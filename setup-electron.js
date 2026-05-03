@@ -32,7 +32,7 @@ console.log('✅ Added Electron main entry point');
 
 // Add Electron scripts
 const electronScripts = {
-  'electron:dev': 'concurrently "npm run dev" "wait-on http://localhost:5173 && cross-env ELECTRON_DEV=true electron ."',
+  'electron:dev': 'concurrently "npm run dev" "wait-on http://localhost:8080 && cross-env ELECTRON_DEV=true electron ."',
   'electron:build': 'npm run build && electron-builder --win',
   'electron:build:portable': 'npm run build && electron-builder --win portable',
   'electron:build:mac': 'npm run build && electron-builder --mac',

@@ -974,9 +974,10 @@ async function processPayment(client, paymentData) {
 
   // Auto-clear against invoices
   if (invoiceIds && invoiceIds.length > 0) {
+    const ph = invoiceIds.map((_, i) => `$${i + 1}`).join(', ');
     const openInvoices = await client.query(
-      `SELECT * FROM open_items WHERE document_id = ANY($1) AND status != 'cleared' ORDER BY document_date ASC`,
-      [invoiceIds]
+      `SELECT * FROM open_items WHERE document_id IN (${ph}) AND status != 'cleared' ORDER BY document_date ASC`,
+      invoiceIds
     );
 
     let remaining = paymentAmount;

@@ -6,11 +6,12 @@ import { Database, Server, RefreshCw, CheckCircle2, XCircle, Container, Monitor 
 import { cn } from '@/lib/utils';
 
 interface HealthData {
-  status: string;
-  serverName: string;
-  version: string;
-  connectedClients: number;
-  database: {
+  status?: string;
+  ok?: boolean;
+  serverName?: string;
+  version?: string;
+  connectedClients?: number;
+  database?: {
     connected: boolean;
     latency: number | null;
     version: string | null;
@@ -19,7 +20,7 @@ interface HealthData {
     serverPort: number | null;
     serverTime: string | null;
   };
-  system: {
+  system?: {
     hostname: string;
     platform: string;
     uptime: number;
@@ -187,7 +188,7 @@ export function ServerConnectionIndicator() {
                 <div className="flex items-center justify-between text-xs">
                   <span className="flex items-center gap-1.5">
                     <Monitor className="w-3 h-3" />
-                    Desktop → PostgreSQL
+                    Desktop → SQLite
                   </span>
                   {dbConnected ? (
                     <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-600">
@@ -233,7 +234,7 @@ export function ServerConnectionIndicator() {
                 <div className="flex items-center justify-between text-xs">
                   <span className="flex items-center gap-1.5">
                     <Container className="w-3 h-3" />
-                    Docker → PostgreSQL
+                    Backend → SQLite
                   </span>
                   {health?.database?.connected ? (
                     <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-600">
@@ -251,13 +252,13 @@ export function ServerConnectionIndicator() {
             {/* Details */}
             {health && (
               <div className="border-t pt-2 space-y-1 text-[11px] text-muted-foreground">
-                {health.database.database && (
+                {health.database?.database && (
                   <p><strong>Base de dados:</strong> {health.database.database}</p>
                 )}
-                {health.database.serverAddr && (
-                  <p><strong>PostgreSQL:</strong> {health.database.serverAddr}:{health.database.serverPort}</p>
+                {health.database?.serverAddr && (
+                  <p><strong>Servidor DB:</strong> {health.database.serverAddr}:{health.database.serverPort}</p>
                 )}
-                {health.database.latency != null && (
+                {health.database?.latency != null && (
                   <p><strong>Latência:</strong> {health.database.latency}ms</p>
                 )}
                 {health.system && (
@@ -272,15 +273,15 @@ export function ServerConnectionIndicator() {
 
             {isElectron && electronStatus?.path && (
               <div className="border-t pt-2 text-[11px] text-muted-foreground">
-                <p><strong>Conexão:</strong> <code className="text-[10px] bg-muted px-1 rounded">PostgreSQL directo</code></p>
+                <p><strong>Conexão:</strong> <code className="text-[10px] bg-muted px-1 rounded">SQLite local (.nexor/.db)</code></p>
               </div>
             )}
 
             {!isElectron && !backendReachable && (
               <div className="border-t pt-2 text-[11px] text-muted-foreground space-y-1">
                 <p className="font-medium text-destructive">Servidor não acessível</p>
-                <p>Verifique se o Docker Desktop está a correr e o container está ativo.</p>
-                <p className="font-mono text-[10px] bg-muted p-1 rounded">docker compose up -d</p>
+                <p>Verifique se o backend Node está a correr na porta configurada.</p>
+                <p className="font-mono text-[10px] bg-muted p-1 rounded">cd backend && npm run dev</p>
               </div>
             )}
 

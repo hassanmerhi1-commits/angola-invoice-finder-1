@@ -77,10 +77,10 @@ module.exports = function(broadcastTable) {
            action, table_name, COUNT(*) as count,
            COUNT(DISTINCT user_id) as unique_users
          FROM audit_log 
-         WHERE created_at >= CURRENT_DATE - $1::integer
+         WHERE datetime(created_at) >= datetime('now', '-' || $1 || ' days')
          GROUP BY action, table_name
          ORDER BY count DESC`,
-        [daysBack]
+        [String(daysBack)]
       );
       res.json(result.rows);
     } catch (error) {

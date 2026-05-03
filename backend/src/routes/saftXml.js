@@ -64,7 +64,12 @@ module.exports = function(saftJsonRouter) {
       const [customers, suppliers, products, accounts] = await Promise.all([
         db.query('SELECT * FROM clients ORDER BY name'),
         db.query('SELECT * FROM suppliers ORDER BY name'),
-        db.query('SELECT DISTINCT ON (sku) * FROM products WHERE is_active = true ORDER BY sku, created_at DESC'),
+        db.query(`
+          SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY sku ORDER BY datetime(created_at) DESC) AS rn
+            FROM products WHERE is_active = 1
+          ) x WHERE rn = 1 ORDER BY sku
+        `),
         db.query('SELECT * FROM chart_of_accounts WHERE is_active = true ORDER BY code'),
       ]);
 

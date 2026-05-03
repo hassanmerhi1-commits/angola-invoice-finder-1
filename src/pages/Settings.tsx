@@ -382,9 +382,7 @@ export default function Settings() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Database</span>
                   <span className="text-xs font-mono truncate max-w-[250px]">
-                    {setupConfig.serverConfig.databasePath?.startsWith('postgresql') 
-                      ? 'PostgreSQL (Docker)' 
-                      : setupConfig.serverConfig.databasePath || 'PostgreSQL (Default)'}
+                    {setupConfig.serverConfig.databasePath || '.nexor/.db (not set)'}
                   </span>
                 </div>
                 <Separator />

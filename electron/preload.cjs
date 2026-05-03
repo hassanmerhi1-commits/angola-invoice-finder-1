@@ -8,6 +8,29 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+let backendHttpOrigin = null;
+let backendPortSync = 0;
+try {
+  const o = ipcRenderer.sendSync('backend:getHttpOriginSync');
+  if (typeof o === 'string' && /^https?:\/\//i.test(o)) backendHttpOrigin = o;
+} catch (_) {
+  /* ipc not ready */
+}
+try {
+  const p = ipcRenderer.sendSync('backend:getPortSync');
+  if (typeof p === 'number' && p > 0 && p < 65536) backendPortSync = p;
+} catch (_) {
+  /* ipc not ready */
+}
+
+if (backendPortSync > 0) {
+  try {
+    contextBridge.exposeInMainWorld('__KWANZA_BACKEND_PORT__', backendPortSync);
+  } catch (_) {
+    /* hot-reload / second preload */
+  }
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // IP file operations (the core of the architecture)
   ipfile: {
@@ -137,6 +160,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Platform info
   platform: process.platform,
   isElectron: true,
+  /** Set when the auto-spawned Express child is actually running (sync at preload time). */
+  backendHttpOrigin: backendHttpOrigin,
 });
 
 console.log('🏢 NEXOR ERP running in Electron desktop mode');

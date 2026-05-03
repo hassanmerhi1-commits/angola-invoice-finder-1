@@ -1,15 +1,15 @@
 /**
- * NEXOR ERP - Main Process (PostgreSQL Edition)
+ * NEXOR ERP - Main Process (File DB Edition)
  * 
  * Architecture:
  * - IP file at C:\NEXOR ERP\IP determines mode
- * - Server mode: PostgreSQL connection string → connects to PG, starts WebSocket server
+ * - Server mode: local .nexor file path → opens local DB file
  * - Client mode: server hostname/IP → connects via WebSocket
  * - Auto-updater via GitHub releases
  * - Multi-company support via companies.json registry
  * 
  * IP file format:
- *   Server: postgresql://postgres:yel3an7azi@127.0.0.1:5432/kwanza_erp
+ *   Server: C:\nexor\erp.db
  *   Client: SERVIDOR or 10.0.0.5  (hostname/IP = client mode)
  */
 
@@ -19,6 +19,18 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const backendManager = require('./backendManager.cjs');
+
+ipcMain.on('backend:getPortSync', (event) => {
+  const st = backendManager.getStatus();
+  const p = backendManager.getPort();
+  event.returnValue = st.running && typeof p === 'number' && p > 0 && p < 65536 ? p : 0;
+});
+
+ipcMain.on('backend:getHttpOriginSync', (event) => {
+  const st = backendManager.getStatus();
+  const p = backendManager.getPort();
+  event.returnValue = st.running && p ? `http://localhost:${p}` : '';
+});
 
 // ============= SINGLE-INSTANCE LOCK (Phase 2) =============
 // Prevent a second .exe launch from spawning a duplicate Express backend or
@@ -110,9 +122,7 @@ const INSTALL_DIR = 'C:\\NEXOR ERP';
 const IP_FILE_PATH = path.join(INSTALL_DIR, 'IP');
 const COMPANIES_FILE_PATH = path.join(INSTALL_DIR, 'companies.json');
 const WS_PORT = 4546;
-
-// Default PostgreSQL connection
-const DEFAULT_PG_URL = 'postgresql://postgres:yel3an7azi@127.0.0.1:5432/kwanza_erp';
+const DEFAULT_NEXOR_PATH = 'C:\\nexor\\erp.db';
 
 // Ensure install directory exists
 if (!fs.existsSync(INSTALL_DIR)) {
@@ -123,11 +133,11 @@ if (!fs.existsSync(INSTALL_DIR)) {
   }
 }
 
-// Create IP file with default PG URL if it doesn't exist
+// Create IP file with default .nexor path if it doesn't exist
 if (!fs.existsSync(IP_FILE_PATH)) {
   try {
-    fs.writeFileSync(IP_FILE_PATH, DEFAULT_PG_URL, 'utf-8');
-    console.log('Created IP file with default PostgreSQL URL at:', IP_FILE_PATH);
+    fs.writeFileSync(IP_FILE_PATH, DEFAULT_NEXOR_PATH, 'utf-8');
+    console.log('Created IP file with default .nexor path at:', IP_FILE_PATH);
   } catch (err) {
     console.error('Failed to create IP file:', err);
   }
@@ -139,7 +149,7 @@ let splashWindow = null;
 let purchaseInvoiceWindow = null;
 let purchaseProductPickerWindow = null;
 let resolveProductPickerSelection = null;
-/** @type {import('pg').Pool | null} */
+/** @type {any} In-process JSON store shim (not PostgreSQL). */
 let pool = null;
 let pgConnectionString = null;
 let isServerMode = false;
@@ -200,17 +210,20 @@ function parseIPFile() {
     if (!content) {
       return { valid: false, error: 'IP file is empty', path: null, isServer: false };
     }
-    // Server mode - PostgreSQL connection string
-    if (content.startsWith('postgresql://') || content.startsWith('postgres://')) {
+    // Server mode - file path (.db preferred; legacy .nexor auto-migrates)
+    if (/^[A-Za-z]:\\.+\.(nexor|db)$/i.test(content)) {
+      if (/\.nexor$/i.test(content)) {
+        console.log('[IP] Legacy .nexor path detected, migrating to SQLite .db default');
+        try { fs.writeFileSync(IP_FILE_PATH, DEFAULT_NEXOR_PATH, 'utf-8'); } catch (e) {}
+        return { valid: true, path: DEFAULT_NEXOR_PATH, isServer: true };
+      }
       return { valid: true, path: content, isServer: true };
     }
-    // Legacy server mode - local SQLite path (auto-migrate to PG)
-    if (/^[A-Za-z]:\\.+\.db$/.test(content)) {
-      console.log('[IP] Legacy SQLite path detected, migrating to PostgreSQL default');
-      try {
-        fs.writeFileSync(IP_FILE_PATH, DEFAULT_PG_URL, 'utf-8');
-      } catch (e) {}
-      return { valid: true, path: DEFAULT_PG_URL, isServer: true };
+    // Legacy server mode - postgresql URL -> migrate to file DB default
+    if (content.startsWith('postgresql://') || content.startsWith('postgres://')) {
+      console.log('[IP] PostgreSQL URL detected, migrating to SQLite .db mode');
+      try { fs.writeFileSync(IP_FILE_PATH, DEFAULT_NEXOR_PATH, 'utf-8'); } catch (e) {}
+      return { valid: true, path: DEFAULT_NEXOR_PATH, isServer: true };
     }
     // Client mode - hostname or IP
     const serverMatch = content.match(/^([A-Za-z0-9_\-\.]+)$/);
@@ -223,7 +236,24 @@ function parseIPFile() {
   }
 }
 
-// ============= POSTGRESQL OPERATIONS =============
+/** True when this path is the real SQLite file used by Express (better-sqlite3) — must not use JSON .nexor shim. */
+function shouldUseSqliteOnly(connectionString) {
+  if (!connectionString || typeof connectionString !== 'string') return false;
+  const p = connectionString.trim();
+  if (/\.db$/i.test(p)) return true;
+  if (!fs.existsSync(p)) return false;
+  try {
+    const fd = fs.openSync(p, 'r');
+    const buf = Buffer.alloc(16);
+    const n = fs.readSync(fd, buf, 0, 16, 0);
+    fs.closeSync(fd);
+    return n >= 16 && buf[15] === 0 && buf.toString('utf8', 0, 15) === 'SQLite format 3';
+  } catch {
+    return false;
+  }
+}
+
+// ============= FILE DB OPERATIONS =============
 const ERP_TABLES = [
   'users', 'user_permissions', 'user_sessions', 'branches', 'categories', 'products',
   'clients', 'suppliers',
@@ -241,28 +271,107 @@ const ERP_TABLES = [
 ];
 
 async function connectPostgres(connectionString) {
-  const pgModule = requireRuntimeModule('pg');
-  if (!pgModule) {
-    throw new Error('Missing "pg" module. Run: npm install pg');
+  // Kept name for compatibility with existing call sites.
+  if (shouldUseSqliteOnly(connectionString)) {
+    console.log('[DB] SQLite file reserved for Express — skipping main-process JSON store:', connectionString);
+    pool = null;
+    return;
   }
-  const { Pool } = pgModule;
-  pool = new Pool({ connectionString });
+  const dir = path.dirname(connectionString);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  let state = { tables: {} };
+  if (fs.existsSync(connectionString)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(connectionString, 'utf-8'));
+      if (parsed && typeof parsed === 'object') state = parsed;
+    } catch {}
+  }
+  if (!state.tables || typeof state.tables !== 'object') state.tables = {};
+  const persist = () => fs.writeFileSync(connectionString, JSON.stringify(state, null, 2), 'utf-8');
+  persist();
 
-  // Test connection
-  const client = await pool.connect();
-  const res = await client.query('SELECT NOW()');
-  client.release();
-  console.log('[DB] Connected to PostgreSQL at', res.rows[0].now);
+  pool = {
+    _state: state,
+    _persist: persist,
+    async query(sql, params = []) {
+      const lower = String(sql || '').trim().toLowerCase();
+      if (lower === 'begin' || lower === 'begin transaction') {
+        return { rows: [] };
+      }
+      if (lower === 'commit') {
+        persist();
+        return { rows: [] };
+      }
+      if (lower === 'rollback') {
+        return { rows: [] };
+      }
+      if (lower.startsWith('select data from nexor_records where table_name = ? and id = ?')) {
+        const [table, id] = params;
+        const row = state.tables?.[table]?.[id];
+        if (!row) return { rows: [] };
+        return { rows: [{ data: JSON.stringify(row) }] };
+      }
+      if (lower.startsWith('select data from nexor_records where table_name = ?')) {
+        const [table] = params;
+        const rows = Object.values(state.tables?.[table] || {}).map((entry) => ({ data: JSON.stringify(entry) }));
+        return { rows };
+      }
+      if (lower.startsWith('insert into nexor_records')) {
+        const [table, id, data] = params;
+        if (!state.tables[table]) state.tables[table] = {};
+        let parsed = {};
+        try { parsed = JSON.parse(data); } catch {}
+        state.tables[table][id] = parsed;
+        persist();
+        return { rows: [], rowCount: 1 };
+      }
+      if (lower.startsWith('delete from nexor_records where table_name = ? and id = ?')) {
+        const [table, id] = params;
+        if (state.tables[table]) delete state.tables[table][id];
+        persist();
+        return { rows: [], rowCount: 1 };
+      }
+      if (lower.startsWith('insert into audit_logs')) {
+        if (!state.tables.audit_logs) state.tables.audit_logs = {};
+        const id = params[0] || ('audit-' + Date.now());
+        state.tables.audit_logs[id] = {
+          id,
+          action: params[1] || null,
+          entity_type: params[2] || null,
+          entity_id: params[3] || null,
+          previous_value: params[4] || null,
+          new_value: params[5] || null,
+          timestamp: new Date().toISOString(),
+        };
+        persist();
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [] };
+    },
+    async connect() {
+      return {
+        query: async (sql, params = []) => this.query(sql, params),
+        release: () => {},
+      };
+    },
+    async end() { try { persist(); } catch {} },
+  };
+
+  console.log('[DB] Connected to .nexor file:', connectionString);
   return pool;
 }
 
 async function dbGetAll(table) {
   if (!pool) return [];
   try {
-    const result = await pool.query(`SELECT * FROM ${table}`);
-    return result.rows || [];
+    const result = await pool.query(
+      'SELECT data FROM nexor_records WHERE table_name = ? ORDER BY updated_at DESC',
+      [table]
+    );
+    return (result.rows || []).map(r => {
+      try { return JSON.parse(r.data); } catch { return null; }
+    }).filter(Boolean);
   } catch (e) {
-    // Table might not exist
     return [];
   }
 }
@@ -270,8 +379,12 @@ async function dbGetAll(table) {
 async function dbGetById(table, id) {
   if (!pool) return null;
   try {
-    const result = await pool.query(`SELECT * FROM ${table} WHERE id = $1`, [id]);
-    return result.rows[0] || null;
+    const result = await pool.query(
+      'SELECT data FROM nexor_records WHERE table_name = ? AND id = ? LIMIT 1',
+      [table, id]
+    );
+    if (!result.rows.length) return null;
+    try { return JSON.parse(result.rows[0].data); } catch { return null; }
   } catch (e) {
     return null;
   }
@@ -280,15 +393,12 @@ async function dbGetById(table, id) {
 async function dbInsert(table, data, companyId = null) {
   if (!pool) return { success: false, error: 'Database not connected' };
   try {
-    const keys = Object.keys(data);
-    const values = Object.values(data);
-    const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
-    const onConflict = keys.filter(k => k !== 'id').map(k => `${k} = EXCLUDED.${k}`).join(', ');
-    
+    const now = new Date().toISOString();
     await pool.query(
-      `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})
-       ON CONFLICT (id) DO UPDATE SET ${onConflict}`,
-      values
+      `INSERT INTO nexor_records (table_name, id, data, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(table_name, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+      [table, data.id, JSON.stringify(data), now, now]
     );
 
     // Audit trail
@@ -311,23 +421,15 @@ async function dbInsert(table, data, companyId = null) {
 async function dbUpdate(table, id, data, companyId = null) {
   if (!pool) return { success: false, error: 'Database not connected' };
   try {
-    // Capture previous value for audit
-    let previousValue = null;
-    if (table !== 'audit_logs' && table !== 'user_sessions') {
-      try {
-        const prev = await pool.query(`SELECT * FROM ${table} WHERE id = $1`, [id]);
-        previousValue = prev.rows[0] || null;
-      } catch (e) {}
-    }
-
-    const keys = Object.keys(data);
-    const values = Object.values(data);
-    const updates = keys.map((key, i) => `${key} = $${i + 1}`).join(', ');
-    values.push(id);
-    
+    const existing = await dbGetById(table, id);
+    const previousValue = existing;
+    const merged = { ...(existing || {}), ...data, id };
+    const now = new Date().toISOString();
     await pool.query(
-      `UPDATE ${table} SET ${updates}, updated_at = NOW() WHERE id = $${values.length}`,
-      values
+      `INSERT INTO nexor_records (table_name, id, data, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(table_name, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+      [table, id, JSON.stringify(merged), now, now]
     );
 
     // Audit trail
@@ -350,15 +452,8 @@ async function dbUpdate(table, id, data, companyId = null) {
 async function dbDelete(table, id, companyId = null) {
   if (!pool) return { success: false, error: 'Database not connected' };
   try {
-    let previousValue = null;
-    if (table !== 'audit_logs' && table !== 'user_sessions') {
-      try {
-        const prev = await pool.query(`SELECT * FROM ${table} WHERE id = $1`, [id]);
-        previousValue = prev.rows[0] || null;
-      } catch (e) {}
-    }
-
-    await pool.query(`DELETE FROM ${table} WHERE id = $1`, [id]);
+    const previousValue = await dbGetById(table, id);
+    await pool.query(`DELETE FROM nexor_records WHERE table_name = ? AND id = ?`, [table, id]);
 
     if (table !== 'audit_logs' && table !== 'user_sessions') {
       try {
@@ -379,12 +474,7 @@ async function dbDelete(table, id, companyId = null) {
 async function dbQuery(sql, params = []) {
   if (!pool) return { success: false, error: 'Database not connected' };
   try {
-    // Convert ? placeholders to $1, $2, etc. for pg compatibility
-    let pgSql = sql;
-    let paramIndex = 0;
-    pgSql = pgSql.replace(/\?/g, () => `$${++paramIndex}`);
-    
-    const result = await pool.query(pgSql, params);
+    const result = await pool.query(sql, params);
     return result.rows || [];
   } catch (error) {
     return { success: false, error: error.message };
@@ -626,23 +716,51 @@ async function sendToServer(request) {
 ipcMain.handle('setup:getConfig', async () => {
   try {
     const configPath = path.join(INSTALL_DIR, 'setup-config.json');
+    let savedConfig = null;
     if (fs.existsSync(configPath)) {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      return { success: true, config };
+      try {
+        savedConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      } catch (_) {
+        savedConfig = null;
+      }
     }
-    // Check if IP file exists and is configured
+
+    // IP file is the source of truth for runtime mode/path.
     const ipConfig = parseIPFile();
     if (ipConfig.valid) {
+      const liveConfig = {
+        setupComplete: true,
+        role: ipConfig.isServer ? 'server' : 'client',
+        serverConfig: ipConfig.isServer
+          ? {
+              databasePath: ipConfig.path || null,
+              serverIp: getLocalIP(),
+              serverPort: WS_PORT
+            }
+          : null,
+        clientConfig: !ipConfig.isServer ? { serverIp: ipConfig.serverAddress, serverPort: WS_PORT } : null,
+      };
+
+      // Preserve extra saved keys but always overwrite role + DB/server runtime fields.
+      const merged = savedConfig
+        ? {
+            ...savedConfig,
+            ...liveConfig,
+            serverConfig: { ...(savedConfig.serverConfig || {}), ...(liveConfig.serverConfig || {}) },
+            clientConfig: { ...(savedConfig.clientConfig || {}), ...(liveConfig.clientConfig || {}) },
+          }
+        : liveConfig;
+
       return {
         success: true,
-        config: {
-          setupComplete: true,
-          role: ipConfig.isServer ? 'server' : 'client',
-          serverConfig: ipConfig.isServer ? { serverIp: getLocalIP(), serverPort: WS_PORT } : null,
-          clientConfig: !ipConfig.isServer ? { serverIp: ipConfig.serverAddress, serverPort: WS_PORT } : null,
-        }
+        config: merged
       };
     }
+
+    if (savedConfig) {
+      return { success: true, config: savedConfig };
+    }
+
     return { success: true, config: { setupComplete: false, role: null } };
   } catch (e) {
     return { success: false, error: e.message };
@@ -653,6 +771,16 @@ ipcMain.handle('setup:saveConfig', async (_, config) => {
   try {
     const configPath = path.join(INSTALL_DIR, 'setup-config.json');
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+    // Keep IP file aligned with setup selection (single runtime source of truth).
+    if (config?.role === 'server') {
+      const requested = String(config?.serverConfig?.databasePath || '').trim();
+      const selectedDb = /\.db$/i.test(requested) ? requested : DEFAULT_NEXOR_PATH;
+      fs.writeFileSync(IP_FILE_PATH, selectedDb, 'utf-8');
+    } else if (config?.role === 'client' && config?.clientConfig?.serverIp) {
+      fs.writeFileSync(IP_FILE_PATH, String(config.clientConfig.serverIp), 'utf-8');
+    }
+
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -697,8 +825,8 @@ async function initDatabase() {
     return { success: true, mode: 'client', serverAddress };
   }
 
-  // Server mode - connect to PostgreSQL
-  pgConnectionString = ipConfig.path;
+  // Server mode - connect to local .nexor file
+  pgConnectionString = ipConfig.path || DEFAULT_NEXOR_PATH;
   isServerMode = true;
   serverAddress = null;
 
@@ -707,11 +835,11 @@ async function initDatabase() {
     await connectPostgres(pgConnectionString);
     ensureCompaniesRegistry();
     startWebSocketServer();
-    console.log('SERVER MODE: Connected to PostgreSQL');
+    console.log('SERVER MODE: Connected to .nexor file');
     return { success: true, mode: 'server', path: pgConnectionString, wsPort: WS_PORT };
   } catch (error) {
     console.error('Error initializing database:', error);
-    return { success: false, error: error.message };
+    return { success: false, error: error.message, mode: 'server', path: pgConnectionString };
   }
 }
 
@@ -779,7 +907,7 @@ function getLocalRendererSource() {
 function getRendererSource() {
   const isDev = process.env.NODE_ENV === 'development' || process.env.ELECTRON_DEV === 'true';
   if (isDev) {
-    return { type: 'dev', url: 'http://localhost:5173' };
+    return { type: 'dev', url: 'http://localhost:8080' };
   }
 
   const hotUpdate = loadHotUpdateConfig();
@@ -1022,7 +1150,6 @@ function createWindow() {
 // ============= APP LIFECYCLE =============
 app.whenReady().then(async () => {
   createSplashWindow();
-  createWindow();
 
   // Phase 6: initialize backend log directory under userData (cross-platform).
   // Windows: %APPDATA%\NEXOR ERP\logs
@@ -1045,9 +1172,21 @@ app.whenReady().then(async () => {
   //   - hostname/IP in IP file          → this PC is a CLIENT  → DO NOT spawn
   //   - IP file missing/invalid         → treat as standalone (spawn, let user fix later)
   let backendMode = 'unknown';
+  let backendSqlitePath = null;
   if (dbResult?.mode === 'server') backendMode = 'server';
   else if (dbResult?.mode === 'client') backendMode = 'client';
   else if (dbResult?.needsConfig) backendMode = 'standalone';
+  else {
+    const ipConfig = parseIPFile();
+    if (ipConfig.valid) {
+      backendMode = ipConfig.isServer ? 'server' : 'client';
+      if (ipConfig.isServer && ipConfig.path) backendSqlitePath = ipConfig.path;
+    }
+  }
+  if (dbResult?.mode === 'server' && dbResult?.path) backendSqlitePath = dbResult.path;
+
+  // File-first mode: no PostgreSQL env wiring.
+  delete process.env.DATABASE_URL;
 
   // Phase 5: forward backend health events from backendManager → renderer.
   // Single status channel; payload shape: { state, detail?, port?, mode?, code?, fails?, attempts?, ts }
@@ -1058,8 +1197,9 @@ app.whenReady().then(async () => {
     } catch (_) { /* renderer may be reloading */ }
   });
 
+  // Start Express before loading the UI so the first /api calls are not ECONNREFUSED.
   try {
-    const spawnResult = await backendManager.start({ mode: backendMode });
+    const spawnResult = await backendManager.start({ mode: backendMode, sqlitePath: backendSqlitePath });
     if (spawnResult.started) {
       backendPort = spawnResult.port;
       console.log(`[Init] Backend up on port ${backendPort} (mode=${backendMode})`);
@@ -1067,15 +1207,12 @@ app.whenReady().then(async () => {
       console.log(`[Init] Backend spawn skipped (${spawnResult.reason}) — using remote server`);
     } else if (spawnResult.error) {
       console.warn(`[Init] Backend spawn failed: ${spawnResult.error}`);
-      const send = () => mainWindow?.webContents.send('backend:status', {
-        state: 'down', detail: spawnResult.error, code: spawnResult.code, mode: backendMode, ts: Date.now(),
-      });
-      if (mainWindow?.webContents?.isLoading() === false) send();
-      else mainWindow?.webContents?.once('did-finish-load', send);
     }
   } catch (err) {
     console.error('[Init] Backend spawn threw:', err);
   }
+
+  createWindow();
 
   // Check for updates (production only)
   const isDev = process.env.NODE_ENV === 'development' || process.env.ELECTRON_DEV === 'true';

@@ -232,7 +232,7 @@ export async function generateSAFTXML(
     <TaxEntity>Global</TaxEntity>
     <ProductCompanyTaxID>999999999</ProductCompanyTaxID>
     <SoftwareCertificateNumber>0000</SoftwareCertificateNumber>
-    <ProductID>KwanzaERP/1.0</ProductID>
+    <ProductID>NEXOR-ERP/1.0</ProductID>
     <ProductVersion>1.0</ProductVersion>
     <Telephone>${company.phone}</Telephone>
     <Email>${company.email}</Email>
@@ -285,7 +285,7 @@ ${sales.map((s, idx) => `      <Invoice>
         <DocumentStatus>
           <InvoiceStatus>${s.status === 'completed' ? 'N' : 'A'}</InvoiceStatus>
           <InvoiceStatusDate>${s.createdAt}</InvoiceStatusDate>
-          <SourceID>KwanzaERP</SourceID>
+          <SourceID>NEXOR-ERP</SourceID>
           <SourceBilling>P</SourceBilling>
         </DocumentStatus>
         <Hash>${s.saftHash || generateDocumentHash(idx === 0 ? '0' : (sales[idx-1].saftHash || '0'), s.createdAt.split('T')[0], s.invoiceNumber, s.total)}</Hash>

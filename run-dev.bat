@@ -29,4 +29,4 @@ echo [INFO] Press Ctrl+C to stop.
 echo.
 
 :: Run electron in dev mode
-call npx concurrently "npm run dev" "npx wait-on http://localhost:5173 && npx cross-env ELECTRON_DEV=true npx electron ."
+call npx concurrently "npm run dev" "npx wait-on http://localhost:8080 && npx cross-env ELECTRON_DEV=true npx electron ."

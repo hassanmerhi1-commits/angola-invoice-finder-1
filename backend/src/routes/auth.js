@@ -3,9 +3,13 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const db = require('../db');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'kwanza-erp-secret-key';
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
+if (!process.env.JWT_SECRET) {
+  console.warn('[AUTH] JWT_SECRET not set. Using ephemeral secret for this process.');
+}
 
 // Login
 router.post('/login', async (req, res) => {

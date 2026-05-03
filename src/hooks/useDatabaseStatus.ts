@@ -29,6 +29,36 @@ export function useDatabaseStatus() {
     try {
       // Check if running in Electron
       const isElectron = !!window.electronAPI?.isElectron;
+
+      // In Electron, IPC DB status is the most reliable source of truth.
+      // It knows whether main-process PG/ws connectivity is alive, while
+      // HTTP health checks can fail transiently during backend port changes.
+      if (isElectron && window.electronAPI?.db?.getStatus) {
+        try {
+          const dbStatus = await window.electronAPI.db.getStatus();
+          if (dbStatus?.success) {
+            const mode = dbStatus.mode === 'server' || dbStatus.mode === 'client'
+              ? dbStatus.mode
+              : 'unknown';
+            const parsedPath = typeof dbStatus.path === 'string' ? dbStatus.path : null;
+            const parsedServerAddress = typeof dbStatus.serverAddress === 'string' ? dbStatus.serverAddress : null;
+            const parsedPort = Number(dbStatus.serverPort || dbStatus.port || 3000);
+
+            setStatus({
+              isConnected: !!dbStatus.connected,
+              isServer: mode === 'server',
+              databasePath: parsedPath,
+              serverIp: parsedServerAddress,
+              serverPort: Number.isFinite(parsedPort) ? parsedPort : 3000,
+              mode,
+              lastChecked: new Date(),
+            });
+            return;
+          }
+        } catch (e) {
+          console.error('[DatabaseStatus] Electron db.getStatus failed, falling back to HTTP health:', e);
+        }
+      }
       
       // First check Electron persistent storage for setup config
       let setupComplete = false;

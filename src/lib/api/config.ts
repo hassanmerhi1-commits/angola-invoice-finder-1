@@ -27,11 +27,27 @@ export function isDemoMode(): boolean {
 // injected as window.__KWANZA_BACKEND_PORT__ before the React app loads.
 export function getApiUrl(): string {
   if (typeof window !== 'undefined') {
+    const isElectron = !!(window as any).electronAPI?.isElectron;
+    if (isElectron) {
+      const origin = (window as any).electronAPI?.backendHttpOrigin;
+      if (typeof origin === 'string' && /^https?:\/\//i.test(origin)) {
+        return origin.replace(/\/$/, '');
+      }
+      const p = (window as any).__KWANZA_BACKEND_PORT__;
+      if (typeof p === 'number' && p > 0 && p < 65536) {
+        return `http://localhost:${p}`;
+      }
+      return DEFAULT_API_URL;
+    }
+
     const savedUrl = localStorage.getItem('kwanza_api_url');
-    if (savedUrl) return savedUrl;
-    const dynamicPort = (window as any).__KWANZA_BACKEND_PORT__;
-    if (typeof dynamicPort === 'number' && dynamicPort > 0) {
-      return `http://localhost:${dynamicPort}`;
+    if (savedUrl) {
+      const normalized = savedUrl.trim().toLowerCase();
+      const isLegacyDbString = normalized.startsWith('postgres://')
+        || normalized.startsWith('postgresql://')
+        || normalized.includes('docker');
+      if (!isLegacyDbString) return savedUrl;
+      localStorage.removeItem('kwanza_api_url');
     }
   }
   return DEFAULT_API_URL;

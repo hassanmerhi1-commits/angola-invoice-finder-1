@@ -19,7 +19,7 @@
  *
  * NOT included yet (phases 5–7, intentionally deferred):
  *   - Health monitoring + auto-restart
- *   - Rotating log files to %APPDATA%/KwanzaERP/logs/
+ *   - Rotating log files to %APPDATA%/NEXOR-ERP/logs/
  *   - Code-signing / firewall rule installer
  */
 
@@ -30,7 +30,8 @@ const { spawn } = require('child_process');
 const { app } = require('electron');
 
 const DEFAULT_PORT = 3000;
-const PORT_RANGE = 10;            // try 3000..3009
+/** Try 3000..3009 so dev can keep a manual `node backend` on 3000 while Electron still starts. */
+const PORT_RANGE = 10;
 const DOCKER_HOST = '127.0.0.1';
 const DOCKER_PG_PORT = 5432;
 const DOCKER_TCP_TIMEOUT = 1500;
@@ -199,9 +200,17 @@ function closeLogStream() {
 //   <resourcesPath>/backend/src/server.js
 // --------------------------------------------------------------------------
 function resolveBackendEntry() {
+  let appPath = null;
+  try {
+    appPath = app.getAppPath();
+  } catch (_) {}
+
+  // extraResources copies backend/ to <resources>/backend/ — that must win in production.
+  // (app.asar does not include backend/, so older logic often fell through to dev paths.)
   const candidates = [
-    path.join(__dirname, '..', 'backend', 'src', 'server.js'),                          // dev
     process.resourcesPath ? path.join(process.resourcesPath, 'backend', 'src', 'server.js') : null,
+    path.join(__dirname, '..', 'backend', 'src', 'server.js'),
+    appPath ? path.join(appPath, 'backend', 'src', 'server.js') : null,
     process.resourcesPath ? path.join(process.resourcesPath, 'app.asar.unpacked', 'backend', 'src', 'server.js') : null,
   ].filter(Boolean);
 
@@ -282,9 +291,10 @@ function shouldSpawnForMode(mode) {
 // --------------------------------------------------------------------------
 // Spawn
 // --------------------------------------------------------------------------
-function spawnBackend(entryPath, port) {
+function spawnBackend(entryPath, port, sqlitePathOverride = null) {
   const cwd = resolveBackendCwd(entryPath);
   const nodePath = buildBackendNodePath();
+  const sqlitePath = sqlitePathOverride || path.join(app.getPath('userData'), 'erp.db');
 
   // CRITICAL: Always use the Electron executable (never system node).
   // app.getPath('exe') returns the NEXOR ERP.exe path even on Windows
@@ -293,18 +303,20 @@ function spawnBackend(entryPath, port) {
   // bundled backend node_modules.
   // ELECTRON_RUN_AS_NODE=1 makes the Electron binary behave as a pure
   // Node v20 process (no Chromium), which DOES see the resources tree.
-  let electronExe;
+  let runnerExe;
   try {
-    electronExe = app.getPath('exe');
+    runnerExe = app.getPath('exe');
   } catch (_) {
-    electronExe = process.execPath;
+    runnerExe = process.execPath;
   }
 
-  // Sanity check: refuse to launch if the resolved exe is system node —
-  // that path is a packaging bug we want to surface, not silently retry.
-  const exeBase = path.basename(electronExe).toLowerCase();
-  if (exeBase === 'node.exe' || exeBase === 'node') {
-    const err = `Refusing to spawn backend with system Node (${electronExe}). Expected Electron exe.`;
+  const exeBase = path.basename(runnerExe).toLowerCase();
+  const isNodeExe = exeBase === 'node.exe' || exeBase === 'node';
+  // In dev, Electron is often launched via a Node CLI shim — getPath('exe') is node.exe.
+  // Use that Node to run the backend so better-sqlite3 matches `npm rebuild` in backend/.
+  const usePackagedRunner = app.isPackaged;
+  if (isNodeExe && usePackagedRunner) {
+    const err = `Refusing to spawn backend with system Node (${runnerExe}) in packaged app. Expected Electron exe.`;
     console.error(`[BackendManager] ${err}`);
     throw new Error(err);
   }
@@ -322,17 +334,24 @@ function spawnBackend(entryPath, port) {
 
   const env = {
     ...process.env,
-    ELECTRON_RUN_AS_NODE: '1',
     PORT: String(port),
+    SQLITE_PATH: sqlitePath,
     NODE_ENV: process.env.NODE_ENV || 'production',
     NODE_PATH: nodePath,
-    // Strip Electron-only vars that would confuse a pure-Node child.
     ELECTRON_NO_ATTACH_CONSOLE: '1',
   };
+  if (isNodeExe) {
+    delete env.ELECTRON_RUN_AS_NODE;
+  } else {
+    env.ELECTRON_RUN_AS_NODE = '1';
+  }
   delete env.ELECTRON_RUN_AS_NODE_DISABLE_NODE_OPTIONS;
 
-  console.log(`[BackendManager] spawning: ${electronExe} ${entryPath} (cwd=${cwd})`);
-  const proc = spawn(electronExe, [entryPath], {
+  console.log(
+    `[BackendManager] spawning: ${runnerExe} ${entryPath} (cwd=${cwd}, plainNode=${isNodeExe})`
+  );
+  console.log(`[BackendManager] SQLite file: ${sqlitePath}`);
+  const proc = spawn(runnerExe, [entryPath], {
     cwd,
     env,
     windowsHide: true,
@@ -360,15 +379,32 @@ function spawnBackend(entryPath, port) {
   return proc;
 }
 
-// Wait until Express answers /api/health (or any 2xx/4xx — anything but ECONNREFUSED).
+// Wait until OUR Express answers /api/health (must be SQLite unified — not some other server on the port).
 function waitForBackendReady(port, timeoutMs = 15000) {
   const http = require('http');
   const start = Date.now();
   return new Promise((resolve) => {
     const tryOnce = () => {
-      const req = http.get({ host: '127.0.0.1', port, path: '/api/health', timeout: 1000 }, (res) => {
-        res.resume();
-        resolve(true);
+      const req = http.get({ host: '127.0.0.1', port, path: '/api/health', timeout: 2000 }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          let payload = null;
+          try {
+            payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          } catch (_) {
+            payload = null;
+          }
+          const ok =
+            res.statusCode === 200
+            && payload
+            && payload.ok === true
+            && payload.engine === 'sqlite'
+            && payload.unified === true;
+          if (ok) return resolve(true);
+          if (Date.now() - start > timeoutMs) return resolve(false);
+          setTimeout(tryOnce, 400);
+        });
       });
       req.on('error', () => {
         if (Date.now() - start > timeoutMs) return resolve(false);
@@ -389,6 +425,7 @@ function waitForBackendReady(port, timeoutMs = 15000) {
 // --------------------------------------------------------------------------
 async function start(opts = {}) {
   const mode = opts.mode || 'unknown';
+  const sqlitePath = typeof opts.sqlitePath === 'string' && opts.sqlitePath.trim() ? opts.sqlitePath.trim() : null;
   lastMode = mode;
 
   // Phase 4: client PCs MUST NOT spawn a local Express — they use the server's.
@@ -402,13 +439,8 @@ async function start(opts = {}) {
     return { started: true, port: boundPort, mode, alreadyRunning: true };
   }
 
-  // Phase 3: Docker pre-flight
-  lastDockerOk = await probeDockerPostgres();
-  if (!lastDockerOk) {
-    const err = `Docker PostgreSQL unreachable at ${DOCKER_HOST}:${DOCKER_PG_PORT}. Is Docker Desktop running?`;
-    console.error(`[BackendManager] ${err}`);
-    return { error: err, code: 'DOCKER_UNAVAILABLE', mode };
-  }
+  // SQLite mode: do not gate backend startup on Docker/PostgreSQL availability.
+  lastDockerOk = true;
 
   // Resolve backend entry
   const entry = resolveBackendEntry();
@@ -427,7 +459,7 @@ async function start(opts = {}) {
   }
 
   console.log(`[BackendManager] spawning backend on port ${port} (mode=${mode}) entry=${entry}`);
-  childProc = spawnBackend(entry, port);
+  childProc = spawnBackend(entry, port, sqlitePath);
   boundPort = port;
 
   // Don't return until /api/health responds (or we time out).
@@ -496,9 +528,23 @@ function probeHealthOnce(port, timeoutMs = HEALTH_TIMEOUT_MS) {
   return new Promise((resolve) => {
     if (!port) return resolve(false);
     const req = http.get({ host: '127.0.0.1', port, path: '/api/health', timeout: timeoutMs }, (res) => {
-      res.resume();
-      // Any 2xx/3xx counts as alive. 5xx = degraded → fail.
-      resolve(res.statusCode != null && res.statusCode < 500);
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        let payload = null;
+        try {
+          payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch (_) {
+          payload = null;
+        }
+        const ok =
+          res.statusCode === 200
+          && payload
+          && payload.ok === true
+          && payload.engine === 'sqlite'
+          && payload.unified === true;
+        resolve(ok);
+      });
     });
     req.on('error', () => resolve(false));
     req.on('timeout', () => { req.destroy(); resolve(false); });

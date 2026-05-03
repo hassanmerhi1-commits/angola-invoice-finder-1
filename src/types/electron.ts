@@ -60,6 +60,8 @@ export interface AGTStatusResult {
 export interface ElectronAPI {
   platform: string;
   isElectron: boolean;
+  /** Base URL for the auto-spawned Express API (e.g. http://localhost:3001) when the child is running. */
+  backendHttpOrigin?: string | null;
 
   // IP file operations
   ipfile: {

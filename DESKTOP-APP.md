@@ -35,8 +35,8 @@ npm run build
 npm run electron:build
 
 # 3. Find your files in the /release folder:
-#    - KwanzaERP-1.0.0-x64.exe (Installer)
-#    - KwanzaERP-Portable-1.0.0.exe (No install needed)
+#    - NEXOR-ERP-1.0.0-x64.exe (Installer)
+#    - NEXOR-ERP-Portable-1.0.0.exe (No install needed)
 ```
 
 ## Available Commands
@@ -45,7 +45,6 @@ npm run electron:build
 |---------|-------------|
 | `npm run electron:dev` | Run app in development mode |
 | `npm run electron:build` | Build .exe installer |
-| `npm run electron:build:portable` | Build portable .exe (no install) |
 | `npm run build` | Build web app only |
 
 ## Package.json Scripts to Add
@@ -83,10 +82,10 @@ project/
 
 After building, share these files:
 
-- **Windows Installer**: `release/KwanzaERP-1.0.0-x64.exe`
-- **Windows Portable**: `release/KwanzaERP-Portable-1.0.0.exe` (no install needed)
-- **Mac**: `release/KwanzaERP-1.0.0-arm64.dmg`
-- **Linux**: `release/KwanzaERP-1.0.0-x86_64.AppImage`
+- **Windows Installer**: `release/NEXOR-ERP-1.0.0-x64.exe`
+- **Windows Portable**: `release/NEXOR-ERP-Portable-1.0.0.exe` (no install needed)
+- **Mac**: `release/NEXOR-ERP-1.0.0-arm64.dmg`
+- **Linux**: `release/NEXOR-ERP-1.0.0-x86_64.AppImage`
 
 ## Offline Mode
 

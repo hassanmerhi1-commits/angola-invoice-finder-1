@@ -10,7 +10,7 @@
 ;   backendManager.cjs probes 3000..3009 for a free port at startup, so we
 ;   must whitelist the whole range — not just 3000.
 ;
-; Rule naming convention: "KwanzaERP-Backend-<port>"  (one rule per port)
+; Rule naming convention: "NEXOR-ERP-Backend-<port>"  (one rule per port)
 ;   - Easy to enumerate for clean removal on uninstall.
 ;   - Easy for an IT admin to spot in `wf.msc`.
 ;
@@ -28,10 +28,10 @@
   Push 3000
   Loop_AddRule:
     Pop $0
-    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="KwanzaERP-Backend-$0"'
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="NEXOR-ERP-Backend-$0"'
     Pop $1
 
-    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="KwanzaERP-Backend-$0" dir=in action=allow protocol=TCP localport=$0 profile=private,domain description="NEXOR ERP Express backend (auto-spawned)"'
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="NEXOR-ERP-Backend-$0" dir=in action=allow protocol=TCP localport=$0 profile=private,domain description="NEXOR ERP Express backend (auto-spawned)"'
     Pop $1
     ${If} $1 == 0
       DetailPrint "  + Firewall rule added for TCP port $0"
@@ -45,9 +45,9 @@
       Goto Loop_AddRule
     ${EndIf}
 
-  nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="KwanzaERP-WS-4546"'
+  nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="NEXOR-ERP-WS-4546"'
   Pop $1
-  nsExec::ExecToLog 'netsh advfirewall firewall add rule name="KwanzaERP-WS-4546" dir=in action=allow protocol=UDP localport=4546 profile=private,domain description="NEXOR ERP LAN discovery / realtime sync"'
+  nsExec::ExecToLog 'netsh advfirewall firewall add rule name="NEXOR-ERP-WS-4546" dir=in action=allow protocol=UDP localport=4546 profile=private,domain description="NEXOR ERP LAN discovery / realtime sync"'
   Pop $1
   ${If} $1 == 0
     DetailPrint "  + Firewall rule added for UDP port 4546 (LAN discovery)"
@@ -62,7 +62,7 @@
   Push 3000
   Loop_DelRule:
     Pop $0
-    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="KwanzaERP-Backend-$0"'
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="NEXOR-ERP-Backend-$0"'
     Pop $1
     IntOp $0 $0 + 1
     ${If} $0 <= 3009
@@ -70,7 +70,7 @@
       Goto Loop_DelRule
     ${EndIf}
 
-  nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="KwanzaERP-WS-4546"'
+  nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="NEXOR-ERP-WS-4546"'
   Pop $1
 
   DetailPrint "Firewall rules removed."

@@ -129,18 +129,9 @@ export function useChartOfAccounts() {
       if (response.error) throw new Error(response.error);
       const remoteAccounts = sortAccountsByCode(response.data || []);
       setAccounts(remoteAccounts);
-      if (remoteAccounts.length > 0 && typeof window !== 'undefined') {
-        saveLocalAccounts(remoteAccounts);
-      }
       setError(null);
     } catch (err: any) {
-      if (isOfflineError(err)) {
-        const localAccounts = loadLocalAccounts();
-        setAccounts(localAccounts);
-        setError(null);
-      } else {
-        setError(err.message || 'Failed to fetch accounts');
-      }
+      setError(err.message || 'Failed to fetch accounts');
       console.error('[useChartOfAccounts] Error:', err);
     } finally {
       setIsLoading(false);
@@ -344,25 +335,7 @@ export function useTrialBalance(startDate?: string, endDate?: string) {
       setData(response.data || []);
       setError(null);
     } catch (err: any) {
-      if (isOfflineError(err)) {
-        const fallbackRows: TrialBalanceRow[] = loadLocalAccounts().map(account => ({
-          id: account.id,
-          code: account.code,
-          name: account.name,
-          account_type: account.account_type,
-          account_nature: account.account_nature,
-          level: account.level,
-          is_header: account.is_header,
-          opening_balance: Number(account.opening_balance) || 0,
-          total_debits: 0,
-          total_credits: 0,
-          closing_balance: Number(account.current_balance) || 0,
-        }));
-        setData(fallbackRows);
-        setError(null);
-      } else {
-        setError(err.message || 'Failed to fetch trial balance');
-      }
+      setError(err.message || 'Failed to fetch trial balance');
       console.error('[useTrialBalance] Error:', err);
     } finally {
       setIsLoading(false);

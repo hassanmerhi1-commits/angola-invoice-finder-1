@@ -91,7 +91,9 @@ async function apiFetch<T>(
     return { error: 'Demo mode — backend not available' };
   }
 
-  const url = `${getApiUrl()}/api${endpoint}`;
+  const buildUrl = (base: string) => `${base}/api${endpoint}`;
+  let baseUrl = getApiUrl();
+  let url = buildUrl(baseUrl);
   const token = getAuthToken();
   
   const headers: HeadersInit = {
@@ -118,10 +120,37 @@ async function apiFetch<T>(
 
     return { data: payload as T };
   } catch (error) {
-    // Only log once, not spam
-    if (!(error instanceof TypeError && (error as any).message === 'Failed to fetch')) {
-      console.error(`[API ERROR] ${endpoint}:`, error);
+    // Electron retry: if backend port changed/stale, resolve fresh port from main process and retry once.
+    const isElectron = typeof window !== 'undefined' && !!window.electronAPI?.isElectron;
+    if (isElectron && window.electronAPI?.backend?.getPort) {
+      try {
+        const freshPort = await window.electronAPI.backend.getPort();
+        if (typeof freshPort === 'number' && freshPort > 0) {
+          const freshBase = `http://localhost:${freshPort}`;
+          if (freshBase !== baseUrl) {
+            baseUrl = freshBase;
+            url = buildUrl(baseUrl);
+            const retryResponse = await fetch(url, { ...options, headers });
+            const retryContentType = retryResponse.headers.get('content-type') || '';
+            const retryIsJson = retryContentType.includes('application/json');
+            const retryPayload = retryIsJson
+              ? await retryResponse.json().catch(() => null)
+              : await retryResponse.text().catch(() => '');
+            if (!retryResponse.ok) {
+              const retryErrorMessage = typeof retryPayload === 'string'
+                ? retryPayload
+                : retryPayload?.error || (Array.isArray(retryPayload?.errors) ? retryPayload.errors.join('; ') : retryPayload?.message);
+              return { error: retryErrorMessage || `HTTP ${retryResponse.status}` };
+            }
+            return { data: retryPayload as T };
+          }
+        }
+      } catch {
+        // Ignore retry failure and return original error below.
+      }
     }
+
+    console.error(`[API ERROR] ${endpoint} url=${url}:`, error);
     return { error: error instanceof Error ? error.message : 'Network error' };
   }
 }
@@ -321,53 +350,16 @@ export const api = {
   // Products
   products: {
     list: async (branchId?: string) => {
-      const endpoint = `/products${branchId ? `?branchId=${branchId}` : ''}`;
-      if (isElectronMode()) {
-        const apiResult = await apiFetch<any[]>(endpoint);
-        if (apiResult.data !== undefined) return apiResult;
-        if (branchId) {
-          return ipcQuery<any>(
-            'SELECT * FROM products WHERE is_active = true AND (branch_id = $1 OR branch_id IS NULL) ORDER BY name',
-            [branchId]
-          );
-        }
-        return ipcQuery<any>('SELECT * FROM products WHERE is_active = true ORDER BY name');
-      }
+      const endpoint = `/products${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`;
       return apiFetch<any[]>(endpoint);
     },
     create: async (data: any) => {
-      if (isElectronMode()) {
-        const apiResult = await apiFetch<any>('/products', { method: 'POST', body: JSON.stringify(data) });
-        if (apiResult.data) return apiResult;
-        return ipcInsert('products', mapProductPayloadForElectron(data));
-      }
       return apiFetch<any>('/products', { method: 'POST', body: JSON.stringify(data) });
     },
     batchImport: async (products: any[]) => {
-      if (isElectronMode()) {
-        const apiResult = await apiFetch<any>('/products/batch', { method: 'POST', body: JSON.stringify({ products }) });
-        if (apiResult.data) return apiResult;
-        return (async () => {
-          let imported = 0, failed = 0;
-          const errors: any[] = [];
-          for (const p of products) {
-            const result = await ipcInsert('products', mapProductPayloadForElectron(p));
-            if (result.data) imported++; else { failed++; errors.push({ product: p.name, error: result.error }); }
-          }
-          return { data: { imported, failed, errors } } as ApiResponse<any>;
-        })();
-      }
       return apiFetch<any>('/products/batch', { method: 'POST', body: JSON.stringify({ products }) });
     },
     update: async (id: string, data: any) => {
-      if (isElectronMode()) {
-        const apiResult = await apiFetch<any>(`/products/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-        if (apiResult.data) return apiResult;
-        const payload = mapProductPayloadForElectron({ ...data, id, updated_at: new Date().toISOString() });
-        delete payload.id;
-        delete payload.created_at;
-        return ipcUpdate('products', id, payload);
-      }
       return apiFetch<any>(`/products/${id}`, { method: 'PUT', body: JSON.stringify(data) });
     },
     updateStock: (id: string, quantityChange: number) => {
@@ -380,11 +372,6 @@ export const api = {
       return apiFetch<any>(`/products/${id}/stock`, { method: 'PATCH', body: JSON.stringify({ quantityChange }) });
     },
     delete: async (id: string) => {
-      if (isElectronMode()) {
-        const apiResult = await apiFetch<any>(`/products/${id}`, { method: 'DELETE' });
-        if (apiResult.data) return apiResult;
-        return ipcDelete('products', id);
-      }
       return apiFetch<any>(`/products/${id}`, { method: 'DELETE' });
     },
   },
@@ -414,10 +401,7 @@ export const api = {
       return apiFetch<any[]>(endpoint);
     },
     create: (data: any) => {
-      if (isElectronMode()) {
-        return ipcInsert('products', mapProductPayloadForElectron(data));
-      }
-      return apiFetch<any>('/products', { method: 'POST', body: JSON.stringify(data) });
+      return apiFetch<any>('/sales', { method: 'POST', body: JSON.stringify(data) });
     },
     generateInvoiceNumber: (branchCode: string) => {
       return apiFetch<{ invoiceNumber: string }>(`/sales/generate-invoice-number/${branchCode}`);
@@ -427,8 +411,7 @@ export const api = {
   // Clients
   clients: {
     list: () => {
-      if (isElectronMode()) return ipcGetAll('clients');
-      return apiFetch<any[]>('/clients');
+      return apiFetch<any[]>('/customers');
     },
     create: (data: any) => {
       if (isElectronMode()) return ipcInsert('clients', { id: generateId(), ...data, created_at: new Date().toISOString() });
@@ -670,8 +653,7 @@ export const api = {
   // Chart of Accounts
   chartOfAccounts: {
     list: () => {
-      if (isElectronMode()) return ipcQuery<any>('SELECT * FROM chart_of_accounts ORDER BY code');
-      return apiFetch<any[]>('/chart-of-accounts');
+      return apiFetch<any[]>('/accounts');
     },
     get: (id: string) => {
       if (isElectronMode()) return ipcQuery<any>('SELECT * FROM chart_of_accounts WHERE id = $1', [id]).then(r => ({ data: r.data?.[0] }));

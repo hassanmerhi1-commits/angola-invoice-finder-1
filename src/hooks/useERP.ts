@@ -180,11 +180,11 @@ export function useProducts(branchId?: string) {
   const [products, setProducts] = useState<Product[]>([]);
 
   const refreshProducts = useCallback(async () => {
-    const data = await apiFallback<any[]>(
-      () => api.products.list(branchId),
-      () => storage.getProducts(branchId)
-    );
-    setProducts(Array.isArray(data) ? data.map(mapProduct) : []);
+    const response = await api.products.list(branchId);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    setProducts(Array.isArray(response.data) ? response.data.map(mapProduct) : []);
   }, [branchId]);
 
   useEffect(() => { refreshProducts(); }, [refreshProducts]);
@@ -687,11 +687,26 @@ export function useClients() {
   const [clients, setClients] = useState<Client[]>([]);
 
   const refreshClients = useCallback(async () => {
-    const data = await apiFallback<any[]>(
-      () => api.clients.list(),
-      () => storage.getClients()
-    );
-    setClients(data);
+    const response = await api.clients.list();
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    const mapped = (response.data || []).map((c: any) => ({
+      id: c.id,
+      name: c.name || '',
+      nif: c.nif || '',
+      email: c.email || '',
+      phone: c.phone || '',
+      address: c.address || '',
+      city: c.city || '',
+      country: c.country || 'Angola',
+      creditLimit: Number(c.creditLimit ?? c.credit_limit ?? 0),
+      currentBalance: Number(c.currentBalance ?? c.current_balance ?? 0),
+      isActive: c.isActive ?? c.is_active ?? true,
+      createdAt: c.createdAt ?? c.created_at ?? new Date().toISOString(),
+      updatedAt: c.updatedAt ?? c.updated_at ?? new Date().toISOString(),
+    }));
+    setClients(mapped);
   }, []);
 
   useEffect(() => { refreshClients(); }, [refreshClients]);

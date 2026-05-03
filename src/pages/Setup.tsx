@@ -10,6 +10,36 @@ import { toast } from 'sonner';
 
 type SetupMode = 'select' | 'server-setup' | 'client-setup' | 'complete';
 
+const ANGOLA_LOCATION_MAP: Record<string, string[]> = {
+  Bengo: ['Ambriz', 'Bula Atumba', 'Dande', 'Dembos', 'Nambuangongo', 'Pango Aluquem'],
+  Benguela: ['Balombo', 'Baia Farta', 'Benguela', 'Bocoio', 'Caimbambo', 'Catumbela', 'Chongoroi', 'Cubal', 'Ganda', 'Lobito'],
+  Bié: ['Andulo', 'Camacupa', 'Catabola', 'Chinguar', 'Chitembo', 'Cuemba', 'Cunhinga', 'Kuito', 'Nharêa'],
+  Cabinda: ['Belize', 'Buco-Zau', 'Cabinda', 'Cacongo'],
+  CuandoCubango: ['Calai', 'Cuangar', 'Cuchi', 'Cuito Cuanavale', 'Dirico', 'Mavinga', 'Menongue', 'Nancova', 'Rivungo'],
+  CuanzaNorte: ['Ambaca', 'Banga', 'Bolongongo', 'Cambambe', 'Cazengo', 'Golungo Alto', 'Gonguembo', 'Lucala', 'Ngonguembo', 'Quiculungo', 'Samba Caju'],
+  CuanzaSul: ['Amboim', 'Cassongue', 'Conda', 'Ebo', 'Libolo', 'Mussende', 'Porto Amboim', 'Quibala', 'Quilenda', 'Seles', 'Sumbe', 'Waku Kungo'],
+  Cunene: ['Cahama', 'Cuanhama', 'Curoca', 'Cuvelai', 'Namacunde', 'Ombadja', 'Ondjiva'],
+  Huambo: ['Bailundo', 'Caála', 'Catchiungo', 'Chicala Cholohanga', 'Chinjenje', 'Ecunha', 'Huambo', 'Londuimbali', 'Longonjo', 'Mungo', 'Tchicala-Tcholoanga', 'Ucuma'],
+  Huíla: ['Caconda', 'Cacula', 'Caluquembe', 'Chiange', 'Chibia', 'Chipindo', 'Cuvango', 'Gambos', 'Humpata', 'Jamba', 'Lubango', 'Matala', 'Quilengues', 'Quipungo'],
+  Luanda: ['Belas', 'Cacuaco', 'Cazenga', 'Icolo e Bengo', 'Kilamba Kiaxi', 'Luanda', 'Quiçama', 'Talatona', 'Viana'],
+  LundaNorte: ['Cambulo', 'Capenda Camulemba', 'Caungula', 'Chitato', 'Cuango', 'Cuilo', 'Lubalo', 'Lucapa', 'Xá-Muteba'],
+  LundaSul: ['Cacolo', 'Dala', 'Muconda', 'Saurimo'],
+  Malanje: ['Cacuso', 'Calandula', 'Cambundi-Catembo', 'Cangandala', 'Caombo', 'Cuaba Nzoji', 'Cunda-Dia-Baze', 'Luquembo', 'Malanje', 'Marimba', 'Massango', 'Mucari', 'Quela', 'Quirima'],
+  Moxico: ['Alto Zambeze', 'Bundas', 'Camanongue', 'Léua', 'Luacano', 'Luau', 'Luchazes', 'Moxico'],
+  Namibe: ['Bibala', 'Camucuio', 'Moçâmedes', 'Tômbwa', 'Virei'],
+  Uíge: ['Alto Cauale', 'Ambuíla', 'Bembe', 'Buengas', 'Bungo', 'Damba', 'Milunga', 'Mucaba', 'Negage', 'Puri', 'Quimbele', 'Quitexe', 'Sanza Pombo', 'Songo', 'Uíge', 'Zombo'],
+  Zaire: ['Mbanza Kongo', 'Nóqui', 'Nzeto', 'Soyo', 'Tomboco'],
+};
+
+function slugMunicipioName(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+}
+
 export default function Setup() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<SetupMode>('select');
@@ -17,6 +47,8 @@ export default function Setup() {
   const [detectedIp, setDetectedIp] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedProvince, setSelectedProvince] = useState('');
+  const [selectedMunicipio, setSelectedMunicipio] = useState('');
   const isElectron = !!window.electronAPI?.isElectron;
 
   // Read current IP file on mount
@@ -39,9 +71,22 @@ export default function Setup() {
     }
   }, [mode, isElectron]);
 
+  useEffect(() => {
+    if (mode !== 'server-setup') return;
+    if (!selectedMunicipio) return;
+    const fileName = `${slugMunicipioName(selectedMunicipio)}.nexor`;
+    setIpFileContent(`C:\\NEXOR ERP\\data\\${fileName}`);
+  }, [mode, selectedMunicipio]);
+
   const handleServerSetup = async () => {
     setIsLoading(true);
-    const dbPath = ipFileContent || 'postgresql://postgres:yel3an7azi@localhost:5432/kwanza_erp';
+    const dbPath = ipFileContent || 'C:\\NEXOR ERP\\data\\nexor-heart.nexor';
+
+    if (!selectedProvince || !selectedMunicipio) {
+      toast.error('Selecione a província e o município antes de iniciar.');
+      setIsLoading(false);
+      return;
+    }
 
     try {
       if (isElectron) {
@@ -161,7 +206,12 @@ export default function Setup() {
               <div className="grid gap-4 md:grid-cols-2">
                 <button
                   className="group border-2 border-border rounded-xl p-6 flex flex-col items-center gap-3 hover:border-primary hover:bg-primary/5 transition-all cursor-pointer"
-                  onClick={() => { setMode('server-setup'); setIpFileContent('postgresql://postgres:yel3an7azi@localhost:5432/kwanza_erp'); }}
+                  onClick={() => {
+                    setMode('server-setup');
+                    setSelectedProvince('');
+                    setSelectedMunicipio('');
+                    setIpFileContent('');
+                  }}
                 >
                   <div className="w-14 h-14 bg-primary/10 rounded-full flex items-center justify-center group-hover:bg-primary/20 transition-colors">
                     <Server className="h-7 w-7 text-primary" />
@@ -227,27 +277,60 @@ export default function Setup() {
                   <CardTitle className="flex items-center gap-2">
                     <Server className="h-5 w-5 text-primary" /> Configurar Servidor
                   </CardTitle>
-                   <CardDescription>
-230:                     Configurar conexão PostgreSQL (Docker) para a base de dados
-                   </CardDescription>
+                  <CardDescription>
+                    Configurar ficheiro local .nexor para a base de dados
+                  </CardDescription>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Província</Label>
+                  <select
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                    value={selectedProvince}
+                    onChange={(e) => {
+                      setSelectedProvince(e.target.value);
+                      setSelectedMunicipio('');
+                    }}
+                  >
+                    <option value="">Selecione a província</option>
+                    {Object.keys(ANGOLA_LOCATION_MAP).map((province) => (
+                      <option key={province} value={province}>{province}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Município</Label>
+                  <select
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                    value={selectedMunicipio}
+                    onChange={(e) => setSelectedMunicipio(e.target.value)}
+                    disabled={!selectedProvince}
+                  >
+                    <option value="">Selecione o município</option>
+                    {(ANGOLA_LOCATION_MAP[selectedProvince] || []).map((municipio) => (
+                      <option key={municipio} value={municipio}>{municipio}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div className="space-y-2">
-                <Label>Conexão PostgreSQL</Label>
+                <Label>Caminho do ficheiro .nexor</Label>
                 <div className="flex gap-2">
                   <Input
                     value={ipFileContent}
                     onChange={e => setIpFileContent(e.target.value)}
-                    placeholder="postgresql://postgres:yel3an7azi@localhost:5432/kwanza_erp"
+                    placeholder="C:\\NEXOR ERP\\data\\nexor-heart.nexor"
                   />
                   <Button variant="outline" size="icon">
                     <FolderOpen className="h-4 w-4" />
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Docker PostgreSQL será usado automaticamente
+                  O nome do ficheiro e gerado pelo município escolhido (ex: soyo.nexor)
                 </p>
               </div>
 
@@ -264,7 +347,7 @@ export default function Setup() {
                 </div>
               )}
 
-              <Button onClick={handleServerSetup} className="w-full" disabled={isLoading}>
+              <Button onClick={handleServerSetup} className="w-full" disabled={isLoading || !selectedProvince || !selectedMunicipio}>
                 {isLoading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Configurando...</>
                   : <><CheckCircle className="h-4 w-4 mr-2" /> Iniciar Servidor</>}
               </Button>
@@ -340,8 +423,8 @@ export default function Setup() {
 
         {/* Info footer */}
         <div className="mt-6 text-center text-xs text-muted-foreground">
-          <p>Base de dados: PostgreSQL (Docker)</p>
-          <p className="mt-1">Servidor = conexão PostgreSQL | Cliente = IP do servidor</p>
+          <p>Base de dados: ficheiro local .nexor</p>
+          <p className="mt-1">Servidor = caminho .nexor | Cliente = IP do servidor</p>
         </div>
       </div>
     </div>

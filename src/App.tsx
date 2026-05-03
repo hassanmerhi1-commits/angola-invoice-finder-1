@@ -79,9 +79,10 @@ function AppRoutes() {
 
     const check = async () => {
       try {
-        if (isElectron && window.electronAPI?.ipfile?.parse) {
-          const parsed = await window.electronAPI.ipfile.parse();
-          const complete = !!parsed?.valid;
+        if (isElectron && window.electronAPI?.setup?.getConfig) {
+          const setup = await window.electronAPI.setup.getConfig();
+          const cfg = setup?.success ? setup.config : null;
+          const complete = !!cfg?.setupComplete;
 
           if (!isMounted) return;
 
@@ -89,14 +90,19 @@ function AppRoutes() {
           localStorage.setItem('kwanza_setup_complete', complete ? 'true' : 'false');
 
           if (complete) {
-            localStorage.setItem('kwanza_is_server', parsed.isServer ? 'true' : 'false');
-            if (parsed.isServer && parsed.path) {
-              localStorage.setItem('kwanza_server_config', JSON.stringify({ databasePath: parsed.path }));
+            const isServer = cfg?.role === 'server';
+            localStorage.setItem('kwanza_is_server', isServer ? 'true' : 'false');
+            if (isServer && cfg?.serverConfig?.databasePath) {
+              localStorage.setItem('kwanza_server_config', JSON.stringify({ databasePath: cfg.serverConfig.databasePath }));
               localStorage.removeItem('kwanza_client_config');
-            } else if (!parsed.isServer && parsed.serverAddress) {
-              localStorage.setItem('kwanza_client_config', JSON.stringify({ serverIp: parsed.serverAddress, serverPort: 4546 }));
+            } else if (!isServer && cfg?.clientConfig?.serverIp) {
+              localStorage.setItem('kwanza_client_config', JSON.stringify({ serverIp: cfg.clientConfig.serverIp, serverPort: cfg.clientConfig.serverPort || 4546 }));
               localStorage.removeItem('kwanza_server_config');
             }
+          } else {
+            localStorage.removeItem('kwanza_is_server');
+            localStorage.removeItem('kwanza_server_config');
+            localStorage.removeItem('kwanza_client_config');
           }
 
           setSetupComplete(complete);
