@@ -84,6 +84,9 @@ export interface PurchaseInvoice {
   ivaTotal: number;
   total: number;
   status: 'draft' | 'confirmed' | 'cancelled';
+  /** Devolução de compra: quando 'full', não permitir novas devoluções nesta fatura. */
+  purchaseReturnsStatus?: 'none' | 'partial' | 'full';
+  purchaseReturnsClosedAt?: string;
   branchId: string;
   branchName: string;
   createdBy: string;
@@ -92,22 +95,195 @@ export interface PurchaseInvoice {
   updatedAt: string;
 }
 
+// ---------- Branch scope (works for any number of filiais) ----------
+
+export type BranchRef = { id: string; code?: string; isMain?: boolean };
+
+function normId(s: string | undefined | null): string {
+  return (s ?? '').trim();
+}
+
+function normalizeLineWarehouse(
+  line: PurchaseInvoiceLine,
+  fallbackWhId: string,
+  fallbackWhName: string,
+): PurchaseInvoiceLine {
+  const wid = normId(line.warehouseId) || normId(fallbackWhId);
+  const wname = line.warehouseName || fallbackWhName;
+  return { ...line, warehouseId: wid, warehouseName: wname };
+}
+
+/** Ensure header/lines have warehouse when only branch was set (legacy saves). */
+export function normalizeInvoiceWarehouse(inv: PurchaseInvoice): PurchaseInvoice {
+  const headerWh = normId(inv.warehouseId) || normId(inv.branchId);
+  const headerWhName = inv.warehouseName || inv.branchName || '';
+  const branchId = normId(inv.branchId) || headerWh;
+  return {
+    ...inv,
+    warehouseId: headerWh,
+    warehouseName: headerWhName,
+    branchId: branchId || inv.branchId,
+    branchName: inv.branchName || headerWhName,
+    lines: inv.lines.map((l) => normalizeLineWarehouse(l, headerWh, headerWhName)),
+  };
+}
+
+/**
+ * Merge DB + localStorage for the same invoice id. localStorage used to fully replace DB,
+ * which dropped warehouseId when LS held an older snapshot — branch filters / devoluções broke.
+ * Prefer non-empty warehouse (and line warehouse) from either side; overlay LS for other fields.
+ */
+/** Stale localStorage often has draft while SQLite has confirmed — devolução only lists confirmed. */
+function pickMergedInvoiceStatus(
+  older: PurchaseInvoice | undefined,
+  newer: PurchaseInvoice,
+): PurchaseInvoice['status'] {
+  const a = older?.status;
+  const b = newer.status;
+  if (a === 'cancelled' || b === 'cancelled') return 'cancelled';
+  if (a === 'confirmed' || b === 'confirmed') return 'confirmed';
+  return (b || a || 'draft') as PurchaseInvoice['status'];
+}
+
+function mergePurchaseInvoiceRecords(db: PurchaseInvoice | undefined, ls: PurchaseInvoice): PurchaseInvoice {
+  const nLs = normalizeInvoiceWarehouse(ls);
+  if (!db) return nLs;
+  const nDb = normalizeInvoiceWarehouse(db);
+
+  const whId = normId(nLs.warehouseId) || normId(nDb.warehouseId);
+  const whName = nLs.warehouseName || nDb.warehouseName || nLs.branchName || nDb.branchName || '';
+  const brId = normId(nLs.branchId) || normId(nDb.branchId) || whId;
+  const brName = nLs.branchName || nDb.branchName || whName;
+
+  const lineIds = [...new Set([...nDb.lines.map((l) => l.id), ...nLs.lines.map((l) => l.id)])];
+  const byId = new Map<string, PurchaseInvoiceLine>();
+  for (const id of lineIds) {
+    const dbL = nDb.lines.find((l) => l.id === id);
+    const lsL = nLs.lines.find((l) => l.id === id);
+    if (!dbL && lsL) {
+      byId.set(id, normalizeLineWarehouse({ ...lsL }, whId, whName));
+    } else if (dbL && !lsL) {
+      byId.set(id, normalizeLineWarehouse({ ...dbL }, whId, whName));
+    } else if (dbL && lsL) {
+      const lw = normId(lsL.warehouseId) || normId(dbL.warehouseId) || whId;
+      const lwn = lsL.warehouseName || dbL.warehouseName || whName;
+      byId.set(id, { ...dbL, ...lsL, warehouseId: lw, warehouseName: lwn });
+    }
+  }
+
+  const order = nLs.lines.length
+    ? [...nLs.lines.map((l) => l.id), ...lineIds.filter((id) => !nLs.lines.some((l) => l.id === id))]
+    : nDb.lines.map((l) => l.id);
+  const mergedLines = order.map((id) => byId.get(id)).filter(Boolean) as PurchaseInvoiceLine[];
+
+  const rankReturns = (s: PurchaseInvoice['purchaseReturnsStatus'] | undefined) =>
+    s === 'full' ? 3 : s === 'partial' ? 2 : s === 'none' ? 1 : 0;
+  const prs =
+    rankReturns(nLs.purchaseReturnsStatus) >= rankReturns(nDb.purchaseReturnsStatus)
+      ? nLs.purchaseReturnsStatus ?? nDb.purchaseReturnsStatus
+      : nDb.purchaseReturnsStatus ?? nLs.purchaseReturnsStatus;
+  const prc = [nLs.purchaseReturnsClosedAt, nDb.purchaseReturnsClosedAt]
+    .filter(Boolean)
+    .sort()
+    .pop();
+
+  const merged: PurchaseInvoice = {
+    ...nDb,
+    ...nLs,
+    warehouseId: whId,
+    warehouseName: whName,
+    branchId: brId,
+    branchName: brName,
+    lines: mergedLines,
+    purchaseReturnsStatus: prs,
+    purchaseReturnsClosedAt: prc,
+    status: pickMergedInvoiceStatus(nDb, nLs),
+  };
+
+  return merged;
+}
+
+/**
+ * Whether this purchase invoice's stock belongs to `branchId` (header, lines, or catalog alias).
+ * Use for devoluções / listas — not hardcoded to filial 01/02.
+ */
+function branchRefMatchesId(ref: BranchRef | undefined, id: string): boolean {
+  if (!ref) return false;
+  const nid = normId(id);
+  if (!nid) return false;
+  if (normId(ref.id) === nid || normId(ref.id).toLowerCase() === nid.toLowerCase()) return true;
+  const code = (ref.code || '').trim();
+  if (code && (code === nid || code.toLowerCase() === nid.toLowerCase())) return true;
+  return false;
+}
+
+export function invoiceBelongsToBranch(
+  inv: PurchaseInvoice,
+  branchId: string,
+  branchCatalog?: BranchRef[],
+): boolean {
+  const want = normId(branchId);
+  if (!want) return true;
+
+  const headerIds = [inv.warehouseId, inv.branchId].map(normId).filter(Boolean);
+  const lineIds = inv.lines.map((l) => normId(l.warehouseId)).filter(Boolean);
+  const allIds = new Set([...headerIds, ...lineIds]);
+
+  for (const id of allIds) {
+    if (id === want) return true;
+    if (id.toLowerCase() === want.toLowerCase()) return true;
+  }
+
+  if (branchCatalog?.length) {
+    const target = branchCatalog.find((b) => branchRefMatchesId(b, want));
+    if (!target) return false;
+    for (const id of allIds) {
+      const meta = branchCatalog.find((b) => branchRefMatchesId(b, id));
+      if (!meta) continue;
+      if (meta.id === target.id) return true;
+      const c1 = (meta.code || '').trim();
+      const c2 = (target.code || '').trim();
+      if (c1 && c2 && c1 === c2) return true;
+      if (meta.isMain && target.isMain) return true;
+    }
+  }
+
+  return false;
+}
+
 // ---------- CRUD ----------
 
-export async function getPurchaseInvoices(branchId?: string): Promise<PurchaseInvoice[]> {
+export async function getPurchaseInvoices(
+  branchId?: string,
+  branchCatalog?: BranchRef[],
+): Promise<PurchaseInvoice[]> {
   if (isElectronMode()) {
-    const rows = await dbGetAll<any>('purchase_invoices');
-    let docs = rows.length > 0
-      ? rows.map(mapPIFromDb)
-      : (await dbGetAll<any>('erp_documents'))
-          .filter((row) => row.document_type === 'fatura_compra')
-          .map(mapPIFromDocumentDb);
+    const piRows = await dbGetAll<any>('purchase_invoices');
+    const piDocs = piRows.map(mapPIFromDb);
+    const docRows = (await dbGetAll<any>('erp_documents'))
+      .filter((row) => row.document_type === 'fatura_compra')
+      .map(mapPIFromDocumentDb);
 
-    if (branchId) docs = docs.filter(d => d.branchId === branchId);
+    const lsDocs = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []);
+    const merged = new Map<string, PurchaseInvoice>();
+    for (const d of docRows) merged.set(d.id, normalizeInvoiceWarehouse(d));
+    for (const d of piDocs) {
+      merged.set(d.id, mergePurchaseInvoiceRecords(merged.get(d.id), d));
+    }
+    for (const d of lsDocs) {
+      merged.set(d.id, mergePurchaseInvoiceRecords(merged.get(d.id), d));
+    }
+    let docs = Array.from(merged.values());
+
+    if (branchId) {
+      docs = docs.filter((d) => invoiceBelongsToBranch(d, branchId, branchCatalog));
+    }
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
-  let docs = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []);
-  if (branchId) docs = docs.filter(d => d.branchId === branchId);
+  let docs = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []).map(normalizeInvoiceWarehouse);
+  if (branchId) {
+    docs = docs.filter((d) => invoiceBelongsToBranch(d, branchId, branchCatalog));
+  }
   return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
@@ -129,6 +305,14 @@ export async function savePurchaseInvoice(invoice: PurchaseInvoice): Promise<Pur
     if (!saved) {
       console.warn('[PurchaseInvoice] purchase_invoices table unavailable in Electron, relying on erp_documents sync');
     }
+    const all = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []);
+    const idx = all.findIndex(d => d.id === invoice.id);
+    if (idx >= 0) {
+      all[idx] = { ...invoice, updatedAt: new Date().toISOString() };
+    } else {
+      all.push(invoice);
+    }
+    lsSet(STORAGE_KEY, all);
     return invoice;
   }
   const all = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []);
@@ -333,9 +517,9 @@ export async function applySupplierBalanceUpdate(invoice: PurchaseInvoice): Prom
 function mapPIFromDb(row: any): PurchaseInvoice {
   return {
     id: row.id,
-    invoiceNumber: row.invoice_number || '',
-    supplierAccountCode: row.supplier_account_code || '',
-    supplierName: row.supplier_name || '',
+    invoiceNumber: row.invoice_number || row.invoiceNumber || '',
+    supplierAccountCode: row.supplier_account_code || row.supplierAccountCode || '',
+    supplierName: row.supplier_name || row.supplierName || '',
     supplierNif: row.supplier_nif,
     supplierPhone: row.supplier_phone,
     supplierBalance: Number(row.supplier_balance || 0),
@@ -348,8 +532,8 @@ function mapPIFromDb(row: any): PurchaseInvoice {
     paymentDate: row.payment_date || '',
     project: row.project,
     currency: row.currency || 'AOA',
-    warehouseId: row.warehouse_id || '',
-    warehouseName: row.warehouse_name || '',
+    warehouseId: row.warehouse_id || row.warehouseId || row.branch_id || row.branchId || '',
+    warehouseName: row.warehouse_name || row.warehouseName || row.branch_name || row.branchName || '',
     priceType: row.price_type || 'last_price',
     address: row.address,
     purchaseAccountCode: row.purchase_account_code || '2.1.1',
@@ -362,14 +546,22 @@ function mapPIFromDb(row: any): PurchaseInvoice {
     changePrice: !!row.change_price,
     isPending: !!row.is_pending,
     extraNote: row.extra_note,
-    lines: row.lines_json ? JSON.parse(row.lines_json) : [],
-    journalLines: row.journal_lines_json ? JSON.parse(row.journal_lines_json) : [],
+    lines: Array.isArray(row.lines)
+      ? row.lines
+      : row.lines_json
+        ? JSON.parse(row.lines_json)
+        : [],
+    journalLines: Array.isArray(row.journalLines)
+      ? row.journalLines
+      : row.journal_lines_json
+        ? JSON.parse(row.journal_lines_json)
+        : [],
     subtotal: Number(row.subtotal || 0),
     ivaTotal: Number(row.iva_total || 0),
     total: Number(row.total || 0),
     status: row.status || 'draft',
-    branchId: row.branch_id || '',
-    branchName: row.branch_name || '',
+    branchId: row.branch_id || row.branchId || '',
+    branchName: row.branch_name || row.branchName || '',
     createdBy: row.created_by || '',
     createdByName: row.created_by_name || '',
     createdAt: row.created_at || '',
@@ -423,6 +615,8 @@ function mapPIFromDocumentDb(row: any): PurchaseInvoice {
   const subtotal = Number(row.subtotal || 0);
   const total = Number(row.total || 0);
   const ivaTotal = Number(row.total_tax || 0);
+  const docWh = row.warehouse_id || row.branch_id || '';
+  const docWhName = row.warehouse_name || row.branch_name || '';
 
   return {
     id: row.id,
@@ -441,8 +635,8 @@ function mapPIFromDocumentDb(row: any): PurchaseInvoice {
     paymentDate: row.due_date || '',
     project: '',
     currency: row.currency || 'AOA',
-    warehouseId: '',
-    warehouseName: '',
+    warehouseId: docWh,
+    warehouseName: docWhName,
     priceType: 'manual',
     address: row.entity_address || '',
     purchaseAccountCode: lines[0]?.accountCode || '2.1.1',
@@ -470,8 +664,8 @@ function mapPIFromDocumentDb(row: any): PurchaseInvoice {
       ivaRate: Number(line.taxRate || 0),
       ivaAmount: Number(line.taxAmount || 0),
       totalWithIva: Number(line.lineTotal || 0),
-      warehouseId: '',
-      warehouseName: '',
+      warehouseId: line.warehouseId || line.warehouse_id || docWh,
+      warehouseName: line.warehouseName || line.warehouse_name || docWhName,
       currentStock: 0,
       unit: line.unit || 'UN',
       barcode: undefined,
