@@ -21,6 +21,7 @@ import { printViaBrowser, getPrinterConfig } from '@/lib/thermalPrinter';
 import { printA4Invoice } from '@/lib/a4Invoice';
 import { getCompanySettings } from '@/lib/companySettings';
 import { toast } from 'sonner';
+import { useTranslation } from '@/i18n';
 
 interface InvoiceViewDialogProps {
   open: boolean;
@@ -36,13 +37,15 @@ export function InvoiceViewDialog({
   branch,
 }: InvoiceViewDialogProps) {
   if (!sale || !branch) return null;
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
   const company = getCompanySettings();
 
   const handlePrintThermal = () => {
     const config = getPrinterConfig();
     printViaBrowser(sale, branch, config.paperWidth);
-    toast.success('Recibo térmico enviado para impressão');
+    toast.success(t.invoiceViewUi.thermalSent);
   };
 
   const handlePrintA4 = async () => {
@@ -52,24 +55,24 @@ export function InvoiceViewDialog({
         showNotes: true,
         documentType: 'FR',
       });
-      toast.success('Factura A4 enviada para impressão');
+      toast.success(t.invoiceViewUi.a4Sent);
     } catch (error) {
-      toast.error('Erro ao imprimir factura');
+      toast.error(t.invoiceViewUi.printError);
       console.error('Print error:', error);
     }
   };
 
   const handleDownloadPDF = async () => {
     await handlePrintA4();
-    toast.info('Use "Guardar como PDF" na janela de impressão');
+    toast.info(t.invoiceViewUi.saveAsPdfHint);
   };
 
 
   const paymentMethodLabels: Record<string, string> = {
-    cash: 'Dinheiro',
-    card: 'Cartão',
-    transfer: 'Transferência',
-    mixed: 'Misto',
+    cash: t.invoiceViewUi.paymentCash,
+    card: t.invoiceViewUi.paymentCard,
+    transfer: t.invoiceViewUi.paymentTransfer,
+    mixed: t.invoiceViewUi.paymentMixed,
   };
 
   return (
@@ -78,7 +81,7 @@ export function InvoiceViewDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="w-5 h-5" />
-            Factura-Recibo {sale.invoiceNumber}
+            {t.invoiceViewUi.title} {sale.invoiceNumber}
           </DialogTitle>
         </DialogHeader>
 
@@ -108,14 +111,14 @@ export function InvoiceViewDialog({
               </div>
               <div className="text-right">
                 <Badge variant={sale.status === 'completed' ? 'default' : 'destructive'}>
-                  {sale.status === 'completed' ? 'Emitido' : 'Anulado'}
+                  {sale.status === 'completed' ? t.invoiceViewUi.issued : t.invoiceViewUi.voided}
                 </Badge>
                 <p className="mt-2 text-lg font-bold">{sale.invoiceNumber}</p>
                 <p className="text-sm text-gray-600">
-                  {new Date(sale.createdAt).toLocaleDateString('pt-AO')}
+                  {new Date(sale.createdAt).toLocaleDateString(locale)}
                 </p>
                 <p className="text-xs text-gray-500">
-                  {new Date(sale.createdAt).toLocaleTimeString('pt-AO')}
+                  {new Date(sale.createdAt).toLocaleTimeString(locale)}
                 </p>
               </div>
             </div>

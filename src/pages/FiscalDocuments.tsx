@@ -40,8 +40,13 @@ import {
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useToast } from '@/hooks/use-toast';
+import { useTranslation } from '@/i18n';
+import { enUS } from 'date-fns/locale';
 
 export default function FiscalDocuments() {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const dfLocale = language === 'pt' ? pt : enUS;
   const { user } = useAuth();
   const { currentBranch } = useBranches();
   const { sales } = useSales(currentBranch?.id);
@@ -137,8 +142,8 @@ export default function FiscalDocuments() {
     );
 
     toast({
-      title: 'Nota de Crédito criada',
-      description: 'O documento foi emitido com sucesso',
+      title: t.fiscalDocumentsUi.creditNoteCreatedTitle,
+      description: t.fiscalDocumentsUi.documentIssuedSuccess,
     });
 
     setCreditNoteDialog(false);
@@ -161,8 +166,8 @@ export default function FiscalDocuments() {
     );
 
     toast({
-      title: 'Nota de Débito criada',
-      description: 'O documento foi emitido com sucesso',
+      title: t.fiscalDocumentsUi.debitNoteCreatedTitle,
+      description: t.fiscalDocumentsUi.documentIssuedSuccess,
     });
 
     setDebitNoteDialog(false);
@@ -205,8 +210,8 @@ export default function FiscalDocuments() {
     );
 
     toast({
-      title: 'Guia de Transporte criada',
-      description: 'O documento foi emitido com sucesso',
+      title: t.fiscalDocumentsUi.transportDocCreatedTitle,
+      description: t.fiscalDocumentsUi.documentIssuedSuccess,
     });
 
     setTransportDocDialog(false);
@@ -219,8 +224,8 @@ export default function FiscalDocuments() {
     generateSAFT(saftStartDate, saftEndDate, user.id, currentBranch?.id);
     
     toast({
-      title: 'SAF-T exportado',
-      description: 'O ficheiro XML foi descarregado',
+      title: t.fiscalDocumentsUi.saftExportedTitle,
+      description: t.fiscalDocumentsUi.xmlDownloaded,
     });
     
     setSaftDialog(false);
@@ -229,8 +234,8 @@ export default function FiscalDocuments() {
   const handleSaveCompanyInfo = () => {
     saveCompanyInfo(editCompanyInfo);
     toast({
-      title: 'Dados da empresa actualizados',
-      description: 'As informações foram guardadas com sucesso',
+      title: t.fiscalDocumentsUi.companyInfoUpdatedTitle,
+      description: t.fiscalDocumentsUi.companyInfoSavedSuccess,
     });
     setCompanyDialog(false);
   };
@@ -300,8 +305,8 @@ export default function FiscalDocuments() {
     const itemsToReturn = returnItems.filter(i => i.quantity > 0);
     if (itemsToReturn.length === 0) {
       toast({
-        title: 'Erro',
-        description: 'Seleccione pelo menos um item para devolver',
+        title: t.common.error,
+        description: t.fiscalDocumentsUi.selectAtLeastOneItemToReturn,
         variant: 'destructive',
       });
       return;
@@ -320,8 +325,8 @@ export default function FiscalDocuments() {
     );
 
     toast({
-      title: 'Devolução criada',
-      description: 'O documento de devolução foi criado com sucesso',
+      title: t.fiscalDocumentsUi.supplierReturnCreatedTitle,
+      description: t.fiscalDocumentsUi.supplierReturnCreatedSuccess,
     });
 
     setSupplierReturnDialog(false);
@@ -404,7 +409,7 @@ export default function FiscalDocuments() {
           <CardContent>
             <div className="text-2xl font-bold">{creditNotes.length}</div>
             <p className="text-xs text-muted-foreground">
-              {creditNotes.reduce((sum, n) => sum + n.total, 0).toLocaleString('pt-AO')} Kz total
+              {creditNotes.reduce((sum, n) => sum + n.total, 0).toLocaleString(uiLocale)} Kz total
             </p>
           </CardContent>
         </Card>
@@ -417,7 +422,7 @@ export default function FiscalDocuments() {
           <CardContent>
             <div className="text-2xl font-bold">{debitNotes.length}</div>
             <p className="text-xs text-muted-foreground">
-              {debitNotes.reduce((sum, n) => sum + n.total, 0).toLocaleString('pt-AO')} Kz total
+              {debitNotes.reduce((sum, n) => sum + n.total, 0).toLocaleString(uiLocale)} Kz total
             </p>
           </CardContent>
         </Card>
@@ -443,7 +448,7 @@ export default function FiscalDocuments() {
           <CardContent>
             <div className="text-2xl font-bold">{supplierReturns.length}</div>
             <p className="text-xs text-muted-foreground">
-              {supplierReturns.reduce((sum, r) => sum + r.total, 0).toLocaleString('pt-AO')} Kz total
+              {supplierReturns.reduce((sum, r) => sum + r.total, 0).toLocaleString(uiLocale)} Kz total
             </p>
           </CardContent>
         </Card>
@@ -456,7 +461,7 @@ export default function FiscalDocuments() {
           <CardContent>
             <div className="text-2xl font-bold">{sales.length}</div>
             <p className="text-xs text-muted-foreground">
-              {sales.reduce((sum, s) => sum + s.total, 0).toLocaleString('pt-AO')} Kz
+              {sales.reduce((sum, s) => sum + s.total, 0).toLocaleString(uiLocale)} Kz
             </p>
           </CardContent>
         </Card>
@@ -519,20 +524,21 @@ export default function FiscalDocuments() {
                     {creditNotes.map(note => (
                       <TableRow key={note.id}>
                         <TableCell className="font-medium">{note.documentNumber}</TableCell>
-                        <TableCell>{format(new Date(note.createdAt), 'dd/MM/yyyy HH:mm', { locale: pt })}</TableCell>
+                        <TableCell>{format(new Date(note.createdAt), 'dd/MM/yyyy HH:mm', { locale: dfLocale })}</TableCell>
                         <TableCell>{note.originalInvoiceNumber}</TableCell>
                         <TableCell>
                           <Badge variant="outline">
-                            {note.reason === 'return' ? 'Devolução' : 
-                             note.reason === 'discount' ? 'Desconto' :
-                             note.reason === 'error' ? 'Erro' : 'Outro'}
+                            {note.reason === 'return' ? t.fiscalDocumentsUi.creditReasonReturn :
+                             note.reason === 'discount' ? t.fiscalDocumentsUi.creditReasonDiscount :
+                             note.reason === 'error' ? t.fiscalDocumentsUi.creditReasonError :
+                             t.fiscalDocumentsUi.other}
                           </Badge>
                         </TableCell>
-                        <TableCell>{note.customerName || 'Consumidor Final'}</TableCell>
-                        <TableCell className="text-right font-bold">{note.total.toLocaleString('pt-AO')} Kz</TableCell>
+                        <TableCell>{note.customerName || t.fiscalDocumentsUi.finalConsumer}</TableCell>
+                        <TableCell className="text-right font-bold">{note.total.toLocaleString(uiLocale)} Kz</TableCell>
                         <TableCell>
                           <Badge variant={note.status === 'issued' ? 'default' : 'destructive'}>
-                            {note.status === 'issued' ? 'Emitida' : 'Cancelada'}
+                            {note.status === 'issued' ? t.fiscalDocumentsUi.statusIssued : t.fiscalDocumentsUi.statusCancelled}
                           </Badge>
                         </TableCell>
                       </TableRow>
@@ -584,16 +590,17 @@ export default function FiscalDocuments() {
                         <TableCell>{note.originalInvoiceNumber || '-'}</TableCell>
                         <TableCell>
                           <Badge variant="outline">
-                            {note.reason === 'price_adjustment' ? 'Ajuste Preço' : 
-                             note.reason === 'additional_charge' ? 'Cobrança' :
-                             note.reason === 'interest' ? 'Juros' : 'Outro'}
+                            {note.reason === 'price_adjustment' ? t.fiscalDocumentsUi.debitReasonPriceAdjustmentShort :
+                             note.reason === 'additional_charge' ? t.fiscalDocumentsUi.debitReasonAdditionalChargeShort :
+                             note.reason === 'interest' ? t.fiscalDocumentsUi.debitReasonInterestShort :
+                             t.fiscalDocumentsUi.other}
                           </Badge>
                         </TableCell>
-                        <TableCell>{note.customerName || 'Consumidor Final'}</TableCell>
-                        <TableCell className="text-right font-bold">{note.total.toLocaleString('pt-AO')} Kz</TableCell>
+                        <TableCell>{note.customerName || t.fiscalDocumentsUi.finalConsumer}</TableCell>
+                        <TableCell className="text-right font-bold">{note.total.toLocaleString(uiLocale)} Kz</TableCell>
                         <TableCell>
                           <Badge variant={note.status === 'issued' ? 'default' : 'destructive'}>
-                            {note.status === 'issued' ? 'Emitida' : 'Cancelada'}
+                            {note.status === 'issued' ? t.fiscalDocumentsUi.statusIssued : t.fiscalDocumentsUi.statusCancelled}
                           </Badge>
                         </TableCell>
                       </TableRow>
@@ -653,7 +660,7 @@ export default function FiscalDocuments() {
                              ret.reason === 'overstock' ? 'Excesso' : 'Outro'}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right font-bold">{ret.total.toLocaleString('pt-AO')} Kz</TableCell>
+                        <TableCell className="text-right font-bold">{ret.total.toLocaleString(uiLocale)} Kz</TableCell>
                         <TableCell>{getReturnStatusBadge(ret.status)}</TableCell>
                         <TableCell>
                           <div className="flex gap-1">
@@ -747,9 +754,10 @@ export default function FiscalDocuments() {
                         <TableCell className="font-medium">{doc.documentNumber}</TableCell>
                         <TableCell>
                           <Badge variant="outline">
-                            {doc.type === 'delivery' ? 'Entrega' : 
-                             doc.type === 'transfer' ? 'Transferência' :
-                             doc.type === 'return' ? 'Devolução' : 'Consignação'}
+                            {doc.type === 'delivery' ? t.fiscalDocumentsUi.transportTypeDelivery :
+                             doc.type === 'transfer' ? t.fiscalDocumentsUi.transportTypeTransfer :
+                             doc.type === 'return' ? t.fiscalDocumentsUi.transportTypeReturn :
+                             t.fiscalDocumentsUi.transportTypeConsignment}
                           </Badge>
                         </TableCell>
                         <TableCell>{doc.loadingDate} {doc.loadingTime}</TableCell>
@@ -762,9 +770,10 @@ export default function FiscalDocuments() {
                             doc.status === 'in_transit' ? 'secondary' :
                             doc.status === 'cancelled' ? 'destructive' : 'outline'
                           }>
-                            {doc.status === 'issued' ? 'Emitida' :
-                             doc.status === 'in_transit' ? 'Em Trânsito' :
-                             doc.status === 'delivered' ? 'Entregue' : 'Cancelada'}
+                            {doc.status === 'issued' ? t.fiscalDocumentsUi.statusIssued :
+                             doc.status === 'in_transit' ? t.fiscalDocumentsUi.statusInTransit :
+                             doc.status === 'delivered' ? t.fiscalDocumentsUi.statusDelivered :
+                             t.fiscalDocumentsUi.statusCancelled}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -774,7 +783,7 @@ export default function FiscalDocuments() {
                               size="sm"
                               onClick={() => updateTransportStatus(doc.id, 'in_transit')}
                             >
-                              Iniciar
+                              {t.fiscalDocumentsUi.start}
                             </Button>
                           )}
                           {doc.status === 'in_transit' && (
@@ -783,7 +792,7 @@ export default function FiscalDocuments() {
                               size="sm"
                               onClick={() => updateTransportStatus(doc.id, 'delivered')}
                             >
-                              Entregar
+                              {t.fiscalDocumentsUi.deliver}
                             </Button>
                           )}
                         </TableCell>
@@ -810,7 +819,7 @@ export default function FiscalDocuments() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  placeholder="Pesquisar factura..."
+                  placeholder={t.fiscalDocumentsUi.searchInvoicePlaceholder}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-10"
@@ -825,7 +834,7 @@ export default function FiscalDocuments() {
                   >
                     <div className="flex justify-between">
                       <span className="font-medium">{sale.invoiceNumber}</span>
-                      <span>{sale.total.toLocaleString('pt-AO')} Kz</span>
+                      <span>{sale.total.toLocaleString(uiLocale)} Kz</span>
                     </div>
                     <div className="text-sm text-muted-foreground">
                       {sale.customerName || 'Consumidor Final'} • {format(new Date(sale.createdAt), 'dd/MM/yyyy')}
@@ -841,7 +850,7 @@ export default function FiscalDocuments() {
                   <div>
                     <p className="font-medium">Factura: {selectedSale.invoiceNumber}</p>
                     <p className="text-sm text-muted-foreground">
-                      {selectedSale.customerName || 'Consumidor Final'} • {selectedSale.total.toLocaleString('pt-AO')} Kz
+                      {selectedSale.customerName || t.fiscalDocumentsUi.finalConsumer} • {selectedSale.total.toLocaleString(uiLocale)} Kz
                     </p>
                   </div>
                   <Button variant="outline" size="sm" onClick={() => setSelectedSale(null)}>
@@ -881,11 +890,11 @@ export default function FiscalDocuments() {
               </div>
 
               <div className="space-y-2">
-                <Label>Descrição</Label>
+                <Label>{t.common.description}</Label>
                 <Textarea 
                   value={creditDescription}
                   onChange={(e) => setCreditDescription(e.target.value)}
-                  placeholder="Descreva o motivo da nota de crédito..."
+                  placeholder={t.fiscalDocumentsUi.creditNoteReasonPlaceholder}
                 />
               </div>
 
@@ -897,7 +906,7 @@ export default function FiscalDocuments() {
                       <TableRow>
                         <TableHead>Produto</TableHead>
                         <TableHead className="text-right">Qtd</TableHead>
-                        <TableHead className="text-right">Preço</TableHead>
+                        <TableHead className="text-right">{t.fiscalDocumentsUi.colPrice}</TableHead>
                         <TableHead className="text-right">Total</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -922,15 +931,15 @@ export default function FiscalDocuments() {
                               className="w-20 text-right"
                             />
                           </TableCell>
-                          <TableCell className="text-right">{item.unitPrice.toLocaleString('pt-AO')} Kz</TableCell>
-                          <TableCell className="text-right">{item.subtotal.toLocaleString('pt-AO')} Kz</TableCell>
+                          <TableCell className="text-right">{item.unitPrice.toLocaleString(uiLocale)} Kz</TableCell>
+                          <TableCell className="text-right">{item.subtotal.toLocaleString(uiLocale)} Kz</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                 </div>
                 <div className="text-right font-bold">
-                  Total: {creditItems.reduce((sum, i) => sum + i.subtotal + i.taxAmount, 0).toLocaleString('pt-AO')} Kz
+                  {t.fiscalDocumentsUi.totalLabel} {creditItems.reduce((sum, i) => sum + i.subtotal + i.taxAmount, 0).toLocaleString(uiLocale)} Kz
                 </div>
               </div>
             </div>
@@ -954,8 +963,8 @@ export default function FiscalDocuments() {
       <Dialog open={debitNoteDialog} onOpenChange={setDebitNoteDialog}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Nova Nota de Débito</DialogTitle>
-            <DialogDescription>Documento de cobrança adicional</DialogDescription>
+            <DialogTitle>{t.fiscalDocumentsUi.newDebitNoteTitle}</DialogTitle>
+            <DialogDescription>{t.fiscalDocumentsUi.newDebitNoteSubtitle}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
@@ -973,7 +982,7 @@ export default function FiscalDocuments() {
                 <Input 
                   value={debitCustomerName}
                   onChange={(e) => setDebitCustomerName(e.target.value)}
-                  placeholder="Nome do cliente"
+                  placeholder={t.fiscalDocumentsUi.customerNamePlaceholder}
                 />
               </div>
             </div>
@@ -986,8 +995,8 @@ export default function FiscalDocuments() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="price_adjustment">Ajuste de Preço</SelectItem>
-                    <SelectItem value="additional_charge">Cobrança Adicional</SelectItem>
+                    <SelectItem value="price_adjustment">{t.fiscalDocumentsUi.debitReasonPriceAdjustment}</SelectItem>
+                    <SelectItem value="additional_charge">{t.fiscalDocumentsUi.debitReasonAdditionalCharge}</SelectItem>
                     <SelectItem value="interest">Juros de Mora</SelectItem>
                     <SelectItem value="other">Outro</SelectItem>
                   </SelectContent>
@@ -996,11 +1005,11 @@ export default function FiscalDocuments() {
             </div>
 
             <div className="space-y-2">
-              <Label>Descrição</Label>
+              <Label>{t.common.description}</Label>
               <Textarea 
                 value={debitDescription}
                 onChange={(e) => setDebitDescription(e.target.value)}
-                placeholder="Descreva o motivo da cobrança..."
+                placeholder={t.fiscalDocumentsUi.debitNoteReasonPlaceholder}
               />
             </div>
 
@@ -1015,7 +1024,7 @@ export default function FiscalDocuments() {
                 {debitItems.map((item, idx) => (
                   <div key={idx} className="grid grid-cols-5 gap-2 items-center">
                     <Input
-                      placeholder="Descrição"
+                      placeholder={t.common.description}
                       value={item.description}
                       onChange={(e) => updateDebitItem(idx, 'description', e.target.value)}
                       className="col-span-2"
@@ -1028,18 +1037,18 @@ export default function FiscalDocuments() {
                     />
                     <Input
                       type="number"
-                      placeholder="Preço"
+                      placeholder={t.fiscalDocumentsUi.pricePlaceholder}
                       value={item.unitPrice}
                       onChange={(e) => updateDebitItem(idx, 'unitPrice', parseFloat(e.target.value) || 0)}
                     />
                     <div className="text-right font-medium">
-                      {(item.subtotal + item.taxAmount).toLocaleString('pt-AO')} Kz
+                      {(item.subtotal + item.taxAmount).toLocaleString(uiLocale)} Kz
                     </div>
                   </div>
                 ))}
               </div>
               <div className="text-right font-bold">
-                Total: {debitItems.reduce((sum, i) => sum + i.subtotal + i.taxAmount, 0).toLocaleString('pt-AO')} Kz
+                {t.fiscalDocumentsUi.totalLabel} {debitItems.reduce((sum, i) => sum + i.subtotal + i.taxAmount, 0).toLocaleString(uiLocale)} Kz
               </div>
             </div>
           </div>
@@ -1078,7 +1087,7 @@ export default function FiscalDocuments() {
                     <SelectItem value="delivery">Entrega a Cliente</SelectItem>
                     <SelectItem value="transfer">Transferência entre Filiais</SelectItem>
                     <SelectItem value="return">Devolução a Fornecedor</SelectItem>
-                    <SelectItem value="consignment">Consignação</SelectItem>
+                    <SelectItem value="consignment">{t.fiscalDocumentsUi.transportTypeConsignment}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1403,7 +1412,7 @@ export default function FiscalDocuments() {
                       >
                         <div className="flex justify-between">
                           <span className="font-medium">{po.orderNumber}</span>
-                          <span>{po.total.toLocaleString('pt-AO')} Kz</span>
+                          <span>{po.total.toLocaleString(uiLocale)} Kz</span>
                         </div>
                         <div className="text-sm text-muted-foreground">
                           {po.supplierName} • {format(new Date(po.createdAt), 'dd/MM/yyyy')}
@@ -1473,7 +1482,7 @@ export default function FiscalDocuments() {
                                 onChange={(e) => updateReturnItemQuantity(item.productId, parseInt(e.target.value) || 0)}
                               />
                             </TableCell>
-                            <TableCell className="text-right">{item.subtotal.toLocaleString('pt-AO')} Kz</TableCell>
+                            <TableCell className="text-right">{item.subtotal.toLocaleString(uiLocale)} Kz</TableCell>
                           </TableRow>
                         );
                       })}
@@ -1487,7 +1496,7 @@ export default function FiscalDocuments() {
                 </div>
 
                 <div className="text-right text-lg font-bold">
-                  Total: {returnItems.reduce((s, i) => s + i.subtotal + i.taxAmount, 0).toLocaleString('pt-AO')} Kz
+                  {t.fiscalDocumentsUi.totalLabel} {returnItems.reduce((s, i) => s + i.subtotal + i.taxAmount, 0).toLocaleString(uiLocale)} Kz
                 </div>
               </>
             )}

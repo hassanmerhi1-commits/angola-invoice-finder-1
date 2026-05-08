@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Settings2, Save, Trash2, Download, Upload, ArrowRight, Check, AlertCircle, Plus } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { useTranslation } from '@/i18n';
+import { COLUMN_AUTO_MATCH_PATTERNS } from '@/lib/import/columnAutoMatchPatterns';
 
 // Types for column mapping
 export interface ColumnMapping {
@@ -26,45 +28,48 @@ export interface MappingTemplate {
   createdAt: string;
 }
 
-// System field definitions
-export const PRODUCT_FIELDS = [
-  { key: 'codigo', label: 'Código/SKU', required: true },
-  { key: 'descricao', label: 'Descrição/Nome', required: true },
-  { key: 'preco', label: 'Preço de Venda', required: false },
-  { key: 'custo', label: 'Preço de Custo', required: false },
-  { key: 'quantidade', label: 'Quantidade/Stock', required: false },
-  { key: 'unidade', label: 'Unidade', required: false },
-  { key: 'categoria', label: 'Categoria', required: false },
-  { key: 'iva', label: 'IVA %', required: false },
-  { key: 'codigoBarras', label: 'Código de Barras', required: false },
-  { key: 'fornecedor', label: 'Fornecedor', required: false },
-  { key: 'qtdMinima', label: 'Quantidade Mínima', required: false },
-  { key: 'localizacao', label: 'Localização', required: false },
-];
+function getFields(t: any, type: 'products' | 'clients' | 'suppliers') {
+  const PRODUCT_FIELDS = [
+    { key: 'codigo', label: t.importUi.fields.productCodeSku, required: true },
+    { key: 'descricao', label: t.importUi.fields.productDescriptionName, required: true },
+    { key: 'preco', label: t.importUi.fields.productSalePrice, required: false },
+    { key: 'custo', label: t.importUi.fields.productCostPrice, required: false },
+    { key: 'quantidade', label: t.importUi.fields.productQuantityStock, required: false },
+    { key: 'unidade', label: t.importUi.fields.productUnit, required: false },
+    { key: 'categoria', label: t.importUi.fields.productCategory, required: false },
+    { key: 'iva', label: t.importUi.fields.productVat, required: false },
+    { key: 'codigoBarras', label: t.importUi.fields.productBarcode, required: false },
+    { key: 'fornecedor', label: t.importUi.fields.productSupplier, required: false },
+    { key: 'qtdMinima', label: t.importUi.fields.productMinQty, required: false },
+    { key: 'localizacao', label: t.importUi.fields.productLocation, required: false },
+  ];
 
-export const CLIENT_FIELDS = [
-  { key: 'nome', label: 'Nome', required: true },
-  { key: 'nif', label: 'NIF', required: true },
-  { key: 'telefone', label: 'Telefone', required: false },
-  { key: 'email', label: 'Email', required: false },
-  { key: 'morada', label: 'Morada/Endereço', required: false },
-  { key: 'cidade', label: 'Cidade', required: false },
-  { key: 'pais', label: 'País', required: false },
-  { key: 'limiteCredito', label: 'Limite de Crédito', required: false },
-];
+  const CLIENT_FIELDS = [
+    { key: 'nome', label: t.importUi.fields.name, required: true },
+    { key: 'nif', label: t.importUi.fields.nif, required: true },
+    { key: 'telefone', label: t.importUi.fields.phone, required: false },
+    { key: 'email', label: t.importUi.fields.email, required: false },
+    { key: 'morada', label: t.importUi.fields.address, required: false },
+    { key: 'cidade', label: t.importUi.fields.city, required: false },
+    { key: 'pais', label: t.importUi.fields.country, required: false },
+    { key: 'limiteCredito', label: t.importUi.fields.creditLimit, required: false },
+  ];
 
-export const SUPPLIER_FIELDS = [
-  { key: 'nome', label: 'Nome', required: true },
-  { key: 'nif', label: 'NIF', required: true },
-  { key: 'pessoaContacto', label: 'Pessoa de Contacto', required: false },
-  { key: 'telefone', label: 'Telefone', required: false },
-  { key: 'email', label: 'Email', required: false },
-  { key: 'morada', label: 'Morada/Endereço', required: false },
-  { key: 'cidade', label: 'Cidade', required: false },
-  { key: 'pais', label: 'País', required: false },
-  { key: 'prazoPagamento', label: 'Prazo de Pagamento', required: false },
-  { key: 'notas', label: 'Notas', required: false },
-];
+  const SUPPLIER_FIELDS = [
+    { key: 'nome', label: t.importUi.fields.name, required: true },
+    { key: 'nif', label: t.importUi.fields.nif, required: true },
+    { key: 'pessoaContacto', label: t.importUi.fields.contactPerson, required: false },
+    { key: 'telefone', label: t.importUi.fields.phone, required: false },
+    { key: 'email', label: t.importUi.fields.email, required: false },
+    { key: 'morada', label: t.importUi.fields.address, required: false },
+    { key: 'cidade', label: t.importUi.fields.city, required: false },
+    { key: 'pais', label: t.importUi.fields.country, required: false },
+    { key: 'prazoPagamento', label: t.importUi.fields.paymentTerms, required: false },
+    { key: 'notas', label: t.importUi.fields.notes, required: false },
+  ];
+
+  return type === 'products' ? PRODUCT_FIELDS : type === 'clients' ? CLIENT_FIELDS : SUPPLIER_FIELDS;
+}
 
 // Storage key for templates
 const TEMPLATES_STORAGE_KEY = 'excel_mapping_templates';
@@ -99,6 +104,7 @@ export function ColumnMappingDialog({
   onApplyMapping,
   excelColumns = [],
 }: ColumnMappingDialogProps) {
+  const { t } = useTranslation();
   const [templates, setTemplates] = useState<MappingTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [mappings, setMappings] = useState<ColumnMapping[]>([]);
@@ -106,8 +112,8 @@ export function ColumnMappingDialog({
   const [showSaveForm, setShowSaveForm] = useState(false);
   const [detectedColumns, setDetectedColumns] = useState<string[]>(excelColumns);
 
-  const fields = type === 'products' ? PRODUCT_FIELDS : type === 'clients' ? CLIENT_FIELDS : SUPPLIER_FIELDS;
-  const typeLabel = type === 'products' ? 'Produtos' : type === 'clients' ? 'Clientes' : 'Fornecedores';
+  const fields = getFields(t, type);
+  const typeLabel = type === 'products' ? t.importUi.typeProducts : type === 'clients' ? t.importUi.typeClients : t.importUi.typeSuppliers;
 
   // Initialize mappings from fields
   useEffect(() => {
@@ -136,33 +142,7 @@ export function ColumnMappingDialog({
       if (!field) return m;
 
       // Try to find a matching column
-      const matchPatterns: Record<string, string[]> = {
-        codigo: ['código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'code', 'id'],
-        descricao: ['descrição', 'descricao', 'nome', 'produto', 'name', 'description', 'item'],
-        preco: ['preço', 'preco', 'preço venda', 'preco venda', 'price', 'pvp', 'valor'],
-        custo: ['custo', 'preço custo', 'preco custo', 'cost', 'valor custo'],
-        quantidade: ['quantidade', 'qty', 'qtd', 'stock', 'estoque'],
-        unidade: ['unidade', 'un', 'unit', 'uom'],
-        categoria: ['categoria', 'category', 'família', 'familia', 'family', 'grupo', 'group'],
-        iva: ['iva', 'imposto', 'tax', '%'],
-        codigoBarras: ['código barras', 'codigo barras', 'barcode', 'ean', 'gtin'],
-        fornecedor: ['fornecedor', 'supplier', 'vendor'],
-        qtdMinima: ['qtd mínima', 'qtd minima', 'min qty', 'minimo', 'mínimo'],
-        localizacao: ['localização', 'localizacao', 'location', 'armazém', 'armazem'],
-        nome: ['nome', 'name', 'razão social', 'razao social', 'empresa'],
-        nif: ['nif', 'contribuinte', 'vat', 'tax id', 'cnpj', 'cpf'],
-        telefone: ['telefone', 'tel', 'phone', 'celular', 'mobile', 'contacto'],
-        email: ['email', 'e-mail', 'correio'],
-        morada: ['morada', 'endereço', 'endereco', 'address', 'rua'],
-        cidade: ['cidade', 'city', 'localidade'],
-        pais: ['país', 'pais', 'country'],
-        limiteCredito: ['limite crédito', 'limite credito', 'credit limit', 'crédito'],
-        pessoaContacto: ['pessoa contacto', 'contacto', 'contact', 'contact person'],
-        prazoPagamento: ['prazo pagamento', 'payment terms', 'prazo'],
-        notas: ['notas', 'notes', 'observações', 'obs'],
-      };
-
-      const patterns = matchPatterns[m.systemField] || [];
+      const patterns = COLUMN_AUTO_MATCH_PATTERNS[m.systemField] || [];
       const matchedCol = cols.find(col => 
         patterns.some(p => col.toLowerCase().includes(p.toLowerCase()))
       );
@@ -256,9 +236,9 @@ export function ColumnMappingDialog({
     const data = fields.map(f => {
       const mapping = mappings.find(m => m.systemField === f.key);
       return {
-        'Campo do Sistema': f.label,
-        'Sua Coluna Excel': mapping?.excelColumn || '',
-        'Obrigatório': f.required ? 'Sim' : 'Não',
+        [t.importUi.systemFieldHeader]: f.label,
+        [t.importUi.yourExcelColumnHeader]: mapping?.excelColumn || '',
+        [t.importUi.requiredHeader]: f.required ? t.importUi.yes : t.importUi.no,
       };
     });
 
@@ -291,25 +271,25 @@ export function ColumnMappingDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Settings2 className="w-5 h-5" />
-            Mapeamento de Colunas - {typeLabel}
+            {t.importUi.mappingTitle.replace('{type}', typeLabel)}
           </DialogTitle>
           <DialogDescription>
-            Configure como as colunas do seu ficheiro Excel correspondem aos campos do sistema
+            {t.importUi.mappingDescription}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-hidden space-y-4">
           {/* Saved Templates */}
           <div className="space-y-2">
-            <Label>Templates Guardados</Label>
+            <Label>{t.importUi.savedTemplates}</Label>
             <div className="flex gap-2">
               <Select value={selectedTemplate} onValueChange={handleLoadTemplate}>
                 <SelectTrigger className="flex-1">
-                  <SelectValue placeholder="Selecionar template guardado..." />
+                  <SelectValue placeholder={t.importUi.selectSavedTemplate} />
                 </SelectTrigger>
                 <SelectContent className="bg-background border shadow-lg z-50">
                   {templates.length === 0 ? (
-                    <SelectItem value="_none" disabled>Nenhum template guardado</SelectItem>
+                    <SelectItem value="_none" disabled>{t.importUi.noSavedTemplates}</SelectItem>
                   ) : (
                     templates.map(t => (
                       <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
@@ -336,7 +316,7 @@ export function ColumnMappingDialog({
               <Upload className="h-4 w-4" />
               <AlertDescription>
                 <label className="cursor-pointer underline text-primary">
-                  Carregue um ficheiro Excel
+                  {t.importUi.uploadExcelFile}
                   <input
                     type="file"
                     accept=".xlsx,.xls,.csv"
@@ -344,14 +324,14 @@ export function ColumnMappingDialog({
                     className="hidden"
                   />
                 </label>
-                {' '}para detectar automaticamente as colunas disponíveis.
+                {' '}{t.importUi.detectColumnsHint}
               </AlertDescription>
             </Alert>
           )}
 
           {detectedColumns.length > 0 && (
             <div className="space-y-1">
-              <Label className="text-sm text-muted-foreground">Colunas detectadas no seu ficheiro:</Label>
+              <Label className="text-sm text-muted-foreground">{t.importUi.detectedColumns}</Label>
               <div className="flex flex-wrap gap-1">
                 {detectedColumns.map((col, i) => (
                   <Badge key={i} variant="secondary" className="text-xs">{col}</Badge>
@@ -365,7 +345,7 @@ export function ColumnMappingDialog({
           {/* Mapping Configuration */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label>Configuração do Mapeamento</Label>
+              <Label>{t.importUi.mappingConfig}</Label>
               <div className="flex items-center gap-1 text-sm">
                 {allRequiredMapped ? (
                   <Check className="w-4 h-4 text-green-600" />
@@ -373,7 +353,9 @@ export function ColumnMappingDialog({
                   <AlertCircle className="w-4 h-4 text-amber-600" />
                 )}
                 <span className={allRequiredMapped ? 'text-green-600' : 'text-amber-600'}>
-                  {requiredFieldsMapped}/{totalRequired} campos obrigatórios
+                  {t.importUi.requiredFieldsCount
+                    .replace('{done}', String(requiredFieldsMapped))
+                    .replace('{total}', String(totalRequired))}
                 </span>
               </div>
             </div>
@@ -392,7 +374,7 @@ export function ColumnMappingDialog({
                         </span>
                         {field.required && (
                           <Badge variant="destructive" className="text-[10px] h-4 px-1">
-                            Obrigatório
+                            {t.importUi.required}
                           </Badge>
                         )}
                       </div>
@@ -402,10 +384,10 @@ export function ColumnMappingDialog({
                         onValueChange={(val) => handleMappingChange(field.key, val === '_none' ? '' : val)}
                       >
                         <SelectTrigger className={`flex-1 ${isMapped ? 'border-green-500' : field.required ? 'border-amber-500' : ''}`}>
-                          <SelectValue placeholder="Selecionar coluna..." />
+                          <SelectValue placeholder={t.importUi.selectColumn} />
                         </SelectTrigger>
                         <SelectContent className="bg-background border shadow-lg z-50">
-                          <SelectItem value="_none">-- Não mapear --</SelectItem>
+                          <SelectItem value="_none">{t.importUi.doNotMap}</SelectItem>
                           {detectedColumns.map((col, i) => (
                             <SelectItem key={i} value={col}>{col}</SelectItem>
                           ))}
@@ -423,28 +405,28 @@ export function ColumnMappingDialog({
           {showSaveForm ? (
             <div className="flex items-center gap-2">
               <Input
-                placeholder="Nome do template..."
+                placeholder={t.importUi.templateNamePlaceholder}
                 value={templateName}
                 onChange={(e) => setTemplateName(e.target.value)}
                 className="flex-1"
               />
               <Button size="sm" onClick={handleSaveTemplate} disabled={!templateName.trim()}>
                 <Save className="w-4 h-4 mr-1" />
-                Guardar
+                {t.importUi.save}
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setShowSaveForm(false)}>
-                Cancelar
+                {t.importUi.cancel}
               </Button>
             </div>
           ) : (
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={() => setShowSaveForm(true)}>
                 <Plus className="w-4 h-4 mr-1" />
-                Guardar Template
+                {t.importUi.saveTemplate}
               </Button>
               <Button variant="outline" size="sm" onClick={handleExportTemplate}>
                 <Download className="w-4 h-4 mr-1" />
-                Exportar Template Excel
+                {t.importUi.exportTemplateExcel}
               </Button>
             </div>
           )}
@@ -452,11 +434,11 @@ export function ColumnMappingDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancelar
+            {t.importUi.cancel}
           </Button>
           <Button onClick={handleApply} disabled={!allRequiredMapped}>
             <Check className="w-4 h-4 mr-2" />
-            Aplicar Mapeamento
+            {t.importUi.applyMapping}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import { useTranslation } from '@/i18n';
 import { 
   BarChart3, Users, Truck, TrendingUp, Calendar, 
   FileText, Download, Printer, DollarSign, Clock,
@@ -22,44 +23,45 @@ import { TransactionHistoryReport } from '@/components/reports/TransactionHistor
 
 export default function Reports() {
   const [activeTab, setActiveTab] = useState('overview');
+  const { t } = useTranslation();
 
   const reportCategories = [
     {
       id: 'sales',
-      title: 'Vendas',
-      description: 'Análise de vendas por período, produto e filial',
+      title: t.reportsCenterUi.categories.sales.title,
+      description: t.reportsCenterUi.categories.sales.description,
       icon: TrendingUp,
       color: 'text-green-500',
       bgColor: 'bg-green-500/10',
     },
     {
       id: 'clients',
-      title: 'Clientes',
-      description: 'Extracto de conta e contas a receber',
+      title: t.reportsCenterUi.categories.clients.title,
+      description: t.reportsCenterUi.categories.clients.description,
       icon: Users,
       color: 'text-blue-500',
       bgColor: 'bg-blue-500/10',
     },
     {
       id: 'suppliers',
-      title: 'Fornecedores',
-      description: 'Conta corrente e contas a pagar',
+      title: t.reportsCenterUi.categories.suppliers.title,
+      description: t.reportsCenterUi.categories.suppliers.description,
       icon: Truck,
       color: 'text-orange-500',
       bgColor: 'bg-orange-500/10',
     },
     {
       id: 'inventory',
-      title: 'Inventário',
-      description: 'Movimentos de stock e valorização',
+      title: t.reportsCenterUi.categories.inventory.title,
+      description: t.reportsCenterUi.categories.inventory.description,
       icon: Package,
       color: 'text-purple-500',
       bgColor: 'bg-purple-500/10',
     },
     {
       id: 'financial',
-      title: 'Financeiro',
-      description: 'Rentabilidade e margens de lucro',
+      title: t.reportsCenterUi.categories.financial.title,
+      description: t.reportsCenterUi.categories.financial.description,
       icon: DollarSign,
       color: 'text-emerald-500',
       bgColor: 'bg-emerald-500/10',
@@ -72,10 +74,10 @@ export default function Reports() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <BarChart3 className="w-6 h-6" />
-            Centro de Relatórios
+            {t.reportsCenterUi.title}
           </h1>
           <p className="text-muted-foreground">
-            Relatórios financeiros, comerciais e operacionais
+            {t.reportsCenterUi.subtitle}
           </p>
         </div>
       </div>
@@ -83,47 +85,47 @@ export default function Reports() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col px-6">
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0 flex-wrap">
           <TabsTrigger value="overview" className="text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Visão Geral
+            {t.reportsCenterUi.tabOverview}
           </TabsTrigger>
           <TabsTrigger value="sales" className="text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             <TrendingUp className="w-4 h-4 mr-2" />
-            Vendas
+            {t.reportsCenterUi.tabSales}
           </TabsTrigger>
           <TabsTrigger value="trial-balance" className="text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             <Scale className="w-4 h-4 mr-2" />
-            Balancete
+            {t.reportsCenterUi.tabTrialBalance}
           </TabsTrigger>
           <TabsTrigger value="income-statement" className="text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             <DollarSign className="w-4 h-4 mr-2" />
-            Lucros/Perdas
+            {t.reportsCenterUi.tabIncomeStatement}
           </TabsTrigger>
           <TabsTrigger value="balance-sheet" className="text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             <FileText className="w-4 h-4 mr-2" />
-            Balanço
+            {t.reportsCenterUi.tabBalanceSheet}
           </TabsTrigger>
           <TabsTrigger value="stock-valuation" className="text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             <Package className="w-4 h-4 mr-2" />
-            Stock
+            {t.reportsCenterUi.tabStock}
           </TabsTrigger>
           <TabsTrigger value="stock-movements" className="text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             <ArrowRightLeft className="w-4 h-4 mr-2" />
-            Movimentos
+            {t.reportsCenterUi.tabMovements}
           </TabsTrigger>
           <TabsTrigger value="client-statement" className="text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             <Users className="w-4 h-4 mr-2" />
-            Clientes
+            {t.reportsCenterUi.tabClients}
           </TabsTrigger>
           <TabsTrigger value="supplier-statement" className="text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             <Truck className="w-4 h-4 mr-2" />
-            Fornecedores
+            {t.reportsCenterUi.tabSuppliers}
           </TabsTrigger>
           <TabsTrigger value="profitability" className="text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             <PieChart className="w-4 h-4 mr-2" />
-            Rentabilidade
+            {t.reportsCenterUi.tabProfitability}
           </TabsTrigger>
           <TabsTrigger value="transaction-history" className="text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             <History className="w-4 h-4 mr-2" />
-            Histórico
+            {t.reportsCenterUi.tabHistory}
           </TabsTrigger>
         </TabsList>
 
@@ -149,7 +151,7 @@ export default function Reports() {
                           {category.description}
                         </p>
                         <Button variant="link" className="p-0 h-auto mt-2 text-primary">
-                          Ver Relatórios <ArrowUpRight className="w-3 h-3 ml-1" />
+                          {t.reportsCenterUi.viewReports} <ArrowUpRight className="w-3 h-3 ml-1" />
                         </Button>
                       </div>
                     </div>
@@ -161,25 +163,25 @@ export default function Reports() {
             {/* Quick Stats */}
             <Card>
               <CardHeader>
-                <CardTitle>Resumo Rápido</CardTitle>
-                <CardDescription>Indicadores principais do período</CardDescription>
+                <CardTitle>{t.reportsCenterUi.quickSummaryTitle}</CardTitle>
+                <CardDescription>{t.reportsCenterUi.quickSummaryDesc}</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Vendas do Mês</p>
+                    <p className="text-sm text-muted-foreground">{t.reportsCenterUi.quickStats.salesMonth}</p>
                     <p className="text-2xl font-bold">---</p>
                   </div>
                   <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-sm text-muted-foreground">A Receber</p>
+                    <p className="text-sm text-muted-foreground">{t.reportsCenterUi.quickStats.receivable}</p>
                     <p className="text-2xl font-bold text-blue-500">---</p>
                   </div>
                   <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-sm text-muted-foreground">A Pagar</p>
+                    <p className="text-sm text-muted-foreground">{t.reportsCenterUi.quickStats.payable}</p>
                     <p className="text-2xl font-bold text-orange-500">---</p>
                   </div>
                   <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Margem Média</p>
+                    <p className="text-sm text-muted-foreground">{t.reportsCenterUi.quickStats.avgMargin}</p>
                     <p className="text-2xl font-bold text-green-500">---</p>
                   </div>
                 </div>

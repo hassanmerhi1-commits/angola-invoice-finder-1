@@ -18,8 +18,10 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { HotUpdateConfig } from '@/types/electron';
+import { useTranslation } from '@/i18n';
 
 export function HotUpdateSettingsCard() {
+  const { t } = useTranslation();
   const [config, setConfig] = useState<HotUpdateConfig>({
     enabled: false,
     serverUrl: '',
@@ -83,15 +85,15 @@ export function HotUpdateSettingsCard() {
       if (result?.success && result.available) {
         setServerStatus('online');
         setWebappVersion(result.version?.version || 'unknown');
-        toast.success('Server is online');
+        toast.success(t.hotUpdateUi.serverOnline);
       } else {
         setServerStatus('offline');
         setWebappVersion('');
-        toast.error('Servidor não acessível');
+        toast.error(t.hotUpdateUi.serverNotReachable);
       }
     } catch (error) {
       setServerStatus('offline');
-      toast.error('Servidor não acessível');
+      toast.error(t.hotUpdateUi.serverNotReachable);
     } finally {
       setIsChecking(false);
     }
@@ -104,12 +106,12 @@ export function HotUpdateSettingsCard() {
       
       if (result?.success && result.config) {
         setConfig(result.config);
-        toast.success('Settings saved');
+        toast.success(t.hotUpdateUi.saved);
       } else {
-        toast.error(result?.error || 'Failed to save settings');
+        toast.error(result?.error || t.hotUpdateUi.saveFailed);
       }
     } catch (error) {
-      toast.error('Failed to save settings');
+      toast.error(t.hotUpdateUi.saveFailed);
     }
   };
 
@@ -118,12 +120,12 @@ export function HotUpdateSettingsCard() {
       const result = await window.electronAPI?.hotUpdate?.reload();
       
       if (result?.success) {
-        toast.success(`Reloading from ${result.source}...`);
+        toast.success(t.hotUpdateUi.reloadingFrom.replace('{source}', result.source));
       } else {
-        toast.error(result?.error || 'Failed to reload');
+        toast.error(result?.error || t.hotUpdateUi.reloadFailed);
       }
     } catch (error) {
-      toast.error('Failed to reload');
+      toast.error(t.hotUpdateUi.reloadFailed);
     }
   };
 
@@ -133,10 +135,10 @@ export function HotUpdateSettingsCard() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Zap className="w-5 h-5" />
-            Hot Updates
+            {t.hotUpdateUi.title}
           </CardTitle>
           <CardDescription>
-            Instant updates without reinstalling
+            {t.hotUpdateUi.subtitle}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -156,7 +158,7 @@ export function HotUpdateSettingsCard() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Zap className="w-5 h-5" />
-            Hot Updates
+            {t.hotUpdateUi.title}
           </CardTitle>
         </CardHeader>
         <CardContent className="flex items-center justify-center py-8">
@@ -171,7 +173,7 @@ export function HotUpdateSettingsCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Zap className="w-5 h-5" />
-          Hot Updates
+          {t.hotUpdateUi.title}
         </CardTitle>
         <CardDescription>
           Load app from server - update by just replacing files
@@ -195,7 +197,7 @@ export function HotUpdateSettingsCard() {
         {/* Enable Hot Updates */}
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
-            <Label htmlFor="hot-update-enabled">Enable Hot Updates</Label>
+            <Label htmlFor="hot-update-enabled">{t.hotUpdateUi.enable}</Label>
             <p className="text-sm text-muted-foreground">
               Load app from update server
             </p>

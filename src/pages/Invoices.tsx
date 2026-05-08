@@ -75,33 +75,33 @@ function buildFlowNodes(doc: ERPDocument): { type: string; number: string; date:
   return nodes;
 }
 
-const DOC_TABS: { key: DocumentType | 'all'; label: string; icon: any }[] = [
-  { key: 'all', label: 'Todos', icon: FileText },
-  { key: 'proforma', label: 'Proforma', icon: FileText },
-  { key: 'fatura_venda', label: 'Fat. Venda', icon: FileText },
-  { key: 'fatura_compra', label: 'Fat. Compra', icon: FileText },
-  { key: 'recibo', label: 'Recibo', icon: Receipt },
-  { key: 'pagamento', label: 'Pagamento', icon: Banknote },
-  { key: 'nota_credito', label: 'N. Crédito', icon: CreditCard },
-  { key: 'nota_debito', label: 'N. Débito', icon: CreditCard },
-  { key: 'guia_remessa', label: 'G. Remessa', icon: FileText },
-];
-
-const STATUS_BADGES: Record<DocumentStatus, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-  draft: { label: 'Rascunho', variant: 'secondary' },
-  pending: { label: 'Pendente', variant: 'outline' },
-  confirmed: { label: 'Confirmado', variant: 'default' },
-  paid: { label: 'Pago', variant: 'default' },
-  partial: { label: 'Parcial', variant: 'outline' },
-  cancelled: { label: 'Anulado', variant: 'destructive' },
-  converted: { label: 'Convertido', variant: 'secondary' },
-};
-
 export default function Invoices() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const DOC_TABS: { key: DocumentType | 'all'; label: string; icon: any }[] = useMemo(() => [
+    { key: 'all', label: t.documents.all, icon: FileText },
+    { key: 'proforma', label: t.documents.proforma, icon: FileText },
+    { key: 'fatura_venda', label: t.documents.salesInvoiceShort, icon: FileText },
+    { key: 'fatura_compra', label: t.documents.purchaseInvoiceShort, icon: FileText },
+    { key: 'recibo', label: t.documents.receipt, icon: Receipt },
+    { key: 'pagamento', label: t.documents.payment, icon: Banknote },
+    { key: 'nota_credito', label: t.documents.creditNoteShort, icon: CreditCard },
+    { key: 'nota_debito', label: t.documents.debitNoteShort, icon: CreditCard },
+    { key: 'guia_remessa', label: t.documents.deliveryNoteShort, icon: FileText },
+  ], [t]);
+
+  const STATUS_BADGES: Record<DocumentStatus, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = useMemo(() => ({
+    draft: { label: t.documentStatus.draft, variant: 'secondary' },
+    pending: { label: t.documentStatus.pending, variant: 'outline' },
+    confirmed: { label: t.documentStatus.confirmed, variant: 'default' },
+    paid: { label: t.documentStatus.paid, variant: 'default' },
+    partial: { label: t.documentStatus.partial, variant: 'outline' },
+    cancelled: { label: t.documentStatus.cancelled, variant: 'destructive' },
+    converted: { label: t.documentStatus.converted, variant: 'secondary' },
+  }), [t]);
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const navigate = useNavigate();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
   const [activeTab, setActiveTab] = useState<DocumentType | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -170,7 +170,7 @@ export default function Invoices() {
       toast.success(`${DOCUMENT_TYPE_CONFIG[targetType].shortLabel} ${result.documentNumber} criado a partir de ${doc.documentNumber}`);
       refresh();
     } else {
-      toast.error('Conversão não permitida');
+      toast.error(t.invoicesUi.conversionNotAllowed);
     }
   };
 
@@ -280,16 +280,16 @@ export default function Invoices() {
           <table className="w-full text-xs">
             <thead className="bg-muted/60 border-b sticky top-0 z-10">
               <tr>
-                <th className="px-3 py-2 text-left font-semibold w-12">Tipo</th>
-                <th className="px-3 py-2 text-left font-semibold w-36">Nº Documento</th>
-                <th className="px-3 py-2 text-left font-semibold w-24">Data</th>
-                <th className="px-3 py-2 text-left font-semibold">{activeTab === 'fatura_compra' || activeTab === 'pagamento' ? 'Fornecedor' : 'Cliente'}</th>
+                <th className="px-3 py-2 text-left font-semibold w-12">{t.invoicesUi.type}</th>
+                <th className="px-3 py-2 text-left font-semibold w-36">{t.invoicesUi.documentNo}</th>
+                <th className="px-3 py-2 text-left font-semibold w-24">{t.common.date}</th>
+                <th className="px-3 py-2 text-left font-semibold">{activeTab === 'fatura_compra' || activeTab === 'pagamento' ? t.paymentsUi.supplier : t.paymentsUi.customer}</th>
                 <th className="px-3 py-2 text-left font-semibold w-24">NIF</th>
-                <th className="px-3 py-2 text-right font-semibold w-28">Total</th>
-                <th className="px-3 py-2 text-right font-semibold w-28">Pago</th>
-                <th className="px-3 py-2 text-right font-semibold w-28">Em Dívida</th>
-                <th className="px-3 py-2 text-center font-semibold w-20">Estado</th>
-                <th className="px-3 py-2 text-left font-semibold w-16">Origem</th>
+                <th className="px-3 py-2 text-right font-semibold w-28">{t.common.total}</th>
+                <th className="px-3 py-2 text-right font-semibold w-28">{t.invoicesUi.paid}</th>
+                <th className="px-3 py-2 text-right font-semibold w-28">{t.invoicesUi.due}</th>
+                <th className="px-3 py-2 text-center font-semibold w-20">{t.common.status}</th>
+                <th className="px-3 py-2 text-left font-semibold w-16">{t.invoicesUi.origin}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -304,13 +304,13 @@ export default function Invoices() {
                     onDoubleClick={() => openEditDocument(doc)}>
                     <td className={cn("px-3 py-1.5 font-medium", config.color)}>{config.prefix}</td>
                     <td className="px-3 py-1.5 font-mono">{doc.documentNumber}</td>
-                    <td className="px-3 py-1.5 text-muted-foreground">{new Date(doc.issueDate).toLocaleDateString('pt-AO')}</td>
+                    <td className="px-3 py-1.5 text-muted-foreground">{new Date(doc.issueDate).toLocaleDateString(locale)}</td>
                     <td className="px-3 py-1.5">{doc.entityName}</td>
                     <td className="px-3 py-1.5 text-muted-foreground">{doc.entityNif || '-'}</td>
-                    <td className="px-3 py-1.5 text-right font-mono font-medium">{doc.total.toLocaleString('pt-AO')}</td>
-                    <td className="px-3 py-1.5 text-right font-mono text-green-600">{doc.amountPaid.toLocaleString('pt-AO')}</td>
+                    <td className="px-3 py-1.5 text-right font-mono font-medium">{doc.total.toLocaleString(locale)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-green-600">{doc.amountPaid.toLocaleString(locale)}</td>
                     <td className={cn("px-3 py-1.5 text-right font-mono", doc.amountDue > 0 && "text-destructive font-medium")}>
-                      {doc.amountDue.toLocaleString('pt-AO')}
+                      {doc.amountDue.toLocaleString(locale)}
                     </td>
                     <td className="px-3 py-1.5 text-center">
                       <Badge variant={statusBadge.variant} className="text-[10px] px-1.5 py-0">{statusBadge.label}</Badge>
@@ -326,10 +326,10 @@ export default function Invoices() {
             </tbody>
             <tfoot className="bg-muted/80 border-t-2 border-primary/30">
               <tr className="font-bold text-xs">
-                <td className="px-3 py-2" colSpan={5}>TOTAL ({totals.count} documentos)</td>
-                <td className="px-3 py-2 text-right font-mono">{totals.total.toLocaleString('pt-AO')} Kz</td>
-                <td className="px-3 py-2 text-right font-mono text-green-600">{totals.paid.toLocaleString('pt-AO')} Kz</td>
-                <td className="px-3 py-2 text-right font-mono text-destructive">{totals.due.toLocaleString('pt-AO')} Kz</td>
+                <td className="px-3 py-2" colSpan={5}>{t.invoicesUi.documentsTotal.replace('{count}', String(totals.count))}</td>
+                <td className="px-3 py-2 text-right font-mono">{totals.total.toLocaleString(locale)} Kz</td>
+                <td className="px-3 py-2 text-right font-mono text-green-600">{totals.paid.toLocaleString(locale)} Kz</td>
+                <td className="px-3 py-2 text-right font-mono text-destructive">{totals.due.toLocaleString(locale)} Kz</td>
                 <td colSpan={2}></td>
               </tr>
             </tfoot>
@@ -337,8 +337,8 @@ export default function Invoices() {
           {filteredDocs.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-sm">Nenhum documento encontrado</p>
-              <p className="text-xs mt-1">Clique em "Novo Documento" para criar</p>
+              <p className="text-sm">{t.common.noResults}</p>
+              <p className="text-xs mt-1">{t.common.create}</p>
             </div>
           )}
         </div>
@@ -352,13 +352,13 @@ export default function Invoices() {
               {selectedDoc.documentNumber}
             </span>
             <span>{selectedDoc.entityName}</span>
-            <span>Total: {selectedDoc.total.toLocaleString('pt-AO')} Kz</span>
+            <span>{t.common.total}: {selectedDoc.total.toLocaleString(locale)} Kz</span>
             {selectedDoc.parentDocumentNumber && (
-              <span className="text-blue-500">Origem: {selectedDoc.parentDocumentNumber}</span>
+              <span className="text-blue-500">{t.invoicesUi.origin}: {selectedDoc.parentDocumentNumber}</span>
             )}
             {selectedDoc.childDocuments && selectedDoc.childDocuments.length > 0 && (
               <span className="text-green-600">
-                Gerou: {selectedDoc.childDocuments.map(c => c.number).join(', ')}
+                {t.common.generate}: {selectedDoc.childDocuments.map(c => c.number).join(', ')}
               </span>
             )}
           </div>

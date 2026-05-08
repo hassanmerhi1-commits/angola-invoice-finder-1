@@ -13,10 +13,11 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:8080 && cross-env ELECTRON_DEV=true electron .\"",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:18080 && cross-env ELECTRON_DEV=true electron .\"",
     "electron:build": "npm run build && electron-builder --win",
     "electron:build:mac": "npm run build && electron-builder --mac",
-    "electron:build:linux": "npm run build && electron-builder --linux"
+    "electron:build:linux": "npm run build && electron-builder --linux",
+    "i18n:audit": "node scripts/i18n-audit.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -28,17 +28,7 @@ import { Product, Branch } from '@/types/erp';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import * as XLSX from 'xlsx';
-
-// Adjustment reason codes
-const ADJUSTMENT_REASONS = [
-  { value: 'physical_count', label: 'Contagem Física' },
-  { value: 'damage', label: 'Dano/Avaria' },
-  { value: 'theft', label: 'Roubo/Furto' },
-  { value: 'expiry', label: 'Validade Expirada' },
-  { value: 'correction', label: 'Correcção de Erro' },
-  { value: 'transfer', label: 'Transferência Interna' },
-  { value: 'other', label: 'Outro' },
-];
+import { useTranslation } from '@/i18n';
 
 interface AdjustmentItem {
   productId: string;
@@ -68,12 +58,27 @@ export function InventoryAdjustmentDialog({
   onApplyAdjustments,
 }: InventoryAdjustmentDialogProps) {
   const { toast } = useToast();
+  const { t } = useTranslation();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [adjustmentReason, setAdjustmentReason] = useState('physical_count');
   const [notes, setNotes] = useState('');
   const [adjustments, setAdjustments] = useState<Map<string, number | null>>(new Map());
   const [showOnlyDifferences, setShowOnlyDifferences] = useState(false);
+
+  const ADJUSTMENT_REASONS = useMemo(() => ([
+    { value: 'physical_count', label: t.inventoryAdjustUi.reasonPhysicalCount },
+    { value: 'damage', label: t.inventoryAdjustUi.reasonDamage },
+    { value: 'theft', label: t.inventoryAdjustUi.reasonTheft },
+    { value: 'expiry', label: t.inventoryAdjustUi.reasonExpiry },
+    { value: 'correction', label: t.inventoryAdjustUi.reasonCorrection },
+    { value: 'transfer', label: t.inventoryAdjustUi.reasonTransfer },
+    { value: 'other', label: t.inventoryAdjustUi.reasonOther },
+  ]), [t]);
+
+  const COL_CODE = t.inventoryAdjustUi.colCode;
+  const COL_PHYSICAL = t.inventoryAdjustUi.colPhysicalCount;
+  const COL_PHYSICAL_SHORT = t.inventoryAdjustUi.colPhysicalShort;
 
   // Get unique categories
   const categories = useMemo(() => 
@@ -176,8 +181,8 @@ export function InventoryAdjustmentDialog({
 
     if (itemsToAdjust.length === 0) {
       toast({
-        title: 'Nenhum ajuste a aplicar',
-        description: 'Não existem diferenças entre o stock do sistema e a contagem física.',
+        title: t.inventoryAdjustUi.noAdjustmentsTitle,
+        description: t.inventoryAdjustUi.noDifferencesDesc,
         variant: 'destructive',
       });
       return;
@@ -188,8 +193,8 @@ export function InventoryAdjustmentDialog({
     onApplyAdjustments(itemsToAdjust, reasonLabel, notes);
     
     toast({
-      title: 'Ajustes aplicados',
-      description: `${itemsToAdjust.length} produtos foram actualizados com sucesso.`,
+      title: t.inventoryAdjustUi.appliedTitle,
+      description: t.inventoryAdjustUi.appliedDesc.replace('{count}', String(itemsToAdjust.length)),
     });
 
     handleClearAll();
@@ -214,8 +219,8 @@ export function InventoryAdjustmentDialog({
 
         jsonData.forEach((row) => {
           // Try to match by SKU
-          const sku = String(row['Código'] || row['codigo'] || row['SKU'] || row['sku'] || '').trim();
-          const count = parseInt(String(row['Contagem Física'] || row['contagem'] || row['Count'] || row['Física'] || 0), 10);
+          const sku = String(row[COL_CODE] || row['codigo'] || row['SKU'] || row['sku'] || '').trim();
+          const count = parseInt(String(row[COL_PHYSICAL] || row['contagem'] || row['Count'] || row[COL_PHYSICAL_SHORT] || 0), 10);
 
           if (sku && !isNaN(count)) {
             const product = products.find(p => p.sku.toLowerCase() === sku.toLowerCase());
@@ -228,15 +233,17 @@ export function InventoryAdjustmentDialog({
 
         setAdjustments(newAdjustments);
         toast({
-          title: 'Importação concluída',
-          description: `${matched} produtos correspondidos de ${jsonData.length} linhas.`,
+          title: t.inventoryAdjustUi.importDone,
+          description: t.inventoryAdjustUi.importDoneDesc
+            .replace('{matched}', String(matched))
+            .replace('{rows}', String(jsonData.length)),
         });
       };
       reader.readAsArrayBuffer(file);
     } catch (error) {
       toast({
-        title: 'Erro na importação',
-        description: 'Não foi possível ler o ficheiro Excel.',
+        title: t.inventoryAdjustUi.importError,
+        description: t.inventoryAdjustUi.importErrorDesc,
         variant: 'destructive',
       });
     }
@@ -251,10 +258,10 @@ export function InventoryAdjustmentDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ClipboardCheck className="w-5 h-5" />
-            Ajuste de Inventário - {branch?.name || 'Todas as Filiais'}
+            {t.inventoryAdjustUi.title.replace('{branch}', branch?.name || t.inventoryAdjustUi.allBranches)}
           </DialogTitle>
           <DialogDescription>
-            Introduza os valores da contagem física para calcular e aplicar as diferenças
+            {t.inventoryAdjustUi.description}
           </DialogDescription>
         </DialogHeader>
 
@@ -264,7 +271,7 @@ export function InventoryAdjustmentDialog({
             <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Pesquisar por código, nome ou código de barras..."
+                placeholder={t.inventoryAdjustUi.searchPlaceholder}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
@@ -338,12 +345,12 @@ export function InventoryAdjustmentDialog({
             <Table>
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
-                  <TableHead className="w-[100px]">Código</TableHead>
+                  <TableHead className="w-[100px]">{t.inventoryAdjustUi.colCode}</TableHead>
                   <TableHead>Produto</TableHead>
                   <TableHead className="w-[100px]">Categoria</TableHead>
                   <TableHead className="w-[60px] text-center">Un.</TableHead>
                   <TableHead className="w-[100px] text-center">Stock Sistema</TableHead>
-                  <TableHead className="w-[120px] text-center">Contagem Física</TableHead>
+                  <TableHead className="w-[120px] text-center">{t.inventoryAdjustUi.colPhysicalCount}</TableHead>
                   <TableHead className="w-[100px] text-center">Diferença</TableHead>
                   <TableHead className="w-[80px]"></TableHead>
                 </TableRow>
@@ -445,7 +452,7 @@ export function InventoryAdjustmentDialog({
                 <div className="space-y-2">
                   <Label>Notas/Observações</Label>
                   <Textarea
-                    placeholder="Observações adicionais sobre este ajuste..."
+                    placeholder={t.inventoryAdjustUi.notesPlaceholder}
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     className="h-[60px] resize-none"

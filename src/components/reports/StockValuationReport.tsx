@@ -26,8 +26,11 @@ import {
 } from '@/components/ui/select';
 import { Download, Printer, Package, FileSpreadsheet, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react';
 import { useBranches, useProducts } from '@/hooks/useERP';
+import { useTranslation } from '@/i18n';
 
 export default function StockValuationReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { currentBranch } = useBranches();
   const { products } = useProducts(currentBranch?.id);
   
@@ -91,12 +94,22 @@ export default function StockValuationReport() {
     };
   }).sort((a, b) => b.value - a.value);
 
-  const formatMoney = (value: number) => value.toLocaleString('pt-AO', { minimumFractionDigits: 2 });
+  const formatMoney = (value: number) => value.toLocaleString(locale, { minimumFractionDigits: 2 });
 
   const handlePrint = () => window.print();
 
   const handleExportExcel = () => {
-    const headers = ['SKU', 'Produto', 'Categoria', 'Stock', 'Custo Unit.', 'Preço Unit.', 'Valor Custo', 'Valor Venda', 'Margem %'];
+    const headers = [
+      'SKU',
+      t.common.product,
+      t.stockValuationUi.category,
+      t.stockValuationUi.stock,
+      t.stockValuationUi.unitCost,
+      t.stockValuationUi.unitPrice,
+      t.stockValuationUi.costValue,
+      t.stockValuationUi.saleValue,
+      t.stockValuationUi.marginPercent,
+    ];
     const rows = productsWithValues.map(p => [
       p.sku,
       p.name,
@@ -124,19 +137,19 @@ export default function StockValuationReport() {
         <CardHeader className="py-3">
           <CardTitle className="text-lg flex items-center gap-2">
             <Package className="w-5 h-5" />
-            Valorização de Stock
+            {t.stockValuationUi.title}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-4 items-end">
             <div className="space-y-1">
-              <Label className="text-xs">Categoria</Label>
+              <Label className="text-xs">{t.stockValuationUi.category}</Label>
               <Select value={filterCategory} onValueChange={setFilterCategory}>
                 <SelectTrigger className="h-8 w-40">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="all">{t.common.all}</SelectItem>
                   {categories.map(cat => (
                     <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                   ))}
@@ -144,16 +157,16 @@ export default function StockValuationReport() {
               </Select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Ordenar por</Label>
+              <Label className="text-xs">{t.stockValuationUi.sortBy}</Label>
               <Select value={sortBy} onValueChange={setSortBy}>
                 <SelectTrigger className="h-8 w-40">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="value">Valor</SelectItem>
-                  <SelectItem value="quantity">Quantidade</SelectItem>
-                  <SelectItem value="margin">Margem</SelectItem>
-                  <SelectItem value="name">Nome</SelectItem>
+                  <SelectItem value="value">{t.stockValuationUi.sortValue}</SelectItem>
+                  <SelectItem value="quantity">{t.stockValuationUi.sortQuantity}</SelectItem>
+                  <SelectItem value="margin">{t.stockValuationUi.sortMargin}</SelectItem>
+                  <SelectItem value="name">{t.common.name}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -165,12 +178,12 @@ export default function StockValuationReport() {
                 onChange={(e) => setShowZeroStock(e.target.checked)}
                 className="rounded"
               />
-              <Label htmlFor="showZero" className="text-xs">Mostrar stock zero</Label>
+              <Label htmlFor="showZero" className="text-xs">{t.stockValuationUi.showZeroStock}</Label>
             </div>
             <div className="flex gap-2 ml-auto">
               <Button variant="outline" size="sm" onClick={handlePrint}>
                 <Printer className="w-4 h-4 mr-2" />
-                Imprimir
+                {t.reportsUi.print}
               </Button>
               <Button variant="outline" size="sm" onClick={handleExportExcel}>
                 <FileSpreadsheet className="w-4 h-4 mr-2" />
@@ -185,27 +198,27 @@ export default function StockValuationReport() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Valor Total (Custo)</p>
-            <p className="text-2xl font-bold">{formatMoney(totals.costValue)} Kz</p>
+            <p className="text-sm text-muted-foreground">{t.stockValuationUi.totalCostValue}</p>
+            <p className="text-2xl font-bold">{formatMoney(totals.costValue)} {t.common.currency}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Valor Total (Venda)</p>
-            <p className="text-2xl font-bold text-blue-600">{formatMoney(totals.saleValue)} Kz</p>
+            <p className="text-sm text-muted-foreground">{t.stockValuationUi.totalSaleValue}</p>
+            <p className="text-2xl font-bold text-blue-600">{formatMoney(totals.saleValue)} {t.common.currency}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Lucro Potencial</p>
-            <p className="text-2xl font-bold text-green-600">{formatMoney(totals.potentialProfit)} Kz</p>
+            <p className="text-sm text-muted-foreground">{t.stockValuationUi.potentialProfit}</p>
+            <p className="text-2xl font-bold text-green-600">{formatMoney(totals.potentialProfit)} {t.common.currency}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Itens em Stock</p>
+            <p className="text-sm text-muted-foreground">{t.stockValuationUi.itemsInStock}</p>
             <p className="text-2xl font-bold">{totals.quantity.toLocaleString()}</p>
-            <p className="text-xs text-muted-foreground">{productsWithValues.length} produtos</p>
+            <p className="text-xs text-muted-foreground">{t.stockValuationUi.productsCount.replace('{count}', String(productsWithValues.length))}</p>
           </CardContent>
         </Card>
       </div>
@@ -213,7 +226,7 @@ export default function StockValuationReport() {
       {/* Category Breakdown */}
       <Card>
         <CardHeader className="py-3">
-          <CardTitle className="text-sm">Por Categoria</CardTitle>
+          <CardTitle className="text-sm">{t.stockValuationUi.byCategory}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-2">
@@ -221,7 +234,7 @@ export default function StockValuationReport() {
               <div key={cat.category} className="px-3 py-2 bg-muted rounded-lg text-sm">
                 <p className="font-medium">{cat.category}</p>
                 <p className="text-xs text-muted-foreground">
-                  {cat.count} produtos | {formatMoney(cat.value)} Kz
+                  {t.stockValuationUi.categoryProductsValue.replace('{count}', String(cat.count)).replace('{value}', `${formatMoney(cat.value)} ${t.common.currency}`)}
                 </p>
               </div>
             ))}
@@ -237,14 +250,14 @@ export default function StockValuationReport() {
               <TableHeader>
                 <TableRow className="bg-muted/50">
                   <TableHead>SKU</TableHead>
-                  <TableHead>Produto</TableHead>
-                  <TableHead>Categoria</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  <TableHead className="text-right">Custo Unit.</TableHead>
-                  <TableHead className="text-right">Preço Unit.</TableHead>
-                  <TableHead className="text-right">Valor (Custo)</TableHead>
-                  <TableHead className="text-right">Valor (Venda)</TableHead>
-                  <TableHead className="text-right">Margem</TableHead>
+                  <TableHead>{t.common.product}</TableHead>
+                  <TableHead>{t.stockValuationUi.category}</TableHead>
+                  <TableHead className="text-right">{t.stockValuationUi.stock}</TableHead>
+                  <TableHead className="text-right">{t.stockValuationUi.unitCost}</TableHead>
+                  <TableHead className="text-right">{t.stockValuationUi.unitPrice}</TableHead>
+                  <TableHead className="text-right">{t.stockValuationUi.costValue}</TableHead>
+                  <TableHead className="text-right">{t.stockValuationUi.saleValue}</TableHead>
+                  <TableHead className="text-right">{t.stockValuationUi.margin}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -258,7 +271,7 @@ export default function StockValuationReport() {
                           <AlertTriangle className="w-4 h-4 text-amber-500" />
                         )}
                         {product.stock === 0 && (
-                          <Badge variant="destructive" className="text-xs">Sem stock</Badge>
+                          <Badge variant="destructive" className="text-xs">{t.stockValuationUi.noStock}</Badge>
                         )}
                       </div>
                     </TableCell>
@@ -267,16 +280,16 @@ export default function StockValuationReport() {
                       {product.stock} {product.unit}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
-                      {formatMoney(product.cost)} Kz
+                      {formatMoney(product.cost)} {t.common.currency}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
-                      {formatMoney(product.price)} Kz
+                      {formatMoney(product.price)} {t.common.currency}
                     </TableCell>
                     <TableCell className="text-right font-mono font-medium">
-                      {formatMoney(product.costValue)} Kz
+                      {formatMoney(product.costValue)} {t.common.currency}
                     </TableCell>
                     <TableCell className="text-right font-mono text-blue-600">
-                      {formatMoney(product.saleValue)} Kz
+                      {formatMoney(product.saleValue)} {t.common.currency}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -294,11 +307,11 @@ export default function StockValuationReport() {
                 ))}
                 {/* Totals */}
                 <TableRow className="bg-primary/10 font-bold">
-                  <TableCell colSpan={3} className="text-right">TOTAIS</TableCell>
+                  <TableCell colSpan={3} className="text-right">{t.stockValuationUi.totals}</TableCell>
                   <TableCell className="text-right font-mono">{totals.quantity.toLocaleString()}</TableCell>
                   <TableCell colSpan={2}></TableCell>
-                  <TableCell className="text-right font-mono">{formatMoney(totals.costValue)} Kz</TableCell>
-                  <TableCell className="text-right font-mono text-blue-600">{formatMoney(totals.saleValue)} Kz</TableCell>
+                  <TableCell className="text-right font-mono">{formatMoney(totals.costValue)} {t.common.currency}</TableCell>
+                  <TableCell className="text-right font-mono text-blue-600">{formatMoney(totals.saleValue)} {t.common.currency}</TableCell>
                   <TableCell className="text-right font-mono text-green-600">
                     {totals.costValue > 0 ? ((totals.potentialProfit / totals.costValue) * 100).toFixed(1) : 0}%
                   </TableCell>

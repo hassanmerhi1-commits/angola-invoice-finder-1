@@ -9,6 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Download, X, AlertTriangle, RefreshCw, Settings2 } from 'lucide-react';
 import { ColumnMappingDialog, ColumnMapping } from './ColumnMappingDialog';
 import { getExcelHeaders } from '@/lib/excel';
+import { useTranslation } from '@/i18n';
 
 interface ImportError {
   row: number;
@@ -51,9 +52,11 @@ export function ExcelImportDialog<T>({
   columns,
   duplicateKey,
   existingKeys = [],
-  duplicateLabel = 'Código',
+  duplicateLabel,
   mappingType,
 }: ExcelImportDialogProps<T>) {
+  const { t } = useTranslation();
+  const resolvedDuplicateLabel = duplicateLabel || t.importUi.duplicateLabelDefault;
   const [step, setStep] = useState<'upload' | 'preview' | 'importing'>('upload');
   const [parsedData, setParsedData] = useState<T[]>([]);
   const [validData, setValidData] = useState<T[]>([]);
@@ -110,7 +113,7 @@ export function ExcelImportDialog<T>({
       setStep('preview');
     } catch (error) {
       console.error('Error parsing file:', error);
-      setErrors([{ row: 0, errors: ['Erro ao processar ficheiro. Verifique o formato.'] }]);
+      setErrors([{ row: 0, errors: [t.importUi.fileProcessError] }]);
     }
   };
 
@@ -275,11 +278,11 @@ export function ExcelImportDialog<T>({
                   <AlertTriangle className="h-4 w-4 text-amber-600" />
                   <AlertDescription>
                     <div className="font-medium mb-2 text-amber-800 dark:text-amber-200">
-                      {duplicates.length} {duplicateLabel}(s) já existem no sistema
+                      {duplicates.length} {resolvedDuplicateLabel}(s) já existem no sistema
                     </div>
                     <div className="space-y-2 text-sm">
                       <p className="text-amber-700 dark:text-amber-300">
-                        Os seguintes registos têm {duplicateLabel} duplicados:
+                        Os seguintes registos têm {resolvedDuplicateLabel} duplicados:
                       </p>
                       <div className="max-h-20 overflow-auto bg-amber-100 dark:bg-amber-900/30 p-2 rounded text-xs font-mono">
                         {duplicates.slice(0, 10).map((d, i) => (

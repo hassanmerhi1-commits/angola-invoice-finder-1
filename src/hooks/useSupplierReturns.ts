@@ -145,7 +145,7 @@ export function useSupplierReturns(branchId?: string) {
             referenceType: 'adjustment',
             referenceId: returnDoc.id,
             referenceNumber: returnDoc.returnNumber,
-            notes: 'Cancelamento de devolução a fornecedor',
+            notes: 'Supplier return cancellation',
             createdBy: userId,
           });
         } catch {

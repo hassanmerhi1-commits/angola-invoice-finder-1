@@ -20,6 +20,7 @@ import { getInvoiceHash } from '@/lib/agtQRCode';
 import { printA4Invoice } from '@/lib/a4Invoice';
 import { getCompanySettings } from '@/lib/companySettings';
 import { toast } from 'sonner';
+import { useTranslation } from '@/i18n';
 
 interface ReceiptDialogProps {
   open: boolean;
@@ -39,6 +40,8 @@ export function ReceiptDialog({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
   const company = getCompanySettings();
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
   if (!sale || !branch) return null;
 
@@ -53,12 +56,12 @@ export function ReceiptDialog({
       if (result.success) {
         toast.success(
           result.method === 'serial' 
-            ? 'Recibo enviado para impressora térmica' 
-            : 'Janela de impressão aberta'
+            ? t.receiptUi.printThermalSent
+            : t.receiptUi.printWindowOpened
         );
       }
     } catch (error) {
-      toast.error('Erro ao imprimir: ' + (error as Error).message);
+      toast.error(`${t.receiptUi.printError}: ${(error as Error).message}`);
     } finally {
       setIsPrinting(false);
     }
@@ -68,12 +71,12 @@ export function ReceiptDialog({
     try {
       const success = await openCashDrawer();
       if (success) {
-        toast.success('Gaveta aberta');
+        toast.success(t.receiptUi.cashDrawerOpened);
       } else {
-        toast.info('Use o app desktop para abrir a gaveta');
+        toast.info(t.receiptUi.cashDrawerDesktopOnly);
       }
     } catch (error) {
-      toast.error('Erro ao abrir gaveta');
+      toast.error(t.receiptUi.cashDrawerError);
     }
   };
 
@@ -84,9 +87,9 @@ export function ReceiptDialog({
         showNotes: true,
         documentType: 'FR',
       });
-      toast.success('Factura A4 enviada para impressão');
+      toast.success(t.receiptUi.a4SentToPrint);
     } catch (error) {
-      toast.error('Erro ao imprimir factura A4');
+      toast.error(t.receiptUi.a4PrintError);
       console.error('A4 print error:', error);
     }
   };
@@ -102,7 +105,7 @@ export function ReceiptDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-green-600">
             <Check className="w-5 h-5" />
-            Venda Concluída
+              {t.receiptUi.saleCompleted}
           </DialogTitle>
         </DialogHeader>
 
@@ -126,7 +129,7 @@ export function ReceiptDialog({
 
           <div className="text-center">
             <p className="font-bold">{sale.invoiceNumber}</p>
-            <p>{new Date(sale.createdAt).toLocaleString('pt-AO')}</p>
+            <p>{new Date(sale.createdAt).toLocaleString(locale)}</p>
           </div>
 
           <Separator className="border-dashed" />
@@ -138,10 +141,10 @@ export function ReceiptDialog({
                 <div className="flex-1">
                   <p className="truncate">{item.productName}</p>
                   <p className="text-[10px] text-gray-600">
-                    {item.quantity} x {item.unitPrice.toLocaleString('pt-AO')}
+                    {item.quantity} x {item.unitPrice.toLocaleString(locale)}
                   </p>
                 </div>
-                <span>{item.subtotal.toLocaleString('pt-AO')}</span>
+                <span>{item.subtotal.toLocaleString(locale)}</span>
               </div>
             ))}
           </div>
@@ -150,16 +153,16 @@ export function ReceiptDialog({
 
           <div className="space-y-1">
             <div className="flex justify-between">
-              <span>Subtotal</span>
-              <span>{sale.subtotal.toLocaleString('pt-AO')} Kz</span>
+              <span>{t.common.subtotal}</span>
+              <span>{sale.subtotal.toLocaleString(locale)} Kz</span>
             </div>
             <div className="flex justify-between">
-              <span>IVA 14%</span>
-              <span>{sale.taxAmount.toLocaleString('pt-AO')} Kz</span>
+              <span>{t.pos.tax} 14%</span>
+              <span>{sale.taxAmount.toLocaleString(locale)} Kz</span>
             </div>
             <div className="flex justify-between font-bold text-sm">
               <span>TOTAL</span>
-              <span>{sale.total.toLocaleString('pt-AO')} Kz</span>
+              <span>{sale.total.toLocaleString(locale)} Kz</span>
             </div>
             {company.exchangeRateUSD && company.exchangeRateUSD > 0 && (
               <div className="flex justify-between text-[10px] text-muted-foreground">
@@ -179,17 +182,25 @@ export function ReceiptDialog({
 
           <div className="space-y-1">
             <div className="flex justify-between">
-              <span>Pagamento</span>
-              <span className="uppercase">{sale.paymentMethod}</span>
+              <span>{t.receiptUi.payment}</span>
+              <span className="uppercase">
+                {sale.paymentMethod === 'cash'
+                  ? t.pos.cash
+                  : sale.paymentMethod === 'card'
+                    ? t.pos.card
+                    : sale.paymentMethod === 'transfer'
+                      ? t.pos.transfer
+                      : sale.paymentMethod}
+              </span>
             </div>
             <div className="flex justify-between">
-              <span>Recebido</span>
-              <span>{sale.amountPaid.toLocaleString('pt-AO')} Kz</span>
+              <span>{t.receiptUi.received}</span>
+              <span>{sale.amountPaid.toLocaleString(locale)} Kz</span>
             </div>
             {sale.change > 0 && (
               <div className="flex justify-between font-bold">
-                <span>Troco</span>
-                <span>{sale.change.toLocaleString('pt-AO')} Kz</span>
+                <span>{t.checkoutUi.change}</span>
+                <span>{sale.change.toLocaleString(locale)} Kz</span>
               </div>
             )}
           </div>
@@ -200,13 +211,13 @@ export function ReceiptDialog({
               <div className="space-y-1">
                 {sale.customerNif && (
                   <div className="flex justify-between">
-                    <span>NIF Cliente</span>
+                    <span>{t.receiptUi.customerNif}</span>
                     <span>{sale.customerNif}</span>
                   </div>
                 )}
                 {sale.customerName && (
                   <div className="flex justify-between">
-                    <span>Cliente</span>
+                    <span>{t.receiptUi.customer}</span>
                     <span>{sale.customerName}</span>
                   </div>
                 )}
@@ -229,9 +240,9 @@ export function ReceiptDialog({
           <Separator className="border-dashed" />
 
           <div className="text-center text-[10px] space-y-1">
-            <p>Documento processado por {company.tradeName || company.name}</p>
-            <p>Software certificado AGT</p>
-            <p>{company.footerText || 'Obrigado pela preferência!'}</p>
+            <p>{t.receiptUi.processedBy.replace('{name}', company.tradeName || company.name)}</p>
+            <p>{t.receiptUi.agtCertified}</p>
+            <p>{company.footerText || t.receiptUi.thanksDefault}</p>
           </div>
         </div>
 
@@ -244,7 +255,7 @@ export function ReceiptDialog({
               disabled={isPrinting}
             >
               <Printer className="w-4 h-4 mr-2" />
-              {isPrinting ? 'Imprimindo...' : 'Térmico'}
+              {isPrinting ? t.receiptUi.printing : t.receiptUi.thermal}
             </Button>
             <Button variant="outline" onClick={handlePrintA4}>
               <FileOutput className="w-4 h-4 mr-2" />
@@ -253,7 +264,7 @@ export function ReceiptDialog({
           </div>
 
           <Button className="w-full" onClick={onNewSale}>
-            Nova Venda
+            {t.receiptUi.newSale}
           </Button>
 
           <div className="flex gap-2">
@@ -264,7 +275,7 @@ export function ReceiptDialog({
               onClick={() => setSettingsOpen(true)}
             >
               <Settings className="w-4 h-4 mr-2" />
-              Config. Impressora
+              {t.receiptUi.printerSettings}
             </Button>
           </div>
         </div>

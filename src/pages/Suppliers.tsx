@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from '@/i18n';
 import { useSuppliers } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
@@ -49,12 +50,12 @@ import { exportSuppliersToExcel, parseSuppliersFromExcel, validateImportedSuppli
 import { ExcelImportDialog } from '@/components/import/ExcelImportDialog';
 
 const PAYMENT_TERMS = [
-  { value: 'immediate', label: 'Pagamento Imediato' },
-  { value: '15_days', label: '15 Dias' },
-  { value: '30_days', label: '30 Dias' },
-  { value: '60_days', label: '60 Dias' },
-  { value: '90_days', label: '90 Dias' },
-];
+  { value: 'immediate', labelKey: 'immediate' },
+  { value: '15_days', labelKey: 'days15' },
+  { value: '30_days', labelKey: 'days30' },
+  { value: '60_days', labelKey: 'days60' },
+  { value: '90_days', labelKey: 'days90' },
+] as const;
 
 const initialFormData = {
   name: '',
@@ -72,6 +73,8 @@ const initialFormData = {
 
 export default function Suppliers() {
   const navigate = useNavigate();
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { suppliers, saveSupplier, deleteSupplier, createSupplier, refreshSuppliers } = useSuppliers();
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
@@ -115,8 +118,8 @@ export default function Suppliers() {
 
     if (!formData.name.trim() || !formData.nif.trim()) {
       toast({
-        title: 'Erro',
-        description: 'Nome e NIF são obrigatórios',
+        title: t.common.error,
+        description: t.suppliersUi.nameAndNifRequired,
         variant: 'destructive',
       });
       return;
@@ -130,22 +133,22 @@ export default function Suppliers() {
           updatedAt: new Date().toISOString(),
         });
         toast({
-          title: 'Fornecedor actualizado',
-          description: `${formData.name} foi actualizado com sucesso`,
+          title: t.suppliersUi.supplierUpdatedTitle,
+          description: t.suppliersUi.supplierUpdatedDesc.replace('{name}', formData.name),
         });
       } else {
         await createSupplier({ ...formData, balance: 0 });
         toast({
-          title: 'Fornecedor criado',
-          description: `${formData.name} foi criado com sucesso`,
+          title: t.suppliersUi.supplierCreatedTitle,
+          description: t.suppliersUi.supplierCreatedDesc.replace('{name}', formData.name),
         });
       }
 
       setDialogOpen(false);
     } catch (error: any) {
       toast({
-        title: 'Erro',
-        description: error?.message || 'Falha ao guardar fornecedor',
+        title: t.common.error,
+        description: error?.message || t.suppliersUi.saveFailed,
         variant: 'destructive',
       });
     }
@@ -155,8 +158,8 @@ export default function Suppliers() {
     if (selectedSupplier) {
       deleteSupplier(selectedSupplier.id);
       toast({
-        title: 'Fornecedor eliminado',
-        description: `${selectedSupplier.name} foi eliminado`,
+        title: t.suppliersUi.supplierDeletedTitle,
+        description: t.suppliersUi.supplierDeletedDesc.replace('{name}', selectedSupplier.name),
       });
       setDeleteDialogOpen(false);
       setSelectedSupplier(null);
@@ -196,14 +199,16 @@ export default function Suppliers() {
     if (result.data) {
       await refreshSuppliers();
       toast({
-        title: 'Importação concluída',
-        description: `${result.data.imported} importados${result.data.failed > 0 ? `, ${result.data.failed} falharam` : ''}`,
+        title: t.suppliersUi.importCompletedTitle,
+        description: t.suppliersUi.importCompletedDesc
+          .replace('{imported}', String(result.data.imported))
+          .replace('{failedPart}', result.data.failed > 0 ? t.suppliersUi.importFailedPart.replace('{count}', String(result.data.failed)) : ''),
       });
       return;
     }
 
     // API returned an error — do NOT silently fall back to localStorage
-    throw new Error(result.error || 'Falha ao importar fornecedores. Verifique a conexão ao servidor.');
+    throw new Error(result.error || t.suppliersUi.importFailedCheckConnection);
   }, [refreshSuppliers, toast]);
 
   // Get existing NIFs for duplicate detection
@@ -225,24 +230,24 @@ export default function Suppliers() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight">Fornecedores</h1>
+            <h1 className="text-2xl font-extrabold tracking-tight">{t.suppliersUi.title}</h1>
             <p className="text-sm text-muted-foreground font-medium">
-              Gestão de fornecedores e compras
+              {t.suppliersUi.subtitle}
             </p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" className="rounded-xl" onClick={() => setImportDialogOpen(true)}>
             <Upload className="w-4 h-4 mr-2" />
-            Importar Excel
+            {t.common.import}
           </Button>
           <Button variant="outline" className="rounded-xl" onClick={() => exportSuppliersToExcel(suppliers)}>
             <FileSpreadsheet className="w-4 h-4 mr-2" />
-            Exportar Excel
+            {t.common.export}
           </Button>
           <Button className="rounded-xl gradient-primary shadow-glow" onClick={() => handleOpenDialog()}>
             <Plus className="w-4 h-4 mr-2" />
-            Novo Fornecedor
+            {t.suppliersUi.newSupplierCta}
           </Button>
         </div>
       </div>
@@ -256,7 +261,7 @@ export default function Suppliers() {
                 <Truck className="w-6 h-6 text-primary-foreground" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Fornecedores</p>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t.suppliersUi.totalSuppliers}</p>
                 <p className="text-3xl font-extrabold tracking-tight">{suppliers.length}</p>
               </div>
             </div>
@@ -269,7 +274,7 @@ export default function Suppliers() {
                 <Truck className="w-6 h-6 text-success-foreground" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Activos</p>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t.common.active}</p>
                 <p className="text-3xl font-extrabold tracking-tight">
                   {suppliers.filter(s => s.isActive).length}
                 </p>
@@ -284,7 +289,7 @@ export default function Suppliers() {
                 <Truck className="w-6 h-6 text-warning-foreground" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Inactivos</p>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t.common.inactive}</p>
                 <p className="text-3xl font-extrabold tracking-tight">
                   {suppliers.filter(s => !s.isActive).length}
                 </p>
@@ -297,11 +302,11 @@ export default function Suppliers() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>Lista de Fornecedores</CardTitle>
+            <CardTitle>{t.suppliersUi.listTitle}</CardTitle>
             <div className="relative w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Pesquisar..."
+                placeholder={t.common.search}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
@@ -315,13 +320,13 @@ export default function Suppliers() {
               {suppliers.length === 0 ? (
                 <>
                   <Truck className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>Nenhum fornecedor cadastrado</p>
+                  <p>{t.suppliersUi.noneRegistered}</p>
                   <Button variant="link" onClick={() => handleOpenDialog()}>
-                    Adicionar primeiro fornecedor
+                    {t.suppliersUi.addFirstSupplier}
                   </Button>
                 </>
               ) : (
-                <p>Nenhum fornecedor encontrado para "{searchTerm}"</p>
+                <p>{t.suppliersUi.noneFoundFor.replace('{term}', searchTerm)}</p>
               )}
             </div>
           ) : (
@@ -369,11 +374,11 @@ export default function Suppliers() {
                       {PAYMENT_TERMS.find(t => t.value === supplier.paymentTerms)?.label}
                     </TableCell>
                     <TableCell className="text-right font-mono font-bold">
-                      {(supplier.balance || 0).toLocaleString('pt-AO', { minimumFractionDigits: 2 })}
+                      {(supplier.balance || 0).toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
                     </TableCell>
                     <TableCell>
                       <Badge variant={supplier.isActive ? 'default' : 'secondary'}>
-                        {supplier.isActive ? 'Activo' : 'Inactivo'}
+                        {supplier.isActive ? t.common.active : t.common.inactive}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
@@ -407,7 +412,7 @@ export default function Suppliers() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {selectedSupplier ? 'Editar Fornecedor' : 'Novo Fornecedor'}
+              {selectedSupplier ? t.suppliersUi.editSupplierTitle : t.suppliersUi.newSupplierTitle}
             </DialogTitle>
           </DialogHeader>
 
@@ -439,7 +444,7 @@ export default function Suppliers() {
                   id="contactPerson"
                   value={formData.contactPerson}
                   onChange={(e) => setFormData({ ...formData, contactPerson: e.target.value })}
-                  placeholder="Ex: João Silva"
+                  placeholder={t.suppliersUi.contactPersonPlaceholder}
                 />
               </div>
 
@@ -507,7 +512,7 @@ export default function Suppliers() {
                   <SelectContent>
                     {PAYMENT_TERMS.map((term) => (
                       <SelectItem key={term.value} value={term.value}>
-                        {term.label}
+                        {t.suppliersUi.paymentTerms[term.labelKey as keyof typeof t.suppliersUi.paymentTerms] as string}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -529,7 +534,7 @@ export default function Suppliers() {
                   id="notes"
                   value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder="Observações adicionais..."
+                  placeholder={t.suppliersUi.notesPlaceholder}
                   rows={3}
                 />
               </div>
@@ -537,10 +542,10 @@ export default function Suppliers() {
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                Cancelar
+                {t.common.cancel}
               </Button>
               <Button type="submit">
-                {selectedSupplier ? 'Guardar Alterações' : 'Criar Fornecedor'}
+                {selectedSupplier ? t.common.saveChanges : t.suppliersUi.createSupplier}
               </Button>
             </DialogFooter>
           </form>
@@ -570,8 +575,8 @@ export default function Suppliers() {
       <ExcelImportDialog<ExcelSupplier>
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
-        title="Importar Fornecedores"
-        description="Importe fornecedores a partir de um ficheiro Excel ou CSV"
+        title={t.suppliersUi.importTitle}
+        description={t.suppliersUi.importDesc}
         parseFile={parseSuppliersFromExcel}
         validateData={validateImportedSuppliers}
         onImport={handleImportSuppliers}

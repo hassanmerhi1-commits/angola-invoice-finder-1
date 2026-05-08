@@ -22,16 +22,16 @@ import AccountLedgerDialog from '@/components/accounting/AccountLedgerDialog';
 
 // Category tabs
 const CATEGORY_TABS = [
-  { key: 'clientes', label: 'Clientes', filter: (a: Account) => a.code.startsWith('3.1') || a.code.startsWith('31') },
-  { key: 'fornecedores', label: 'Fornecedores', filter: (a: Account) => a.code.startsWith('3.2') || a.code.startsWith('32') },
-  { key: 'caixa', label: 'Caixa', filter: (a: Account) => a.code.startsWith('4.1') || a.code.startsWith('41') },
-  { key: 'bancos', label: 'Bancos', filter: (a: Account) => a.code.startsWith('4.2') || a.code.startsWith('42') },
-  { key: 'ativos', label: 'Ativos', filter: (a: Account) => a.account_type === 'asset' },
-  { key: 'recebimentos', label: 'Recebimentos', filter: (a: Account) => a.account_type === 'revenue' },
-  { key: 'custos', label: 'Custos', filter: (a: Account) => a.account_type === 'expense' },
-  { key: 'funcionarios', label: 'Funcionários', filter: (a: Account) => a.code.startsWith('6.3') || a.code.startsWith('63') || a.code.startsWith('3.4') || a.code.startsWith('34') },
-  { key: 'capital', label: 'Capital', filter: (a: Account) => a.account_type === 'equity' },
-  { key: 'todos', label: 'Todos', filter: () => true },
+  { key: 'clientes', labelKey: 'tabCustomers', filter: (a: Account) => a.code.startsWith('3.1') || a.code.startsWith('31') },
+  { key: 'fornecedores', labelKey: 'tabSuppliers', filter: (a: Account) => a.code.startsWith('3.2') || a.code.startsWith('32') },
+  { key: 'caixa', labelKey: 'tabCash', filter: (a: Account) => a.code.startsWith('4.1') || a.code.startsWith('41') },
+  { key: 'bancos', labelKey: 'tabBanks', filter: (a: Account) => a.code.startsWith('4.2') || a.code.startsWith('42') },
+  { key: 'ativos', labelKey: 'tabAssets', filter: (a: Account) => a.account_type === 'asset' },
+  { key: 'recebimentos', labelKey: 'tabRevenue', filter: (a: Account) => a.account_type === 'revenue' },
+  { key: 'custos', labelKey: 'tabExpenses', filter: (a: Account) => a.account_type === 'expense' },
+  { key: 'funcionarios', labelKey: 'tabEmployees', filter: (a: Account) => a.code.startsWith('6.3') || a.code.startsWith('63') || a.code.startsWith('3.4') || a.code.startsWith('34') },
+  { key: 'capital', labelKey: 'tabEquity', filter: (a: Account) => a.account_type === 'equity' },
+  { key: 'todos', labelKey: 'tabAll', filter: () => true },
 ] as const;
 
 const ROOT_ACCOUNT_VALUE = '__root__';
@@ -60,7 +60,8 @@ const buildSuggestedChildCode = (parentCode: string, siblingCodes: string[]) => 
 };
 
 export default function ChartOfAccounts() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { accounts, isLoading, refetch, createAccount, updateAccount, deleteAccount } = useChartOfAccounts();
 
   const [activeTab, setActiveTab] = useState('todos');
@@ -202,32 +203,32 @@ export default function ChartOfAccounts() {
   };
 
   const handleDelete = async (account: Account) => {
-    if (!confirm(`Eliminar conta "${account.name}"?`)) return;
+    if (!confirm(t.chartOfAccountsUi.deleteConfirm.replace('{name}', account.name))) return;
     try {
       await deleteAccount(account.id);
-      toast.success('Conta eliminada');
+      toast.success(t.chartOfAccountsUi.deleted);
     } catch (error: any) {
-      toast.error(error.message || 'Erro ao eliminar');
+      toast.error(error.message || t.chartOfAccountsUi.deleteError);
     }
   };
 
   const handleSubmit = async () => {
     if (!formData.code || !formData.name) {
-      toast.error('Código e Nome são obrigatórios');
+      toast.error(t.chartOfAccountsUi.codeAndNameRequired);
       return;
     }
     setIsSubmitting(true);
     try {
       if (editingAccount) {
         await updateAccount(editingAccount.id, { ...formData, parent_id: formData.parent_id || null });
-        toast.success('Conta actualizada');
+        toast.success(t.chartOfAccountsUi.updated);
       } else {
         await createAccount({ ...formData, parent_id: formData.parent_id || null });
-        toast.success('Conta criada');
+        toast.success(t.chartOfAccountsUi.created);
       }
       setIsDialogOpen(false);
     } catch (error: any) {
-      toast.error(error.message || 'Erro ao guardar');
+      toast.error(error.message || t.chartOfAccountsUi.saveError);
     } finally {
       setIsSubmitting(false);
     }
@@ -245,41 +246,41 @@ export default function ChartOfAccounts() {
       {/* Action Toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b flex-wrap">
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={openCreateDialog}>
-          <Plus className="w-3 h-3" /> Nova Conta
+          <Plus className="w-3 h-3" /> {t.chartOfAccountsUi.newAccount}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedAccountInCurrentTab} onClick={() => selectedAccountInCurrentTab && openEditDialog(selectedAccountInCurrentTab)}>
-          <Edit2 className="w-3 h-3" /> Editar
+          <Edit2 className="w-3 h-3" /> {t.common.edit}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-destructive" disabled={!selectedAccountInCurrentTab || selectedAccountInCurrentTab.is_header}
           onClick={() => selectedAccountInCurrentTab && handleDelete(selectedAccountInCurrentTab)}>
-          <Trash2 className="w-3 h-3" /> Eliminar
+          <Trash2 className="w-3 h-3" /> {t.common.delete}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
         {/* Action buttons */}
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:hover:bg-blue-950/30" disabled={!selectedAccount}>
-          <FileText className="w-3 h-3" /> Fatura De Venda
+          <FileText className="w-3 h-3" /> {t.chartOfAccountsUi.salesInvoice}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-green-600 border-green-200 hover:bg-green-50 dark:border-green-800 dark:hover:bg-green-950/30" disabled={!selectedAccount}>
-          <Receipt className="w-3 h-3" /> Recibo
+          <Receipt className="w-3 h-3" /> {t.chartOfAccountsUi.receipt}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-orange-600 border-orange-200 hover:bg-orange-50 dark:border-orange-800 dark:hover:bg-orange-950/30" disabled={!selectedAccount}>
-          <Banknote className="w-3 h-3" /> Pagamento
+          <Banknote className="w-3 h-3" /> {t.chartOfAccountsUi.payment}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-purple-600 border-purple-200 hover:bg-purple-50 dark:border-purple-800 dark:hover:bg-purple-950/30" disabled={!selectedAccount}>
-          <CreditCard className="w-3 h-3" /> Nota De Crédito
+          <CreditCard className="w-3 h-3" /> {t.chartOfAccountsUi.creditNote}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1 bg-primary/10 text-primary border-primary/30 hover:bg-primary/20" disabled={!selectedAccount}
           onClick={() => selectedAccount && openLedger(selectedAccount)}>
-          <Eye className="w-3 h-3" /> Extracto
+          <Eye className="w-3 h-3" /> {t.chartOfAccountsUi.ledger}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={expandAll}>Expandir</Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={collapseAll}>Recolher</Button>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={expandAll}>{t.chartOfAccountsUi.expand}</Button>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={collapseAll}>{t.chartOfAccountsUi.collapse}</Button>
         <Button variant="outline" size="icon" className="h-7 w-7" onClick={refetch}><RefreshCw className="w-3 h-3" /></Button>
         <div className="flex-1" />
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-          <Input placeholder="Pesquisar conta..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-7 text-xs pl-7 w-48" />
+          <Input placeholder={t.chartOfAccountsUi.searchPlaceholder} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-7 text-xs pl-7 w-48" />
         </div>
       </div>
 
@@ -292,7 +293,7 @@ export default function ChartOfAccounts() {
           {CATEGORY_TABS.map(tab => (
             <TabsTrigger key={tab.key} value={tab.key}
               className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-primary/10 px-4 py-1.5">
-              {tab.label}
+              {t.chartOfAccountsUi[tab.labelKey as keyof typeof t.chartOfAccountsUi] as string}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -308,12 +309,12 @@ export default function ChartOfAccounts() {
           <table className="w-full text-xs">
             <thead className="bg-muted/60 border-b sticky top-0 z-10">
               <tr>
-                <th className="px-3 py-2 text-left font-semibold w-32">Nº de Conta</th>
-                <th className="px-3 py-2 text-left font-semibold">Nome</th>
-                <th className="px-3 py-2 text-center font-semibold w-16">Moeda</th>
-                <th className="px-3 py-2 text-right font-semibold w-28">Débito</th>
-                <th className="px-3 py-2 text-right font-semibold w-28">Crédito</th>
-                <th className="px-3 py-2 text-right font-semibold w-28">Balanço</th>
+                <th className="px-3 py-2 text-left font-semibold w-32">{t.chartOfAccountsUi.colAccountNo}</th>
+                <th className="px-3 py-2 text-left font-semibold">{t.common.name}</th>
+                <th className="px-3 py-2 text-center font-semibold w-16">{t.chartOfAccountsUi.colCurrency}</th>
+                <th className="px-3 py-2 text-right font-semibold w-28">{t.chartOfAccountsUi.colDebit}</th>
+                <th className="px-3 py-2 text-right font-semibold w-28">{t.chartOfAccountsUi.colCredit}</th>
+                <th className="px-3 py-2 text-right font-semibold w-28">{t.chartOfAccountsUi.colBalance}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -335,16 +336,19 @@ export default function ChartOfAccounts() {
             {/* Totals footer */}
             <tfoot className="bg-muted/80 border-t-2 border-primary/30">
               <tr className="font-bold text-xs">
-                <td className="px-3 py-2" colSpan={3}>TOTAL ({filteredAccounts.filter(a => !a.is_header).length} contas)</td>
-                <td className="px-3 py-2 text-right font-mono text-green-600">{totals.debit.toLocaleString('pt-AO')} Kz</td>
-                <td className="px-3 py-2 text-right font-mono text-red-600">{totals.credit.toLocaleString('pt-AO')} Kz</td>
-                <td className="px-3 py-2 text-right font-mono">{totals.balance.toLocaleString('pt-AO')} Kz</td>
+                <td className="px-3 py-2" colSpan={3}>
+                  {t.chartOfAccountsUi.totalAccounts
+                    .replace('{count}', String(filteredAccounts.filter(a => !a.is_header).length))}
+                </td>
+                <td className="px-3 py-2 text-right font-mono text-green-600">{totals.debit.toLocaleString(uiLocale)} Kz</td>
+                <td className="px-3 py-2 text-right font-mono text-red-600">{totals.credit.toLocaleString(uiLocale)} Kz</td>
+                <td className="px-3 py-2 text-right font-mono">{totals.balance.toLocaleString(uiLocale)} Kz</td>
               </tr>
             </tfoot>
           </table>
         )}
         {!isLoading && rootAccounts.length === 0 && (
-          <div className="text-center py-12 text-muted-foreground text-sm">Nenhuma conta encontrada</div>
+          <div className="text-center py-12 text-muted-foreground text-sm">{t.chartOfAccountsUi.empty}</div>
         )}
       </div>
 
@@ -352,8 +356,8 @@ export default function ChartOfAccounts() {
       {selectedAccount && (
         <div className="h-6 bg-primary/10 border-t flex items-center px-3 text-[10px] gap-4">
           <span className="font-bold">{selectedAccount.code} - {selectedAccount.name}</span>
-          <span>Tipo: {accountTypeLabels[selectedAccount.account_type].pt}</span>
-          <span>Saldo: {Number(selectedAccount.current_balance).toLocaleString('pt-AO')} Kz</span>
+          <span>{t.chartOfAccountsUi.typeLabel}: {accountTypeLabels[selectedAccount.account_type].pt}</span>
+          <span>{t.chartOfAccountsUi.balanceLabel}: {Number(selectedAccount.current_balance).toLocaleString(uiLocale)} Kz</span>
         </div>
       )}
 
@@ -361,38 +365,38 @@ export default function ChartOfAccounts() {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editingAccount ? 'Editar Conta' : 'Nova Conta'}</DialogTitle>
+            <DialogTitle>{editingAccount ? t.chartOfAccountsUi.editTitle : t.chartOfAccountsUi.newTitle}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Código *</Label>
-                <Input value={formData.code} onChange={e => setFormData(prev => ({ ...prev, code: e.target.value }))} placeholder="ex: 4.1.1" />
+                <Label>{t.chartOfAccountsUi.codeLabel}</Label>
+                <Input value={formData.code} onChange={e => setFormData(prev => ({ ...prev, code: e.target.value }))} placeholder={t.chartOfAccountsUi.codePlaceholder} />
               </div>
               <div className="space-y-2">
-                <Label>Tipo *</Label>
+                <Label>{t.chartOfAccountsUi.typeRequiredLabel}</Label>
                 <Select value={formData.account_type} onValueChange={v => handleTypeChange(v as AccountType)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="asset">Activo</SelectItem>
-                    <SelectItem value="liability">Passivo</SelectItem>
-                    <SelectItem value="equity">Capital Próprio</SelectItem>
-                    <SelectItem value="revenue">Receitas</SelectItem>
-                    <SelectItem value="expense">Gastos</SelectItem>
+                    <SelectItem value="asset">{t.chartOfAccountsUi.typeAsset}</SelectItem>
+                    <SelectItem value="liability">{t.chartOfAccountsUi.typeLiability}</SelectItem>
+                    <SelectItem value="equity">{t.chartOfAccountsUi.typeEquity}</SelectItem>
+                    <SelectItem value="revenue">{t.chartOfAccountsUi.typeRevenue}</SelectItem>
+                    <SelectItem value="expense">{t.chartOfAccountsUi.typeExpense}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Nome *</Label>
-              <Input value={formData.name} onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))} placeholder="ex: Caixa Principal" />
+              <Label>{t.chartOfAccountsUi.nameLabel}</Label>
+              <Input value={formData.name} onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))} placeholder={t.chartOfAccountsUi.namePlaceholder} />
             </div>
             <div className="space-y-2">
-              <Label>Descrição</Label>
+              <Label>{t.common.description}</Label>
               <Textarea value={formData.description} onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))} rows={2} />
             </div>
             <div className="space-y-2">
-              <Label>Conta Pai</Label>
+              <Label>{t.chartOfAccountsUi.parentAccountLabel}</Label>
               <Select value={formData.parent_id || ROOT_ACCOUNT_VALUE} onValueChange={v => {
                 const parentId = v === ROOT_ACCOUNT_VALUE ? '' : v;
                 const parent = accounts.find(a => a.id === parentId);
@@ -404,9 +408,9 @@ export default function ChartOfAccounts() {
                   account_nature: parent ? parent.account_nature : prev.account_nature,
                 }));
               }}>
-                <SelectTrigger><SelectValue placeholder="Nenhuma (Conta raiz)" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder={t.chartOfAccountsUi.rootPlaceholder} /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ROOT_ACCOUNT_VALUE}>Nenhuma (Conta raiz)</SelectItem>
+                  <SelectItem value={ROOT_ACCOUNT_VALUE}>{t.chartOfAccountsUi.rootOption}</SelectItem>
                   {accounts
                     .filter(a => a.is_active !== false && (!editingAccount || a.id !== editingAccount.id))
                     .sort((a, b) => a.code.localeCompare(b.code))
@@ -421,18 +425,18 @@ export default function ChartOfAccounts() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Saldo Inicial</Label>
+                <Label>{t.chartOfAccountsUi.openingBalanceLabel}</Label>
                 <Input type="number" value={formData.opening_balance} onChange={e => setFormData(prev => ({ ...prev, opening_balance: Number(e.target.value) }))} />
               </div>
               <div className="flex items-center gap-2 pt-8">
                 <Checkbox id="is_header" checked={formData.is_header} onCheckedChange={checked => setFormData(prev => ({ ...prev, is_header: !!checked }))} />
-                <Label htmlFor="is_header" className="text-sm">Conta Cabeçalho (grupo)</Label>
+                <Label htmlFor="is_header" className="text-sm">{t.chartOfAccountsUi.headerAccountLabel}</Label>
               </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSubmit} disabled={isSubmitting}>{isSubmitting ? 'A guardar...' : 'Guardar'}</Button>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={handleSubmit} disabled={isSubmitting}>{isSubmitting ? t.common.saving : t.common.save}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -457,6 +461,8 @@ interface AccountTreeRowProps {
 }
 
 function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDoubleClick, onViewLedger, selectedId, allAccounts }: AccountTreeRowProps) {
+  const { language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const isExpanded = expandedIds.has(account.id);
   const children = allAccounts.filter(a => a.parent_id === account.id);
   const hasChildren = children.length > 0;
@@ -494,13 +500,13 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
         <td className="px-3 py-1.5">{account.name}</td>
         <td className="px-3 py-1.5 text-center text-muted-foreground">AOA</td>
         <td className="px-3 py-1.5 text-right font-mono">
-          {balance >= 0 ? `${balance.toLocaleString('pt-AO')}` : ''}
+          {balance >= 0 ? `${balance.toLocaleString(uiLocale)}` : ''}
         </td>
         <td className="px-3 py-1.5 text-right font-mono">
-          {balance < 0 ? `${Math.abs(balance).toLocaleString('pt-AO')}` : ''}
+          {balance < 0 ? `${Math.abs(balance).toLocaleString(uiLocale)}` : ''}
         </td>
         <td className={cn("px-3 py-1.5 text-right font-mono font-medium", balance >= 0 ? "text-foreground" : "text-destructive")}>
-          {`${balance.toLocaleString('pt-AO')}`}
+          {`${balance.toLocaleString(uiLocale)}`}
         </td>
       </tr>
       {isExpanded && children.map(child => (

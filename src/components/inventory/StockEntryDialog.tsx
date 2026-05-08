@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react';
 import { format } from 'date-fns';
-import { pt } from 'date-fns/locale';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +24,7 @@ import { Product, Branch } from '@/types/erp';
 import { useBranches } from '@/hooks/useERP';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { useTranslation } from '@/i18n';
 
 interface EntryItem {
   productId: string;
@@ -53,6 +53,7 @@ export function StockEntryDialog({
   onApplyEntry,
 }: StockEntryDialogProps) {
   const { toast } = useToast();
+  const { t, language } = useTranslation();
   const { branches } = useBranches();
   const [searchTerm, setSearchTerm] = useState('');
   const [sourceBranch, setSourceBranch] = useState<string>('');
@@ -165,8 +166,8 @@ export function StockEntryDialog({
   const handleApply = () => {
     if (items.length === 0) {
       toast({
-        title: 'Sem itens',
-        description: 'Adicione pelo menos um item para dar entrada.',
+        title: t.stockEntryUi.noItemsTitle,
+        description: t.stockEntryUi.addAtLeastOne,
         variant: 'destructive',
       });
       return;
@@ -174,8 +175,8 @@ export function StockEntryDialog({
 
     if (!sourceBranch) {
       toast({
-        title: 'Filial de origem obrigatória',
-        description: 'Seleccione a filial de onde vem a mercadoria.',
+        title: t.stockEntryUi.sourceBranchRequiredTitle,
+        description: t.stockEntryUi.selectSourceBranchDesc,
         variant: 'destructive',
       });
       return;
@@ -191,8 +192,8 @@ export function StockEntryDialog({
     onApplyEntry(itemsWithFreight, sourceBranch, reference || entryNumber, notes);
     
     toast({
-      title: 'Entrada registada',
-      description: `${items.length} produtos adicionados ao stock.`,
+      title: t.stockEntryUi.entryRecorded,
+      description: t.stockEntryUi.productsAddedDesc.replace('{count}', String(items.length)),
     });
 
     // Reset form
@@ -206,8 +207,8 @@ export function StockEntryDialog({
     onOpenChange(false);
   };
 
-  const formatCurrency = (value: number) => 
-    new Intl.NumberFormat('pt-AO', { style: 'currency', currency: 'AOA' }).format(value);
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat(language === 'pt' ? 'pt-AO' : 'en-GB', { style: 'currency', currency: 'AOA' }).format(value);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -215,10 +216,10 @@ export function StockEntryDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PackagePlus className="w-5 h-5 text-primary" />
-            Ajustar Entrada - Recepção de Stock
+            {t.stockEntryUi.title}
           </DialogTitle>
           <DialogDescription>
-            Dê entrada de mercadoria transferida de outra filial para {currentBranch?.name || 'esta filial'}
+            {t.stockEntryUi.description.replace('{branch}', currentBranch?.name || t.stockEntryUi.thisBranch)}
           </DialogDescription>
         </DialogHeader>
 
@@ -226,17 +227,17 @@ export function StockEntryDialog({
           {/* Entry Info */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 border rounded-lg bg-muted/30">
             <div className="space-y-2">
-              <Label>Nº Entrada</Label>
+              <Label>{t.stockEntryUi.entryNo}</Label>
               <Input value={entryNumber} readOnly className="font-mono bg-muted" />
             </div>
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 <Building2 className="w-4 h-4" />
-                Filial de Origem *
+                {t.stockEntryUi.sourceBranch} *
               </Label>
               <Select value={sourceBranch} onValueChange={setSourceBranch}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Seleccionar origem..." />
+                  <SelectValue placeholder={t.stockEntryUi.selectSource} />
                 </SelectTrigger>
                 <SelectContent className="bg-background border shadow-lg z-50">
                   {sourceBranches.map(b => (
@@ -263,7 +264,7 @@ export function StockEntryDialog({
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Pesquisar por código, nome ou código de barras..."
+                placeholder={t.stockEntryUi.searchPlaceholder}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"

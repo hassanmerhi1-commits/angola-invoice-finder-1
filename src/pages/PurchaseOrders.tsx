@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from '@/i18n';
 import { useProducts, useSuppliers, usePurchaseOrders, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
@@ -38,20 +39,23 @@ import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 
-const STATUS_LABELS: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-  draft: { label: 'Rascunho', variant: 'outline' },
-  pending: { label: 'Pendente', variant: 'secondary' },
-  approved: { label: 'Aprovado', variant: 'default' },
-  received: { label: 'Recebido', variant: 'default' },
-  partial: { label: 'Parcial', variant: 'secondary' },
-  cancelled: { label: 'Cancelado', variant: 'destructive' },
-  awaiting_approval: { label: 'Aguarda Aprovação', variant: 'secondary' },
+const getStatusBadge = (t: any, status: string) => {
+  const labels: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
+    draft: { label: t.purchaseOrdersUi.statusDraft, variant: 'outline' },
+    pending: { label: t.purchaseOrdersUi.statusPending, variant: 'secondary' },
+    approved: { label: t.purchaseOrdersUi.statusApproved, variant: 'default' },
+    received: { label: t.purchaseOrdersUi.statusReceived, variant: 'default' },
+    partial: { label: t.purchaseOrdersUi.statusPartial, variant: 'secondary' },
+    cancelled: { label: t.purchaseOrdersUi.statusCancelled, variant: 'destructive' },
+    awaiting_approval: { label: t.purchaseOrdersUi.statusAwaitingApproval, variant: 'secondary' },
+  };
+  return labels[status] || { label: status, variant: 'outline' as const };
 };
-
-const getStatusBadge = (status: string) => STATUS_LABELS[status] || { label: status, variant: 'outline' as const };
 
 export default function PurchaseOrders() {
   const navigate = useNavigate();
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { branches, currentBranch } = useBranchContext();
   const { products } = useProducts(currentBranch?.id);
@@ -107,7 +111,7 @@ export default function PurchaseOrders() {
     
     if (!product) {
       toast({
-        title: 'Produto não encontrado',
+        title: t.purchaseOrdersUi.productNotFoundTitle,
         description: `Código: ${barcode}`,
         variant: 'destructive',
       });
@@ -169,7 +173,7 @@ export default function PurchaseOrders() {
         }
       } else {
         toast({
-          title: 'Produto não pertence à encomenda',
+          title: t.purchaseOrdersUi.productNotInOrderTitle,
           description: product.name,
           variant: 'destructive',
         });
@@ -206,8 +210,8 @@ export default function PurchaseOrders() {
   const handleAddItem = () => {
     if (!newItemForm.productId || newItemForm.quantity <= 0 || newItemForm.unitCost <= 0) {
       toast({
-        title: 'Erro',
-        description: 'Seleccione um produto, quantidade válida e preço do fornecedor',
+        title: t.common.error,
+        description: t.purchaseOrdersUi.selectProductQtyAndSupplierPrice,
         variant: 'destructive',
       });
       return;
@@ -219,8 +223,8 @@ export default function PurchaseOrders() {
     // Check if product already in list
     if (orderForm.items.find(i => i.productId === newItemForm.productId)) {
       toast({
-        title: 'Aviso',
-        description: 'Este produto já está na lista',
+        title: t.purchaseOrdersUi.warningTitle,
+        description: t.purchaseOrdersUi.productAlreadyInList,
         variant: 'destructive',
       });
       return;
@@ -251,8 +255,8 @@ export default function PurchaseOrders() {
   const handleCreateOrder = async () => {
     if (!orderForm.supplierId || !orderForm.branchId || orderForm.items.length === 0) {
       toast({
-        title: 'Erro',
-        description: 'Seleccione fornecedor, filial e adicione pelo menos um produto',
+        title: t.common.error,
+        description: t.purchaseOrdersUi.selectSupplierBranchAndAddProduct,
         variant: 'destructive',
       });
       return;
@@ -260,8 +264,8 @@ export default function PurchaseOrders() {
 
     if (orderForm.items.some(item => item.unitCost <= 0)) {
       toast({
-        title: 'Preço do fornecedor em falta',
-        description: 'Preencha o preço do fornecedor em todas as linhas',
+        title: t.purchaseOrdersUi.supplierPriceMissingTitle,
+        description: t.purchaseOrdersUi.fillSupplierPriceAllLines,
         variant: 'destructive',
       });
       return;
@@ -301,8 +305,8 @@ export default function PurchaseOrders() {
       );
 
       toast({
-        title: 'Encomenda criada',
-        description: 'A encomenda foi criada com sucesso',
+        title: t.purchaseOrdersUi.orderCreatedTitle,
+        description: t.purchaseOrdersUi.orderCreatedDesc,
       });
 
       setCreateDialogOpen(false);
@@ -318,8 +322,8 @@ export default function PurchaseOrders() {
       });
     } catch (error: any) {
       toast({
-        title: 'Falha ao criar encomenda',
-        description: error.message || 'Não foi possível criar a encomenda',
+        title: t.purchaseOrdersUi.createFailedTitle,
+        description: error.message || t.purchaseOrdersUi.createFailedDesc,
         variant: 'destructive',
       });
     }
@@ -334,8 +338,8 @@ export default function PurchaseOrders() {
       });
     } catch (error: any) {
       toast({
-        title: 'Falha ao aprovar',
-        description: error.message || 'Não foi possível aprovar a encomenda',
+        title: t.purchaseOrdersUi.approveFailedTitle,
+        description: error.message || t.purchaseOrdersUi.approveFailedDesc,
         variant: 'destructive',
       });
     }
@@ -364,8 +368,8 @@ export default function PurchaseOrders() {
       setSelectedOrder(null);
     } catch (error: any) {
       toast({
-        title: 'Falha na recepção',
-        description: error.message || 'Não foi possível receber a encomenda',
+        title: t.purchaseOrdersUi.receiveFailedTitle,
+        description: error.message || t.purchaseOrdersUi.receiveFailedDesc,
         variant: 'destructive',
       });
     }
@@ -527,8 +531,8 @@ export default function PurchaseOrders() {
                       {order.total.toLocaleString('pt-AO')} Kz
                     </TableCell>
                     <TableCell>
-                      <Badge variant={getStatusBadge(order.status).variant}>
-                        {getStatusBadge(order.status).label}
+                      <Badge variant={getStatusBadge(t, order.status).variant}>
+                        {getStatusBadge(t, order.status).label}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
@@ -613,7 +617,7 @@ export default function PurchaseOrders() {
                   onValueChange={(value) => setOrderForm({ ...orderForm, supplierId: value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccione o fornecedor" />
+                    <SelectValue placeholder={t.purchaseOrdersUi.selectSupplierPlaceholder} />
                   </SelectTrigger>
                   <SelectContent>
                     {activeSuppliers.map((supplier) => (
@@ -632,7 +636,7 @@ export default function PurchaseOrders() {
                   onValueChange={(value) => setOrderForm({ ...orderForm, branchId: value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccione a filial" />
+                    <SelectValue placeholder={t.purchaseOrdersUi.selectBranchPlaceholder} />
                   </SelectTrigger>
                   <SelectContent>
                     {branches.filter(b => b.id).map((branch) => (
@@ -658,7 +662,7 @@ export default function PurchaseOrders() {
                 <Textarea
                   value={orderForm.notes}
                   onChange={(e) => setOrderForm({ ...orderForm, notes: e.target.value })}
-                  placeholder="Observações..."
+                  placeholder={t.purchaseOrdersUi.notesPlaceholder}
                   rows={1}
                 />
               </div>
@@ -679,7 +683,7 @@ export default function PurchaseOrders() {
                 <div className="relative flex-1">
                   <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
-                    placeholder="Digite ou escaneie o código de barras..."
+                    placeholder={t.purchaseOrdersUi.barcodeInputPlaceholder}
                     value={barcodeInput}
                     onChange={(e) => setBarcodeInput(e.target.value)}
                     onFocus={() => setScanMode('create')}
@@ -714,7 +718,7 @@ export default function PurchaseOrders() {
                     }}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Seleccione o produto" />
+                      <SelectValue placeholder={t.purchaseOrdersUi.selectProductPlaceholder} />
                     </SelectTrigger>
                     <SelectContent>
                       {products.filter(p => p.isActive).map((product) => (
@@ -837,7 +841,7 @@ export default function PurchaseOrders() {
                 <div>
                   <Label>Descrição das Despesas</Label>
                   <Input
-                    placeholder="Ex: Seguro, documentação, taxas..."
+                    placeholder={t.purchaseOrdersUi.otherCostsDescriptionPlaceholder}
                     value={orderForm.otherCostsDescription}
                     onChange={(e) => setOrderForm({ ...orderForm, otherCostsDescription: e.target.value })}
                   />
@@ -907,8 +911,8 @@ export default function PurchaseOrders() {
                 </div>
                 <div>
                   <span className="text-muted-foreground">Estado:</span>
-                  <Badge variant={getStatusBadge(selectedOrder.status).variant} className="ml-2">
-                    {getStatusBadge(selectedOrder.status).label}
+                  <Badge variant={getStatusBadge(t, selectedOrder.status).variant} className="ml-2">
+                    {getStatusBadge(t, selectedOrder.status).label}
                   </Badge>
                 </div>
               </div>
@@ -1002,7 +1006,7 @@ export default function PurchaseOrders() {
                     <div className="relative flex-1">
                       <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                       <Input
-                        placeholder="Escaneie o código para confirmar recepção..."
+                        placeholder={t.purchaseOrdersUi.receiveScanPlaceholder}
                         value={barcodeInput}
                         onChange={(e) => setBarcodeInput(e.target.value)}
                         onFocus={() => setScanMode('receive')}

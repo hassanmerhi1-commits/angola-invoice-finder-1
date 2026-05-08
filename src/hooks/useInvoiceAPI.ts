@@ -16,8 +16,10 @@ import {
   MonthlyVATReport
 } from '@/lib/api/saft';
 import { toast } from 'sonner';
+import { useTranslation } from '@/i18n';
 
 export function useInvoiceAPI() {
+  const { t } = useTranslation();
   const [isLoading, setIsLoading] = useState(false);
   const [lastResponse, setLastResponse] = useState<CreateInvoiceResponse | null>(null);
 
@@ -33,9 +35,12 @@ export function useInvoiceAPI() {
       setLastResponse(response);
       
       if (response.status === 'error') {
-        toast.error(response.error || 'Erro ao criar factura');
+        toast.error(response.error || t.invoiceApiUi.createInvoiceFailed);
       } else {
-        toast.success(`Factura ${response.invoice_number} criada com sucesso`);
+        toast.success(
+          t.invoiceApiUi.invoiceCreated
+            .replace('{number}', String(response.invoice_number || ''))
+        );
       }
       
       return response;
@@ -49,13 +54,13 @@ export function useInvoiceAPI() {
   ): Promise<AGTValidationResponse> => {
     setIsLoading(true);
     try {
-      toast.info('A enviar para AGT...');
+      toast.info(t.invoiceApiUi.sendingToAgt);
       const response = await sendToAGT(invoiceId);
       
       if (response.status === 'validated') {
-        toast.success(`Factura validada pela AGT: ${response.agt_code}`);
+        toast.success(t.invoiceApiUi.agtValidated.replace('{code}', String(response.agt_code || '')));
       } else if (response.status === 'error') {
-        toast.error(response.error || 'Erro na validação AGT');
+        toast.error(response.error || t.invoiceApiUi.agtValidationError);
       }
       
       return response;
@@ -83,6 +88,7 @@ export function useInvoiceAPI() {
 }
 
 export function useSAFTAPI() {
+  const { t } = useTranslation();
   const [isLoading, setIsLoading] = useState(false);
   const [lastExport, setLastExport] = useState<SAFTExportResponse | null>(null);
 
@@ -91,7 +97,10 @@ export function useSAFTAPI() {
     try {
       const response = generateSAFT({ month, year, branchId });
       setLastExport(response);
-      toast.success(`SAF-T gerado: ${response.total_invoices} facturas`);
+      toast.success(
+        t.invoiceApiUi.saftGenerated
+          .replace('{count}', String(response.total_invoices))
+      );
       return response;
     } finally {
       setIsLoading(false);
@@ -100,7 +109,7 @@ export function useSAFTAPI() {
 
   const downloadSAFTFile = useCallback((response: SAFTExportResponse) => {
     downloadSAFT(response.xml, response.file);
-    toast.success(`Ficheiro ${response.file} transferido`);
+    toast.success(t.invoiceApiUi.fileDownloaded.replace('{file}', response.file));
   }, []);
 
   const getVATReport = useCallback((month: number, year: number, branchId?: string): MonthlyVATReport => {

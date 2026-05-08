@@ -20,16 +20,16 @@ import {
 import { Product, Branch } from '@/types/erp';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { useTranslation } from '@/i18n';
 
-// Exit reason codes
-const EXIT_REASONS = [
-  { value: 'expired', label: 'Validade Expirada', color: 'text-amber-600' },
-  { value: 'damaged', label: 'Dano / Avaria', color: 'text-red-600' },
-  { value: 'loss', label: 'Perda / Furto', color: 'text-destructive' },
-  { value: 'internal_use', label: 'Uso Interno', color: 'text-blue-600' },
-  { value: 'sample', label: 'Amostra / Oferta', color: 'text-purple-600' },
-  { value: 'donation', label: 'Doação', color: 'text-emerald-600' },
-];
+const exitReasonColors: Record<string, string> = {
+  expired: 'text-amber-600',
+  damaged: 'text-red-600',
+  loss: 'text-destructive',
+  internal_use: 'text-blue-600',
+  sample: 'text-purple-600',
+  donation: 'text-emerald-600',
+};
 
 interface ExitItem {
   productId: string;
@@ -57,12 +57,22 @@ export function StockExitDialog({
   onApplyExit,
 }: StockExitDialogProps) {
   const { toast } = useToast();
+  const { t, language } = useTranslation();
   const [searchTerm, setSearchTerm] = useState('');
   const [reason, setReason] = useState<string>('expired');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState<ExitItem[]>([]);
   const [newItemQty, setNewItemQty] = useState<Record<string, number>>({});
+
+  const EXIT_REASONS = useMemo(() => ([
+    { value: 'expired', label: t.stockExitUi.reasonExpired, color: exitReasonColors.expired },
+    { value: 'damaged', label: t.stockExitUi.reasonDamaged, color: exitReasonColors.damaged },
+    { value: 'loss', label: t.stockExitUi.reasonLoss, color: exitReasonColors.loss },
+    { value: 'internal_use', label: t.stockExitUi.reasonInternalUse, color: exitReasonColors.internal_use },
+    { value: 'sample', label: t.stockExitUi.reasonSample, color: exitReasonColors.sample },
+    { value: 'donation', label: t.stockExitUi.reasonDonation, color: exitReasonColors.donation },
+  ]), [t]);
 
   // Search products
   const filteredProducts = useMemo(() => {
@@ -149,8 +159,8 @@ export function StockExitDialog({
   const handleApply = () => {
     if (items.length === 0) {
       toast({
-        title: 'Sem itens',
-        description: 'Adicione pelo menos um item para dar saída.',
+        title: t.stockExitUi.noItemsTitle,
+        description: t.stockExitUi.addAtLeastOne,
         variant: 'destructive',
       });
       return;
@@ -160,8 +170,8 @@ export function StockExitDialog({
     onApplyExit(items, reasonLabel, notes, reference || exitNumber);
     
     toast({
-      title: 'Saída registada',
-      description: `${items.length} produtos removidos do stock.`,
+      title: t.stockExitUi.exitRecorded,
+      description: t.stockExitUi.productsRemovedDesc.replace('{count}', String(items.length)),
     });
 
     // Reset form
@@ -172,8 +182,8 @@ export function StockExitDialog({
     onOpenChange(false);
   };
 
-  const formatCurrency = (value: number) => 
-    new Intl.NumberFormat('pt-AO', { style: 'currency', currency: 'AOA' }).format(value);
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat(language === 'pt' ? 'pt-AO' : 'en-GB', { style: 'currency', currency: 'AOA' }).format(value);
 
   const selectedReason = EXIT_REASONS.find(r => r.value === reason);
 
@@ -183,10 +193,10 @@ export function StockExitDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PackageMinus className="w-5 h-5 text-destructive" />
-            Ajustar Saída - Remoção de Stock
+            {t.stockExitUi.title}
           </DialogTitle>
           <DialogDescription>
-            Remova mercadoria do stock por expiração, dano, perda ou uso interno
+            {t.stockExitUi.description}
           </DialogDescription>
         </DialogHeader>
 
@@ -194,13 +204,13 @@ export function StockExitDialog({
           {/* Exit Info */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 border rounded-lg bg-muted/30">
             <div className="space-y-2">
-              <Label>Nº Saída</Label>
+              <Label>{t.stockExitUi.exitNo}</Label>
               <Input value={exitNumber} readOnly className="font-mono bg-muted" />
             </div>
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4" />
-                Motivo da Saída *
+                {t.stockExitUi.exitReason} *
               </Label>
               <Select value={reason} onValueChange={setReason}>
                 <SelectTrigger>
@@ -216,7 +226,7 @@ export function StockExitDialog({
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Referência</Label>
+              <Label>{t.stockExitUi.reference}</Label>
               <Input 
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
@@ -230,7 +240,7 @@ export function StockExitDialog({
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                Saídas por perda/furto serão registadas no histórico de auditoria para investigação.
+                {t.stockExitUi.lossWarning}
               </AlertDescription>
             </Alert>
           )}
@@ -241,7 +251,7 @@ export function StockExitDialog({
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Pesquisar por código, nome ou código de barras..."
+                placeholder={t.stockExitUi.searchPlaceholder}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
@@ -374,7 +384,7 @@ export function StockExitDialog({
             <Textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Descreva o motivo detalhado desta saída..."
+              placeholder={t.stockExitUi.detailedReasonPlaceholder}
               rows={2}
             />
           </div>

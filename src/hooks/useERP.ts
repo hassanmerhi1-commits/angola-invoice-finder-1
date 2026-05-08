@@ -11,6 +11,7 @@ import { api, setAuthToken } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
+import { useTranslation } from '@/i18n';
 
 // Helper: only use local demo storage in explicit demo mode.
 // In real web localhost/API mode, never silently revive stale browser data.
@@ -36,6 +37,7 @@ async function apiFallback<T>(apiFn: () => Promise<{ data?: T; error?: string }>
 // BRANCHES
 // ============================================
 export function useBranches() {
+  const { t } = useTranslation();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [currentBranch, setCurrentBranchState] = useState<Branch | null>(null);
 
@@ -380,7 +382,7 @@ export function useSales(branchId?: string) {
 
     if (!apiResult.data) {
       console.error('[POS] API business error:', apiResult.error);
-      throw new Error(apiResult.error || 'Falha ao processar venda no servidor');
+      throw new Error(apiResult.error || t.erpUi.processSaleFailed);
     }
 
     const sale: Sale = {
@@ -585,7 +587,7 @@ export function useAuth() {
         const user: User = {
           id: normalizedUsername === 'admin' ? 'user-admin' : 'user-caixa1',
           email: `${normalizedUsername}@kwanzaerp.ao`,
-          name: normalizedUsername === 'admin' ? 'Administrador' : 'Caixa 1',
+          name: normalizedUsername === 'admin' ? 'Admin' : 'Cashier 1',
           username: normalizedUsername,
           role: normalizedUsername === 'admin' ? 'admin' : 'cashier',
           branchId: mainBranchId,
@@ -747,6 +749,7 @@ export function useClients() {
 // STOCK TRANSFERS
 // ============================================
 export function useStockTransfers(branchId?: string) {
+  const { t } = useTranslation();
   const [transfers, setTransfers] = useState<StockTransfer[]>([]);
 
   const refreshTransfers = useCallback(async () => {
@@ -768,7 +771,7 @@ export function useStockTransfers(branchId?: string) {
       fromBranchId, toBranchId, items, requestedBy, notes,
     });
     if (!result.data) {
-      throw new Error(result.error || 'Falha ao criar transferência');
+      throw new Error(result.error || t.erpUi.createTransferFailed);
     }
     await refreshTransfers();
     return mapStockTransfer(result.data);
@@ -776,7 +779,7 @@ export function useStockTransfers(branchId?: string) {
 
   const approveTransfer = useCallback(async (transferId: string, userId: string) => {
     const result = await api.stockTransfers.approve(transferId, userId);
-    if (!result.data) throw new Error(result.error || 'Falha ao aprovar transferência');
+    if (!result.data) throw new Error(result.error || t.erpUi.approveTransferFailed);
     await refreshTransfers();
     // Notify product listeners to refresh (source branch stock changed)
     window.dispatchEvent(new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, { detail: {} }));
@@ -784,7 +787,7 @@ export function useStockTransfers(branchId?: string) {
 
   const receiveTransfer = useCallback(async (transferId: string, userId: string, receivedQuantities?: Record<string, number>) => {
     const result = await api.stockTransfers.receive(transferId, userId, receivedQuantities);
-    if (!result.data) throw new Error(result.error || 'Falha ao receber transferência');
+    if (!result.data) throw new Error(result.error || t.erpUi.receiveTransferFailed);
     await refreshTransfers();
     // Notify product listeners to refresh (destination branch now has new/updated products)
     window.dispatchEvent(new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, { detail: {} }));
@@ -918,6 +921,7 @@ function mapPurchaseOrder(order: any): PurchaseOrder {
 }
 
 export function usePurchaseOrders(branchId?: string) {
+  const { t } = useTranslation();
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
 
   const refreshOrders = useCallback(async () => {
@@ -940,7 +944,7 @@ export function usePurchaseOrders(branchId?: string) {
       freightCost, otherCosts, otherCostsDescription,
     });
     if (!result.data) {
-      throw new Error(result.error || 'Falha ao criar encomenda');
+      throw new Error(result.error || t.erpUi.createPurchaseOrderFailed);
     }
     await refreshOrders();
     return mapPurchaseOrder(result.data);
@@ -949,14 +953,14 @@ export function usePurchaseOrders(branchId?: string) {
   const approveOrder = useCallback(async (orderId: string, userId: string) => {
     const result = await api.purchaseOrders.approve(orderId, userId);
     if (!result.data) {
-      throw new Error(result.error || 'Falha ao aprovar encomenda');
+      throw new Error(result.error || t.erpUi.approvePurchaseOrderFailed);
     }
     await refreshOrders();
   }, [refreshOrders]);
 
   const receiveOrder = useCallback(async (orderId: string, userId: string, receivedQuantities: Record<string, number>) => {
     const result = await api.purchaseOrders.receive(orderId, userId, receivedQuantities);
-    if (!result.data) throw new Error(result.error || 'Falha ao receber encomenda');
+    if (!result.data) throw new Error(result.error || t.erpUi.receivePurchaseOrderFailed);
     await refreshOrders();
     window.dispatchEvent(new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, { detail: { branchId } }));
   }, [branchId, refreshOrders]);

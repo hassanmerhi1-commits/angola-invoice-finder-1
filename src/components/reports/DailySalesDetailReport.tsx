@@ -33,6 +33,7 @@ import {
 import { Printer, FileDown, Eye, TrendingUp, DollarSign, Package, Filter, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
+import { useTranslation } from '@/i18n';
 
 interface SaleItemDetail extends SaleItem {
   cost: number;
@@ -60,6 +61,8 @@ export function DailySalesDetailReport({
   branchId,
   branchName 
 }: DailySalesDetailReportProps) {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { currentBranch } = useBranchContext();
   const { sales } = useSales(branchId || currentBranch?.id);
   const { products } = useProducts(branchId || currentBranch?.id);
@@ -314,8 +317,8 @@ export function DailySalesDetailReport({
       <body>
         ${printContent.innerHTML}
         <div class="footer">
-          <p>Gerado em ${format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: pt })}</p>
-          <p>NEXOR ERP - Sistema de Gestão Empresarial</p>
+          <p>${t.reportsUi.generatedAt.replace('{date}', format(new Date(), "dd/MM/yyyy HH:mm", { locale: pt }))}</p>
+          <p>${t.reportsUi.systemName}</p>
         </div>
       </body>
       </html>
@@ -345,7 +348,7 @@ export function DailySalesDetailReport({
       <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
-            <span>Relatório Detalhado de Vendas</span>
+            <span>{t.reportsUi.dailySalesDetailTitle}</span>
             <div className="flex gap-2">
               <Button 
                 variant={showFilters ? "default" : "outline"} 
@@ -353,18 +356,18 @@ export function DailySalesDetailReport({
                 onClick={() => setShowFilters(!showFilters)}
               >
                 <Filter className="w-4 h-4 mr-2" />
-                Filtros
+                {t.common.filters}
                 {hasActiveFilters && <Badge variant="secondary" className="ml-1 text-xs">{
                   [ivaFilter !== 'all', categoryFilter !== 'all', skuFilter !== ''].filter(Boolean).length
                 }</Badge>}
               </Button>
               <Button variant="outline" size="sm" onClick={handlePrint}>
                 <Printer className="w-4 h-4 mr-2" />
-                Imprimir
+                {t.reportsUi.print}
               </Button>
               <Button variant="outline" size="sm" onClick={handleSavePDF}>
                 <FileDown className="w-4 h-4 mr-2" />
-                Guardar PDF
+                {t.reportsUi.savePdf}
               </Button>
             </div>
           </DialogTitle>
@@ -409,13 +412,13 @@ export function DailySalesDetailReport({
 
                 {/* Category Filter */}
                 <div className="space-y-2">
-                  <Label htmlFor="category-filter">Categoria / Família</Label>
+                  <Label htmlFor="category-filter">{t.reportsUi.categoryFamily}</Label>
                   <Select value={categoryFilter} onValueChange={setCategoryFilter}>
                     <SelectTrigger id="category-filter">
-                      <SelectValue placeholder="Todas as categorias" />
+                      <SelectValue placeholder={t.reportsUi.allCategories} />
                     </SelectTrigger>
                     <SelectContent className="bg-background">
-                      <SelectItem value="all">Todas as categorias</SelectItem>
+                      <SelectItem value="all">{t.reportsUi.allCategories}</SelectItem>
                       {uniqueCategories.map(cat => (
                         <SelectItem key={cat} value={cat}>
                           {cat}
@@ -427,10 +430,10 @@ export function DailySalesDetailReport({
 
                 {/* SKU/Product Filter */}
                 <div className="space-y-2">
-                  <Label htmlFor="sku-filter">Código / Produto</Label>
+                  <Label htmlFor="sku-filter">{t.reportsUi.codeProduct}</Label>
                   <Input
                     id="sku-filter"
-                    placeholder="Pesquisar por código ou nome..."
+                    placeholder={t.reportsUi.searchByCodeOrName}
                     value={skuFilter}
                     onChange={(e) => setSkuFilter(e.target.value)}
                   />
@@ -440,7 +443,7 @@ export function DailySalesDetailReport({
               {/* Active Filters Summary */}
               {hasActiveFilters && (
                 <div className="mt-4 pt-3 border-t flex items-center gap-2 flex-wrap">
-                  <span className="text-sm text-muted-foreground">Filtros activos:</span>
+                  <span className="text-sm text-muted-foreground">{t.reportsUi.activeFilters}</span>
                   {ivaFilter !== 'all' && (
                     <Badge variant="secondary" className="gap-1">
                       IVA: {ivaFilter}%
@@ -466,7 +469,7 @@ export function DailySalesDetailReport({
                     </Badge>
                   )}
                   <span className="text-sm text-muted-foreground ml-auto">
-                    {aggregatedItems.length} produtos encontrados
+                    {t.reportsUi.productsFound.replace('{count}', String(aggregatedItems.length))}
                   </span>
                 </div>
               )}
@@ -676,12 +679,12 @@ export function DailySalesDetailReport({
                     <TableRow key={sale.id}>
                       <TableCell className="font-mono">{sale.invoiceNumber}</TableCell>
                       <TableCell>{format(new Date(sale.createdAt), 'HH:mm')}</TableCell>
-                      <TableCell>{sale.customerName || 'Consumidor Final'}</TableCell>
+                      <TableCell>{sale.customerName || t.reportsUi.finalConsumer}</TableCell>
                       <TableCell>
                         <Badge variant="outline">
-                          {sale.paymentMethod === 'cash' ? 'Numerário' :
-                           sale.paymentMethod === 'card' ? 'Cartão' :
-                           sale.paymentMethod === 'transfer' ? 'Transferência' : sale.paymentMethod}
+                          {sale.paymentMethod === 'cash' ? t.chartsUi.methodCash :
+                           sale.paymentMethod === 'card' ? t.chartsUi.methodCard :
+                           sale.paymentMethod === 'transfer' ? t.chartsUi.methodTransfer : sale.paymentMethod}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">{formatCurrency(saleSubtotal)}</TableCell>
@@ -693,7 +696,7 @@ export function DailySalesDetailReport({
               </TableBody>
               <TableFooter>
                 <TableRow>
-                  <TableCell colSpan={4} className="font-bold">TOTAL</TableCell>
+                  <TableCell colSpan={4} className="font-bold">{t.common.total}</TableCell>
                   <TableCell className="text-right font-bold">{formatCurrency(totals.subtotalWithoutIVA)}</TableCell>
                   <TableCell className="text-right font-bold">{formatCurrency(totals.ivaAmount)}</TableCell>
                   <TableCell className="text-right font-bold">{formatCurrency(totals.subtotalWithIVA)}</TableCell>

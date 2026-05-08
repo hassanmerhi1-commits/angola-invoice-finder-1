@@ -286,30 +286,30 @@ export function useUserTransactionLog() {
       log({
         category: 'user',
         action: 'user_login',
-        entityType: 'Utilizador',
+        entityType: 'User',
         entityId: userId,
         entityName: userName,
-        description: `${userName} iniciou sessão`,
+        description: `${userName} signed in`,
       });
     },
     logUserLogout: (userId: string, userName: string) => {
       log({
         category: 'user',
         action: 'user_logout',
-        entityType: 'Utilizador',
+        entityType: 'User',
         entityId: userId,
         entityName: userName,
-        description: `${userName} terminou sessão`,
+        description: `${userName} signed out`,
       });
     },
     logUserCreated: (userId: string, userName: string, role: string) => {
       log({
         category: 'user',
         action: 'user_created',
-        entityType: 'Utilizador',
+        entityType: 'User',
         entityId: userId,
         entityName: userName,
-        description: `Utilizador ${userName} criado com função ${role}`,
+        description: `User ${userName} created with role ${role}`,
         details: { role },
       });
     },
@@ -324,40 +324,40 @@ export function useTransferTransactionLog() {
       log({
         category: 'stock_transfer',
         action: 'transfer_requested',
-        entityType: 'Transferência',
+        entityType: 'Transfer',
         entityId: transferId,
         entityNumber: transferNumber,
-        description: `Transferência ${transferNumber} solicitada de ${fromBranch} para ${toBranch}`,
+        description: `Transfer ${transferNumber} requested from ${fromBranch} to ${toBranch}`,
       });
     },
     logTransferApproved: (transferId: string, transferNumber: string) => {
       log({
         category: 'stock_transfer',
         action: 'transfer_approved',
-        entityType: 'Transferência',
+        entityType: 'Transfer',
         entityId: transferId,
         entityNumber: transferNumber,
-        description: `Transferência ${transferNumber} aprovada`,
+        description: `Transfer ${transferNumber} approved`,
       });
     },
     logTransferReceived: (transferId: string, transferNumber: string) => {
       log({
         category: 'stock_transfer',
         action: 'transfer_received',
-        entityType: 'Transferência',
+        entityType: 'Transfer',
         entityId: transferId,
         entityNumber: transferNumber,
-        description: `Transferência ${transferNumber} recebida`,
+        description: `Transfer ${transferNumber} received`,
       });
     },
     logTransferCancelled: (transferId: string, transferNumber: string, reason?: string) => {
       log({
         category: 'stock_transfer',
         action: 'transfer_cancelled',
-        entityType: 'Transferência',
+        entityType: 'Transfer',
         entityId: transferId,
         entityNumber: transferNumber,
-        description: `Transferência ${transferNumber} cancelada${reason ? `: ${reason}` : ''}`,
+        description: `Transfer ${transferNumber} cancelled${reason ? `: ${reason}` : ''}`,
       });
     },
   };

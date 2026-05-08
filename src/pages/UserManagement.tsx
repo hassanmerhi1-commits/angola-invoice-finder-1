@@ -520,7 +520,7 @@ export default function UserManagement() {
                 id="name"
                 value={formData.name}
                 onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                placeholder="João Silva"
+                placeholder={t.userManagementUi.fullNamePlaceholder}
               />
             </div>
 

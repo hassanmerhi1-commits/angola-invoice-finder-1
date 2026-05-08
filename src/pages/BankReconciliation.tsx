@@ -4,7 +4,8 @@ import { useAuth } from '@/hooks/useERP';
 import { getBankAccounts, getBankTransactions } from '@/lib/accountingStorage';
 import { BankAccount, BankTransaction } from '@/types/accounting';
 import { format } from 'date-fns';
-import { pt } from 'date-fns/locale';
+import { enUS, pt } from 'date-fns/locale';
+import { useTranslation } from '@/i18n';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -61,9 +62,13 @@ const RECON_STORAGE_KEY = 'kwanzaerp_bank_reconciliations';
 // ==================== COMPONENT ====================
 
 export default function BankReconciliation() {
+  const { t, language } = useTranslation();
   const { currentBranch } = useBranchContext();
   const { user } = useAuth();
   const { toast } = useToast();
+
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const dfLocale = language === 'pt' ? pt : enUS;
 
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [statementRows, setStatementRows] = useState<BankStatementRow[]>([]);
@@ -137,10 +142,11 @@ export default function BankReconciliation() {
 
         const rows: BankStatementRow[] = json.map((row: any, i: number) => {
           const rawDate = row['Data'] || row['Date'] || row['data'] || row['date'] || '';
-          const desc = row['Descrição'] || row['Description'] || row['Descricao'] || row['description'] || row['Movimento'] || '';
-          const ref = row['Referência'] || row['Reference'] || row['Ref'] || row['ref'] || '';
-          const credit = parseFloat(row['Crédito'] || row['Credit'] || row['credito'] || row['credit'] || 0);
-          const debit = parseFloat(row['Débito'] || row['Debit'] || row['debito'] || row['debit'] || 0);
+          // NOTE: keep Portuguese column names here for import compatibility.
+          const desc = row['Description'] || row['Descricao'] || row['description'] || row['Movimento'] || row['Desc'] || row['desc'] || row['Descricao/Description'] || row['description/descricao'] || row['description/Descrição'] || row['Descrição'] || '';
+          const ref = row['Reference'] || row['Ref'] || row['ref'] || row['Referencia'] || row['reference'] || row['Referência'] || '';
+          const credit = parseFloat(row['Credit'] || row['credito'] || row['credit'] || row['Crédito'] || 0);
+          const debit = parseFloat(row['Debit'] || row['debito'] || row['debit'] || row['Débito'] || 0);
           const amount = row['Valor'] || row['Amount'] || row['amount'];
           const balance = parseFloat(row['Saldo'] || row['Balance'] || row['saldo'] || row['balance'] || 0);
 
@@ -180,14 +186,21 @@ export default function BankReconciliation() {
         });
 
         setStatementRows(rows);
-        toast({ title: 'Extracto importado', description: `${rows.length} linhas carregadas` });
+        toast({
+          title: t.bankReconciliationUi.statementImported,
+          description: t.bankReconciliationUi.linesLoaded.replace('{count}', String(rows.length)),
+        });
         setImportDialogOpen(false);
       } catch (err) {
-        toast({ title: 'Erro na importação', description: 'Formato do ficheiro não reconhecido', variant: 'destructive' });
+        toast({
+          title: t.bankReconciliationUi.importError,
+          description: t.bankReconciliationUi.fileFormatNotRecognized,
+          variant: 'destructive',
+        });
       }
     };
     reader.readAsArrayBuffer(file);
-  }, [toast]);
+  }, [toast, t]);
 
   // ==================== AUTO-MATCH ====================
 
@@ -226,8 +239,11 @@ export default function BankReconciliation() {
     });
 
     setStatementRows(updated);
-    toast({ title: 'Auto-conciliação', description: `${matchCount} transacções conciliadas automaticamente` });
-  }, [accountTransactions, statementRows, matchedTxnIds, toast]);
+    toast({
+      title: t.bankReconciliationUi.autoReconciliation,
+      description: t.bankReconciliationUi.autoReconciledCount.replace('{count}', String(matchCount)),
+    });
+  }, [accountTransactions, statementRows, matchedTxnIds, toast, t]);
 
   // ==================== MANUAL MATCH ====================
 
@@ -238,7 +254,7 @@ export default function BankReconciliation() {
       r.id === row.id ? { ...r, matched: true, matchedTransactionId: txnId, matchConfidence: 100 } : r
     ));
     setManualMatchRow(null);
-    toast({ title: 'Conciliado', description: 'Transacção conciliada manualmente' });
+    toast({ title: t.bankReconciliationUi.reconciled, description: t.bankReconciliationUi.manuallyReconciled });
   };
 
   const handleUnmatch = (rowId: string) => {
@@ -271,18 +287,18 @@ export default function BankReconciliation() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Reconciliação Bancária</h1>
-          <p className="text-muted-foreground">Compare extractos bancários com transacções registadas</p>
+          <h1 className="text-2xl font-bold">{t.bankReconciliationUi.title}</h1>
+          <p className="text-muted-foreground">{t.bankReconciliationUi.subtitle}</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setImportDialogOpen(true)} className="gap-2">
             <Upload className="w-4 h-4" />
-            Importar Extracto
+            {t.bankReconciliationUi.importStatement}
           </Button>
           {statementRows.length > 0 && (
             <Button onClick={autoMatch} className="gap-2">
               <ArrowRightLeft className="w-4 h-4" />
-              Auto-Conciliar
+              {t.bankReconciliationUi.autoReconcile}
             </Button>
           )}
         </div>
@@ -293,10 +309,10 @@ export default function BankReconciliation() {
         <CardContent className="pt-4">
           <div className="flex flex-col sm:flex-row gap-4 items-end">
             <div className="flex-1 space-y-2">
-              <Label>Conta Bancária</Label>
+              <Label>{t.bankReconciliationUi.bankAccount}</Label>
               <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecionar conta..." />
+                  <SelectValue placeholder={t.bankReconciliationUi.selectAccountPlaceholder} />
                 </SelectTrigger>
                 <SelectContent>
                   {accounts.map(acc => (
@@ -308,11 +324,11 @@ export default function BankReconciliation() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Data Início</Label>
+              <Label>{t.bankReconciliationUi.dateFrom}</Label>
               <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
             </div>
             <div className="space-y-2">
-              <Label>Data Fim</Label>
+              <Label>{t.bankReconciliationUi.dateTo}</Label>
               <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
             </div>
           </div>
@@ -326,38 +342,38 @@ export default function BankReconciliation() {
             <CardContent className="pt-4 text-center">
               <FileSpreadsheet className="w-6 h-6 mx-auto text-muted-foreground mb-1" />
               <div className="text-2xl font-bold">{summary.statementRows}</div>
-              <div className="text-xs text-muted-foreground">Linhas Extracto</div>
+              <div className="text-xs text-muted-foreground">{t.bankReconciliationUi.statementLines}</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 text-center">
               <CheckCircle2 className="w-6 h-6 mx-auto text-emerald-500 mb-1" />
               <div className="text-2xl font-bold text-emerald-600">{summary.matched}</div>
-              <div className="text-xs text-muted-foreground">Conciliadas</div>
+              <div className="text-xs text-muted-foreground">{t.bankReconciliationUi.matched}</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 text-center">
               <AlertTriangle className="w-6 h-6 mx-auto text-orange-500 mb-1" />
               <div className="text-2xl font-bold text-orange-600">{summary.unmatched}</div>
-              <div className="text-xs text-muted-foreground">Pendentes</div>
+              <div className="text-xs text-muted-foreground">{t.bankReconciliationUi.pending}</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 text-center">
               <XCircle className="w-6 h-6 mx-auto text-destructive mb-1" />
               <div className="text-2xl font-bold">{summary.systemOnly}</div>
-              <div className="text-xs text-muted-foreground">Só no Sistema</div>
+              <div className="text-xs text-muted-foreground">{t.bankReconciliationUi.systemOnly}</div>
             </CardContent>
           </Card>
           <Card className={Math.abs(summary.difference) < 0.01 ? 'border-emerald-500' : 'border-destructive'}>
             <CardContent className="pt-4 text-center">
               <Scale className="w-6 h-6 mx-auto mb-1" />
               <div className={`text-2xl font-bold ${Math.abs(summary.difference) < 0.01 ? 'text-emerald-600' : 'text-destructive'}`}>
-                {getCurrencySymbol(selectedAccount?.currency)} {Math.abs(summary.difference).toLocaleString('pt-AO', { minimumFractionDigits: 2 })}
+                {getCurrencySymbol(selectedAccount?.currency)} {Math.abs(summary.difference).toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
               </div>
               <div className="text-xs text-muted-foreground">
-                {Math.abs(summary.difference) < 0.01 ? 'Conciliado ✓' : 'Diferença'}
+                {Math.abs(summary.difference) < 0.01 ? t.bankReconciliationUi.reconciledOk : t.bankReconciliationUi.difference}
               </div>
             </CardContent>
           </Card>
@@ -370,17 +386,17 @@ export default function BankReconciliation() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle>Transacções</CardTitle>
+                <CardTitle>{t.bankReconciliationUi.transactionsTitle}</CardTitle>
                 <CardDescription>
                   {statementRows.length > 0
-                    ? 'Compare extracto bancário com transacções do sistema'
-                    : 'Importe um extracto bancário para iniciar a conciliação'}
+                    ? t.bankReconciliationUi.compareStatementVsSystem
+                    : t.bankReconciliationUi.importToStart}
                 </CardDescription>
               </div>
               <div className="relative w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  placeholder="Pesquisar..."
+                  placeholder={t.bankReconciliationUi.searchPlaceholder}
                   value={searchTerm}
                   onChange={e => setSearchTerm(e.target.value)}
                   className="pl-9"
@@ -393,13 +409,13 @@ export default function BankReconciliation() {
               <Tabs value={activeTab} onValueChange={setActiveTab}>
                 <TabsList>
                   <TabsTrigger value="all">
-                    Todas ({statementRows.length})
+                    {t.bankReconciliationUi.tabAll.replace('{count}', String(statementRows.length))}
                   </TabsTrigger>
                   <TabsTrigger value="unmatched">
-                    Pendentes ({statementRows.filter(r => !r.matched).length})
+                    {t.bankReconciliationUi.tabPending.replace('{count}', String(statementRows.filter(r => !r.matched).length))}
                   </TabsTrigger>
                   <TabsTrigger value="matched">
-                    Conciliadas ({statementRows.filter(r => r.matched).length})
+                    {t.bankReconciliationUi.tabMatched.replace('{count}', String(statementRows.filter(r => r.matched).length))}
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value={activeTab} className="mt-4">
@@ -407,13 +423,13 @@ export default function BankReconciliation() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="w-10">Status</TableHead>
-                          <TableHead>Data</TableHead>
-                          <TableHead>Descrição</TableHead>
-                          <TableHead>Referência</TableHead>
-                          <TableHead className="text-right">Valor</TableHead>
-                          <TableHead className="text-right">Saldo</TableHead>
-                          <TableHead className="w-28">Acção</TableHead>
+                          <TableHead className="w-10">{t.bankReconciliationUi.colStatus}</TableHead>
+                          <TableHead>{t.bankReconciliationUi.colDate}</TableHead>
+                          <TableHead>{t.bankReconciliationUi.colDescription}</TableHead>
+                          <TableHead>{t.bankReconciliationUi.colReference}</TableHead>
+                          <TableHead className="text-right">{t.bankReconciliationUi.colAmount}</TableHead>
+                          <TableHead className="text-right">{t.bankReconciliationUi.colBalance}</TableHead>
+                          <TableHead className="w-28">{t.bankReconciliationUi.colAction}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -428,23 +444,23 @@ export default function BankReconciliation() {
                             </TableCell>
                             <TableCell className="whitespace-nowrap text-sm">{row.date}</TableCell>
                             <TableCell className="text-sm max-w-48 truncate">{row.description}</TableCell>
-                            <TableCell className="text-sm text-muted-foreground">{row.reference || '—'}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">{row.reference || t.common.dash}</TableCell>
                             <TableCell className={`text-right font-medium ${row.direction === 'in' ? 'text-emerald-600' : 'text-destructive'}`}>
-                              {row.direction === 'in' ? '+' : '-'}{row.amount.toLocaleString('pt-AO', { minimumFractionDigits: 2 })}
+                              {row.direction === 'in' ? '+' : '-'}{row.amount.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
                             </TableCell>
                             <TableCell className="text-right text-sm text-muted-foreground">
-                              {row.balance?.toLocaleString('pt-AO', { minimumFractionDigits: 2 }) || '—'}
+                              {row.balance?.toLocaleString(uiLocale, { minimumFractionDigits: 2 }) || t.common.dash}
                             </TableCell>
                             <TableCell>
                               {row.matched ? (
                                 <Button variant="ghost" size="sm" onClick={() => handleUnmatch(row.id)}>
                                   <Unlink className="w-4 h-4 mr-1" />
-                                  Desfazer
+                                  {t.bankReconciliationUi.undo}
                                 </Button>
                               ) : (
                                 <Button variant="outline" size="sm" onClick={() => setManualMatchRow(row)}>
                                   <Link2 className="w-4 h-4 mr-1" />
-                                  Conciliar
+                                  {t.bankReconciliationUi.reconcile}
                                 </Button>
                               )}
                             </TableCell>
@@ -453,7 +469,12 @@ export default function BankReconciliation() {
                         {filteredStatementRows.length === 0 && (
                           <TableRow>
                             <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                              Nenhuma transacção {activeTab === 'unmatched' ? 'pendente' : activeTab === 'matched' ? 'conciliada' : ''}
+                              {t.bankReconciliationUi.noneForTab
+                                .replace('{kind}', activeTab === 'unmatched'
+                                  ? t.bankReconciliationUi.kindPendingLower
+                                  : activeTab === 'matched'
+                                    ? t.bankReconciliationUi.kindMatchedLower
+                                    : '')}
                             </TableCell>
                           </TableRow>
                         )}
@@ -468,11 +489,11 @@ export default function BankReconciliation() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Data</TableHead>
-                      <TableHead>Descrição</TableHead>
-                      <TableHead>Referência</TableHead>
-                      <TableHead className="text-right">Valor</TableHead>
-                      <TableHead className="text-right">Saldo</TableHead>
+                      <TableHead>{t.bankReconciliationUi.colDate}</TableHead>
+                      <TableHead>{t.bankReconciliationUi.colDescription}</TableHead>
+                      <TableHead>{t.bankReconciliationUi.colReference}</TableHead>
+                      <TableHead className="text-right">{t.bankReconciliationUi.colAmount}</TableHead>
+                      <TableHead className="text-right">{t.bankReconciliationUi.colBalance}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -480,17 +501,17 @@ export default function BankReconciliation() {
                       <TableRow key={txn.id}>
                         <TableCell className="whitespace-nowrap text-sm">{txn.transactionDate}</TableCell>
                         <TableCell className="text-sm">{txn.description}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{txn.referenceNumber || '—'}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{txn.referenceNumber || t.common.dash}</TableCell>
                         <TableCell className={`text-right font-medium ${txn.direction === 'in' ? 'text-emerald-600' : 'text-destructive'}`}>
-                          {txn.direction === 'in' ? '+' : '-'}{txn.amount.toLocaleString('pt-AO', { minimumFractionDigits: 2 })}
+                          {txn.direction === 'in' ? '+' : '-'}{txn.amount.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
                         </TableCell>
-                        <TableCell className="text-right text-sm">{txn.balanceAfter.toLocaleString('pt-AO', { minimumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-right text-sm">{txn.balanceAfter.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}</TableCell>
                       </TableRow>
                     ))}
                     {accountTransactions.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                          Nenhuma transacção registada nesta conta
+                          {t.bankReconciliationUi.noSystemTransactions}
                         </TableCell>
                       </TableRow>
                     )}
@@ -506,8 +527,8 @@ export default function BankReconciliation() {
         <Card>
           <CardContent className="py-16 text-center">
             <Scale className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium mb-2">Selecione uma conta bancária</h3>
-            <p className="text-muted-foreground">Escolha uma conta acima para iniciar a reconciliação</p>
+            <h3 className="text-lg font-medium mb-2">{t.bankReconciliationUi.pickAccountTitle}</h3>
+            <p className="text-muted-foreground">{t.bankReconciliationUi.pickAccountDescription}</p>
           </CardContent>
         </Card>
       )}
@@ -518,18 +539,18 @@ export default function BankReconciliation() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileSpreadsheet className="w-5 h-5" />
-              Importar Extracto Bancário
+              {t.bankReconciliationUi.importDialogTitle}
             </DialogTitle>
             <DialogDescription>
-              Importe um ficheiro Excel (.xlsx) com o extracto do banco
+              {t.bankReconciliationUi.importDialogDescription}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="border-2 border-dashed rounded-lg p-8 text-center">
               <Upload className="w-10 h-10 mx-auto text-muted-foreground mb-4" />
               <Label htmlFor="statement-file" className="cursor-pointer">
-                <span className="text-primary font-medium">Clique para selecionar</span>
-                <span className="text-muted-foreground"> ou arraste o ficheiro</span>
+                <span className="text-primary font-medium">{t.bankReconciliationUi.clickToSelect}</span>
+                <span className="text-muted-foreground"> {t.bankReconciliationUi.orDragFile}</span>
               </Label>
               <Input
                 id="statement-file"
@@ -539,19 +560,19 @@ export default function BankReconciliation() {
                 onChange={handleFileUpload}
               />
               <p className="text-xs text-muted-foreground mt-2">
-                Suporta: .xlsx, .xls, .csv
+                {t.bankReconciliationUi.supportsFormats}
               </p>
             </div>
             <Card className="bg-muted/50">
               <CardContent className="pt-4">
-                <p className="text-sm font-medium mb-2">Colunas esperadas:</p>
+                <p className="text-sm font-medium mb-2">{t.bankReconciliationUi.expectedColumns}</p>
                 <div className="grid grid-cols-2 gap-1 text-xs text-muted-foreground">
-                  <span>• Data / Date</span>
-                  <span>• Descrição / Description</span>
-                  <span>• Crédito / Credit</span>
-                  <span>• Débito / Debit</span>
-                  <span>• Referência / Reference</span>
-                  <span>• Saldo / Balance</span>
+                  <span>{t.bankReconciliationUi.colDateBullet}</span>
+                  <span>{t.bankReconciliationUi.colDescriptionBullet}</span>
+                  <span>{t.bankReconciliationUi.colCreditBullet}</span>
+                  <span>{t.bankReconciliationUi.colDebitBullet}</span>
+                  <span>{t.bankReconciliationUi.colReferenceBullet}</span>
+                  <span>{t.bankReconciliationUi.colBalanceBullet}</span>
                 </div>
               </CardContent>
             </Card>
@@ -563,9 +584,9 @@ export default function BankReconciliation() {
       <Dialog open={!!manualMatchRow} onOpenChange={() => setManualMatchRow(null)}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Conciliação Manual</DialogTitle>
+            <DialogTitle>{t.bankReconciliationUi.manualMatchTitle}</DialogTitle>
             <DialogDescription>
-              Selecione a transacção do sistema que corresponde a esta linha do extracto
+              {t.bankReconciliationUi.manualMatchDescription}
             </DialogDescription>
           </DialogHeader>
           {manualMatchRow && (
@@ -576,10 +597,12 @@ export default function BankReconciliation() {
                   <div className="flex justify-between items-center">
                     <div>
                       <p className="font-medium">{manualMatchRow.description}</p>
-                      <p className="text-sm text-muted-foreground">{manualMatchRow.date} • Ref: {manualMatchRow.reference || '—'}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {manualMatchRow.date} • {t.bankReconciliationUi.refShort}: {manualMatchRow.reference || t.common.dash}
+                      </p>
                     </div>
                     <span className={`text-lg font-bold ${manualMatchRow.direction === 'in' ? 'text-emerald-600' : 'text-destructive'}`}>
-                      {manualMatchRow.direction === 'in' ? '+' : '-'}{manualMatchRow.amount.toLocaleString('pt-AO', { minimumFractionDigits: 2 })}
+                      {manualMatchRow.direction === 'in' ? '+' : '-'}{manualMatchRow.amount.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 </CardContent>
@@ -592,10 +615,10 @@ export default function BankReconciliation() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Data</TableHead>
-                      <TableHead>Descrição</TableHead>
-                      <TableHead className="text-right">Valor</TableHead>
-                      <TableHead className="w-24">Acção</TableHead>
+                      <TableHead>{t.bankReconciliationUi.colDate}</TableHead>
+                      <TableHead>{t.bankReconciliationUi.colDescription}</TableHead>
+                      <TableHead className="text-right">{t.bankReconciliationUi.colAmount}</TableHead>
+                      <TableHead className="w-24">{t.bankReconciliationUi.colAction}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -604,12 +627,12 @@ export default function BankReconciliation() {
                         <TableCell className="text-sm">{txn.transactionDate}</TableCell>
                         <TableCell className="text-sm">{txn.description}</TableCell>
                         <TableCell className={`text-right font-medium ${txn.direction === 'in' ? 'text-emerald-600' : 'text-destructive'}`}>
-                          {txn.direction === 'in' ? '+' : '-'}{txn.amount.toLocaleString('pt-AO', { minimumFractionDigits: 2 })}
+                          {txn.direction === 'in' ? '+' : '-'}{txn.amount.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
                         </TableCell>
                         <TableCell>
                           <Button size="sm" onClick={() => handleManualMatch(manualMatchRow, txn.id)}>
                             <Link2 className="w-4 h-4 mr-1" />
-                            Conciliar
+                            {t.bankReconciliationUi.reconcile}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -617,7 +640,7 @@ export default function BankReconciliation() {
                     {unmatchedSystemTxns.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={4} className="text-center py-6 text-muted-foreground">
-                          Sem transacções disponíveis para conciliar
+                          {t.bankReconciliationUi.noTransactionsToMatch}
                         </TableCell>
                       </TableRow>
                     )}

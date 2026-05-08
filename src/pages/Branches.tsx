@@ -20,12 +20,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Plus, Pencil, Trash2, Building2, MapPin, Phone } from 'lucide-react';
 import { toast } from 'sonner';
-import { useLanguage } from '@/i18n';
+import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
 
 export default function Branches() {
-  const { t } = useLanguage();
-  const { branches, setCurrentBranch, refreshBranches } = useBranchContext();
+  const { t } = useTranslation();
+  const { branches, refreshBranches } = useBranchContext();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
@@ -59,7 +59,7 @@ export default function Branches() {
 
   const handleSave = async () => {
     if (!formData.name.trim()) {
-      toast.error('Nome da filial é obrigatório');
+      toast.error(t.branchesUi.nameRequired);
       return;
     }
 
@@ -68,11 +68,11 @@ export default function Branches() {
       if (editingBranch) {
         const response = await api.branches.update(editingBranch.id, formData);
         if (response.error) throw new Error(response.error);
-        toast.success('Filial actualizada com sucesso');
+        toast.success(t.branchesUi.updatedSuccess);
       } else {
         const response = await api.branches.create(formData);
         if (response.data) {
-          toast.success('Filial criada com sucesso');
+          toast.success(t.branchesUi.createdSuccess);
         } else {
           // API unavailable - save to localStorage as fallback
           const { saveBranch } = await import('@/lib/storage');
@@ -87,7 +87,7 @@ export default function Branches() {
             createdAt: new Date().toISOString(),
           };
           await saveBranch(newBranch);
-          toast.success('Filial criada com sucesso (modo local)');
+          toast.success(t.branchesUi.createdLocalSuccess);
         }
       }
       setDialogOpen(false);
@@ -95,7 +95,7 @@ export default function Branches() {
       await refreshBranches();
     } catch (error: any) {
       console.error('Error saving branch:', error);
-      toast.error(error.message || 'Erro ao guardar filial');
+      toast.error(error.message || t.branchesUi.saveError);
     } finally {
       setIsLoading(false);
     }
@@ -105,7 +105,7 @@ export default function Branches() {
     if (!branchToDelete) return;
 
     if (branchToDelete.isMain) {
-      toast.error('Não é possível eliminar a filial principal');
+      toast.error(t.branchesUi.cannotDeleteMain);
       setDeleteDialogOpen(false);
       return;
     }
@@ -113,12 +113,12 @@ export default function Branches() {
     setIsLoading(true);
     try {
       // Try API delete
-      toast.error('Eliminação via API não implementada');
+      toast.error(t.branchesUi.apiDeleteNotImplemented);
       setDeleteDialogOpen(false);
       setBranchToDelete(null);
     } catch (error: any) {
       console.error('Error deleting branch:', error);
-      toast.error(error.message || 'Erro ao eliminar filial');
+      toast.error(error.message || t.branchesUi.deleteError);
     } finally {
       setIsLoading(false);
     }
@@ -130,39 +130,39 @@ export default function Branches() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Building2 className="h-7 w-7" />
-            Gestão de Filiais
+            {t.branchesUi.title}
           </h1>
           <p className="text-muted-foreground mt-1">
-            Gerir as filiais e localizações da empresa
+            {t.branchesUi.subtitle}
           </p>
         </div>
         <Button onClick={openCreateDialog} className="gap-2">
           <Plus className="h-4 w-4" />
-          Nova Filial
+          {t.branchesUi.newBranch}
         </Button>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Filiais Registadas</CardTitle>
+          <CardTitle className="text-lg">{t.branchesUi.registeredBranches}</CardTitle>
         </CardHeader>
         <CardContent>
           {branches.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <Building2 className="h-12 w-12 mx-auto mb-4 opacity-30" />
-              <p>Nenhuma filial registada</p>
-              <p className="text-sm">Clique em "Nova Filial" para adicionar</p>
+              <p>{t.branchesUi.emptyTitle}</p>
+              <p className="text-sm">{t.branchesUi.emptyHint}</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Nome</TableHead>
-                  <TableHead>Código</TableHead>
-                  <TableHead>Endereço</TableHead>
-                  <TableHead>Telefone</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead className="text-right">Acções</TableHead>
+                  <TableHead>{t.branchesUi.colName}</TableHead>
+                  <TableHead>{t.branchesUi.colCode}</TableHead>
+                  <TableHead>{t.branchesUi.colAddress}</TableHead>
+                  <TableHead>{t.branchesUi.colPhone}</TableHead>
+                  <TableHead>{t.branchesUi.colType}</TableHead>
+                  <TableHead className="text-right">{t.branchesUi.colActions}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -188,9 +188,9 @@ export default function Branches() {
                     </TableCell>
                     <TableCell>
                       {branch.isMain ? (
-                        <Badge variant="default">Sede</Badge>
+                        <Badge variant="default">{t.branchesUi.typeHeadOffice}</Badge>
                       ) : (
-                        <Badge variant="secondary">Filial</Badge>
+                        <Badge variant="secondary">{t.branchesUi.typeBranch}</Badge>
                       )}
                     </TableCell>
                     <TableCell className="text-right">
@@ -214,33 +214,33 @@ export default function Branches() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editingBranch ? 'Editar Filial' : 'Nova Filial'}</DialogTitle>
+            <DialogTitle>{editingBranch ? t.branchesUi.editTitle : t.branchesUi.newTitle}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Nome *</Label>
-              <Input id="name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="Ex: Sede Principal" />
+              <Label htmlFor="name">{t.branchesUi.nameLabel}</Label>
+              <Input id="name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder={t.branchesUi.namePlaceholder} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="code">Código</Label>
-              <Input id="code" value={formData.code} onChange={(e) => setFormData({ ...formData, code: e.target.value })} placeholder="Ex: SEDE01" />
+              <Label htmlFor="code">{t.branchesUi.codeLabel}</Label>
+              <Input id="code" value={formData.code} onChange={(e) => setFormData({ ...formData, code: e.target.value })} placeholder={t.branchesUi.codePlaceholder} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="address">Endereço</Label>
-              <Input id="address" value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} placeholder="Ex: Rua Principal, Luanda" />
+              <Label htmlFor="address">{t.branchesUi.addressLabel}</Label>
+              <Input id="address" value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} placeholder={t.branchesUi.addressPlaceholder} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="phone">Telefone</Label>
-              <Input id="phone" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} placeholder="Ex: +244 923 456 789" />
+              <Label htmlFor="phone">{t.branchesUi.phoneLabel}</Label>
+              <Input id="phone" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} placeholder={t.branchesUi.phonePlaceholder} />
             </div>
             <div className="flex items-center justify-between">
-              <Label htmlFor="isMain">Filial Principal (Sede)</Label>
+              <Label htmlFor="isMain">{t.branchesUi.mainBranchLabel}</Label>
               <Switch id="isMain" checked={formData.isMain} onCheckedChange={(checked) => setFormData({ ...formData, isMain: checked })} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={isLoading}>{isLoading ? 'A guardar...' : 'Guardar'}</Button>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={handleSave} disabled={isLoading}>{isLoading ? t.common.saving : t.common.save}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -248,16 +248,16 @@ export default function Branches() {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar Filial</AlertDialogTitle>
+            <AlertDialogTitle>{t.branchesUi.deleteTitle}</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem a certeza que deseja eliminar a filial "{branchToDelete?.name}"?
-              Esta acção não pode ser revertida.
+              {t.branchesUi.deleteConfirm
+                .replace('{name}', String(branchToDelete?.name || ''))}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} disabled={isLoading}>
-              {isLoading ? 'A eliminar...' : 'Eliminar'}
+              {isLoading ? t.common.deleting : t.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

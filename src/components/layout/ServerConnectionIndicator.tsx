@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Database, Server, RefreshCw, CheckCircle2, XCircle, Container, Monitor } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTranslation } from '@/i18n';
 
 interface HealthData {
   status?: string;
@@ -38,6 +39,7 @@ interface ElectronStatus {
 const isElectron = !!(window as any).electronAPI?.db;
 
 export function ServerConnectionIndicator() {
+  const { t } = useTranslation();
   const [health, setHealth] = useState<HealthData | null>(null);
   const [backendReachable, setBackendReachable] = useState(false);
   const [electronStatus, setElectronStatus] = useState<ElectronStatus | null>(null);
@@ -166,7 +168,7 @@ export function ServerConnectionIndicator() {
             )}
 
             <span className="hidden sm:inline">
-              {isChecking ? 'A verificar...' : allGood ? 'Conectado' : systemReachable ? 'DB Offline' : 'Desconectado'}
+              {isChecking ? t.connectionUi.checking : allGood ? t.connectionUi.connected : systemReachable ? t.connectionUi.dbOffline : t.connectionUi.disconnected}
             </span>
 
             {health?.database?.latency != null && (
@@ -178,7 +180,7 @@ export function ServerConnectionIndicator() {
           <div className="p-3 space-y-3">
             <div className="flex items-center gap-2">
               <Server className="w-4 h-4" />
-              <span className="font-semibold text-sm">Estado da Conexão</span>
+              <span className="font-semibold text-sm">{t.connectionUi.connectionStatus}</span>
               <Badge variant="secondary" className="text-[10px] ml-auto">{modeLabel}</Badge>
             </div>
 
@@ -192,21 +194,21 @@ export function ServerConnectionIndicator() {
                   </span>
                   {dbConnected ? (
                     <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-600">
-                      <CheckCircle2 className="w-3 h-3 mr-1" /> Conectado
+                      <CheckCircle2 className="w-3 h-3 mr-1" /> {t.connectionUi.connected}
                     </Badge>
                   ) : (
                     <Badge variant="outline" className="text-[10px] border-destructive/50 text-destructive">
-                      <XCircle className="w-3 h-3 mr-1" /> Desconectado
+                      <XCircle className="w-3 h-3 mr-1" /> {t.connectionUi.disconnected}
                     </Badge>
                   )}
                 </div>
                 <div className="flex items-center justify-between text-xs">
                   <span className="flex items-center gap-1.5">
                     <Server className="w-3 h-3" />
-                    Modo
+                    {t.connectionUi.mode}
                   </span>
                   <Badge variant="outline" className="text-[10px]">
-                    {electronStatus.mode === 'server' ? '🖥️ Servidor' : electronStatus.mode === 'client' ? '💻 Cliente' : '❓ N/A'}
+                    {electronStatus.mode === 'server' ? `🖥️ ${t.connectionUi.server}` : electronStatus.mode === 'client' ? `💻 ${t.connectionUi.client}` : '❓ N/A'}
                   </Badge>
                 </div>
               </div>
@@ -218,15 +220,15 @@ export function ServerConnectionIndicator() {
                 <div className="flex items-center justify-between text-xs">
                   <span className="flex items-center gap-1.5">
                     <Server className="w-3 h-3" />
-                    Servidor (Backend)
+                    {t.connectionUi.backendServer}
                   </span>
                   {backendReachable ? (
                     <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-600">
-                      <CheckCircle2 className="w-3 h-3 mr-1" /> Online
+                      <CheckCircle2 className="w-3 h-3 mr-1" /> {t.connectionUi.online}
                     </Badge>
                   ) : (
                     <Badge variant="outline" className="text-[10px] border-destructive/50 text-destructive">
-                      <XCircle className="w-3 h-3 mr-1" /> Offline
+                      <XCircle className="w-3 h-3 mr-1" /> {t.connectionUi.offline}
                     </Badge>
                   )}
                 </div>
@@ -238,11 +240,11 @@ export function ServerConnectionIndicator() {
                   </span>
                   {health?.database?.connected ? (
                     <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-600">
-                      <CheckCircle2 className="w-3 h-3 mr-1" /> Conectado
+                      <CheckCircle2 className="w-3 h-3 mr-1" /> {t.connectionUi.connected}
                     </Badge>
                   ) : (
                     <Badge variant="outline" className="text-[10px] border-destructive/50 text-destructive">
-                      <XCircle className="w-3 h-3 mr-1" /> Desconectado
+                      <XCircle className="w-3 h-3 mr-1" /> {t.connectionUi.disconnected}
                     </Badge>
                   )}
                 </div>
@@ -253,41 +255,41 @@ export function ServerConnectionIndicator() {
             {health && (
               <div className="border-t pt-2 space-y-1 text-[11px] text-muted-foreground">
                 {health.database?.database && (
-                  <p><strong>Base de dados:</strong> {health.database.database}</p>
+                  <p><strong>{t.connectionUi.database}:</strong> {health.database.database}</p>
                 )}
                 {health.database?.serverAddr && (
-                  <p><strong>Servidor DB:</strong> {health.database.serverAddr}:{health.database.serverPort}</p>
+                  <p><strong>{t.connectionUi.dbServer}:</strong> {health.database.serverAddr}:{health.database.serverPort}</p>
                 )}
                 {health.database?.latency != null && (
-                  <p><strong>Latência:</strong> {health.database.latency}ms</p>
+                  <p><strong>{t.connectionUi.latency}:</strong> {health.database.latency}ms</p>
                 )}
                 {health.system && (
                   <>
-                    <p><strong>Host:</strong> {health.system.hostname} ({health.system.platform})</p>
-                    <p><strong>Uptime:</strong> {formatUptime(health.system.uptime)}</p>
+                    <p><strong>{t.connectionUi.host}:</strong> {health.system.hostname} ({health.system.platform})</p>
+                    <p><strong>{t.connectionUi.uptime}:</strong> {formatUptime(health.system.uptime)}</p>
                   </>
                 )}
-                <p><strong>Clientes conectados:</strong> {health.connectedClients}</p>
+                <p><strong>{t.connectionUi.connectedClients}:</strong> {health.connectedClients}</p>
               </div>
             )}
 
             {isElectron && electronStatus?.path && (
               <div className="border-t pt-2 text-[11px] text-muted-foreground">
-                <p><strong>Conexão:</strong> <code className="text-[10px] bg-muted px-1 rounded">SQLite local (.nexor/.db)</code></p>
+                <p><strong>{t.connectionUi.connection}:</strong> <code className="text-[10px] bg-muted px-1 rounded">SQLite local (.nexor/.db)</code></p>
               </div>
             )}
 
             {!isElectron && !backendReachable && (
               <div className="border-t pt-2 text-[11px] text-muted-foreground space-y-1">
-                <p className="font-medium text-destructive">Servidor não acessível</p>
-                <p>Verifique se o backend Node está a correr na porta configurada.</p>
+                <p className="font-medium text-destructive">{t.connectionUi.serverNotAccessible}</p>
+                <p>{t.connectionUi.checkBackendRunning}</p>
                 <p className="font-mono text-[10px] bg-muted p-1 rounded">cd backend && npm run dev</p>
               </div>
             )}
 
             {lastChecked && (
               <p className="text-[10px] text-muted-foreground/60 pt-1">
-                Última verificação: {lastChecked.toLocaleTimeString()} · Clique para atualizar
+                {t.connectionUi.lastCheck.replace('{time}', lastChecked.toLocaleTimeString())}
               </p>
             )}
           </div>

@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { Sale } from '@/types/erp';
 import { AGTTransmissionResult, AGTStatusResult, AGTConfig } from '@/types/electron';
 import { getInvoiceHash } from '@/lib/agtQRCode';
+import { useTranslation } from '@/i18n';
 
 interface AGTValidationState {
   isTransmitting: boolean;
@@ -23,6 +24,7 @@ interface TransmitOptions {
 }
 
 export function useAGTValidation() {
+  const { t } = useTranslation();
   const [state, setState] = useState<AGTValidationState>({
     isTransmitting: false,
     isConfigured: false,
@@ -59,7 +61,7 @@ export function useAGTValidation() {
    */
   const configure = useCallback(async (config: AGTConfig): Promise<boolean> => {
     if (!isElectron) {
-      toast.error('AGT só disponível em modo desktop');
+      toast.error(t.agtUi.desktopOnly);
       return false;
     }
 
@@ -73,16 +75,16 @@ export function useAGTValidation() {
           environment: config.environment,
           lastError: null
         }));
-        toast.success('AGT configurado com sucesso');
+        toast.success(t.agtUi.configuredSuccess);
         return true;
       } else {
-        setState(prev => ({ ...prev, lastError: result.error || 'Erro de configuração' }));
-        toast.error(result.error || 'Erro ao configurar AGT');
+        setState(prev => ({ ...prev, lastError: result.error || t.agtUi.configError }));
+        toast.error(result.error || t.agtUi.configureFailed);
         return false;
       }
     } catch (error: any) {
       setState(prev => ({ ...prev, lastError: error.message }));
-      toast.error('Erro ao configurar AGT');
+      toast.error(t.agtUi.configureFailed);
       return false;
     }
   }, [isElectron]);
@@ -104,7 +106,7 @@ export function useAGTValidation() {
     }
 
     setState(prev => ({ ...prev, isTransmitting: true, lastError: null }));
-    toast.info('A assinar e transmitir para AGT...', { id: 'agt-transmit' });
+    toast.info(t.agtUi.signingAndTransmitting, { id: 'agt-transmit' });
 
     try {
       // Step 1: Sign the invoice
@@ -121,7 +123,7 @@ export function useAGTValidation() {
       );
 
       if (!signResult.success) {
-        throw new Error(signResult.error || 'Erro ao assinar factura');
+        throw new Error(signResult.error || t.agtUi.signInvoiceFailed);
       }
 
       // Step 2: Build invoice payload
@@ -152,7 +154,10 @@ export function useAGTValidation() {
       });
 
       if (result.success && result.agtStatus === 'validated') {
-        toast.success(`Factura validada pela AGT: ${result.agtCode}`, { id: 'agt-transmit' });
+        toast.success(
+          t.agtUi.invoiceValidated.replace('{code}', String(result.agtCode || '')),
+          { id: 'agt-transmit' }
+        );
         
         // Update local sale with AGT info
         updateLocalSale(sale.id, {
@@ -161,16 +166,16 @@ export function useAGTValidation() {
           agtValidatedAt: result.validatedAt
         });
       } else if (result.agtStatus === 'pending') {
-        toast.info('Factura enviada - aguardando validação AGT', { id: 'agt-transmit' });
+        toast.info(t.agtUi.invoicePending, { id: 'agt-transmit' });
       } else {
-        toast.error(result.errorMessage || 'Erro na validação AGT', { id: 'agt-transmit' });
+        toast.error(result.errorMessage || t.agtUi.validationError, { id: 'agt-transmit' });
         setState(prev => ({ ...prev, lastError: result.errorMessage || null }));
       }
 
       return result;
     } catch (error: any) {
       console.error('[AGT] Transmission error:', error);
-      toast.error(error.message || 'Erro ao transmitir para AGT', { id: 'agt-transmit' });
+      toast.error(error.message || t.agtUi.transmitFailed, { id: 'agt-transmit' });
       setState(prev => ({ ...prev, lastError: error.message }));
       
       return {
@@ -222,24 +227,24 @@ export function useAGTValidation() {
     reason: string
   ): Promise<{ success: boolean; errorMessage?: string }> => {
     if (!isElectron) {
-      toast.error('Anulação AGT só disponível em modo desktop');
-      return { success: false, errorMessage: 'Modo desktop necessário' };
+      toast.error(t.agtUi.voidDesktopOnly);
+      return { success: false, errorMessage: t.agtUi.desktopRequired };
     }
 
-    toast.info('A anular factura na AGT...', { id: 'agt-void' });
+    toast.info(t.agtUi.voidingInvoice, { id: 'agt-void' });
 
     try {
       const result = await window.electronAPI!.agt.voidInvoice(invoiceNumber, reason);
       
       if (result.success) {
-        toast.success('Factura anulada na AGT', { id: 'agt-void' });
+        toast.success(t.agtUi.invoiceVoided, { id: 'agt-void' });
       } else {
-        toast.error(result.errorMessage || 'Erro ao anular na AGT', { id: 'agt-void' });
+        toast.error(result.errorMessage || t.agtUi.voidFailed, { id: 'agt-void' });
       }
       
       return result;
     } catch (error: any) {
-      toast.error(error.message || 'Erro ao anular na AGT', { id: 'agt-void' });
+      toast.error(error.message || t.agtUi.voidFailed, { id: 'agt-void' });
       return { success: false, errorMessage: error.message };
     }
   }, [isElectron]);
@@ -256,7 +261,7 @@ export function useAGTValidation() {
     let transmitted = 0;
     let failed = 0;
 
-    toast.info(`A transmitir ${pending.length} facturas pendentes...`);
+    toast.info(t.agtUi.transmittingPending.replace('{count}', String(pending.length)));
 
     for (const sale of pending) {
       const result = await transmitInvoice(sale, options);
@@ -269,7 +274,11 @@ export function useAGTValidation() {
       await new Promise(r => setTimeout(r, 500));
     }
 
-    toast.success(`Transmitidas: ${transmitted}, Falhadas: ${failed}`);
+    toast.success(
+      t.agtUi.transmitSummary
+        .replace('{transmitted}', String(transmitted))
+        .replace('{failed}', String(failed))
+    );
     return { transmitted, failed };
   }, [transmitInvoice]);
 

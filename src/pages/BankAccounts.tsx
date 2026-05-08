@@ -11,7 +11,7 @@ import {
 import { BankAccount, BankTransaction } from '@/types/accounting';
 import { MoneyTransferDialog } from '@/components/accounting/MoneyTransferDialog';
 import { format } from 'date-fns';
-import { pt } from 'date-fns/locale';
+import { enUS, pt } from 'date-fns/locale';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -62,28 +62,6 @@ import {
   ArrowRightLeft
 } from 'lucide-react';
 
-const ANGOLAN_BANKS = [
-  'BAI - Banco Angolano de Investimentos',
-  'BFA - Banco de Fomento Angola',
-  'BIC - Banco BIC',
-  'BPC - Banco de Poupança e Crédito',
-  'BMA - Banco Millennium Atlântico',
-  'Banco Keve',
-  'Standard Bank Angola',
-  'Banco Sol',
-  'Banco Yetu',
-  'BNI - Banco de Negócios Internacional',
-  'Finibanco Angola',
-  'Banco VTB África',
-  'Outro',
-];
-
-const CURRENCIES = [
-  { value: 'AOA', label: 'Kz - Kwanza Angolano' },
-  { value: 'USD', label: '$ - Dólar Americano' },
-  { value: 'EUR', label: '€ - Euro' },
-];
-
 interface AccountFormData {
   bankName: string;
   accountName: string;
@@ -95,22 +73,42 @@ interface AccountFormData {
   isPrimary: boolean;
 }
 
-const initialFormData: AccountFormData = {
-  bankName: ANGOLAN_BANKS[0],
-  accountName: '',
-  accountNumber: '',
-  iban: '',
-  swift: '',
-  currency: 'AOA',
-  openingBalance: 0,
-  isPrimary: false,
-};
-
 export default function BankAccounts() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const { currentBranch } = useBranchContext();
   const { user } = useAuth();
   const { toast } = useToast();
+
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const dfLocale = language === 'pt' ? pt : enUS;
+
+  const ANGOLAN_BANKS = useMemo(
+    () => [
+      t.bankAccountsUi.bankBAI,
+      t.bankAccountsUi.bankBFA,
+      t.bankAccountsUi.bankBIC,
+      t.bankAccountsUi.bankBPC,
+      t.bankAccountsUi.bankBMA,
+      t.bankAccountsUi.bankKeve,
+      t.bankAccountsUi.bankStandard,
+      t.bankAccountsUi.bankSol,
+      t.bankAccountsUi.bankYetu,
+      t.bankAccountsUi.bankBNI,
+      t.bankAccountsUi.bankFinibanco,
+      t.bankAccountsUi.bankVTB,
+      t.bankAccountsUi.bankOther,
+    ],
+    [t]
+  );
+
+  const CURRENCIES = useMemo(
+    () => [
+      { value: 'AOA', label: t.bankAccountsUi.currencyAOA },
+      { value: 'USD', label: t.bankAccountsUi.currencyUSD },
+      { value: 'EUR', label: t.bankAccountsUi.currencyEUR },
+    ],
+    [t]
+  );
 
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [transactions, setTransactions] = useState<BankTransaction[]>([]);
@@ -118,7 +116,16 @@ export default function BankAccounts() {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<BankAccount | null>(null);
-  const [formData, setFormData] = useState<AccountFormData>(initialFormData);
+  const [formData, setFormData] = useState<AccountFormData>(() => ({
+    bankName: ANGOLAN_BANKS[0],
+    accountName: '',
+    accountNumber: '',
+    iban: '',
+    swift: '',
+    currency: 'AOA',
+    openingBalance: 0,
+    isPrimary: false,
+  }));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [customBankName, setCustomBankName] = useState('');
 
@@ -150,7 +157,7 @@ export default function BankAccounts() {
       setEditingId(account.id);
       const isCustomBank = !ANGOLAN_BANKS.includes(account.bankName);
       setFormData({
-        bankName: isCustomBank ? 'Outro' : account.bankName,
+        bankName: isCustomBank ? t.bankAccountsUi.bankOther : account.bankName,
         accountName: account.accountName,
         accountNumber: account.accountNumber,
         iban: account.iban || '',
@@ -163,7 +170,13 @@ export default function BankAccounts() {
     } else {
       setEditingId(null);
       setFormData({
-        ...initialFormData,
+        bankName: ANGOLAN_BANKS[0],
+        accountName: '',
+        accountNumber: '',
+        iban: '',
+        swift: '',
+        currency: 'AOA',
+        openingBalance: 0,
         isPrimary: accounts.length === 0,
       });
       setCustomBankName('');
@@ -177,14 +190,14 @@ export default function BankAccounts() {
   };
 
   const handleSave = () => {
-    const bankName = formData.bankName === 'Outro' ? customBankName : formData.bankName;
+    const bankName = formData.bankName === t.bankAccountsUi.bankOther ? customBankName : formData.bankName;
     
     if (!bankName.trim()) {
-      toast({ title: 'Erro', description: 'Nome do banco é obrigatório', variant: 'destructive' });
+      toast({ title: t.common.error, description: t.bankAccountsUi.bankNameRequired, variant: 'destructive' });
       return;
     }
     if (!formData.accountNumber.trim()) {
-      toast({ title: 'Erro', description: 'Número da conta é obrigatório', variant: 'destructive' });
+      toast({ title: t.common.error, description: t.bankAccountsUi.accountNumberRequired, variant: 'destructive' });
       return;
     }
 
@@ -211,12 +224,12 @@ export default function BankAccounts() {
           });
         }
         
-        toast({ title: 'Sucesso', description: 'Conta bancária actualizada' });
+        toast({ title: t.common.success, description: t.bankAccountsUi.updated });
       }
     } else {
       createBankAccount(
         currentBranch?.id || 'default',
-        currentBranch?.name || 'Sede',
+        currentBranch?.name || t.bankAccountsUi.headOffice,
         bankName,
         formData.accountName,
         formData.accountNumber,
@@ -224,7 +237,7 @@ export default function BankAccounts() {
         formData.openingBalance,
         formData.iban || undefined
       );
-      toast({ title: 'Sucesso', description: 'Conta bancária criada' });
+      toast({ title: t.common.success, description: t.bankAccountsUi.created });
     }
 
     setIsDialogOpen(false);
@@ -234,8 +247,10 @@ export default function BankAccounts() {
   const toggleAccountStatus = (account: BankAccount) => {
     saveBankAccount({ ...account, isActive: !account.isActive });
     toast({ 
-      title: account.isActive ? 'Desactivada' : 'Activada', 
-      description: `Conta ${account.accountNumber} ${account.isActive ? 'desactivada' : 'activada'}` 
+      title: account.isActive ? t.bankAccountsUi.deactivatedTitle : t.bankAccountsUi.activatedTitle,
+      description: t.bankAccountsUi.accountStatusChanged
+        .replace('{account}', account.accountNumber)
+        .replace('{status}', account.isActive ? t.bankAccountsUi.deactivatedLower : t.bankAccountsUi.activatedLower)
     });
     loadData();
   };
@@ -253,19 +268,19 @@ export default function BankAccounts() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Contas Bancárias</h1>
+          <h1 className="text-2xl font-bold">{t.bankAccountsUi.title}</h1>
           <p className="text-muted-foreground">
-            Gestão de contas bancárias por filial - {currentBranch?.name || 'Todas as filiais'}
+            {t.bankAccountsUi.subtitle.replace('{branch}', currentBranch?.name || t.bankAccountsUi.allBranches)}
           </p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setIsTransferDialogOpen(true)} className="gap-2">
             <ArrowRightLeft className="w-4 h-4" />
-            Transferência
+            {t.bankAccountsUi.transfer}
           </Button>
           <Button onClick={() => handleOpenDialog()} className="gap-2">
             <Plus className="w-4 h-4" />
-            Nova Conta
+            {t.bankAccountsUi.newAccount}
           </Button>
         </div>
       </div>
@@ -278,7 +293,7 @@ export default function BankAccounts() {
               <Building2 className="w-5 h-5 text-muted-foreground" />
               <div>
                 <div className="text-2xl font-bold">{stats.total}</div>
-                <div className="text-sm text-muted-foreground">Total Contas</div>
+                <div className="text-sm text-muted-foreground">{t.bankAccountsUi.totalAccounts}</div>
               </div>
             </div>
           </CardContent>
@@ -286,25 +301,25 @@ export default function BankAccounts() {
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold text-primary">
-              {stats.totalAOA.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+              {stats.totalAOA.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
             </div>
-            <div className="text-sm text-muted-foreground">Saldo AOA</div>
+            <div className="text-sm text-muted-foreground">{t.bankAccountsUi.balanceAOA}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold text-accent-foreground">
-              $ {stats.totalUSD.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              $ {stats.totalUSD.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-sm text-muted-foreground">Saldo USD</div>
+            <div className="text-sm text-muted-foreground">{t.bankAccountsUi.balanceUSD}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold text-secondary-foreground">
-              € {stats.totalEUR.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+              € {stats.totalEUR.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-sm text-muted-foreground">Saldo EUR</div>
+            <div className="text-sm text-muted-foreground">{t.bankAccountsUi.balanceEUR}</div>
           </CardContent>
         </Card>
       </div>
@@ -315,13 +330,13 @@ export default function BankAccounts() {
           <Card className="col-span-full">
             <CardContent className="py-12 text-center">
               <Banknote className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-              <h3 className="text-lg font-medium mb-2">Nenhuma conta bancária</h3>
+              <h3 className="text-lg font-medium mb-2">{t.bankAccountsUi.emptyTitle}</h3>
               <p className="text-muted-foreground mb-4">
-                Adicione contas bancárias para gerir os fundos da filial
+                {t.bankAccountsUi.emptyDescription}
               </p>
               <Button onClick={() => handleOpenDialog()}>
                 <Plus className="w-4 h-4 mr-2" />
-                Adicionar Conta
+                {t.bankAccountsUi.addAccount}
               </Button>
             </CardContent>
           </Card>
@@ -354,9 +369,9 @@ export default function BankAccounts() {
               <CardContent>
                 <div className="space-y-3">
                   <div>
-                    <p className="text-sm text-muted-foreground">Saldo Actual</p>
+                    <p className="text-sm text-muted-foreground">{t.bankAccountsUi.currentBalance}</p>
                     <p className="text-2xl font-bold">
-                      {getCurrencySymbol(account.currency)} {account.currentBalance.toLocaleString('pt-AO', { minimumFractionDigits: 2 })}
+                      {getCurrencySymbol(account.currency)} {account.currentBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
                     </p>
                   </div>
                   {account.iban && (
@@ -368,11 +383,11 @@ export default function BankAccounts() {
                   <div className="flex gap-2 pt-2">
                     <Button variant="outline" size="sm" className="flex-1" onClick={() => handleViewAccount(account)}>
                       <Eye className="w-4 h-4 mr-1" />
-                      Ver
+                      {t.common.view}
                     </Button>
                     <Button variant="outline" size="sm" className="flex-1" onClick={() => handleOpenDialog(account)}>
                       <Edit className="w-4 h-4 mr-1" />
-                      Editar
+                      {t.common.edit}
                     </Button>
                   </div>
                 </div>
@@ -386,15 +401,15 @@ export default function BankAccounts() {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editingId ? 'Editar Conta Bancária' : 'Nova Conta Bancária'}</DialogTitle>
+            <DialogTitle>{editingId ? t.bankAccountsUi.editTitle : t.bankAccountsUi.newTitle}</DialogTitle>
             <DialogDescription>
-              Configure os dados da conta bancária
+              {t.bankAccountsUi.dialogDescription}
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label>Banco *</Label>
+              <Label>{t.bankAccountsUi.bankLabel}</Label>
               <Select value={formData.bankName} onValueChange={(v) => setFormData({ ...formData, bankName: v })}>
                 <SelectTrigger>
                   <SelectValue />
@@ -407,37 +422,37 @@ export default function BankAccounts() {
               </Select>
             </div>
 
-            {formData.bankName === 'Outro' && (
+            {formData.bankName === t.bankAccountsUi.bankOther && (
               <div className="space-y-2">
-                <Label>Nome do Banco *</Label>
+                <Label>{t.bankAccountsUi.customBankNameLabel}</Label>
                 <Input
                   value={customBankName}
                   onChange={(e) => setCustomBankName(e.target.value)}
-                  placeholder="Nome do banco"
+                  placeholder={t.bankAccountsUi.customBankNamePlaceholder}
                 />
               </div>
             )}
 
             <div className="space-y-2">
-              <Label>Nome da Conta</Label>
+              <Label>{t.bankAccountsUi.accountNameLabel}</Label>
               <Input
                 value={formData.accountName}
                 onChange={(e) => setFormData({ ...formData, accountName: e.target.value })}
-                placeholder="Ex: Conta Operacional, Conta Salários"
+                placeholder={t.bankAccountsUi.accountNamePlaceholder}
               />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Número da Conta *</Label>
+                <Label>{t.bankAccountsUi.accountNumberLabel}</Label>
                 <Input
                   value={formData.accountNumber}
                   onChange={(e) => setFormData({ ...formData, accountNumber: e.target.value })}
-                  placeholder="Número da conta"
+                  placeholder={t.bankAccountsUi.accountNumberPlaceholder}
                 />
               </div>
               <div className="space-y-2">
-                <Label>Moeda</Label>
+                <Label>{t.bankAccountsUi.currencyLabel}</Label>
                 <Select value={formData.currency} onValueChange={(v) => setFormData({ ...formData, currency: v as 'AOA' | 'USD' | 'EUR' })}>
                   <SelectTrigger>
                     <SelectValue />
@@ -471,7 +486,7 @@ export default function BankAccounts() {
 
             {!editingId && (
               <div className="space-y-2">
-                <Label>Saldo Inicial</Label>
+                <Label>{t.bankAccountsUi.openingBalanceLabel}</Label>
                 <Input
                   type="number"
                   min="0"
@@ -485,8 +500,8 @@ export default function BankAccounts() {
 
             <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
               <div>
-                <Label>Conta Principal</Label>
-                <p className="text-xs text-muted-foreground">Definir como conta principal da filial</p>
+                <Label>{t.bankAccountsUi.primaryAccountLabel}</Label>
+                <p className="text-xs text-muted-foreground">{t.bankAccountsUi.primaryAccountDescription}</p>
               </div>
               <Switch
                 checked={formData.isPrimary}
@@ -497,10 +512,10 @@ export default function BankAccounts() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleSave}>
-              {editingId ? 'Guardar Alterações' : 'Criar Conta'}
+              {editingId ? t.common.saveChanges : t.bankAccountsUi.createAccount}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -516,58 +531,58 @@ export default function BankAccounts() {
               {selectedAccount?.isPrimary && (
                 <Badge variant="outline" className="ml-2">
                   <Star className="w-3 h-3 mr-1" />
-                  Principal
+                  {t.bankAccountsUi.primaryBadge}
                 </Badge>
               )}
             </DialogTitle>
             <DialogDescription>
-              Conta: {selectedAccount?.accountNumber} | {selectedAccount?.currency}
+              {t.bankAccountsUi.accountLabel}: {selectedAccount?.accountNumber} | {selectedAccount?.currency}
             </DialogDescription>
           </DialogHeader>
 
           <Tabs defaultValue="details">
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="details">Detalhes</TabsTrigger>
-              <TabsTrigger value="transactions">Movimentos</TabsTrigger>
+              <TabsTrigger value="details">{t.bankAccountsUi.tabDetails}</TabsTrigger>
+              <TabsTrigger value="transactions">{t.bankAccountsUi.tabTransactions}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="details" className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 bg-muted rounded-lg">
-                  <p className="text-sm text-muted-foreground">Saldo Actual</p>
+                  <p className="text-sm text-muted-foreground">{t.bankAccountsUi.currentBalance}</p>
                   <p className="text-3xl font-bold">
-                    {getCurrencySymbol(selectedAccount?.currency || 'AOA')} {selectedAccount?.currentBalance.toLocaleString('pt-AO', { minimumFractionDigits: 2 })}
+                    {getCurrencySymbol(selectedAccount?.currency || 'AOA')} {selectedAccount?.currentBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="p-4 bg-muted rounded-lg">
-                  <p className="text-sm text-muted-foreground">Movimentos</p>
+                  <p className="text-sm text-muted-foreground">{t.bankAccountsUi.transactions}</p>
                   <p className="text-3xl font-bold">{accountTransactions.length}</p>
                 </div>
               </div>
 
               <div className="space-y-2">
                 <div className="flex justify-between py-2 border-b">
-                  <span className="text-muted-foreground">Banco</span>
+                  <span className="text-muted-foreground">{t.bankAccountsUi.fieldBank}</span>
                   <span className="font-medium">{selectedAccount?.bankName}</span>
                 </div>
                 <div className="flex justify-between py-2 border-b">
-                  <span className="text-muted-foreground">Nº Conta</span>
+                  <span className="text-muted-foreground">{t.bankAccountsUi.fieldAccountNo}</span>
                   <span className="font-medium font-mono">{selectedAccount?.accountNumber}</span>
                 </div>
                 {selectedAccount?.iban && (
                   <div className="flex justify-between py-2 border-b">
-                    <span className="text-muted-foreground">IBAN</span>
+                    <span className="text-muted-foreground">{t.bankAccountsUi.fieldIban}</span>
                     <span className="font-medium font-mono text-sm">{selectedAccount.iban}</span>
                   </div>
                 )}
                 <div className="flex justify-between py-2 border-b">
-                  <span className="text-muted-foreground">Filial</span>
+                  <span className="text-muted-foreground">{t.bankAccountsUi.fieldBranch}</span>
                   <span className="font-medium">{selectedAccount?.branchName}</span>
                 </div>
                 <div className="flex justify-between py-2 border-b">
-                  <span className="text-muted-foreground">Criada em</span>
+                  <span className="text-muted-foreground">{t.bankAccountsUi.fieldCreatedAt}</span>
                   <span className="font-medium">
-                    {selectedAccount?.createdAt && format(new Date(selectedAccount.createdAt), 'dd/MM/yyyy HH:mm', { locale: pt })}
+                    {selectedAccount?.createdAt && format(new Date(selectedAccount.createdAt), 'dd/MM/yyyy HH:mm', { locale: dfLocale })}
                   </span>
                 </div>
               </div>
@@ -577,25 +592,25 @@ export default function BankAccounts() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Data</TableHead>
-                    <TableHead>Tipo</TableHead>
-                    <TableHead>Descrição</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
-                    <TableHead className="text-right">Saldo</TableHead>
+                    <TableHead>{t.bankAccountsUi.colDate}</TableHead>
+                    <TableHead>{t.bankAccountsUi.colType}</TableHead>
+                    <TableHead>{t.bankAccountsUi.colDescription}</TableHead>
+                    <TableHead className="text-right">{t.bankAccountsUi.colAmount}</TableHead>
+                    <TableHead className="text-right">{t.bankAccountsUi.colBalance}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {accountTransactions.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                        Nenhum movimento registado
+                        {t.bankAccountsUi.noTransactions}
                       </TableCell>
                     </TableRow>
                   ) : (
                     accountTransactions.map(tx => (
                       <TableRow key={tx.id}>
                         <TableCell className="text-sm">
-                          {format(new Date(tx.createdAt), 'dd/MM/yyyy', { locale: pt })}
+                          {format(new Date(tx.createdAt), 'dd/MM/yyyy', { locale: dfLocale })}
                         </TableCell>
                         <TableCell>
                           <Badge variant={tx.direction === 'in' ? 'default' : 'secondary'}>
@@ -609,10 +624,10 @@ export default function BankAccounts() {
                         </TableCell>
                         <TableCell className="max-w-[200px] truncate">{tx.description}</TableCell>
                         <TableCell className={`text-right font-medium ${tx.direction === 'in' ? 'text-green-600' : 'text-red-600'}`}>
-                          {tx.direction === 'in' ? '+' : '-'}{tx.amount.toLocaleString('pt-AO', { minimumFractionDigits: 2 })}
+                          {tx.direction === 'in' ? '+' : '-'}{tx.amount.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
                         </TableCell>
                         <TableCell className="text-right">
-                          {tx.balanceAfter.toLocaleString('pt-AO', { minimumFractionDigits: 2 })}
+                          {tx.balanceAfter.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
                         </TableCell>
                       </TableRow>
                     ))

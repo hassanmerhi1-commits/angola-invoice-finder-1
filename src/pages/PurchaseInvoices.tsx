@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { generateId } from '@/lib/utils';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from '@/i18n';
 import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { api } from '@/lib/api/client';
@@ -51,31 +52,35 @@ import { saveDocument, getDocuments } from '@/lib/documentStorage';
 import type { ERPDocument } from '@/types/documents';
 import { usePurchaseOrders } from '@/hooks/useERP';
 
-const PURCHASE_INVOICE_STATUS_BADGES: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-  confirmed: { label: 'Confirmado', variant: 'default' },
-  cancelled: { label: 'Anulado', variant: 'destructive' },
-  draft: { label: 'Rascunho', variant: 'outline' },
-  pending: { label: 'Pendente', variant: 'secondary' },
+const getPurchaseInvoiceStatusBadge = (
+  t: any,
+  status?: string
+) => {
+  const labels: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
+    confirmed: { label: t.purchaseInvoicesUi.statusConfirmed, variant: 'default' },
+    cancelled: { label: t.purchaseInvoicesUi.statusCancelled, variant: 'destructive' },
+    draft: { label: t.purchaseInvoicesUi.statusDraft, variant: 'outline' },
+    pending: { label: t.purchaseInvoicesUi.statusPending, variant: 'secondary' },
+  };
+  if (!status) return { label: t.purchaseInvoicesUi.statusDraft, variant: 'outline' as const };
+  return labels[status] || { label: status, variant: 'outline' as const };
 };
 
-const PURCHASE_ORDER_STATUS_BADGES: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-  draft: { label: 'Rascunho', variant: 'outline' },
-  pending: { label: 'Pendente', variant: 'secondary' },
-  approved: { label: 'Aprovado', variant: 'default' },
-  awaiting_approval: { label: 'Aguarda Aprovação', variant: 'secondary' },
-  received: { label: 'Recebido', variant: 'default' },
-  partial: { label: 'Parcial', variant: 'secondary' },
-  cancelled: { label: 'Cancelado', variant: 'destructive' },
-};
-
-const getPurchaseInvoiceStatusBadge = (status?: string) => {
-  if (!status) return { label: 'Rascunho', variant: 'outline' as const };
-  return PURCHASE_INVOICE_STATUS_BADGES[status] || { label: status, variant: 'outline' as const };
-};
-
-const getPurchaseOrderStatusBadge = (status?: string) => {
-  if (!status) return { label: 'Rascunho', variant: 'outline' as const };
-  return PURCHASE_ORDER_STATUS_BADGES[status] || { label: status, variant: 'outline' as const };
+const getPurchaseOrderStatusBadge = (
+  t: any,
+  status?: string
+) => {
+  const labels: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
+    draft: { label: t.purchaseInvoicesUi.poStatusDraft, variant: 'outline' },
+    pending: { label: t.purchaseInvoicesUi.poStatusPending, variant: 'secondary' },
+    approved: { label: t.purchaseInvoicesUi.poStatusApproved, variant: 'default' },
+    awaiting_approval: { label: t.purchaseInvoicesUi.poStatusAwaitingApproval, variant: 'secondary' },
+    received: { label: t.purchaseInvoicesUi.poStatusReceived, variant: 'default' },
+    partial: { label: t.purchaseInvoicesUi.poStatusPartial, variant: 'secondary' },
+    cancelled: { label: t.purchaseInvoicesUi.poStatusCancelled, variant: 'destructive' },
+  };
+  if (!status) return { label: t.purchaseInvoicesUi.poStatusDraft, variant: 'outline' as const };
+  return labels[status] || { label: status, variant: 'outline' as const };
 };
 
 // ─────────── Supplier Picker Dialog ───────────
@@ -89,6 +94,7 @@ function SupplierPickerDialog({
   onCreateNew?: () => void;
   onRefresh?: () => void;
 }) {
+  const { t } = useTranslation();
   // Auto-refresh when dialog opens
   useEffect(() => {
     if (open && onRefresh) onRefresh();
@@ -108,17 +114,17 @@ function SupplierPickerDialog({
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[80vh]">
         <DialogHeader>
-          <DialogTitle>Listagem de Contas — Fornecedores</DialogTitle>
+          <DialogTitle>{t.purchaseInvoicesUi.supplierAccountsTitle}</DialogTitle>
         </DialogHeader>
         <Input
-          placeholder="Pesquisar fornecedor..."
+          placeholder={t.purchaseInvoicesUi.searchSupplierPlaceholder}
           value={search}
           onChange={e => setSearch(e.target.value)}
           autoFocus
         />
         {onCreateNew && (
           <Button variant="outline" size="sm" className="w-full gap-1" onClick={onCreateNew}>
-            <Plus className="h-4 w-4" /> Criar Novo Fornecedor
+            <Plus className="h-4 w-4" /> {t.purchaseInvoicesUi.createNewSupplier}
           </Button>
         )}
         <ScrollArea className="h-[400px]">
@@ -147,7 +153,7 @@ function SupplierPickerDialog({
               {filtered.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                    Nenhum fornecedor encontrado
+                    {t.purchaseInvoicesUi.noSuppliersFound}
                   </TableCell>
                 </TableRow>
               )}
@@ -208,7 +214,9 @@ async function syncPurchaseInvoiceDocument(invoice: PurchaseInvoice) {
     issueTime: invoice.createdAt.includes('T') ? invoice.createdAt.split('T')[1].slice(0, 8) : new Date().toTimeString().slice(0, 8),
     dueDate: invoice.paymentDate,
     notes: invoice.extraNote,
-    internalNotes: invoice.supplierInvoiceNo ? `Nº Fatura Fornecedor: ${invoice.supplierInvoiceNo}` : undefined,
+    internalNotes: invoice.supplierInvoiceNo
+      ? t.purchaseInvoicesUi.supplierInvoiceNoPrefix.replace('{no}', invoice.supplierInvoiceNo)
+      : undefined,
     createdBy: invoice.createdBy,
     createdByName: invoice.createdByName,
     createdAt: invoice.createdAt,
@@ -253,7 +261,7 @@ function ProductPickerDialog({
           </DialogTitle>
         </DialogHeader>
         <Input
-          placeholder="Pesquisar produto por nome, SKU ou código de barras..."
+          placeholder={t.purchaseInvoicesUi.searchProductByNameSkuBarcode}
           value={search}
           onChange={e => setSearch(e.target.value)}
           autoFocus
@@ -339,7 +347,7 @@ function AccountPickerDialog({
         <DialogHeader>
           <DialogTitle>Pesquisar Conta</DialogTitle>
         </DialogHeader>
-        <Input placeholder="Pesquisar por código ou nome..." value={search} onChange={e => setSearch(e.target.value)} autoFocus />
+        <Input placeholder={t.purchaseInvoicesUi.searchByCodeOrName} value={search} onChange={e => setSearch(e.target.value)} autoFocus />
         <ScrollArea className="h-[350px]">
           <Table>
             <TableHeader>
@@ -414,7 +422,7 @@ function buildPurchaseInvoiceJournalLines({
     postedLines.push({
       id: nextId('freight_debit'),
       accountCode: '6.2.6',
-      accountName: 'Transporte sobre Compras',
+      accountName: t.purchaseInvoicesUi.transportOnPurchases,
       currency,
       note: `Frete / Transporte - FC ${invoiceNumber}`,
       debit: landingCosts,
@@ -426,7 +434,7 @@ function buildPurchaseInvoiceJournalLines({
     postedLines.push({
       id: nextId('iva'),
       accountCode: ivaAccountCode || '3.3.1',
-      accountName: 'IVA Dedutível',
+      accountName: t.purchaseInvoicesUi.deductibleVat,
       currency,
       note: `IVA - FC ${invoiceNumber}`,
       debit: ivaTotal,
@@ -499,7 +507,10 @@ function InvoiceViewDialog({
       <style>body{font-family:Arial,sans-serif;font-size:12px;margin:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:4px 8px}th{background:#f5f5f5;text-align:left}h2{color:#c2410c}@media print{body{margin:0}}</style>
     </head><body>
       <h2>FATURA DE COMPRA</h2>
-      <p><strong>${invoice.invoiceNumber}</strong>${invoice.supplierInvoiceNo ? ' — Fatura Fornecedor: ' + invoice.supplierInvoiceNo : ''}</p>
+      <p>
+        <strong>${invoice.invoiceNumber}</strong>
+        {invoice.supplierInvoiceNo ? t.purchaseInvoicesUi.supplierInvoiceLabel.replace('{no}', invoice.supplierInvoiceNo) : ''}
+      </p>
       <table style="width:auto;border:none;margin-bottom:16px"><tr style="border:none">
         <td style="border:none"><strong>Fornecedor:</strong> ${invoice.supplierName}</td>
         <td style="border:none"><strong>Data:</strong> ${new Date(invoice.date).toLocaleDateString('pt-AO')}</td>
@@ -542,8 +553,8 @@ function InvoiceViewDialog({
           <DialogTitle className="flex items-center gap-3">
             <span className="text-orange-600 font-bold">COMPRA</span>
             <span>{invoice.invoiceNumber}</span>
-            <Badge variant={getPurchaseInvoiceStatusBadge(invoice.status).variant}>
-              {getPurchaseInvoiceStatusBadge(invoice.status).label}
+            <Badge variant={getPurchaseInvoiceStatusBadge(t, invoice.status).variant}>
+              {getPurchaseInvoiceStatusBadge(t, invoice.status).label}
             </Badge>
             <Button variant="outline" size="sm" className="ml-auto gap-1" onClick={handlePrint}>
               <Printer className="h-4 w-4" /> Imprimir
@@ -631,6 +642,8 @@ function InvoiceViewDialog({
 // ═══════════════════════════════════════════
 export default function PurchaseInvoices() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { currentBranch, branches } = useBranchContext();
   const { products, addProduct: addProductToStock, refreshProducts } = useProducts(currentBranch?.id);
@@ -667,8 +680,8 @@ export default function PurchaseInvoices() {
   // Freight / Transport cost
   const [freightCost, setFreightCost] = useState(0);
   const [freightOtherCosts, setFreightOtherCosts] = useState(0);
-  const [freightSourceAccount, setFreightSourceAccount] = useState('4.1.1'); // default Caixa
-  const [freightSourceName, setFreightSourceName] = useState('Caixa');
+  const [freightSourceAccount, setFreightSourceAccount] = useState('4.1.1'); // default Cash
+  const [freightSourceName, setFreightSourceName] = useState('Cash');
   const [freightPickerOpen, setFreightPickerOpen] = useState(false);
   // PO inline state
   const [poCreateOpen, setPoCreateOpen] = useState(false);
@@ -722,7 +735,7 @@ export default function PurchaseInvoices() {
           supplierNif: d.entityNif,
           supplierPhone: d.entityPhone,
           supplierBalance: 0,
-          supplierInvoiceNo: d.internalNotes?.replace('Nº Fatura Fornecedor: ', '') || '',
+          supplierInvoiceNo: d.internalNotes?.replace(t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix, '') || '',
           date: d.issueDate,
           paymentDate: d.dueDate || d.issueDate,
           currency: d.currency === 'AOA' ? 'KZ' : d.currency || 'KZ',
@@ -940,7 +953,7 @@ export default function PurchaseInvoices() {
 
   const postedJournalPreview = useMemo(() => buildPurchaseInvoiceJournalLines({
     documentId: 'preview',
-    invoiceNumber: form.supplierInvoiceNo || form.ref || 'PRÉVIA',
+    invoiceNumber: form.supplierInvoiceNo || form.ref || t.purchaseInvoicesUi.previewInvoiceNumber,
     currency: form.currency || 'KZ',
     purchaseAccountCode: form.purchaseAccountCode || '2.1.1',
     ivaAccountCode: form.ivaAccountCode || '3.3.1',
@@ -1036,9 +1049,9 @@ export default function PurchaseInvoices() {
 
     // Validate supplier FIRST before any async work
     if (!form.supplierName) {
-      setSaveError('Selecione um fornecedor antes de guardar.');
+      setSaveError(t.purchaseInvoicesUi.selectSupplierBeforeSave);
       console.warn('[PurchaseInvoices] BLOCKED: No supplier name');
-      toast({ title: 'Erro', description: 'Selecione um fornecedor', variant: 'destructive' });
+      toast({ title: t.common.error, description: t.purchaseInvoicesUi.selectSupplier, variant: 'destructive' });
       return;
     }
 
@@ -1055,11 +1068,11 @@ export default function PurchaseInvoices() {
     const resolvedSupplierId = matchedSupplier?.id || formWithSupplier.supplierId;
 
     if (!resolvedSupplierId) {
-      setSaveError('Fornecedor sem ligação válida. Selecione novamente o fornecedor na lista.');
+      setSaveError(t.purchaseInvoicesUi.invalidSupplierLinkSelectAgain);
       console.warn('[PurchaseInvoices] BLOCKED: No resolved supplier ID');
       toast({
-        title: 'Erro',
-        description: 'Fornecedor sem ligação válida. Crie ou selecione novamente o fornecedor na lista antes de guardar a compra.',
+        title: t.common.error,
+        description: t.purchaseInvoicesUi.invalidSupplierLinkCreateOrSelect,
         variant: 'destructive',
       });
       return;
@@ -1074,30 +1087,34 @@ export default function PurchaseInvoices() {
         resolvedSupplierAccountCode = await ensureSupplierAccount(matchedSupplier.id, matchedSupplier.name, matchedSupplier.nif);
         console.log(`[PurchaseInvoices] Resolved supplier account: ${resolvedSupplierAccountCode} for ${matchedSupplier.name}`);
       } catch (err: any) {
-        setSaveError(`Não foi possível resolver a conta contabilística do fornecedor: ${err?.message || 'Erro desconhecido'}`);
+        setSaveError(
+          t.purchaseInvoicesUi.cannotResolveSupplierAccount
+            .replace('{message}', err?.message || t.purchaseInvoicesUi.unknownError)
+        );
         console.error('[PurchaseInvoices] Failed to resolve supplier account:', err);
         toast({
-          title: 'Erro na conta do fornecedor',
-          description: `Não foi possível resolver a conta contabilística: ${err?.message || 'Erro desconhecido'}`,
+          title: t.purchaseInvoicesUi.supplierAccountErrorTitle,
+          description: t.purchaseInvoicesUi.cannotResolveSupplierAccountShort
+            .replace('{message}', err?.message || t.purchaseInvoicesUi.unknownError),
           variant: 'destructive',
         });
         return;
       }
     }
     if (!resolvedSupplierAccountCode) {
-      setSaveError('O fornecedor seleccionado ainda não tem subconta contabilística válida.');
+      setSaveError(t.purchaseInvoicesUi.supplierNoValidSubaccount);
       console.warn('[PurchaseInvoices] BLOCKED: No supplier account code resolved');
       toast({
-        title: 'Erro',
-        description: 'O fornecedor seleccionado ainda não tem subconta contabilística válida.',
+        title: t.common.error,
+        description: t.purchaseInvoicesUi.supplierNoValidSubaccount,
         variant: 'destructive',
       });
       return;
     }
     if (lines.length === 0) {
-      setSaveError('Adicione pelo menos um produto antes de guardar.');
+      setSaveError(t.purchaseInvoicesUi.addAtLeastOneProductBeforeSave);
       console.warn('[PurchaseInvoices] BLOCKED: No lines');
-      toast({ title: 'Erro', description: 'Adicione pelo menos um produto', variant: 'destructive' });
+      toast({ title: t.common.error, description: t.purchaseInvoicesUi.addAtLeastOneProduct, variant: 'destructive' });
       return;
     }
 
@@ -1109,20 +1126,20 @@ export default function PurchaseInvoices() {
     const resolvedBranchName = currentBranch?.name || resolvedWarehouseName;
 
     if (!resolvedBranchId) {
-      setSaveError('Nenhuma filial activa foi encontrada. Selecione o armazém/filial antes de guardar.');
+      setSaveError(t.purchaseInvoicesUi.noActiveBranchSelectWarehouse);
       toast({
-        title: 'Erro',
-        description: 'Nenhuma filial activa foi encontrada. Selecione o armazém/filial antes de guardar.',
+        title: t.common.error,
+        description: t.purchaseInvoicesUi.noActiveBranchSelectWarehouse,
         variant: 'destructive',
       });
       return;
     }
 
     if (!resolvedWarehouseId) {
-      setSaveError('Selecione um armazém antes de guardar a compra.');
+      setSaveError(t.purchaseInvoicesUi.selectWarehouseBeforeSave);
       toast({
-        title: 'Erro',
-        description: 'Selecione um armazém antes de guardar a compra.',
+        title: t.common.error,
+        description: t.purchaseInvoicesUi.selectWarehouseBeforeSave,
         variant: 'destructive',
       });
       return;
@@ -1279,15 +1296,15 @@ export default function PurchaseInvoices() {
       console.log('[PurchaseInvoices] Transaction result:', JSON.stringify(txResult));
 
       if (!txResult.success) {
-        const txError = txResult.errors.join('; ') || 'Stock e contabilidade não foram actualizados.';
+        const txError = txResult.errors.join('; ') || t.purchaseInvoicesUi.stockAccountingNotUpdated;
         const description = txError.includes('invalid input syntax for type uuid')
-          ? 'Existe um ID inválido na compra. Reabra o fornecedor e o armazém, depois grave novamente.'
+          ? t.purchaseInvoicesUi.invalidIdReopenSupplierWarehouse
           : txError;
 
         console.error('[PurchaseInvoices] Transaction engine errors:', txResult.errors);
           setSaveError(description);
         toast({
-          title: 'Aviso: Falha no motor de transação',
+          title: t.purchaseInvoicesUi.transactionEngineFailureTitle,
           description,
           variant: 'destructive',
         });
@@ -1299,8 +1316,8 @@ export default function PurchaseInvoices() {
       await Promise.all([refreshProducts(), refreshSuppliers()]);
 
       toast({
-        title: 'Fatura de Compra Guardada',
-        description: `${invoice.invoiceNumber} — ${invoice.supplierName} — ${invoice.total.toLocaleString('pt-AO')} ${invoice.currency}`,
+        title: t.purchaseInvoicesUi.purchaseInvoiceSavedTitle,
+        description: `${invoice.invoiceNumber} — ${invoice.supplierName} — ${invoice.total.toLocaleString(uiLocale)} ${invoice.currency}`,
       });
 
       getPurchaseInvoices(resolvedBranchId).then(setInvoices);
@@ -1309,10 +1326,10 @@ export default function PurchaseInvoices() {
       setMode('list');
     } catch (error: any) {
       console.error('[PurchaseInvoices] Failed to save purchase invoice:', error);
-      setSaveError(error?.message || 'A compra não foi sincronizada corretamente com stock e fornecedor.');
+      setSaveError(error?.message || t.purchaseInvoicesUi.notSyncedWithStockSupplier);
       toast({
-        title: 'Erro ao guardar a fatura de compra',
-        description: error?.message || 'A compra não foi sincronizada corretamente com stock e fornecedor.',
+        title: t.purchaseInvoicesUi.savePurchaseInvoiceErrorTitle,
+        description: error?.message || t.purchaseInvoicesUi.notSyncedWithStockSupplier,
         variant: 'destructive',
       });
     }
@@ -1406,7 +1423,7 @@ export default function PurchaseInvoices() {
             <div className="flex flex-wrap gap-2 items-end">
               <div className="relative flex-1 max-w-xs">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input placeholder="Pesquisar nº fatura, fornecedor..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-9" />
+                <Input placeholder={t.purchaseInvoicesUi.searchInvoiceOrSupplierPlaceholder} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-9" />
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">Fornecedor</Label>
@@ -1479,8 +1496,8 @@ export default function PurchaseInvoices() {
                         <TableCell className="text-right font-mono text-[11px] py-1 text-destructive">{inv.ivaTotal.toLocaleString('pt-AO')}</TableCell>
                         <TableCell className="text-right font-mono text-[11px] py-1 font-bold">{inv.total.toLocaleString('pt-AO')}</TableCell>
                         <TableCell className="py-1">
-                          <Badge variant={getPurchaseInvoiceStatusBadge(inv.status).variant} className="text-[9px] px-1.5 py-0">
-                            {getPurchaseInvoiceStatusBadge(inv.status).label}
+                          <Badge variant={getPurchaseInvoiceStatusBadge(t, inv.status).variant} className="text-[9px] px-1.5 py-0">
+                            {getPurchaseInvoiceStatusBadge(t, inv.status).label}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right py-1">
@@ -1538,8 +1555,8 @@ export default function PurchaseInvoices() {
                         <TableCell>{order.createdAt ? format(new Date(order.createdAt), 'dd/MM/yyyy') : '—'}</TableCell>
                         <TableCell className="text-right font-medium font-mono">{(order.total || 0).toLocaleString('pt-AO')} Kz</TableCell>
                         <TableCell>
-                          <Badge variant={getPurchaseOrderStatusBadge(order.status).variant}>
-                            {getPurchaseOrderStatusBadge(order.status).label}
+                          <Badge variant={getPurchaseOrderStatusBadge(t, order.status).variant}>
+                            {getPurchaseOrderStatusBadge(t, order.status).label}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right">
@@ -1620,7 +1637,7 @@ export default function PurchaseInvoices() {
                 <div>
                   <Label>Fornecedor *</Label>
                   <Select value={poForm.supplierId} onValueChange={v => setPoForm(p => ({ ...p, supplierId: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Seleccione o fornecedor" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder={t.purchaseInvoicesUi.selectSupplierPlaceholder} /></SelectTrigger>
                     <SelectContent>
                       {activeSuppliers.map(s => (
                         <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
@@ -1631,7 +1648,7 @@ export default function PurchaseInvoices() {
                 <div>
                   <Label>Filial Destino *</Label>
                   <Select value={poForm.branchId} onValueChange={v => setPoForm(p => ({ ...p, branchId: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Seleccione a filial" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder={t.purchaseInvoicesUi.selectBranchPlaceholder} /></SelectTrigger>
                     <SelectContent>
                       {branches.filter(b => b.id).map(b => (
                         <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
@@ -1645,7 +1662,7 @@ export default function PurchaseInvoices() {
                 </div>
                 <div>
                   <Label>Notas</Label>
-                  <Input value={poForm.notes} onChange={e => setPoForm(p => ({ ...p, notes: e.target.value }))} placeholder="Observações..." />
+                  <Input value={poForm.notes} onChange={e => setPoForm(p => ({ ...p, notes: e.target.value }))} placeholder={t.purchaseInvoicesUi.notesPlaceholder} />
                 </div>
               </div>
 
@@ -1655,7 +1672,7 @@ export default function PurchaseInvoices() {
                 <div className="grid grid-cols-4 gap-3">
                   <div className="col-span-2 relative">
                     <Input
-                      placeholder="Pesquisar produto por nome, SKU ou código..."
+                      placeholder={t.purchaseInvoicesUi.searchProductByNameSkuOrCode}
                       value={poProductSearch}
                       onChange={e => {
                         setPoProductSearch(e.target.value);
@@ -1700,7 +1717,7 @@ export default function PurchaseInvoices() {
                 <Button variant="secondary" size="sm" onClick={() => {
                   if (!poNewItem.productId || poNewItem.quantity <= 0) return;
                   if (poForm.items.find(i => i.productId === poNewItem.productId)) {
-                    toast({ title: 'Produto já na lista', variant: 'destructive' });
+                    toast({ title: t.purchaseInvoicesUi.productAlreadyInList, variant: 'destructive' });
                     return;
                   }
                   setPoForm(p => ({ ...p, items: [...p.items, { ...poNewItem }] }));
@@ -1801,8 +1818,8 @@ export default function PurchaseInvoices() {
                     <div><span className="text-muted-foreground">Entrega Prevista:</span><p className="font-medium">{format(new Date(poViewOrder.expectedDeliveryDate), 'dd/MM/yyyy')}</p></div>
                   )}
                   <div><span className="text-muted-foreground">Estado:</span>
-                    <Badge variant={getPurchaseOrderStatusBadge(poViewOrder.status).variant} className="ml-2">
-                      {getPurchaseOrderStatusBadge(poViewOrder.status).label}
+                    <Badge variant={getPurchaseOrderStatusBadge(t, poViewOrder.status).variant} className="ml-2">
+                      {getPurchaseOrderStatusBadge(t, poViewOrder.status).label}
                     </Badge>
                   </div>
                   {poViewOrder.notes && (
@@ -1947,7 +1964,7 @@ export default function PurchaseInvoices() {
             onClick={() => void openSupplierPicker()}
           >
             <span className="font-mono text-[11px] text-muted-foreground">{form.supplierAccountCode || '---'}</span>
-            <span className="font-semibold text-sm">{form.supplierName || 'Selecionar Fornecedor...'}</span>
+            <span className="font-semibold text-sm">{form.supplierName || t.purchaseInvoicesUi.selectSupplierInline}</span>
             <Search className="h-3 w-3 text-muted-foreground" />
           </button>
           {/* Supplier balance badge — always visible when supplier selected */}
@@ -2224,7 +2241,7 @@ export default function PurchaseInvoices() {
                         </Select>
                       </TableCell>
                       <TableCell className="py-0.5">
-                        <Input value={jl.note} onChange={e => updateJournalLine(idx, 'note', e.target.value)} className="h-6 text-[10px] px-1" placeholder="Descrição..." />
+                        <Input value={jl.note} onChange={e => updateJournalLine(idx, 'note', e.target.value)} className="h-6 text-[10px] px-1" placeholder={t.purchaseInvoicesUi.notePlaceholder} />
                       </TableCell>
                       <TableCell className="py-0.5">
                         <Input type="number" value={jl.debit || ''} onChange={e => updateJournalLine(idx, 'debit', parseFloat(e.target.value) || 0)} className="h-6 w-20 text-[10px] text-right font-mono px-1" />
@@ -2330,7 +2347,7 @@ export default function PurchaseInvoices() {
           <div className="space-y-3">
             <div>
               <Label>Nome *</Label>
-              <Input value={newSupplierForm.name} onChange={e => setNewSupplierForm(f => ({ ...f, name: e.target.value }))} placeholder="Nome do fornecedor" />
+              <Input value={newSupplierForm.name} onChange={e => setNewSupplierForm(f => ({ ...f, name: e.target.value }))} placeholder={t.purchaseInvoicesUi.supplierNamePlaceholder} />
             </div>
             <div>
               <Label>NIF</Label>
@@ -2383,9 +2400,9 @@ export default function PurchaseInvoices() {
                   } as any);
                   setShowCreateSupplier(false);
                   handleSelectSupplier(created);
-                  toast({ title: 'Fornecedor criado', description: `${created.name} adicionado e seleccionado` });
+                  toast({ title: t.purchaseInvoicesUi.supplierCreatedTitle, description: t.purchaseInvoicesUi.supplierCreatedDesc.replace('{name}', created.name) });
                 } catch (err: any) {
-                  toast({ title: 'Erro', description: err.message || 'Falha ao criar fornecedor', variant: 'destructive' });
+                  toast({ title: t.common.error, description: err.message || t.purchaseInvoicesUi.createSupplierFailed, variant: 'destructive' });
                 }
               }}
             >

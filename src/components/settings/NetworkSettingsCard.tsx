@@ -29,6 +29,7 @@ import {
 import { getApiUrl, setApiUrl, isLocalNetworkMode, setForceApiMode } from '@/lib/api/config';
 import { toast } from 'sonner';
 import type { DiscoveredServer } from '@/types/electron';
+import { useTranslation } from '@/i18n';
 
 import { 
   startMockServer, 
@@ -54,6 +55,7 @@ interface ConnectionTestResult {
 }
 
 export function NetworkSettingsCard() {
+  const { t } = useTranslation();
   const [serverUrl, setServerUrl] = useState('');
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
@@ -96,7 +98,7 @@ export function NetworkSettingsCard() {
 
   const testConnection = async () => {
     if (!serverUrl) {
-      toast.error('Por favor, insira o endereço do servidor');
+      toast.error(t.networkSettingsUi.enterServerAddress);
       return;
     }
 
@@ -130,22 +132,22 @@ export function NetworkSettingsCard() {
           latency,
           serverInfo: data,
         });
-        toast.success(`Conexão bem-sucedida! Latência: ${latency}ms`);
+        toast.success(t.networkSettingsUi.connectionSuccessLatency.replace('{ms}', String(latency)));
       } else {
         setTestResult({
           success: false,
           error: `Servidor respondeu com erro: ${response.status}`,
         });
-        toast.error('Falha na conexão com o servidor');
+        toast.error(t.networkSettingsUi.connectionFailed);
       }
     } catch (error: any) {
       const latency = Date.now() - startTime;
-      let errorMessage = 'Não foi possível conectar ao servidor';
+      let errorMessage = t.networkSettingsUi.couldNotConnect;
       
       if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-        errorMessage = 'Tempo limite de conexão excedido (5s)';
+        errorMessage = t.networkSettingsUi.timeout5s;
       } else if (error.message?.includes('Failed to fetch')) {
-        errorMessage = 'Servidor não encontrado ou inacessível';
+        errorMessage = t.networkSettingsUi.serverNotFound;
       }
 
       setTestResult({
@@ -161,7 +163,7 @@ export function NetworkSettingsCard() {
 
   const saveSettings = () => {
     if (!testResult?.success) {
-      toast.error('Por favor, teste a conexão antes de salvar');
+      toast.error(t.networkSettingsUi.testBeforeSave);
       return;
     }
 
@@ -185,14 +187,14 @@ export function NetworkSettingsCard() {
     setServerUrl('http://localhost:3000');
     setHasChanges(true);
     setTestResult(null);
-    toast.info('Endereço resetado para padrão. Teste a conexão e salve.');
+    toast.info(t.networkSettingsUi.resetToDefaultInfo);
   };
 
   // Discover servers on local network (Electron or Mock)
   const discoverServers = async () => {
     setIsDiscovering(true);
     setDiscoveredServers([]);
-    toast.info('Procurando servidores na rede local...');
+    toast.info(t.networkSettingsUi.scanningLocalNetwork);
 
     // Check for mock server first
     if (mockServerRunning) {
@@ -200,7 +202,7 @@ export function NetworkSettingsCard() {
       const mockServers = getMockDiscoveredServers();
       if (mockServers.length > 0) {
         setDiscoveredServers(mockServers);
-        toast.success(`Encontrado(s) ${mockServers.length} servidor(es) (mock)`);
+        toast.success(t.networkSettingsUi.foundServersMock.replace('{count}', String(mockServers.length)));
         setIsDiscovering(false);
         return;
       }
@@ -213,17 +215,17 @@ export function NetworkSettingsCard() {
         
         if (result.success && result.servers.length > 0) {
           setDiscoveredServers(result.servers);
-          toast.success(`Encontrado(s) ${result.servers.length} servidor(es)`);
+          toast.success(t.networkSettingsUi.foundServers.replace('{count}', String(result.servers.length)));
         } else if (result.servers.length === 0) {
-          toast.info('Nenhum servidor encontrado na rede');
+          toast.info(t.networkSettingsUi.noServersFound);
         } else {
-          toast.error(result.error || 'Erro na descoberta de servidores');
+          toast.error(result.error || t.networkSettingsUi.discoveryError);
         }
       } catch (error: any) {
-        toast.error('Falha na descoberta: ' + error.message);
+        toast.error(t.networkSettingsUi.discoveryFailed.replace('{error}', error.message));
       }
     } else if (!mockServerRunning) {
-      toast.info('Inicie o servidor de teste local ou use o app desktop');
+      toast.info(t.networkSettingsUi.startLocalServerOrDesktop);
     }
     
     setIsDiscovering(false);
@@ -235,14 +237,14 @@ export function NetworkSettingsCard() {
       stopMockServer();
       setMockServerRunning(false);
       setMockRequestCount(0);
-      toast.info('Servidor de teste parado');
+      toast.info(t.networkSettingsUi.testServerStopped);
     } else {
       startMockServer({
         simulatedLatency: mockLatency,
         failureRate: mockFailureRate / 100
       });
       setMockServerRunning(true);
-      toast.success('Servidor de teste iniciado');
+      toast.success(t.networkSettingsUi.testServerStarted);
     }
   };
   
@@ -268,9 +270,9 @@ export function NetworkSettingsCard() {
       setTestResult(result);
       
       if (result.success) {
-        toast.success(`Conexão mock bem-sucedida! Latência: ${result.latency}ms`);
+        toast.success(t.networkSettingsUi.mockConnectionSuccessLatency.replace('{ms}', String(result.latency)));
       } else {
-        toast.error(result.error || 'Falha na conexão mock');
+        toast.error(result.error || t.networkSettingsUi.mockConnectionFailed);
       }
       
       setIsTestingConnection(false);
@@ -287,7 +289,7 @@ export function NetworkSettingsCard() {
     setServerUrl(url);
     setHasChanges(true);
     setTestResult(null);
-    toast.success(`Servidor selecionado: ${server.name}`);
+    toast.success(t.networkSettingsUi.serverSelected.replace('{name}', server.name));
   };
 
   return (
@@ -295,7 +297,7 @@ export function NetworkSettingsCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Network className="w-5 h-5" />
-          Configurações de Rede
+          {t.networkSettingsUi.title}
         </CardTitle>
         <CardDescription>
           Configure a conexão com o servidor central para sincronização em tempo real
@@ -486,7 +488,7 @@ export function NetworkSettingsCard() {
               <div className="text-center">
                 <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary mb-2" />
                 <p className="text-sm text-muted-foreground">
-                  Procurando servidores NEXOR ERP na rede...
+                  {t.networkSettingsUi.scanningNexorServers}
                 </p>
               </div>
             </div>
@@ -497,7 +499,7 @@ export function NetworkSettingsCard() {
 
         {/* Server URL Input */}
         <div className="space-y-3">
-          <Label htmlFor="server-url">Endereço do Servidor</Label>
+          <Label htmlFor="server-url">{t.networkSettingsUi.serverAddressLabel}</Label>
           <div className="flex gap-2">
             <Input
               id="server-url"
@@ -510,17 +512,17 @@ export function NetworkSettingsCard() {
               variant="outline"
               size="icon"
               onClick={resetToDefault}
-              title="Resetar para padrão"
+              title={t.networkSettingsUi.resetToDefaultTitle}
             >
               <RefreshCw className="w-4 h-4" />
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
             {mockServerRunning 
-              ? 'Servidor de teste local está em execução - use localhost:3000'
+              ? t.networkSettingsUi.testServerRunningHint
               : isElectron 
-                ? 'Use a descoberta automática ou insira o IP manualmente'
-                : 'Insira o IP do servidor principal (ex: http://192.168.1.50:3000)'
+                ? t.networkSettingsUi.useDiscoveryOrManualIp
+                : t.networkSettingsUi.enterServerIpHint
             }
           </p>
         </div>
@@ -535,12 +537,12 @@ export function NetworkSettingsCard() {
           {isTestingConnection ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Testando conexão...
+              {t.networkSettingsUi.testingConnection}
             </>
           ) : (
             <>
               <Wifi className="w-4 h-4" />
-              Testar Conexão {mockServerRunning && '(Mock)'}
+              {t.networkSettingsUi.testConnection} {mockServerRunning && '(Mock)'}
             </>
           )}
         </Button>
@@ -562,16 +564,16 @@ export function NetworkSettingsCard() {
                 <p className={`font-medium ${
                   testResult.success ? 'text-emerald-600' : 'text-destructive'
                 }`}>
-                  {testResult.success ? 'Conexão bem-sucedida!' : 'Falha na conexão'}
+                  {testResult.success ? t.networkSettingsUi.connectionSuccess : t.networkSettingsUi.connectionFailure}
                 </p>
                 {testResult.success ? (
                   <div className="text-sm text-muted-foreground space-y-1">
-                    <p>Latência: {testResult.latency}ms</p>
+                    <p>{t.networkSettingsUi.latency.replace('{ms}', String(testResult.latency))}</p>
                     {testResult.serverInfo?.serverName && (
-                      <p>Servidor: {testResult.serverInfo.serverName}</p>
+                      <p>{t.networkSettingsUi.serverLabel.replace('{name}', testResult.serverInfo.serverName)}</p>
                     )}
                     {testResult.serverInfo?.connectedClients !== undefined && (
-                      <p>Clientes conectados: {testResult.serverInfo.connectedClients}</p>
+                      <p>{t.networkSettingsUi.connectedClients.replace('{count}', String(testResult.serverInfo.connectedClients))}</p>
                     )}
                   </div>
                 ) : (

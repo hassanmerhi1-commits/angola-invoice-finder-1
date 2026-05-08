@@ -11,14 +11,18 @@ import { Download, TrendingUp, Calendar, Package, Tags, Building2 } from 'lucide
 import { format, parseISO, startOfMonth, endOfMonth, startOfWeek, endOfWeek, 
          eachDayOfInterval, eachWeekOfInterval, eachMonthOfInterval, isSameDay, 
          isSameWeek, isSameMonth, getWeek, getMonth, getYear } from 'date-fns';
-import { pt } from 'date-fns/locale';
+import { enUS, pt } from 'date-fns/locale';
 import { exportToExcel } from '@/lib/excel';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
          PieChart, Pie, Cell, Legend, LineChart, Line } from 'recharts';
+import { useTranslation } from '@/i18n';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
 
 export default function SalesAnalysisReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const dfLocale = language === 'pt' ? pt : enUS;
   const { branches, currentBranch } = useBranches();
   const { sales } = useSales();
   const { products } = useProducts();
@@ -80,9 +84,9 @@ export default function SalesAnalysisReport() {
       
       return {
         date,
-        label: groupBy === 'day' ? format(date, 'dd/MM', { locale: pt }) :
-               groupBy === 'week' ? `Sem ${getWeek(date)}` :
-               format(date, 'MMM/yy', { locale: pt }),
+        label: groupBy === 'day' ? format(date, 'dd/MM', { locale: dfLocale }) :
+               groupBy === 'week' ? t.salesAnalysisUi.weekLabel.replace('{week}', String(getWeek(date))) :
+               format(date, 'MMM/yy', { locale: dfLocale }),
         revenue: periodSales.reduce((sum, s) => sum + s.total, 0),
         transactions: periodSales.length,
         items: periodSales.reduce((sum, s) => sum + s.items.reduce((itemSum, i) => itemSum + i.quantity, 0), 0),
@@ -127,7 +131,7 @@ export default function SalesAnalysisReport() {
     filteredSales.forEach(sale => {
       sale.items.forEach(item => {
         const product = products.find(p => p.id === item.productId);
-        const categoryName = product?.category || 'Sem Categoria';
+        const categoryName = product?.category || t.salesAnalysisUi.noCategory;
         
         if (!categoryMap[categoryName]) {
           categoryMap[categoryName] = { name: categoryName, quantity: 0, revenue: 0 };
@@ -146,7 +150,7 @@ export default function SalesAnalysisReport() {
     
     filteredSales.forEach(sale => {
       const branch = branches.find(b => b.id === sale.branchId);
-      const branchName = branch?.name || 'Desconhecido';
+      const branchName = branch?.name || t.common.unknown;
       
       if (!branchMap[sale.branchId]) {
         branchMap[sale.branchId] = { name: branchName, transactions: 0, revenue: 0 };
@@ -159,7 +163,7 @@ export default function SalesAnalysisReport() {
   }, [filteredSales, branches]);
 
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-AO', { 
+    return new Intl.NumberFormat(locale, { 
       style: 'currency', 
       currency: 'AOA',
       minimumFractionDigits: 0 
@@ -172,27 +176,27 @@ export default function SalesAnalysisReport() {
     
     if (type === 'summary') {
       data = salesByDate.map(d => ({
-        'Período': d.label,
-        'Receita': d.revenue,
-        'Transações': d.transactions,
-        'Itens Vendidos': d.items,
+        [t.salesAnalysisUi.colPeriod]: d.label,
+        [t.salesAnalysisUi.colRevenue]: d.revenue,
+        [t.salesAnalysisUi.colTransactions]: d.transactions,
+        [t.salesAnalysisUi.colItemsSold]: d.items,
       }));
       filename = `Vendas_Resumo_${format(new Date(), 'yyyyMMdd')}`;
     } else if (type === 'products') {
       data = salesByProduct.map(p => ({
-        'Produto': p.name,
-        'Quantidade': p.quantity,
-        'Receita': p.revenue,
-        'Custo': p.cost * p.quantity,
-        'Lucro': p.profit,
-        'Margem %': p.margin.toFixed(2),
+        [t.common.product]: p.name,
+        [t.common.quantity]: p.quantity,
+        [t.salesAnalysisUi.colRevenue]: p.revenue,
+        [t.salesAnalysisUi.colCost]: p.cost * p.quantity,
+        [t.salesAnalysisUi.colProfit]: p.profit,
+        [t.salesAnalysisUi.colMarginPercent]: p.margin.toFixed(2),
       }));
       filename = `Vendas_Produtos_${format(new Date(), 'yyyyMMdd')}`;
     } else if (type === 'categories') {
       data = salesByCategory.map(c => ({
-        'Categoria': c.name,
-        'Quantidade': c.quantity,
-        'Receita': c.revenue,
+        [t.salesAnalysisUi.colCategory]: c.name,
+        [t.common.quantity]: c.quantity,
+        [t.salesAnalysisUi.colRevenue]: c.revenue,
       }));
       filename = `Vendas_Categorias_${format(new Date(), 'yyyyMMdd')}`;
     }
@@ -207,16 +211,16 @@ export default function SalesAnalysisReport() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <TrendingUp className="w-5 h-5" />
-            Análise de Vendas
+            {t.salesAnalysisUi.title}
           </CardTitle>
           <CardDescription>
-            Relatórios detalhados de vendas por período, produto e categoria
+            {t.salesAnalysisUi.description}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
-              <Label>Data Início</Label>
+              <Label>{t.reportsUi.dateFrom}</Label>
               <Input
                 type="date"
                 value={dateFrom}
@@ -224,7 +228,7 @@ export default function SalesAnalysisReport() {
               />
             </div>
             <div>
-              <Label>Data Fim</Label>
+              <Label>{t.reportsUi.dateTo}</Label>
               <Input
                 type="date"
                 value={dateTo}
@@ -232,13 +236,13 @@ export default function SalesAnalysisReport() {
               />
             </div>
             <div>
-              <Label>Filial</Label>
+              <Label>{t.salesAnalysisUi.branch}</Label>
               <Select value={selectedBranch} onValueChange={setSelectedBranch}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Todas" />
+                  <SelectValue placeholder={t.common.all} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Todas as Filiais</SelectItem>
+                  <SelectItem value="all">{t.salesAnalysisUi.allBranches}</SelectItem>
                   {branches.map(branch => (
                     <SelectItem key={branch.id} value={branch.id}>
                       {branch.name}
@@ -248,22 +252,22 @@ export default function SalesAnalysisReport() {
               </Select>
             </div>
             <div>
-              <Label>Agrupar Por</Label>
+              <Label>{t.salesAnalysisUi.groupBy}</Label>
               <Select value={groupBy} onValueChange={(v: 'day' | 'week' | 'month') => setGroupBy(v)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="day">Dia</SelectItem>
-                  <SelectItem value="week">Semana</SelectItem>
-                  <SelectItem value="month">Mês</SelectItem>
+                  <SelectItem value="day">{t.salesAnalysisUi.groupDay}</SelectItem>
+                  <SelectItem value="week">{t.salesAnalysisUi.groupWeek}</SelectItem>
+                  <SelectItem value="month">{t.salesAnalysisUi.groupMonth}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="flex items-end">
               <Button variant="outline" onClick={() => handleExport('summary')}>
                 <Download className="w-4 h-4 mr-2" />
-                Exportar
+                {t.common.export}
               </Button>
             </div>
           </div>
@@ -274,31 +278,31 @@ export default function SalesAnalysisReport() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">Receita Total</p>
+            <p className="text-sm text-muted-foreground">{t.salesAnalysisUi.totalRevenue}</p>
             <p className="text-2xl font-bold">{formatCurrency(summaryStats.totalRevenue)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">Transações</p>
+            <p className="text-sm text-muted-foreground">{t.salesAnalysisUi.transactions}</p>
             <p className="text-2xl font-bold">{summaryStats.totalTransactions}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">Itens Vendidos</p>
+            <p className="text-sm text-muted-foreground">{t.salesAnalysisUi.itemsSold}</p>
             <p className="text-2xl font-bold">{summaryStats.totalItems}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">IVA Colectado</p>
+            <p className="text-sm text-muted-foreground">{t.salesAnalysisUi.taxCollected}</p>
             <p className="text-2xl font-bold">{formatCurrency(summaryStats.totalTax)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">Ticket Médio</p>
+            <p className="text-sm text-muted-foreground">{t.salesAnalysisUi.avgTicket}</p>
             <p className="text-2xl font-bold">{formatCurrency(summaryStats.avgTicket)}</p>
           </CardContent>
         </Card>
@@ -309,19 +313,19 @@ export default function SalesAnalysisReport() {
         <TabsList>
           <TabsTrigger value="summary">
             <Calendar className="w-4 h-4 mr-2" />
-            Por Período
+            {t.salesAnalysisUi.tabByPeriod}
           </TabsTrigger>
           <TabsTrigger value="products">
             <Package className="w-4 h-4 mr-2" />
-            Por Produto
+            {t.salesAnalysisUi.tabByProduct}
           </TabsTrigger>
           <TabsTrigger value="categories">
             <Tags className="w-4 h-4 mr-2" />
-            Por Categoria
+            {t.salesAnalysisUi.tabByCategory}
           </TabsTrigger>
           <TabsTrigger value="branches">
             <Building2 className="w-4 h-4 mr-2" />
-            Por Filial
+            {t.salesAnalysisUi.tabByBranch}
           </TabsTrigger>
         </TabsList>
 
@@ -329,7 +333,7 @@ export default function SalesAnalysisReport() {
           {/* Revenue Chart */}
           <Card>
             <CardHeader>
-              <CardTitle>Evolução de Vendas</CardTitle>
+              <CardTitle>{t.salesAnalysisUi.salesEvolution}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="h-80">
@@ -340,7 +344,7 @@ export default function SalesAnalysisReport() {
                     <YAxis />
                     <Tooltip formatter={(value: number) => formatCurrency(value)} />
                     <Legend />
-                    <Line type="monotone" dataKey="revenue" name="Receita" stroke="#3b82f6" strokeWidth={2} />
+                    <Line type="monotone" dataKey="revenue" name={t.salesAnalysisUi.colRevenue} stroke="#3b82f6" strokeWidth={2} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -350,20 +354,20 @@ export default function SalesAnalysisReport() {
           {/* Payment Methods */}
           <Card>
             <CardHeader>
-              <CardTitle>Por Método de Pagamento</CardTitle>
+              <CardTitle>{t.salesAnalysisUi.byPaymentMethod}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-3 gap-4">
                 <div className="p-4 bg-green-500/10 rounded-lg">
-                  <p className="text-sm text-muted-foreground">Dinheiro</p>
+                  <p className="text-sm text-muted-foreground">{t.chartsUi.methodCash}</p>
                   <p className="text-xl font-bold text-green-500">{formatCurrency(summaryStats.byPaymentMethod.cash)}</p>
                 </div>
                 <div className="p-4 bg-blue-500/10 rounded-lg">
-                  <p className="text-sm text-muted-foreground">Cartão</p>
+                  <p className="text-sm text-muted-foreground">{t.chartsUi.methodCard}</p>
                   <p className="text-xl font-bold text-blue-500">{formatCurrency(summaryStats.byPaymentMethod.card)}</p>
                 </div>
                 <div className="p-4 bg-purple-500/10 rounded-lg">
-                  <p className="text-sm text-muted-foreground">Transferência</p>
+                  <p className="text-sm text-muted-foreground">{t.chartsUi.methodTransfer}</p>
                   <p className="text-xl font-bold text-purple-500">{formatCurrency(summaryStats.byPaymentMethod.transfer)}</p>
                 </div>
               </div>
@@ -375,7 +379,7 @@ export default function SalesAnalysisReport() {
           <Card>
             <CardHeader>
               <div className="flex justify-between items-center">
-                <CardTitle>Vendas por Produto</CardTitle>
+                <CardTitle>{t.salesAnalysisUi.salesByProduct}</CardTitle>
                 <Button variant="outline" size="sm" onClick={() => handleExport('products')}>
                   <Download className="w-4 h-4 mr-2" />
                   Excel
@@ -386,12 +390,12 @@ export default function SalesAnalysisReport() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Produto</TableHead>
-                    <TableHead className="text-right">Qtd</TableHead>
-                    <TableHead className="text-right">Receita</TableHead>
-                    <TableHead className="text-right">Custo</TableHead>
-                    <TableHead className="text-right">Lucro</TableHead>
-                    <TableHead className="text-right">Margem</TableHead>
+                    <TableHead>{t.common.product}</TableHead>
+                    <TableHead className="text-right">{t.common.qty}</TableHead>
+                    <TableHead className="text-right">{t.salesAnalysisUi.colRevenue}</TableHead>
+                    <TableHead className="text-right">{t.salesAnalysisUi.colCost}</TableHead>
+                    <TableHead className="text-right">{t.salesAnalysisUi.colProfit}</TableHead>
+                    <TableHead className="text-right">{t.salesAnalysisUi.colMargin}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -419,7 +423,7 @@ export default function SalesAnalysisReport() {
           <div className="grid md:grid-cols-2 gap-4">
             <Card>
               <CardHeader>
-                <CardTitle>Vendas por Categoria</CardTitle>
+                <CardTitle>{t.salesAnalysisUi.salesByCategory}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-80">
@@ -447,7 +451,7 @@ export default function SalesAnalysisReport() {
             <Card>
               <CardHeader>
                 <div className="flex justify-between items-center">
-                  <CardTitle>Tabela</CardTitle>
+                  <CardTitle>{t.salesAnalysisUi.table}</CardTitle>
                   <Button variant="outline" size="sm" onClick={() => handleExport('categories')}>
                     <Download className="w-4 h-4 mr-2" />
                     Excel
@@ -458,9 +462,9 @@ export default function SalesAnalysisReport() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Categoria</TableHead>
-                      <TableHead className="text-right">Qtd</TableHead>
-                      <TableHead className="text-right">Receita</TableHead>
+                      <TableHead>{t.salesAnalysisUi.colCategory}</TableHead>
+                      <TableHead className="text-right">{t.common.qty}</TableHead>
+                      <TableHead className="text-right">{t.salesAnalysisUi.colRevenue}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -490,7 +494,7 @@ export default function SalesAnalysisReport() {
           <div className="grid md:grid-cols-2 gap-4">
             <Card>
               <CardHeader>
-                <CardTitle>Vendas por Filial</CardTitle>
+                <CardTitle>{t.salesAnalysisUi.salesByBranch}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-80">
@@ -500,7 +504,7 @@ export default function SalesAnalysisReport() {
                       <XAxis dataKey="name" />
                       <YAxis />
                       <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                      <Bar dataKey="revenue" name="Receita" fill="#3b82f6" />
+                      <Bar dataKey="revenue" name={t.salesAnalysisUi.colRevenue} fill="#3b82f6" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -508,15 +512,15 @@ export default function SalesAnalysisReport() {
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle>Tabela</CardTitle>
+                <CardTitle>{t.salesAnalysisUi.table}</CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Filial</TableHead>
-                      <TableHead className="text-right">Transações</TableHead>
-                      <TableHead className="text-right">Receita</TableHead>
+                      <TableHead>{t.salesAnalysisUi.branch}</TableHead>
+                      <TableHead className="text-right">{t.salesAnalysisUi.transactions}</TableHead>
+                      <TableHead className="text-right">{t.salesAnalysisUi.colRevenue}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

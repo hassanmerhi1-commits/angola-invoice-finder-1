@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Plus, TrendingUp, TrendingDown, ArrowRightLeft, Trash2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api/client';
+import { useTranslation } from '@/i18n';
 
 interface ExchangeRate {
   id: string;
@@ -24,6 +25,8 @@ interface ExchangeRate {
 const CURRENCIES = ['USD', 'EUR', 'ZAR', 'GBP', 'CNY', 'BRL'];
 
 export default function ExchangeRates() {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const [rates, setRates] = useState<ExchangeRate[]>([]);
   const [latestRates, setLatestRates] = useState<ExchangeRate[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -43,7 +46,7 @@ export default function ExchangeRates() {
   useEffect(() => { load(); }, []);
 
   const handleCreate = async () => {
-    if (!form.rate || parseFloat(form.rate) <= 0) { toast.error('Taxa inválida'); return; }
+    if (!form.rate || parseFloat(form.rate) <= 0) { toast.error(t.exchangeRatesUi.invalidRate); return; }
     const res = await api.exchangeRates.create({
       from_currency: form.from_currency,
       to_currency: 'AOA',
@@ -52,7 +55,7 @@ export default function ExchangeRates() {
       source: 'manual',
     });
     if (res.data) {
-      toast.success('Taxa adicionada');
+      toast.success(t.exchangeRatesUi.rateAdded);
       setDialogOpen(false);
       setForm({ from_currency: 'USD', rate: '', effective_date: new Date().toISOString().split('T')[0] });
       load();
@@ -61,36 +64,36 @@ export default function ExchangeRates() {
 
   const handleDelete = async (id: string) => {
     await api.exchangeRates.delete(id);
-    toast.success('Taxa removida');
+    toast.success(t.exchangeRatesUi.rateRemoved);
     load();
   };
 
   const handleConvert = async () => {
     const res = await api.exchangeRates.convert(convertForm.from, 'AOA', parseFloat(convertForm.amount));
     if (res.data) setConvertResult(res.data);
-    else toast.error('Sem taxa disponível');
+    else toast.error(t.exchangeRatesUi.noRateAvailable);
   };
 
-  const fmt = (n: number) => n.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+  const fmt = (n: number) => n.toLocaleString(uiLocale, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Taxas de Câmbio</h1>
-          <p className="text-muted-foreground">Gestão de taxas de câmbio para multi-moeda</p>
+          <p className="text-muted-foreground">{t.exchangeRatesUi.subtitle}</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={load}><RefreshCw className="w-4 h-4 mr-2" />Atualizar</Button>
+          <Button variant="outline" onClick={load}><RefreshCw className="w-4 h-4 mr-2" />{t.common.refresh}</Button>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
-              <Button><Plus className="w-4 h-4 mr-2" />Nova Taxa</Button>
+              <Button><Plus className="w-4 h-4 mr-2" />{t.exchangeRatesUi.newRate}</Button>
             </DialogTrigger>
             <DialogContent>
-              <DialogHeader><DialogTitle>Adicionar Taxa de Câmbio</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>{t.exchangeRatesUi.addRateTitle}</DialogTitle></DialogHeader>
               <div className="space-y-4">
                 <div>
-                  <Label>Moeda</Label>
+                  <Label>{t.exchangeRatesUi.currencyLabel}</Label>
                   <Select value={form.from_currency} onValueChange={v => setForm(p => ({ ...p, from_currency: v }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -99,16 +102,16 @@ export default function ExchangeRates() {
                   </Select>
                 </div>
                 <div>
-                  <Label>Taxa (1 {form.from_currency} = ? AOA)</Label>
+                  <Label>{t.exchangeRatesUi.rateLabel.replace('{currency}', form.from_currency)}</Label>
                   <Input type="number" step="0.01" value={form.rate} onChange={e => setForm(p => ({ ...p, rate: e.target.value }))} placeholder="835.00" />
                 </div>
                 <div>
-                  <Label>Data Efetiva</Label>
+                  <Label>{t.exchangeRatesUi.effectiveDateLabel}</Label>
                   <Input type="date" value={form.effective_date} onChange={e => setForm(p => ({ ...p, effective_date: e.target.value }))} />
                 </div>
               </div>
               <DialogFooter>
-                <Button onClick={handleCreate}>Guardar</Button>
+                <Button onClick={handleCreate}>{t.common.save}</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -130,7 +133,7 @@ export default function ExchangeRates() {
               </div>
               <p className="text-3xl font-bold mt-3 text-foreground">{fmt(parseFloat(String(r.rate)))}</p>
               <p className="text-xs text-muted-foreground mt-1">
-                Atualizado: {new Date(r.effective_date).toLocaleDateString('pt-AO')} • {r.source}
+                {t.exchangeRatesUi.updatedAt.replace('{date}', new Date(r.effective_date).toLocaleDateString(uiLocale))} • {r.source}
               </p>
             </CardContent>
           </Card>
@@ -139,15 +142,15 @@ export default function ExchangeRates() {
 
       {/* Quick Converter */}
       <Card>
-        <CardHeader><CardTitle className="text-base">Conversor Rápido</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">{t.exchangeRatesUi.quickConverter}</CardTitle></CardHeader>
         <CardContent>
           <div className="flex items-end gap-4">
             <div className="flex-1">
-              <Label>Montante</Label>
+              <Label>{t.exchangeRatesUi.amountLabel}</Label>
               <Input type="number" value={convertForm.amount} onChange={e => setConvertForm(p => ({ ...p, amount: e.target.value }))} />
             </div>
             <div className="w-32">
-              <Label>Moeda</Label>
+              <Label>{t.exchangeRatesUi.currencyLabel}</Label>
               <Select value={convertForm.from} onValueChange={v => setConvertForm(p => ({ ...p, from: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -155,10 +158,10 @@ export default function ExchangeRates() {
                 </SelectContent>
               </Select>
             </div>
-            <Button onClick={handleConvert}>Converter</Button>
+            <Button onClick={handleConvert}>{t.exchangeRatesUi.convert}</Button>
             {convertResult && (
               <div className="text-right">
-                <p className="text-xs text-muted-foreground">Taxa: {fmt(convertResult.rate)}</p>
+                <p className="text-xs text-muted-foreground">{t.exchangeRatesUi.rateValue.replace('{rate}', fmt(convertResult.rate))}</p>
                 <p className="text-xl font-bold text-foreground">{fmt(convertResult.converted)} AOA</p>
               </div>
             )}
@@ -168,15 +171,15 @@ export default function ExchangeRates() {
 
       {/* History Table */}
       <Card>
-        <CardHeader><CardTitle className="text-base">Histórico de Taxas</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">{t.exchangeRatesUi.historyTitle}</CardTitle></CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Moeda</TableHead>
-                <TableHead>Taxa</TableHead>
-                <TableHead>Data</TableHead>
-                <TableHead>Fonte</TableHead>
+                <TableHead>{t.exchangeRatesUi.colCurrency}</TableHead>
+                <TableHead>{t.exchangeRatesUi.colRate}</TableHead>
+                <TableHead>{t.common.date}</TableHead>
+                <TableHead>{t.exchangeRatesUi.colSource}</TableHead>
                 <TableHead className="w-12"></TableHead>
               </TableRow>
             </TableHeader>
@@ -187,7 +190,7 @@ export default function ExchangeRates() {
                     <Badge variant="secondary">{r.from_currency} → {r.to_currency}</Badge>
                   </TableCell>
                   <TableCell className="font-mono font-medium">{fmt(parseFloat(String(r.rate)))}</TableCell>
-                  <TableCell>{new Date(r.effective_date).toLocaleDateString('pt-AO')}</TableCell>
+                  <TableCell>{new Date(r.effective_date).toLocaleDateString(uiLocale)}</TableCell>
                   <TableCell><Badge variant="outline">{r.source}</Badge></TableCell>
                   <TableCell>
                     <Button variant="ghost" size="icon" onClick={() => handleDelete(r.id)}>
@@ -197,7 +200,7 @@ export default function ExchangeRates() {
                 </TableRow>
               ))}
               {!rates.length && (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Sem taxas registadas</TableCell></TableRow>
+                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">{t.exchangeRatesUi.empty}</TableCell></TableRow>
               )}
             </TableBody>
           </Table>

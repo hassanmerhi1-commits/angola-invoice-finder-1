@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select';
 import { Download, Printer, Calendar, FileSpreadsheet } from 'lucide-react';
 import { useBranches, useSales, useClients, useSuppliers } from '@/hooks/useERP';
+import { useTranslation } from '@/i18n';
 
 interface AccountBalance {
   accountCode: string;
@@ -39,6 +40,8 @@ interface AccountBalance {
 }
 
 export default function TrialBalanceReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { currentBranch } = useBranches();
   const { sales } = useSales(currentBranch?.id);
   const { clients } = useClients();
@@ -73,7 +76,7 @@ export default function TrialBalanceReport() {
       },
       {
         accountCode: '12',
-        accountName: 'Depósitos à Ordem',
+        accountName: t.trialBalanceUi.depositsOnDemand,
         accountType: 'Activo',
         openingDebit: 500000,
         openingCredit: 0,
@@ -153,7 +156,7 @@ export default function TrialBalanceReport() {
       // Revenue
       {
         accountCode: '71',
-        accountName: 'Vendas de Mercadorias',
+        accountName: t.incomeStatementUi.salesOfGoods,
         accountType: 'Rendimento',
         openingDebit: 0,
         openingCredit: 0,
@@ -176,7 +179,7 @@ export default function TrialBalanceReport() {
       },
       {
         accountCode: '62',
-        accountName: 'Fornecimentos e Serviços',
+        accountName: t.trialBalanceUi.suppliesAndServices,
         accountType: 'Gasto',
         openingDebit: 0,
         openingCredit: 0,
@@ -218,7 +221,7 @@ export default function TrialBalanceReport() {
     { openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: 0, closingDebit: 0, closingCredit: 0 }
   );
 
-  const formatMoney = (value: number) => value.toLocaleString('pt-AO', { minimumFractionDigits: 2 });
+  const formatMoney = (value: number) => value.toLocaleString(locale, { minimumFractionDigits: 2 });
 
   const handlePrint = () => {
     window.print();
@@ -226,7 +229,17 @@ export default function TrialBalanceReport() {
 
   const handleExportExcel = () => {
     // Simplified CSV export
-    const headers = ['Código', 'Conta', 'Tipo', 'Débito Inicial', 'Crédito Inicial', 'Débito Período', 'Crédito Período', 'Débito Final', 'Crédito Final'];
+    const headers = [
+      t.trialBalanceUi.colCode,
+      t.trialBalanceUi.colAccount,
+      t.trialBalanceUi.colType,
+      t.trialBalanceUi.openingDebit,
+      t.trialBalanceUi.openingCredit,
+      t.trialBalanceUi.periodDebit,
+      t.trialBalanceUi.periodCredit,
+      t.trialBalanceUi.closingDebit,
+      t.trialBalanceUi.closingCredit,
+    ];
     const rows = accounts.map(a => [
       a.accountCode,
       a.accountName,
@@ -253,12 +266,12 @@ export default function TrialBalanceReport() {
       {/* Filters */}
       <Card>
         <CardHeader className="py-3">
-          <CardTitle className="text-lg">Balancete - Período</CardTitle>
+          <CardTitle className="text-lg">{t.trialBalanceUi.title}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-4 items-end">
             <div className="space-y-1">
-              <Label className="text-xs">Data Início</Label>
+              <Label className="text-xs">{t.reportsUi.dateFrom}</Label>
               <Input
                 type="date"
                 value={startDate}
@@ -267,7 +280,7 @@ export default function TrialBalanceReport() {
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Data Fim</Label>
+              <Label className="text-xs">{t.reportsUi.dateTo}</Label>
               <Input
                 type="date"
                 value={endDate}
@@ -276,25 +289,25 @@ export default function TrialBalanceReport() {
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Tipo de Conta</Label>
+              <Label className="text-xs">{t.trialBalanceUi.accountType}</Label>
               <Select value={accountType} onValueChange={setAccountType}>
                 <SelectTrigger className="h-8 w-40">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Todas</SelectItem>
-                  <SelectItem value="Activo">Activo</SelectItem>
-                  <SelectItem value="Passivo">Passivo</SelectItem>
-                  <SelectItem value="Capital">Capital</SelectItem>
-                  <SelectItem value="Rendimento">Rendimento</SelectItem>
-                  <SelectItem value="Gasto">Gasto</SelectItem>
+                  <SelectItem value="all">{t.common.all}</SelectItem>
+                  <SelectItem value="Activo">{t.trialBalanceUi.typeAssets}</SelectItem>
+                  <SelectItem value="Passivo">{t.trialBalanceUi.typeLiabilities}</SelectItem>
+                  <SelectItem value="Capital">{t.trialBalanceUi.typeEquity}</SelectItem>
+                  <SelectItem value="Rendimento">{t.trialBalanceUi.typeIncome}</SelectItem>
+                  <SelectItem value="Gasto">{t.trialBalanceUi.typeExpense}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="flex gap-2 ml-auto">
               <Button variant="outline" size="sm" onClick={handlePrint}>
                 <Printer className="w-4 h-4 mr-2" />
-                Imprimir
+                {t.reportsUi.print}
               </Button>
               <Button variant="outline" size="sm" onClick={handleExportExcel}>
                 <FileSpreadsheet className="w-4 h-4 mr-2" />
@@ -312,20 +325,20 @@ export default function TrialBalanceReport() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead className="font-bold" rowSpan={2}>Código</TableHead>
-                  <TableHead className="font-bold" rowSpan={2}>Conta</TableHead>
-                  <TableHead className="font-bold" rowSpan={2}>Tipo</TableHead>
-                  <TableHead className="text-center font-bold" colSpan={2}>Saldo Inicial</TableHead>
-                  <TableHead className="text-center font-bold" colSpan={2}>Movimento Período</TableHead>
-                  <TableHead className="text-center font-bold" colSpan={2}>Saldo Final</TableHead>
+                  <TableHead className="font-bold" rowSpan={2}>{t.trialBalanceUi.colCode}</TableHead>
+                  <TableHead className="font-bold" rowSpan={2}>{t.trialBalanceUi.colAccount}</TableHead>
+                  <TableHead className="font-bold" rowSpan={2}>{t.trialBalanceUi.colType}</TableHead>
+                  <TableHead className="text-center font-bold" colSpan={2}>{t.trialBalanceUi.openingBalance}</TableHead>
+                  <TableHead className="text-center font-bold" colSpan={2}>{t.trialBalanceUi.periodMovement}</TableHead>
+                  <TableHead className="text-center font-bold" colSpan={2}>{t.trialBalanceUi.closingBalance}</TableHead>
                 </TableRow>
                 <TableRow className="bg-muted/30">
-                  <TableHead className="text-right text-xs">Débito</TableHead>
-                  <TableHead className="text-right text-xs">Crédito</TableHead>
-                  <TableHead className="text-right text-xs">Débito</TableHead>
-                  <TableHead className="text-right text-xs">Crédito</TableHead>
-                  <TableHead className="text-right text-xs">Débito</TableHead>
-                  <TableHead className="text-right text-xs">Crédito</TableHead>
+                  <TableHead className="text-right text-xs">{t.trialBalanceUi.debit}</TableHead>
+                  <TableHead className="text-right text-xs">{t.trialBalanceUi.credit}</TableHead>
+                  <TableHead className="text-right text-xs">{t.trialBalanceUi.debit}</TableHead>
+                  <TableHead className="text-right text-xs">{t.trialBalanceUi.credit}</TableHead>
+                  <TableHead className="text-right text-xs">{t.trialBalanceUi.debit}</TableHead>
+                  <TableHead className="text-right text-xs">{t.trialBalanceUi.credit}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -335,28 +348,28 @@ export default function TrialBalanceReport() {
                     <TableCell>{account.accountName}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{account.accountType}</TableCell>
                     <TableCell className="text-right font-mono text-sm">
-                      {account.openingDebit > 0 ? formatMoney(account.openingDebit) : '-'}
+                      {account.openingDebit > 0 ? formatMoney(account.openingDebit) : t.common.dash}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
-                      {account.openingCredit > 0 ? formatMoney(account.openingCredit) : '-'}
+                      {account.openingCredit > 0 ? formatMoney(account.openingCredit) : t.common.dash}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
-                      {account.periodDebit > 0 ? formatMoney(account.periodDebit) : '-'}
+                      {account.periodDebit > 0 ? formatMoney(account.periodDebit) : t.common.dash}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
-                      {account.periodCredit > 0 ? formatMoney(account.periodCredit) : '-'}
+                      {account.periodCredit > 0 ? formatMoney(account.periodCredit) : t.common.dash}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm font-medium">
-                      {account.closingDebit > 0 ? formatMoney(account.closingDebit) : '-'}
+                      {account.closingDebit > 0 ? formatMoney(account.closingDebit) : t.common.dash}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm font-medium">
-                      {account.closingCredit > 0 ? formatMoney(account.closingCredit) : '-'}
+                      {account.closingCredit > 0 ? formatMoney(account.closingCredit) : t.common.dash}
                     </TableCell>
                   </TableRow>
                 ))}
                 {/* Totals Row */}
                 <TableRow className="bg-primary/10 font-bold">
-                  <TableCell colSpan={3} className="text-right">TOTAIS</TableCell>
+                  <TableCell colSpan={3} className="text-right">{t.stockValuationUi.totals}</TableCell>
                   <TableCell className="text-right font-mono">{formatMoney(totals.openingDebit)}</TableCell>
                   <TableCell className="text-right font-mono">{formatMoney(totals.openingCredit)}</TableCell>
                   <TableCell className="text-right font-mono">{formatMoney(totals.periodDebit)}</TableCell>

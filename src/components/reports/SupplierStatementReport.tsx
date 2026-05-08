@@ -13,6 +13,7 @@ import { pt } from 'date-fns/locale';
 import { exportToExcel } from '@/lib/excel';
 import { api } from '@/lib/api/client';
 import { getPurchaseInvoices, PurchaseInvoice } from '@/lib/purchaseInvoiceStorage';
+import { useTranslation } from '@/i18n';
 
 interface StatementEntry {
   id: string;
@@ -26,6 +27,8 @@ interface StatementEntry {
 }
 
 export default function SupplierStatementReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { suppliers } = useSuppliers();
   
   const [selectedSupplier, setSelectedSupplier] = useState<string>('');
@@ -74,16 +77,16 @@ export default function SupplierStatementReport() {
 
               if (docType === 'invoice' || docType === 'purchase_invoice') {
                 type = 'purchase';
-                description = 'Fatura de Compra';
+                description = t.supplierStatementUi.purchaseInvoice;
               } else if (docType === 'credit_note') {
                 type = 'credit_note';
-                description = 'Nota de Crédito';
+                description = t.supplierStatementUi.creditNote;
               } else if (docType === 'debit_note') {
                 type = 'debit_note';
-                description = 'Nota de Débito';
+                description = t.supplierStatementUi.debitNote;
               } else if (docType === 'advance') {
                 type = 'advance';
-                description = 'Adiantamento';
+                description = t.supplierStatementUi.advance;
               } else {
                 description = docType;
               }
@@ -113,7 +116,13 @@ export default function SupplierStatementReport() {
                 date: p.created_at,
                 type: 'payment',
                 reference: payRef,
-                description: `Pagamento - ${p.payment_method === 'cash' ? 'Numerário' : p.payment_method === 'transfer' ? 'Transferência' : p.payment_method === 'cheque' ? 'Cheque' : p.payment_method}`,
+                description: t.supplierStatementUi.paymentWithMethod
+                  .replace('{method}',
+                    p.payment_method === 'cash' ? t.chartsUi.methodCash :
+                    p.payment_method === 'transfer' ? t.chartsUi.methodTransfer :
+                    p.payment_method === 'cheque' ? t.supplierStatementUi.methodCheque :
+                    p.payment_method
+                  ),
                 debit: amount,
                 credit: 0,
               });
@@ -146,7 +155,7 @@ export default function SupplierStatementReport() {
             date: invDate,
             type: 'purchase',
             reference: inv.invoiceNumber,
-            description: `Fatura de Compra ${inv.invoiceNumber}`,
+            description: `${t.supplierStatementUi.purchaseInvoice} ${inv.invoiceNumber}`,
             debit: 0,
             credit: inv.total,
           });
@@ -192,7 +201,7 @@ export default function SupplierStatementReport() {
   }, [suppliers, searchTerm]);
 
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-AO', { 
+    return new Intl.NumberFormat(locale, { 
       style: 'currency', 
       currency: 'AOA',
       minimumFractionDigits: 2 
@@ -201,11 +210,11 @@ export default function SupplierStatementReport() {
 
   const getTypeBadge = (type: StatementEntry['type']) => {
     switch (type) {
-      case 'purchase': return <Badge>Compra</Badge>;
-      case 'payment': return <Badge variant="secondary">Pagamento</Badge>;
+      case 'purchase': return <Badge>{t.supplierStatementUi.purchase}</Badge>;
+      case 'payment': return <Badge variant="secondary">{t.supplierStatementUi.payment}</Badge>;
       case 'credit_note': return <Badge variant="outline" className="text-green-600 border-green-600">NC</Badge>;
       case 'debit_note': return <Badge variant="outline" className="text-red-600 border-red-600">ND</Badge>;
-      case 'advance': return <Badge variant="outline">Adiantamento</Badge>;
+      case 'advance': return <Badge variant="outline">{t.supplierStatementUi.advance}</Badge>;
       default: return <Badge variant="outline">{type}</Badge>;
     }
   };
@@ -214,16 +223,18 @@ export default function SupplierStatementReport() {
     if (!selectedSupplierData) return;
     
     const data = statementEntries.map(entry => ({
-      'Data': format(parseISO(entry.date), 'dd/MM/yyyy'),
-      'Tipo': entry.type === 'purchase' ? 'Compra' : 
-              entry.type === 'payment' ? 'Pagamento' :
-              entry.type === 'credit_note' ? 'Nota Crédito' : 
-              entry.type === 'debit_note' ? 'Nota Débito' : 'Adiantamento',
-      'Referência': entry.reference,
-      'Descrição': entry.description,
-      'Débito': entry.debit,
-      'Crédito': entry.credit,
-      'Saldo': entry.balance,
+      [t.common.date]: format(parseISO(entry.date), 'dd/MM/yyyy'),
+      [t.reportsUi.type]:
+        entry.type === 'purchase' ? t.supplierStatementUi.purchase :
+        entry.type === 'payment' ? t.supplierStatementUi.payment :
+        entry.type === 'credit_note' ? t.supplierStatementUi.creditNoteShort :
+        entry.type === 'debit_note' ? t.supplierStatementUi.debitNoteShort :
+        t.supplierStatementUi.advance,
+      [t.reportsUi.reference]: entry.reference,
+      [t.common.description]: entry.description,
+      [t.reportsUi.debit]: entry.debit,
+      [t.reportsUi.credit]: entry.credit,
+      [t.reportsUi.balance]: entry.balance,
     }));
     
     exportToExcel(data, `ContaCorrente_${selectedSupplierData.name}_${format(new Date(), 'yyyyMMdd')}`);
@@ -238,8 +249,8 @@ export default function SupplierStatementReport() {
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;">${
           entry.type === 'purchase' ? 'Compra' :
           entry.type === 'payment' ? 'Pagamento' :
-          entry.type === 'credit_note' ? 'Nota Crédito' :
-          entry.type === 'debit_note' ? 'Nota Débito' : 'Adiantamento'
+          entry.type === 'credit_note' ? t.supplierStatementUi.creditNoteShort :
+          entry.type === 'debit_note' ? t.supplierStatementUi.debitNoteShort : t.supplierStatementUi.advance
         }</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;font-family:monospace;">${entry.reference}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;">${entry.description}</td>
@@ -251,17 +262,17 @@ export default function SupplierStatementReport() {
 
     const html = `
       <html>
-      <head><title>Conta Corrente - ${selectedSupplierData.name}</title></head>
+      <head><title>${t.supplierStatementUi.title} - ${selectedSupplierData.name}</title></head>
       <body style="font-family:Arial,sans-serif;padding:20px;color:#333;">
-        <h2 style="margin-bottom:4px;">Conta Corrente - Fornecedor</h2>
-        <p style="color:#666;margin-top:0;">Período: ${format(parseISO(dateFrom), 'dd/MM/yyyy')} a ${format(parseISO(dateTo), 'dd/MM/yyyy')}</p>
+        <h2 style="margin-bottom:4px;">${t.supplierStatementUi.title}</h2>
+        <p style="color:#666;margin-top:0;">${t.incomeStatementUi.periodLabel.replace('{from}', format(parseISO(dateFrom), 'dd/MM/yyyy')).replace('{to}', format(parseISO(dateTo), 'dd/MM/yyyy'))}</p>
         
         <div style="background:#f5f5f5;padding:12px;border-radius:6px;margin:16px 0;">
           <table style="width:100%;">
             <tr>
-              <td><strong>Fornecedor:</strong> ${selectedSupplierData.name}</td>
-              <td><strong>NIF:</strong> ${selectedSupplierData.nif}</td>
-              <td><strong>Saldo Actual:</strong> ${formatCurrency(currentBalance)}</td>
+              <td><strong>${t.supplierStatementUi.supplier}:</strong> ${selectedSupplierData.name}</td>
+              <td><strong>${t.reportsUi.nif}:</strong> ${selectedSupplierData.nif}</td>
+              <td><strong>${t.reportsUi.balance}:</strong> ${formatCurrency(currentBalance)}</td>
             </tr>
           </table>
         </div>
@@ -269,26 +280,26 @@ export default function SupplierStatementReport() {
         <table style="width:100%;border-collapse:collapse;font-size:13px;">
           <thead>
             <tr style="background:#f0f0f0;">
-              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">Data</th>
-              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">Tipo</th>
-              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">Referência</th>
-              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">Descrição</th>
-              <th style="padding:8px;text-align:right;border-bottom:2px solid #999;">Débito</th>
-              <th style="padding:8px;text-align:right;border-bottom:2px solid #999;">Crédito</th>
-              <th style="padding:8px;text-align:right;border-bottom:2px solid #999;">Saldo</th>
+              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">${t.common.date}</th>
+              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">${t.reportsUi.type}</th>
+              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">${t.reportsUi.reference}</th>
+              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">${t.common.description}</th>
+              <th style="padding:8px;text-align:right;border-bottom:2px solid #999;">${t.reportsUi.debit}</th>
+              <th style="padding:8px;text-align:right;border-bottom:2px solid #999;">${t.reportsUi.credit}</th>
+              <th style="padding:8px;text-align:right;border-bottom:2px solid #999;">${t.reportsUi.balance}</th>
             </tr>
           </thead>
           <tbody>
             ${rows}
             <tr style="background:#f0f0f0;font-weight:bold;">
-              <td colspan="4" style="padding:8px;">TOTAIS</td>
+              <td colspan="4" style="padding:8px;">${t.common.total}</td>
               <td style="padding:8px;text-align:right;">${formatCurrency(totals.debit)}</td>
               <td style="padding:8px;text-align:right;">${formatCurrency(totals.credit)}</td>
               <td style="padding:8px;text-align:right;">${formatCurrency(totals.credit - totals.debit)}</td>
             </tr>
           </tbody>
         </table>
-        <p style="margin-top:24px;font-size:11px;color:#999;">Impresso em ${format(new Date(), 'dd/MM/yyyy HH:mm')}</p>
+        <p style="margin-top:24px;font-size:11px;color:#999;">${t.supplierStatementUi.printedAt.replace('{date}', format(new Date(), 'dd/MM/yyyy HH:mm'))}</p>
       </body>
       </html>
     `;
@@ -309,20 +320,20 @@ export default function SupplierStatementReport() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Truck className="w-5 h-5" />
-            Conta Corrente - Fornecedor
+            {t.supplierStatementUi.title}
           </CardTitle>
           <CardDescription>
-            Todos os movimentos: compras, pagamentos, notas de crédito/débito e devoluções
+            {t.supplierStatementUi.description}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="md:col-span-2">
-              <Label>Fornecedor</Label>
+              <Label>{t.supplierStatementUi.supplier}</Label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  placeholder="Pesquisar fornecedor..."
+                  placeholder={t.supplierStatementUi.searchSupplier}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-9 mb-2"
@@ -330,7 +341,7 @@ export default function SupplierStatementReport() {
               </div>
               <Select value={selectedSupplier} onValueChange={setSelectedSupplier}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecione um fornecedor" />
+                  <SelectValue placeholder={t.supplierStatementUi.selectSupplier} />
                 </SelectTrigger>
                 <SelectContent>
                   {filteredSuppliers.map(supplier => (
@@ -342,11 +353,11 @@ export default function SupplierStatementReport() {
               </Select>
             </div>
             <div>
-              <Label>Data Início</Label>
+              <Label>{t.reportsUi.dateFrom}</Label>
               <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
             </div>
             <div>
-              <Label>Data Fim</Label>
+              <Label>{t.reportsUi.dateTo}</Label>
               <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
           </div>
@@ -355,23 +366,23 @@ export default function SupplierStatementReport() {
             <div className="mt-4 p-4 bg-muted/50 rounded-lg">
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <div>
-                  <p className="text-sm text-muted-foreground">Fornecedor</p>
+                  <p className="text-sm text-muted-foreground">{t.supplierStatementUi.supplier}</p>
                   <p className="font-semibold">{selectedSupplierData.name}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">NIF</p>
+                  <p className="text-sm text-muted-foreground">{t.reportsUi.nif}</p>
                   <p className="font-semibold">{selectedSupplierData.nif}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Contacto</p>
-                  <p className="font-semibold">{selectedSupplierData.contactPerson || '-'}</p>
+                  <p className="text-sm text-muted-foreground">{t.supplierStatementUi.contact}</p>
+                  <p className="font-semibold">{selectedSupplierData.contactPerson || t.common.dash}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Prazo Pagamento</p>
+                  <p className="text-sm text-muted-foreground">{t.supplierStatementUi.paymentTerms}</p>
                   <p className="font-semibold">{selectedSupplierData.paymentTerms.replace('_', ' ')}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Saldo Actual</p>
+                  <p className="text-sm text-muted-foreground">{t.reportsUi.balance}</p>
                   <p className={`font-semibold ${currentBalance > 0 ? 'text-orange-500' : 'text-green-500'}`}>
                     {formatCurrency(currentBalance)}
                   </p>
@@ -386,7 +397,7 @@ export default function SupplierStatementReport() {
         <Card>
           <CardHeader>
             <div className="flex justify-between items-center">
-              <CardTitle>Movimentos</CardTitle>
+              <CardTitle>{t.reportsUi.moves}</CardTitle>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={handleExport} className="no-print">
                   <Download className="w-4 h-4 mr-2" />
@@ -394,7 +405,7 @@ export default function SupplierStatementReport() {
                 </Button>
                 <Button variant="outline" size="sm" onClick={handlePrint} className="no-print">
                   <Printer className="w-4 h-4 mr-2" />
-                  Imprimir
+                  {t.reportsUi.print}
                 </Button>
               </div>
             </div>
@@ -408,13 +419,13 @@ export default function SupplierStatementReport() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Data</TableHead>
-                    <TableHead>Tipo</TableHead>
-                    <TableHead>Referência</TableHead>
-                    <TableHead>Descrição</TableHead>
-                    <TableHead className="text-right">Débito (Pagto)</TableHead>
-                    <TableHead className="text-right">Crédito (Compra)</TableHead>
-                    <TableHead className="text-right">Saldo</TableHead>
+                    <TableHead>{t.common.date}</TableHead>
+                    <TableHead>{t.reportsUi.type}</TableHead>
+                    <TableHead>{t.reportsUi.reference}</TableHead>
+                    <TableHead>{t.common.description}</TableHead>
+                    <TableHead className="text-right">{t.supplierStatementUi.debitPayment}</TableHead>
+                    <TableHead className="text-right">{t.supplierStatementUi.creditPurchase}</TableHead>
+                    <TableHead className="text-right">{t.reportsUi.balance}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

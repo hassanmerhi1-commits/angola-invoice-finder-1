@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { useSales, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { Sale } from '@/types/erp';
+import { useTranslation } from '@/i18n';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,30 +17,33 @@ import {
   Receipt, Check, X,
 } from 'lucide-react';
 import { format } from 'date-fns';
-import { pt } from 'date-fns/locale';
+import { pt, enUS } from 'date-fns/locale';
 import { printA4Invoice } from '@/lib/a4Invoice';
 import { printReceipt, getPrinterConfig } from '@/lib/thermalPrinter';
 import { getCompanySettings } from '@/lib/companySettings';
 import { AGTQRCode } from '@/components/invoice/AGTQRCode';
 import { toast } from 'sonner';
 
-const paymentLabels: Record<string, { label: string; icon: any; color: string }> = {
-  cash: { label: 'Numerário', icon: Banknote, color: 'text-success' },
-  card: { label: 'Cartão', icon: CreditCard, color: 'text-info' },
-  transfer: { label: 'Transferência', icon: ArrowRightLeft, color: 'text-primary' },
-  mixed: { label: 'Misto', icon: DollarSign, color: 'text-warning' },
+const paymentLabels: Record<string, { labelKey: 'cash' | 'card' | 'transfer' | 'mixed'; icon: any; color: string }> = {
+  cash: { labelKey: 'cash', icon: Banknote, color: 'text-success' },
+  card: { labelKey: 'card', icon: CreditCard, color: 'text-info' },
+  transfer: { labelKey: 'transfer', icon: ArrowRightLeft, color: 'text-primary' },
+  mixed: { labelKey: 'mixed', icon: DollarSign, color: 'text-warning' },
 };
 
-const statusConfig: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' }> = {
-  completed: { label: 'Concluída', variant: 'default' },
-  voided: { label: 'Anulada', variant: 'destructive' },
-  pending: { label: 'Pendente', variant: 'secondary' },
+const statusConfig: Record<string, { labelKey: 'completed' | 'voided' | 'pending'; variant: 'default' | 'secondary' | 'destructive' }> = {
+  completed: { labelKey: 'completed', variant: 'default' },
+  voided: { labelKey: 'voided', variant: 'destructive' },
+  pending: { labelKey: 'pending', variant: 'secondary' },
 };
 
 export default function Vendas() {
   const { currentBranch } = useBranchContext();
   const { sales, refreshSales } = useSales(currentBranch?.id);
   const company = getCompanySettings();
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const dfLocale = language === 'pt' ? pt : enUS;
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
@@ -73,9 +77,9 @@ export default function Vendas() {
     try {
       const config = getPrinterConfig();
       await printReceipt(sale, currentBranch, config, false);
-      toast.success('Recibo enviado para impressão');
+      toast.success(t.vendasUi.thermalSent);
     } catch {
-      toast.error('Erro ao imprimir recibo');
+      toast.error(t.vendasUi.thermalPrintError);
     }
   };
 
@@ -83,9 +87,9 @@ export default function Vendas() {
     if (!currentBranch) return;
     try {
       await printA4Invoice(sale, currentBranch, { showBankDetails: true, documentType: 'FR' });
-      toast.success('Factura A4 enviada para impressão');
+      toast.success(t.vendasUi.a4Sent);
     } catch {
-      toast.error('Erro ao imprimir factura A4');
+      toast.error(t.vendasUi.a4PrintError);
     }
   };
 
@@ -98,7 +102,7 @@ export default function Vendas() {
             <Receipt className="w-5 h-5 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-lg font-bold leading-none">Vendas</h1>
+            <h1 className="text-lg font-bold leading-none">{t.vendasUi.title}</h1>
             <p className="text-xs text-muted-foreground">{currentBranch?.name}</p>
           </div>
         </div>
@@ -106,7 +110,7 @@ export default function Vendas() {
         <div className="w-px h-8 bg-border mx-2" />
 
         <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={() => refreshSales()}>
-          <RefreshCw className="w-3.5 h-3.5" /> Atualizar
+          <RefreshCw className="w-3.5 h-3.5" /> {t.common.refresh}
         </Button>
 
         <div className="flex-1" />
@@ -114,7 +118,7 @@ export default function Vendas() {
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input
-            placeholder="Pesquisar nº fatura, cliente, NIF..."
+            placeholder={t.vendasUi.searchPlaceholder}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             className="h-8 text-xs pl-8 w-64"
@@ -125,10 +129,10 @@ export default function Vendas() {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-3 p-3">
         {[
-          { label: 'Total Vendas', value: totals.count, icon: ShoppingCart, gradient: 'gradient-primary' },
-          { label: 'Valor Total', value: `${totals.total.toLocaleString('pt-AO')} Kz`, icon: DollarSign, gradient: 'gradient-success' },
-          { label: 'Numerário', value: `${totals.cash.toLocaleString('pt-AO')} Kz`, icon: Banknote, gradient: 'gradient-warm' },
-          { label: 'Cartão', value: `${totals.card.toLocaleString('pt-AO')} Kz`, icon: CreditCard, gradient: 'gradient-accent' },
+          { label: t.vendasUi.statsTotalSales, value: totals.count, icon: ShoppingCart, gradient: 'gradient-primary' },
+          { label: t.vendasUi.statsTotalAmount, value: `${totals.total.toLocaleString(uiLocale)} Kz`, icon: DollarSign, gradient: 'gradient-success' },
+          { label: t.vendasUi.payment.cash, value: `${totals.cash.toLocaleString(uiLocale)} Kz`, icon: Banknote, gradient: 'gradient-warm' },
+          { label: t.vendasUi.payment.card, value: `${totals.card.toLocaleString(uiLocale)} Kz`, icon: CreditCard, gradient: 'gradient-accent' },
         ].map((stat, i) => (
           <Card key={i} className="overflow-hidden">
             <CardContent className="p-4">
@@ -151,16 +155,16 @@ export default function Vendas() {
         <table className="w-full text-xs">
           <thead className="bg-muted/60 border-b sticky top-0 z-10">
             <tr>
-              <th className="px-3 py-2 text-left font-semibold w-36">Nº Factura</th>
-              <th className="px-3 py-2 text-left font-semibold w-28">Data</th>
-              <th className="px-3 py-2 text-left font-semibold w-20">Hora</th>
-              <th className="px-3 py-2 text-left font-semibold">Cliente</th>
-              <th className="px-3 py-2 text-left font-semibold w-24">NIF</th>
-              <th className="px-3 py-2 text-center font-semibold w-24">Pagamento</th>
-              <th className="px-3 py-2 text-right font-semibold w-20">Itens</th>
-              <th className="px-3 py-2 text-right font-semibold w-28">Total</th>
-              <th className="px-3 py-2 text-center font-semibold w-20">Estado</th>
-              <th className="px-3 py-2 text-center font-semibold w-32">Ações</th>
+              <th className="px-3 py-2 text-left font-semibold w-36">{t.vendasUi.invoiceNo}</th>
+              <th className="px-3 py-2 text-left font-semibold w-28">{t.common.date}</th>
+              <th className="px-3 py-2 text-left font-semibold w-20">{t.vendasUi.time}</th>
+              <th className="px-3 py-2 text-left font-semibold">{t.vendasUi.customer}</th>
+              <th className="px-3 py-2 text-left font-semibold w-24">{t.vendasUi.nif}</th>
+              <th className="px-3 py-2 text-center font-semibold w-24">{t.vendasUi.paymentHeader}</th>
+              <th className="px-3 py-2 text-right font-semibold w-20">{t.vendasUi.items}</th>
+              <th className="px-3 py-2 text-right font-semibold w-28">{t.common.total}</th>
+              <th className="px-3 py-2 text-center font-semibold w-20">{t.common.status}</th>
+              <th className="px-3 py-2 text-center font-semibold w-32">{t.common.actions}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
@@ -176,33 +180,33 @@ export default function Vendas() {
                 >
                   <td className="px-3 py-2 font-mono font-medium">{sale.invoiceNumber}</td>
                   <td className="px-3 py-2 text-muted-foreground">
-                    {format(new Date(sale.createdAt), 'dd/MM/yyyy')}
+                    {format(new Date(sale.createdAt), 'dd/MM/yyyy', { locale: dfLocale })}
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">
-                    {format(new Date(sale.createdAt), 'HH:mm')}
+                    {format(new Date(sale.createdAt), 'HH:mm', { locale: dfLocale })}
                   </td>
-                  <td className="px-3 py-2">{sale.customerName || 'Consumidor Final'}</td>
+                  <td className="px-3 py-2">{sale.customerName || t.pos.finalConsumer}</td>
                   <td className="px-3 py-2 text-muted-foreground">{sale.customerNif || '999999990'}</td>
                   <td className="px-3 py-2 text-center">
                     <div className="flex items-center justify-center gap-1">
                       <PayIcon className={`w-3.5 h-3.5 ${pay.color}`} />
-                      <span className="text-[10px]">{pay.label}</span>
+                      <span className="text-[10px]">{t.vendasUi.payment[pay.labelKey]}</span>
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right">{sale.items.length}</td>
-                  <td className="px-3 py-2 text-right font-mono font-medium">{sale.total.toLocaleString('pt-AO')} Kz</td>
+                  <td className="px-3 py-2 text-right font-mono font-medium">{sale.total.toLocaleString(uiLocale)} Kz</td>
                   <td className="px-3 py-2 text-center">
-                    <Badge variant={status.variant} className="text-[10px] px-1.5 py-0">{status.label}</Badge>
+                    <Badge variant={status.variant} className="text-[10px] px-1.5 py-0">{t.vendasUi.status[status.labelKey]}</Badge>
                   </td>
                   <td className="px-3 py-2 text-center">
                     <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openDetail(sale)} title="Ver detalhes">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openDetail(sale)} title={t.vendasUi.viewDetails}>
                         <Eye className="w-3.5 h-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleReprintThermal(sale)} title="Reimprimir recibo">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleReprintThermal(sale)} title={t.vendasUi.reprintThermal}>
                         <Printer className="w-3.5 h-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleReprintA4(sale)} title="Reimprimir A4">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleReprintA4(sale)} title={t.vendasUi.reprintA4}>
                         <FileOutput className="w-3.5 h-3.5" />
                       </Button>
                     </div>
@@ -214,8 +218,8 @@ export default function Vendas() {
           {filteredSales.length > 0 && (
             <tfoot className="bg-muted/80 border-t-2 border-primary/30">
               <tr className="font-bold text-xs">
-                <td className="px-3 py-2" colSpan={7}>TOTAL ({totals.count} vendas)</td>
-                <td className="px-3 py-2 text-right font-mono">{totals.total.toLocaleString('pt-AO')} Kz</td>
+                <td className="px-3 py-2" colSpan={7}>{t.vendasUi.totalRow.replace('{count}', String(totals.count))}</td>
+                <td className="px-3 py-2 text-right font-mono">{totals.total.toLocaleString(uiLocale)} Kz</td>
                 <td colSpan={2}></td>
               </tr>
             </tfoot>
@@ -225,8 +229,8 @@ export default function Vendas() {
         {filteredSales.length === 0 && (
           <div className="text-center py-16 text-muted-foreground">
             <ShoppingCart className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p className="text-sm">Nenhuma venda encontrada</p>
-            <p className="text-xs mt-1">As vendas realizadas no POS aparecerão aqui</p>
+            <p className="text-sm">{t.vendasUi.noneFound}</p>
+            <p className="text-xs mt-1">{t.vendasUi.noneFoundHint}</p>
           </div>
         )}
       </div>
@@ -240,6 +244,9 @@ export default function Vendas() {
         company={company}
         onReprintThermal={handleReprintThermal}
         onReprintA4={handleReprintA4}
+        t={t}
+        uiLocale={uiLocale}
+        dfLocale={dfLocale}
       />
     </div>
   );
@@ -248,6 +255,7 @@ export default function Vendas() {
 // ============ Sale Detail Dialog ============
 function SaleDetailDialog({
   sale, open, onOpenChange, branch, company, onReprintThermal, onReprintA4,
+  t, uiLocale, dfLocale,
 }: {
   sale: Sale | null;
   open: boolean;
@@ -256,6 +264,9 @@ function SaleDetailDialog({
   company: any;
   onReprintThermal: (sale: Sale) => void;
   onReprintA4: (sale: Sale) => void;
+  t: any;
+  uiLocale: string;
+  dfLocale: any;
 }) {
   if (!sale) return null;
 
@@ -290,7 +301,7 @@ function SaleDetailDialog({
 
           <div className="text-center">
             <p className="font-bold">{sale.invoiceNumber}</p>
-            <p>{format(new Date(sale.createdAt), "dd/MM/yyyy 'às' HH:mm:ss")}</p>
+            <p>{format(new Date(sale.createdAt), t.vendasUi.dateTimePattern, { locale: dfLocale })}</p>
           </div>
 
           <Separator className="border-dashed" />
@@ -302,10 +313,10 @@ function SaleDetailDialog({
                 <div className="flex-1">
                   <p className="truncate">{item.productName}</p>
                   <p className="text-[10px] text-gray-600">
-                    {item.quantity} x {item.unitPrice.toLocaleString('pt-AO')}
+                    {item.quantity} x {item.unitPrice.toLocaleString(uiLocale)}
                   </p>
                 </div>
-                <span>{item.subtotal.toLocaleString('pt-AO')}</span>
+                <span>{item.subtotal.toLocaleString(uiLocale)}</span>
               </div>
             ))}
           </div>
@@ -314,16 +325,16 @@ function SaleDetailDialog({
 
           <div className="space-y-1">
             <div className="flex justify-between">
-              <span>Subtotal</span>
-              <span>{sale.subtotal.toLocaleString('pt-AO')} Kz</span>
+              <span>{t.vendasUi.subtotal}</span>
+              <span>{sale.subtotal.toLocaleString(uiLocale)} Kz</span>
             </div>
             <div className="flex justify-between">
-              <span>IVA 14%</span>
-              <span>{sale.taxAmount.toLocaleString('pt-AO')} Kz</span>
+              <span>{t.vendasUi.vatLabel}</span>
+              <span>{sale.taxAmount.toLocaleString(uiLocale)} Kz</span>
             </div>
             <div className="flex justify-between font-bold text-sm">
-              <span>TOTAL</span>
-              <span>{sale.total.toLocaleString('pt-AO')} Kz</span>
+              <span>{t.common.total}</span>
+              <span>{sale.total.toLocaleString(uiLocale)} Kz</span>
             </div>
           </div>
 
@@ -331,20 +342,20 @@ function SaleDetailDialog({
 
           <div className="space-y-1">
             <div className="flex justify-between items-center">
-              <span>Pagamento</span>
+              <span>{t.vendasUi.paymentHeader}</span>
               <div className="flex items-center gap-1">
                 <PayIcon className={`w-3 h-3 ${pay.color}`} />
-                <span>{pay.label}</span>
+                <span>{t.vendasUi.payment[pay.labelKey]}</span>
               </div>
             </div>
             <div className="flex justify-between">
-              <span>Recebido</span>
-              <span>{sale.amountPaid.toLocaleString('pt-AO')} Kz</span>
+              <span>{t.vendasUi.received}</span>
+              <span>{sale.amountPaid.toLocaleString(uiLocale)} Kz</span>
             </div>
             {sale.change > 0 && (
               <div className="flex justify-between font-bold">
-                <span>Troco</span>
-                <span>{sale.change.toLocaleString('pt-AO')} Kz</span>
+                <span>{t.pos.change}</span>
+                <span>{sale.change.toLocaleString(uiLocale)} Kz</span>
               </div>
             )}
           </div>
@@ -355,13 +366,13 @@ function SaleDetailDialog({
               <div className="space-y-1">
                 {sale.customerName && (
                   <div className="flex justify-between">
-                    <span>Cliente</span>
+                    <span>{t.vendasUi.customer}</span>
                     <span>{sale.customerName}</span>
                   </div>
                 )}
                 {sale.customerNif && (
                   <div className="flex justify-between">
-                    <span>NIF</span>
+                    <span>{t.vendasUi.nif}</span>
                     <span>{sale.customerNif}</span>
                   </div>
                 )}
@@ -378,18 +389,18 @@ function SaleDetailDialog({
           )}
 
           <div className="text-center text-[10px] space-y-1">
-            <p>Documento processado por {company.tradeName || company.name}</p>
-            <p>{company.footerText || 'Obrigado pela preferência!'}</p>
+            <p>{t.vendasUi.processedBy.replace('{name}', company.tradeName || company.name)}</p>
+            <p>{company.footerText || t.vendasUi.thanks}</p>
           </div>
         </div>
 
         {/* Action Buttons */}
         <div className="grid grid-cols-2 gap-2 pt-2">
           <Button variant="outline" onClick={() => onReprintThermal(sale)} className="gap-2">
-            <Printer className="w-4 h-4" /> Recibo Térmico
+            <Printer className="w-4 h-4" /> {t.vendasUi.thermalReceipt}
           </Button>
           <Button variant="outline" onClick={() => onReprintA4(sale)} className="gap-2">
-            <FileOutput className="w-4 h-4" /> Factura A4
+            <FileOutput className="w-4 h-4" /> {t.vendasUi.a4Invoice}
           </Button>
         </div>
       </DialogContent>

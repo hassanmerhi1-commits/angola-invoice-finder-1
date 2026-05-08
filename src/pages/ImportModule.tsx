@@ -4,6 +4,7 @@
 import { useState, useMemo } from 'react';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useAuth } from '@/hooks/useERP';
+import { useTranslation } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -100,6 +101,8 @@ function setStored(data: ImportOrder[]) { localStorage.setItem(STORAGE_KEY, JSON
 export default function ImportModule() {
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const [activeTab, setActiveTab] = useState('importacoes');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -134,7 +137,7 @@ export default function ImportModule() {
   }), [orders]);
 
   const createOrder = () => {
-    if (!form.supplierName) { toast.error('Fornecedor é obrigatório'); return; }
+    if (!form.supplierName) { toast.error(t.importsUi.supplierRequired); return; }
     const all = getStored();
     const seq = all.length + 1;
     const now = new Date();
@@ -182,7 +185,7 @@ export default function ImportModule() {
     };
     all.push(order);
     setStored(all);
-    toast.success(`Importação ${order.orderNumber} criada`);
+    toast.success(t.importsUi.importCreated.replace('{number}', order.orderNumber));
     setFormOpen(false);
     refresh();
   };
@@ -199,7 +202,7 @@ export default function ImportModule() {
       if (status === 'received') all[idx].receivedDate = now;
       setStored(all);
       refresh();
-      toast.success('Estado actualizado');
+      toast.success(t.importsUi.statusUpdated);
     }
   };
 
@@ -212,7 +215,7 @@ export default function ImportModule() {
       {/* Toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b flex-wrap">
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setFormOpen(true)}>
-          <Plus className="w-3 h-3" /> Nova Importação
+          <Plus className="w-3 h-3" /> {t.importsUi.newImport}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
         {/* Status progression */}
@@ -220,27 +223,27 @@ export default function ImportModule() {
           <>
             {selectedOrder.status === 'draft' && (
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => updateStatus(selectedOrder.id, 'ordered')}>
-                <ArrowRight className="w-3 h-3" /> Encomendado
+                <ArrowRight className="w-3 h-3" /> {t.importsUi.statusOrdered}
               </Button>
             )}
             {selectedOrder.status === 'ordered' && (
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => updateStatus(selectedOrder.id, 'shipped')}>
-                <Ship className="w-3 h-3" /> Expedido
+                <Ship className="w-3 h-3" /> {t.importsUi.statusShipped}
               </Button>
             )}
             {selectedOrder.status === 'shipped' && (
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => updateStatus(selectedOrder.id, 'in_customs')}>
-                <Globe className="w-3 h-3" /> Na Alfândega
+                <Globe className="w-3 h-3" /> {t.importsUi.statusInCustoms}
               </Button>
             )}
             {selectedOrder.status === 'in_customs' && (
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-green-600" onClick={() => updateStatus(selectedOrder.id, 'cleared')}>
-                <CheckCircle className="w-3 h-3" /> Desalfandegado
+                <CheckCircle className="w-3 h-3" /> {t.importsUi.statusCleared}
               </Button>
             )}
             {selectedOrder.status === 'cleared' && (
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-green-600" onClick={() => updateStatus(selectedOrder.id, 'received')}>
-                <Package className="w-3 h-3" /> Recebido
+                <Package className="w-3 h-3" /> {t.importsUi.statusReceived}
               </Button>
             )}
           </>
@@ -249,12 +252,12 @@ export default function ImportModule() {
         <div className="flex-1" />
         <div className="flex items-center gap-2 text-[10px] mr-2">
           <Badge variant="outline" className="gap-1"><Globe className="w-3 h-3" /> {summary.total}</Badge>
-          <Badge variant="outline" className="gap-1 text-blue-600">{summary.inTransit} em trânsito</Badge>
-          <Badge variant="outline" className="gap-1 text-amber-600">{summary.inCustoms} alfândega</Badge>
+          <Badge variant="outline" className="gap-1 text-blue-600">{t.importsUi.inTransitCount.replace('{count}', String(summary.inTransit))}</Badge>
+          <Badge variant="outline" className="gap-1 text-amber-600">{t.importsUi.inCustomsCount.replace('{count}', String(summary.inCustoms))}</Badge>
         </div>
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-          <Input placeholder="Pesquisar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-7 text-xs pl-7 w-40" />
+          <Input placeholder={t.common.search} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-7 text-xs pl-7 w-40" />
         </div>
       </div>
 
@@ -262,14 +265,14 @@ export default function ImportModule() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0">
           {[
-            { key: 'importacoes', label: 'Importações', icon: Globe },
-            { key: 'custos', label: 'Landed Cost', icon: Calculator },
-            { key: 'cambio', label: 'Câmbio', icon: DollarSign },
-            { key: 'alfandega', label: 'Alfândega', icon: FileText },
+            { key: 'importacoes', labelKey: 'tabImports', icon: Globe },
+            { key: 'custos', labelKey: 'tabLandedCost', icon: Calculator },
+            { key: 'cambio', labelKey: 'tabFx', icon: DollarSign },
+            { key: 'alfandega', labelKey: 'tabCustoms', icon: FileText },
           ].map(tab => (
             <TabsTrigger key={tab.key} value={tab.key}
               className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-1.5 gap-1">
-              <tab.icon className="w-3 h-3" /> {tab.label}
+              <tab.icon className="w-3 h-3" /> {t.importsUi[tab.labelKey as keyof typeof t.importsUi] as string}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -278,14 +281,14 @@ export default function ImportModule() {
           <table className="w-full text-xs">
             <thead className="bg-muted/60 border-b sticky top-0 z-10">
               <tr>
-                <th className="px-3 py-2 text-left font-semibold w-32">Nº Importação</th>
-                <th className="px-3 py-2 text-left font-semibold">Fornecedor</th>
-                <th className="px-3 py-2 text-left font-semibold w-20">País</th>
-                <th className="px-3 py-2 text-center font-semibold w-14">Via</th>
-                <th className="px-3 py-2 text-left font-semibold w-14">Moeda</th>
+                <th className="px-3 py-2 text-left font-semibold w-32">{t.importsUi.importNo}</th>
+                <th className="px-3 py-2 text-left font-semibold">{t.importsUi.supplier}</th>
+                <th className="px-3 py-2 text-left font-semibold w-20">{t.importsUi.country}</th>
+                <th className="px-3 py-2 text-center font-semibold w-14">{t.importsUi.via}</th>
+                <th className="px-3 py-2 text-left font-semibold w-14">{t.importsUi.currency}</th>
                 <th className="px-3 py-2 text-right font-semibold w-24">FOB</th>
-                <th className="px-3 py-2 text-right font-semibold w-28">Custo Total (Kz)</th>
-                <th className="px-3 py-2 text-center font-semibold w-24">Estado</th>
+                <th className="px-3 py-2 text-right font-semibold w-28">{t.importsUi.totalCostKz}</th>
+                <th className="px-3 py-2 text-center font-semibold w-24">{t.common.status}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -299,17 +302,21 @@ export default function ImportModule() {
                     <td className="px-3 py-1.5 text-muted-foreground">{order.supplierCountry}</td>
                     <td className="px-3 py-1.5 text-center"><TransportIcon className="w-3.5 h-3.5 inline text-muted-foreground" /></td>
                     <td className="px-3 py-1.5">{order.currency}</td>
-                    <td className="px-3 py-1.5 text-right font-mono">{order.fobValue.toLocaleString('en-US')}</td>
-                    <td className="px-3 py-1.5 text-right font-mono font-medium">{order.totalLandedCost.toLocaleString('pt-AO')}</td>
+                    <td className="px-3 py-1.5 text-right font-mono">{order.fobValue.toLocaleString(uiLocale)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono font-medium">{order.totalLandedCost.toLocaleString(uiLocale)}</td>
                     <td className="px-3 py-1.5 text-center">
                       <Badge variant={
                         order.status === 'received' ? 'default' :
                         order.status === 'shipped' || order.status === 'in_customs' ? 'secondary' :
                         order.status === 'cancelled' ? 'destructive' : 'outline'
                       } className="text-[9px] px-1.5 py-0">
-                        {order.status === 'draft' ? 'Rascunho' : order.status === 'ordered' ? 'Encomendado' :
-                         order.status === 'shipped' ? 'Expedido' : order.status === 'in_customs' ? 'Alfândega' :
-                         order.status === 'cleared' ? 'Desalfandegado' : order.status === 'received' ? 'Recebido' : 'Cancelado'}
+                        {order.status === 'draft' ? t.importsUi.statusDraft :
+                          order.status === 'ordered' ? t.importsUi.statusOrdered :
+                          order.status === 'shipped' ? t.importsUi.statusShipped :
+                          order.status === 'in_customs' ? t.importsUi.statusInCustomsShort :
+                          order.status === 'cleared' ? t.importsUi.statusCleared :
+                          order.status === 'received' ? t.importsUi.statusReceived :
+                          t.importsUi.statusCancelled}
                       </Badge>
                     </td>
                   </tr>
@@ -320,7 +327,7 @@ export default function ImportModule() {
           {filteredOrders.length === 0 && (
             <div className="text-center py-12 text-muted-foreground text-sm">
               <Globe className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>Nenhuma importação registada</p>
+              <p>{t.importsUi.noImports}</p>
             </div>
           )}
         </TabsContent>
@@ -329,8 +336,8 @@ export default function ImportModule() {
           <TabsContent key={tab} value={tab} className="flex-1 m-0 p-4">
             <Card><CardContent className="pt-6 text-center text-muted-foreground">
               <Calculator className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>{tab === 'custos' ? 'Cálculo de Landed Cost' : tab === 'cambio' ? 'Gestão de Câmbio' : 'Documentos Alfandegários'}</p>
-              <p className="text-xs mt-1">Funcionalidade em desenvolvimento</p>
+              <p>{tab === 'custos' ? t.importsUi.landedCostTitle : tab === 'cambio' ? t.importsUi.fxTitle : t.importsUi.customsDocsTitle}</p>
+              <p className="text-xs mt-1">{t.common.featureInDevelopment}</p>
             </CardContent></Card>
           </TabsContent>
         ))}
@@ -341,77 +348,77 @@ export default function ImportModule() {
         <div className="h-7 bg-primary/10 border-t flex items-center px-3 text-[10px] gap-4">
           <span className="font-bold">{selectedOrder.orderNumber}</span>
           <span>{selectedOrder.supplierName} ({selectedOrder.supplierCountry})</span>
-          <span>FOB: {selectedOrder.fobValue.toLocaleString('en-US')} {selectedOrder.currency}</span>
-          <span>Taxa: {selectedOrder.exchangeRate}</span>
-          <span>Custo Total: {selectedOrder.totalLandedCost.toLocaleString('pt-AO')} Kz</span>
+          <span>{t.importsUi.fobLabel.replace('{amount}', selectedOrder.fobValue.toLocaleString(uiLocale)).replace('{currency}', selectedOrder.currency)}</span>
+          <span>{t.importsUi.exchangeRateLabel.replace('{rate}', String(selectedOrder.exchangeRate))}</span>
+          <span>{t.importsUi.totalCostLabel.replace('{amount}', selectedOrder.totalLandedCost.toLocaleString(uiLocale))}</span>
         </div>
       )}
 
       {/* New Import Dialog */}
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Nova Importação</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t.importsUi.newImportTitle}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
-              <div className="space-y-1"><Label className="text-xs">Fornecedor *</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.supplier} *</Label>
                 <Input value={form.supplierName} onChange={e => setForm(p => ({ ...p, supplierName: e.target.value }))} className="h-8 text-xs" /></div>
-              <div className="space-y-1"><Label className="text-xs">País</Label>
-                <Input value={form.supplierCountry} onChange={e => setForm(p => ({ ...p, supplierCountry: e.target.value }))} placeholder="China, Portugal..." className="h-8 text-xs" /></div>
-              <div className="space-y-1"><Label className="text-xs">Via Transporte</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.country}</Label>
+                <Input value={form.supplierCountry} onChange={e => setForm(p => ({ ...p, supplierCountry: e.target.value }))} placeholder={t.importsUi.countryPlaceholder} className="h-8 text-xs" /></div>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.transportMode}</Label>
                 <Select value={form.transportMode} onValueChange={v => setForm(p => ({ ...p, transportMode: v as any }))}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="sea">Marítima</SelectItem>
-                    <SelectItem value="air">Aérea</SelectItem>
-                    <SelectItem value="land">Terrestre</SelectItem>
+                    <SelectItem value="sea">{t.importsUi.transportSea}</SelectItem>
+                    <SelectItem value="air">{t.importsUi.transportAir}</SelectItem>
+                    <SelectItem value="land">{t.importsUi.transportLand}</SelectItem>
                   </SelectContent>
                 </Select></div>
             </div>
             <div className="grid grid-cols-4 gap-3">
-              <div className="space-y-1"><Label className="text-xs">Moeda</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.currency}</Label>
                 <Select value={form.currency} onValueChange={v => setForm(p => ({ ...p, currency: v as any }))}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="USD">USD</SelectItem><SelectItem value="EUR">EUR</SelectItem><SelectItem value="CNY">CNY</SelectItem></SelectContent>
                 </Select></div>
-              <div className="space-y-1"><Label className="text-xs">Taxa Câmbio</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.exchangeRate}</Label>
                 <Input type="number" value={form.exchangeRate} onChange={e => setForm(p => ({ ...p, exchangeRate: Number(e.target.value) }))} className="h-8 text-xs" /></div>
-              <div className="space-y-1"><Label className="text-xs">Incoterm</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.incoterm}</Label>
                 <Select value={form.incoterm} onValueChange={v => setForm(p => ({ ...p, incoterm: v as any }))}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="FOB">FOB</SelectItem><SelectItem value="CIF">CIF</SelectItem><SelectItem value="EXW">EXW</SelectItem><SelectItem value="DDP">DDP</SelectItem></SelectContent>
                 </Select></div>
-              <div className="space-y-1"><Label className="text-xs">Direitos Alfânda %</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.customsDutyRate} %</Label>
                 <Input type="number" value={form.customsDutyRate} onChange={e => setForm(p => ({ ...p, customsDutyRate: Number(e.target.value) }))} className="h-8 text-xs" /></div>
             </div>
             <div className="grid grid-cols-3 gap-3">
-              <div className="space-y-1"><Label className="text-xs">Valor FOB ({form.currency})</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.fobValue} ({form.currency})</Label>
                 <Input type="number" value={form.fobValue} onChange={e => setForm(p => ({ ...p, fobValue: Number(e.target.value) }))} className="h-8 text-xs" /></div>
-              <div className="space-y-1"><Label className="text-xs">Frete ({form.currency})</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.freight} ({form.currency})</Label>
                 <Input type="number" value={form.freightCost} onChange={e => setForm(p => ({ ...p, freightCost: Number(e.target.value) }))} className="h-8 text-xs" /></div>
-              <div className="space-y-1"><Label className="text-xs">Seguro ({form.currency})</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.insurance} ({form.currency})</Label>
                 <Input type="number" value={form.insuranceCost} onChange={e => setForm(p => ({ ...p, insuranceCost: Number(e.target.value) }))} className="h-8 text-xs" /></div>
             </div>
             <div className="grid grid-cols-3 gap-3">
-              <div className="space-y-1"><Label className="text-xs">Despesas Porto (Kz)</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.portCharges} (Kz)</Label>
                 <Input type="number" value={form.portCharges} onChange={e => setForm(p => ({ ...p, portCharges: Number(e.target.value) }))} className="h-8 text-xs" /></div>
-              <div className="space-y-1"><Label className="text-xs">Transporte Local (Kz)</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.localTransport} (Kz)</Label>
                 <Input type="number" value={form.transportLocal} onChange={e => setForm(p => ({ ...p, transportLocal: Number(e.target.value) }))} className="h-8 text-xs" /></div>
-              <div className="space-y-1"><Label className="text-xs">Outros Custos (Kz)</Label>
+              <div className="space-y-1"><Label className="text-xs">{t.importsUi.otherCosts} (Kz)</Label>
                 <Input type="number" value={form.otherCosts} onChange={e => setForm(p => ({ ...p, otherCosts: Number(e.target.value) }))} className="h-8 text-xs" /></div>
             </div>
             {/* Auto-calculated summary */}
             <div className="bg-muted/30 rounded p-3 text-xs space-y-1 border">
-              <div className="flex justify-between"><span>CIF ({form.currency}):</span><span className="font-mono">{(form.fobValue + form.freightCost + form.insuranceCost).toLocaleString('en-US')}</span></div>
-              <div className="flex justify-between"><span>CIF (Kz):</span><span className="font-mono">{((form.fobValue + form.freightCost + form.insuranceCost) * form.exchangeRate).toLocaleString('pt-AO')}</span></div>
-              <div className="flex justify-between"><span>Direitos ({form.customsDutyRate}%):</span><span className="font-mono">{(((form.fobValue + form.freightCost + form.insuranceCost) * form.exchangeRate) * form.customsDutyRate / 100).toLocaleString('pt-AO')}</span></div>
-              <div className="flex justify-between font-bold border-t pt-1"><span>Custo Total:</span>
-                <span className="font-mono">{(((form.fobValue + form.freightCost + form.insuranceCost) * form.exchangeRate) * (1 + form.customsDutyRate / 100) + form.portCharges + form.transportLocal + form.otherCosts).toLocaleString('pt-AO')} Kz</span>
+              <div className="flex justify-between"><span>{t.importsUi.cifForeignLabel.replace('{currency}', form.currency)}:</span><span className="font-mono">{(form.fobValue + form.freightCost + form.insuranceCost).toLocaleString(uiLocale)}</span></div>
+              <div className="flex justify-between"><span>{t.importsUi.cifKzLabel}:</span><span className="font-mono">{((form.fobValue + form.freightCost + form.insuranceCost) * form.exchangeRate).toLocaleString(uiLocale)}</span></div>
+              <div className="flex justify-between"><span>{t.importsUi.customsDutyLabel.replace('{rate}', String(form.customsDutyRate))}:</span><span className="font-mono">{(((form.fobValue + form.freightCost + form.insuranceCost) * form.exchangeRate) * form.customsDutyRate / 100).toLocaleString(uiLocale)}</span></div>
+              <div className="flex justify-between font-bold border-t pt-1"><span>{t.importsUi.totalCost}:</span>
+                <span className="font-mono">{(((form.fobValue + form.freightCost + form.insuranceCost) * form.exchangeRate) * (1 + form.customsDutyRate / 100) + form.portCharges + form.transportLocal + form.otherCosts).toLocaleString(uiLocale)} Kz</span>
               </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setFormOpen(false)}>Cancelar</Button>
-            <Button onClick={createOrder}>Criar Importação</Button>
+            <Button variant="outline" onClick={() => setFormOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={createOrder}>{t.importsUi.createImport}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

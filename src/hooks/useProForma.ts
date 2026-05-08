@@ -166,7 +166,7 @@ export function useProForma(branchId?: string) {
 
     const saleResult = await api.sales.create(sale);
     if (!saleResult.data) {
-      throw new Error(saleResult.error || 'Falha ao guardar venda no servidor');
+      throw new Error(saleResult.error || 'Failed to save sale on the server');
     }
 
     proforma.status = 'converted';
@@ -183,7 +183,7 @@ export function useProForma(branchId?: string) {
       action: 'proforma_converted',
       entityId: sale.id,
       entityType: 'sale',
-      description: `Pro Forma ${proforma.documentNumber} convertida em Factura ${invoiceNumber}`,
+      description: `Pro Forma ${proforma.documentNumber} converted to Invoice ${invoiceNumber}`,
       details: { proformaId, invoiceId: sale.id, invoiceNumber, total: sale.total },
     });
 

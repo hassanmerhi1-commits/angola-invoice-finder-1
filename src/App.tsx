@@ -5,7 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useERP";
-import { LanguageProvider } from "@/i18n";
+import { LanguageProvider, useLanguage } from "@/i18n";
 import { BranchProvider } from "@/contexts/BranchContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -206,6 +206,19 @@ function AppRoutes() {
   );
 }
 
+function LanguageKeyedRouter({ isElectron, browserBasename }: { isElectron: boolean; browserBasename?: string }) {
+  const { language } = useLanguage();
+  return isElectron ? (
+    <HashRouter key={language}>
+      <AppRoutes />
+    </HashRouter>
+  ) : (
+    <BrowserRouter key={language} basename={browserBasename}>
+      <AppRoutes />
+    </BrowserRouter>
+  );
+}
+
 const App = () => {
   const isElectron = typeof window !== "undefined" && !!window.electronAPI?.isElectron;
   const browserBasename = !isElectron && typeof window !== 'undefined' && window.location.pathname.startsWith('/app')
@@ -220,15 +233,7 @@ const App = () => {
             <TooltipProvider>
               <Toaster />
               <Sonner />
-              {isElectron ? (
-                <HashRouter>
-                  <AppRoutes />
-                </HashRouter>
-              ) : (
-                <BrowserRouter basename={browserBasename}>
-                  <AppRoutes />
-                </BrowserRouter>
-              )}
+              <LanguageKeyedRouter isElectron={isElectron} browserBasename={browserBasename} />
             </TooltipProvider>
           </BranchProvider>
         </LanguageProvider>

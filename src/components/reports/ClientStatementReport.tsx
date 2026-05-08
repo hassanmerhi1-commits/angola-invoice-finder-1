@@ -11,6 +11,7 @@ import { Download, Printer, FileText, Search, TrendingUp, TrendingDown } from 'l
 import { format, parseISO, isWithinInterval, startOfMonth, endOfMonth } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { exportToExcel } from '@/lib/excel';
+import { useTranslation } from '@/i18n';
 
 interface StatementEntry {
   id: string;
@@ -24,6 +25,8 @@ interface StatementEntry {
 }
 
 export default function ClientStatementReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { clients } = useClients();
   const { sales } = useSales();
   
@@ -92,7 +95,7 @@ export default function ClientStatementReport() {
   }, [clients, searchTerm]);
 
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-AO', { 
+    return new Intl.NumberFormat(locale, {
       style: 'currency', 
       currency: 'AOA',
       minimumFractionDigits: 2 
@@ -103,15 +106,16 @@ export default function ClientStatementReport() {
     if (!selectedClientData) return;
     
     const data = statementEntries.map(entry => ({
-      'Data': format(parseISO(entry.date), 'dd/MM/yyyy'),
-      'Tipo': entry.type === 'invoice' ? 'Fatura' : 
-              entry.type === 'payment' ? 'Pagamento' :
-              entry.type === 'credit_note' ? 'Nota Crédito' : 'Nota Débito',
-      'Referência': entry.reference,
-      'Descrição': entry.description,
-      'Débito': entry.debit,
-      'Crédito': entry.credit,
-      'Saldo': entry.balance,
+      [t.reportsUi.date]: format(parseISO(entry.date), 'dd/MM/yyyy'),
+      [t.reportsUi.type]:
+        entry.type === 'invoice' ? t.reportsUi.invoice :
+        entry.type === 'payment' ? t.reportsUi.payment :
+        entry.type === 'credit_note' ? t.reportsUi.creditNote : t.reportsUi.debitNote,
+      [t.reportsUi.reference]: entry.reference,
+      [t.reportsUi.description]: entry.description,
+      [t.reportsUi.debit]: entry.debit,
+      [t.reportsUi.credit]: entry.credit,
+      [t.reportsUi.balance]: entry.balance,
     }));
     
     exportToExcel(data, `Extracto_${selectedClientData.name}_${format(new Date(), 'yyyyMMdd')}`);
@@ -128,20 +132,20 @@ export default function ClientStatementReport() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileText className="w-5 h-5" />
-            Extracto de Conta - Cliente
+            {t.reportsUi.statementTitle}
           </CardTitle>
           <CardDescription>
-            Movimentos financeiros por cliente com saldo corrente
+            {t.reportsUi.statementDesc}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="md:col-span-2">
-              <Label>Cliente</Label>
+              <Label>{t.reportsUi.client}</Label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  placeholder="Pesquisar cliente..."
+                  placeholder={t.reportsUi.searchClient}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-9 mb-2"
@@ -149,7 +153,7 @@ export default function ClientStatementReport() {
               </div>
               <Select value={selectedClient} onValueChange={setSelectedClient}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecione um cliente" />
+                  <SelectValue placeholder={t.reportsUi.selectClient} />
                 </SelectTrigger>
                 <SelectContent>
                   {filteredClients.map(client => (
@@ -161,7 +165,7 @@ export default function ClientStatementReport() {
               </Select>
             </div>
             <div>
-              <Label>Data Início</Label>
+              <Label>{t.reportsUi.dateFrom}</Label>
               <Input
                 type="date"
                 value={dateFrom}
@@ -169,7 +173,7 @@ export default function ClientStatementReport() {
               />
             </div>
             <div>
-              <Label>Data Fim</Label>
+              <Label>{t.reportsUi.dateTo}</Label>
               <Input
                 type="date"
                 value={dateTo}
@@ -182,19 +186,19 @@ export default function ClientStatementReport() {
             <div className="mt-4 p-4 bg-muted/50 rounded-lg">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
-                  <p className="text-sm text-muted-foreground">Cliente</p>
+                  <p className="text-sm text-muted-foreground">{t.reportsUi.client}</p>
                   <p className="font-semibold">{selectedClientData.name}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">NIF</p>
+                  <p className="text-sm text-muted-foreground">{t.reportsUi.nif}</p>
                   <p className="font-semibold">{selectedClientData.nif}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Limite de Crédito</p>
+                  <p className="text-sm text-muted-foreground">{t.reportsUi.creditLimit}</p>
                   <p className="font-semibold">{formatCurrency(selectedClientData.creditLimit)}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Saldo Actual</p>
+                  <p className="text-sm text-muted-foreground">{t.reportsUi.balance}</p>
                   <p className={`font-semibold ${selectedClientData.currentBalance > 0 ? 'text-red-500' : 'text-green-500'}`}>
                     {formatCurrency(selectedClientData.currentBalance)}
                   </p>
@@ -218,7 +222,7 @@ export default function ClientStatementReport() {
                 </Button>
                 <Button variant="outline" size="sm" onClick={handlePrint}>
                   <Printer className="w-4 h-4 mr-2" />
-                  Imprimir
+                  {t.reportsUi.print}
                 </Button>
               </div>
             </div>
@@ -227,20 +231,20 @@ export default function ClientStatementReport() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Data</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Referência</TableHead>
-                  <TableHead>Descrição</TableHead>
-                  <TableHead className="text-right">Débito</TableHead>
-                  <TableHead className="text-right">Crédito</TableHead>
-                  <TableHead className="text-right">Saldo</TableHead>
+                  <TableHead>{t.reportsUi.date}</TableHead>
+                  <TableHead>{t.reportsUi.type}</TableHead>
+                  <TableHead>{t.reportsUi.reference}</TableHead>
+                  <TableHead>{t.reportsUi.description}</TableHead>
+                  <TableHead className="text-right">{t.reportsUi.debit}</TableHead>
+                  <TableHead className="text-right">{t.reportsUi.credit}</TableHead>
+                  <TableHead className="text-right">{t.reportsUi.balance}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {statementEntries.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                      Nenhum movimento encontrado para o período seleccionado
+                      {t.common.noResults}
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -253,8 +257,8 @@ export default function ClientStatementReport() {
                         <TableCell>
                           <Badge variant={entry.type === 'invoice' ? 'default' : 
                                          entry.type === 'payment' ? 'secondary' : 'outline'}>
-                            {entry.type === 'invoice' ? 'Fatura' : 
-                             entry.type === 'payment' ? 'Pagamento' :
+                            {entry.type === 'invoice' ? t.reportsUi.invoice :
+                             entry.type === 'payment' ? t.reportsUi.payment :
                              entry.type === 'credit_note' ? 'NC' : 'ND'}
                           </Badge>
                         </TableCell>
@@ -273,7 +277,7 @@ export default function ClientStatementReport() {
                     ))}
                     {/* Totals Row */}
                     <TableRow className="bg-muted/50 font-bold">
-                      <TableCell colSpan={4}>TOTAIS</TableCell>
+                      <TableCell colSpan={4}>{t.common.total}</TableCell>
                       <TableCell className="text-right text-red-500">
                         {formatCurrency(totals.debit)}
                       </TableCell>

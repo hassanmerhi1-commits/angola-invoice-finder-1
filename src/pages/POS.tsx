@@ -15,11 +15,13 @@ import { ReceiptDialog } from '@/components/pos/ReceiptDialog';
 import { BranchSelector } from '@/components/BranchSelector';
 import { Search, ScanBarcode, Keyboard } from 'lucide-react';
 import { toast } from 'sonner';
+import { useTranslation } from '@/i18n';
 
 export default function POS() {
   const { currentBranch } = useBranchContext();
   const { products, refreshProducts } = useProducts(currentBranch?.id);
   const { user } = useAuth();
+  const { t } = useTranslation();
   const cart = useCart();
   const { completeSale } = useSales(currentBranch?.id);
 
@@ -49,14 +51,14 @@ export default function POS() {
       if (product) {
         cart.addItem(product);
         setLastScannedBarcode(barcode);
-        toast.success(`${product.name} adicionado`, {
-          description: `Código: ${barcode}`,
+        toast.success(t.posUi.itemAdded.replace('{name}', product.name), {
+          description: `${t.posUi.code}: ${barcode}`,
         });
         // Clear indicator after 2 seconds
         setTimeout(() => setLastScannedBarcode(null), 2000);
       } else {
-        toast.error('Produto não encontrado', {
-          description: `Código: ${barcode}`,
+        toast.error(t.posUi.productNotFound, {
+          description: `${t.posUi.code}: ${barcode}`,
         });
       }
     },
@@ -69,14 +71,14 @@ export default function POS() {
     if (cart.items.length > 0) {
       setCheckoutOpen(true);
     } else {
-      toast.info('Carrinho vazio', { description: 'Adicione produtos para finalizar' });
+      toast.info(t.posUi.emptyCart, { description: t.posUi.addProductsToCheckout });
     }
   }, [cart.items.length]);
 
   const handleClearCart = useCallback(() => {
     if (cart.items.length > 0) {
       cart.clearCart();
-      toast.info('Carrinho limpo');
+      toast.info(t.posUi.cartCleared);
     }
   }, [cart]);
 
@@ -91,17 +93,17 @@ export default function POS() {
       {
         key: 'F12',
         action: handleCheckout,
-        description: 'Finalizar venda',
+        description: t.posUi.checkoutShortcut,
       },
       {
         key: 'Escape',
         action: handleClearCart,
-        description: 'Limpar carrinho',
+        description: t.posUi.clearCartShortcut,
       },
       {
         key: 'F2',
         action: focusSearch,
-        description: 'Pesquisar produto',
+        description: t.posUi.searchProductShortcut,
       },
       {
         key: '+',
@@ -111,7 +113,7 @@ export default function POS() {
             cart.updateQuantity(lastItem.product.id, lastItem.quantity + 1);
           }
         },
-        description: 'Aumentar quantidade do último item',
+        description: t.posUi.increaseLastItem,
       },
       {
         key: '-',
@@ -123,7 +125,7 @@ export default function POS() {
             }
           }
         },
-        description: 'Diminuir quantidade do último item',
+        description: t.posUi.decreaseLastItem,
       },
       {
         key: 'Delete',
@@ -131,10 +133,10 @@ export default function POS() {
           if (cart.items.length > 0) {
             const lastItem = cart.items[cart.items.length - 1];
             cart.removeItem(lastItem.product.id);
-            toast.info(`${lastItem.product.name} removido`);
+            toast.info(t.posUi.itemRemoved.replace('{name}', lastItem.product.name));
           }
         },
-        description: 'Remover último item',
+        description: t.posUi.removeLastItem,
       },
     ],
     [handleCheckout, handleClearCart, focusSearch, cart]
@@ -169,13 +171,13 @@ export default function POS() {
       
       // Show feedback for cash payments
       if (paymentMethod === 'cash') {
-        toast.info('Venda concluída', {
-          description: 'Pagamento em dinheiro registado',
+        toast.info(t.posUi.saleCompleted, {
+          description: t.posUi.cashPaymentRecorded,
         });
       }
     } catch (error) {
       console.error('Failed to complete sale:', error);
-      toast.error('Erro ao finalizar venda');
+      toast.error(t.posUi.completeSaleError);
     }
   };
 
@@ -196,7 +198,7 @@ export default function POS() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 ref={searchInputRef}
-                placeholder="Pesquisar produto por nome, SKU ou código de barras..."
+                placeholder={t.pos.searchProducts}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
@@ -204,7 +206,7 @@ export default function POS() {
             </div>
             <Badge variant={lastScannedBarcode ? 'default' : 'outline'} className="flex items-center gap-1.5 py-1.5 px-3">
               <ScanBarcode className="w-4 h-4" />
-              {lastScannedBarcode ? lastScannedBarcode : 'Scanner Pronto'}
+              {lastScannedBarcode ? lastScannedBarcode : t.posUi.scannerReady}
             </Badge>
             <Popover>
               <PopoverTrigger asChild>
@@ -214,7 +216,7 @@ export default function POS() {
               </PopoverTrigger>
               <PopoverContent className="w-72" align="end">
                 <div className="space-y-2">
-                  <h4 className="font-medium text-sm">Atalhos de Teclado</h4>
+                  <h4 className="font-medium text-sm">{t.posUi.keyboardShortcuts}</h4>
                   <div className="space-y-1.5 text-sm">
                     {shortcuts.map((s) => (
                       <div key={s.key} className="flex items-center justify-between">
@@ -242,7 +244,7 @@ export default function POS() {
       {/* Cart Section */}
       <div className="w-96 border-l bg-card flex flex-col">
         <div className="p-4 border-b">
-          <h2 className="font-semibold">Carrinho de Compras</h2>
+          <h2 className="font-semibold">{t.posUi.shoppingCartTitle}</h2>
           <p className="text-xs text-muted-foreground">{currentBranch?.name}</p>
         </div>
         <div className="flex-1 p-4 overflow-hidden">

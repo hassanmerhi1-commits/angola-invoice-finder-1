@@ -6,6 +6,7 @@ import day4 from '@/assets/wallpapers/day-4-kalandula-falls.jpg';
 import day5 from '@/assets/wallpapers/day-5-igreja-remedios.jpg';
 import day6 from '@/assets/wallpapers/day-6-miradouro-lua.jpg';
 import day7 from '@/assets/wallpapers/day-7-cidade-alta.jpg';
+import { useTranslation } from '@/i18n';
 
 export interface WallpaperInfo {
   image: string;
@@ -14,52 +15,61 @@ export interface WallpaperInfo {
   description: string;
 }
 
-const wallpapers: WallpaperInfo[] = [
+const wallpaperDefs = [
   {
     image: day1,
-    name: 'Fortaleza de São Miguel',
     location: 'Luanda',
-    description: 'Fortaleza histórica do século XVI com vista para a baía de Luanda',
+    nameKey: 'day1Name',
+    descriptionKey: 'day1Description',
   },
   {
     image: day2,
-    name: 'Cristo Rei',
     location: 'Lubango',
-    description: 'Majestosa estátua do Cristo Rei no topo da montanha',
+    nameKey: 'day2Name',
+    descriptionKey: 'day2Description',
   },
   {
     image: day3,
-    name: 'Serra da Leba',
     location: 'Lubango',
-    description: 'Famosa estrada serpenteante atravessando as montanhas',
+    nameKey: 'day3Name',
+    descriptionKey: 'day3Description',
   },
   {
     image: day4,
-    name: 'Quedas de Kalandula',
     location: 'Malanje',
-    description: 'Uma das maiores cascatas de África',
+    nameKey: 'day4Name',
+    descriptionKey: 'day4Description',
   },
   {
     image: day5,
-    name: 'Igreja N. Sra. dos Remédios',
     location: 'Luanda',
-    description: 'Igreja barroca colonial portuguesa histórica',
+    nameKey: 'day5Name',
+    descriptionKey: 'day5Description',
   },
   {
     image: day6,
-    name: 'Miradouro da Lua',
     location: 'Luanda',
-    description: 'Paisagem lunar única com formações rochosas dramáticas',
+    nameKey: 'day6Name',
+    descriptionKey: 'day6Description',
   },
   {
     image: day7,
-    name: 'Cidade Alta',
     location: 'Luanda',
-    description: 'Centro histórico colonial com vista para a baía',
+    nameKey: 'day7Name',
+    descriptionKey: 'day7Description',
   },
 ];
 
 export function useDailyWallpaper(): WallpaperInfo {
+  const { t } = useTranslation();
+
+  const wallpapers: WallpaperInfo[] = wallpaperDefs.map((w: any) => ({
+    image: w.image,
+    location: w.location,
+    name: t.wallpaperUi[w.nameKey],
+    description: t.wallpaperUi[w.descriptionKey],
+  }));
+
   // Get the day of the week (0 = Sunday, 1 = Monday, etc.)
   const dayOfWeek = new Date().getDay();
   
@@ -71,5 +81,10 @@ export function useDailyWallpaper(): WallpaperInfo {
 }
 
 export function getAllWallpapers(): WallpaperInfo[] {
-  return wallpapers;
+  return wallpaperDefs.map((w: any) => ({
+    image: w.image,
+    location: w.location,
+    name: String(w.nameKey),
+    description: String(w.descriptionKey),
+  }));
 }

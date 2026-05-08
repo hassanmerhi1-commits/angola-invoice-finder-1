@@ -32,6 +32,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Search, Plus, Edit, Trash2, Tags, Package, ChevronRight, FolderOpen, Folder } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useTranslation } from '@/i18n';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -58,6 +59,7 @@ const initialFormData = {
 };
 
 export default function Categories() {
+  const { t } = useTranslation();
   const { categories, saveCategory, deleteCategory, createCategory } = useCategories();
   const { products } = useProducts();
   const { toast } = useToast();
@@ -139,7 +141,7 @@ export default function Categories() {
     e.preventDefault();
 
     if (!formData.name.trim()) {
-      toast({ title: 'Erro', description: 'Nome da categoria é obrigatório', variant: 'destructive' });
+      toast({ title: t.categoriesUi.toastErrorTitle, description: t.categoriesUi.nameRequired, variant: 'destructive' });
       return;
     }
 
@@ -147,7 +149,7 @@ export default function Categories() {
       c => c.name.toLowerCase() === formData.name.trim().toLowerCase() && c.id !== selectedCategory?.id
     );
     if (existingCategory) {
-      toast({ title: 'Erro', description: 'Já existe uma categoria com este nome', variant: 'destructive' });
+      toast({ title: t.categoriesUi.toastErrorTitle, description: t.categoriesUi.duplicateName, variant: 'destructive' });
       return;
     }
 
@@ -162,10 +164,16 @@ export default function Categories() {
         ...categoryData,
         updatedAt: new Date().toISOString(),
       });
-      toast({ title: 'Categoria actualizada', description: `${formData.name} foi actualizada com sucesso` });
+      toast({
+        title: t.categoriesUi.updatedTitle,
+        description: t.categoriesUi.updatedDesc.replace('{name}', formData.name),
+      });
     } else {
       createCategory(categoryData);
-      toast({ title: 'Categoria criada', description: `${formData.name} foi criada com sucesso` });
+      toast({
+        title: t.categoriesUi.createdTitle,
+        description: t.categoriesUi.createdDesc.replace('{name}', formData.name),
+      });
     }
 
     setDialogOpen(false);
@@ -175,18 +183,30 @@ export default function Categories() {
     if (selectedCategory) {
       const children = getChildren(selectedCategory.id);
       if (children.length > 0) {
-        toast({ title: 'Não é possível eliminar', description: 'Esta categoria tem sub-categorias. Elimine-as primeiro.', variant: 'destructive' });
+        toast({
+          title: t.categoriesUi.cannotDeleteTitle,
+          description: t.categoriesUi.cannotDeleteHasChildren,
+          variant: 'destructive',
+        });
         setDeleteDialogOpen(false);
         return;
       }
       const productCount = getProductCount(selectedCategory.name);
       if (productCount > 0) {
-        toast({ title: 'Não é possível eliminar', description: `Esta categoria tem ${productCount} produto(s) associado(s)`, variant: 'destructive' });
+        toast({
+          title: t.categoriesUi.cannotDeleteTitle,
+          description: t.categoriesUi.cannotDeleteHasProducts
+            .replace('{count}', String(productCount)),
+          variant: 'destructive',
+        });
         setDeleteDialogOpen(false);
         return;
       }
       deleteCategory(selectedCategory.id);
-      toast({ title: 'Categoria eliminada', description: `${selectedCategory.name} foi eliminada` });
+      toast({
+        title: t.categoriesUi.deletedTitle,
+        description: t.categoriesUi.deletedDesc.replace('{name}', selectedCategory.name),
+      });
       setDeleteDialogOpen(false);
       setSelectedCategory(null);
     }
@@ -231,7 +251,7 @@ export default function Categories() {
             <div className="flex items-center gap-2">
               {hasChildren ? <FolderOpen className="w-4 h-4 text-muted-foreground" /> : depth > 0 ? null : <Folder className="w-4 h-4 text-muted-foreground" />}
               {category.name}
-              {!category.parentId && <Badge variant="outline" className="text-[10px] ml-1">Família</Badge>}
+              {!category.parentId && <Badge variant="outline" className="text-[10px] ml-1">{t.categoriesUi.familyBadge}</Badge>}
             </div>
           </TableCell>
           <TableCell className="text-muted-foreground text-sm">
@@ -244,13 +264,13 @@ export default function Categories() {
           </TableCell>
           <TableCell>
             <Badge variant={category.isActive ? 'default' : 'secondary'}>
-              {category.isActive ? 'Activa' : 'Inactiva'}
+              {category.isActive ? t.categoriesUi.active : t.categoriesUi.inactive}
             </Badge>
           </TableCell>
           <TableCell className="text-right">
             <div className="flex justify-end gap-1">
               {!category.parentId && (
-                <Button variant="ghost" size="icon" className="h-7 w-7" title="Adicionar sub-categoria" onClick={() => handleAddChild(category)}>
+                <Button variant="ghost" size="icon" className="h-7 w-7" title={t.categoriesUi.addSubcategory} onClick={() => handleAddChild(category)}>
                   <Plus className="w-3 h-3" />
                 </Button>
               )}
@@ -272,14 +292,14 @@ export default function Categories() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Categorias (Famílias)</h1>
+          <h1 className="text-2xl font-bold">{t.categoriesUi.title}</h1>
           <p className="text-muted-foreground">
-            Organização hierárquica — Família → Sub-categorias → Produtos
+            {t.categoriesUi.subtitle}
           </p>
         </div>
         <Button onClick={() => handleOpenDialog()}>
           <Plus className="w-4 h-4 mr-2" />
-          Nova Família
+          {t.categoriesUi.newFamily}
         </Button>
       </div>
 
@@ -292,7 +312,7 @@ export default function Categories() {
                 <Tags className="w-6 h-6 text-primary" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Total Categorias</p>
+                <p className="text-sm text-muted-foreground">{t.categoriesUi.statsTotalCategories}</p>
                 <p className="text-2xl font-bold">{categories.length}</p>
               </div>
             </div>
@@ -305,7 +325,7 @@ export default function Categories() {
                 <Tags className="w-6 h-6 text-accent-foreground" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Activas</p>
+                <p className="text-sm text-muted-foreground">{t.categoriesUi.statsActive}</p>
                 <p className="text-2xl font-bold">{activeCount}</p>
               </div>
             </div>
@@ -318,7 +338,7 @@ export default function Categories() {
                 <Package className="w-6 h-6 text-secondary-foreground" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Total Produtos</p>
+                <p className="text-sm text-muted-foreground">{t.categoriesUi.statsTotalProducts}</p>
                 <p className="text-2xl font-bold">{products.length}</p>
               </div>
             </div>
@@ -329,11 +349,11 @@ export default function Categories() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>Árvore de Categorias</CardTitle>
+            <CardTitle>{t.categoriesUi.treeTitle}</CardTitle>
             <div className="relative w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Pesquisar..."
+                placeholder={t.common.search}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
@@ -345,19 +365,19 @@ export default function Categories() {
           {(filteredCategories || rootCategories).length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <Tags className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>Nenhuma categoria encontrada</p>
-              <p className="text-sm mt-1">Crie famílias como: Bebidas, Mercearia, Limpeza, etc.</p>
+              <p>{t.categoriesUi.emptyTitle}</p>
+              <p className="text-sm mt-1">{t.categoriesUi.emptyHint}</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-16">Cor</TableHead>
-                  <TableHead>Nome</TableHead>
-                  <TableHead>Descrição</TableHead>
-                  <TableHead className="text-center">Produtos</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-right">Acções</TableHead>
+                  <TableHead className="w-16">{t.categoriesUi.colColor}</TableHead>
+                  <TableHead>{t.categoriesUi.colName}</TableHead>
+                  <TableHead>{t.categoriesUi.colDescription}</TableHead>
+                  <TableHead className="text-center">{t.categoriesUi.colProducts}</TableHead>
+                  <TableHead>{t.categoriesUi.colStatus}</TableHead>
+                  <TableHead className="text-right">{t.categoriesUi.colActions}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -376,20 +396,24 @@ export default function Categories() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {selectedCategory ? 'Editar Categoria' : formData.parentId ? 'Nova Sub-Categoria' : 'Nova Família'}
+              {selectedCategory
+                ? t.categoriesUi.editTitle
+                : formData.parentId
+                  ? t.categoriesUi.newSubcategoryTitle
+                  : t.categoriesUi.newFamilyTitle}
             </DialogTitle>
           </DialogHeader>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <Label>Família (Pai)</Label>
+              <Label>{t.categoriesUi.parentFamilyLabel}</Label>
               <Select
                 value={formData.parentId || '__root__'}
                 onValueChange={v => setFormData({ ...formData, parentId: v === '__root__' ? null : v })}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent className="bg-popover border shadow-lg z-50">
-                  <SelectItem value="__root__">— Raiz (Família Principal) —</SelectItem>
+                  <SelectItem value="__root__">{t.categoriesUi.rootOption}</SelectItem>
                   {parentOptions.map(c => (
                     <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                   ))}
@@ -398,28 +422,28 @@ export default function Categories() {
             </div>
 
             <div>
-              <Label htmlFor="name">Nome *</Label>
+              <Label htmlFor="name">{t.categoriesUi.nameLabel}</Label>
               <Input
                 id="name"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder={formData.parentId ? 'Ex: Água, Gasosa, Sumo...' : 'Ex: Bebidas, Mercearia, Limpeza...'}
+                placeholder={formData.parentId ? t.categoriesUi.subcategoryNamePlaceholder : t.categoriesUi.familyNamePlaceholder}
               />
             </div>
 
             <div>
-              <Label htmlFor="description">Descrição</Label>
+              <Label htmlFor="description">{t.categoriesUi.descriptionLabel}</Label>
               <Textarea
                 id="description"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="Descrição da categoria..."
+                placeholder={t.categoriesUi.descriptionPlaceholder}
                 rows={2}
               />
             </div>
 
             <div>
-              <Label>Cor</Label>
+              <Label>{t.categoriesUi.colorLabel}</Label>
               <div className="flex flex-wrap gap-2 mt-2">
                 {PRESET_COLORS.map((color) => (
                   <button
@@ -436,7 +460,7 @@ export default function Categories() {
                 ))}
               </div>
               <div className="flex items-center gap-2 mt-3">
-                <Label htmlFor="customColor" className="text-sm">Personalizada:</Label>
+                <Label htmlFor="customColor" className="text-sm">{t.categoriesUi.customColorLabel}</Label>
                 <Input
                   id="customColor"
                   type="color"
@@ -454,15 +478,15 @@ export default function Categories() {
                 checked={formData.isActive}
                 onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
               />
-              <Label htmlFor="isActive">Categoria Activa</Label>
+              <Label htmlFor="isActive">{t.categoriesUi.activeCategoryLabel}</Label>
             </div>
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                Cancelar
+                {t.common.cancel}
               </Button>
               <Button type="submit">
-                {selectedCategory ? 'Guardar Alterações' : 'Criar Categoria'}
+                {selectedCategory ? t.common.saveChanges : t.categoriesUi.createCategory}
               </Button>
             </DialogFooter>
           </form>
@@ -473,25 +497,26 @@ export default function Categories() {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar Categoria</AlertDialogTitle>
+            <AlertDialogTitle>{t.categoriesUi.deleteTitle}</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem a certeza que deseja eliminar "{selectedCategory?.name}"?
+              {t.categoriesUi.deleteConfirm.replace('{name}', String(selectedCategory?.name || ''))}
               {getProductCount(selectedCategory?.name || '') > 0 && (
                 <span className="block mt-2 text-destructive font-medium">
-                  ⚠️ Esta categoria tem {getProductCount(selectedCategory?.name || '')} produto(s) associado(s).
+                  {t.categoriesUi.deleteWarnProducts
+                    .replace('{count}', String(getProductCount(selectedCategory?.name || '')))}
                 </span>
               )}
               {selectedCategory && getChildren(selectedCategory.id).length > 0 && (
                 <span className="block mt-2 text-destructive font-medium">
-                  ⚠️ Esta categoria tem sub-categorias. Elimine-as primeiro.
+                  {t.categoriesUi.deleteWarnChildren}
                 </span>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
-              Eliminar
+              {t.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

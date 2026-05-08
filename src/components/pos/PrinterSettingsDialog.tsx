@@ -26,6 +26,7 @@ import {
   savePrinterConfig,
 } from '@/lib/thermalPrinter';
 import { toast } from 'sonner';
+import { useTranslation } from '@/i18n';
 
 interface PrinterSettingsDialogProps {
   open: boolean;
@@ -36,6 +37,7 @@ export function PrinterSettingsDialog({
   open,
   onOpenChange,
 }: PrinterSettingsDialogProps) {
+  const { t } = useTranslation();
   const [config, setConfig] = useState<PrinterConfig>(DEFAULT_PRINTER_CONFIG);
   const [hasSerialSupport, setHasSerialSupport] = useState(false);
   const [autoOpenDrawer, setAutoOpenDrawer] = useState(true);
@@ -51,7 +53,7 @@ export function PrinterSettingsDialog({
   const handleSave = () => {
     savePrinterConfig(config);
     localStorage.setItem('kwanza_auto_open_drawer', autoOpenDrawer.toString());
-    toast.success('Configurações da impressora salvas');
+    toast.success(t.printerUi.saved);
     onOpenChange(false);
   };
 
@@ -102,10 +104,10 @@ export function PrinterSettingsDialog({
           printWindow.document.close();
           printWindow.print();
         }
-        toast.success('Janela de impressão aberta');
+        toast.success(t.printerUi.testWindowOpened);
       }
     } catch (error) {
-      toast.error('Erro ao testar impressora: ' + (error as Error).message);
+      toast.error(t.printerUi.testError.replace('{message}', (error as Error).message));
     }
   };
 
@@ -115,17 +117,17 @@ export function PrinterSettingsDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Printer className="w-5 h-5" />
-            Configurações da Impressora
+            {t.printerUi.title}
           </DialogTitle>
           <DialogDescription>
-            Configure a impressora térmica para recibos
+            {t.printerUi.subtitle}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
           {/* Connection Type */}
           <div className="space-y-3">
-            <Label>Tipo de Conexão</Label>
+            <Label>{t.printerUi.connectionType}</Label>
             <RadioGroup
               value={config.type}
               onValueChange={(v) => setConfig({ ...config, type: v as PrinterConfig['type'] })}
@@ -138,8 +140,8 @@ export function PrinterSettingsDialog({
                   className="flex flex-col items-center justify-center rounded-lg border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary cursor-pointer"
                 >
                   <Monitor className="mb-2 h-6 w-6" />
-                  <span className="text-sm font-medium">Navegador</span>
-                  <span className="text-xs text-muted-foreground">Impressão normal</span>
+                  <span className="text-sm font-medium">{t.printerUi.browser}</span>
+                  <span className="text-xs text-muted-foreground">{t.printerUi.normalPrint}</span>
                 </Label>
               </div>
               <div>
@@ -156,9 +158,9 @@ export function PrinterSettingsDialog({
                   }`}
                 >
                   <Usb className="mb-2 h-6 w-6" />
-                  <span className="text-sm font-medium">USB Térmico</span>
+                  <span className="text-sm font-medium">{t.printerUi.usbThermal}</span>
                   <span className="text-xs text-muted-foreground">
-                    {hasSerialSupport ? 'ESC/POS direto' : 'Não suportado'}
+                    {hasSerialSupport ? t.printerUi.directEscPos : t.printerUi.notSupported}
                   </span>
                 </Label>
               </div>
@@ -167,10 +169,7 @@ export function PrinterSettingsDialog({
             {!hasSerialSupport && config.type === 'browser' && (
               <div className="flex items-start gap-2 p-3 bg-amber-500/10 rounded-lg text-sm text-amber-700">
                 <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <span>
-                  Impressão USB térmica direta requer Chrome/Edge com Web Serial API 
-                  (funciona melhor no app Electron desktop)
-                </span>
+                <span>{t.printerUi.usbWarning}</span>
               </div>
             )}
           </div>
@@ -179,7 +178,7 @@ export function PrinterSettingsDialog({
 
           {/* Paper Width */}
           <div className="space-y-3">
-            <Label>Largura do Papel</Label>
+            <Label>{t.printerUi.paperWidth}</Label>
             <RadioGroup
               value={config.paperWidth.toString()}
               onValueChange={(v) => setConfig({ 
@@ -191,11 +190,11 @@ export function PrinterSettingsDialog({
             >
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="80" id="80mm" />
-                <Label htmlFor="80mm" className="cursor-pointer">80mm (padrão)</Label>
+                <Label htmlFor="80mm" className="cursor-pointer">{t.printerUi.default80}</Label>
               </div>
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="58" id="58mm" />
-                <Label htmlFor="58mm" className="cursor-pointer">58mm (mini)</Label>
+                <Label htmlFor="58mm" className="cursor-pointer">{t.printerUi.mini58}</Label>
               </div>
             </RadioGroup>
           </div>
@@ -205,9 +204,9 @@ export function PrinterSettingsDialog({
           {/* Auto open drawer */}
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
-              <Label>Abrir Gaveta Automático</Label>
+              <Label>{t.printerUi.autoOpenDrawer}</Label>
               <p className="text-xs text-muted-foreground">
-                Abrir gaveta de dinheiro após cada venda
+                {t.printerUi.autoOpenDrawerDesc}
               </p>
             </div>
             <Switch
@@ -222,11 +221,11 @@ export function PrinterSettingsDialog({
           <div className="flex gap-2">
             <Button variant="outline" onClick={handleTestPrint} className="flex-1">
               <Printer className="w-4 h-4 mr-2" />
-              Testar
+              {t.printerUi.test}
             </Button>
             <Button onClick={handleSave} className="flex-1">
               <Check className="w-4 h-4 mr-2" />
-              Salvar
+              {t.printerUi.save}
             </Button>
           </div>
         </div>

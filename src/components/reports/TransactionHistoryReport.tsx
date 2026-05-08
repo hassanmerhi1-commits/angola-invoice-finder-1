@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
+import { useTranslation } from '@/i18n';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,6 +74,8 @@ const CATEGORY_ICONS: Record<TransactionCategory, React.ReactNode> = {
 };
 
 export function TransactionHistoryReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { branches } = useBranches();
   const { users } = useUsers();
   
@@ -284,10 +287,10 @@ export function TransactionHistoryReport() {
                   onValueChange={(v) => setSelectedBranch(v === ALL_SELECT_VALUE ? '' : v)}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Todas as filiais" />
+                  <SelectValue placeholder={t.salesAnalysisUi.allBranches} />
                   </SelectTrigger>
                   <SelectContent className="bg-background border shadow-lg z-50">
-                    <SelectItem value={ALL_SELECT_VALUE}>Todas</SelectItem>
+                    <SelectItem value={ALL_SELECT_VALUE}>{t.common.all}</SelectItem>
                     {branches.map(branch => (
                       <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>
                     ))}
@@ -303,10 +306,10 @@ export function TransactionHistoryReport() {
                   onValueChange={(v) => setSelectedCategory(v === ALL_SELECT_VALUE ? '' : v)}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Todas as categorias" />
+                  <SelectValue placeholder={t.salesAnalysisUi.allCategories} />
                   </SelectTrigger>
                   <SelectContent className="bg-background border shadow-lg z-50">
-                    <SelectItem value={ALL_SELECT_VALUE}>Todas</SelectItem>
+                    <SelectItem value={ALL_SELECT_VALUE}>{t.common.all}</SelectItem>
                     {Object.entries(CATEGORY_LABELS).map(([key, label]) => (
                       <SelectItem key={key} value={key}>{label}</SelectItem>
                     ))}
@@ -316,11 +319,11 @@ export function TransactionHistoryReport() {
 
               {/* Search */}
               <div className="space-y-2 lg:col-span-3">
-                <Label>Pesquisar</Label>
+                <Label>{t.common.search}</Label>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
-                    placeholder="Pesquisar por descrição, utilizador, número..."
+                    placeholder={t.transactionHistoryUi.searchPlaceholder}
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="pl-10"
@@ -337,7 +340,7 @@ export function TransactionHistoryReport() {
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-lg">
-              {filteredRecords.length.toLocaleString()} transacções encontradas
+              {t.transactionHistoryUi.resultsFound.replace('{count}', filteredRecords.length.toLocaleString(locale))}
             </CardTitle>
             {totalPages > 1 && (
               <div className="flex items-center gap-2">
@@ -350,7 +353,7 @@ export function TransactionHistoryReport() {
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
                 <span className="text-sm text-muted-foreground">
-                  Página {currentPage} de {totalPages}
+                  {t.transactionHistoryUi.pageOf.replace('{page}', String(currentPage)).replace('{total}', String(totalPages))}
                 </span>
                 <Button
                   variant="outline"
@@ -369,11 +372,11 @@ export function TransactionHistoryReport() {
             <Table>
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
-                  <TableHead className="w-[160px]">Data/Hora</TableHead>
-                  <TableHead>Utilizador</TableHead>
-                  <TableHead>Categoria</TableHead>
-                  <TableHead>Acção</TableHead>
-                  <TableHead>Descrição</TableHead>
+                  <TableHead className="w-[160px]">{t.transactionHistoryUi.dateTime}</TableHead>
+                  <TableHead>{t.transactionHistoryUi.user}</TableHead>
+                  <TableHead>{t.transactionHistoryUi.category}</TableHead>
+                  <TableHead>{t.transactionHistoryUi.action}</TableHead>
+                  <TableHead>{t.common.description}</TableHead>
                   <TableHead className="w-[100px]">Valor</TableHead>
                   <TableHead className="w-[60px]"></TableHead>
                 </TableRow>
@@ -383,8 +386,8 @@ export function TransactionHistoryReport() {
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                       <History className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                      <p>Nenhuma transacção encontrada</p>
-                      <p className="text-sm">Ajuste os filtros ou aguarde novas operações</p>
+                      <p>{t.common.noResults}</p>
+                      <p className="text-sm">{t.transactionHistoryUi.emptyHint}</p>
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -429,10 +432,10 @@ export function TransactionHistoryReport() {
                       <TableCell className="font-medium">
                         {record.amount ? (
                           <span className={record.amount > 0 ? 'text-emerald-600' : 'text-destructive'}>
-                            {record.amount.toLocaleString('pt-AO')} Kz
+                            {record.amount.toLocaleString(locale)} {t.common.currency}
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">-</span>
+                          <span className="text-muted-foreground">{t.common.dash}</span>
                         )}
                       </TableCell>
                       <TableCell>
@@ -459,10 +462,10 @@ export function TransactionHistoryReport() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <History className="w-5 h-5" />
-              Detalhes da Transacção
+              {t.transactionHistoryUi.detailTitle}
             </DialogTitle>
             <DialogDescription>
-              Informação completa sobre esta operação
+              {t.transactionHistoryUi.detailDesc}
             </DialogDescription>
           </DialogHeader>
           
@@ -472,7 +475,7 @@ export function TransactionHistoryReport() {
                 <div>
                   <Label className="text-xs text-muted-foreground">Data/Hora</Label>
                   <p className="font-medium">
-                    {format(new Date(selectedRecord.timestamp), "dd/MM/yyyy 'às' HH:mm:ss")}
+                    {format(new Date(selectedRecord.timestamp), 'dd/MM/yyyy HH:mm:ss')}
                   </p>
                 </div>
                 <div>
@@ -500,7 +503,7 @@ export function TransactionHistoryReport() {
                   <Label className="text-xs text-muted-foreground">Filial</Label>
                   <div className="flex items-center gap-2 mt-1">
                     <Building className="w-4 h-4 text-muted-foreground" />
-                    <p className="font-medium">{selectedRecord.branchName || 'N/A'}</p>
+                    <p className="font-medium">{selectedRecord.branchName || t.common.dash}</p>
                   </div>
                 </div>
               </div>

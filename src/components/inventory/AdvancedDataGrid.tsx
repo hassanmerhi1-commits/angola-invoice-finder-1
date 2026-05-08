@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ChevronDown, ChevronUp, Filter, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTranslation } from '@/i18n';
 import {
   CustomFilterDialog,
   CustomFilterState,
@@ -37,23 +38,6 @@ interface AdvancedDataGridProps {
   allBranchProducts?: Record<string, Product[]>;
   reservedQty?: Record<string, number>;
 }
-
-const COLUMNS: ColumnDef[] = [
-  { key: 'sku', label: 'Código', minWidth: 100 },
-  { key: 'name', label: 'Descrição', minWidth: 180 },
-  { key: 'price', label: 'Preço s/IVA', minWidth: 100, type: 'number' },
-  { key: 'priceWithIVA', label: 'Preço c/IVA', minWidth: 100, type: 'number', computed: true },
-  { key: 'reservedQty', label: 'Qty Reservada', minWidth: 100, type: 'number', computed: true },
-  { key: 'stock', label: 'Qty Total', minWidth: 80, type: 'number' },
-  { key: 'firstCost', label: 'Custo Inicial', minWidth: 100, type: 'number' },
-  { key: 'lastCost', label: 'Últ. Custo', minWidth: 100, type: 'number' },
-  { key: 'avgCost', label: 'Custo Médio', minWidth: 100, type: 'number' },
-  { key: 'profitMargin', label: 'Lucro %', minWidth: 80, type: 'number', computed: true },
-  { key: 'taxRate', label: 'IVA %', minWidth: 70, type: 'number' },
-  { key: 'unit', label: 'Unidade', minWidth: 80 },
-  { key: 'category', label: 'Categoria', minWidth: 120 },
-  { key: 'supplierName', label: 'Fornecedor', minWidth: 120 },
-];
 
 function matchesCondition(val: string, numVal: number, cond: FilterCondition, isNumber: boolean): boolean {
   const op = cond.operator;
@@ -91,6 +75,24 @@ export function AdvancedDataGrid({
   products, onSelectProduct, onDoubleClickProduct, selectedProductId, hideStock = false,
   isHeadOffice = false, allBranchProducts = {}, reservedQty = {}
 }: AdvancedDataGridProps) {
+  const { t } = useTranslation();
+
+  const COLUMNS: ColumnDef[] = useMemo(() => ([
+    { key: 'sku', label: t.inventoryGridUi.sku, minWidth: 100 },
+    { key: 'name', label: t.inventoryGridUi.name, minWidth: 180 },
+    { key: 'price', label: t.inventoryGridUi.priceNoTax, minWidth: 100, type: 'number' },
+    { key: 'priceWithIVA', label: t.inventoryGridUi.priceWithTax, minWidth: 100, type: 'number', computed: true },
+    { key: 'reservedQty', label: t.inventoryGridUi.reservedQty, minWidth: 100, type: 'number', computed: true },
+    { key: 'stock', label: t.inventoryGridUi.totalQty, minWidth: 80, type: 'number' },
+    { key: 'firstCost', label: t.inventoryGridUi.firstCost, minWidth: 100, type: 'number' },
+    { key: 'lastCost', label: t.inventoryGridUi.lastCost, minWidth: 100, type: 'number' },
+    { key: 'avgCost', label: t.inventoryGridUi.avgCost, minWidth: 100, type: 'number' },
+    { key: 'profitMargin', label: t.inventoryGridUi.profitMargin, minWidth: 80, type: 'number', computed: true },
+    { key: 'taxRate', label: t.inventoryGridUi.taxRate, minWidth: 70, type: 'number' },
+    { key: 'unit', label: t.inventoryGridUi.unit, minWidth: 80 },
+    { key: 'category', label: t.inventoryGridUi.category, minWidth: 120 },
+    { key: 'supplierName', label: t.inventoryGridUi.supplierName, minWidth: 120 },
+  ]), [t]);
   const [columnSearches, setColumnSearches] = useState<Record<string, string>>({});
   const [sortColumn, setSortColumn] = useState<string>('sku');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');

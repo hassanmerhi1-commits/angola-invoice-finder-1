@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import {
   FileText, ShoppingCart, Truck, Receipt, CreditCard, CheckCircle, ArrowRight
 } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 
 interface FlowNode {
   type: string;
@@ -18,22 +19,25 @@ interface DocumentFlowViewerProps {
   className?: string;
 }
 
-const TYPE_CONFIG: Record<string, { icon: any; label: string; color: string }> = {
-  proforma: { icon: FileText, label: 'Pro Forma', color: 'text-blue-500' },
-  purchase_order: { icon: ShoppingCart, label: 'Ordem Compra', color: 'text-orange-500' },
-  goods_receipt: { icon: Truck, label: 'Recepção', color: 'text-green-500' },
-  invoice: { icon: Receipt, label: 'Factura', color: 'text-primary' },
-  credit_note: { icon: FileText, label: 'Nota Crédito', color: 'text-red-500' },
-  payment: { icon: CreditCard, label: 'Pagamento', color: 'text-green-600' },
-  delivery: { icon: Truck, label: 'Entrega', color: 'text-purple-500' },
-  sales_order: { icon: ShoppingCart, label: 'Encomenda', color: 'text-blue-600' },
-};
-
 export function DocumentFlowViewer({ nodes, className }: DocumentFlowViewerProps) {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+
+  const TYPE_CONFIG: Record<string, { icon: any; label: string; color: string }> = useMemo(() => ({
+    proforma: { icon: FileText, label: t.flowUi.proforma, color: 'text-blue-500' },
+    purchase_order: { icon: ShoppingCart, label: t.flowUi.purchaseOrder, color: 'text-orange-500' },
+    goods_receipt: { icon: Truck, label: t.flowUi.goodsReceipt, color: 'text-green-500' },
+    invoice: { icon: Receipt, label: t.flowUi.invoice, color: 'text-primary' },
+    credit_note: { icon: FileText, label: t.flowUi.creditNote, color: 'text-red-500' },
+    payment: { icon: CreditCard, label: t.flowUi.payment, color: 'text-green-600' },
+    delivery: { icon: Truck, label: t.flowUi.delivery, color: 'text-purple-500' },
+    sales_order: { icon: ShoppingCart, label: t.flowUi.salesOrder, color: 'text-blue-600' },
+  }), [t]);
+
   if (nodes.length === 0) {
     return (
       <div className={cn("text-center py-6 text-muted-foreground text-sm", className)}>
-        Nenhum fluxo documental encontrado
+        {t.flowUi.noneFound}
       </div>
     );
   }
@@ -58,9 +62,9 @@ export function DocumentFlowViewer({ nodes, className }: DocumentFlowViewerProps
                 <span className="text-xs font-medium">{config.label}</span>
               </div>
               <span className="text-[10px] font-mono text-muted-foreground">{node.number}</span>
-              <span className="text-[10px] text-muted-foreground">{new Date(node.date).toLocaleDateString('pt-AO')}</span>
+              <span className="text-[10px] text-muted-foreground">{new Date(node.date).toLocaleDateString(locale)}</span>
               {node.amount !== undefined && (
-                <span className="text-xs font-semibold">{node.amount.toLocaleString('pt-AO')} Kz</span>
+                <span className="text-xs font-semibold">{node.amount.toLocaleString(locale)} Kz</span>
               )}
               {node.status === 'completed' && (
                 <CheckCircle className="w-3 h-3 text-green-500" />

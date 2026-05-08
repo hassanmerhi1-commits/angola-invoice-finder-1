@@ -46,6 +46,7 @@ import {
 } from '@/lib/saftAO';
 import { getCompanySettings } from '@/lib/companySettings';
 import { toast } from 'sonner';
+import { useTranslation } from '@/i18n';
 
 interface SAFTExportDialogProps {
   open: boolean;
@@ -56,6 +57,7 @@ export function SAFTExportDialog({
   open,
   onOpenChange,
 }: SAFTExportDialogProps) {
+  const { t } = useTranslation();
   const { branches, currentBranch } = useBranches();
   const { sales } = useSales();
   const { products } = useProducts();
@@ -86,7 +88,7 @@ export function SAFTExportDialog({
     try {
       // Validate company settings
       if (!company.nif || company.nif === '5000000000') {
-        toast.error('Configure o NIF da empresa antes de exportar');
+        toast.error(t.saftUi.companyNifRequired);
         setIsGenerating(false);
         return;
       }
@@ -97,10 +99,10 @@ export function SAFTExportDialog({
       setGeneratedSAFT(saft);
       setSummary(saftSummary);
       
-      toast.success('SAF-T AO gerado com sucesso');
+      toast.success(t.saftUi.generated);
     } catch (error) {
       console.error('Error generating SAF-T:', error);
-      toast.error('Erro ao gerar SAF-T: ' + (error as Error).message);
+      toast.error(t.saftUi.generateErrorPrefix.replace('{message}', (error as Error).message));
     } finally {
       setIsGenerating(false);
     }
@@ -111,9 +113,9 @@ export function SAFTExportDialog({
     
     try {
       downloadSAFTFile(generatedSAFT, options.format);
-      toast.success(`Ficheiro SAF-T ${options.format.toUpperCase()} descarregado`);
+      toast.success(t.saftUi.downloaded.replace('{format}', options.format.toUpperCase()));
     } catch (error) {
-      toast.error('Erro ao descarregar ficheiro');
+      toast.error(t.saftUi.downloadError);
     }
   };
   
@@ -129,9 +131,9 @@ export function SAFTExportDialog({
       a.download = `SAFT-AO_${company.nif}_${options.startDate}_${options.endDate}.xml`;
       a.click();
       
-      toast.success('Ficheiro SAF-T XML (servidor) descarregado');
+      toast.success(t.saftUi.xmlDownloadedServer);
     } catch (error) {
-      toast.error('Servidor indisponível — use a exportação local');
+      toast.error(t.saftUi.serverUnavailableUseLocal);
     } finally {
       setIsGenerating(false);
     }
@@ -148,10 +150,10 @@ export function SAFTExportDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="w-5 h-5" />
-            Exportar SAF-T AO
+            {t.saftUi.title}
           </DialogTitle>
           <DialogDescription>
-            Gere o ficheiro SAF-T para submissão à AGT (Administração Geral Tributária)
+            {t.saftUi.description}
           </DialogDescription>
         </DialogHeader>
 
@@ -174,12 +176,12 @@ export function SAFTExportDialog({
             <div className="space-y-3">
               <Label className="flex items-center gap-2">
                 <Calendar className="w-4 h-4" />
-                Período de Exportação
+                {t.saftUi.exportPeriod}
               </Label>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="startDate" className="text-sm text-muted-foreground">
-                    Data Início
+                    {t.saftUi.startDate}
                   </Label>
                   <Input
                     id="startDate"
@@ -190,7 +192,7 @@ export function SAFTExportDialog({
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="endDate" className="text-sm text-muted-foreground">
-                    Data Fim
+                    {t.saftUi.endDate}
                   </Label>
                   <Input
                     id="endDate"
@@ -204,7 +206,7 @@ export function SAFTExportDialog({
 
             {/* Branch Selection */}
             <div className="space-y-3">
-              <Label>Filial</Label>
+              <Label>{t.saftUi.branch}</Label>
               <Select
                 value={options.branchId || 'all'}
                 onValueChange={(value) => 
@@ -212,10 +214,10 @@ export function SAFTExportDialog({
                 }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecionar filial" />
+                  <SelectValue placeholder={t.saftUi.selectBranch} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Todas as Filiais</SelectItem>
+                  <SelectItem value="all">{t.saftUi.allBranches}</SelectItem>
                   {branches.map(branch => (
                     <SelectItem key={branch.id} value={branch.id}>
                       {branch.name} ({branch.code})
@@ -235,7 +237,7 @@ export function SAFTExportDialog({
                 }
               />
               <Label htmlFor="includeVoided" className="text-sm">
-                Incluir documentos anulados
+                {t.saftUi.includeVoided}
               </Label>
             </div>
 
@@ -243,7 +245,7 @@ export function SAFTExportDialog({
 
             {/* Format Selection */}
             <div className="space-y-3">
-              <Label>Formato do Ficheiro</Label>
+              <Label>{t.saftUi.fileFormat}</Label>
               <RadioGroup
                 value={options.format}
                 onValueChange={(value) => 
@@ -255,7 +257,7 @@ export function SAFTExportDialog({
                   <RadioGroupItem value="json" id="json" />
                   <Label htmlFor="json" className="flex items-center gap-2 cursor-pointer">
                     <FileJson className="w-4 h-4" />
-                    JSON (Recomendado AGT)
+                    {t.saftUi.jsonRecommended}
                   </Label>
                 </div>
                 <div className="flex items-center space-x-2">

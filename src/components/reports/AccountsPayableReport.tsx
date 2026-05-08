@@ -8,6 +8,7 @@ import { Download, FileText, Clock, AlertTriangle, AlertCircle, CheckCircle } fr
 import { format, differenceInDays, parseISO, addDays } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { exportToExcel } from '@/lib/excel';
+import { useTranslation } from '@/i18n';
 
 interface PayableEntry {
   supplierId: string;
@@ -30,6 +31,8 @@ interface PayableEntry {
 }
 
 export default function AccountsPayableReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { suppliers } = useSuppliers();
   const { orders } = usePurchaseOrders();
   const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null);
@@ -120,7 +123,7 @@ export default function AccountsPayableReport() {
   }, [payableReport]);
 
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-AO', { 
+    return new Intl.NumberFormat(locale, {
       style: 'currency', 
       currency: 'AOA',
       minimumFractionDigits: 0 
@@ -129,26 +132,26 @@ export default function AccountsPayableReport() {
 
   const getDueBadge = (daysUntilDue: number) => {
     if (daysUntilDue >= 7) {
-      return <Badge variant="secondary" className="bg-green-500/10 text-green-500">A Vencer</Badge>;
+      return <Badge variant="secondary" className="bg-green-500/10 text-green-500">{t.reportsUi.dueSoon}</Badge>;
     } else if (daysUntilDue >= 0) {
-      return <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-500">Vence Breve</Badge>;
+      return <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-500">{t.reportsUi.dueShort}</Badge>;
     } else if (daysUntilDue >= -30) {
-      return <Badge variant="secondary" className="bg-orange-500/10 text-orange-500">Vencido</Badge>;
+      return <Badge variant="secondary" className="bg-orange-500/10 text-orange-500">{t.reportsUi.overdue}</Badge>;
     } else {
-      return <Badge variant="destructive">Muito Atrasado</Badge>;
+      return <Badge variant="destructive">{t.reportsUi.veryLate}</Badge>;
     }
   };
 
   const handleExport = () => {
     const data = payableReport.map(entry => ({
-      'Fornecedor': entry.supplierName,
-      'NIF': entry.supplierNif,
-      'Prazo Pagamento': entry.paymentTerms.replace('_', ' '),
-      'A Vencer': entry.current,
-      'Vencido 1-30': entry.days30,
-      'Vencido 31-60': entry.days60,
-      'Vencido +60': entry.days90,
-      'Total': entry.total,
+      [t.reportsUi.supplier]: entry.supplierName,
+      [t.reportsUi.nif]: entry.supplierNif,
+      [t.reportsUi.paymentTerm]: entry.paymentTerms.replace('_', ' '),
+      [t.reportsUi.currentDue]: entry.current,
+      [t.reportsUi.overdue1to30]: entry.days30,
+      [t.reportsUi.overdue31to60]: entry.days60,
+      [t.reportsUi.overdue60plus]: entry.days90,
+      [t.reportsUi.total]: entry.total,
     }));
     
     exportToExcel(data, `ContasPagar_${format(new Date(), 'yyyyMMdd')}`);
@@ -162,7 +165,7 @@ export default function AccountsPayableReport() {
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 mb-2">
               <CheckCircle className="w-4 h-4 text-green-500" />
-              <p className="text-sm text-muted-foreground">A Vencer</p>
+              <p className="text-sm text-muted-foreground">{t.reportsUi.dueSoon}</p>
             </div>
             <p className="text-2xl font-bold text-green-500">{formatCurrency(summaryStats.current)}</p>
           </CardContent>
@@ -171,7 +174,7 @@ export default function AccountsPayableReport() {
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 mb-2">
               <Clock className="w-4 h-4 text-yellow-500" />
-              <p className="text-sm text-muted-foreground">Vencido 1-30</p>
+              <p className="text-sm text-muted-foreground">{t.reportsUi.overdue1to30}</p>
             </div>
             <p className="text-2xl font-bold text-yellow-500">{formatCurrency(summaryStats.days30)}</p>
           </CardContent>
@@ -180,7 +183,7 @@ export default function AccountsPayableReport() {
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 mb-2">
               <AlertTriangle className="w-4 h-4 text-orange-500" />
-              <p className="text-sm text-muted-foreground">Vencido 31-60</p>
+              <p className="text-sm text-muted-foreground">{t.reportsUi.overdue31to60}</p>
             </div>
             <p className="text-2xl font-bold text-orange-500">{formatCurrency(summaryStats.days60)}</p>
           </CardContent>
@@ -189,14 +192,14 @@ export default function AccountsPayableReport() {
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 mb-2">
               <AlertCircle className="w-4 h-4 text-red-500" />
-              <p className="text-sm text-muted-foreground">Vencido +60</p>
+              <p className="text-sm text-muted-foreground">{t.reportsUi.overdue60plus}</p>
             </div>
             <p className="text-2xl font-bold text-red-500">{formatCurrency(summaryStats.days90)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground mb-2">Total a Pagar</p>
+            <p className="text-sm text-muted-foreground mb-2">{t.reportsUi.totalToPay}</p>
             <p className="text-2xl font-bold">{formatCurrency(summaryStats.total)}</p>
           </CardContent>
         </Card>
@@ -209,15 +212,15 @@ export default function AccountsPayableReport() {
             <div>
               <CardTitle className="flex items-center gap-2">
                 <FileText className="w-5 h-5" />
-                Contas a Pagar - Fornecedores
+                {t.reportsUi.payablesTitle}
               </CardTitle>
               <CardDescription>
-                Dívidas a fornecedores organizadas por vencimento
+                {t.reportsUi.payablesDesc}
               </CardDescription>
             </div>
             <Button variant="outline" onClick={handleExport}>
               <Download className="w-4 h-4 mr-2" />
-              Exportar Excel
+              {t.reportsUi.exportExcel}
             </Button>
           </div>
         </CardHeader>

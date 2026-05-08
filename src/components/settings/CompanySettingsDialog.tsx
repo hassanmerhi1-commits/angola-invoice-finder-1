@@ -35,6 +35,7 @@ import {
   validateNIF,
 } from '@/lib/companySettings';
 import { toast } from 'sonner';
+import { useTranslation } from '@/i18n';
 
 interface CompanySettingsDialogProps {
   open: boolean;
@@ -45,6 +46,7 @@ export function CompanySettingsDialog({
   open,
   onOpenChange,
 }: CompanySettingsDialogProps) {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState<CompanySettings>(() => {
     try {
       return getCompanySettings();
@@ -101,7 +103,7 @@ export function CompanySettingsDialog({
   const handleSave = async () => {
     // Validate NIF
     if (!validateNIF(settings.nif)) {
-      toast.error('NIF inválido. Deve ter 10 dígitos.');
+      toast.error(t.companySettingsUi.nifInvalid10Digits);
       return;
     }
 
@@ -118,20 +120,20 @@ export function CompanySettingsDialog({
         : settings;
         
       saveCompanySettings(toSave);
-      toast.success('Configurações guardadas com sucesso');
+      toast.success(t.companySettingsUi.savedSuccess);
       onOpenChange(false);
     } catch (error) {
-      toast.error('Erro ao guardar configurações');
+      toast.error(t.companySettingsUi.saveError);
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleReset = () => {
-    if (confirm('Tem certeza que deseja repor as configurações padrão?')) {
+    if (confirm(t.companySettingsUi.resetConfirm)) {
       const defaultSettings = resetCompanySettings();
       setSettings(defaultSettings);
-      toast.info('Configurações repostas');
+      toast.info(t.companySettingsUi.resetDone);
     }
   };
 
@@ -186,7 +188,7 @@ export function CompanySettingsDialog({
                 id="address"
                 value={settings.address}
                 onChange={(e) => handleChange('address', e.target.value)}
-                placeholder="Rua, número, bairro"
+                placeholder={t.companySettingsUi.addressPlaceholder}
               />
             </div>
 
@@ -357,7 +359,7 @@ export function CompanySettingsDialog({
                 id="invoiceNotes"
                 value={settings.invoiceNotes || ''}
                 onChange={(e) => handleChange('invoiceNotes', e.target.value)}
-                placeholder="Condições de pagamento, políticas de devolução, etc."
+                placeholder={t.companySettingsUi.invoiceNotesPlaceholder}
                 rows={3}
               />
             </div>
@@ -368,7 +370,7 @@ export function CompanySettingsDialog({
                 id="footerText"
                 value={settings.footerText || ''}
                 onChange={(e) => handleChange('footerText', e.target.value)}
-                placeholder="Obrigado pela preferência!"
+                placeholder={t.companySettingsUi.footerTextPlaceholder}
               />
             </div>
           </TabsContent>
@@ -556,7 +558,7 @@ export function CompanySettingsDialog({
             </Button>
             <Button onClick={handleSave} disabled={isSaving}>
               <Save className="w-4 h-4 mr-2" />
-              {isSaving ? 'A guardar...' : 'Guardar'}
+              {isSaving ? t.companySettingsUi.saving : t.common.save}
             </Button>
           </div>
         </div>

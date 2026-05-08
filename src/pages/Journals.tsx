@@ -47,17 +47,20 @@ interface DisplayEntry {
 }
 
 const ENTRY_TYPES = [
-  { value: 'venda', label: 'Venda', color: 'text-blue-600' },
-  { value: 'compra', label: 'Compra', color: 'text-orange-600' },
-  { value: 'recibo', label: 'Recibo', color: 'text-green-600' },
-  { value: 'pagamento', label: 'Pagamento', color: 'text-red-600' },
-  { value: 'ajuste', label: 'Ajuste', color: 'text-purple-600' },
-  { value: 'abertura', label: 'Abertura', color: 'text-muted-foreground' },
-  { value: 'fecho', label: 'Fecho', color: 'text-muted-foreground' },
-  { value: 'manual', label: 'Manual', color: 'text-amber-600' },
+  { value: 'venda', labelKey: 'sale', color: 'text-blue-600' },
+  { value: 'compra', labelKey: 'purchase', color: 'text-orange-600' },
+  { value: 'recibo', labelKey: 'receipt', color: 'text-green-600' },
+  { value: 'pagamento', labelKey: 'payment', color: 'text-red-600' },
+  { value: 'ajuste', labelKey: 'adjustment', color: 'text-purple-600' },
+  { value: 'abertura', labelKey: 'opening', color: 'text-muted-foreground' },
+  { value: 'fecho', labelKey: 'closing', color: 'text-muted-foreground' },
+  { value: 'manual', labelKey: 'manual', color: 'text-amber-600' },
 ];
 
-function useJournalEntries(branchId?: string) {
+function useJournalEntries(
+  branchId: string | undefined,
+  ui: { systemUser: string; salesOfMerchandise: string }
+) {
   const [entries, setEntries] = useState<DisplayEntry[]>([]);
 
   const loadAll = useCallback(async () => {
@@ -78,7 +81,7 @@ function useJournalEntries(branchId?: string) {
           totalDebit: Number(je.total_debit || je.totalDebit || 0),
           totalCredit: Number(je.total_credit || je.totalCredit || 0),
           isPosted: true,
-          createdBy: je.created_by || je.createdBy || 'Sistema',
+          createdBy: je.created_by || je.createdBy || ui.systemUser,
           lines: (je.lines || []).map((l: any) => ({
             id: `${je.id}_${l.account_code || l.accountCode}_${l.debit}_${l.credit}`,
             accountCode: l.account_code || l.accountCode || '',
@@ -94,7 +97,7 @@ function useJournalEntries(branchId?: string) {
       try {
         const raw = localStorage.getItem('kwanzaerp_journal_entries');
         const journalEntries = raw ? JSON.parse(raw) : [];
-        for (const je of journalEntries) {
+      for (const je of journalEntries) {
           if (branchId && je.branchId !== branchId) continue;
           allEntries.push({
             id: je.id,
@@ -106,7 +109,7 @@ function useJournalEntries(branchId?: string) {
             totalDebit: je.totalDebit,
             totalCredit: je.totalCredit,
             isPosted: true,
-            createdBy: je.createdBy || 'Sistema',
+            createdBy: je.createdBy || ui.systemUser,
             lines: (je.lines || []).map((l: any) => ({
               id: `${je.id}_${l.accountCode}_${l.debit}_${l.credit}`,
               accountCode: l.accountCode || '',
@@ -141,10 +144,10 @@ function useJournalEntries(branchId?: string) {
             totalDebit: sale.total || 0,
             totalCredit: sale.total || 0,
             isPosted: true,
-            createdBy: sale.cashierName || 'Sistema',
+            createdBy: sale.cashierName || ui.systemUser,
             lines: [
               { id: `${id}_1`, accountCode: '4.1.1', accountName: 'Caixa', description: 'Recebimento', debit: sale.total || 0, credit: 0 },
-              { id: `${id}_2`, accountCode: '7.1.1', accountName: 'Vendas de Mercadorias', description: sale.invoiceNumber || '', debit: 0, credit: (sale.subtotal || sale.total || 0) },
+              { id: `${id}_2`, accountCode: '7.1.1', accountName: ui.salesOfMerchandise, description: sale.invoiceNumber || '', debit: 0, credit: (sale.subtotal || sale.total || 0) },
               ...(sale.taxAmount ? [{ id: `${id}_3`, accountCode: '2.4.3', accountName: 'IVA a Pagar', description: 'IVA', debit: 0, credit: sale.taxAmount }] : []),
             ],
           });
@@ -154,7 +157,7 @@ function useJournalEntries(branchId?: string) {
 
     allEntries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     setEntries(allEntries);
-  }, [branchId]);
+  }, [branchId, ui.salesOfMerchandise, ui.systemUser]);
 
   useEffect(() => { void loadAll(); }, [loadAll]);
 
@@ -183,10 +186,14 @@ function createEmptyLine(): NewEntryLine {
 }
 
 export default function Journals() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
-  const { entries, refetch } = useJournalEntries(currentBranch?.id);
+  const { entries, refetch } = useJournalEntries(currentBranch?.id, {
+    systemUser: t.journalsUi.systemUser,
+    salesOfMerchandise: t.journalsUi.salesOfMerchandise,
+  });
 
   const [activeTab, setActiveTab] = useState('diarios');
   const [searchTerm, setSearchTerm] = useState('');
@@ -292,7 +299,7 @@ export default function Journals() {
 
   function removeLine(lineId: string) {
     if (newEntryLines.length <= 2) {
-      toast.error('O lançamento precisa de pelo menos 2 linhas');
+      toast.error(t.journalsUi.minTwoLines);
       return;
     }
     setNewEntryLines(prev => prev.filter(l => l.id !== lineId));
@@ -326,18 +333,18 @@ export default function Journals() {
   async function saveNewEntry() {
     // Validate
     if (!newEntryDescription.trim()) {
-      toast.error('Preencha a descrição do lançamento');
+      toast.error(t.journalsUi.fillEntryDescription);
       return;
     }
 
     const validLines = newEntryLines.filter(l => l.accountCode && (parseFloat(l.debit) || parseFloat(l.credit)));
     if (validLines.length < 2) {
-      toast.error('O lançamento precisa de pelo menos 2 linhas com conta e valor');
+      toast.error(t.journalsUi.minTwoLinesWithAccountAndAmount);
       return;
     }
 
     if (!isBalanced) {
-      toast.error(`Lançamento não está balanceado. Diferença: ${Math.abs(difference).toLocaleString('pt-AO')} Kz`);
+      toast.error(t.journalsUi.entryNotBalanced.replace('{amount}', Math.abs(difference).toLocaleString(uiLocale)));
       return;
     }
 
@@ -394,8 +401,10 @@ export default function Journals() {
       localStorage.setItem('kwanzaerp_journal_entries', JSON.stringify(all));
     }
 
-    toast.success(`Lançamento ${createdEntry.entryNumber} criado com sucesso`, {
-      description: `Débito: ${newEntryTotalDebit.toLocaleString('pt-AO')} Kz | Crédito: ${newEntryTotalCredit.toLocaleString('pt-AO')} Kz`,
+    toast.success(t.journalsUi.entryCreated.replace('{number}', createdEntry.entryNumber), {
+      description: t.journalsUi.entryCreatedDesc
+        .replace('{debit}', newEntryTotalDebit.toLocaleString(uiLocale))
+        .replace('{credit}', newEntryTotalCredit.toLocaleString(uiLocale)),
     });
 
     setNewEntryOpen(false);
@@ -407,25 +416,27 @@ export default function Journals() {
       {/* Toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b flex-wrap">
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={openNewEntry}>
-          <Plus className="w-3 h-3" /> Novo Lançamento
+          <Plus className="w-3 h-3" /> {t.journalsUi.newEntry}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedEntry}
           onClick={() => { setViewEntryOpen(true); }}>
-          <Eye className="w-3 h-3" /> Ver
+          <Eye className="w-3 h-3" /> {t.common.view}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
         {/* Date filters */}
-        <span className="text-xs text-muted-foreground">De:</span>
+        <span className="text-xs text-muted-foreground">{t.common.from}:</span>
         <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-7 text-xs w-32" />
-        <span className="text-xs text-muted-foreground">Até:</span>
+        <span className="text-xs text-muted-foreground">{t.common.to}:</span>
         <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-7 text-xs w-32" />
         <div className="w-px h-5 bg-border mx-1" />
         <Select value={filterType} onValueChange={setFilterType}>
-          <SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="Tipo" /></SelectTrigger>
+          <SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder={t.common.type} /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="all">{t.common.all}</SelectItem>
             {ENTRY_TYPES.map(t => (
-              <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+              <SelectItem key={t.value} value={t.value}>
+                {t.journalsUi.entryTypes[t.labelKey as keyof typeof t.journalsUi.entryTypes] as string}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -433,19 +444,23 @@ export default function Journals() {
         <div className="flex-1" />
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-          <Input placeholder="Pesquisar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-7 text-xs pl-7 w-40" />
+          <Input placeholder={t.common.search} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-7 text-xs pl-7 w-40" />
         </div>
       </div>
 
       {/* Sub-tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0">
-          {['Diários', 'Balancete', 'Auditoria', 'Cashiers'].map((label, i) => {
-            const key = ['diarios', 'balancete', 'auditoria', 'cashiers'][i];
+          {[
+            { key: 'diarios', labelKey: 'tabJournals' },
+            { key: 'balancete', labelKey: 'tabTrialBalance' },
+            { key: 'auditoria', labelKey: 'tabAudit' },
+            { key: 'cashiers', labelKey: 'tabCashiers' },
+          ].map((tab) => {
             return (
-              <TabsTrigger key={key} value={key}
+              <TabsTrigger key={tab.key} value={tab.key}
                 className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-1.5">
-                {label}
+                {t.journalsUi[tab.labelKey as keyof typeof t.journalsUi] as string}
               </TabsTrigger>
             );
           })}
@@ -455,15 +470,15 @@ export default function Journals() {
           <table className="w-full text-xs">
             <thead className="bg-muted/60 border-b sticky top-0 z-10">
               <tr>
-                <th className="px-3 py-2 text-left font-semibold w-24">Data</th>
-                <th className="px-3 py-2 text-left font-semibold w-16">Tipo</th>
-                <th className="px-3 py-2 text-center font-semibold w-12">Moeda</th>
-                <th className="px-3 py-2 text-left font-semibold w-24">Nº Lançamento</th>
-                <th className="px-3 py-2 text-left font-semibold">Descrição</th>
-                <th className="px-3 py-2 text-right font-semibold w-28">Débito</th>
-                <th className="px-3 py-2 text-right font-semibold w-28">Crédito</th>
-                <th className="px-3 py-2 text-left font-semibold w-20">Utilizador</th>
-                <th className="px-3 py-2 text-center font-semibold w-12">Estado</th>
+                <th className="px-3 py-2 text-left font-semibold w-24">{t.common.date}</th>
+                <th className="px-3 py-2 text-left font-semibold w-16">{t.common.type}</th>
+                <th className="px-3 py-2 text-center font-semibold w-12">{t.common.currency}</th>
+                <th className="px-3 py-2 text-left font-semibold w-24">{t.journalsUi.entryNo}</th>
+                <th className="px-3 py-2 text-left font-semibold">{t.common.description}</th>
+                <th className="px-3 py-2 text-right font-semibold w-28">{t.journalsUi.debit}</th>
+                <th className="px-3 py-2 text-right font-semibold w-28">{t.journalsUi.credit}</th>
+                <th className="px-3 py-2 text-left font-semibold w-20">{t.common.user}</th>
+                <th className="px-3 py-2 text-center font-semibold w-12">{t.common.status}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -476,16 +491,18 @@ export default function Journals() {
                     onClick={() => setSelectedEntryId(entry.id)}
                     onDoubleClick={() => { setSelectedEntryId(entry.id); setViewEntryOpen(true); }}>
                     <td className="px-3 py-1.5 text-muted-foreground">
-                      {new Date(entry.date).toLocaleDateString('pt-AO')}
+                      {new Date(entry.date).toLocaleDateString(uiLocale)}
                     </td>
                     <td className={cn("px-3 py-1.5 font-medium", typeConfig?.color)}>
-                      {typeConfig?.label || entry.type}
+                      {typeConfig
+                        ? (t.journalsUi.entryTypes[typeConfig.labelKey as keyof typeof t.journalsUi.entryTypes] as string)
+                        : entry.type}
                     </td>
                     <td className="px-3 py-1.5 text-center text-muted-foreground">{entry.currency}</td>
                     <td className="px-3 py-1.5 font-mono">{entry.entryNumber}</td>
                     <td className="px-3 py-1.5">{entry.description}</td>
-                    <td className="px-3 py-1.5 text-right font-mono">{entry.totalDebit.toLocaleString('pt-AO')}</td>
-                    <td className="px-3 py-1.5 text-right font-mono">{entry.totalCredit.toLocaleString('pt-AO')}</td>
+                    <td className="px-3 py-1.5 text-right font-mono">{entry.totalDebit.toLocaleString(uiLocale)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono">{entry.totalCredit.toLocaleString(uiLocale)}</td>
                     <td className="px-3 py-1.5 text-muted-foreground">{entry.createdBy}</td>
                     <td className="px-3 py-1.5 text-center">
                       {entry.isPosted ? (
@@ -500,39 +517,39 @@ export default function Journals() {
             </tbody>
             <tfoot className="bg-muted/80 border-t-2 border-primary/30">
               <tr className="font-bold text-xs">
-                <td className="px-3 py-2" colSpan={5}>TOTAL ({filteredEntries.length} lançamentos)</td>
-                <td className="px-3 py-2 text-right font-mono text-green-600">{totals.debit.toLocaleString('pt-AO')} Kz</td>
-                <td className="px-3 py-2 text-right font-mono text-red-600">{totals.credit.toLocaleString('pt-AO')} Kz</td>
+                <td className="px-3 py-2" colSpan={5}>{t.journalsUi.totalEntries.replace('{count}', String(filteredEntries.length))}</td>
+                <td className="px-3 py-2 text-right font-mono text-green-600">{totals.debit.toLocaleString(uiLocale)} Kz</td>
+                <td className="px-3 py-2 text-right font-mono text-red-600">{totals.credit.toLocaleString(uiLocale)} Kz</td>
                 <td colSpan={2}></td>
               </tr>
             </tfoot>
           </table>
           {filteredEntries.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground text-sm">Nenhum lançamento encontrado</div>
+            <div className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.noEntriesFound}</div>
           )}
         </TabsContent>
 
         <TabsContent value="balancete" className="flex-1 m-0 p-4">
           <Card><CardContent className="pt-6 text-center text-muted-foreground">
             <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p>Balancete será gerado a partir dos lançamentos</p>
-            <p className="text-xs mt-1">Seleccione um período e clique em Gerar</p>
+            <p>{t.journalsUi.trialBalanceHint}</p>
+            <p className="text-xs mt-1">{t.journalsUi.selectPeriodAndGenerate}</p>
           </CardContent></Card>
         </TabsContent>
 
         <TabsContent value="auditoria" className="flex-1 m-0 p-4">
           <Card><CardContent className="pt-6 text-center text-muted-foreground">
             <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p>Auditoria - Registo de todas as alterações</p>
-            <p className="text-xs mt-1">Histórico completo de quem fez o quê e quando</p>
+            <p>{t.journalsUi.auditHintTitle}</p>
+            <p className="text-xs mt-1">{t.journalsUi.auditHintDesc}</p>
           </CardContent></Card>
         </TabsContent>
 
         <TabsContent value="cashiers" className="flex-1 m-0 p-4">
           <Card><CardContent className="pt-6 text-center text-muted-foreground">
             <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p>Cashiers - Resumo por operador</p>
-            <p className="text-xs mt-1">Vendas e recebimentos por caixa</p>
+            <p>{t.journalsUi.cashiersHintTitle}</p>
+            <p className="text-xs mt-1">{t.journalsUi.cashiersHintDesc}</p>
           </CardContent></Card>
         </TabsContent>
       </Tabs>
@@ -541,24 +558,27 @@ export default function Journals() {
       <Dialog open={viewEntryOpen} onOpenChange={setViewEntryOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Lançamento {selectedEntry?.entryNumber}</DialogTitle>
+            <DialogTitle>{t.journalsUi.entryTitle.replace('{number}', selectedEntry?.entryNumber || '')}</DialogTitle>
           </DialogHeader>
           {selectedEntry && (
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-4 text-sm">
-                <div><span className="text-muted-foreground">Data:</span> {new Date(selectedEntry.date).toLocaleDateString('pt-AO')}</div>
-                <div><span className="text-muted-foreground">Tipo:</span> {ENTRY_TYPES.find(t => t.value === selectedEntry.type)?.label}</div>
-                <div><span className="text-muted-foreground">Utilizador:</span> {selectedEntry.createdBy}</div>
+                <div><span className="text-muted-foreground">{t.common.date}:</span> {new Date(selectedEntry.date).toLocaleDateString(uiLocale)}</div>
+                <div><span className="text-muted-foreground">{t.common.type}:</span> {(() => {
+                  const et = ENTRY_TYPES.find(t => t.value === selectedEntry.type);
+                  return et ? (t.journalsUi.entryTypes[et.labelKey as keyof typeof t.journalsUi.entryTypes] as string) : selectedEntry.type;
+                })()}</div>
+                <div><span className="text-muted-foreground">{t.common.user}:</span> {selectedEntry.createdBy}</div>
               </div>
-              <div className="text-sm"><span className="text-muted-foreground">Descrição:</span> {selectedEntry.description}</div>
+              <div className="text-sm"><span className="text-muted-foreground">{t.common.description}:</span> {selectedEntry.description}</div>
               <table className="w-full text-xs border">
                 <thead className="bg-muted/60">
                   <tr>
-                    <th className="px-3 py-2 text-left">Conta</th>
-                    <th className="px-3 py-2 text-left">Nome</th>
-                    <th className="px-3 py-2 text-left">Descrição</th>
-                    <th className="px-3 py-2 text-right">Débito</th>
-                    <th className="px-3 py-2 text-right">Crédito</th>
+                    <th className="px-3 py-2 text-left">{t.journalsUi.account}</th>
+                    <th className="px-3 py-2 text-left">{t.common.name}</th>
+                    <th className="px-3 py-2 text-left">{t.common.description}</th>
+                    <th className="px-3 py-2 text-right">{t.journalsUi.debit}</th>
+                    <th className="px-3 py-2 text-right">{t.journalsUi.credit}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -567,16 +587,16 @@ export default function Journals() {
                       <td className="px-3 py-1.5 font-mono">{line.accountCode}</td>
                       <td className="px-3 py-1.5">{line.accountName}</td>
                       <td className="px-3 py-1.5 text-muted-foreground">{line.description}</td>
-                      <td className="px-3 py-1.5 text-right font-mono">{line.debit ? line.debit.toLocaleString('pt-AO') : ''}</td>
-                      <td className="px-3 py-1.5 text-right font-mono">{line.credit ? line.credit.toLocaleString('pt-AO') : ''}</td>
+                      <td className="px-3 py-1.5 text-right font-mono">{line.debit ? line.debit.toLocaleString(uiLocale) : ''}</td>
+                      <td className="px-3 py-1.5 text-right font-mono">{line.credit ? line.credit.toLocaleString(uiLocale) : ''}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot className="bg-muted/60 font-bold">
                   <tr>
-                    <td className="px-3 py-2" colSpan={3}>TOTAL</td>
-                    <td className="px-3 py-2 text-right font-mono">{selectedEntry.totalDebit.toLocaleString('pt-AO')}</td>
-                    <td className="px-3 py-2 text-right font-mono">{selectedEntry.totalCredit.toLocaleString('pt-AO')}</td>
+                    <td className="px-3 py-2" colSpan={3}>{t.common.total}</td>
+                    <td className="px-3 py-2 text-right font-mono">{selectedEntry.totalDebit.toLocaleString(uiLocale)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{selectedEntry.totalCredit.toLocaleString(uiLocale)}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -590,7 +610,7 @@ export default function Journals() {
         <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Plus className="w-4 h-4" /> Novo Lançamento Manual
+              <Plus className="w-4 h-4" /> {t.journalsUi.newManualEntry}
             </DialogTitle>
           </DialogHeader>
 
@@ -598,32 +618,34 @@ export default function Journals() {
             {/* Header fields */}
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <Label className="text-xs">Data</Label>
+                <Label className="text-xs">{t.common.date}</Label>
                 <Input type="date" value={newEntryDate} onChange={e => setNewEntryDate(e.target.value)} className="h-8 text-sm" />
               </div>
               <div>
-                <Label className="text-xs">Tipo</Label>
+                <Label className="text-xs">{t.common.type}</Label>
                 <Select value={newEntryType} onValueChange={setNewEntryType}>
                   <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {ENTRY_TYPES.map(t => (
-                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    {ENTRY_TYPES.map(et => (
+                      <SelectItem key={et.value} value={et.value}>
+                        {t.journalsUi.entryTypes[et.labelKey as keyof typeof t.journalsUi.entryTypes] as string}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <Label className="text-xs">Filial</Label>
-                <Input value={currentBranch?.name || 'Sede'} disabled className="h-8 text-sm bg-muted" />
+                <Label className="text-xs">{t.journalsUi.branch}</Label>
+                <Input value={currentBranch?.name || t.branchUi.headOffice} disabled className="h-8 text-sm bg-muted" />
               </div>
             </div>
 
             <div>
-              <Label className="text-xs">Descrição</Label>
+              <Label className="text-xs">{t.common.description}</Label>
               <Textarea
                 value={newEntryDescription}
                 onChange={e => setNewEntryDescription(e.target.value)}
-                placeholder="Descrição do lançamento..."
+                placeholder={t.journalsUi.entryDescriptionPlaceholder}
                 className="min-h-[40px] text-sm resize-none"
               />
             </div>
@@ -631,13 +653,13 @@ export default function Journals() {
             {/* Lines table */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <Label className="text-xs font-semibold">Linhas do Lançamento</Label>
+                <Label className="text-xs font-semibold">{t.journalsUi.entryLines}</Label>
                 <div className="flex gap-1">
                   <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1" onClick={autoBalance}>
-                    Balancear Auto
+                    {t.journalsUi.autoBalance}
                   </Button>
                   <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1" onClick={addLine}>
-                    <Plus className="w-3 h-3" /> Linha
+                    <Plus className="w-3 h-3" /> {t.journalsUi.line}
                   </Button>
                 </div>
               </div>
@@ -646,11 +668,11 @@ export default function Journals() {
                 <table className="w-full text-xs">
                   <thead className="bg-muted/60">
                     <tr>
-                      <th className="px-2 py-1.5 text-left w-28">Conta</th>
-                      <th className="px-2 py-1.5 text-left">Nome da Conta</th>
-                      <th className="px-2 py-1.5 text-left w-40">Descrição</th>
-                      <th className="px-2 py-1.5 text-right w-28">Débito</th>
-                      <th className="px-2 py-1.5 text-right w-28">Crédito</th>
+                      <th className="px-2 py-1.5 text-left w-28">{t.journalsUi.account}</th>
+                      <th className="px-2 py-1.5 text-left">{t.journalsUi.accountName}</th>
+                      <th className="px-2 py-1.5 text-left w-40">{t.common.description}</th>
+                      <th className="px-2 py-1.5 text-right w-28">{t.journalsUi.debit}</th>
+                      <th className="px-2 py-1.5 text-right w-28">{t.journalsUi.credit}</th>
                       <th className="px-2 py-1.5 w-8"></th>
                     </tr>
                   </thead>
@@ -660,7 +682,7 @@ export default function Journals() {
                         <td className="px-1 py-1 relative">
                           <Input
                             value={line.accountCode}
-                            placeholder="Ex: 4.1.1"
+                            placeholder={t.journalsUi.accountCodeExample}
                             className="h-7 text-xs font-mono"
                             onFocus={() => { setActiveLineId(line.id); setAccountSearch(''); }}
                             onChange={e => {
@@ -674,7 +696,7 @@ export default function Journals() {
                             <div className="absolute top-full left-0 z-50 w-72 bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
                               <div className="p-1">
                                 <Input
-                                  placeholder="Pesquisar conta..."
+                                  placeholder={t.journalsUi.searchAccountPlaceholder}
                                   value={accountSearch}
                                   onChange={e => setAccountSearch(e.target.value)}
                                   className="h-6 text-xs mb-1"
@@ -683,7 +705,7 @@ export default function Journals() {
                               </div>
                               {filteredAccounts.length === 0 ? (
                                 <div className="px-2 py-3 text-center text-muted-foreground text-xs">
-                                  Nenhuma conta encontrada
+                                  {t.journalsUi.noAccountsFound}
                                 </div>
                               ) : (
                                 filteredAccounts.map(acct => (
@@ -698,7 +720,7 @@ export default function Journals() {
                                     <span className="font-mono text-primary w-14 shrink-0">{acct.code}</span>
                                     <span className="truncate">{acct.name}</span>
                                     <span className="ml-auto text-muted-foreground">
-                                      {(acct.current_balance || 0).toLocaleString('pt-AO')}
+                                      {(acct.current_balance || 0).toLocaleString(uiLocale)}
                                     </span>
                                   </button>
                                 ))
@@ -716,7 +738,7 @@ export default function Journals() {
                         <td className="px-1 py-1">
                           <Input
                             value={line.description}
-                            placeholder="Descrição..."
+                            placeholder={t.journalsUi.lineDescriptionPlaceholder}
                             onChange={e => updateLine(line.id, 'description', e.target.value)}
                             className="h-7 text-xs"
                           />
@@ -759,18 +781,20 @@ export default function Journals() {
                   <tfoot className="bg-muted/60">
                     <tr className="font-bold text-xs">
                       <td className="px-2 py-2" colSpan={3}>
-                        TOTAL
+                        {t.common.total}
                         {!isBalanced && newEntryTotalDebit + newEntryTotalCredit > 0 && (
                           <span className="ml-2 text-destructive font-normal">
-                            (Diferença: {Math.abs(difference).toLocaleString('pt-AO')} Kz {difference > 0 ? 'a débito' : 'a crédito'})
+                            {t.journalsUi.differenceLabel
+                              .replace('{amount}', Math.abs(difference).toLocaleString(uiLocale))
+                              .replace('{side}', difference > 0 ? t.journalsUi.debitSide : t.journalsUi.creditSide)}
                           </span>
                         )}
                         {isBalanced && newEntryTotalDebit > 0 && (
-                          <span className="ml-2 text-green-600 font-normal">✓ Balanceado</span>
+                          <span className="ml-2 text-green-600 font-normal">{t.journalsUi.balanced}</span>
                         )}
                       </td>
-                      <td className="px-2 py-2 text-right font-mono">{newEntryTotalDebit.toLocaleString('pt-AO')}</td>
-                      <td className="px-2 py-2 text-right font-mono">{newEntryTotalCredit.toLocaleString('pt-AO')}</td>
+                      <td className="px-2 py-2 text-right font-mono">{newEntryTotalDebit.toLocaleString(uiLocale)}</td>
+                      <td className="px-2 py-2 text-right font-mono">{newEntryTotalCredit.toLocaleString(uiLocale)}</td>
                       <td></td>
                     </tr>
                   </tfoot>
@@ -780,13 +804,13 @@ export default function Journals() {
           </div>
 
           <DialogFooter className="mt-4 gap-2">
-            <Button variant="outline" onClick={() => setNewEntryOpen(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setNewEntryOpen(false)}>{t.common.cancel}</Button>
             <Button
               onClick={saveNewEntry}
               disabled={!isBalanced || newEntryTotalDebit === 0 || !newEntryDescription.trim()}
               className="gap-1"
             >
-              <CheckCircle className="w-4 h-4" /> Lançar
+              <CheckCircle className="w-4 h-4" /> {t.journalsUi.postEntry}
             </Button>
           </DialogFooter>
         </DialogContent>

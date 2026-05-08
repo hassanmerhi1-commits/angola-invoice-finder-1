@@ -18,8 +18,13 @@ import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { DateRange } from 'react-day-picker';
+import { useTranslation } from '@/i18n';
+import { enUS } from 'date-fns/locale';
 
 export default function DailyReports() {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const dfLocale = language === 'pt' ? pt : enUS;
   const { user } = useAuth();
   const { branches, currentBranch } = useBranchContext();
   const { reports, generateReport, closeDay, refreshReports } = useDailyReports(currentBranch?.id);
@@ -86,7 +91,7 @@ export default function DailyReports() {
   };
 
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-AO', { style: 'currency', currency: 'AOA' }).format(value);
+    return new Intl.NumberFormat(uiLocale, { style: 'currency', currency: 'AOA' }).format(value);
   };
 
   // Calculate totals for summary cards
@@ -99,13 +104,13 @@ export default function DailyReports() {
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Relatórios Diários</h1>
-          <p className="text-muted-foreground">Gestão de fechamento de caixa por filial</p>
+          <h1 className="text-2xl font-bold">{t.dailyReportsUi.title}</h1>
+          <p className="text-muted-foreground">{t.dailyReportsUi.subtitle}</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={refreshReports}>
             <RefreshCw className="w-4 h-4 mr-2" />
-            Atualizar
+            {t.common.refresh}
           </Button>
         </div>
       </div>
@@ -114,42 +119,44 @@ export default function DailyReports() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Receita Total</CardTitle>
+            <CardTitle className="text-sm font-medium">{t.dailyReportsUi.totalRevenue}</CardTitle>
             <TrendingUp className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(totalRevenue)}</div>
-            <p className="text-xs text-muted-foreground">{filteredReports.length} relatórios</p>
+            <p className="text-xs text-muted-foreground">
+              {t.dailyReportsUi.reportsCount.replace('{count}', String(filteredReports.length))}
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Transações</CardTitle>
+            <CardTitle className="text-sm font-medium">{t.dailyReportsUi.transactions}</CardTitle>
             <FileText className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{totalTransactions}</div>
-            <p className="text-xs text-muted-foreground">vendas realizadas</p>
+            <p className="text-xs text-muted-foreground">{t.dailyReportsUi.salesDone}</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Dinheiro</CardTitle>
+            <CardTitle className="text-sm font-medium">{t.dailyReportsUi.cash}</CardTitle>
             <Banknote className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(totalCash)}</div>
-            <p className="text-xs text-muted-foreground">em numerário</p>
+            <p className="text-xs text-muted-foreground">{t.dailyReportsUi.inCash}</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Cartão</CardTitle>
+            <CardTitle className="text-sm font-medium">{t.dailyReportsUi.card}</CardTitle>
             <CreditCard className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(totalCard)}</div>
-            <p className="text-xs text-muted-foreground">em TPA</p>
+            <p className="text-xs text-muted-foreground">{t.dailyReportsUi.inCard}</p>
           </CardContent>
         </Card>
       </div>
@@ -157,13 +164,13 @@ export default function DailyReports() {
       {/* Filters */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Gerar Relatório</CardTitle>
-          <CardDescription>Selecione a data e filial para gerar um novo relatório</CardDescription>
+          <CardTitle className="text-lg">{t.dailyReportsUi.generateTitle}</CardTitle>
+          <CardDescription>{t.dailyReportsUi.generateSubtitle}</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
-              <Label>Período</Label>
+              <Label>{t.dailyReportsUi.periodLabel}</Label>
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
@@ -177,14 +184,14 @@ export default function DailyReports() {
                     {dateRange?.from ? (
                       dateRange.to ? (
                         <>
-                          {format(dateRange.from, "dd/MM/yyyy", { locale: pt })} -{" "}
-                          {format(dateRange.to, "dd/MM/yyyy", { locale: pt })}
+                          {format(dateRange.from, "dd/MM/yyyy", { locale: dfLocale })} -{" "}
+                          {format(dateRange.to, "dd/MM/yyyy", { locale: dfLocale })}
                         </>
                       ) : (
-                        format(dateRange.from, "dd/MM/yyyy", { locale: pt })
+                        format(dateRange.from, "dd/MM/yyyy", { locale: dfLocale })
                       )
                     ) : (
-                      <span>Selecione o período</span>
+                      <span>{t.dailyReportsUi.selectPeriod}</span>
                     )}
                   </Button>
                 </PopoverTrigger>
@@ -206,13 +213,13 @@ export default function DailyReports() {
                 <Label htmlFor="branch">Filial</Label>
                 <Select value={selectedBranch} onValueChange={setSelectedBranch}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Todas as filiais" />
+                    <SelectValue placeholder={t.dailyReportsUi.allBranches} />
                   </SelectTrigger>
                   <SelectContent className="bg-popover">
-                    <SelectItem value="all">Todas as filiais</SelectItem>
+                    <SelectItem value="all">{t.dailyReportsUi.allBranches}</SelectItem>
                     {branches.map(branch => (
                       <SelectItem key={branch.id} value={branch.id}>
-                        {branch.name} {branch.isMain && '(Sede)'}
+                        {branch.name} {branch.isMain && t.dailyReportsUi.headOfficeSuffix}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -222,7 +229,7 @@ export default function DailyReports() {
             <div className="flex items-end gap-2">
               <Button onClick={handleGenerateReport}>
                 <CalendarIcon className="w-4 h-4 mr-2" />
-                Gerar Relatório
+                {t.dailyReportsUi.generateButton}
               </Button>
               <Button 
                 variant="outline" 
@@ -238,7 +245,7 @@ export default function DailyReports() {
                 }}
               >
                 <Eye className="w-4 h-4 mr-2" />
-                Ver Detalhes
+                {t.dailyReportsUi.viewDetails}
               </Button>
             </div>
           </div>
@@ -248,38 +255,40 @@ export default function DailyReports() {
       {/* Reports Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Relatórios</CardTitle>
+          <CardTitle>{t.dailyReportsUi.reportsTitle}</CardTitle>
           <CardDescription>
-            {isMainOffice ? 'Relatórios de todas as filiais' : `Relatórios de ${currentBranch?.name}`}
+            {isMainOffice
+              ? t.dailyReportsUi.allBranchesReports
+              : t.dailyReportsUi.reportsOfBranch.replace('{name}', String(currentBranch?.name || ''))}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Data</TableHead>
-                <TableHead>Filial</TableHead>
-                <TableHead className="text-right">Vendas</TableHead>
-                <TableHead className="text-right">Transações</TableHead>
-                <TableHead className="text-right">Dinheiro</TableHead>
-                <TableHead className="text-right">Cartão</TableHead>
-                <TableHead className="text-right">Transferência</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead>Ações</TableHead>
+                <TableHead>{t.common.date}</TableHead>
+                <TableHead>{t.dailyReportsUi.colBranch}</TableHead>
+                <TableHead className="text-right">{t.dailyReportsUi.colSales}</TableHead>
+                <TableHead className="text-right">{t.dailyReportsUi.colTransactions}</TableHead>
+                <TableHead className="text-right">{t.dailyReportsUi.colCash}</TableHead>
+                <TableHead className="text-right">{t.dailyReportsUi.colCard}</TableHead>
+                <TableHead className="text-right">{t.dailyReportsUi.colTransfer}</TableHead>
+                <TableHead>{t.common.status}</TableHead>
+                <TableHead>{t.common.actions}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredReports.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
-                    Nenhum relatório encontrado
+                    {t.dailyReportsUi.empty}
                   </TableCell>
                 </TableRow>
               ) : (
                 filteredReports.map(report => (
                   <TableRow key={report.id}>
                     <TableCell>
-                      {format(new Date(report.date), 'dd/MM/yyyy', { locale: pt })}
+                      {format(new Date(report.date), 'dd/MM/yyyy', { locale: dfLocale })}
                     </TableCell>
                     <TableCell>{report.branchName}</TableCell>
                     <TableCell className="text-right font-medium">
@@ -292,9 +301,9 @@ export default function DailyReports() {
                     <TableCell>
                       <Badge variant={report.status === 'closed' ? 'default' : 'secondary'}>
                         {report.status === 'closed' ? (
-                          <><Lock className="w-3 h-3 mr-1" /> Fechado</>
+                          <><Lock className="w-3 h-3 mr-1" /> {t.dailyReportsUi.statusClosed}</>
                         ) : (
-                          'Aberto'
+                          t.dailyReportsUi.statusOpen
                         )}
                       </Badge>
                     </TableCell>
@@ -304,7 +313,7 @@ export default function DailyReports() {
                           size="sm" 
                           variant="ghost"
                           onClick={() => openDetailReport(report.date, report.date, report.branchId, report.branchName)}
-                          title="Ver detalhes"
+                          title={t.dailyReportsUi.viewDetails}
                         >
                           <Eye className="w-4 h-4" />
                         </Button>
@@ -315,7 +324,7 @@ export default function DailyReports() {
                             onClick={() => openCloseDialog(report.id, report.cashTotal)}
                           >
                             <Lock className="w-3 h-3 mr-1" />
-                            Fechar
+                            {t.dailyReportsUi.close}
                           </Button>
                         )}
                       </div>
@@ -332,14 +341,14 @@ export default function DailyReports() {
       <Dialog open={closeDialogOpen} onOpenChange={setCloseDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Fechar Caixa do Dia</DialogTitle>
+            <DialogTitle>{t.dailyReportsUi.closeDialogTitle}</DialogTitle>
             <DialogDescription>
-              Confirme o saldo de fechamento e adicione observações se necessário
+              {t.dailyReportsUi.closeDialogDescription}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="closingBalance">Saldo de Fechamento (Kz)</Label>
+              <Label htmlFor="closingBalance">{t.dailyReportsUi.closingBalanceLabel}</Label>
               <Input
                 id="closingBalance"
                 type="number"
@@ -349,23 +358,23 @@ export default function DailyReports() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="notes">Observações</Label>
+              <Label htmlFor="notes">{t.common.notes}</Label>
               <Textarea
                 id="notes"
                 value={closingNotes}
                 onChange={(e) => setClosingNotes(e.target.value)}
-                placeholder="Observações sobre o fechamento do dia..."
+                placeholder={t.dailyReportsUi.closingNotesPlaceholder}
                 rows={3}
               />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCloseDialogOpen(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleCloseDay}>
               <Lock className="w-4 h-4 mr-2" />
-              Confirmar Fechamento
+              {t.dailyReportsUi.confirmClose}
             </Button>
           </DialogFooter>
         </DialogContent>

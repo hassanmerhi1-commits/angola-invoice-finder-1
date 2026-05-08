@@ -35,7 +35,7 @@ interface DashboardKPIs {
 export default function Dashboard() {
   const navigate = useNavigate();
   const { currentBranch } = useBranchContext();
-  const { language } = useTranslation();
+  const { language, t } = useTranslation();
   const { companyName, logo } = useCompanyLogo();
   const { products } = useProducts(currentBranch?.id);
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
@@ -53,7 +53,8 @@ export default function Dashboard() {
     })();
   }, [currentBranch?.id]);
 
-  const fmt = (n: number) => (n || 0).toLocaleString('pt-AO');
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const fmt = (n: number) => (n || 0).toLocaleString(locale);
 
   // Low stock alerts from actual product data
   const lowStockProducts = useMemo(() => {
@@ -71,23 +72,23 @@ export default function Dashboard() {
   }, [products]);
 
   const documentFlow = useMemo(() => [
-    { label: 'Proforma', icon: ClipboardList, path: '/proforma' },
-    { label: 'Fatura De Venda', icon: FileText, path: '/invoices' },
-    { label: 'Recibo', icon: Receipt, path: '/invoices' },
-    { label: 'Pagamento', icon: DollarSign, path: '/payments' },
-    { label: 'Extracto', icon: FileCheck, path: '/extracto' },
-  ], []);
+    { label: t.documents.proforma, icon: ClipboardList, path: '/proforma' },
+    { label: t.dashboardUi.documentFlow.salesInvoice, icon: FileText, path: '/invoices' },
+    { label: t.documents.receipt, icon: Receipt, path: '/invoices' },
+    { label: t.documents.payment, icon: DollarSign, path: '/payments' },
+    { label: t.dashboardUi.documentFlow.statement, icon: FileCheck, path: '/extracto' },
+  ], [t]);
 
   const quickActions = useMemo(() => [
-    { label: 'POS / Vendas', icon: ShoppingCart, path: '/pos', gradient: 'gradient-primary' },
-    { label: 'Facturas', icon: FileText, path: '/invoices', gradient: 'gradient-accent' },
-    { label: 'Inventário', icon: Package, path: '/inventory', gradient: 'gradient-success' },
-    { label: 'Compras', icon: Truck, path: '/purchase-orders', gradient: 'gradient-warm' },
-    { label: 'Clientes', icon: Users, path: '/clients', gradient: 'gradient-primary' },
-    { label: 'Mapa De Contas', icon: BookOpen, path: '/chart-of-accounts', gradient: 'gradient-accent' },
-    { label: 'Transferências', icon: ArrowRightLeft, path: '/stock-transfer', gradient: 'gradient-success' },
-    { label: 'Relatórios', icon: BarChart3, path: '/reports', gradient: 'gradient-warm' },
-  ], []);
+    { label: t.dashboardUi.quickActions.posSales, icon: ShoppingCart, path: '/pos', gradient: 'gradient-primary' },
+    { label: t.dashboardUi.quickActions.invoices, icon: FileText, path: '/invoices', gradient: 'gradient-accent' },
+    { label: t.dashboardUi.quickActions.inventory, icon: Package, path: '/inventory', gradient: 'gradient-success' },
+    { label: t.dashboardUi.quickActions.purchases, icon: Truck, path: '/purchase-orders', gradient: 'gradient-warm' },
+    { label: t.dashboardUi.quickActions.clients, icon: Users, path: '/clients', gradient: 'gradient-primary' },
+    { label: t.dashboardUi.quickActions.chartOfAccounts, icon: BookOpen, path: '/chart-of-accounts', gradient: 'gradient-accent' },
+    { label: t.dashboardUi.quickActions.transfers, icon: ArrowRightLeft, path: '/stock-transfer', gradient: 'gradient-success' },
+    { label: t.dashboardUi.quickActions.reports, icon: BarChart3, path: '/reports', gradient: 'gradient-warm' },
+  ], [t]);
 
   return (
     <div className="h-full flex flex-col lg:flex-row">
@@ -100,7 +101,7 @@ export default function Dashboard() {
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight text-gradient">{companyName}</h1>
             <p className="text-sm text-muted-foreground font-medium">
-              {currentBranch?.name || 'Sede'} • {new Date().toLocaleDateString('pt-AO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+              {currentBranch?.name || t.dashboardUi.headquarters} • {new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
             </p>
           </div>
         </div>
@@ -110,31 +111,37 @@ export default function Dashboard() {
           <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/vendas')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-muted-foreground font-medium">Vendas Hoje</span>
+                <span className="text-xs text-muted-foreground font-medium">{t.dashboardUi.kpis.salesToday}</span>
                 <ShoppingCart className="w-4 h-4 text-primary" />
               </div>
               <p className="text-xl font-bold">{fmt(kpis?.todaySales?.total ?? 0)} Kz</p>
-              <p className="text-[10px] text-muted-foreground">{kpis?.todaySales?.count ?? 0} transacções</p>
+              <p className="text-[10px] text-muted-foreground">
+                {t.dashboardUi.kpis.transactions.replace('{count}', String(kpis?.todaySales?.count ?? 0))}
+              </p>
             </CardContent>
           </Card>
           <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/reports')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-muted-foreground font-medium">Vendas Mês</span>
+                <span className="text-xs text-muted-foreground font-medium">{t.dashboardUi.kpis.salesMonth}</span>
                 <TrendingUp className="w-4 h-4 text-green-600" />
               </div>
               <p className="text-xl font-bold">{fmt(kpis?.monthSales?.total ?? 0)} Kz</p>
-              <p className="text-[10px] text-muted-foreground">{kpis?.monthSales?.count ?? 0} facturas</p>
+              <p className="text-[10px] text-muted-foreground">
+                {t.dashboardUi.kpis.invoicesCount.replace('{count}', String(kpis?.monthSales?.count ?? 0))}
+              </p>
             </CardContent>
           </Card>
           <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/payments')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-muted-foreground font-medium">Contas a Receber</span>
+                <span className="text-xs text-muted-foreground font-medium">{t.dashboardUi.kpis.accountsReceivable}</span>
                 <CreditCard className="w-4 h-4 text-orange-500" />
               </div>
               <p className="text-xl font-bold text-orange-600">{fmt(kpis?.openAR?.total ?? 0)} Kz</p>
-              <p className="text-[10px] text-muted-foreground">{kpis?.openAR?.count ?? 0} itens abertos</p>
+              <p className="text-[10px] text-muted-foreground">
+                {t.dashboardUi.kpis.openItems.replace('{count}', String(kpis?.openAR?.count ?? 0))}
+              </p>
             </CardContent>
           </Card>
           <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/payments')}>
@@ -310,7 +317,7 @@ export default function Dashboard() {
           {[
             { label: 'Balancete', icon: PieChart, path: '/reports', color: 'bg-primary/10 text-primary' },
             { label: 'Faturas', icon: FileText, path: '/invoices', color: 'bg-green-500/10 text-green-600' },
-            { label: 'Vendas / Lucro', icon: TrendingUp, path: '/reports', color: 'bg-orange-500/10 text-orange-600' },
+            { label: t.dashboardUi.bi.salesProfit, icon: TrendingUp, path: '/reports', color: 'bg-orange-500/10 text-orange-600' },
             { label: 'Compras', icon: Truck, path: '/purchase-orders', color: 'bg-blue-500/10 text-blue-600' },
             { label: 'Impostos', icon: Receipt, path: '/tax-management', color: 'bg-destructive/10 text-destructive' },
             { label: 'Stock', icon: Package, path: '/inventory', color: 'bg-primary/10 text-primary' },

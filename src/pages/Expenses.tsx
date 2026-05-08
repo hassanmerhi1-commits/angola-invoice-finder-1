@@ -14,6 +14,7 @@ import {
 import { Expense, ExpenseCategory, EXPENSE_CATEGORIES, Caixa, BankAccount } from '@/types/accounting';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
+import { enUS } from 'date-fns/locale';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,12 +65,12 @@ import {
   Filter
 } from 'lucide-react';
 
-const STATUS_CONFIG: Record<Expense['status'], { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: React.ElementType }> = {
-  draft: { label: 'Rascunho', variant: 'secondary', icon: Clock },
-  pending_approval: { label: 'Aguardando Aprovação', variant: 'outline', icon: Clock },
-  approved: { label: 'Aprovado', variant: 'default', icon: CheckCircle },
-  paid: { label: 'Pago', variant: 'default', icon: CheckCircle },
-  rejected: { label: 'Rejeitado', variant: 'destructive', icon: XCircle },
+const STATUS_CONFIG: Record<Expense['status'], { labelKey: 'statusDraft' | 'statusPendingApproval' | 'statusApproved' | 'statusPaid' | 'statusRejected'; variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: React.ElementType }> = {
+  draft: { labelKey: 'statusDraft', variant: 'secondary', icon: Clock },
+  pending_approval: { labelKey: 'statusPendingApproval', variant: 'outline', icon: Clock },
+  approved: { labelKey: 'statusApproved', variant: 'default', icon: CheckCircle },
+  paid: { labelKey: 'statusPaid', variant: 'default', icon: CheckCircle },
+  rejected: { labelKey: 'statusRejected', variant: 'destructive', icon: XCircle },
 };
 
 interface ExpenseFormData {
@@ -101,7 +102,9 @@ const initialFormData: ExpenseFormData = {
 };
 
 export default function Expenses() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const dfLocale = language === 'pt' ? pt : enUS;
   const { currentBranch } = useBranchContext();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -121,7 +124,7 @@ export default function Expenses() {
   const loadData = async () => {
     // Auto-seed a default Caixa for the current branch if none exists
     if (currentBranch?.id) {
-      await ensureBranchCaixa(currentBranch.id, currentBranch.name || 'Sede');
+      await ensureBranchCaixa(currentBranch.id, currentBranch.name || t.branchUi.headOffice);
     }
     setExpenses(await getExpenses(currentBranch?.id));
     setCaixas(await getCaixas(currentBranch?.id));
@@ -172,19 +175,19 @@ export default function Expenses() {
 
   const handleSave = () => {
     if (!formData.description.trim()) {
-      toast({ title: 'Erro', description: 'Descrição é obrigatória', variant: 'destructive' });
+      toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.descriptionRequired, variant: 'destructive' });
       return;
     }
     if (formData.amount <= 0) {
-      toast({ title: 'Erro', description: 'Valor deve ser maior que zero', variant: 'destructive' });
+      toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.amountMustBeGreaterThanZero, variant: 'destructive' });
       return;
     }
     if (formData.paymentSource === 'caixa' && !formData.caixaId) {
-      toast({ title: 'Erro', description: 'Seleccione uma caixa', variant: 'destructive' });
+      toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.selectCashRegister, variant: 'destructive' });
       return;
     }
     if (formData.paymentSource === 'bank' && !formData.bankAccountId) {
-      toast({ title: 'Erro', description: 'Seleccione uma conta bancária', variant: 'destructive' });
+      toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.selectBankAccount, variant: 'destructive' });
       return;
     }
 
@@ -196,18 +199,18 @@ export default function Expenses() {
           ...formData,
           totalAmount: formData.amount + formData.taxAmount,
         });
-        toast({ title: 'Sucesso', description: 'Despesa actualizada' });
+        toast({ title: t.expensesUi.toastSuccessTitle, description: t.expensesUi.expenseUpdated });
       }
     } else {
       createExpense(
         currentBranch?.id || 'default',
-        currentBranch?.name || 'Sede',
+        currentBranch?.name || t.branchUi.headOffice,
         currentBranch?.code || 'SEDE',
         formData.category,
         formData.description,
         formData.amount,
         formData.paymentSource,
-        user?.name || 'Sistema',
+        user?.name || t.expensesUi.systemUser,
         formData.caixaId || undefined,
         formData.bankAccountId || undefined,
         formData.payeeName || undefined,
@@ -215,7 +218,7 @@ export default function Expenses() {
         formData.invoiceNumber || undefined,
         formData.notes || undefined
       );
-      toast({ title: 'Sucesso', description: 'Despesa registada' });
+      toast({ title: t.expensesUi.toastSuccessTitle, description: t.expensesUi.expenseRecorded });
     }
 
     setIsDialogOpen(false);
@@ -224,25 +227,25 @@ export default function Expenses() {
 
   const handleApprove = (expense: Expense) => {
     saveExpense({ ...expense, status: 'approved', approvedBy: user?.name, approvedAt: new Date().toISOString() });
-    toast({ title: 'Aprovado', description: `Despesa ${expense.expenseNumber} aprovada` });
+    toast({ title: t.expensesUi.approvedTitle, description: t.expensesUi.expenseApproved.replace('{number}', expense.expenseNumber) });
     loadData();
   };
 
   const handleReject = (expense: Expense) => {
-    saveExpense({ ...expense, status: 'rejected', approvedBy: user?.name, approvedAt: new Date().toISOString(), rejectionReason: 'Rejeitado pelo gestor' });
-    toast({ title: 'Rejeitado', description: `Despesa ${expense.expenseNumber} rejeitada`, variant: 'destructive' });
+    saveExpense({ ...expense, status: 'rejected', approvedBy: user?.name, approvedAt: new Date().toISOString(), rejectionReason: t.expensesUi.rejectedByManagerReason });
+    toast({ title: t.expensesUi.rejectedTitle, description: t.expensesUi.expenseRejected.replace('{number}', expense.expenseNumber), variant: 'destructive' });
     loadData();
   };
 
   const handlePay = (expense: Expense) => {
-    payExpense(expense.id, user?.name || 'Sistema');
-    toast({ title: 'Pago', description: `Despesa ${expense.expenseNumber} paga com sucesso` });
+    payExpense(expense.id, user?.name || t.expensesUi.systemUser);
+    toast({ title: t.expensesUi.paidTitle, description: t.expensesUi.expensePaid.replace('{number}', expense.expenseNumber) });
     loadData();
   };
 
   const handleSubmitForApproval = (expense: Expense) => {
     saveExpense({ ...expense, status: 'pending_approval' });
-    toast({ title: 'Enviado', description: 'Despesa enviada para aprovação' });
+    toast({ title: t.expensesUi.sentTitle, description: t.expensesUi.sentForApproval });
     loadData();
   };
 
@@ -267,14 +270,14 @@ export default function Expenses() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Despesas</h1>
+          <h1 className="text-2xl font-bold">{t.expensesUi.title}</h1>
           <p className="text-muted-foreground">
-            Gestão de despesas operacionais - {currentBranch?.name || 'Todas as filiais'}
+            {t.expensesUi.subtitle.replace('{branch}', String(currentBranch?.name || t.expensesUi.allBranches))}
           </p>
         </div>
         <Button onClick={() => handleOpenDialog()} className="gap-2">
           <Plus className="w-4 h-4" />
-          Nova Despesa
+          {t.expensesUi.newExpense}
         </Button>
       </div>
 
@@ -283,29 +286,29 @@ export default function Expenses() {
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold">{stats.total}</div>
-            <div className="text-sm text-muted-foreground">Total Despesas</div>
+            <div className="text-sm text-muted-foreground">{t.expensesUi.totalExpenses}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold text-amber-600">{stats.pending}</div>
-            <div className="text-sm text-muted-foreground">Aguardando Aprovação</div>
+            <div className="text-sm text-muted-foreground">{t.expensesUi.awaitingApproval}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold text-primary">
-              {stats.totalPaid.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+              {stats.totalPaid.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
             </div>
-            <div className="text-sm text-muted-foreground">Total Pago</div>
+            <div className="text-sm text-muted-foreground">{t.expensesUi.totalPaid}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold text-amber-600">
-              {stats.totalPending.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+              {stats.totalPending.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
             </div>
-            <div className="text-sm text-muted-foreground">Pendente</div>
+            <div className="text-sm text-muted-foreground">{t.expensesUi.pending}</div>
           </CardContent>
         </Card>
       </div>
@@ -317,7 +320,7 @@ export default function Expenses() {
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Pesquisar despesas..."
+                placeholder={t.expensesUi.searchPlaceholder}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9"
@@ -325,23 +328,23 @@ export default function Expenses() {
             </div>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Estado" />
+              <SelectValue placeholder={t.common.status} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__all__">Todos Estados</SelectItem>
-                <SelectItem value="draft">Rascunho</SelectItem>
-                <SelectItem value="pending_approval">Aguardando</SelectItem>
-                <SelectItem value="approved">Aprovado</SelectItem>
-                <SelectItem value="paid">Pago</SelectItem>
-                <SelectItem value="rejected">Rejeitado</SelectItem>
+              <SelectItem value="__all__">{t.expensesUi.allStatuses}</SelectItem>
+              <SelectItem value="draft">{t.expensesUi.statusDraft}</SelectItem>
+              <SelectItem value="pending_approval">{t.expensesUi.statusPendingShort}</SelectItem>
+              <SelectItem value="approved">{t.expensesUi.statusApproved}</SelectItem>
+              <SelectItem value="paid">{t.expensesUi.statusPaid}</SelectItem>
+              <SelectItem value="rejected">{t.expensesUi.statusRejected}</SelectItem>
               </SelectContent>
             </Select>
             <Select value={categoryFilter} onValueChange={setCategoryFilter}>
               <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Categoria" />
+              <SelectValue placeholder={t.expensesUi.categoryPlaceholder} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__all__">Todas Categorias</SelectItem>
+              <SelectItem value="__all__">{t.expensesUi.allCategories}</SelectItem>
                 {EXPENSE_CATEGORIES.map(cat => (
                   <SelectItem key={cat.value} value={cat.value}>
                     {cat.icon} {cat.label}
@@ -359,14 +362,14 @@ export default function Expenses() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Nº Despesa</TableHead>
-                <TableHead>Categoria</TableHead>
-                <TableHead>Descrição</TableHead>
-                <TableHead>Beneficiário</TableHead>
-                <TableHead className="text-right">Valor</TableHead>
-                <TableHead>Fonte Pagamento</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead>Data</TableHead>
+                <TableHead>{t.expensesUi.colExpenseNo}</TableHead>
+                <TableHead>{t.expensesUi.colCategory}</TableHead>
+                <TableHead>{t.common.description}</TableHead>
+                <TableHead>{t.expensesUi.colPayee}</TableHead>
+                <TableHead className="text-right">{t.expensesUi.colAmount}</TableHead>
+                <TableHead>{t.expensesUi.colPaymentSource}</TableHead>
+                <TableHead>{t.common.status}</TableHead>
+                <TableHead>{t.common.date}</TableHead>
                 <TableHead className="w-[50px]"></TableHead>
               </TableRow>
             </TableHeader>
@@ -374,7 +377,7 @@ export default function Expenses() {
               {filteredExpenses.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
-                    Nenhuma despesa encontrada
+                    {t.expensesUi.empty}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -393,25 +396,25 @@ export default function Expenses() {
                       <TableCell className="max-w-[200px] truncate">{expense.description}</TableCell>
                       <TableCell>{expense.payeeName || '-'}</TableCell>
                       <TableCell className="text-right font-medium">
-                        {expense.totalAmount.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+                        {expense.totalAmount.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
                       </TableCell>
                       <TableCell>
                         <span className="flex items-center gap-1 text-sm">
                           {expense.paymentSource === 'caixa' ? (
-                            <><Wallet className="w-3 h-3" /> Caixa</>
+                            <><Wallet className="w-3 h-3" /> {t.expensesUi.cashRegister}</>
                           ) : (
-                            <><Building className="w-3 h-3" /> Banco</>
+                            <><Building className="w-3 h-3" /> {t.expensesUi.bank}</>
                           )}
                         </span>
                       </TableCell>
                       <TableCell>
                         <Badge variant={statusConfig.variant} className="gap-1">
                           <StatusIcon className="w-3 h-3" />
-                          {statusConfig.label}
+                          {t.expensesUi[statusConfig.labelKey]}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {format(new Date(expense.createdAt), 'dd/MM/yyyy', { locale: pt })}
+                        {format(new Date(expense.createdAt), 'dd/MM/yyyy', { locale: dfLocale })}
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>
@@ -424,10 +427,10 @@ export default function Expenses() {
                             {expense.status === 'draft' && (
                               <>
                                 <DropdownMenuItem onClick={() => handleOpenDialog(expense)}>
-                                  Editar
+                                  {t.common.edit}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => handleSubmitForApproval(expense)}>
-                                  Enviar para Aprovação
+                                  {t.expensesUi.sendForApproval}
                                 </DropdownMenuItem>
                               </>
                             )}
@@ -435,18 +438,18 @@ export default function Expenses() {
                               <>
                                 <DropdownMenuItem onClick={() => handleApprove(expense)} className="text-green-600">
                                   <CheckCircle className="w-4 h-4 mr-2" />
-                                  Aprovar
+                                  {t.expensesUi.approve}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => handleReject(expense)} className="text-destructive">
                                   <XCircle className="w-4 h-4 mr-2" />
-                                  Rejeitar
+                                  {t.expensesUi.reject}
                                 </DropdownMenuItem>
                               </>
                             )}
                             {expense.status === 'approved' && (
                               <DropdownMenuItem onClick={() => handlePay(expense)} className="text-green-600">
                                 <Receipt className="w-4 h-4 mr-2" />
-                                Marcar como Pago
+                                {t.expensesUi.markAsPaid}
                               </DropdownMenuItem>
                             )}
                           </DropdownMenuContent>
@@ -465,9 +468,9 @@ export default function Expenses() {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editingId ? 'Editar Despesa' : 'Nova Despesa'}</DialogTitle>
+            <DialogTitle>{editingId ? t.expensesUi.editTitle : t.expensesUi.newTitle}</DialogTitle>
             <DialogDescription>
-              Preencha os dados da despesa operacional
+              {t.expensesUi.dialogDescription}
             </DialogDescription>
           </DialogHeader>
 
@@ -507,12 +510,14 @@ export default function Expenses() {
                 <Label>Caixa *</Label>
                 <Select value={formData.caixaId} onValueChange={(v) => setFormData({ ...formData, caixaId: v })}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccione a caixa" />
+                    <SelectValue placeholder={t.expensesUi.selectCashPlaceholder} />
                   </SelectTrigger>
                   <SelectContent>
                     {caixas.map(c => (
                       <SelectItem key={c.id} value={c.id}>
-                        {c.name} - Saldo: {c.currentBalance.toLocaleString('pt-AO')} Kz
+                        {t.expensesUi.cashWithBalance
+                          .replace('{name}', c.name)
+                          .replace('{balance}', c.currentBalance.toLocaleString(uiLocale))}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -523,7 +528,7 @@ export default function Expenses() {
                 <Label>Conta Bancária *</Label>
                 <Select value={formData.bankAccountId} onValueChange={(v) => setFormData({ ...formData, bankAccountId: v })}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccione a conta" />
+                    <SelectValue placeholder={t.expensesUi.selectBankPlaceholder} />
                   </SelectTrigger>
                   <SelectContent>
                     {bankAccounts.map(a => (
@@ -541,7 +546,7 @@ export default function Expenses() {
               <Input
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="Descrição da despesa"
+                placeholder={t.expensesUi.descriptionPlaceholder}
               />
             </div>
 
@@ -576,7 +581,7 @@ export default function Expenses() {
                 <Input
                   value={formData.payeeName}
                   onChange={(e) => setFormData({ ...formData, payeeName: e.target.value })}
-                  placeholder="Nome do beneficiário"
+                  placeholder={t.expensesUi.payeePlaceholder}
                 />
               </div>
               <div className="space-y-2">
@@ -594,7 +599,7 @@ export default function Expenses() {
               <Input
                 value={formData.invoiceNumber}
                 onChange={(e) => setFormData({ ...formData, invoiceNumber: e.target.value })}
-                placeholder="Referência do documento"
+                placeholder={t.expensesUi.documentRefPlaceholder}
               />
             </div>
 
@@ -603,16 +608,16 @@ export default function Expenses() {
               <Textarea
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                placeholder="Observações adicionais"
+                placeholder={t.expensesUi.notesPlaceholder}
                 rows={2}
               />
             </div>
 
             <div className="p-3 bg-muted rounded-lg">
               <div className="flex justify-between items-center">
-                <span className="font-medium">Total a Pagar:</span>
+                <span className="font-medium">{t.expensesUi.totalToPay}</span>
                 <span className="text-xl font-bold">
-                  {(formData.amount + formData.taxAmount).toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+                  {(formData.amount + formData.taxAmount).toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
                 </span>
               </div>
             </div>
@@ -620,10 +625,10 @@ export default function Expenses() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleSave}>
-              {editingId ? 'Guardar Alterações' : 'Registar Despesa'}
+              {editingId ? t.common.saveChanges : t.expensesUi.registerExpense}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
+import { useTranslation } from '@/i18n';
 
 interface ProductFormDialogProps {
   open: boolean;
@@ -65,6 +66,7 @@ export function ProductFormDialog({
   const { categories } = useCategories();
   const { suppliers } = useSuppliers();
   const { toast } = useToast();
+  const { t } = useTranslation();
   
   const activeCategories = useMemo(() => categories.filter(c => c.isActive), [categories]);
 
@@ -108,7 +110,7 @@ export function ProductFormDialog({
         name: '',
         sku: '',
         barcode: '',
-        category: activeCategories[0]?.name || 'Alimentação',
+        category: activeCategories[0]?.name || '',
         price: 0,
         cost: 0,
         stock: 0,
@@ -128,8 +130,8 @@ export function ProductFormDialog({
     
     if (!formData.name.trim() || !formData.sku.trim()) {
       toast({
-        title: 'Erro',
-        description: 'Nome e SKU são obrigatórios',
+        title: t.productFormUi.errorTitle,
+        description: t.productFormUi.nameSkuRequired,
         variant: 'destructive',
       });
       return;
@@ -137,8 +139,8 @@ export function ProductFormDialog({
 
     if (formData.price < 0 || formData.cost < 0) {
       toast({
-        title: 'Erro',
-        description: 'Preço e custo não podem ser negativos',
+        title: t.productFormUi.errorTitle,
+        description: t.productFormUi.priceCostNonNegative,
         variant: 'destructive',
       });
       return;
@@ -174,8 +176,10 @@ export function ProductFormDialog({
     onOpenChange(false);
     
     toast({
-      title: product ? 'Produto actualizado' : 'Produto criado',
-      description: `${savedProduct.name} foi ${product ? 'actualizado' : 'criado'} com sucesso`,
+      title: product ? t.productFormUi.productUpdated : t.productFormUi.productCreated,
+      description: t.productFormUi.savedDesc
+        .replace('{name}', savedProduct.name)
+        .replace('{action}', product ? t.productFormUi.actionUpdated : t.productFormUi.actionCreated),
     });
   };
 
@@ -192,21 +196,21 @@ export function ProductFormDialog({
       <DialogContent className="max-w-2xl p-0">
         <form onSubmit={handleSubmit} className="flex max-h-[85dvh] flex-col">
           <DialogHeader className="px-6 pt-6 pb-3">
-            <DialogTitle>{product ? 'Editar Produto' : 'Novo Produto'}</DialogTitle>
+            <DialogTitle>{product ? t.productFormUi.editTitle : t.productFormUi.newTitle}</DialogTitle>
             <DialogDescription>
-              Atualize os dados do produto e role com o mouse normalmente pela lista de campos.
+              {t.productFormUi.description}
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto px-6 pb-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <Label htmlFor="name">Nome do Produto *</Label>
+                <Label htmlFor="name">{t.productFormUi.productNameLabel} *</Label>
                 <Input
                   id="name"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="Ex: Arroz Tio João 1kg"
+                  placeholder={t.productFormUi.namePlaceholder}
                 />
               </div>
 
@@ -221,7 +225,7 @@ export function ProductFormDialog({
               </div>
 
               <div>
-                <Label htmlFor="barcode">Código de Barras</Label>
+                <Label htmlFor="barcode">{t.productFormUi.barcodeLabel}</Label>
                 <Input
                   id="barcode"
                   value={formData.barcode}
@@ -256,16 +260,16 @@ export function ProductFormDialog({
               </div>
 
               <div>
-                <Label htmlFor="supplier">Fornecedor</Label>
+                <Label htmlFor="supplier">{t.productFormUi.supplierLabel}</Label>
                 <Select
                   value={formData.supplierId || 'none'}
                   onValueChange={(value) => setFormData({ ...formData, supplierId: value === 'none' ? '' : value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Selecionar fornecedor" />
+                    <SelectValue placeholder={t.productFormUi.selectSupplier} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Nenhum</SelectItem>
+                    <SelectItem value="none">{t.productFormUi.none}</SelectItem>
                     {suppliers.map((supplier) => (
                       <SelectItem key={supplier.id} value={supplier.id}>
                         {supplier.name}
@@ -405,17 +409,17 @@ export function ProductFormDialog({
                   checked={formData.isActive}
                   onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
                 />
-                <Label htmlFor="isActive">Produto Activo</Label>
+                <Label htmlFor="isActive">{t.common.active}</Label>
               </div>
             </div>
           </div>
 
           <DialogFooter className="border-t px-6 py-4 bg-background">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button type="submit">
-              {product ? 'Guardar Alterações' : 'Criar Produto'}
+              {product ? t.common.save : t.common.create}
             </Button>
           </DialogFooter>
         </form>

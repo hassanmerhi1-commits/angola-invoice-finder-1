@@ -21,8 +21,11 @@ import { useBranches, useProducts } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
 import { getStockMovements as getLocalStockMovements } from '@/lib/storage';
 import { StockMovement } from '@/types/erp';
+import { useTranslation } from '@/i18n';
 
 export default function StockMovementReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { currentBranch } = useBranches();
   const { products } = useProducts(currentBranch?.id);
   
@@ -62,14 +65,14 @@ export default function StockMovementReport() {
 
   const getReasonLabel = (reason: string) => {
     switch (reason) {
-      case 'purchase': return 'Compra';
-      case 'sale': return 'Venda';
-      case 'transfer_in': return 'Transferência (Entrada)';
-      case 'transfer_out': return 'Transferência (Saída)';
-      case 'adjustment': return 'Ajuste';
-      case 'damage': return 'Dano/Avaria';
-      case 'return': return 'Devolução';
-      case 'initial': return 'Stock Inicial';
+      case 'purchase': return t.stockMovementUi.reasonPurchase;
+      case 'sale': return t.stockMovementUi.reasonSale;
+      case 'transfer_in': return t.stockMovementUi.reasonTransferIn;
+      case 'transfer_out': return t.stockMovementUi.reasonTransferOut;
+      case 'adjustment': return t.stockMovementUi.reasonAdjustment;
+      case 'damage': return t.stockMovementUi.reasonDamage;
+      case 'return': return t.stockMovementUi.reasonReturn;
+      case 'initial': return t.stockMovementUi.reasonInitial;
       default: return reason;
     }
   };
@@ -144,15 +147,26 @@ export default function StockMovementReport() {
     { entries: 0, exits: 0, entryValue: 0, exitValue: 0 }
   ), [filteredMovements]);
 
-  const formatMoney = (value: number) => value.toLocaleString('pt-AO', { minimumFractionDigits: 2 });
+  const formatMoney = (value: number) => value.toLocaleString(locale, { minimumFractionDigits: 2 });
 
   const handlePrint = () => window.print();
 
   const handleExportExcel = () => {
-    const headers = ['Data', 'Tipo', 'Motivo', 'Documento', 'SKU', 'Produto', 'Qtd', 'Custo Unit.', 'Valor Total', 'Notas'];
+    const headers = [
+      t.common.date,
+      t.stockMovementUi.colType,
+      t.stockMovementUi.colReason,
+      t.stockMovementUi.colDocument,
+      'SKU',
+      t.common.product,
+      t.common.qty,
+      t.stockMovementUi.colUnitCost,
+      t.stockMovementUi.colTotalValue,
+      t.common.notes,
+    ];
     const rows = filteredMovements.map(m => [
-      new Date(m.createdAt).toLocaleDateString('pt-AO'),
-      m.type === 'IN' ? 'Entrada' : 'Saída',
+      new Date(m.createdAt).toLocaleDateString(locale),
+      m.type === 'IN' ? t.stockMovementUi.typeIn : t.stockMovementUi.typeOut,
       getReasonLabel(m.reason),
       m.referenceNumber || '',
       m.sku,
@@ -178,48 +192,48 @@ export default function StockMovementReport() {
         <CardHeader className="py-3">
           <CardTitle className="text-lg flex items-center gap-2">
             <Package className="w-5 h-5" />
-            Extracto de Movimentos de Stock
+            {t.stockMovementUi.title}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-4 items-end">
             <div className="space-y-1">
-              <Label className="text-xs">Data Início</Label>
+              <Label className="text-xs">{t.reportsUi.dateFrom}</Label>
               <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-8 w-40" />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Data Fim</Label>
+              <Label className="text-xs">{t.reportsUi.dateTo}</Label>
               <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-8 w-40" />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Tipo de Movimento</Label>
+              <Label className="text-xs">{t.stockMovementUi.movementType}</Label>
               <Select value={movementType} onValueChange={setMovementType}>
                 <SelectTrigger className="h-8 w-44">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Todos</SelectItem>
-                  <SelectItem value="entry">Todas Entradas</SelectItem>
-                  <SelectItem value="exit">Todas Saídas</SelectItem>
-                  <SelectItem value="purchase">Compras</SelectItem>
-                  <SelectItem value="sale">Vendas</SelectItem>
-                  <SelectItem value="transfer_in">Transferência Entrada</SelectItem>
-                  <SelectItem value="transfer_out">Transferência Saída</SelectItem>
-                  <SelectItem value="adjustment">Ajustes</SelectItem>
-                  <SelectItem value="damage">Dano/Avaria</SelectItem>
-                  <SelectItem value="return">Devoluções</SelectItem>
-                  <SelectItem value="initial">Stock Inicial</SelectItem>
+                  <SelectItem value="all">{t.common.all}</SelectItem>
+                  <SelectItem value="entry">{t.stockMovementUi.allEntries}</SelectItem>
+                  <SelectItem value="exit">{t.stockMovementUi.allExits}</SelectItem>
+                  <SelectItem value="purchase">{t.stockMovementUi.reasonPurchasePlural}</SelectItem>
+                  <SelectItem value="sale">{t.stockMovementUi.reasonSalePlural}</SelectItem>
+                  <SelectItem value="transfer_in">{t.stockMovementUi.reasonTransferInShort}</SelectItem>
+                  <SelectItem value="transfer_out">{t.stockMovementUi.reasonTransferOutShort}</SelectItem>
+                  <SelectItem value="adjustment">{t.stockMovementUi.reasonAdjustmentPlural}</SelectItem>
+                  <SelectItem value="damage">{t.stockMovementUi.reasonDamage}</SelectItem>
+                  <SelectItem value="return">{t.stockMovementUi.reasonReturnPlural}</SelectItem>
+                  <SelectItem value="initial">{t.stockMovementUi.reasonInitial}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Produto</Label>
+              <Label className="text-xs">{t.common.product}</Label>
               <Select value={selectedProduct} onValueChange={setSelectedProduct}>
                 <SelectTrigger className="h-8 w-52">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Todos os Produtos</SelectItem>
+                  <SelectItem value="all">{t.stockMovementUi.allProducts}</SelectItem>
                   {products.map(p => (
                     <SelectItem key={p.id} value={p.id}>{p.sku} — {p.name}</SelectItem>
                   ))}
@@ -230,11 +244,11 @@ export default function StockMovementReport() {
           <div className="flex gap-2 items-end">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Pesquisar por nome, SKU, documento..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-9 h-8" />
+              <Input placeholder={t.stockMovementUi.searchPlaceholder} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-9 h-8" />
             </div>
             <div className="flex gap-2 ml-auto">
               <Button variant="outline" size="sm" onClick={handlePrint}>
-                <Printer className="w-4 h-4 mr-2" /> Imprimir
+                <Printer className="w-4 h-4 mr-2" /> {t.reportsUi.print}
               </Button>
               <Button variant="outline" size="sm" onClick={handleExportExcel}>
                 <FileSpreadsheet className="w-4 h-4 mr-2" /> Excel
@@ -250,7 +264,7 @@ export default function StockMovementReport() {
           <CardContent className="pt-4">
             <div className="flex items-center gap-2">
               <ArrowDownCircle className="w-5 h-5 text-green-500" />
-              <p className="text-sm text-muted-foreground">Entradas</p>
+              <p className="text-sm text-muted-foreground">{t.stockMovementUi.entries}</p>
             </div>
             <p className="text-2xl font-bold text-green-600">{totals.entries}</p>
             <p className="text-sm text-muted-foreground">{formatMoney(totals.entryValue)} Kz</p>
@@ -260,7 +274,7 @@ export default function StockMovementReport() {
           <CardContent className="pt-4">
             <div className="flex items-center gap-2">
               <ArrowUpCircle className="w-5 h-5 text-red-500" />
-              <p className="text-sm text-muted-foreground">Saídas</p>
+              <p className="text-sm text-muted-foreground">{t.stockMovementUi.exits}</p>
             </div>
             <p className="text-2xl font-bold text-red-600">{totals.exits}</p>
             <p className="text-sm text-muted-foreground">{formatMoney(totals.exitValue)} Kz</p>
@@ -268,7 +282,7 @@ export default function StockMovementReport() {
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Saldo Movimento</p>
+            <p className="text-sm text-muted-foreground">{t.stockMovementUi.netMovement}</p>
             <p className={`text-2xl font-bold ${totals.entries - totals.exits >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {totals.entries - totals.exits > 0 ? '+' : ''}{totals.entries - totals.exits}
             </p>
@@ -276,7 +290,7 @@ export default function StockMovementReport() {
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Total Movimentos</p>
+            <p className="text-sm text-muted-foreground">{t.stockMovementUi.totalMovements}</p>
             <p className="text-2xl font-bold">{filteredMovements.length}</p>
           </CardContent>
         </Card>
@@ -289,55 +303,55 @@ export default function StockMovementReport() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead>Data/Hora</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Motivo</TableHead>
-                  <TableHead>Documento</TableHead>
+                  <TableHead>{t.stockMovementUi.colDateTime}</TableHead>
+                  <TableHead>{t.stockMovementUi.colType}</TableHead>
+                  <TableHead>{t.stockMovementUi.colReason}</TableHead>
+                  <TableHead>{t.stockMovementUi.colDocument}</TableHead>
                   <TableHead>SKU</TableHead>
-                  <TableHead>Produto</TableHead>
-                  <TableHead className="text-right">Quantidade</TableHead>
-                  <TableHead className="text-right">Custo Unit.</TableHead>
-                  <TableHead className="text-right">Valor Total</TableHead>
-                  <TableHead>Notas</TableHead>
+                  <TableHead>{t.common.product}</TableHead>
+                  <TableHead className="text-right">{t.common.quantity}</TableHead>
+                  <TableHead className="text-right">{t.stockMovementUi.colUnitCost}</TableHead>
+                  <TableHead className="text-right">{t.stockMovementUi.colTotalValue}</TableHead>
+                  <TableHead>{t.common.notes}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredMovements.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
-                      Nenhum movimento encontrado para o período selecionado
+                      {t.common.noResults}
                     </TableCell>
                   </TableRow>
                 ) : (
                   filteredMovements.map((m) => (
                     <TableRow key={m.id}>
                       <TableCell className="text-sm">
-                        {new Date(m.createdAt).toLocaleDateString('pt-AO')}<br />
+                        {new Date(m.createdAt).toLocaleDateString(locale)}<br />
                         <span className="text-xs text-muted-foreground">
-                          {new Date(m.createdAt).toLocaleTimeString('pt-AO', { hour: '2-digit', minute: '2-digit' })}
+                          {new Date(m.createdAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </TableCell>
                       <TableCell>
                         <Badge className={`flex items-center gap-1 w-fit ${getTypeBadgeColor(m.type, m.reason)}`}>
                           {m.type === 'IN' ? <ArrowDownCircle className="w-3 h-3" /> : <ArrowUpCircle className="w-3 h-3" />}
-                          {m.type === 'IN' ? 'Entrada' : 'Saída'}
+                          {m.type === 'IN' ? t.stockMovementUi.typeIn : t.stockMovementUi.typeOut}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs">{getReasonLabel(m.reason)}</TableCell>
-                      <TableCell className="font-mono text-sm">{m.referenceNumber || '—'}</TableCell>
+                      <TableCell className="font-mono text-sm">{m.referenceNumber || t.common.dash}</TableCell>
                       <TableCell className="font-mono text-sm">{m.sku}</TableCell>
                       <TableCell>{m.productName}</TableCell>
                       <TableCell className={`text-right font-mono font-medium ${m.type === 'IN' ? 'text-green-600' : 'text-red-600'}`}>
                         {m.type === 'IN' ? '+' : '-'}{m.quantity}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm">
-                        {m.costAtTime ? formatMoney(m.costAtTime) + ' Kz' : '—'}
+                        {m.costAtTime ? formatMoney(m.costAtTime) + ' ' + t.common.currency : t.common.dash}
                       </TableCell>
                       <TableCell className="text-right font-mono">
-                        {m.costAtTime ? formatMoney(m.costAtTime * m.quantity) + ' Kz' : '—'}
+                        {m.costAtTime ? formatMoney(m.costAtTime * m.quantity) + ' ' + t.common.currency : t.common.dash}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">
-                        {m.notes || '—'}
+                        {m.notes || t.common.dash}
                       </TableCell>
                     </TableRow>
                   ))

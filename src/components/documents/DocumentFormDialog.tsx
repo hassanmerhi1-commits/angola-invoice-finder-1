@@ -17,6 +17,7 @@ import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocum
 import { useProducts, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { api } from '@/lib/api/client';
+import { useTranslation } from '@/i18n';
 
 interface DocumentFormDialogProps {
   open: boolean;
@@ -28,6 +29,8 @@ interface DocumentFormDialogProps {
 }
 
 export function DocumentFormDialog({ open, onOpenChange, documentType, editDocument, prefillFrom, onSaved }: DocumentFormDialogProps) {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const { products } = useProducts(currentBranch?.id);
@@ -138,7 +141,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       setEntityName('Consumidor Final');
     }
     if (lines.length === 0) {
-      toast.error('Adicione pelo menos uma linha');
+      toast.error(t.documentFormUi.addAtLeastOneLine);
       return;
     }
 
@@ -226,7 +229,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           if (!saleResult.data) {
             const saleError = saleResult.error || 'Falha ao processar venda no servidor';
             if (saleError.includes('chk_products_stock_nonneg') || saleError.toLowerCase().includes('stock insuficiente')) {
-              throw new Error('Stock insuficiente para concluir esta fatura de venda. Verifique as quantidades dos produtos.');
+              throw new Error(t.documentFormUi.insufficientStockToCompleteSaleInvoice);
             }
             throw new Error(saleError);
           }
@@ -289,7 +292,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       }
       onOpenChange(false);
     } catch (error: any) {
-      toast.error(error.message || 'Erro ao guardar');
+      toast.error(error.message || t.documentFormUi.saveError);
     }
   };
 
@@ -381,7 +384,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
                 <Input value={productSearch} onChange={e => setProductSearch(e.target.value)}
-                  placeholder="Pesquisar por nome, código ou barcode..." className="h-8 text-xs pl-7" />
+                  placeholder={t.documentFormUi.productSearchPlaceholder} className="h-8 text-xs pl-7" />
               </div>
             </div>
             <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => addLine()}>
@@ -396,7 +399,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                 <button key={p.id} className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent/50 flex justify-between"
                   onClick={() => addLine(p.id)}>
                   <span><span className="font-mono text-muted-foreground">{p.sku}</span> {p.name}</span>
-                  <span className="font-mono">{p.price.toLocaleString('pt-AO')} Kz</span>
+                  <span className="font-mono">{p.price.toLocaleString(locale)} Kz</span>
                 </button>
               ))}
             </div>
@@ -479,7 +482,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             </TabsContent>
 
             <TabsContent value="notas" className="mt-2">
-              <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Observações..." rows={3} className="text-xs" />
+              <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder={t.documentFormUi.notesPlaceholder} rows={3} className="text-xs" />
             </TabsContent>
           </Tabs>
 

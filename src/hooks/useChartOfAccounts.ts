@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/client';
 import { Account, AccountFormData, TrialBalanceRow, AccountType } from '@/types/accounting';
 import { ensureBranchCaixaAccounts } from '@/lib/chartOfAccountsEngine';
+import { useTranslation } from '@/i18n';
 
 const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts';
 
@@ -15,7 +16,7 @@ const isOfflineError = (error: unknown): boolean => {
 
 const sortAccountsByCode = (items: Account[]) => [...items].sort((a, b) => a.code.localeCompare(b.code));
 
-const createSeedChartOfAccounts = (): Account[] => {
+const createSeedChartOfAccounts = (t: any): Account[] => {
   const timestamp = nowIso();
   const seedRows: Array<{
     code: string;
@@ -26,27 +27,27 @@ const createSeedChartOfAccounts = (): Account[] => {
     is_header: boolean;
     parent_code?: string;
   }> = [
-    { code: '1', name: 'Meios Fixos e Investimentos', account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
-    { code: '2', name: 'Existências', account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
-    { code: '2.1', name: 'Compra de Mercadorias', account_type: 'asset', account_nature: 'debit', level: 2, is_header: false, parent_code: '2' },
-    { code: '2.2', name: 'Mercadorias', account_type: 'asset', account_nature: 'debit', level: 2, is_header: false, parent_code: '2' },
-    { code: '3', name: 'Terceiros', account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
-    { code: '3.1', name: 'Clientes', account_type: 'asset', account_nature: 'debit', level: 2, is_header: true, parent_code: '3' },
-    { code: '3.2', name: 'Fornecedores', account_type: 'liability', account_nature: 'credit', level: 2, is_header: true, parent_code: '3' },
-    { code: '3.3', name: 'IVA', account_type: 'liability', account_nature: 'credit', level: 2, is_header: true, parent_code: '3' },
-    { code: '3.3.1', name: 'IVA Dedutível', account_type: 'liability', account_nature: 'debit', level: 3, is_header: false, parent_code: '3.3' },
-    { code: '3.3.2', name: 'IVA Liquidado', account_type: 'liability', account_nature: 'credit', level: 3, is_header: false, parent_code: '3.3' },
-    { code: '3.4', name: 'Pessoal', account_type: 'liability', account_nature: 'credit', level: 2, is_header: true, parent_code: '3' },
-    { code: '4', name: 'Meios Monetários', account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
-    { code: '4.1', name: 'Caixa', account_type: 'asset', account_nature: 'debit', level: 2, is_header: true, parent_code: '4' },
-    { code: '4.1.1', name: 'Caixa Principal', account_type: 'asset', account_nature: 'debit', level: 3, is_header: false, parent_code: '4.1' },
-    { code: '4.2', name: 'Depósitos à Ordem', account_type: 'asset', account_nature: 'debit', level: 2, is_header: true, parent_code: '4' },
-    { code: '5', name: 'Capital Próprio', account_type: 'equity', account_nature: 'credit', level: 1, is_header: true },
-    { code: '6', name: 'Gastos e Perdas', account_type: 'expense', account_nature: 'debit', level: 1, is_header: true },
-    { code: '6.1', name: 'Custo das Mercadorias Vendidas', account_type: 'expense', account_nature: 'debit', level: 2, is_header: false, parent_code: '6' },
-    { code: '6.3', name: 'Gastos com Pessoal', account_type: 'expense', account_nature: 'debit', level: 2, is_header: true, parent_code: '6' },
-    { code: '7', name: 'Rendimentos e Ganhos', account_type: 'revenue', account_nature: 'credit', level: 1, is_header: true },
-    { code: '7.1', name: 'Vendas', account_type: 'revenue', account_nature: 'credit', level: 2, is_header: false, parent_code: '7' },
+    { code: '1', name: t.chartOfAccountsSeed.fixedAssetsAndInvestments, account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
+    { code: '2', name: t.chartOfAccountsSeed.inventories, account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
+    { code: '2.1', name: t.chartOfAccountsSeed.purchaseOfGoods, account_type: 'asset', account_nature: 'debit', level: 2, is_header: false, parent_code: '2' },
+    { code: '2.2', name: t.chartOfAccountsSeed.goods, account_type: 'asset', account_nature: 'debit', level: 2, is_header: false, parent_code: '2' },
+    { code: '3', name: t.chartOfAccountsSeed.thirdParties, account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
+    { code: '3.1', name: t.chartOfAccountsSeed.customers, account_type: 'asset', account_nature: 'debit', level: 2, is_header: true, parent_code: '3' },
+    { code: '3.2', name: t.chartOfAccountsSeed.suppliers, account_type: 'liability', account_nature: 'credit', level: 2, is_header: true, parent_code: '3' },
+    { code: '3.3', name: t.chartOfAccountsSeed.vat, account_type: 'liability', account_nature: 'credit', level: 2, is_header: true, parent_code: '3' },
+    { code: '3.3.1', name: t.chartOfAccountsSeed.vatDeductible, account_type: 'liability', account_nature: 'debit', level: 3, is_header: false, parent_code: '3.3' },
+    { code: '3.3.2', name: t.chartOfAccountsSeed.vatPayable, account_type: 'liability', account_nature: 'credit', level: 3, is_header: false, parent_code: '3.3' },
+    { code: '3.4', name: t.chartOfAccountsSeed.staff, account_type: 'liability', account_nature: 'credit', level: 2, is_header: true, parent_code: '3' },
+    { code: '4', name: t.chartOfAccountsSeed.monetaryFunds, account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
+    { code: '4.1', name: t.chartOfAccountsSeed.cash, account_type: 'asset', account_nature: 'debit', level: 2, is_header: true, parent_code: '4' },
+    { code: '4.1.1', name: t.chartOfAccountsSeed.mainCash, account_type: 'asset', account_nature: 'debit', level: 3, is_header: false, parent_code: '4.1' },
+    { code: '4.2', name: t.chartOfAccountsSeed.demandDeposits, account_type: 'asset', account_nature: 'debit', level: 2, is_header: true, parent_code: '4' },
+    { code: '5', name: t.chartOfAccountsSeed.equity, account_type: 'equity', account_nature: 'credit', level: 1, is_header: true },
+    { code: '6', name: t.chartOfAccountsSeed.expensesAndLosses, account_type: 'expense', account_nature: 'debit', level: 1, is_header: true },
+    { code: '6.1', name: t.chartOfAccountsSeed.costOfGoodsSold, account_type: 'expense', account_nature: 'debit', level: 2, is_header: false, parent_code: '6' },
+    { code: '6.3', name: t.chartOfAccountsSeed.staffExpenses, account_type: 'expense', account_nature: 'debit', level: 2, is_header: true, parent_code: '6' },
+    { code: '7', name: t.chartOfAccountsSeed.incomeAndGains, account_type: 'revenue', account_nature: 'credit', level: 1, is_header: true },
+    { code: '7.1', name: t.chartOfAccountsSeed.sales, account_type: 'revenue', account_nature: 'credit', level: 2, is_header: false, parent_code: '7' },
   ];
 
   const idByCode = new Map<string, string>();
@@ -86,7 +87,7 @@ const createSeedChartOfAccounts = (): Account[] => {
   });
 };
 
-const loadLocalAccounts = (): Account[] => {
+const loadLocalAccounts = (t: any): Account[] => {
   if (typeof window === 'undefined') return [];
 
   try {
@@ -101,7 +102,7 @@ const loadLocalAccounts = (): Account[] => {
     console.error('[useChartOfAccounts] Failed to read local chart of accounts:', error);
   }
 
-  const seeded = createSeedChartOfAccounts();
+  const seeded = createSeedChartOfAccounts(t);
   localStorage.setItem(LOCAL_COA_STORAGE_KEY, JSON.stringify(seeded));
   return sortAccountsByCode(seeded);
 };
@@ -117,6 +118,7 @@ const createLocalId = () =>
     : `local-coa-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 export function useChartOfAccounts() {
+  const { t } = useTranslation();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -148,7 +150,7 @@ export function useChartOfAccounts() {
       const branches = response.data || [];
       if (branches.length > 0) {
         ensureBranchCaixaAccounts(branches.map((b: any) => ({ id: b.id, name: b.name }))).then(() => {
-          const updated = loadLocalAccounts();
+          const updated = loadLocalAccounts(t);
           if (updated.length > accounts.length) {
             setAccounts(sortAccountsByCode(updated));
           }
@@ -161,7 +163,7 @@ export function useChartOfAccounts() {
         const branches = raw ? JSON.parse(raw) : [];
         if (branches.length > 0) {
           ensureBranchCaixaAccounts(branches.map((b: any) => ({ id: b.id, name: b.name }))).then(() => {
-            const updated = loadLocalAccounts();
+            const updated = loadLocalAccounts(t);
             if (updated.length > accounts.length) {
               setAccounts(sortAccountsByCode(updated));
             }
@@ -169,7 +171,7 @@ export function useChartOfAccounts() {
         }
       } catch { /* ignore */ }
     });
-  }, [isLoading, accounts.length]);
+  }, [isLoading, accounts.length, t]);
 
   useEffect(() => {
     fetchAccounts();
@@ -184,7 +186,7 @@ export function useChartOfAccounts() {
     } catch (err) {
       if (!isOfflineError(err)) throw err;
 
-      const localAccounts = loadLocalAccounts();
+      const localAccounts = loadLocalAccounts(t);
       if (localAccounts.some(account => account.code === data.code)) {
         throw new Error('Account code already exists');
       }
@@ -228,7 +230,7 @@ export function useChartOfAccounts() {
     } catch (err) {
       if (!isOfflineError(err)) throw err;
 
-      const localAccounts = loadLocalAccounts();
+      const localAccounts = loadLocalAccounts(t);
       const index = localAccounts.findIndex(account => account.id === id);
       if (index < 0) throw new Error('Account not found');
 
@@ -265,7 +267,7 @@ export function useChartOfAccounts() {
     } catch (err) {
       if (!isOfflineError(err)) throw err;
 
-      const localAccounts = loadLocalAccounts();
+      const localAccounts = loadLocalAccounts(t);
       if (localAccounts.some(account => account.parent_id === id)) {
         throw new Error('Cannot delete account with child accounts');
       }

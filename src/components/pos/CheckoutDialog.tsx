@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Separator } from '@/components/ui/separator';
 import { Banknote, CreditCard, ArrowRightLeft, Check } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 
 interface CheckoutDialogProps {
   open: boolean;
@@ -35,10 +36,12 @@ export function CheckoutDialog({
   taxAmount,
   onCompleteSale,
 }: CheckoutDialogProps) {
+  const { t, language } = useTranslation();
   const [paymentMethod, setPaymentMethod] = useState<Sale['paymentMethod']>('cash');
   const [amountPaid, setAmountPaid] = useState<string>(total.toString());
   const [customerNif, setCustomerNif] = useState('');
   const [customerName, setCustomerName] = useState('');
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
   const change = parseFloat(amountPaid || '0') - total;
   const isValid = parseFloat(amountPaid || '0') >= total;
@@ -63,30 +66,30 @@ export function CheckoutDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Finalizar Venda</DialogTitle>
+          <DialogTitle>{t.checkoutUi.title}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6">
           {/* Order Summary */}
           <div className="bg-muted/50 rounded-lg p-4 space-y-2">
             <div className="flex justify-between text-sm">
-              <span>{items.length} itens</span>
-              <span>{items.reduce((sum, i) => sum + i.quantity, 0)} unidades</span>
+              <span>{t.checkoutUi.itemsCount.replace('{count}', String(items.length))}</span>
+              <span>{t.checkoutUi.unitsCount.replace('{count}', String(items.reduce((sum, i) => sum + i.quantity, 0)))}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span>IVA</span>
-              <span>{taxAmount.toLocaleString('pt-AO')} Kz</span>
+              <span>{t.pos.tax}</span>
+              <span>{taxAmount.toLocaleString(locale)} Kz</span>
             </div>
             <Separator />
             <div className="flex justify-between text-xl font-bold">
-              <span>Total</span>
-              <span className="text-primary">{total.toLocaleString('pt-AO')} Kz</span>
+              <span>{t.common.total}</span>
+              <span className="text-primary">{total.toLocaleString(locale)} Kz</span>
             </div>
           </div>
 
           {/* Payment Method */}
           <div className="space-y-3">
-            <Label>Forma de Pagamento</Label>
+            <Label>{t.checkoutUi.paymentForm}</Label>
             <RadioGroup
               value={paymentMethod}
               onValueChange={(v) => setPaymentMethod(v as Sale['paymentMethod'])}
@@ -99,7 +102,7 @@ export function CheckoutDialog({
                   className="flex flex-col items-center justify-center rounded-lg border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary cursor-pointer"
                 >
                   <Banknote className="mb-2 h-6 w-6" />
-                  <span className="text-sm">Dinheiro</span>
+                  <span className="text-sm">{t.pos.cash}</span>
                 </Label>
               </div>
               <div>
@@ -109,7 +112,7 @@ export function CheckoutDialog({
                   className="flex flex-col items-center justify-center rounded-lg border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary cursor-pointer"
                 >
                   <CreditCard className="mb-2 h-6 w-6" />
-                  <span className="text-sm">Cartão</span>
+                  <span className="text-sm">{t.pos.card}</span>
                 </Label>
               </div>
               <div>
@@ -119,7 +122,7 @@ export function CheckoutDialog({
                   className="flex flex-col items-center justify-center rounded-lg border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary cursor-pointer"
                 >
                   <ArrowRightLeft className="mb-2 h-6 w-6" />
-                  <span className="text-sm">Transf.</span>
+                  <span className="text-sm">{t.pos.transfer}</span>
                 </Label>
               </div>
             </RadioGroup>
@@ -128,7 +131,7 @@ export function CheckoutDialog({
           {/* Amount Paid (for cash) */}
           {paymentMethod === 'cash' && (
             <div className="space-y-3">
-              <Label>Valor Recebido</Label>
+              <Label>{t.checkoutUi.amountReceived}</Label>
               <Input
                 type="number"
                 value={amountPaid}
@@ -145,14 +148,14 @@ export function CheckoutDialog({
                     className="flex-1"
                     onClick={() => setAmountPaid(amount.toString())}
                   >
-                    {amount.toLocaleString('pt-AO')}
+                    {amount.toLocaleString(locale)}
                   </Button>
                 ))}
               </div>
               {change > 0 && (
                 <div className="bg-green-500/10 text-green-600 rounded-lg p-3 text-center">
-                  <span className="text-sm">Troco: </span>
-                  <span className="text-xl font-bold">{change.toLocaleString('pt-AO')} Kz</span>
+                  <span className="text-sm">{t.checkoutUi.change}: </span>
+                  <span className="text-xl font-bold">{change.toLocaleString(locale)} Kz</span>
                 </div>
               )}
             </div>
@@ -160,15 +163,15 @@ export function CheckoutDialog({
 
           {/* Customer Info (optional) */}
           <div className="space-y-3">
-            <Label className="text-muted-foreground">Dados do Cliente (opcional)</Label>
+            <Label className="text-muted-foreground">{t.checkoutUi.customerInfoOptional}</Label>
             <div className="grid grid-cols-2 gap-2">
               <Input
-                placeholder="NIF"
+                placeholder={t.checkoutUi.nif}
                 value={customerNif}
                 onChange={(e) => setCustomerNif(e.target.value)}
               />
               <Input
-                placeholder="Nome"
+                placeholder={t.checkoutUi.name}
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
               />
@@ -183,7 +186,7 @@ export function CheckoutDialog({
             disabled={!isValid}
           >
             <Check className="w-5 h-5 mr-2" />
-            Confirmar Pagamento
+            {t.checkoutUi.confirmPayment}
           </Button>
         </div>
       </DialogContent>

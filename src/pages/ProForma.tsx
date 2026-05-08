@@ -193,7 +193,7 @@ export default function ProFormaPage() {
   const handleCreateProforma = () => {
     if (!currentBranch || !user) return;
     if (!customerName.trim()) {
-      toast.error('Nome do cliente é obrigatório');
+      toast.error(t.proFormaUi.customerNameRequired);
       return;
     }
     if (selectedItems.length === 0) {
@@ -227,7 +227,7 @@ export default function ProFormaPage() {
     if (!currentBranch) return;
     try {
       await printProFormaA4(proforma, currentBranch);
-      toast.success('Pro Forma enviada para impressão');
+      toast.success(t.proFormaUi.sentToPrint);
     } catch (error) {
       toast.error('Erro ao imprimir');
     }
@@ -264,10 +264,10 @@ export default function ProFormaPage() {
 
   const handleDelete = (proforma: ProForma) => {
     if (proforma.status === 'converted') {
-      toast.error('Não é possível eliminar uma pro forma convertida');
+      toast.error(t.proFormaUi.cannotDeleteConverted);
       return;
     }
-    if (confirm('Tem certeza que deseja eliminar esta pro forma?')) {
+    if (confirm(t.proFormaUi.deleteConfirm)) {
       deleteProForma(proforma.id);
       toast.success('Pro Forma eliminada');
     }
@@ -340,7 +340,7 @@ export default function ProFormaPage() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
           <Input
-            placeholder="Pesquisar por número ou cliente..."
+            placeholder={t.proFormaUi.searchPlaceholder}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-10"
@@ -478,7 +478,7 @@ export default function ProFormaPage() {
                   <Label>Selecionar Cliente Existente</Label>
                   <Select onValueChange={handleSelectClient}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Selecione um cliente..." />
+                      <SelectValue placeholder={t.proFormaUi.selectClientPlaceholder} />
                     </SelectTrigger>
                     <SelectContent>
                       {clients.map(client => (
@@ -498,7 +498,7 @@ export default function ProFormaPage() {
                     <Input
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
-                      placeholder="Nome do cliente"
+                      placeholder={t.proFormaUi.customerNamePlaceholder}
                     />
                   </div>
                   <div>
@@ -506,7 +506,7 @@ export default function ProFormaPage() {
                     <Input
                       value={customerNif}
                       onChange={(e) => setCustomerNif(e.target.value)}
-                      placeholder="NIF do cliente"
+                      placeholder={t.proFormaUi.customerNifPlaceholder}
                     />
                   </div>
                   <div>
@@ -531,7 +531,7 @@ export default function ProFormaPage() {
                     <Input
                       value={customerAddress}
                       onChange={(e) => setCustomerAddress(e.target.value)}
-                      placeholder="Endereço completo"
+                      placeholder={t.proFormaUi.customerAddressPlaceholder}
                     />
                   </div>
                 </div>
@@ -541,7 +541,7 @@ export default function ProFormaPage() {
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
                   <Input
-                    placeholder="Pesquisar produtos..."
+                    placeholder={t.proFormaUi.searchProductsPlaceholder}
                     value={productSearch}
                     onChange={(e) => setProductSearch(e.target.value)}
                     className="pl-10"
@@ -654,7 +654,7 @@ export default function ProFormaPage() {
                   <Textarea
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Observações adicionais..."
+                    placeholder={t.proFormaUi.notesPlaceholder}
                     rows={3}
                   />
                 </div>

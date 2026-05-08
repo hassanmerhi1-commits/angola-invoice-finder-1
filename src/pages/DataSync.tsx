@@ -19,8 +19,13 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
+import { enUS } from 'date-fns/locale';
+import { useTranslation } from '@/i18n';
 
 export default function DataSync() {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const dfLocale = language === 'pt' ? pt : enUS;
   const { user } = useAuth();
   const { branches, currentBranch } = useBranchContext();
   const { exportData, downloadSyncPackage } = useDataSync();
@@ -41,8 +46,8 @@ export default function DataSync() {
     const branchId = isMainOffice ? selectedBranch : currentBranch?.id;
     if (!branchId) {
       toast({
-        title: 'Erro',
-        description: 'Selecione uma filial',
+        title: t.dataSyncUi.toastErrorTitle,
+        description: t.dataSyncUi.selectBranchError,
         variant: 'destructive',
       });
       return;
@@ -52,8 +57,8 @@ export default function DataSync() {
     setSyncPackage(pkg as any);
     
     toast({
-      title: 'Pacote preparado',
-      description: `${pkg.totalRecords} registos prontos para exportar`,
+      title: t.dataSyncUi.packagePreparedTitle,
+      description: t.dataSyncUi.recordsReady.replace('{count}', String(pkg.totalRecords)),
     });
   };
 
@@ -61,8 +66,8 @@ export default function DataSync() {
     if (syncPackage) {
       downloadSyncPackage(syncPackage);
       toast({
-        title: 'Download iniciado',
-        description: 'O ficheiro JSON foi descarregado',
+        title: t.dataSyncUi.downloadStartedTitle,
+        description: t.dataSyncUi.jsonDownloaded,
       });
     }
   };
@@ -74,8 +79,8 @@ export default function DataSync() {
       const body = encodeURIComponent(`Pacote de sincronização com ${syncPackage.totalRecords} registos.`);
       window.open(`mailto:${email}?subject=${subject}&body=${body}`);
       toast({
-        title: 'Email preparado',
-        description: 'O seu cliente de email foi aberto com o ficheiro em anexo',
+        title: t.dataSyncUi.emailPreparedTitle,
+        description: t.dataSyncUi.emailClientOpened,
       });
       setEmailDialogOpen(false);
       setEmail('');
@@ -94,7 +99,7 @@ export default function DataSync() {
         
         // Validate package structure
         if (!pkg.id || !pkg.branchId) {
-          throw new Error('Formato de ficheiro inválido');
+          throw new Error(t.dataSyncUi.invalidFileFormat);
         }
 
         // Basic import: merge data from package
@@ -112,13 +117,13 @@ export default function DataSync() {
         setImportResult(result);
         
         toast({
-          title: 'Importação concluída',
-          description: `${result.totalImported} registos importados com sucesso`,
+          title: t.dataSyncUi.importCompletedTitle,
+          description: t.dataSyncUi.recordsImported.replace('{count}', String(result.totalImported)),
         });
       } catch (error) {
         toast({
-          title: 'Erro na importação',
-          description: 'Ficheiro inválido ou corrompido',
+          title: t.dataSyncUi.importErrorTitle,
+          description: t.dataSyncUi.invalidOrCorruptedFile,
           variant: 'destructive',
         });
       }
@@ -135,8 +140,8 @@ export default function DataSync() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Sincronização de Dados</h1>
-          <p className="text-muted-foreground">Exportar e importar dados entre filiais e sede</p>
+          <h1 className="text-2xl font-bold">{t.dataSyncUi.title}</h1>
+          <p className="text-muted-foreground">{t.dataSyncUi.subtitle}</p>
         </div>
       </div>
 
@@ -179,7 +184,7 @@ export default function DataSync() {
                     <Label>Filial</Label>
                     <Select value={selectedBranch} onValueChange={setSelectedBranch}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Selecione a filial" />
+                        <SelectValue placeholder={t.dataSyncUi.selectBranchPlaceholder} />
                       </SelectTrigger>
                       <SelectContent>
                         {branches.map(branch => (
@@ -244,10 +249,10 @@ export default function DataSync() {
                       <p className="text-sm text-muted-foreground">Período</p>
                     </div>
                     <p className="font-medium">
-                      {format(new Date(syncPackage.dateRange.from), 'dd/MM/yyyy', { locale: pt })}
+                  {format(new Date(syncPackage.dateRange.from), 'dd/MM/yyyy', { locale: dfLocale })}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      até {format(new Date(syncPackage.dateRange.to), 'dd/MM/yyyy', { locale: pt })}
+                  {t.dataSyncUi.toLabel} {format(new Date(syncPackage.dateRange.to), 'dd/MM/yyyy', { locale: dfLocale })}
                     </p>
                   </div>
                   <div className="bg-muted p-4 rounded-lg">
@@ -354,7 +359,7 @@ export default function DataSync() {
                   />
                   <Button onClick={() => fileInputRef.current?.click()}>
                     <Upload className="w-4 h-4 mr-2" />
-                    Selecionar Ficheiro
+                    {t.dataSyncUi.selectFile}
                   </Button>
                 </div>
 
@@ -415,7 +420,7 @@ export default function DataSync() {
               <CardContent>
                 <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
                   <li>Receba o ficheiro JSON da filial (via pen drive ou email)</li>
-                  <li>Clique em "Selecionar Ficheiro" e escolha o ficheiro recebido</li>
+                  <li>{t.dataSyncUi.importStepSelectFile}</li>
                   <li>O sistema irá validar e importar os dados automaticamente</li>
                   <li>Registos duplicados serão ignorados (baseado no ID ou NIF)</li>
                   <li>Os dados serão consolidados no sistema central</li>
@@ -473,17 +478,17 @@ export default function DataSync() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="sede@empresa.ao"
+                placeholder={t.dataSyncUi.headOfficeEmailPlaceholder}
               />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEmailDialogOpen(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleSendEmail} disabled={!email}>
               <Mail className="w-4 h-4 mr-2" />
-              Enviar
+              {t.dataSyncUi.send}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from '@/i18n';
 import { useProducts, useStockTransfers, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { Product, StockTransfer as StockTransferType } from '@/types/erp';
@@ -26,6 +27,8 @@ interface TransferItem {
 }
 
 export default function StockTransfer() {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { branches, currentBranch } = useBranchContext();
   // Load ALL transfers (not branch-filtered) so we can see transfers between any branches
@@ -58,8 +61,8 @@ export default function StockTransfer() {
   const handleAddProduct = (product: Product) => {
     if (transferItems.find(item => item.productId === product.id)) {
       toast({
-        title: 'Produto já adicionado',
-        description: 'Este produto já está na lista de transferência',
+        title: t.stockTransferUi.productAlreadyAddedTitle,
+        description: t.stockTransferUi.productAlreadyInTransferList,
         variant: 'destructive',
       });
       return;
@@ -102,8 +105,8 @@ export default function StockTransfer() {
   const handleCreateTransfer = async () => {
     if (!fromBranchId || !toBranchId || transferItems.length === 0 || !user) {
       toast({
-        title: 'Erro',
-        description: 'Preencha todos os campos obrigatórios',
+        title: t.common.error,
+        description: t.stockTransferUi.fillRequiredFields,
         variant: 'destructive',
       });
       return;
@@ -124,16 +127,16 @@ export default function StockTransfer() {
       );
 
       toast({
-        title: 'Transferência criada',
-        description: 'A requisição de transferência foi criada com sucesso',
+        title: t.stockTransferUi.transferCreatedTitle,
+        description: t.stockTransferUi.transferCreatedDesc,
       });
 
       setDialogOpen(false);
       resetForm();
     } catch (error: any) {
       toast({
-        title: 'Erro',
-        description: error?.message || 'Falha ao criar transferência',
+        title: t.common.error,
+        description: error?.message || t.stockTransferUi.createTransferFailed,
         variant: 'destructive',
       });
     }
@@ -144,13 +147,13 @@ export default function StockTransfer() {
     try {
       await approveTransfer(transfer.id, user.id);
       toast({
-        title: 'Transferência aprovada',
-        description: 'Os produtos foram deduzidos do stock de origem',
+        title: t.stockTransferUi.transferApprovedTitle,
+        description: t.stockTransferUi.transferApprovedDesc,
       });
     } catch (error: any) {
       toast({
-        title: 'Erro',
-        description: error?.message || 'Falha ao aprovar transferência',
+        title: t.common.error,
+        description: error?.message || t.stockTransferUi.approveTransferFailed,
         variant: 'destructive',
       });
     }
@@ -171,15 +174,15 @@ export default function StockTransfer() {
     try {
       await receiveTransfer(selectedTransfer.id, user.id, receivedQuantities);
       toast({
-        title: 'Transferência recebida',
-        description: 'Os produtos foram adicionados ao stock de destino',
+        title: t.stockTransferUi.transferReceivedTitle,
+        description: t.stockTransferUi.transferReceivedDesc,
       });
       setReceiveDialogOpen(false);
       setSelectedTransfer(null);
     } catch (error: any) {
       toast({
-        title: 'Erro',
-        description: error?.message || 'Falha ao receber transferência',
+        title: t.common.error,
+        description: error?.message || t.stockTransferUi.receiveTransferFailed,
         variant: 'destructive',
       });
     }
@@ -190,13 +193,13 @@ export default function StockTransfer() {
     try {
       await cancelTransfer(transfer.id, user.id);
       toast({
-        title: 'Transferência cancelada',
-        description: 'A requisição foi cancelada',
+        title: t.stockTransferUi.transferCancelledTitle,
+        description: t.stockTransferUi.transferCancelledDesc,
       });
     } catch (error: any) {
       toast({
-        title: 'Erro',
-        description: error?.message || 'Falha ao cancelar transferência',
+        title: t.common.error,
+        description: error?.message || t.stockTransferUi.cancelTransferFailed,
         variant: 'destructive',
       });
     }
@@ -205,13 +208,13 @@ export default function StockTransfer() {
   const getStatusBadge = (status: StockTransferType['status']) => {
     switch (status) {
       case 'pending':
-        return <Badge variant="secondary"><Clock className="w-3 h-3 mr-1" />Pendente</Badge>;
+        return <Badge variant="secondary"><Clock className="w-3 h-3 mr-1" />{t.stockTransferUi.statusPending}</Badge>;
       case 'in_transit':
-        return <Badge variant="default"><Truck className="w-3 h-3 mr-1" />Em Trânsito</Badge>;
+        return <Badge variant="default"><Truck className="w-3 h-3 mr-1" />{t.stockTransferUi.statusInTransit}</Badge>;
       case 'received':
-        return <Badge className="bg-green-500"><Check className="w-3 h-3 mr-1" />Recebido</Badge>;
+        return <Badge className="bg-green-500"><Check className="w-3 h-3 mr-1" />{t.stockTransferUi.statusReceived}</Badge>;
       case 'cancelled':
-        return <Badge variant="destructive"><X className="w-3 h-3 mr-1" />Cancelado</Badge>;
+        return <Badge variant="destructive"><X className="w-3 h-3 mr-1" />{t.stockTransferUi.statusCancelled}</Badge>;
     }
   };
 
@@ -221,12 +224,12 @@ export default function StockTransfer() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Transferência de Stock</h1>
-          <p className="text-muted-foreground">Movimentação de produtos entre filiais</p>
+          <h1 className="text-2xl font-bold">{t.stockTransferUi.title}</h1>
+          <p className="text-muted-foreground">{t.stockTransferUi.subtitle}</p>
         </div>
         <Button onClick={() => setDialogOpen(true)}>
           <Plus className="w-4 h-4 mr-2" />
-          Nova Transferência
+          {t.stockTransferUi.newTransfer}
         </Button>
       </div>
 
@@ -234,42 +237,42 @@ export default function StockTransfer() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Pendentes</CardTitle>
+            <CardTitle className="text-sm font-medium">{t.stockTransferUi.pending}</CardTitle>
             <Clock className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{pendingTransfers.length}</div>
-            <p className="text-xs text-muted-foreground">aguardando aprovação</p>
+            <p className="text-xs text-muted-foreground">{t.stockTransferUi.awaitingApproval}</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Em Trânsito</CardTitle>
+            <CardTitle className="text-sm font-medium">{t.stockTransferUi.inTransit}</CardTitle>
             <Truck className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{inTransitTransfers.length}</div>
-            <p className="text-xs text-muted-foreground">a caminho</p>
+            <p className="text-xs text-muted-foreground">{t.stockTransferUi.onTheWay}</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Transferido</CardTitle>
+            <CardTitle className="text-sm font-medium">{t.stockTransferUi.totalTransferred}</CardTitle>
             <ArrowRightLeft className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{completedTransfers.filter(t => t.status === 'received').length}</div>
-            <p className="text-xs text-muted-foreground">concluídas</p>
+            <p className="text-xs text-muted-foreground">{t.stockTransferUi.completed}</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Produtos em Falta</CardTitle>
+            <CardTitle className="text-sm font-medium">{t.stockTransferUi.lowStockProducts}</CardTitle>
             <Package className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{sourceProducts.filter(p => p.stock <= 10).length}</div>
-            <p className="text-xs text-muted-foreground">stock baixo</p>
+            <p className="text-xs text-muted-foreground">{t.stockTransferUi.lowStock}</p>
           </CardContent>
         </Card>
       </div>
@@ -278,21 +281,21 @@ export default function StockTransfer() {
       <Tabs defaultValue="pending" className="space-y-4">
         <TabsList>
           <TabsTrigger value="pending">
-            Pendentes ({pendingTransfers.length})
+            {t.stockTransferUi.pending} ({pendingTransfers.length})
           </TabsTrigger>
           <TabsTrigger value="transit">
-            Em Trânsito ({inTransitTransfers.length})
+            {t.stockTransferUi.inTransit} ({inTransitTransfers.length})
           </TabsTrigger>
           <TabsTrigger value="completed">
-            Concluídas ({completedTransfers.length})
+            {t.stockTransferUi.completedF} ({completedTransfers.length})
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="pending">
           <Card>
             <CardHeader>
-              <CardTitle>Transferências Pendentes</CardTitle>
-              <CardDescription>Aguardando aprovação para envio</CardDescription>
+              <CardTitle>{t.stockTransferUi.pendingTransfersTitle}</CardTitle>
+              <CardDescription>{t.stockTransferUi.pendingTransfersDesc}</CardDescription>
             </CardHeader>
             <CardContent>
               <TransferTable
@@ -309,8 +312,8 @@ export default function StockTransfer() {
         <TabsContent value="transit">
           <Card>
             <CardHeader>
-              <CardTitle>Em Trânsito</CardTitle>
-              <CardDescription>Produtos a caminho do destino</CardDescription>
+              <CardTitle>{t.stockTransferUi.inTransitTitle}</CardTitle>
+              <CardDescription>{t.stockTransferUi.inTransitDesc}</CardDescription>
             </CardHeader>
             <CardContent>
               <TransferTable
@@ -326,8 +329,8 @@ export default function StockTransfer() {
         <TabsContent value="completed">
           <Card>
             <CardHeader>
-              <CardTitle>Transferências Concluídas</CardTitle>
-              <CardDescription>Histórico de transferências</CardDescription>
+              <CardTitle>{t.stockTransferUi.completedTransfersTitle}</CardTitle>
+              <CardDescription>{t.stockTransferUi.completedTransfersDesc}</CardDescription>
             </CardHeader>
             <CardContent>
               <TransferTable
@@ -344,9 +347,9 @@ export default function StockTransfer() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Nova Transferência</DialogTitle>
+            <DialogTitle>{t.stockTransferUi.newTransferTitle}</DialogTitle>
             <DialogDescription>
-              Selecione os produtos e a filial de destino
+              {t.stockTransferUi.newTransferDesc}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -355,12 +358,12 @@ export default function StockTransfer() {
                 <Label>De (Origem):</Label>
                 <Select value={fromBranchId} onValueChange={handleFromBranchChange}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Selecione a filial de origem" />
+                    <SelectValue placeholder={t.stockTransferUi.selectSourceBranch} />
                   </SelectTrigger>
                   <SelectContent>
                     {branches.map(branch => (
                       <SelectItem key={branch.id} value={branch.id}>
-                        {branch.name} {branch.isMain && '(Sede)'}
+                        {branch.name} {branch.isMain && `(${t.branchUi.headOffice})`}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -370,12 +373,12 @@ export default function StockTransfer() {
                 <Label>Para (Destino):</Label>
                 <Select value={toBranchId} onValueChange={setToBranchId}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Selecione a filial de destino" />
+                    <SelectValue placeholder={t.stockTransferUi.selectDestinationBranch} />
                   </SelectTrigger>
                   <SelectContent>
                     {destinationBranches.map(branch => (
                       <SelectItem key={branch.id} value={branch.id}>
-                        {branch.name} {branch.isMain && '(Sede)'}
+                        {branch.name} {branch.isMain && `(${t.branchUi.headOffice})`}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -390,7 +393,7 @@ export default function StockTransfer() {
                 if (product) handleAddProduct(product);
               }}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecione um produto" />
+                  <SelectValue placeholder={t.stockTransferUi.selectProduct} />
                 </SelectTrigger>
                 <SelectContent>
                   {sourceProducts.filter(p => p.stock > 0).map(product => (
@@ -447,18 +450,18 @@ export default function StockTransfer() {
               <Textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Notas adicionais sobre a transferência..."
+                placeholder={t.stockTransferUi.notesPlaceholder}
                 rows={2}
               />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleCreateTransfer} disabled={transferItems.length === 0 || !toBranchId || !fromBranchId}>
               <ArrowRightLeft className="w-4 h-4 mr-2" />
-              Criar Transferência
+              {t.stockTransferUi.createTransfer}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -468,9 +471,9 @@ export default function StockTransfer() {
       <Dialog open={receiveDialogOpen} onOpenChange={setReceiveDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Receber Transferência</DialogTitle>
+            <DialogTitle>{t.stockTransferUi.receiveTransferTitle}</DialogTitle>
             <DialogDescription>
-              Confirme as quantidades recebidas
+              {t.stockTransferUi.receiveTransferDesc}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -511,11 +514,11 @@ export default function StockTransfer() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setReceiveDialogOpen(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleReceive}>
               <Check className="w-4 h-4 mr-2" />
-              Confirmar Recebimento
+              {t.stockTransferUi.confirmReceiving}
             </Button>
           </DialogFooter>
         </DialogContent>

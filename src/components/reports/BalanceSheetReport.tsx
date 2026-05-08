@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Download, Printer, FileSpreadsheet, Scale } from 'lucide-react';
 import { useBranches, useSales } from '@/hooks/useERP';
+import { useTranslation } from '@/i18n';
 
 interface BalanceItem {
   code: string;
@@ -24,6 +25,8 @@ interface BalanceItem {
 }
 
 export default function BalanceSheetReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { currentBranch } = useBranches();
   const { sales } = useSales(currentBranch?.id);
   
@@ -35,22 +38,22 @@ export default function BalanceSheetReport() {
 
   const formatMoney = (value: number) => {
     if (value === 0) return '-';
-    return value.toLocaleString('pt-AO', { minimumFractionDigits: 2 });
+    return value.toLocaleString(locale, { minimumFractionDigits: 2 });
   };
 
   // Balance Sheet Structure
   const assets: BalanceItem[] = [
-    { code: '', description: 'ACTIVO', currentPeriod: 0, previousPeriod: 0, isHeader: true },
-    { code: '', description: 'Activo Não Corrente', currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
-    { code: '43', description: 'Activos Fixos Tangíveis', currentPeriod: 500000, previousPeriod: 550000, indent: 1 },
-    { code: '44', description: 'Activos Intangíveis', currentPeriod: 50000, previousPeriod: 60000, indent: 1 },
-    { code: '', description: 'Total Activo Não Corrente', currentPeriod: 550000, previousPeriod: 610000, isSubtotal: true },
+    { code: '', description: t.balanceSheetUi.assetsHeader, currentPeriod: 0, previousPeriod: 0, isHeader: true },
+    { code: '', description: t.balanceSheetUi.nonCurrentAssets, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
+    { code: '43', description: t.balanceSheetUi.tangibleFixedAssets, currentPeriod: 500000, previousPeriod: 550000, indent: 1 },
+    { code: '44', description: t.balanceSheetUi.intangibleAssets, currentPeriod: 50000, previousPeriod: 60000, indent: 1 },
+    { code: '', description: t.balanceSheetUi.totalNonCurrentAssets, currentPeriod: 550000, previousPeriod: 610000, isSubtotal: true },
     
-    { code: '', description: 'Activo Corrente', currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
-    { code: '31', description: 'Inventários', currentPeriod: 1000000 + salesTotal * 0.2, previousPeriod: 1000000, indent: 1 },
-    { code: '21', description: 'Clientes', currentPeriod: salesTotal * 0.1, previousPeriod: 150000, indent: 1 },
-    { code: '12', description: 'Depósitos Bancários', currentPeriod: 500000 + salesTotal * 0.4, previousPeriod: 500000, indent: 1 },
-    { code: '11', description: 'Caixa', currentPeriod: salesTotal * 0.6, previousPeriod: 100000, indent: 1 },
+    { code: '', description: t.balanceSheetUi.currentAssets, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
+    { code: '31', description: t.balanceSheetUi.inventories, currentPeriod: 1000000 + salesTotal * 0.2, previousPeriod: 1000000, indent: 1 },
+    { code: '21', description: t.balanceSheetUi.customers, currentPeriod: salesTotal * 0.1, previousPeriod: 150000, indent: 1 },
+    { code: '12', description: t.balanceSheetUi.bankDeposits, currentPeriod: 500000 + salesTotal * 0.4, previousPeriod: 500000, indent: 1 },
+    { code: '11', description: t.balanceSheetUi.cash, currentPeriod: salesTotal * 0.6, previousPeriod: 100000, indent: 1 },
   ];
 
   const totalCurrentAssets = 1000000 + salesTotal * 0.2 + salesTotal * 0.1 + 500000 + salesTotal * 0.4 + salesTotal * 0.6;
@@ -59,33 +62,33 @@ export default function BalanceSheetReport() {
   const prevTotalAssets = 610000 + prevCurrentAssets;
 
   assets.push(
-    { code: '', description: 'Total Activo Corrente', currentPeriod: totalCurrentAssets, previousPeriod: prevCurrentAssets, isSubtotal: true },
-    { code: '', description: 'TOTAL DO ACTIVO', currentPeriod: totalAssets, previousPeriod: prevTotalAssets, isTotal: true }
+    { code: '', description: t.balanceSheetUi.totalCurrentAssets, currentPeriod: totalCurrentAssets, previousPeriod: prevCurrentAssets, isSubtotal: true },
+    { code: '', description: t.balanceSheetUi.totalAssets, currentPeriod: totalAssets, previousPeriod: prevTotalAssets, isTotal: true }
   );
 
   const liabilitiesAndEquity: BalanceItem[] = [
-    { code: '', description: 'CAPITAL PRÓPRIO E PASSIVO', currentPeriod: 0, previousPeriod: 0, isHeader: true },
+    { code: '', description: t.balanceSheetUi.equityAndLiabilitiesHeader, currentPeriod: 0, previousPeriod: 0, isHeader: true },
     
-    { code: '', description: 'Capital Próprio', currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
-    { code: '51', description: 'Capital Social', currentPeriod: 1000000, previousPeriod: 1000000, indent: 1 },
-    { code: '55', description: 'Reservas Legais', currentPeriod: 100000, previousPeriod: 80000, indent: 1 },
-    { code: '59', description: 'Resultados Transitados', currentPeriod: 250000, previousPeriod: 200000, indent: 1 },
-    { code: '88', description: 'Resultado Líquido do Período', currentPeriod: netProfit, previousPeriod: 150000, indent: 1 },
+    { code: '', description: t.balanceSheetUi.equity, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
+    { code: '51', description: t.balanceSheetUi.shareCapital, currentPeriod: 1000000, previousPeriod: 1000000, indent: 1 },
+    { code: '55', description: t.balanceSheetUi.legalReserves, currentPeriod: 100000, previousPeriod: 80000, indent: 1 },
+    { code: '59', description: t.balanceSheetUi.retainedEarnings, currentPeriod: 250000, previousPeriod: 200000, indent: 1 },
+    { code: '88', description: t.balanceSheetUi.netResult, currentPeriod: netProfit, previousPeriod: 150000, indent: 1 },
   ];
 
   const totalEquity = 1000000 + 100000 + 250000 + netProfit;
   const prevTotalEquity = 1000000 + 80000 + 200000 + 150000;
 
   liabilitiesAndEquity.push(
-    { code: '', description: 'Total do Capital Próprio', currentPeriod: totalEquity, previousPeriod: prevTotalEquity, isSubtotal: true },
+    { code: '', description: t.balanceSheetUi.totalEquity, currentPeriod: totalEquity, previousPeriod: prevTotalEquity, isSubtotal: true },
     
-    { code: '', description: 'Passivo Não Corrente', currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
-    { code: '25', description: 'Empréstimos Obtidos', currentPeriod: 200000, previousPeriod: 250000, indent: 1 },
-    { code: '', description: 'Total Passivo Não Corrente', currentPeriod: 200000, previousPeriod: 250000, isSubtotal: true },
+    { code: '', description: t.balanceSheetUi.nonCurrentLiabilities, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
+    { code: '25', description: t.balanceSheetUi.borrowings, currentPeriod: 200000, previousPeriod: 250000, indent: 1 },
+    { code: '', description: t.balanceSheetUi.totalNonCurrentLiabilities, currentPeriod: 200000, previousPeriod: 250000, isSubtotal: true },
     
-    { code: '', description: 'Passivo Corrente', currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
-    { code: '22', description: 'Fornecedores', currentPeriod: totalAssets - totalEquity - 200000 - 50000, previousPeriod: 300000, indent: 1 },
-    { code: '24', description: 'Estado e Outros Entes Públicos', currentPeriod: 50000, previousPeriod: 40000, indent: 1 }
+    { code: '', description: t.balanceSheetUi.currentLiabilities, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
+    { code: '22', description: t.balanceSheetUi.suppliers, currentPeriod: totalAssets - totalEquity - 200000 - 50000, previousPeriod: 300000, indent: 1 },
+    { code: '24', description: t.balanceSheetUi.stateAndPublicEntities, currentPeriod: 50000, previousPeriod: 40000, indent: 1 }
   );
 
   const totalCurrentLiabilities = totalAssets - totalEquity - 200000;
@@ -94,9 +97,9 @@ export default function BalanceSheetReport() {
   const prevTotalLiabilities = 250000 + prevCurrentLiabilities;
 
   liabilitiesAndEquity.push(
-    { code: '', description: 'Total Passivo Corrente', currentPeriod: totalCurrentLiabilities, previousPeriod: prevCurrentLiabilities, isSubtotal: true },
-    { code: '', description: 'Total do Passivo', currentPeriod: totalLiabilities, previousPeriod: prevTotalLiabilities, isSubtotal: true },
-    { code: '', description: 'TOTAL DO CAPITAL PRÓPRIO E PASSIVO', currentPeriod: totalAssets, previousPeriod: prevTotalAssets, isTotal: true }
+    { code: '', description: t.balanceSheetUi.totalCurrentLiabilities, currentPeriod: totalCurrentLiabilities, previousPeriod: prevCurrentLiabilities, isSubtotal: true },
+    { code: '', description: t.balanceSheetUi.totalLiabilities, currentPeriod: totalLiabilities, previousPeriod: prevTotalLiabilities, isSubtotal: true },
+    { code: '', description: t.balanceSheetUi.totalEquityAndLiabilities, currentPeriod: totalAssets, previousPeriod: prevTotalAssets, isTotal: true }
   );
 
   const handlePrint = () => {
@@ -145,13 +148,13 @@ export default function BalanceSheetReport() {
         <CardHeader className="py-3">
           <CardTitle className="text-lg flex items-center gap-2">
             <Scale className="w-5 h-5" />
-            Balanço Patrimonial
+            {t.balanceSheetUi.title}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-4 items-end">
             <div className="space-y-1">
-              <Label className="text-xs">Data de Referência</Label>
+              <Label className="text-xs">{t.balanceSheetUi.referenceDate}</Label>
               <Input
                 type="date"
                 value={reportDate}
@@ -162,7 +165,7 @@ export default function BalanceSheetReport() {
             <div className="flex gap-2 ml-auto">
               <Button variant="outline" size="sm" onClick={handlePrint}>
                 <Printer className="w-4 h-4 mr-2" />
-                Imprimir
+                {t.reportsUi.print}
               </Button>
               <Button variant="outline" size="sm">
                 <FileSpreadsheet className="w-4 h-4 mr-2" />
@@ -177,10 +180,10 @@ export default function BalanceSheetReport() {
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
-            <CardTitle>Balanço em {new Date(reportDate).toLocaleDateString('pt-AO')}</CardTitle>
+            <CardTitle>{t.balanceSheetUi.asOf.replace('{date}', new Date(reportDate).toLocaleDateString(locale))}</CardTitle>
             <div className="flex gap-8 text-sm font-medium">
-              <span>Período Actual</span>
-              <span className="text-muted-foreground">Período Anterior</span>
+              <span>{t.balanceSheetUi.currentPeriod}</span>
+              <span className="text-muted-foreground">{t.balanceSheetUi.previousPeriod}</span>
             </div>
           </div>
         </CardHeader>
@@ -199,7 +202,7 @@ export default function BalanceSheetReport() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Liquidez Corrente</p>
+            <p className="text-sm text-muted-foreground">{t.balanceSheetUi.currentRatio}</p>
             <p className="text-2xl font-bold text-blue-600">
               {totalCurrentLiabilities > 0 ? (totalCurrentAssets / totalCurrentLiabilities).toFixed(2) : '-'}
             </p>
@@ -207,7 +210,7 @@ export default function BalanceSheetReport() {
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Autonomia Financeira</p>
+            <p className="text-sm text-muted-foreground">{t.balanceSheetUi.financialAutonomy}</p>
             <p className="text-2xl font-bold text-green-600">
               {totalAssets > 0 ? ((totalEquity / totalAssets) * 100).toFixed(1) : 0}%
             </p>
@@ -215,7 +218,7 @@ export default function BalanceSheetReport() {
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Endividamento</p>
+            <p className="text-sm text-muted-foreground">{t.balanceSheetUi.debtRatio}</p>
             <p className="text-2xl font-bold text-orange-600">
               {totalAssets > 0 ? ((totalLiabilities / totalAssets) * 100).toFixed(1) : 0}%
             </p>
@@ -223,7 +226,7 @@ export default function BalanceSheetReport() {
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Fundo de Maneio</p>
+            <p className="text-sm text-muted-foreground">{t.balanceSheetUi.workingCapital}</p>
             <p className={`text-2xl font-bold ${totalCurrentAssets - totalCurrentLiabilities >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {formatMoney(totalCurrentAssets - totalCurrentLiabilities)} Kz
             </p>

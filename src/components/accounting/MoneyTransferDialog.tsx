@@ -23,6 +23,7 @@ import { ArrowRight, Banknote, Building2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useAuth } from '@/hooks/useERP';
+import { useTranslation } from '@/i18n';
 import {
   getCaixas,
   getBankAccounts,
@@ -53,6 +54,8 @@ export function MoneyTransferDialog({
 }: MoneyTransferDialogProps) {
   const { currentBranch } = useBranchContext();
   const { user } = useAuth();
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
   const [caixas, setCaixas] = useState<Caixa[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
@@ -157,8 +160,8 @@ export function MoneyTransferDialog({
       );
       
       if (result.success && result.transfer) {
-        toast.success('Transferência Concluída', {
-          description: `${result.transfer.transferNumber}: ${amountValue.toLocaleString('pt-AO')} Kz`,
+        toast.success(t.moneyTransferUi.doneTitle, {
+          description: `${result.transfer.transferNumber}: ${amountValue.toLocaleString(locale)} Kz`,
           icon: '💸',
         });
         
@@ -172,13 +175,13 @@ export function MoneyTransferDialog({
         onTransferComplete?.();
         onOpenChange(false);
       } else {
-        toast.error('Erro na Transferência', {
-          description: result.error || 'Não foi possível completar a transferência',
+        toast.error(t.moneyTransferUi.errorTitle, {
+          description: result.error || t.moneyTransferUi.errorDefault,
         });
       }
     } catch (error) {
       console.error('Transfer error:', error);
-      toast.error('Erro na Transferência');
+      toast.error(t.moneyTransferUi.errorTitle);
     } finally {
       setIsSubmitting(false);
     }
@@ -194,10 +197,10 @@ export function MoneyTransferDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ArrowRight className="w-5 h-5" />
-            Transferência entre Contas
+            {t.moneyTransferUi.title}
           </DialogTitle>
           <DialogDescription>
-            Débito/Crédito - Sistema de partida dobrada
+            {t.moneyTransferUi.description}
           </DialogDescription>
         </DialogHeader>
 
@@ -206,14 +209,14 @@ export function MoneyTransferDialog({
           <div className="space-y-3 p-4 bg-red-500/5 border border-red-500/20 rounded-lg">
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/30">
-                CRÉDITO
+                {t.moneyTransferUi.creditBadge}
               </Badge>
-              <span className="text-sm text-muted-foreground">Origem (sai dinheiro)</span>
+              <span className="text-sm text-muted-foreground">{t.moneyTransferUi.sourceHint}</span>
             </div>
             
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
-                <Label>Tipo</Label>
+                <Label>{t.moneyTransferUi.type}</Label>
                 <Select 
                   value={sourceType} 
                   onValueChange={(v) => { 
@@ -229,13 +232,13 @@ export function MoneyTransferDialog({
                     <SelectItem value="caixa">
                       <div className="flex items-center gap-2">
                         <Banknote className="w-4 h-4" />
-                        Caixa
+                        {t.moneyTransferUi.cash}
                       </div>
                     </SelectItem>
                     <SelectItem value="bank">
                       <div className="flex items-center gap-2">
                         <Building2 className="w-4 h-4" />
-                        Banco
+                        {t.moneyTransferUi.bank}
                       </div>
                     </SelectItem>
                   </SelectContent>
@@ -243,10 +246,10 @@ export function MoneyTransferDialog({
               </div>
               
               <div className="space-y-2">
-                <Label>Conta</Label>
+                <Label>{t.moneyTransferUi.account}</Label>
                 <Select value={sourceId} onValueChange={(v) => { setSourceId(v); resetDestination(); }}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar..." />
+                    <SelectValue placeholder={t.moneyTransferUi.select} />
                   </SelectTrigger>
                   <SelectContent>
                     {getSourceOptions().map(option => (
@@ -254,7 +257,7 @@ export function MoneyTransferDialog({
                         <div className="flex flex-col">
                           <span>{option.name}</span>
                           <span className="text-xs text-muted-foreground">
-                            {option.balance.toLocaleString('pt-AO')} Kz
+                            {option.balance.toLocaleString(locale)} Kz
                           </span>
                         </div>
                       </SelectItem>
@@ -266,7 +269,8 @@ export function MoneyTransferDialog({
             
             {selectedSource && (
               <div className="text-sm">
-                Saldo disponível: <strong className="text-red-600">{selectedSource.balance.toLocaleString('pt-AO')} Kz</strong>
+                {t.moneyTransferUi.availableBalance}{' '}
+                <strong className="text-red-600">{selectedSource.balance.toLocaleString(locale)} Kz</strong>
               </div>
             )}
           </div>
@@ -275,7 +279,7 @@ export function MoneyTransferDialog({
           <div className="flex justify-center">
             <div className="flex items-center gap-2 text-muted-foreground">
               <ArrowRight className="w-5 h-5" />
-              <span className="text-sm font-medium">TRANSFERIR</span>
+              <span className="text-sm font-medium">{t.moneyTransferUi.transferVerb}</span>
               <ArrowRight className="w-5 h-5" />
             </div>
           </div>
@@ -284,14 +288,14 @@ export function MoneyTransferDialog({
           <div className="space-y-3 p-4 bg-green-500/5 border border-green-500/20 rounded-lg">
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/30">
-                DÉBITO
+                {t.moneyTransferUi.debitBadge}
               </Badge>
-              <span className="text-sm text-muted-foreground">Destino (entra dinheiro)</span>
+              <span className="text-sm text-muted-foreground">{t.moneyTransferUi.destinationHint}</span>
             </div>
             
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
-                <Label>Tipo</Label>
+                <Label>{t.moneyTransferUi.type}</Label>
                 <Select 
                   value={destinationType} 
                   onValueChange={(v) => { 
@@ -306,13 +310,13 @@ export function MoneyTransferDialog({
                     <SelectItem value="caixa">
                       <div className="flex items-center gap-2">
                         <Banknote className="w-4 h-4" />
-                        Caixa
+                        {t.moneyTransferUi.cash}
                       </div>
                     </SelectItem>
                     <SelectItem value="bank">
                       <div className="flex items-center gap-2">
                         <Building2 className="w-4 h-4" />
-                        Banco
+                        {t.moneyTransferUi.bank}
                       </div>
                     </SelectItem>
                   </SelectContent>
@@ -320,10 +324,10 @@ export function MoneyTransferDialog({
               </div>
               
               <div className="space-y-2">
-                <Label>Conta</Label>
+                <Label>{t.moneyTransferUi.account}</Label>
                 <Select value={destinationId} onValueChange={setDestinationId}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar..." />
+                    <SelectValue placeholder={t.moneyTransferUi.select} />
                   </SelectTrigger>
                   <SelectContent>
                     {getDestinationOptions().map(option => (
@@ -331,7 +335,7 @@ export function MoneyTransferDialog({
                         <div className="flex flex-col">
                           <span>{option.name}</span>
                           <span className="text-xs text-muted-foreground">
-                            {option.balance.toLocaleString('pt-AO')} Kz
+                            {option.balance.toLocaleString(locale)} Kz
                           </span>
                         </div>
                       </SelectItem>
@@ -343,10 +347,11 @@ export function MoneyTransferDialog({
             
             {selectedDestination && (
               <div className="text-sm">
-                Saldo actual: <strong className="text-green-600">{selectedDestination.balance.toLocaleString('pt-AO')} Kz</strong>
+                {t.moneyTransferUi.currentBalance}{' '}
+                <strong className="text-green-600">{selectedDestination.balance.toLocaleString(locale)} Kz</strong>
                 {amountValue > 0 && (
                   <span className="text-muted-foreground">
-                    {' → '}{(selectedDestination.balance + amountValue).toLocaleString('pt-AO')} Kz
+                    {' → '}{(selectedDestination.balance + amountValue).toLocaleString(locale)} Kz
                   </span>
                 )}
               </div>
@@ -357,7 +362,7 @@ export function MoneyTransferDialog({
 
           {/* Amount */}
           <div className="space-y-2">
-            <Label>Valor a Transferir (Kz)</Label>
+            <Label>{t.moneyTransferUi.amountLabel}</Label>
             <Input
               type="number"
               value={amount}
@@ -368,28 +373,28 @@ export function MoneyTransferDialog({
             {selectedSource && amountValue > selectedSource.balance && (
               <div className="flex items-center gap-2 text-sm text-red-600">
                 <AlertCircle className="w-4 h-4" />
-                Saldo insuficiente
+                {t.moneyTransferUi.insufficientBalance}
               </div>
             )}
           </div>
 
           {/* Reason */}
           <div className="space-y-2">
-            <Label>Motivo da Transferência *</Label>
+            <Label>{t.moneyTransferUi.reasonLabel}</Label>
             <Input
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="Ex: Depósito bancário, Reforço de caixa..."
+              placeholder={t.moneyTransferUi.reasonPlaceholder}
             />
           </div>
 
           {/* Notes */}
           <div className="space-y-2">
-            <Label>Notas (opcional)</Label>
+            <Label>{t.moneyTransferUi.notesLabel}</Label>
             <Textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Observações adicionais..."
+              placeholder={t.moneyTransferUi.notesPlaceholder}
               rows={2}
             />
           </div>
@@ -397,14 +402,14 @@ export function MoneyTransferDialog({
           {/* Summary */}
           {isValid && selectedSource && selectedDestination && (
             <div className="p-3 bg-muted/50 rounded-lg text-sm space-y-1">
-              <div className="font-medium">Resumo da Transferência:</div>
+              <div className="font-medium">{t.moneyTransferUi.summaryTitle}</div>
               <div className="text-muted-foreground">
                 <span className="text-red-600">{selectedSource.name}</span>
                 {' → '}
                 <span className="text-green-600">{selectedDestination.name}</span>
               </div>
               <div className="text-lg font-bold">
-                {amountValue.toLocaleString('pt-AO')} Kz
+                {amountValue.toLocaleString(locale)} Kz
               </div>
             </div>
           )}
@@ -415,7 +420,7 @@ export function MoneyTransferDialog({
             onClick={handleSubmit}
             disabled={!isValid || isSubmitting}
           >
-            {isSubmitting ? 'A processar...' : 'Confirmar Transferência'}
+          {isSubmitting ? t.moneyTransferUi.processing : t.moneyTransferUi.confirm}
           </Button>
         </div>
       </DialogContent>

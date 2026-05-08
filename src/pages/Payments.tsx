@@ -94,12 +94,13 @@ function usePaymentsData() {
 }
 
 export default function Payments() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const { clients } = useClients();
   const { suppliers } = useSuppliers();
   const { payments, openItems, loading, refresh, createPayment, loadOpenItems } = usePaymentsData();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
   const [activeTab, setActiveTab] = useState<'receipts' | 'payments' | 'open-items'>('receipts');
   const [searchTerm, setSearchTerm] = useState('');
@@ -115,7 +116,7 @@ export default function Payments() {
   const [selectedOpenItems, setSelectedOpenItems] = useState<Set<string>>(new Set());
 
   const entities = paymentType === 'receipt' ? clients : suppliers;
-  const entityLabel = paymentType === 'receipt' ? 'Cliente' : 'Fornecedor';
+  const entityLabel = paymentType === 'receipt' ? t.paymentsUi.customer : t.paymentsUi.supplier;
 
   const entityOpenItems = useMemo(() => {
     if (!entityId) return [];
@@ -156,7 +157,7 @@ export default function Payments() {
 
   const handleCreate = async () => {
     if (!entityId || !amount || Number(amount) <= 0) {
-      toast.error('Preencha todos os campos obrigatórios');
+      toast.error(t.paymentsUi.requiredFields);
       return;
     }
 
@@ -177,11 +178,11 @@ export default function Payments() {
         notes,
         invoiceIds: selected.map(oi => oi.documentId),
       });
-      toast.success(`${paymentType === 'receipt' ? 'Recibo' : 'Pagamento'} registado com sucesso`);
+      toast.success(paymentType === 'receipt' ? t.paymentsUi.receiptRecorded : t.paymentsUi.paymentRecorded);
       setShowNewDialog(false);
       resetForm();
     } catch (err: any) {
-      toast.error(err.message || 'Erro ao registar pagamento');
+      toast.error(err.message || t.paymentsUi.recordFailed);
       console.error('[PAYMENTS] Create failed:', err);
     }
   };
@@ -206,8 +207,8 @@ export default function Payments() {
             <div className="flex items-center gap-2">
               <ArrowDownCircle className="w-5 h-5 text-green-500" />
               <div>
-                <p className="text-xs text-muted-foreground">Recebimentos</p>
-                <p className="text-lg font-bold">{totalReceipts.toLocaleString('pt-AO')} Kz</p>
+                <p className="text-xs text-muted-foreground">{t.paymentsUi.receipts}</p>
+                <p className="text-lg font-bold">{totalReceipts.toLocaleString(locale)} Kz</p>
               </div>
             </div>
           </CardContent>
@@ -217,8 +218,8 @@ export default function Payments() {
             <div className="flex items-center gap-2">
               <ArrowUpCircle className="w-5 h-5 text-red-500" />
               <div>
-                <p className="text-xs text-muted-foreground">Pagamentos</p>
-                <p className="text-lg font-bold">{totalPayments.toLocaleString('pt-AO')} Kz</p>
+                <p className="text-xs text-muted-foreground">{t.paymentsUi.payments}</p>
+                <p className="text-lg font-bold">{totalPayments.toLocaleString(locale)} Kz</p>
               </div>
             </div>
           </CardContent>
@@ -228,8 +229,8 @@ export default function Payments() {
             <div className="flex items-center gap-2">
               <FileText className="w-5 h-5 text-orange-500" />
               <div>
-                <p className="text-xs text-muted-foreground">A Receber</p>
-                <p className="text-lg font-bold">{totalOpenReceivable.toLocaleString('pt-AO')} Kz</p>
+                <p className="text-xs text-muted-foreground">{t.dashboardUi.kpis.accountsReceivable}</p>
+                <p className="text-lg font-bold">{totalOpenReceivable.toLocaleString(locale)} Kz</p>
               </div>
             </div>
           </CardContent>
@@ -239,8 +240,8 @@ export default function Payments() {
             <div className="flex items-center gap-2">
               <FileText className="w-5 h-5 text-blue-500" />
               <div>
-                <p className="text-xs text-muted-foreground">A Pagar</p>
-                <p className="text-lg font-bold">{totalOpenPayable.toLocaleString('pt-AO')} Kz</p>
+                <p className="text-xs text-muted-foreground">{t.dashboardUi.kpis.accountsPayable}</p>
+                <p className="text-lg font-bold">{totalOpenPayable.toLocaleString(locale)} Kz</p>
               </div>
             </div>
           </CardContent>
@@ -250,15 +251,15 @@ export default function Payments() {
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b">
         <Button size="sm" className="gap-1" onClick={() => openNewDialog('receipt')}>
-          <ArrowDownCircle className="w-4 h-4" /> Novo Recibo
+          <ArrowDownCircle className="w-4 h-4" /> {t.paymentsUi.newReceipt}
         </Button>
         <Button size="sm" variant="outline" className="gap-1" onClick={() => openNewDialog('payment')}>
-          <ArrowUpCircle className="w-4 h-4" /> Novo Pagamento
+          <ArrowUpCircle className="w-4 h-4" /> {t.paymentsUi.newPayment}
         </Button>
         <div className="flex-1" />
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Pesquisar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-8 h-8 w-48 text-sm" />
+          <Input placeholder={t.paymentsUi.searchPlaceholder} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-8 h-8 w-48 text-sm" />
         </div>
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={refresh}>
           <RefreshCw className="w-4 h-4" />
@@ -269,13 +270,13 @@ export default function Payments() {
       <Tabs value={activeTab} onValueChange={v => setActiveTab(v as any)} className="flex-1 flex flex-col">
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0">
           <TabsTrigger value="receipts" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2">
-            Recibos ({payments.filter(p => p.paymentType === 'receipt').length})
+            {t.paymentsUi.receipts} ({payments.filter(p => p.paymentType === 'receipt').length})
           </TabsTrigger>
           <TabsTrigger value="payments" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2">
-            Pagamentos ({payments.filter(p => p.paymentType === 'payment').length})
+            {t.paymentsUi.payments} ({payments.filter(p => p.paymentType === 'payment').length})
           </TabsTrigger>
           <TabsTrigger value="open-items" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2">
-            Itens Abertos ({openItems.filter(oi => oi.status !== 'cleared').length})
+            {t.paymentsUi.openItems} ({openItems.filter(oi => oi.status !== 'cleared').length})
           </TabsTrigger>
         </TabsList>
 
@@ -286,25 +287,33 @@ export default function Payments() {
               <thead className="bg-muted/60 border-b sticky top-0">
                 <tr>
                   <th className="px-3 py-2 text-left font-semibold">Nº</th>
-                  <th className="px-3 py-2 text-left font-semibold">Data</th>
-                  <th className="px-3 py-2 text-left font-semibold">{activeTab === 'receipts' ? 'Cliente' : 'Fornecedor'}</th>
-                  <th className="px-3 py-2 text-left font-semibold">Método</th>
-                  <th className="px-3 py-2 text-right font-semibold">Valor</th>
-                  <th className="px-3 py-2 text-left font-semibold">Referência</th>
+                  <th className="px-3 py-2 text-left font-semibold">{t.common.date}</th>
+                  <th className="px-3 py-2 text-left font-semibold">{activeTab === 'receipts' ? t.paymentsUi.customer : t.paymentsUi.supplier}</th>
+                  <th className="px-3 py-2 text-left font-semibold">{t.paymentsUi.method}</th>
+                  <th className="px-3 py-2 text-right font-semibold">{t.paymentsUi.amount}</th>
+                  <th className="px-3 py-2 text-left font-semibold">{t.paymentsUi.reference}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
                 {filteredPayments.map(p => (
                   <tr key={p.id} className="hover:bg-accent/50 transition-colors">
                     <td className="px-3 py-2 font-mono text-xs">{p.paymentNumber}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{new Date(p.createdAt).toLocaleDateString('pt-AO')}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{new Date(p.createdAt).toLocaleDateString(locale)}</td>
                     <td className="px-3 py-2">{p.entityName}</td>
                     <td className="px-3 py-2">
                       <Badge variant="outline" className="text-xs">
-                        {p.paymentMethod === 'cash' ? 'Dinheiro' : p.paymentMethod === 'card' ? 'Cartão' : p.paymentMethod === 'transfer' ? 'Transf.' : p.paymentMethod === 'cheque' ? 'Cheque' : p.paymentMethod}
+                        {p.paymentMethod === 'cash'
+                          ? t.paymentsUi.methods.cash
+                          : p.paymentMethod === 'card'
+                            ? t.paymentsUi.methods.card
+                            : p.paymentMethod === 'transfer'
+                              ? t.paymentsUi.methods.shortTransfer
+                              : p.paymentMethod === 'cheque'
+                                ? t.paymentsUi.methods.cheque
+                                : p.paymentMethod}
                       </Badge>
                     </td>
-                    <td className="px-3 py-2 text-right font-mono font-medium">{p.amount.toLocaleString('pt-AO')} Kz</td>
+                    <td className="px-3 py-2 text-right font-mono font-medium">{p.amount.toLocaleString(locale)} Kz</td>
                     <td className="px-3 py-2 text-muted-foreground text-xs">{p.reference || '—'}</td>
                   </tr>
                 ))}
@@ -313,7 +322,7 @@ export default function Payments() {
             {filteredPayments.length === 0 && (
               <div className="text-center py-12 text-muted-foreground">
                 <Receipt className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                <p>Nenhum {activeTab === 'receipts' ? 'recibo' : 'pagamento'} encontrado</p>
+                <p>{t.paymentsUi.noneFound.replace('{kind}', activeTab === 'receipts' ? t.documents.receipt.toLowerCase() : t.documents.payment.toLowerCase())}</p>
               </div>
             )}
           </TabsContent>
@@ -324,13 +333,13 @@ export default function Payments() {
           <table className="w-full text-sm">
             <thead className="bg-muted/60 border-b sticky top-0">
               <tr>
-                <th className="px-3 py-2 text-left font-semibold">Tipo</th>
-                <th className="px-3 py-2 text-left font-semibold">Documento</th>
-                <th className="px-3 py-2 text-left font-semibold">Data</th>
-                <th className="px-3 py-2 text-left font-semibold">Vencimento</th>
-                <th className="px-3 py-2 text-right font-semibold">Original</th>
-                <th className="px-3 py-2 text-right font-semibold">Em Aberto</th>
-                <th className="px-3 py-2 text-center font-semibold">Estado</th>
+                <th className="px-3 py-2 text-left font-semibold">{t.paymentsUi.type}</th>
+                <th className="px-3 py-2 text-left font-semibold">{t.paymentsUi.document}</th>
+                <th className="px-3 py-2 text-left font-semibold">{t.common.date}</th>
+                <th className="px-3 py-2 text-left font-semibold">{t.paymentsUi.dueDate}</th>
+                <th className="px-3 py-2 text-right font-semibold">{t.paymentsUi.original}</th>
+                <th className="px-3 py-2 text-right font-semibold">{t.paymentsUi.openAmount}</th>
+                <th className="px-3 py-2 text-center font-semibold">{t.paymentsUi.state}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -338,17 +347,17 @@ export default function Payments() {
                 <tr key={oi.id} className="hover:bg-accent/50">
                   <td className="px-3 py-2">
                     <Badge variant={oi.entityType === 'customer' ? 'default' : 'secondary'} className="text-xs">
-                      {oi.entityType === 'customer' ? 'Cliente' : 'Fornecedor'}
+                      {oi.entityType === 'customer' ? t.paymentsUi.customer : t.paymentsUi.supplier}
                     </Badge>
                   </td>
                   <td className="px-3 py-2 font-mono text-xs">{oi.documentNumber}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{new Date(oi.documentDate).toLocaleDateString('pt-AO')}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{oi.dueDate ? new Date(oi.dueDate).toLocaleDateString('pt-AO') : '—'}</td>
-                  <td className="px-3 py-2 text-right font-mono">{oi.originalAmount.toLocaleString('pt-AO')} Kz</td>
-                  <td className="px-3 py-2 text-right font-mono font-medium">{oi.remainingAmount.toLocaleString('pt-AO')} Kz</td>
+                  <td className="px-3 py-2 text-muted-foreground">{new Date(oi.documentDate).toLocaleDateString(locale)}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{oi.dueDate ? new Date(oi.dueDate).toLocaleDateString(locale) : '—'}</td>
+                  <td className="px-3 py-2 text-right font-mono">{oi.originalAmount.toLocaleString(locale)} Kz</td>
+                  <td className="px-3 py-2 text-right font-mono font-medium">{oi.remainingAmount.toLocaleString(locale)} Kz</td>
                   <td className="px-3 py-2 text-center">
                     <Badge variant={oi.status === 'open' ? 'destructive' : 'outline'} className="text-xs">
-                      {oi.status === 'open' ? 'Aberto' : 'Parcial'}
+                      {oi.status === 'open' ? t.paymentsUi.open : t.documentStatus.partial}
                     </Badge>
                   </td>
                 </tr>
@@ -358,7 +367,7 @@ export default function Payments() {
           {openItems.filter(oi => oi.status !== 'cleared').length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>Nenhum item em aberto</p>
+              <p>{t.paymentsUi.noneOpenItems}</p>
             </div>
           )}
         </TabsContent>
@@ -370,7 +379,7 @@ export default function Payments() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {paymentType === 'receipt' ? <ArrowDownCircle className="w-5 h-5 text-green-500" /> : <ArrowUpCircle className="w-5 h-5 text-red-500" />}
-              {paymentType === 'receipt' ? 'Novo Recibo (Recebimento)' : 'Novo Pagamento (a Fornecedor)'}
+              {paymentType === 'receipt' ? t.paymentsUi.newReceiptTitle : t.paymentsUi.newPaymentTitle}
             </DialogTitle>
           </DialogHeader>
 
@@ -391,15 +400,15 @@ export default function Payments() {
             {/* Open Items for this entity */}
             {entityId && entityOpenItems.length > 0 && (
               <div>
-                <Label className="mb-2 block">Documentos em Aberto (seleccione para compensar)</Label>
+                <Label className="mb-2 block">{t.paymentsUi.openDocsToOffset}</Label>
                 <div className="border rounded-md max-h-48 overflow-y-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-muted/60 sticky top-0">
                       <tr>
                         <th className="px-2 py-1.5 w-8"></th>
-                        <th className="px-2 py-1.5 text-left">Documento</th>
-                        <th className="px-2 py-1.5 text-left">Data</th>
-                        <th className="px-2 py-1.5 text-right">Em Aberto</th>
+                        <th className="px-2 py-1.5 text-left">{t.paymentsUi.document}</th>
+                        <th className="px-2 py-1.5 text-left">{t.common.date}</th>
+                        <th className="px-2 py-1.5 text-right">{t.paymentsUi.openAmount}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -416,8 +425,8 @@ export default function Payments() {
                             />
                           </td>
                           <td className="px-2 py-1.5 font-mono">{oi.documentNumber}</td>
-                          <td className="px-2 py-1.5 text-muted-foreground">{new Date(oi.documentDate).toLocaleDateString('pt-AO')}</td>
-                          <td className="px-2 py-1.5 text-right font-mono">{oi.remainingAmount.toLocaleString('pt-AO')} Kz</td>
+                          <td className="px-2 py-1.5 text-muted-foreground">{new Date(oi.documentDate).toLocaleDateString(locale)}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{oi.remainingAmount.toLocaleString(locale)} Kz</td>
                         </tr>
                       ))}
                     </tbody>
@@ -425,7 +434,7 @@ export default function Payments() {
                 </div>
                 {selectedOpenItems.size > 0 && (
                   <p className="text-xs text-muted-foreground mt-1">
-                    Total seleccionado: <strong>{selectedTotal.toLocaleString('pt-AO')} Kz</strong>
+                    {t.paymentsUi.totalSelected} <strong>{selectedTotal.toLocaleString(locale)} Kz</strong>
                   </p>
                 )}
               </div>
@@ -434,14 +443,14 @@ export default function Payments() {
             {/* Payment Details */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Método de Pagamento</Label>
+                <Label>{t.paymentsUi.paymentMethod}</Label>
                 <Select value={paymentMethod} onValueChange={v => setPaymentMethod(v as any)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="cash">Dinheiro</SelectItem>
-                    <SelectItem value="card">Cartão</SelectItem>
-                    <SelectItem value="transfer">Transferência Bancária</SelectItem>
-                    <SelectItem value="cheque">Cheque</SelectItem>
+                    <SelectItem value="cash">{t.paymentsUi.methods.cash}</SelectItem>
+                    <SelectItem value="card">{t.paymentsUi.methods.card}</SelectItem>
+                    <SelectItem value="transfer">{t.paymentsUi.bankTransfer}</SelectItem>
+                    <SelectItem value="cheque">{t.paymentsUi.methods.cheque}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -454,20 +463,20 @@ export default function Payments() {
             </div>
 
             <div>
-              <Label>Referência (nº cheque, transferência, etc.)</Label>
-              <Input value={reference} onChange={e => setReference(e.target.value)} placeholder="Opcional" />
+              <Label>{t.paymentsUi.reference} ({t.paymentsUi.optional})</Label>
+              <Input value={reference} onChange={e => setReference(e.target.value)} placeholder={t.paymentsUi.optional} />
             </div>
 
             <div>
-              <Label>Notas</Label>
-              <Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Observações..." />
+              <Label>{t.common.notes}</Label>
+              <Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder={t.paymentsUi.notesPlaceholder} />
             </div>
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewDialog(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setShowNewDialog(false)}>{t.paymentsUi.cancel}</Button>
             <Button onClick={handleCreate}>
-              {paymentType === 'receipt' ? 'Registar Recibo' : 'Registar Pagamento'}
+              {paymentType === 'receipt' ? t.paymentsUi.registerReceipt : t.paymentsUi.registerPayment}
             </Button>
           </DialogFooter>
         </DialogContent>

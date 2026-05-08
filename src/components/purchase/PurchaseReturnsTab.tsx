@@ -25,6 +25,7 @@ import {
 import { processTransaction } from '@/lib/transactionEngine';
 import { saveDocument } from '@/lib/documentStorage';
 import type { ERPDocument } from '@/types/documents';
+import { useTranslation } from '@/i18n';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,20 +48,12 @@ import {
   Package,
 } from 'lucide-react';
 
-const RETURN_STATUS_BADGES: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-  pending: { label: 'Pendente', variant: 'secondary' },
-  approved: { label: 'Aprovado', variant: 'default' },
-  shipped: { label: 'Enviado', variant: 'outline' },
-  completed: { label: 'Concluído', variant: 'default' },
-  cancelled: { label: 'Anulado', variant: 'destructive' },
-};
-
-const REASON_LABELS: Record<string, string> = {
-  damaged: 'Danificado',
-  wrong_item: 'Produto Errado',
-  quality: 'Qualidade',
-  overstock: 'Excesso de Stock',
-  other: 'Outro',
+const RETURN_STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  pending: 'secondary',
+  approved: 'default',
+  shipped: 'outline',
+  completed: 'default',
+  cancelled: 'destructive',
 };
 
 interface ReturnLineForm {
@@ -81,10 +74,34 @@ interface PurchaseReturnsTabProps {
 
 export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabProps) {
   const { toast } = useToast();
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { currentBranch, branches } = useBranchContext();
   const { user } = useAuth();
   const openCreateRef = useRef(openCreateSignal);
   const branchId = currentBranch?.id;
+
+  const statusLabel = useCallback((status: string) => {
+    switch (status) {
+      case 'pending': return t.purchaseReturnsUi.statusPending;
+      case 'approved': return t.purchaseReturnsUi.statusApproved;
+      case 'shipped': return t.purchaseReturnsUi.statusShipped;
+      case 'completed': return t.purchaseReturnsUi.statusCompleted;
+      case 'cancelled': return t.purchaseReturnsUi.statusCancelled;
+      default: return status;
+    }
+  }, [t]);
+
+  const reasonLabel = useCallback((reason: string) => {
+    switch (reason) {
+      case 'damaged': return t.purchaseReturnsUi.reasonDamaged;
+      case 'wrong_item': return t.purchaseReturnsUi.reasonWrongItem;
+      case 'quality': return t.purchaseReturnsUi.reasonQuality;
+      case 'overstock': return t.purchaseReturnsUi.reasonOverstock;
+      case 'other': return t.purchaseReturnsUi.reasonOther;
+      default: return reason;
+    }
+  }, [t]);
 
   // Data
   const [returns, setReturns] = useState<SupplierReturn[]>([]);
@@ -178,7 +195,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
     const invoiceBranchId = selectedInvoice.branchId;
     const invoiceBranchName = selectedInvoice.branchName || selectedBranch?.name || '';
     if (!selectedBranch) {
-      toast({ title: 'Erro', description: 'A filial da fatura de compra não foi encontrada', variant: 'destructive' });
+      toast({ title: t.purchaseReturnsUi.errorTitle, description: t.purchaseReturnsUi.invoiceBranchNotFound, variant: 'destructive' });
       return;
     }
       const recalculatedLines = selectedInvoice.lines.map((invoiceLine) => {
@@ -209,15 +226,15 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
         }));
 
     if (selectedLines.length === 0) {
-      toast({ title: 'Erro', description: 'Seleccione pelo menos uma linha', variant: 'destructive' });
+      toast({ title: t.purchaseReturnsUi.errorTitle, description: t.purchaseReturnsUi.selectAtLeastOneLine, variant: 'destructive' });
       return;
     }
 
     const exceededLine = selectedLines.find(line => line.quantity > line.maxQty);
     if (exceededLine) {
       toast({
-        title: 'Erro',
-        description: `A quantidade da linha ${exceededLine.sku} excede o saldo devolvível.`,
+        title: t.purchaseReturnsUi.errorTitle,
+        description: t.purchaseReturnsUi.qtyExceedsBalance.replace('{sku}', exceededLine.sku),
         variant: 'destructive',
       });
       return;
@@ -385,7 +402,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
             },
             ...(taxAmount > 0 ? [{
               accountCode: ivaAccountCode,
-              accountName: 'IVA Dedutível',
+              accountName: t.purchaseReturnsUi.taxDeductible,
               debit: 0,
               credit: taxAmount,
               note: `Devolução ${returnNumber} — IVA`,
@@ -430,12 +447,12 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
       await saveSupplierReturn(returnDoc);
       await saveDocument(debitNoteDoc);
 
-      toast({ title: 'Devolução criada', description: `${returnNumber} — ${selectedLines.length} linha(s)` });
+      toast({ title: t.purchaseReturnsUi.returnCreated, description: `${returnNumber} — ${selectedLines.length} linha(s)` });
       setCreateOpen(false);
       resetForm();
       await loadData();
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message || 'Falha ao criar devolução', variant: 'destructive' });
+      toast({ title: t.purchaseReturnsUi.errorTitle, description: err.message || t.purchaseReturnsUi.returnCreateFailed, variant: 'destructive' });
     } finally {
       setSaving(false);
     }
@@ -456,7 +473,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
     ret.approvedBy = user?.name || 'Sistema';
     ret.approvedAt = new Date().toISOString();
     await saveSupplierReturn(ret);
-    toast({ title: 'Devolução aprovada' });
+    toast({ title: t.purchaseReturnsUi.returnApproved });
     await loadData();
   }, [user, loadData, toast]);
 
@@ -473,7 +490,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
           referenceType: 'adjustment',
           referenceId: ret.id,
           referenceNumber: ret.returnNumber,
-          notes: 'Cancelamento de devolução de compra',
+          notes: t.purchaseReturnsUi.cancelPurchaseReturnNotes,
           createdBy: user?.name || 'Sistema',
         });
       } catch {
@@ -482,7 +499,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
     }
     ret.status = 'cancelled';
     await saveSupplierReturn(ret);
-    toast({ title: 'Devolução anulada', description: 'Stock reposto' });
+    toast({ title: t.purchaseReturnsUi.returnVoided, description: t.purchaseReturnsUi.stockRestored });
     await loadData();
   }, [user, loadData, toast]);
 
@@ -491,11 +508,11 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
     ret.status = 'completed';
     ret.completedAt = new Date().toISOString();
     await saveSupplierReturn(ret);
-    toast({ title: 'Devolução concluída' });
+    toast({ title: t.purchaseReturnsUi.returnCompleted });
     await loadData();
   }, [loadData, toast]);
 
-  const fmtKz = (v: number) => new Intl.NumberFormat('pt-AO', { style: 'currency', currency: 'AOA', minimumFractionDigits: 2 }).format(v);
+  const fmtKz = (v: number) => new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 2 }).format(v);
 
   return (
     <div className="space-y-3">
@@ -503,23 +520,23 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
       <div className="flex flex-wrap gap-2 items-end">
         <div className="relative flex-1 max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Pesquisar devolução..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+          <Input placeholder={t.purchaseReturnsUi.searchPlaceholder} value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
         </div>
         <Select value={filterStatus} onValueChange={setFilterStatus}>
           <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Estado" />
+            <SelectValue placeholder={t.purchaseReturnsUi.statusPlaceholder} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Todos</SelectItem>
-            <SelectItem value="pending">Pendente</SelectItem>
-            <SelectItem value="approved">Aprovado</SelectItem>
-            <SelectItem value="shipped">Enviado</SelectItem>
-            <SelectItem value="completed">Concluído</SelectItem>
-            <SelectItem value="cancelled">Anulado</SelectItem>
+            <SelectItem value="all">{t.purchaseReturnsUi.all}</SelectItem>
+            <SelectItem value="pending">{t.purchaseReturnsUi.statusPending}</SelectItem>
+            <SelectItem value="approved">{t.purchaseReturnsUi.statusApproved}</SelectItem>
+            <SelectItem value="shipped">{t.purchaseReturnsUi.statusShipped}</SelectItem>
+            <SelectItem value="completed">{t.purchaseReturnsUi.statusCompleted}</SelectItem>
+            <SelectItem value="cancelled">{t.purchaseReturnsUi.statusCancelled}</SelectItem>
           </SelectContent>
         </Select>
         <Button className="gap-2 ml-auto" onClick={() => { resetForm(); setCreateOpen(true); }}>
-          <Plus className="h-4 w-4" /> Nova Devolução
+          <Plus className="h-4 w-4" /> {t.purchaseReturnsUi.newReturn}
         </Button>
       </div>
 
@@ -542,14 +559,14 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
             </TableHeader>
             <TableBody>
               {filteredReturns.map(ret => {
-                const statusBadge = RETURN_STATUS_BADGES[ret.status] || { label: ret.status, variant: 'outline' as const };
+                const statusBadge = { label: statusLabel(ret.status), variant: RETURN_STATUS_VARIANTS[ret.status] || ('outline' as const) };
                 return (
                   <TableRow key={ret.id} className="h-8 text-[11px]">
                     <TableCell className="font-mono font-medium">{ret.returnNumber}</TableCell>
                     <TableCell>{ret.supplierName}</TableCell>
                     <TableCell className="text-muted-foreground">{ret.branchName || '—'}</TableCell>
                     <TableCell className="font-mono text-muted-foreground">{ret.purchaseOrderNumber}</TableCell>
-                    <TableCell>{REASON_LABELS[ret.reason] || ret.reason}</TableCell>
+                    <TableCell>{reasonLabel(ret.reason)}</TableCell>
                     <TableCell className="text-right font-mono">{fmtKz(ret.total)}</TableCell>
                     <TableCell>
                       <Badge variant={statusBadge.variant} className="text-[9px]">{statusBadge.label}</Badge>
@@ -564,16 +581,16 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
                         </Button>
                         {ret.status === 'pending' && (
                           <>
-                            <Button variant="ghost" size="icon" className="h-6 w-6 text-primary" onClick={() => handleApprove(ret)} title="Aprovar">
+                            <Button variant="ghost" size="icon" className="h-6 w-6 text-primary" onClick={() => handleApprove(ret)} title={t.purchaseReturnsUi.approve}>
                               <CheckCircle className="h-3 w-3" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => handleCancel(ret)} title="Anular">
+                            <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => handleCancel(ret)} title={t.purchaseReturnsUi.void}>
                               <XCircle className="h-3 w-3" />
                             </Button>
                           </>
                         )}
                         {(ret.status === 'approved' || ret.status === 'shipped') && (
-                          <Button variant="ghost" size="icon" className="h-6 w-6 text-primary" onClick={() => handleComplete(ret)} title="Concluir">
+                          <Button variant="ghost" size="icon" className="h-6 w-6 text-primary" onClick={() => handleComplete(ret)} title={t.purchaseReturnsUi.complete}>
                             <CheckCircle className="h-3 w-3" />
                           </Button>
                         )}
@@ -586,7 +603,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
                 <TableRow>
                   <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
                     <RotateCcw className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    Nenhuma devolução encontrada
+                    {t.purchaseReturnsUi.returnsNoneFound}
                   </TableCell>
                 </TableRow>
               )}
@@ -600,7 +617,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <RotateCcw className="h-5 w-5" /> Nova Devolução de Compra
+              <RotateCcw className="h-5 w-5" /> {t.purchaseReturnsUi.createTitle}
             </DialogTitle>
           </DialogHeader>
 
@@ -609,11 +626,11 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
             <div className="grid grid-cols-1 gap-3 rounded-md border bg-muted/50 px-3 py-2 text-sm md:grid-cols-2">
               <div className="flex items-center gap-2">
                 <Package className="h-4 w-4 text-muted-foreground" />
-                <span className="text-muted-foreground">Filial:</span>
-                <span className="font-medium">{selectedInvoice?.branchName || currentBranch?.name || 'Selecione a fatura de compra'}</span>
+                <span className="text-muted-foreground">{t.purchaseReturnsUi.branchLabel}</span>
+                <span className="font-medium">{selectedInvoice?.branchName || currentBranch?.name || t.purchaseReturnsUi.selectPurchaseInvoicePrompt}</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">Conta fornecedor:</span>
+                <span className="text-muted-foreground">{t.purchaseReturnsUi.supplierAccountLabel}</span>
                 <span className="font-mono font-medium">{selectedInvoice?.supplierAccountCode || '—'}</span>
               </div>
             </div>
@@ -621,7 +638,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
             {/* Source invoice selection */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Fatura de Compra Origem *</Label>
+                <Label>{t.purchaseReturnsUi.sourceInvoiceLabel}</Label>
                 <Button
                   variant="outline"
                   className="w-full justify-start gap-2 mt-1"
@@ -631,33 +648,33 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
                   {selectedInvoice ? (
                     <span className="font-mono">{selectedInvoice.invoiceNumber} — {selectedInvoice.supplierName}</span>
                   ) : (
-                    <span className="text-muted-foreground">Seleccione uma fatura...</span>
+                    <span className="text-muted-foreground">{t.purchaseReturnsUi.selectInvoicePlaceholder}</span>
                   )}
                 </Button>
               </div>
               <div>
-                <Label>Motivo *</Label>
+                <Label>{t.purchaseReturnsUi.reasonLabel}</Label>
                 <Select value={reason} onValueChange={v => setReason(v as any)}>
                   <SelectTrigger className="mt-1">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="damaged">Danificado</SelectItem>
-                    <SelectItem value="wrong_item">Produto Errado</SelectItem>
-                    <SelectItem value="quality">Qualidade</SelectItem>
-                    <SelectItem value="overstock">Excesso de Stock</SelectItem>
-                    <SelectItem value="other">Outro</SelectItem>
+                    <SelectItem value="damaged">{t.purchaseReturnsUi.reasonDamaged}</SelectItem>
+                    <SelectItem value="wrong_item">{t.purchaseReturnsUi.reasonWrongItem}</SelectItem>
+                    <SelectItem value="quality">{t.purchaseReturnsUi.reasonQuality}</SelectItem>
+                    <SelectItem value="overstock">{t.purchaseReturnsUi.reasonOverstock}</SelectItem>
+                    <SelectItem value="other">{t.purchaseReturnsUi.reasonOther}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
 
             <div>
-              <Label>Descrição do Motivo *</Label>
+              <Label>{t.purchaseReturnsUi.reasonDescriptionLabel}</Label>
               <Input
                 value={reasonDescription}
                 onChange={e => setReasonDescription(e.target.value)}
-                placeholder="Descreva o motivo da devolução..."
+                placeholder={t.purchaseReturnsUi.reasonDescriptionPlaceholder}
                 className="mt-1"
               />
             </div>
@@ -665,7 +682,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
             {/* Lines from invoice */}
             {selectedInvoice && returnLines.length > 0 && (
               <div>
-                <Label className="mb-2 block">Linhas da Fatura — seleccione as que pretende devolver</Label>
+                <Label className="mb-2 block">{t.purchaseReturnsUi.invoiceLinesLabel}</Label>
                  <div className="border rounded-lg overflow-hidden">
                   <Table>
                     <TableHeader>
@@ -673,11 +690,11 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
                         <TableHead className="w-[40px]">✓</TableHead>
                         <TableHead>SKU</TableHead>
                         <TableHead>Descrição</TableHead>
-                        <TableHead className="text-right">Qtd. Restante</TableHead>
-                        <TableHead className="text-right w-[100px]">Qtd. Devolver</TableHead>
-                        <TableHead className="text-right">Preço Unit.</TableHead>
-                        <TableHead className="text-right">IVA %</TableHead>
-                        <TableHead className="text-right">Subtotal</TableHead>
+                        <TableHead className="text-right">{t.purchaseReturnsUi.remainingQty}</TableHead>
+                        <TableHead className="text-right w-[100px]">{t.purchaseReturnsUi.returnQty}</TableHead>
+                        <TableHead className="text-right">{t.purchaseReturnsUi.unitPrice}</TableHead>
+                        <TableHead className="text-right">{t.purchaseReturnsUi.vatPercent}</TableHead>
+                        <TableHead className="text-right">{t.purchaseReturnsUi.subtotal}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -734,9 +751,9 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
                   const tax = selected.reduce((s, l) => s + l.quantity * l.unitCost * (l.taxRate / 100), 0);
                   return (
                     <div className="flex justify-end gap-6 mt-3 text-sm font-medium">
-                      <span>Subtotal: <span className="font-mono">{fmtKz(sub)}</span></span>
-                      <span>IVA: <span className="font-mono">{fmtKz(tax)}</span></span>
-                      <span className="text-base font-bold">Total: <span className="font-mono">{fmtKz(sub + tax)}</span></span>
+                      <span>{t.purchaseReturnsUi.subtotal}: <span className="font-mono">{fmtKz(sub)}</span></span>
+                      <span>{t.purchaseReturnsUi.vat}: <span className="font-mono">{fmtKz(tax)}</span></span>
+                      <span className="text-base font-bold">{t.purchaseReturnsUi.total}: <span className="font-mono">{fmtKz(sub + tax)}</span></span>
                     </div>
                   );
                 })()}
@@ -744,11 +761,11 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
             )}
 
             <div>
-              <Label>Observações</Label>
+              <Label>{t.purchaseReturnsUi.notesLabel}</Label>
               <Textarea
                 value={notes}
                 onChange={e => setNotes(e.target.value)}
-                placeholder="Notas adicionais..."
+                placeholder={t.purchaseReturnsUi.notesPlaceholder}
                 className="mt-1"
                 rows={2}
               />
@@ -756,14 +773,14 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>{t.purchaseReturnsUi.cancel}</Button>
             <Button
               onClick={handleCreate}
               disabled={saving || !selectedInvoice || !reasonDescription.trim() || returnLines.filter(l => l.selected && l.quantity > 0).length === 0}
               className="gap-2"
             >
               {saving ? <span className="animate-spin">⏳</span> : <Save className="h-4 w-4" />}
-              Criar Devolução
+              {t.purchaseReturnsUi.createReturn}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -773,17 +790,17 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
       <Dialog open={invoicePickerOpen} onOpenChange={setInvoicePickerOpen}>
         <DialogContent className="max-w-3xl max-h-[80vh]">
           <DialogHeader>
-            <DialogTitle>Seleccionar Fatura de Compra</DialogTitle>
+            <DialogTitle>{t.purchaseReturnsUi.selectPurchaseInvoiceTitle}</DialogTitle>
           </DialogHeader>
           <ScrollArea className="h-[400px]">
             <Table>
               <TableHeader>
                 <TableRow className="text-[11px]">
-                  <TableHead>Nº Fatura</TableHead>
-                  <TableHead>Fornecedor</TableHead>
-                  <TableHead>Data</TableHead>
+                  <TableHead>{t.purchaseReturnsUi.invoiceNo}</TableHead>
+                  <TableHead>{t.purchaseReturnsUi.supplier}</TableHead>
+                  <TableHead>{t.purchaseReturnsUi.date}</TableHead>
                   <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="text-right">Linhas</TableHead>
+                  <TableHead className="text-right">{t.purchaseReturnsUi.lines}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -803,7 +820,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
                  {invoices.filter(inv => inv.branchId === branchId).filter(inv => inv.lines.some(line => Math.max(line.totalQty - getAlreadyReturnedQty(inv.id, line.id, line.productId), 0) > 0)).length === 0 && (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                       Nenhuma fatura confirmada com saldo devolvível disponível para esta filial
+                       {t.purchaseReturnsUi.noInvoicesWithReturnableBalance}
                     </TableCell>
                   </TableRow>
                 )}
@@ -819,40 +836,40 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <RotateCcw className="h-5 w-5" />
-              Devolução {viewReturn?.returnNumber}
+              {t.purchaseReturnsUi.viewTitle.replace('{number}', viewReturn?.returnNumber || '')}
             </DialogTitle>
           </DialogHeader>
           {viewReturn && (
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-4 text-sm">
                 <div>
-                  <Label className="text-muted-foreground text-xs">Fornecedor</Label>
+                  <Label className="text-muted-foreground text-xs">{t.purchaseReturnsUi.supplier}</Label>
                   <p className="font-medium">{viewReturn.supplierName}</p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground text-xs">Fatura Origem</Label>
+                  <Label className="text-muted-foreground text-xs">{t.purchaseReturnsUi.sourceInvoiceShort}</Label>
                   <p className="font-mono">{viewReturn.purchaseOrderNumber}</p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground text-xs">Filial</Label>
+                  <Label className="text-muted-foreground text-xs">{t.purchaseReturnsUi.branch}</Label>
                   <p className="font-medium">{viewReturn.branchName || '—'}</p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground text-xs">Estado</Label>
-                  <Badge variant={RETURN_STATUS_BADGES[viewReturn.status]?.variant || 'outline'}>
-                    {RETURN_STATUS_BADGES[viewReturn.status]?.label || viewReturn.status}
+                  <Label className="text-muted-foreground text-xs">{t.purchaseReturnsUi.status}</Label>
+                  <Badge variant={RETURN_STATUS_VARIANTS[viewReturn.status] || 'outline'}>
+                    {statusLabel(viewReturn.status)}
                   </Badge>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground text-xs">Motivo</Label>
-                  <p>{REASON_LABELS[viewReturn.reason] || viewReturn.reason}</p>
+                  <Label className="text-muted-foreground text-xs">{t.purchaseReturnsUi.reason}</Label>
+                  <p>{reasonLabel(viewReturn.reason)}</p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground text-xs">Descrição</Label>
+                  <Label className="text-muted-foreground text-xs">{t.purchaseReturnsUi.description}</Label>
                   <p>{viewReturn.reasonDescription}</p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground text-xs">Criado por</Label>
+                  <Label className="text-muted-foreground text-xs">{t.purchaseReturnsUi.createdBy}</Label>
                   <p>{viewReturn.createdBy} — {viewReturn.createdAt ? format(new Date(viewReturn.createdAt), 'dd/MM/yyyy HH:mm') : ''}</p>
                 </div>
               </div>
@@ -861,11 +878,11 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
                 <TableHeader>
                   <TableRow className="text-[11px]">
                     <TableHead>SKU</TableHead>
-                    <TableHead>Produto</TableHead>
-                    <TableHead className="text-right">Qtd</TableHead>
-                    <TableHead className="text-right">Custo Unit.</TableHead>
-                    <TableHead className="text-right">IVA</TableHead>
-                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead>{t.purchaseReturnsUi.product}</TableHead>
+                    <TableHead className="text-right">{t.purchaseReturnsUi.qty}</TableHead>
+                    <TableHead className="text-right">{t.purchaseReturnsUi.unitCost}</TableHead>
+                    <TableHead className="text-right">{t.purchaseReturnsUi.vat}</TableHead>
+                    <TableHead className="text-right">{t.purchaseReturnsUi.total}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -883,14 +900,14 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
               </Table>
 
               <div className="flex justify-end gap-6 text-sm border-t pt-3">
-                <span>Subtotal: <span className="font-mono">{fmtKz(viewReturn.subtotal)}</span></span>
-                <span>IVA: <span className="font-mono">{fmtKz(viewReturn.taxAmount)}</span></span>
-                <span className="font-bold text-base">Total: <span className="font-mono">{fmtKz(viewReturn.total)}</span></span>
+                <span>{t.purchaseReturnsUi.subtotal}: <span className="font-mono">{fmtKz(viewReturn.subtotal)}</span></span>
+                <span>{t.purchaseReturnsUi.vat}: <span className="font-mono">{fmtKz(viewReturn.taxAmount)}</span></span>
+                <span className="font-bold text-base">{t.purchaseReturnsUi.total}: <span className="font-mono">{fmtKz(viewReturn.total)}</span></span>
               </div>
 
               {viewReturn.notes && (
                 <div className="text-sm">
-                  <Label className="text-muted-foreground text-xs">Observações</Label>
+                  <Label className="text-muted-foreground text-xs">{t.purchaseReturnsUi.notesLabel}</Label>
                   <p>{viewReturn.notes}</p>
                 </div>
               )}

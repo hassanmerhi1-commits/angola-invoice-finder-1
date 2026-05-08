@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Server, Monitor, Wifi, CheckCircle, XCircle, Loader2, FolderOpen } from 'lucide-react';
 import { toast } from 'sonner';
+import { useTranslation } from '@/i18n';
 
 type SetupMode = 'select' | 'server-setup' | 'client-setup' | 'complete';
 
@@ -42,6 +43,7 @@ function slugMunicipioName(name: string): string {
 
 export default function Setup() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [mode, setMode] = useState<SetupMode>('select');
   const [ipFileContent, setIpFileContent] = useState('');
   const [detectedIp, setDetectedIp] = useState('');
@@ -83,7 +85,7 @@ export default function Setup() {
     const dbPath = ipFileContent || 'C:\\NEXOR ERP\\data\\nexor-heart.nexor';
 
     if (!selectedProvince || !selectedMunicipio) {
-      toast.error('Selecione a província e o município antes de iniciar.');
+      toast.error(t.setupUi.selectProvinceAndMunicipio);
       setIsLoading(false);
       return;
     }
@@ -96,20 +98,20 @@ export default function Setup() {
         const result = await window.electronAPI!.db.init();
         if (!result.success) throw new Error(result.error);
 
-        toast.success('Servidor configurado!', {
-          description: `Base de dados: ${dbPath}\nOutros computadores podem conectar a ${detectedIp}`
+        toast.success(t.setupUi.serverConfigured, {
+          description: `${t.setupUi.dbPathLabel}: ${dbPath}\n${t.setupUi.otherComputersConnect.replace('{ip}', detectedIp)}`
         });
       } else {
         // Web preview - use localStorage fallback
         localStorage.setItem('kwanza_mode', 'server');
         localStorage.setItem('kwanza_db_path', dbPath);
-        toast.success('Modo servidor configurado (Preview)');
+        toast.success(t.setupUi.serverPreviewConfigured);
       }
 
       localStorage.setItem('kwanza_setup_complete', 'true');
       setMode('complete');
     } catch (error: any) {
-      toast.error('Erro na configuração', { description: error.message });
+      toast.error(t.setupUi.configError, { description: error.message });
     } finally {
       setIsLoading(false);
     }
@@ -117,7 +119,7 @@ export default function Setup() {
 
   const handleClientSetup = async () => {
     if (!ipFileContent.trim()) {
-      toast.error('Insira o IP ou nome do servidor');
+      toast.error(t.setupUi.enterServerAddress);
       return;
     }
 
@@ -129,19 +131,19 @@ export default function Setup() {
         const result = await window.electronAPI!.db.init();
         if (!result.success) throw new Error(result.error);
 
-        toast.success('Cliente configurado!', {
-          description: `Conectado ao servidor: ${ipFileContent.trim()}`
+        toast.success(t.setupUi.clientConfigured, {
+          description: t.setupUi.connectedToServer.replace('{server}', ipFileContent.trim())
         });
       } else {
         localStorage.setItem('kwanza_mode', 'client');
         localStorage.setItem('kwanza_server_address', ipFileContent.trim());
-        toast.success('Modo cliente configurado (Preview)');
+        toast.success(t.setupUi.clientPreviewConfigured);
       }
 
       localStorage.setItem('kwanza_setup_complete', 'true');
       setMode('complete');
     } catch (error: any) {
-      toast.error('Erro na conexão', { description: error.message });
+      toast.error(t.setupUi.connectionError, { description: error.message });
     } finally {
       setIsLoading(false);
     }
@@ -155,25 +157,25 @@ export default function Setup() {
         await window.electronAPI!.ipfile.write(ipFileContent.trim());
         const result = await window.electronAPI!.db.testConnection();
         setConnectionStatus(result.success ? 'success' : 'error');
-        if (result.success) toast.success('Conexão OK!');
-        else toast.error('Falha na conexão');
+        if (result.success) toast.success(t.setupUi.connectionOk);
+        else toast.error(t.setupUi.connectionFailed);
       } else {
         // Web preview - simulate
         await new Promise(r => setTimeout(r, 1000));
         setConnectionStatus('error');
-        toast.error('Servidor não encontrado (apenas funciona no Electron)');
+        toast.error(t.setupUi.serverNotFoundElectronOnly);
       }
     } catch {
       setConnectionStatus('error');
-      toast.error('Falha na conexão');
+      toast.error(t.setupUi.connectionFailed);
     }
   };
 
   const startDemoMode = () => {
     localStorage.setItem('kwanza_setup_complete', 'true');
     localStorage.setItem('kwanza_mode', 'demo');
-    toast.success('Modo Demo Activado!', {
-      description: 'Dados armazenados localmente neste dispositivo'
+    toast.success(t.setupUi.demoModeActivated, {
+      description: t.setupUi.demoModeDesc
     });
     setMode('complete');
   };
@@ -189,17 +191,17 @@ export default function Setup() {
             <span className="text-primary-foreground font-bold text-4xl">N</span>
           </div>
           <h1 className="text-4xl font-bold text-foreground mb-2">NEXOR ERP</h1>
-          <p className="text-muted-foreground text-lg">O futuro é construído com nós</p>
-          <p className="text-muted-foreground text-sm mt-1">Configuração Inicial</p>
+          <p className="text-muted-foreground text-lg">{t.auth.tagline}</p>
+          <p className="text-muted-foreground text-sm mt-1">{t.setupUi.initialSetup}</p>
         </div>
 
         {/* Mode Selection */}
         {mode === 'select' && (
           <Card className="shadow-2xl">
             <CardHeader className="text-center pb-4">
-              <CardTitle className="text-2xl">Como este computador será usado?</CardTitle>
+              <CardTitle className="text-2xl">{t.setupUi.howUsed}</CardTitle>
               <CardDescription>
-                Escolha se este computador será o servidor principal ou uma estação de trabalho
+                {t.setupUi.chooseServerOrClient}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6 px-6 pb-8">

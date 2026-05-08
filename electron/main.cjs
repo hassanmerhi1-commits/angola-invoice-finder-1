@@ -907,7 +907,7 @@ function getLocalRendererSource() {
 function getRendererSource() {
   const isDev = process.env.NODE_ENV === 'development' || process.env.ELECTRON_DEV === 'true';
   if (isDev) {
-    return { type: 'dev', url: 'http://localhost:8080' };
+    return { type: 'dev', url: 'http://localhost:18080' };
   }
 
   const hotUpdate = loadHotUpdateConfig();

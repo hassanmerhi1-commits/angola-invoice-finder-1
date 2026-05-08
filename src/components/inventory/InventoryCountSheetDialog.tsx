@@ -11,6 +11,7 @@ import { Printer, FileSpreadsheet, Download } from 'lucide-react';
 import { Product, Branch } from '@/types/erp';
 import { getCompanySettings } from '@/lib/companySettings';
 import * as XLSX from 'xlsx';
+import { useTranslation } from '@/i18n';
 
 // Generate count sheet number
 function generateCountNumber(branchCode: string): string {
@@ -34,6 +35,7 @@ export function InventoryCountSheetDialog({
   branch,
   categories,
 }: InventoryCountSheetDialogProps) {
+  const { t, language } = useTranslation();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [includeInactive, setIncludeInactive] = useState(false);
   const [hideSystemStock, setHideSystemStock] = useState(false);
@@ -68,11 +70,11 @@ export function InventoryCountSheetDialog({
 
   const handleExportExcel = () => {
     const data = filteredProducts.map((p, idx) => ({
-      'Codigo': p.sku,
-      'Descrição': p.name,
-      'Qtd': hideSystemStock ? '' : p.stock,
-      'Contagem': '',
-      'Diff': '',
+      [t.countSheetUi.colCode]: p.sku,
+      [t.countSheetUi.colDescription]: p.name,
+      [t.countSheetUi.colQty]: hideSystemStock ? '' : p.stock,
+      [t.countSheetUi.colCount]: '',
+      [t.countSheetUi.colDiff]: '',
     }));
 
     const ws = XLSX.utils.json_to_sheet(data);
@@ -89,19 +91,19 @@ export function InventoryCountSheetDialog({
     ];
 
     const dateStr = format(new Date(), 'yyyy-MM-dd');
-    XLSX.writeFile(wb, `Contagem_${branch?.code || 'geral'}_${dateStr}.xlsx`);
+    XLSX.writeFile(wb, `${t.countSheetUi.filePrefix}_${branch?.code || 'geral'}_${dateStr}.xlsx`);
   };
 
   const generatePrintContent = () => {
-    const dateStr = format(new Date(), "dd.MM.yyyy", { locale: pt });
-    const branchName = branch?.name || 'GERAL';
+    const dateStr = format(new Date(), "dd.MM.yyyy", { locale: language === 'pt' ? pt : undefined });
+    const branchName = branch?.name || t.countSheetUi.general;
 
     return `
       <!DOCTYPE html>
       <html>
       <head>
         <meta charset="UTF-8">
-        <title>Folha de Contagem - ${branchName}</title>
+        <title>${t.countSheetUi.sheetTitle.replace('{branch}', branchName)}</title>
         <style>
           * {
             margin: 0;
@@ -181,11 +183,11 @@ export function InventoryCountSheetDialog({
         <table>
           <thead>
             <tr class="header-row">
-              <th class="col-codigo">Codigo</th>
+              <th class="col-codigo">${t.countSheetUi.colCode}</th>
               <th class="col-descricao branch-header">${branchName.toUpperCase()}</th>
-              <th class="col-qtd">Qtd</th>
-              <th class="col-contagem">Contagem</th>
-              <th class="col-diff">Diff</th>
+              <th class="col-qtd">${t.countSheetUi.colQty}</th>
+              <th class="col-contagem">${t.countSheetUi.colCount}</th>
+              <th class="col-diff">${t.countSheetUi.colDiff}</th>
             </tr>
           </thead>
           <tbody>
@@ -222,30 +224,30 @@ export function InventoryCountSheetDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileSpreadsheet className="w-5 h-5" />
-            Folha de Contagem
+            {t.countSheetUi.title}
           </DialogTitle>
           <DialogDescription>
-            Gere uma folha simples para contagem física do stock
+            {t.countSheetUi.description}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           {/* Branch Info */}
           <div className="p-3 bg-muted rounded-lg">
-            <Label className="text-xs text-muted-foreground">Filial</Label>
-            <p className="font-medium">{branch?.name || 'Todas as Filiais'}</p>
+            <Label className="text-xs text-muted-foreground">{t.countSheetUi.branch}</Label>
+            <p className="font-medium">{branch?.name || t.countSheetUi.allBranches}</p>
             {branch?.code && <p className="text-sm text-muted-foreground">Código: {branch.code}</p>}
           </div>
 
           {/* Category Filter */}
           <div className="space-y-2">
-            <Label>Categoria</Label>
+            <Label>{t.countSheetUi.category}</Label>
             <Select value={selectedCategory} onValueChange={setSelectedCategory}>
               <SelectTrigger>
-                <SelectValue placeholder="Seleccionar categoria" />
+                <SelectValue placeholder={t.countSheetUi.selectCategory} />
               </SelectTrigger>
               <SelectContent className="bg-background border shadow-lg z-50">
-                <SelectItem value="all">Todas as Categorias</SelectItem>
+                <SelectItem value="all">{t.countSheetUi.allCategories}</SelectItem>
                 {categories.map(cat => (
                   <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                 ))}
@@ -255,9 +257,9 @@ export function InventoryCountSheetDialog({
 
           {/* Counted By */}
           <div className="space-y-2">
-            <Label>Contado por (opcional)</Label>
+            <Label>{t.countSheetUi.countedByOptional}</Label>
             <Input
-              placeholder="Nome do responsável"
+              placeholder={t.countSheetUi.responsibleNamePlaceholder}
               value={countedBy}
               onChange={(e) => setCountedBy(e.target.value)}
             />
@@ -272,7 +274,7 @@ export function InventoryCountSheetDialog({
                 onCheckedChange={(checked) => setHideSystemStock(checked === true)}
               />
               <label htmlFor="hideStock" className="text-sm cursor-pointer">
-                Ocultar stock do sistema (contagem cega)
+                {t.countSheetUi.hideSystemStock}
               </label>
             </div>
             <div className="flex items-center gap-2">
@@ -282,25 +284,25 @@ export function InventoryCountSheetDialog({
                 onCheckedChange={(checked) => setIncludeInactive(checked === true)}
               />
               <label htmlFor="includeInactive" className="text-sm cursor-pointer">
-                Incluir produtos inativos
+                {t.countSheetUi.includeInactive}
               </label>
             </div>
           </div>
 
           {/* Product Count */}
           <div className="text-sm text-muted-foreground">
-            {filteredProducts.length} produtos serão listados
+            {t.countSheetUi.productsListed.replace('{count}', String(filteredProducts.length))}
           </div>
         </div>
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={handleExportExcel}>
             <Download className="w-4 h-4 mr-2" />
-            Excel
+            {t.countSheetUi.excel}
           </Button>
           <Button onClick={handlePrint}>
             <Printer className="w-4 h-4 mr-2" />
-            Imprimir Folha
+            {t.countSheetUi.printSheet}
           </Button>
         </DialogFooter>
       </DialogContent>

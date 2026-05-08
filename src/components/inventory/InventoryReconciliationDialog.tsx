@@ -13,6 +13,7 @@ import { ClipboardCheck, Search, AlertTriangle, CheckCircle, XCircle, ArrowUp, A
 import { Product, Branch } from '@/types/erp';
 import { toast } from 'sonner';
 import { logTransaction } from '@/lib/transactionHistory';
+import { useTranslation } from '@/i18n';
 
 // Generate reconciliation number
 function generateReconciliationNumber(branchCode: string): string {
@@ -57,8 +58,11 @@ export function InventoryReconciliationDialog({
   branch,
   categories,
   onReconcile,
-  currentUser = 'Sistema',
+  currentUser,
 }: InventoryReconciliationDialogProps) {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const resolvedUser = currentUser ?? t.reconcileUi.defaultUser;
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [countEntries, setCountEntries] = useState<Map<string, number | null>>(new Map());
@@ -167,11 +171,11 @@ export function InventoryReconciliationDialog({
         previousStock: e.systemStock,
         countedStock: e.countedStock!,
         difference: e.difference,
-        reason: e.difference > 0 ? 'Ajuste positivo - contagem física' : 'Ajuste negativo - contagem física',
+        reason: e.difference > 0 ? t.reconcileUi.reasonPositive : t.reconcileUi.reasonNegative,
       }));
 
     if (adjustments.length === 0) {
-      toast.info('Sem diferenças para reconciliar');
+      toast.info(t.reconcileUi.noDifferences);
       return;
     }
 
@@ -188,7 +192,7 @@ export function InventoryReconciliationDialog({
         previousStock: e.systemStock,
         countedStock: e.countedStock!,
         difference: e.difference,
-        reason: e.difference > 0 ? 'Ajuste positivo - contagem física' : 'Ajuste negativo - contagem física',
+        reason: e.difference > 0 ? t.reconcileUi.reasonPositive : t.reconcileUi.reasonNegative,
       }));
 
     // Record transaction for audit
@@ -197,7 +201,7 @@ export function InventoryReconciliationDialog({
       action: 'stock_adjusted',
       entityType: 'reconciliation',
       entityNumber: reconciliationNumber,
-      description: `Reconciliação de inventário: ${adjustments.length} produtos ajustados`,
+      description: t.reconcileUi.auditDescription.replace('{count}', String(adjustments.length)),
       details: {
         countedBy,
         notes: reconciliationNotes,
@@ -215,8 +219,10 @@ export function InventoryReconciliationDialog({
     // Call parent handler to apply adjustments
     onReconcile(adjustments);
 
-    toast.success('Reconciliação concluída!', {
-      description: `${adjustments.length} produtos foram ajustados. Ref: ${reconciliationNumber}`,
+    toast.success(t.reconcileUi.reconciliationDone, {
+      description: t.reconcileUi.reconciliationDoneDesc
+        .replace('{count}', String(adjustments.length))
+        .replace('{ref}', reconciliationNumber),
     });
 
     setShowConfirmDialog(false);
@@ -225,8 +231,8 @@ export function InventoryReconciliationDialog({
     onOpenChange(false);
   };
 
-  const formatCurrency = (value: number) => 
-    new Intl.NumberFormat('pt-AO', { style: 'currency', currency: 'AOA' }).format(value);
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA' }).format(value);
 
   return (
     <>
@@ -235,10 +241,10 @@ export function InventoryReconciliationDialog({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ClipboardCheck className="w-5 h-5" />
-              Reconciliação de Inventário
+              {t.reconcileUi.title}
             </DialogTitle>
             <DialogDescription>
-              Introduza as quantidades contadas fisicamente. O sistema calculará as diferenças automaticamente.
+              {t.reconcileUi.description}
             </DialogDescription>
           </DialogHeader>
 
@@ -246,27 +252,27 @@ export function InventoryReconciliationDialog({
             {/* Filters and Info */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Referência</Label>
+                <Label className="text-xs text-muted-foreground">{t.reconcileUi.reference}</Label>
                 <div className="font-mono text-sm font-medium bg-muted px-2 py-1.5 rounded">
                   {reconciliationNumber}
                 </div>
               </div>
               
               <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Filial</Label>
+                <Label className="text-xs text-muted-foreground">{t.reconcileUi.branch}</Label>
                 <div className="text-sm font-medium bg-muted px-2 py-1.5 rounded">
-                  {branch?.name || 'Todas'}
+                  {branch?.name || t.reconcileUi.all}
                 </div>
               </div>
 
               <div className="space-y-1">
-                <Label htmlFor="category">Categoria</Label>
+                <Label htmlFor="category">{t.reconcileUi.category}</Label>
                 <Select value={selectedCategory} onValueChange={setSelectedCategory}>
                   <SelectTrigger id="category" className="h-9">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-background border shadow-lg z-50">
-                    <SelectItem value="all">Todas</SelectItem>
+                    <SelectItem value="all">{t.reconcileUi.all}</SelectItem>
                     {categories.map(cat => (
                       <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                     ))}
@@ -275,12 +281,12 @@ export function InventoryReconciliationDialog({
               </div>
 
               <div className="space-y-1">
-                <Label htmlFor="search">Pesquisar</Label>
+                <Label htmlFor="search">{t.reconcileUi.search}</Label>
                 <div className="relative">
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
                     id="search"
-                    placeholder="SKU, nome ou código..."
+                    placeholder={t.reconcileUi.searchPlaceholder}
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="pl-8 h-9"
@@ -293,23 +299,23 @@ export function InventoryReconciliationDialog({
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
               <div className="bg-muted/50 rounded-lg p-2 text-center">
                 <div className="text-lg font-bold">{summary.total}</div>
-                <div className="text-xs text-muted-foreground">Total Produtos</div>
+                <div className="text-xs text-muted-foreground">{t.reconcileUi.totalProducts}</div>
               </div>
               <div className="bg-blue-500/10 rounded-lg p-2 text-center">
                 <div className="text-lg font-bold text-blue-600">{summary.counted}</div>
-                <div className="text-xs text-muted-foreground">Contados</div>
+                <div className="text-xs text-muted-foreground">{t.reconcileUi.counted}</div>
               </div>
               <div className="bg-orange-500/10 rounded-lg p-2 text-center">
                 <div className="text-lg font-bold text-orange-600">{summary.withDifference}</div>
-                <div className="text-xs text-muted-foreground">Com Diferença</div>
+                <div className="text-xs text-muted-foreground">{t.reconcileUi.withDifference}</div>
               </div>
               <div className="bg-emerald-500/10 rounded-lg p-2 text-center">
                 <div className="text-lg font-bold text-emerald-600">+{summary.positive}</div>
-                <div className="text-xs text-muted-foreground">Excesso</div>
+                <div className="text-xs text-muted-foreground">{t.reconcileUi.excess}</div>
               </div>
               <div className="bg-red-500/10 rounded-lg p-2 text-center">
                 <div className="text-lg font-bold text-red-600">-{summary.negative}</div>
-                <div className="text-xs text-muted-foreground">Falta</div>
+                <div className="text-xs text-muted-foreground">{t.reconcileUi.missing}</div>
               </div>
             </div>
 
@@ -319,12 +325,12 @@ export function InventoryReconciliationDialog({
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-background border-b">
                     <tr>
-                      <th className="text-left py-2 px-2 font-medium w-24">Código</th>
-                      <th className="text-left py-2 px-2 font-medium">Descrição</th>
-                      <th className="text-center py-2 px-2 font-medium w-20">Sistema</th>
-                      <th className="text-center py-2 px-2 font-medium w-28">Contagem</th>
-                      <th className="text-center py-2 px-2 font-medium w-20">Diferença</th>
-                      <th className="text-center py-2 px-2 font-medium w-16">Ação</th>
+                      <th className="text-left py-2 px-2 font-medium w-24">{t.reconcileUi.colCode}</th>
+                      <th className="text-left py-2 px-2 font-medium">{t.reconcileUi.colDescription}</th>
+                      <th className="text-center py-2 px-2 font-medium w-20">{t.reconcileUi.colSystem}</th>
+                      <th className="text-center py-2 px-2 font-medium w-28">{t.reconcileUi.colCount}</th>
+                      <th className="text-center py-2 px-2 font-medium w-20">{t.reconcileUi.colDifference}</th>
+                      <th className="text-center py-2 px-2 font-medium w-16">{t.reconcileUi.colAction}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -381,7 +387,7 @@ export function InventoryReconciliationDialog({
                             size="sm"
                             className="h-7 w-7 p-0"
                             onClick={() => handleSetEqual(entry.productId, entry.systemStock)}
-                            title="Marcar como igual ao sistema"
+                            title={t.reconcileUi.markEqual}
                           >
                             <CheckCircle className="w-4 h-4 text-muted-foreground hover:text-emerald-600" />
                           </Button>
@@ -396,21 +402,21 @@ export function InventoryReconciliationDialog({
             {/* Notes and Counted By */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label htmlFor="countedBy">Contado por</Label>
+                <Label htmlFor="countedBy">{t.reconcileUi.countedBy}</Label>
                 <Input
                   id="countedBy"
                   value={countedBy}
                   onChange={(e) => setCountedBy(e.target.value)}
-                  placeholder="Nome do responsável pela contagem"
+                  placeholder={t.reconcileUi.countedByPlaceholder}
                 />
               </div>
               <div className="space-y-1">
-                <Label htmlFor="notes">Observações</Label>
+                <Label htmlFor="notes">{t.reconcileUi.notes}</Label>
                 <Input
                   id="notes"
                   value={reconciliationNotes}
                   onChange={(e) => setReconciliationNotes(e.target.value)}
-                  placeholder="Notas sobre a contagem..."
+                  placeholder={t.reconcileUi.notesPlaceholder}
                 />
               </div>
             </div>
@@ -427,7 +433,7 @@ export function InventoryReconciliationDialog({
                     <AlertTriangle className={`w-4 h-4 ${
                       summary.totalDifferenceValue >= 0 ? 'text-emerald-600' : 'text-red-600'
                     }`} />
-                    <span className="text-sm font-medium">Impacto no valor do stock:</span>
+                    <span className="text-sm font-medium">{t.reconcileUi.valueImpact}</span>
                   </div>
                   <span className={`font-bold ${
                     summary.totalDifferenceValue >= 0 ? 'text-emerald-600' : 'text-red-600'
@@ -442,14 +448,14 @@ export function InventoryReconciliationDialog({
           <DialogFooter className="gap-2 mt-4">
             <Button variant="outline" onClick={handleClearAll}>
               <XCircle className="w-4 h-4 mr-2" />
-              Limpar Tudo
+              {t.reconcileUi.clearAll}
             </Button>
             <Button 
               onClick={handleReconcile}
               disabled={summary.withDifference === 0}
             >
               <Save className="w-4 h-4 mr-2" />
-              Reconciliar ({summary.withDifference} ajustes)
+              {t.reconcileUi.reconcileCta.replace('{count}', String(summary.withDifference))}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -461,25 +467,24 @@ export function InventoryReconciliationDialog({
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-orange-500" />
-              Confirmar Reconciliação
+              {t.reconcileUi.confirmTitle}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3">
                 <p>
-                  Esta ação irá ajustar o stock de <strong>{summary.withDifference} produtos</strong> 
-                  com base na contagem física.
+                  {t.reconcileUi.confirmBody.replace('{count}', String(summary.withDifference))}
                 </p>
                 <div className="bg-muted p-3 rounded-lg text-sm space-y-1">
                   <div className="flex justify-between">
-                    <span>Produtos com excesso:</span>
+                    <span>{t.reconcileUi.excessProducts}</span>
                     <span className="font-medium text-emerald-600">+{summary.positive}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Produtos em falta:</span>
+                    <span>{t.reconcileUi.missingProducts}</span>
                     <span className="font-medium text-red-600">-{summary.negative}</span>
                   </div>
                   <div className="flex justify-between pt-2 border-t">
-                    <span>Impacto financeiro:</span>
+                    <span>{t.reconcileUi.financialImpact}</span>
                     <span className={`font-bold ${
                       summary.totalDifferenceValue >= 0 ? 'text-emerald-600' : 'text-red-600'
                     }`}>
@@ -488,15 +493,15 @@ export function InventoryReconciliationDialog({
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Esta ação será registada no histórico de transações e não pode ser desfeita automaticamente.
+                  {t.reconcileUi.confirmFooter}
                 </p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel>{t.reconcileUi.cancel}</AlertDialogCancel>
             <AlertDialogAction onClick={confirmReconciliation}>
-              Confirmar Ajustes
+              {t.reconcileUi.confirmAdjustments}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

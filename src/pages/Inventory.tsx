@@ -50,10 +50,13 @@ import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { logTransaction } from '@/lib/transactionHistory';
 import { saveStockMovement } from '@/lib/storage';
+import { useTranslation } from '@/i18n';
 
 export default function Inventory() {
   const navigate = useNavigate();
   const { currentBranch, branches } = useBranchContext();
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   
   // Head office (Sede) sees ALL inventory; filials see only their own
   const isHeadOffice = currentBranch?.isMain === true;
@@ -219,7 +222,7 @@ export default function Inventory() {
       }));
 
     if (productsToImport.length === 0) {
-      toast.info('Nenhum produto novo para importar');
+      toast.info(t.inventoryUi.noNewProductsToImport);
       return;
     }
 
@@ -229,9 +232,9 @@ export default function Inventory() {
       if (result.data) {
         const { imported, failed } = result.data;
         const messages: string[] = [];
-        if (imported > 0) messages.push(`${imported} importados`);
-        if (failed > 0) messages.push(`${failed} falharam`);
-        toast.success(messages.join(', ') || 'Importação concluída');
+        if (imported > 0) messages.push(t.inventoryUi.importedCount.replace('{count}', String(imported)));
+        if (failed > 0) messages.push(t.inventoryUi.failedCount.replace('{count}', String(failed)));
+        toast.success(messages.join(', ') || t.inventoryUi.importCompleted);
       } else {
         // Fallback: save individually to localStorage
         let count = 0;
@@ -248,11 +251,11 @@ export default function Inventory() {
           await addProduct(product);
           count++;
         }
-        toast.success(`${count} produtos importados (modo local)`);
+        toast.success(t.inventoryUi.importedLocalMode.replace('{count}', String(count)));
       }
     } catch (error: any) {
       console.error('Import error:', error);
-      toast.error(error.message || 'Erro na importação');
+      toast.error(error.message || t.inventoryUi.importError);
     }
 
     refreshProducts();
@@ -321,9 +324,9 @@ export default function Inventory() {
   const existingSkus = products.map(p => p.sku);
 
   const productImportColumns: { key: keyof ExcelProduct; label: string }[] = [
-    { key: 'codigo', label: 'Código' },
-    { key: 'descricao', label: 'Descrição' },
-    { key: 'preco', label: 'Preço' },
+    { key: 'codigo', label: t.inventoryUi.colCode },
+    { key: 'descricao', label: t.inventoryUi.colDescription },
+    { key: 'preco', label: t.inventoryUi.colPrice },
     { key: 'quantidade', label: 'Qtd' },
     { key: 'categoria', label: 'Categoria' },
   ];
@@ -343,14 +346,14 @@ export default function Inventory() {
 
   const getMovementReasonLabel = (reason: StockMovement['reason']) => {
     switch (reason) {
-      case 'purchase': return 'Compra';
-      case 'sale': return 'Venda';
-      case 'transfer_in': return 'Transferência Entrada';
-      case 'transfer_out': return 'Transferência Saída';
-      case 'adjustment': return 'Ajuste';
-      case 'damage': return 'Dano/Avaria';
-      case 'return': return 'Devolução';
-      case 'initial': return 'Stock Inicial';
+      case 'purchase': return t.inventoryUi.reasonPurchase;
+      case 'sale': return t.inventoryUi.reasonSale;
+      case 'transfer_in': return t.inventoryUi.reasonTransferIn;
+      case 'transfer_out': return t.inventoryUi.reasonTransferOut;
+      case 'adjustment': return t.inventoryUi.reasonAdjustment;
+      case 'damage': return t.inventoryUi.reasonDamage;
+      case 'return': return t.inventoryUi.reasonReturn;
+      case 'initial': return t.inventoryUi.reasonInitial;
       default: return reason;
     }
   };
@@ -400,7 +403,7 @@ export default function Inventory() {
           className="h-7 text-xs gap-1 text-destructive" 
           disabled={!selectedProduct}
           onClick={() => {
-            if (selectedProduct && confirm('Eliminar este produto?')) {
+            if (selectedProduct && confirm(t.inventoryUi.deleteConfirm)) {
               deleteProduct(selectedProduct.id);
               setSelectedProduct(null);
             }
@@ -499,7 +502,7 @@ export default function Inventory() {
             value={selectedProduct?.sku || ''} 
             readOnly
             className="h-5 w-24 text-xs border-0 p-0 focus-visible:ring-0"
-            placeholder="Código"
+            placeholder={t.inventoryUi.codePlaceholder}
           />
           <span className="text-xs text-muted-foreground">{selectedProduct?.name || ''}</span>
           <div className="flex gap-0.5 ml-2">
@@ -640,20 +643,20 @@ export default function Inventory() {
                     <TableBody>
                       {selectedProductMovements.map((movement) => (
                         <TableRow key={movement.id}>
-                          <TableCell className="text-xs text-muted-foreground">{new Date(movement.createdAt).toLocaleString('pt-AO')}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{new Date(movement.createdAt).toLocaleString(uiLocale)}</TableCell>
                           <TableCell className={movement.type === 'IN' ? 'text-green-600 font-medium' : 'text-destructive font-medium'}>
-                            {movement.type === 'IN' ? 'Entrada' : 'Saída'}
+                            {movement.type === 'IN' ? t.inventoryUi.entry : t.inventoryUi.exit}
                           </TableCell>
                           <TableCell>{getMovementReasonLabel(movement.reason)}</TableCell>
                           <TableCell className="font-mono text-xs">{movement.referenceNumber || '—'}</TableCell>
                           <TableCell className="text-right font-mono">{movement.quantity}</TableCell>
-                          <TableCell className="text-right font-mono">{(movement.costAtTime || 0).toLocaleString('pt-AO', { minimumFractionDigits: 2 })}</TableCell>
+                          <TableCell className="text-right font-mono">{(movement.costAtTime || 0).toLocaleString(uiLocale, { minimumFractionDigits: 2 })}</TableCell>
                           <TableCell className="text-xs">{movement.notes || '—'}</TableCell>
                         </TableRow>
                       ))}
                       {selectedProductMovements.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Ainda não existem movimentos para este produto.</TableCell>
+                          <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">{t.inventoryUi.noMovementsForProduct}</TableCell>
                         </TableRow>
                       )}
                     </TableBody>

@@ -14,8 +14,11 @@ import { Users, Plus, Search, Edit, Trash2, Building, FileSpreadsheet, Upload } 
 import { useToast } from '@/hooks/use-toast';
 import { exportClientsToExcel, parseClientsFromExcel, validateImportedClients, downloadClientImportTemplate, ExcelClient } from '@/lib/excel';
 import { ExcelImportDialog } from '@/components/import/ExcelImportDialog';
+import { useTranslation } from '@/i18n';
 
 export default function Clients() {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { currentBranch } = useBranchContext();
   const { clients, createClient, saveClient, deleteClient } = useClients();
   const { toast } = useToast();
@@ -80,8 +83,8 @@ export default function Clients() {
   const handleSave = () => {
     if (!formData.name || !formData.nif) {
       toast({
-        title: 'Erro',
-        description: 'Nome e NIF são obrigatórios',
+        title: t.clientsUi.toastErrorTitle,
+        description: t.clientsUi.nameAndNifRequired,
         variant: 'destructive',
       });
       return;
@@ -90,8 +93,8 @@ export default function Clients() {
     // Validate NIF format (basic validation)
     if (formData.nif.length < 9) {
       toast({
-        title: 'Erro',
-        description: 'NIF inválido',
+        title: t.clientsUi.toastErrorTitle,
+        description: t.clientsUi.invalidNif,
         variant: 'destructive',
       });
       return;
@@ -104,8 +107,8 @@ export default function Clients() {
         creditLimit: parseFloat(formData.creditLimit) || 0,
       });
       toast({
-        title: 'Cliente atualizado',
-        description: `${formData.name} foi atualizado com sucesso`,
+        title: t.clientsUi.updatedTitle,
+        description: t.clientsUi.updatedDesc.replace('{name}', formData.name),
       });
     } else {
       createClient({
@@ -115,8 +118,8 @@ export default function Clients() {
         isActive: true,
       });
       toast({
-        title: 'Cliente criado',
-        description: `${formData.name} foi registrado com sucesso`,
+        title: t.clientsUi.createdTitle,
+        description: t.clientsUi.createdDesc.replace('{name}', formData.name),
       });
     }
 
@@ -128,8 +131,8 @@ export default function Clients() {
     if (selectedClient) {
       deleteClient(selectedClient.id);
       toast({
-        title: 'Cliente removido',
-        description: `${selectedClient.name} foi removido do sistema`,
+        title: t.clientsUi.removedTitle,
+        description: t.clientsUi.removedDesc.replace('{name}', selectedClient.name),
       });
       setDeleteDialogOpen(false);
       setSelectedClient(null);
@@ -142,7 +145,7 @@ export default function Clients() {
   };
 
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-AO', { style: 'currency', currency: 'AOA' }).format(value);
+    return new Intl.NumberFormat(uiLocale, { style: 'currency', currency: 'AOA' }).format(value);
   };
 
   const handleImportClients = (data: ExcelClient[], options?: { updateDuplicates?: boolean }) => {
@@ -189,8 +192,8 @@ export default function Clients() {
     if (updated > 0) messages.push(`${updated} actualizados`);
     
     toast({
-      title: 'Importação concluída',
-      description: messages.join(', ') || 'Nenhum registo importado',
+      title: t.clientsUi.importCompletedTitle,
+      description: messages.join(', ') || t.clientsUi.noRecordsImported,
     });
   };
 
@@ -198,11 +201,11 @@ export default function Clients() {
   const existingNifs = clients.map(c => c.nif);
 
   const clientImportColumns: { key: keyof ExcelClient; label: string }[] = [
-    { key: 'nome', label: 'Nome' },
+    { key: 'nome', label: t.common.name },
     { key: 'nif', label: 'NIF' },
-    { key: 'telefone', label: 'Telefone' },
-    { key: 'email', label: 'Email' },
-    { key: 'cidade', label: 'Cidade' },
+    { key: 'telefone', label: t.common.phone },
+    { key: 'email', label: t.common.email },
+    { key: 'cidade', label: t.clientsUi.cityLabel },
   ];
 
   // Only main office can manage clients
@@ -210,10 +213,9 @@ export default function Clients() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
         <Building className="w-16 h-16 text-muted-foreground mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Acesso Restrito</h2>
+        <h2 className="text-xl font-semibold mb-2">{t.clientsUi.restrictedAccessTitle}</h2>
         <p className="text-muted-foreground max-w-md">
-          O registo de clientes está disponível apenas na sede principal. 
-          Entre em contacto com a administração para registar novos clientes.
+          {t.clientsUi.restrictedAccessDesc}
         </p>
       </div>
     );
@@ -223,21 +225,21 @@ export default function Clients() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Registo de Clientes</h1>
-          <p className="text-muted-foreground">Gestão centralizada de clientes</p>
+          <h1 className="text-2xl font-bold">{t.clientsUi.title}</h1>
+          <p className="text-muted-foreground">{t.clientsUi.subtitle}</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
             <Upload className="w-4 h-4 mr-2" />
-            Importar Excel
+            {t.clientsUi.importExcel}
           </Button>
           <Button variant="outline" onClick={() => exportClientsToExcel(clients)}>
             <FileSpreadsheet className="w-4 h-4 mr-2" />
-            Exportar Excel
+            {t.clientsUi.exportExcel}
           </Button>
           <Button onClick={() => handleOpenDialog()}>
             <Plus className="w-4 h-4 mr-2" />
-            Novo Cliente
+            {t.clientsUi.newClient}
           </Button>
         </div>
       </div>
@@ -246,36 +248,37 @@ export default function Clients() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total de Clientes</CardTitle>
+            <CardTitle className="text-sm font-medium">{t.clientsUi.totalClients}</CardTitle>
             <Users className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{clients.length}</div>
             <p className="text-xs text-muted-foreground">
-              {clients.filter(c => c.isActive).length} ativos
+              {t.clientsUi.activeCount
+                .replace('{count}', String(clients.filter(c => c.isActive).length))}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Limite de Crédito Total</CardTitle>
+            <CardTitle className="text-sm font-medium">{t.clientsUi.totalCreditLimit}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {formatCurrency(clients.reduce((sum, c) => sum + c.creditLimit, 0))}
             </div>
-            <p className="text-xs text-muted-foreground">disponibilizado</p>
+            <p className="text-xs text-muted-foreground">{t.clientsUi.totalCreditLimitHint}</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Saldo Pendente</CardTitle>
+            <CardTitle className="text-sm font-medium">{t.clientsUi.pendingBalance}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {formatCurrency(clients.reduce((sum, c) => sum + c.currentBalance, 0))}
             </div>
-            <p className="text-xs text-muted-foreground">a receber</p>
+            <p className="text-xs text-muted-foreground">{t.clientsUi.pendingBalanceHint}</p>
           </CardContent>
         </Card>
       </div>
@@ -286,7 +289,7 @@ export default function Clients() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
             <Input
-              placeholder="Pesquisar por nome, NIF ou email..."
+              placeholder={t.clientsUi.searchPlaceholder}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10"
@@ -298,28 +301,28 @@ export default function Clients() {
       {/* Clients Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Lista de Clientes</CardTitle>
-          <CardDescription>Todos os clientes registados no sistema</CardDescription>
+          <CardTitle>{t.clientsUi.listTitle}</CardTitle>
+          <CardDescription>{t.clientsUi.listSubtitle}</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Nome</TableHead>
+                <TableHead>{t.common.name}</TableHead>
                 <TableHead>NIF</TableHead>
-                <TableHead>Telefone</TableHead>
-                <TableHead>Cidade</TableHead>
-                <TableHead className="text-right">Limite Crédito</TableHead>
-                <TableHead className="text-right">Saldo</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead>Ações</TableHead>
+                <TableHead>{t.common.phone}</TableHead>
+                <TableHead>{t.clientsUi.colCity}</TableHead>
+                <TableHead className="text-right">{t.clientsUi.colCreditLimit}</TableHead>
+                <TableHead className="text-right">{t.clientsUi.colBalance}</TableHead>
+                <TableHead>{t.common.status}</TableHead>
+                <TableHead>{t.common.actions}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredClients.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                    Nenhum cliente encontrado
+                    {t.clientsUi.empty}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -337,7 +340,7 @@ export default function Clients() {
                     </TableCell>
                     <TableCell>
                       <Badge variant={client.isActive ? 'default' : 'secondary'}>
-                        {client.isActive ? 'Ativo' : 'Inativo'}
+                        {client.isActive ? t.common.active : t.common.inactive}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -362,33 +365,33 @@ export default function Clients() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{selectedClient ? 'Editar Cliente' : 'Novo Cliente'}</DialogTitle>
+            <DialogTitle>{selectedClient ? t.clientsUi.editTitle : t.clientsUi.newTitle}</DialogTitle>
             <DialogDescription>
-              {selectedClient ? 'Atualize os dados do cliente' : 'Preencha os dados para registar um novo cliente'}
+              {selectedClient ? t.clientsUi.editSubtitle : t.clientsUi.newSubtitle}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2 space-y-2">
-                <Label htmlFor="name">Nome *</Label>
+                <Label htmlFor="name">{t.clientsUi.nameLabel}</Label>
                 <Input
                   id="name"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="Nome completo ou empresa"
+                  placeholder={t.clientsUi.namePlaceholder}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="nif">NIF *</Label>
+                <Label htmlFor="nif">{t.clientsUi.nifLabel}</Label>
                 <Input
                   id="nif"
                   value={formData.nif}
                   onChange={(e) => setFormData({ ...formData, nif: e.target.value })}
-                  placeholder="Número fiscal"
+                  placeholder={t.clientsUi.nifPlaceholder}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="phone">Telefone</Label>
+                <Label htmlFor="phone">{t.common.phone}</Label>
                 <Input
                   id="phone"
                   value={formData.phone}
@@ -397,7 +400,7 @@ export default function Clients() {
                 />
               </div>
               <div className="col-span-2 space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">{t.common.email}</Label>
                 <Input
                   id="email"
                   type="email"
@@ -407,16 +410,16 @@ export default function Clients() {
                 />
               </div>
               <div className="col-span-2 space-y-2">
-                <Label htmlFor="address">Morada</Label>
+                <Label htmlFor="address">{t.common.address}</Label>
                 <Input
                   id="address"
                   value={formData.address}
                   onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                  placeholder="Endereço completo"
+                  placeholder={t.clientsUi.addressPlaceholder}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="city">Cidade</Label>
+                <Label htmlFor="city">{t.clientsUi.cityLabel}</Label>
                 <Input
                   id="city"
                   value={formData.city}
@@ -425,7 +428,7 @@ export default function Clients() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="creditLimit">Limite de Crédito (Kz)</Label>
+                <Label htmlFor="creditLimit">{t.clientsUi.creditLimitLabel}</Label>
                 <Input
                   id="creditLimit"
                   type="number"
@@ -438,10 +441,10 @@ export default function Clients() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleSave}>
-              {selectedClient ? 'Guardar Alterações' : 'Registar Cliente'}
+              {selectedClient ? t.common.saveChanges : t.clientsUi.registerClient}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -451,16 +454,15 @@ export default function Clients() {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remover Cliente</AlertDialogTitle>
+            <AlertDialogTitle>{t.clientsUi.removeTitle}</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem a certeza que deseja remover {selectedClient?.name}? 
-              Esta ação não pode ser revertida.
+              {t.clientsUi.removeConfirm.replace('{name}', String(selectedClient?.name || ''))}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
-              Remover
+              {t.clientsUi.removeAction}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -470,8 +472,8 @@ export default function Clients() {
       <ExcelImportDialog<ExcelClient>
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
-        title="Importar Clientes"
-        description="Importe clientes a partir de um ficheiro Excel ou CSV"
+        title={t.clientsUi.importDialogTitle}
+        description={t.clientsUi.importDialogDescription}
         parseFile={parseClientsFromExcel}
         validateData={validateImportedClients}
         onImport={handleImportClients}

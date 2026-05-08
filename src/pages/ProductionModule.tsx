@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { useTranslation } from '@/i18n';
 import {
   Plus, Search, Trash2, RefreshCw, Factory, Package,
   Play, CheckCircle, XCircle, Layers, Settings, DollarSign
@@ -109,6 +110,8 @@ function getBOMUnitCost(bom: BillOfMaterials): number {
 }
 
 export default function ProductionModule() {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const { products } = useProducts(currentBranch?.id);
@@ -170,10 +173,10 @@ export default function ProductionModule() {
 
   // --- BOM Actions ---
   const addBomItem = () => {
-    if (!bomItemMaterial) { toast.error('Seleccione um material'); return; }
+    if (!bomItemMaterial) { toast.error(t.productionUi.selectMaterial); return; }
     const mat = products.find(p => p.id === bomItemMaterial);
     if (!mat) return;
-    if (bomItems.some(i => i.materialId === mat.id)) { toast.error('Material já adicionado'); return; }
+    if (bomItems.some(i => i.materialId === mat.id)) { toast.error(t.productionUi.materialAlreadyAdded); return; }
     setBomItems(prev => [...prev, {
       id: `bi_${Date.now()}`,
       materialId: mat.id,
@@ -192,7 +195,7 @@ export default function ProductionModule() {
   const removeBomItem = (id: string) => setBomItems(prev => prev.filter(i => i.id !== id));
 
   const saveBOM = () => {
-    if (!bomProduct) { toast.error('Seleccione o produto final'); return; }
+    if (!bomProduct) { toast.error(t.productionUi.selectFinalProduct); return; }
     if (bomItems.length === 0) { toast.error('Adicione pelo menos um material'); return; }
     const prod = products.find(p => p.id === bomProduct);
     if (!prod) return;
@@ -237,7 +240,7 @@ export default function ProductionModule() {
 
   // --- Order Actions ---
   const createOrder = () => {
-    if (!orderProduct) { toast.error('Seleccione um produto'); return; }
+    if (!orderProduct) { toast.error(t.productionUi.selectProduct); return; }
     const product = products.find(p => p.id === orderProduct);
     if (!product) return;
     const bom = boms.find(b => b.productId === product.id && b.isActive);
@@ -275,7 +278,7 @@ export default function ProductionModule() {
     if (idx >= 0) {
       all[idx].status = 'in_progress';
       setStored(STORAGE_KEYS.orders, all);
-      toast.success('Produção iniciada');
+      toast.success(t.productionUi.productionStarted);
       refresh();
     }
   };
@@ -437,14 +440,14 @@ export default function ProductionModule() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0">
           {[
-            { key: 'ordens', label: 'Ordens de Produção', icon: Factory },
+            { key: 'ordens', labelKey: 'tabOrders', icon: Factory },
             { key: 'bom', label: 'Bill of Materials', icon: Layers },
-            { key: 'consumo', label: 'Consumo Materiais', icon: Package },
-            { key: 'custos', label: 'Custos de Produção', icon: Settings },
+            { key: 'consumo', labelKey: 'tabConsumption', icon: Package },
+            { key: 'custos', labelKey: 'tabCosts', icon: Settings },
           ].map(tab => (
             <TabsTrigger key={tab.key} value={tab.key}
               className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-1.5 gap-1">
-              <tab.icon className="w-3 h-3" /> {tab.label}
+              <tab.icon className="w-3 h-3" /> {'labelKey' in tab ? (t.productionUi[tab.labelKey as keyof typeof t.productionUi] as string) : tab.label}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -475,15 +478,18 @@ export default function ProductionModule() {
                   <td className="px-3 py-1.5 text-right font-mono">{order.completedQuantity}</td>
                   <td className="px-3 py-1.5 text-right font-mono text-destructive">{order.wastedQuantity || 0}</td>
                   <td className="px-3 py-1.5 text-muted-foreground">{order.branchName}</td>
-                  <td className="px-3 py-1.5 text-muted-foreground">{new Date(order.startDate).toLocaleDateString('pt-AO')}</td>
-                  <td className="px-3 py-1.5 text-muted-foreground">{order.completedDate ? new Date(order.completedDate).toLocaleDateString('pt-AO') : '-'}</td>
+                  <td className="px-3 py-1.5 text-muted-foreground">{new Date(order.startDate).toLocaleDateString(uiLocale)}</td>
+                  <td className="px-3 py-1.5 text-muted-foreground">{order.completedDate ? new Date(order.completedDate).toLocaleDateString(uiLocale) : '-'}</td>
                   <td className="px-3 py-1.5 text-center">
                     <Badge variant={
                       order.status === 'completed' ? 'default' :
                       order.status === 'in_progress' ? 'secondary' :
                       order.status === 'cancelled' ? 'destructive' : 'outline'
                     } className="text-[9px] px-1.5 py-0">
-                      {order.status === 'planned' ? 'Planeada' : order.status === 'in_progress' ? 'Em Curso' : order.status === 'completed' ? 'Concluída' : 'Cancelada'}
+                      {order.status === 'planned' ? t.productionUi.statusPlanned :
+                        order.status === 'in_progress' ? t.productionUi.statusInProgress :
+                        order.status === 'completed' ? t.productionUi.statusCompleted :
+                        t.productionUi.statusCancelled}
                     </Badge>
                   </td>
                 </tr>
@@ -493,7 +499,7 @@ export default function ProductionModule() {
           {filteredOrders.length === 0 && (
             <div className="text-center py-12 text-muted-foreground text-sm">
               <Factory className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>Nenhuma ordem de produção</p>
+              <p>{t.productionUi.noProductionOrders}</p>
             </div>
           )}
         </TabsContent>
@@ -639,7 +645,7 @@ export default function ProductionModule() {
 
           <div className="grid grid-cols-2 gap-3 mb-4">
             <Card><CardContent className="pt-4 pb-3 text-center">
-              <p className="text-[10px] text-muted-foreground">Ordens Concluídas</p>
+              <p className="text-[10px] text-muted-foreground">{t.productionUi.completedOrders}</p>
               <p className="text-2xl font-bold">{costAnalysis.completedCount}</p>
             </CardContent></Card>
             <Card><CardContent className="pt-4 pb-3 text-center">
@@ -700,7 +706,7 @@ export default function ProductionModule() {
             <div className="space-y-1">
               <Label className="text-xs">Produto a Produzir</Label>
               <Select value={orderProduct} onValueChange={setOrderProduct}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Seleccionar produto..." /></SelectTrigger>
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={t.productionUi.selectProductPlaceholder} /></SelectTrigger>
                 <SelectContent>
                   {products.map(p => <SelectItem key={p.id} value={p.id}>{p.sku} - {p.name}</SelectItem>)}
                 </SelectContent>

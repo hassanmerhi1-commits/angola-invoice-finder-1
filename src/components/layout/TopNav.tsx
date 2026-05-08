@@ -54,105 +54,105 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
   // ========== MENU BAR ==========
   const menuItems = [
     {
-      label: 'Ficheiro',
+      label: t.topNav.menus.file,
       items: [
-        { label: 'Abrir', icon: FolderOpen },
-        { label: 'Guardar', icon: Save },
-        { label: 'Imprimir', icon: Printer },
+        { label: t.topNav.file.open, icon: FolderOpen },
+        { label: t.topNav.file.save, icon: Save },
+        { label: t.topNav.file.print, icon: Printer },
         { label: 'separator' },
-        { label: 'Cópia de Segurança', icon: Database },
-        { label: 'Importar', icon: Download },
+        { label: t.topNav.file.backup, icon: Database },
+        { label: t.topNav.file.import, icon: Download },
         { label: 'separator' },
-        { label: 'Sair', icon: LogOut, action: onLogout },
+        { label: t.topNav.file.exit, icon: LogOut, action: onLogout },
       ],
     },
     {
-      label: 'Empresa',
+      label: t.topNav.menus.company,
       items: [
-        { label: 'Filiais', icon: Building2, path: '/branches' },
-        { label: 'Utilizadores', icon: UserCog, path: '/users' },
-        { label: 'Configurações', icon: Settings, path: '/settings' },
+        { label: t.topNav.company.branches, icon: Building2, path: '/branches' },
+        { label: t.topNav.company.users, icon: UserCog, path: '/users' },
+        { label: t.topNav.company.settings, icon: Settings, path: '/settings' },
       ],
     },
     {
-      label: 'Invoicing',
+      label: t.topNav.menus.invoicing,
       items: [
-        { label: 'POS / Ponto de Venda', icon: ShoppingCart, path: '/pos' },
-        { label: 'Vendas (Histórico)', icon: Receipt, path: '/vendas' },
-        { label: 'Facturas', icon: FileText, path: '/invoices' },
-        { label: 'Pro-forma', icon: ClipboardList, path: '/proforma' },
+        { label: t.topNav.invoicing.pos, icon: ShoppingCart, path: '/pos' },
+        { label: t.topNav.invoicing.salesHistory, icon: Receipt, path: '/vendas' },
+        { label: t.topNav.invoicing.invoices, icon: FileText, path: '/invoices' },
+        { label: t.topNav.invoicing.proforma, icon: ClipboardList, path: '/proforma' },
         { label: 'separator' },
-        { label: 'Nota de Crédito', icon: CreditCard, path: '/fiscal-documents' },
-        { label: 'Nota de Débito', icon: DollarSign, path: '/fiscal-documents' },
+        { label: t.topNav.invoicing.creditNote, icon: CreditCard, path: '/fiscal-documents' },
+        { label: t.topNav.invoicing.debitNote, icon: DollarSign, path: '/fiscal-documents' },
       ],
     },
     {
-      label: 'Accounting',
+      label: t.topNav.menus.accounting,
       items: [
-        { label: 'Recibo', icon: Receipt, path: '/invoices' },
-        { label: 'Forma de Receber', icon: Wallet },
-        { label: 'Valor Crédito', icon: CreditCard },
+        { label: t.topNav.accounting.receipt, icon: Receipt, path: '/invoices' },
+        { label: t.topNav.accounting.receiveMethod, icon: Wallet },
+        { label: t.topNav.accounting.creditAmount, icon: CreditCard },
         { label: 'separator' },
-        { label: 'Pagamento', icon: DollarSign, path: '/expenses' },
-        { label: 'Pagamento por Cheque', icon: FileText },
+        { label: t.topNav.accounting.payment, icon: DollarSign, path: '/expenses' },
+        { label: t.topNav.accounting.chequePayment, icon: FileText },
         { label: 'separator' },
-        { label: 'Multi Crédito', icon: Plus },
-        { label: 'Multi Débito', icon: Plus },
-        { label: 'Entrada do Diário', icon: BookOpen, path: '/chart-of-accounts' },
+        { label: t.topNav.accounting.multiCredit, icon: Plus },
+        { label: t.topNav.accounting.multiDebit, icon: Plus },
+        { label: t.topNav.accounting.journalEntry, icon: BookOpen, path: '/chart-of-accounts' },
       ],
     },
     {
-      label: 'Transações',
+      label: t.topNav.menus.transactions,
       items: [
-        { label: 'Transferência de Stock', icon: ArrowRightLeft, path: '/stock-transfer' },
-        { label: 'Ajuste de Inventário', icon: RefreshCw, path: '/inventory' },
-        { label: 'Devolução de Compra', icon: Truck },
+        { label: t.topNav.transactions.stockTransfer, icon: ArrowRightLeft, path: '/stock-transfer' },
+        { label: t.topNav.transactions.inventoryAdjustment, icon: RefreshCw, path: '/inventory' },
+        { label: t.topNav.transactions.purchaseReturn, icon: Truck },
       ],
     },
     {
-      label: 'Relatórios',
+      label: t.topNav.menus.reports,
       items: [
-        { label: 'Balancete', icon: PieChart, path: '/reports' },
-        { label: 'Demonstração de Resultados', icon: TrendingUp, path: '/reports' },
-        { label: 'Balanço', icon: BarChart3, path: '/reports' },
+        { label: t.topNav.reports.trialBalance, icon: PieChart, path: '/reports' },
+        { label: t.topNav.reports.incomeStatement, icon: TrendingUp, path: '/reports' },
+        { label: t.topNav.reports.balanceSheet, icon: BarChart3, path: '/reports' },
         { label: 'separator' },
-        { label: 'Relatórios Diários', icon: Calendar, path: '/daily-reports' },
-        { label: 'Extracto de Conta', icon: FileText, path: '/reports' },
+        { label: t.topNav.reports.dailyReports, icon: Calendar, path: '/daily-reports' },
+        { label: t.topNav.reports.accountStatement, icon: FileText, path: '/reports' },
         { label: 'separator' },
-        { label: 'Movimento de Stock', icon: ArrowRightLeft, path: '/reports' },
-        { label: 'Valorização de Stock', icon: DollarSign, path: '/reports' },
-        { label: 'Stock por Filial', icon: Building2, path: '/reports' },
+        { label: t.topNav.reports.stockMovement, icon: ArrowRightLeft, path: '/reports' },
+        { label: t.topNav.reports.stockValuation, icon: DollarSign, path: '/reports' },
+        { label: t.topNav.reports.stockByBranch, icon: Building2, path: '/reports' },
       ],
     },
     {
-      label: 'Utilities',
+      label: t.topNav.menus.utilities,
       items: [
-        { label: 'Modificar Senha Actual', icon: Shield },
-        { label: 'Manutenção', icon: Settings },
-        { label: 'Calculadora', icon: Calculator },
+        { label: t.topNav.utilities.changePassword, icon: Shield },
+        { label: t.topNav.utilities.maintenance, icon: Settings },
+        { label: t.topNav.utilities.calculator, icon: Calculator },
         { label: 'separator' },
-        { label: 'Sincronização', icon: Upload, path: '/data-sync' },
+        { label: t.topNav.utilities.sync, icon: Upload, path: '/data-sync' },
       ],
     },
     {
-      label: 'Ajuda',
+      label: t.topNav.menus.help,
       items: [
-        { label: 'Sobre', icon: Info },
-        { label: 'Ajuda', icon: HelpCircle },
+        { label: t.topNav.help.about, icon: Info },
+        { label: t.topNav.help.help, icon: HelpCircle },
       ],
     },
   ];
 
   // ========== MAIN TABS ==========
   const mainTabs = [
-    { label: 'Inicio', path: '/', icon: LayoutDashboard },
-    { label: 'Mapa De Contas', path: '/chart-of-accounts', icon: BookOpen },
-    { label: 'Stock', path: '/inventory', icon: Package },
-    { label: 'Diarios', path: '/journals', icon: Calendar },
-    { label: 'Faturas / Vouchers', path: '/invoices', icon: FileText },
-    { label: 'Produção', path: '/production', icon: Factory },
-    { label: 'Importação', path: '/import', icon: Globe },
-    { label: 'HR', path: '/hr', icon: Users },
+    { label: t.nav.dashboard, path: '/', icon: LayoutDashboard },
+    { label: t.nav.chartOfAccounts, path: '/chart-of-accounts', icon: BookOpen },
+    { label: t.nav.inventory, path: '/inventory', icon: Package },
+    { label: t.nav.journals, path: '/journals', icon: Calendar },
+    { label: t.nav.invoices, path: '/invoices', icon: FileText },
+    { label: t.nav.production, path: '/production', icon: Factory },
+    { label: t.common.import, path: '/import', icon: Globe },
+    { label: t.nav.hr, path: '/hr', icon: Users },
   ];
 
   // ========== ACTION TOOLBAR ==========
@@ -163,43 +163,43 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     if (p === '/' || p === '') return [];
 
     const base = [
-      { label: 'Todos', icon: FolderOpen, variant: 'outline' as const },
-      { label: 'Novo', icon: Plus, variant: 'default' as const },
-      { label: 'Eliminar', icon: Trash2, variant: 'destructive' as const },
-      { label: 'Editar', icon: Pencil, variant: 'outline' as const },
+      { label: t.topNav.toolbar.all, icon: FolderOpen, variant: 'outline' as const },
+      { label: t.topNav.toolbar.new, icon: Plus, variant: 'default' as const },
+      { label: t.topNav.toolbar.delete, icon: Trash2, variant: 'destructive' as const },
+      { label: t.topNav.toolbar.edit, icon: Pencil, variant: 'outline' as const },
     ];
 
     if (p.includes('inventory') || p.includes('stock')) {
       return [
         ...base,
-        { label: 'Transferência', icon: ArrowRightLeft, variant: 'outline' as const },
-        { label: 'Ajustar Saída', icon: RefreshCw, variant: 'outline' as const },
-        { label: 'Entrada Inventário', icon: Download, variant: 'outline' as const },
-        { label: 'Qtd Mínima', icon: Filter, variant: 'outline' as const },
+        { label: t.topNav.toolbar.transfer, icon: ArrowRightLeft, variant: 'outline' as const },
+        { label: t.topNav.toolbar.adjustExit, icon: RefreshCw, variant: 'outline' as const },
+        { label: t.topNav.toolbar.inventoryEntry, icon: Download, variant: 'outline' as const },
+        { label: t.topNav.toolbar.minQty, icon: Filter, variant: 'outline' as const },
       ];
     }
     if (p.includes('chart-of-accounts')) {
       return [
         ...base,
-        { label: 'Fatura De Venda', icon: FileText, variant: 'outline' as const },
-        { label: 'Recibo', icon: Receipt, variant: 'outline' as const },
-        { label: 'Pagamento', icon: DollarSign, variant: 'outline' as const },
-        { label: 'Fatura de Compra', icon: Truck, variant: 'outline' as const },
-        { label: 'Entrada do Diário', icon: BookOpen, variant: 'outline' as const },
+        { label: t.topNav.toolbar.salesInvoice, icon: FileText, variant: 'outline' as const },
+        { label: t.topNav.toolbar.receipt, icon: Receipt, variant: 'outline' as const },
+        { label: t.topNav.toolbar.payment, icon: DollarSign, variant: 'outline' as const },
+        { label: t.topNav.toolbar.purchaseInvoice, icon: Truck, variant: 'outline' as const },
+        { label: t.topNav.toolbar.journalEntry, icon: BookOpen, variant: 'outline' as const },
       ];
     }
     if (p.includes('invoices') || p.includes('fiscal') || p.includes('proforma')) {
       return [
         ...base,
-        { label: 'Imprimir', icon: Printer, variant: 'outline' as const },
-        { label: 'AGT Send', icon: Upload, variant: 'outline' as const },
+        { label: t.topNav.file.print, icon: Printer, variant: 'outline' as const },
+        { label: t.topNav.toolbar.agtSend, icon: Upload, variant: 'outline' as const },
       ];
     }
     if (p.includes('pos')) {
       return [
-        { label: 'Nova Venda', icon: Plus, variant: 'default' as const },
-        { label: 'Guardar', icon: Save, variant: 'outline' as const },
-        { label: 'Anular', icon: X, variant: 'destructive' as const },
+        { label: t.topNav.toolbar.newSale, icon: Plus, variant: 'default' as const },
+        { label: t.topNav.toolbar.save, icon: Save, variant: 'outline' as const },
+        { label: t.topNav.toolbar.void, icon: X, variant: 'destructive' as const },
       ];
     }
     return base;
@@ -237,8 +237,8 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
                     <DropdownMenuItem
                       key={item.label}
                       onClick={() => {
-                        if ((item as any).action) (item as any).action();
-                        else if ((item as any).path) navigate((item as any).path);
+                        if ('action' in item && typeof item.action === 'function') item.action();
+                        else if ('path' in item && typeof item.path === 'string') navigate(item.path);
                       }}
                       className="text-xs gap-2"
                     >
@@ -265,7 +265,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           >
             <SelectTrigger className="h-7 w-[140px] text-xs bg-sidebar-accent border-sidebar-border text-sidebar-foreground">
               <Building2 className="w-3.5 h-3.5 mr-1.5 text-sidebar-primary" />
-              <SelectValue placeholder="Filial" />
+              <SelectValue placeholder={t.topNav.toolbar.branchPlaceholder} />
             </SelectTrigger>
             <SelectContent>
               {branches.map(branch => (
@@ -292,16 +292,16 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
               </div>
               <DropdownMenuItem className="text-xs gap-2 mt-1">
                 <Shield className="w-3.5 h-3.5" />
-                Perfil
+                {t.topNav.userMenu.profile}
               </DropdownMenuItem>
               <DropdownMenuItem className="text-xs gap-2" onClick={() => navigate('/settings')}>
                 <Settings className="w-3.5 h-3.5" />
-                Configurações
+                {t.nav.settings}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onLogout} className="text-destructive text-xs gap-2">
                 <LogOut className="w-3.5 h-3.5" />
-                Sair
+                {t.nav.logout}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -340,11 +340,11 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <div className="flex-1" />
           <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 px-3 rounded-lg">
             <Filter className="w-3.5 h-3.5" />
-            Filtro
+            {t.topNav.toolbar.filter}
           </Button>
           <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 px-3 rounded-lg">
             <FileSpreadsheet className="w-3.5 h-3.5" />
-            Excel
+            {t.topNav.toolbar.excel}
           </Button>
         </div>
       )}

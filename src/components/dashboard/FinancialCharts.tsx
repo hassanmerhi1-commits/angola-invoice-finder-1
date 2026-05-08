@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useTranslation } from '@/i18n';
 import { isDemoMode } from '@/lib/api/config';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
@@ -428,13 +429,14 @@ export function ProfitMarginWidget() {
 // ==================== PAYMENT METHOD BREAKDOWN ====================
 
 export function PaymentMethodChart() {
+  const { t } = useTranslation();
   const data = useMemo(() => {
     const sales = getSalesFromStorage();
     const methods: Record<string, { name: string; value: number; count: number }> = {
-      cash: { name: 'Numerário', value: 0, count: 0 },
-      card: { name: 'Cartão', value: 0, count: 0 },
-      transfer: { name: 'Transferência', value: 0, count: 0 },
-      mixed: { name: 'Misto', value: 0, count: 0 },
+      cash: { name: t.chartsUi.methodCash, value: 0, count: 0 },
+      card: { name: t.chartsUi.methodCard, value: 0, count: 0 },
+      transfer: { name: t.chartsUi.methodTransfer, value: 0, count: 0 },
+      mixed: { name: t.chartsUi.methodMixed, value: 0, count: 0 },
     };
 
     for (const sale of sales) {
@@ -453,7 +455,7 @@ export function PaymentMethodChart() {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">Métodos de Pagamento</CardTitle>
+        <CardTitle className="text-sm font-semibold">{t.chartsUi.paymentMethods}</CardTitle>
       </CardHeader>
       <CardContent>
         {data.length > 0 ? (

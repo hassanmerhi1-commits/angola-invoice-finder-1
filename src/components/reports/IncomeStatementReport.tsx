@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Download, Printer, FileSpreadsheet, TrendingUp, TrendingDown } from 'lucide-react';
 import { useBranches, useSales } from '@/hooks/useERP';
+import { useTranslation } from '@/i18n';
 
 interface LineItem {
   code: string;
@@ -22,6 +23,8 @@ interface LineItem {
 }
 
 export default function IncomeStatementReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { currentBranch } = useBranches();
   const { sales } = useSales(currentBranch?.id);
   
@@ -61,36 +64,36 @@ export default function IncomeStatementReport() {
   const netProfit = profitBeforeTax - incomeTax;
 
   const formatMoney = (value: number) => {
-    const formatted = Math.abs(value).toLocaleString('pt-AO', { minimumFractionDigits: 2 });
+    const formatted = Math.abs(value).toLocaleString(locale, { minimumFractionDigits: 2 });
     return value < 0 ? `(${formatted})` : formatted;
   };
 
   const lineItems: LineItem[] = [
-    { code: '71', description: 'Vendas de Mercadorias', value: salesTotal },
-    { code: '72', description: 'Prestação de Serviços', value: 0 },
-    { code: '73', description: 'Outros Rendimentos Operacionais', value: 0 },
-    { code: '', description: 'RENDIMENTOS OPERACIONAIS', value: salesTotal, isSubtotal: true },
+    { code: '71', description: t.incomeStatementUi.salesOfGoods, value: salesTotal },
+    { code: '72', description: t.incomeStatementUi.servicesProvided, value: 0 },
+    { code: '73', description: t.incomeStatementUi.otherOperatingIncome, value: 0 },
+    { code: '', description: t.incomeStatementUi.operatingIncome, value: salesTotal, isSubtotal: true },
     
-    { code: '61', description: 'Custo das Mercadorias Vendidas', value: -costOfGoodsSold, indent: 1 },
-    { code: '', description: 'RESULTADO BRUTO', value: grossProfit, isSubtotal: true },
+    { code: '61', description: t.incomeStatementUi.costOfGoodsSold, value: -costOfGoodsSold, indent: 1 },
+    { code: '', description: t.incomeStatementUi.grossResult, value: grossProfit, isSubtotal: true },
     
-    { code: '62', description: 'Fornecimentos e Serviços Externos', value: -operatingExpenses.supplies, indent: 1 },
-    { code: '63', description: 'Gastos com Pessoal', value: -operatingExpenses.personnel, indent: 1 },
-    { code: '64', description: 'Depreciações e Amortizações', value: -operatingExpenses.depreciation, indent: 1 },
-    { code: '65', description: 'Outros Gastos Operacionais', value: -operatingExpenses.other, indent: 1 },
-    { code: '', description: 'Total Gastos Operacionais', value: -totalOperatingExpenses, isSubtotal: true },
+    { code: '62', description: t.incomeStatementUi.externalSuppliesServices, value: -operatingExpenses.supplies, indent: 1 },
+    { code: '63', description: t.incomeStatementUi.personnelExpenses, value: -operatingExpenses.personnel, indent: 1 },
+    { code: '64', description: t.incomeStatementUi.depreciationAmortization, value: -operatingExpenses.depreciation, indent: 1 },
+    { code: '65', description: t.incomeStatementUi.otherOperatingExpenses, value: -operatingExpenses.other, indent: 1 },
+    { code: '', description: t.incomeStatementUi.totalOperatingExpenses, value: -totalOperatingExpenses, isSubtotal: true },
     
-    { code: '', description: 'RESULTADO OPERACIONAL', value: operatingProfit, isSubtotal: true },
+    { code: '', description: t.incomeStatementUi.operatingResult, value: operatingProfit, isSubtotal: true },
     
-    { code: '78', description: 'Rendimentos Financeiros', value: financialItems.financialIncome, indent: 1 },
-    { code: '68', description: 'Gastos Financeiros', value: financialItems.financialExpenses, indent: 1 },
-    { code: '', description: 'Resultado Financeiro', value: financialResult, isSubtotal: true },
+    { code: '78', description: t.incomeStatementUi.financialIncome, value: financialItems.financialIncome, indent: 1 },
+    { code: '68', description: t.incomeStatementUi.financialExpenses, value: financialItems.financialExpenses, indent: 1 },
+    { code: '', description: t.incomeStatementUi.financialResult, value: financialResult, isSubtotal: true },
     
-    { code: '', description: 'RESULTADO ANTES DE IMPOSTOS', value: profitBeforeTax, isSubtotal: true },
+    { code: '', description: t.incomeStatementUi.resultBeforeTax, value: profitBeforeTax, isSubtotal: true },
     
-    { code: '81', description: 'Imposto sobre o Rendimento', value: -incomeTax, indent: 1 },
+    { code: '81', description: t.incomeStatementUi.incomeTax, value: -incomeTax, indent: 1 },
     
-    { code: '', description: 'RESULTADO LÍQUIDO DO PERÍODO', value: netProfit, isTotal: true },
+    { code: '', description: t.incomeStatementUi.netResult, value: netProfit, isTotal: true },
   ];
 
   const handlePrint = () => {
@@ -98,7 +101,7 @@ export default function IncomeStatementReport() {
   };
 
   const handleExportExcel = () => {
-    const headers = ['Código', 'Descrição', 'Valor (Kz)'];
+    const headers = [t.incomeStatementUi.colCode, t.incomeStatementUi.colDescription, t.incomeStatementUi.colValueKz];
     const rows = lineItems.map(item => [item.code, item.description, item.value]);
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -114,12 +117,12 @@ export default function IncomeStatementReport() {
       {/* Filters */}
       <Card>
         <CardHeader className="py-3">
-          <CardTitle className="text-lg">Demonstração de Resultados</CardTitle>
+          <CardTitle className="text-lg">{t.incomeStatementUi.title}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-4 items-end">
             <div className="space-y-1">
-              <Label className="text-xs">Data Início</Label>
+              <Label className="text-xs">{t.reportsUi.dateFrom}</Label>
               <Input
                 type="date"
                 value={startDate}
@@ -128,7 +131,7 @@ export default function IncomeStatementReport() {
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Data Fim</Label>
+              <Label className="text-xs">{t.reportsUi.dateTo}</Label>
               <Input
                 type="date"
                 value={endDate}
@@ -139,7 +142,7 @@ export default function IncomeStatementReport() {
             <div className="flex gap-2 ml-auto">
               <Button variant="outline" size="sm" onClick={handlePrint}>
                 <Printer className="w-4 h-4 mr-2" />
-                Imprimir
+                {t.reportsUi.print}
               </Button>
               <Button variant="outline" size="sm" onClick={handleExportExcel}>
                 <FileSpreadsheet className="w-4 h-4 mr-2" />
@@ -154,7 +157,9 @@ export default function IncomeStatementReport() {
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
-            <CardTitle>Período: {new Date(startDate).toLocaleDateString('pt-AO')} - {new Date(endDate).toLocaleDateString('pt-AO')}</CardTitle>
+            <CardTitle>
+              {t.incomeStatementUi.periodLabel.replace('{from}', new Date(startDate).toLocaleDateString(locale)).replace('{to}', new Date(endDate).toLocaleDateString(locale))}
+            </CardTitle>
             <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${netProfit >= 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
               {netProfit >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
               <span className="font-bold">{formatMoney(netProfit)} Kz</span>
@@ -194,7 +199,7 @@ export default function IncomeStatementReport() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Margem Bruta</p>
+            <p className="text-sm text-muted-foreground">{t.incomeStatementUi.grossMargin}</p>
             <p className="text-2xl font-bold text-green-600">
               {salesTotal > 0 ? ((grossProfit / salesTotal) * 100).toFixed(1) : 0}%
             </p>
@@ -202,7 +207,7 @@ export default function IncomeStatementReport() {
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Margem Operacional</p>
+            <p className="text-sm text-muted-foreground">{t.incomeStatementUi.operatingMargin}</p>
             <p className="text-2xl font-bold text-blue-600">
               {salesTotal > 0 ? ((operatingProfit / salesTotal) * 100).toFixed(1) : 0}%
             </p>
@@ -210,7 +215,7 @@ export default function IncomeStatementReport() {
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Margem Líquida</p>
+            <p className="text-sm text-muted-foreground">{t.incomeStatementUi.netMargin}</p>
             <p className={`text-2xl font-bold ${netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {salesTotal > 0 ? ((netProfit / salesTotal) * 100).toFixed(1) : 0}%
             </p>
@@ -218,7 +223,7 @@ export default function IncomeStatementReport() {
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">Volume de Vendas</p>
+            <p className="text-sm text-muted-foreground">{t.incomeStatementUi.salesVolume}</p>
             <p className="text-2xl font-bold">{formatMoney(salesTotal)} Kz</p>
           </CardContent>
         </Card>

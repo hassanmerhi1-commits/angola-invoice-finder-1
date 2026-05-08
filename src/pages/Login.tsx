@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { LogIn, Shield } from 'lucide-react';
 import { z } from 'zod';
 import defaultLogo from '/icon.png?url';
+import { useTranslation } from '@/i18n';
 
 const loginSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters').max(50, 'Username too long'),
@@ -22,6 +23,7 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<{ username?: string; password?: string }>({});
   const { login } = useAuth();
+  const { t } = useTranslation();
   const { companyName, logo } = useCompanyLogo();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -45,13 +47,13 @@ export default function Login() {
     try {
       const success = await login(username, password);
       if (success) {
-        toast({ title: 'Bem-vindo!', description: 'Login efectuado com sucesso.' });
+        toast({ title: t.auth.welcomeToastTitle, description: t.auth.welcomeToastDesc });
         navigate('/');
       } else {
-        toast({ title: 'Erro de Autenticação', description: 'Utilizador ou senha inválidos.', variant: 'destructive' });
+        toast({ title: t.auth.authErrorTitle, description: t.auth.authErrorDesc, variant: 'destructive' });
       }
     } catch {
-      toast({ title: 'Erro', description: 'Falha na conexão ao servidor.', variant: 'destructive' });
+      toast({ title: t.auth.connectionErrorTitle, description: t.auth.connectionErrorDesc, variant: 'destructive' });
     }
     setIsLoading(false);
   };
@@ -71,13 +73,13 @@ export default function Login() {
             <img src={logoSrc} alt={companyName} className="w-16 h-16 object-contain" />
           </div>
           <h1 className="text-4xl font-extrabold mb-3 tracking-tight">{companyName}</h1>
-          <p className="text-lg text-white/70 font-medium">O futuro é construído com nós</p>
+          <p className="text-lg text-white/70 font-medium">{t.auth.tagline}</p>
           <div className="mt-12 flex items-center justify-center gap-6 text-white/50 text-sm">
             <div className="flex items-center gap-2">
-              <Shield className="w-4 h-4" /> Seguro
+              <Shield className="w-4 h-4" /> {t.auth.safe}
             </div>
             <div className="w-1 h-1 rounded-full bg-white/30" />
-            <div>Multi-Filial</div>
+            <div>{t.auth.multiBranch}</div>
             <div className="w-1 h-1 rounded-full bg-white/30" />
             <div>AGT Compliance</div>
           </div>
@@ -94,17 +96,17 @@ export default function Login() {
           </div>
 
           <div>
-            <h2 className="text-2xl font-extrabold tracking-tight">Bem-vindo de volta</h2>
-            <p className="text-muted-foreground text-sm mt-1">Entre para continuar no sistema</p>
+            <h2 className="text-2xl font-extrabold tracking-tight">{t.auth.welcomeBack}</h2>
+            <p className="text-muted-foreground text-sm mt-1">{t.auth.enterToContinue}</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="username" className="text-sm font-semibold">Utilizador</Label>
+              <Label htmlFor="username" className="text-sm font-semibold">{t.auth.username}</Label>
               <Input
                 id="username"
                 type="text"
-                placeholder="Introduza o seu utilizador"
+                placeholder={t.auth.username}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className={`h-11 rounded-xl ${errors.username ? 'border-destructive' : ''}`}
@@ -114,7 +116,7 @@ export default function Login() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-sm font-semibold">Senha</Label>
+              <Label htmlFor="password" className="text-sm font-semibold">{t.auth.password}</Label>
               <Input
                 id="password"
                 type="password"
@@ -133,7 +135,7 @@ export default function Login() {
               ) : (
                 <>
                   <LogIn className="w-4 h-4 mr-2" />
-                  Entrar
+                  {t.auth.login}
                 </>
               )}
             </Button>
@@ -141,11 +143,11 @@ export default function Login() {
 
           <Card className="shadow-card">
             <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground mb-2 font-semibold">Demo — Credenciais de teste:</p>
+              <p className="text-xs text-muted-foreground mb-2 font-semibold">{t.auth.demoCredentials}</p>
               <div className="space-y-1 text-xs">
                 <p><span className="font-bold text-foreground">Admin:</span> <span className="font-mono text-primary">admin</span></p>
                 <p><span className="font-bold text-foreground">Caixa:</span> <span className="font-mono text-primary">caixa1</span></p>
-                <p className="text-muted-foreground">(qualquer senha)</p>
+                <p className="text-muted-foreground">{t.auth.anyPassword}</p>
               </div>
             </CardContent>
           </Card>

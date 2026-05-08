@@ -21,6 +21,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Check, X, Plus } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 
 interface ProductDetailDialogProps {
   open: boolean;
@@ -87,6 +88,7 @@ export function ProductDetailDialog({
   const { branches } = useBranches();
   const { categories } = useCategories();
   const { suppliers } = useSuppliers();
+  const { t } = useTranslation();
 
   const activeCategories = useMemo(() => categories.filter(c => c.isActive), [categories]);
   const activeSuppliers = useMemo(() => suppliers.filter(s => s.isActive), [suppliers]);
@@ -251,26 +253,26 @@ export function ProductDetailDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl p-0 gap-0" onOpenAutoFocus={e => e.preventDefault()}>
         <DialogHeader className="px-4 py-2 border-b bg-muted/50">
-          <DialogTitle className="text-sm">Stock Produto</DialogTitle>
+          <DialogTitle className="text-sm">{t.productDetailUi.title}</DialogTitle>
         </DialogHeader>
 
         <Tabs defaultValue="info" className="flex flex-col">
           <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 px-4 h-8">
-            <TabsTrigger value="info" className="text-xs h-7">Informações de Produto</TabsTrigger>
-            <TabsTrigger value="barcodes" className="text-xs h-7">Barcodes</TabsTrigger>
+            <TabsTrigger value="info" className="text-xs h-7">{t.productDetailUi.tabInfo}</TabsTrigger>
+            <TabsTrigger value="barcodes" className="text-xs h-7">{t.productDetailUi.tabBarcodes}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="info" className="m-0 p-0 overflow-y-auto max-h-[65vh]" onWheel={e => e.stopPropagation()}>
             <div className="grid grid-cols-3 gap-0 text-xs">
               {/* ── Column 1: Informações Gerais ── */}
               <div className="border-r p-3 space-y-1">
-                <Row label="Codigo">
+                <Row label={t.productDetailUi.code}>
                   <Input value={formData.sku} onChange={e => set('sku', e.target.value)} className="h-7 text-xs" />
                 </Row>
-                <Row label="Descrição">
+                <Row label={t.common.description}>
                   <Input value={formData.name} onChange={e => set('name', e.target.value)} className="h-7 text-xs" />
                 </Row>
-                <Row label="Categoria">
+                <Row label={t.inventory.category}>
                   <Select value={resolveCategoryName(formData.category, activeCategories)} onValueChange={v => set('category', v)}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-popover border shadow-lg z-50">
@@ -278,25 +280,25 @@ export function ProductDetailDialog({
                     </SelectContent>
                   </Select>
                 </Row>
-                <Row label="Fornecedor">
+                <Row label={t.productFormUi.supplierLabel}>
                   <Select value={formData.fornecedorName || '__none__'} onValueChange={v => set('fornecedorName', v === '__none__' ? '' : v)}>
-                    <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                    <SelectTrigger className="h-7 text-xs"><SelectValue placeholder={t.productDetailUi.select} /></SelectTrigger>
                     <SelectContent className="bg-popover border shadow-lg z-50">
                       <SelectItem value="__none__">—</SelectItem>
                       {activeSuppliers.map(s => <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </Row>
-                <Row label="Embalagem">
+                <Row label={t.productDetailUi.packaging}>
                   <Input type="number" value={formData.embalagem} onChange={e => set('embalagem', parseInt(e.target.value) || 1)} className="h-7 text-xs" />
                 </Row>
-                <Row label="Qtd Minima">
+                <Row label={t.productDetailUi.minQty}>
                   <Input type="number" value={formData.qtdMinima} onChange={e => set('qtdMinima', parseInt(e.target.value) || 0)} className="h-7 text-xs" />
                 </Row>
-                <Row label="Qtd Maximo">
+                <Row label={t.productDetailUi.maxQty}>
                   <Input type="number" value={formData.qtdMaxima} onChange={e => set('qtdMaxima', parseInt(e.target.value) || 0)} className="h-7 text-xs" />
                 </Row>
-                <Row label="Unidade">
+                <Row label={t.inventory.unit}>
                   <Select value={formData.unit} onValueChange={v => set('unit', v)}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-popover border shadow-lg z-50">
@@ -304,7 +306,7 @@ export function ProductDetailDialog({
                     </SelectContent>
                   </Select>
                 </Row>
-                <Row label="IVA">
+                <Row label={t.productDetailUi.vat}>
                   <Select value={String(formData.iva)} onValueChange={v => updateIVA(parseInt(v))}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-popover border shadow-lg z-50">
@@ -312,89 +314,89 @@ export function ProductDetailDialog({
                     </SelectContent>
                   </Select>
                 </Row>
-                <Row label="Tipo">
+                <Row label={t.productDetailUi.type}>
                   <Select value={formData.tipo} onValueChange={v => set('tipo', v)}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-popover border shadow-lg z-50">
-                      <SelectItem value="INVENTARIO">INVENTARIO</SelectItem>
-                      <SelectItem value="SERVICO">SERVICO</SelectItem>
-                      <SelectItem value="CONSUMIVEL">CONSUMIVEL</SelectItem>
+                      <SelectItem value="INVENTARIO">{t.productDetailUi.inventoryType}</SelectItem>
+                      <SelectItem value="SERVICO">{t.productDetailUi.serviceType}</SelectItem>
+                      <SelectItem value="CONSUMIVEL">{t.productDetailUi.consumableType}</SelectItem>
                     </SelectContent>
                   </Select>
                 </Row>
-                <Row label="Código Barras">
+                <Row label={t.productFormUi.barcodeLabel}>
                   <Input value={formData.barcode} onChange={e => set('barcode', e.target.value)} className="h-7 text-xs" />
                 </Row>
               </div>
 
               {/* ── Column 2: Preços & Custos ── */}
               <div className="border-r p-3 space-y-1">
-              <h4 className="text-[11px] font-semibold border-b pb-1 mb-1">Preços de Venda</h4>
-                <Row label="Preço 1 (s/IVA)">
+              <h4 className="text-[11px] font-semibold border-b pb-1 mb-1">{t.productDetailUi.pricesTitle}</h4>
+                <Row label={t.productDetailUi.price1ExVat}>
                   <Input type="number" step="0.01" value={formData.price} onChange={e => updatePrice(parseFloat(e.target.value) || 0)} className="h-7 text-xs" />
                 </Row>
-                <Row label="Preço 1 c/IVA">
+                <Row label={t.productDetailUi.price1IncVat}>
                   <Input type="number" step="0.01" value={formData.priceIVA} onChange={e => updatePriceFromIVA(parseFloat(e.target.value) || 0)} className="h-7 text-xs font-medium" />
                 </Row>
                 <div className="border-t border-dashed my-1" />
-                <Row label="Preço 2 (s/IVA)">
+                <Row label={t.productDetailUi.price2ExVat}>
                   <Input type="number" step="0.01" value={formData.price2} onChange={e => set('price2', parseFloat(e.target.value) || 0)} className="h-7 text-xs" />
                 </Row>
-                <ReadOnlyRow label="Preço 2 c/IVA" value={(formData.price2 * (1 + formData.iva / 100)).toFixed(2)} />
-                <Row label="Preço 3 (s/IVA)">
+                <ReadOnlyRow label={t.productDetailUi.price2IncVat} value={(formData.price2 * (1 + formData.iva / 100)).toFixed(2)} />
+                <Row label={t.productDetailUi.price3ExVat}>
                   <Input type="number" step="0.01" value={formData.price3} onChange={e => set('price3', parseFloat(e.target.value) || 0)} className="h-7 text-xs" />
                 </Row>
-                <ReadOnlyRow label="Preço 3 c/IVA" value={(formData.price3 * (1 + formData.iva / 100)).toFixed(2)} />
-                <Row label="Preço 4 (s/IVA)">
+                <ReadOnlyRow label={t.productDetailUi.price3IncVat} value={(formData.price3 * (1 + formData.iva / 100)).toFixed(2)} />
+                <Row label={t.productDetailUi.price4ExVat}>
                   <Input type="number" step="0.01" value={formData.price4} onChange={e => set('price4', parseFloat(e.target.value) || 0)} className="h-7 text-xs" />
                 </Row>
-                <ReadOnlyRow label="Preço 4 c/IVA" value={(formData.price4 * (1 + formData.iva / 100)).toFixed(2)} />
+                <ReadOnlyRow label={t.productDetailUi.price4IncVat} value={(formData.price4 * (1 + formData.iva / 100)).toFixed(2)} />
 
-                <h4 className="text-[11px] font-semibold border-b pb-1 mb-1 pt-2">Custo (AKZ)</h4>
-                <Row label="Custo Actual">
+                <h4 className="text-[11px] font-semibold border-b pb-1 mb-1 pt-2">{t.productDetailUi.costAkzTitle}</h4>
+                <Row label={t.productDetailUi.currentCost}>
                   <Input type="number" step="0.01" value={formData.cost} onChange={e => set('cost', parseFloat(e.target.value) || 0)} className="h-7 text-xs" />
                 </Row>
-                <ReadOnlyRow label="Iniciar Custo" value={(product?.firstCost || formData.cost).toFixed(2)} />
-                <ReadOnlyRow label="Custo Médio" value={formData.avgCost.toFixed(2)} />
-                <ReadOnlyRow label="Último Custo" value={formData.lastCost.toFixed(2)} />
+                <ReadOnlyRow label={t.productDetailUi.initialCost} value={(product?.firstCost || formData.cost).toFixed(2)} />
+                <ReadOnlyRow label={t.productDetailUi.avgCost} value={formData.avgCost.toFixed(2)} />
+                <ReadOnlyRow label={t.productDetailUi.lastCost} value={formData.lastCost.toFixed(2)} />
 
                 {usdRate > 0 && (
                   <>
-                    <h4 className="text-[11px] font-semibold border-b pb-1 mb-1 pt-2">Custo (USD)</h4>
-                    <ReadOnlyRow label="Custo Actual" value={(formData.cost / usdRate).toFixed(4)} />
-                    <ReadOnlyRow label="Iniciar Custo" value={((product?.firstCost || formData.cost) / usdRate).toFixed(4)} />
-                    <ReadOnlyRow label="Custo Médio" value={(formData.avgCost / usdRate).toFixed(4)} />
-                    <ReadOnlyRow label="Último Custo" value={(formData.lastCost / usdRate).toFixed(4)} />
+                    <h4 className="text-[11px] font-semibold border-b pb-1 mb-1 pt-2">{t.productDetailUi.costUsdTitle}</h4>
+                    <ReadOnlyRow label={t.productDetailUi.currentCost} value={(formData.cost / usdRate).toFixed(4)} />
+                    <ReadOnlyRow label={t.productDetailUi.initialCost} value={((product?.firstCost || formData.cost) / usdRate).toFixed(4)} />
+                    <ReadOnlyRow label={t.productDetailUi.avgCost} value={(formData.avgCost / usdRate).toFixed(4)} />
+                    <ReadOnlyRow label={t.productDetailUi.lastCost} value={(formData.lastCost / usdRate).toFixed(4)} />
                   </>
                 )}
 
-                <h4 className="text-[11px] font-semibold border-b pb-1 mb-1 pt-2">Margem & Embalagem</h4>
+                <h4 className="text-[11px] font-semibold border-b pb-1 mb-1 pt-2">{t.productDetailUi.marginPackagingTitle}</h4>
                 <ReadOnlyRow label="Markup %" value={`${margin}%`} />
-                <ReadOnlyRow label="Margem Líq." value={formData.price > 0 ? (((formData.price - formData.cost) / formData.price) * 100).toFixed(2) + '%' : '0.00%'} />
-                <ReadOnlyRow label="Custo Emb." value={(formData.cost * (formData.embalagem || 1)).toFixed(2)} />
+                <ReadOnlyRow label={t.productDetailUi.netMargin} value={formData.price > 0 ? (((formData.price - formData.cost) / formData.price) * 100).toFixed(2) + '%' : '0.00%'} />
+                <ReadOnlyRow label={t.productDetailUi.packagingCost} value={(formData.cost * (formData.embalagem || 1)).toFixed(2)} />
                 {usdRate > 0 && (
-                  <ReadOnlyRow label="Custo Emb. USD" value={((formData.cost * (formData.embalagem || 1)) / usdRate).toFixed(4)} />
+                  <ReadOnlyRow label={t.productDetailUi.packagingCostUsd} value={((formData.cost * (formData.embalagem || 1)) / usdRate).toFixed(4)} />
                 )}
               </div>
 
               {/* ── Column 3: Stock & Filial ── */}
               <div className="p-3 space-y-1">
-                <h4 className="text-[11px] font-semibold border-b pb-1 mb-1">Stock & Filial</h4>
-                <Row label="Stock">
+                <h4 className="text-[11px] font-semibold border-b pb-1 mb-1">{t.productDetailUi.stockBranchTitle}</h4>
+                <Row label={t.inventory.stock}>
                   <Input type="number" value={formData.stock} onChange={e => set('stock', parseInt(e.target.value) || 0)} className="h-7 text-xs" />
                 </Row>
-                <Row label="Filial">
+                <Row label={t.productDetailUi.branch}>
                   <Select value={formData.branchId} onValueChange={v => set('branchId', v)}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-popover border shadow-lg z-50">
-                      <SelectItem value="all">Todas</SelectItem>
+                      <SelectItem value="all">{t.productDetailUi.all}</SelectItem>
                       {branches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </Row>
                 <div className="flex items-center gap-2 pt-2">
                   <Switch checked={formData.isActive} onCheckedChange={v => set('isActive', v)} />
-                  <Label className="text-[11px]">Produto Activo</Label>
+                  <Label className="text-[11px]">{t.productDetailUi.activeProduct}</Label>
                 </div>
               </div>
             </div>
@@ -404,11 +406,11 @@ export function ProductDetailDialog({
             <table className="w-full text-xs border">
               <thead>
                 <tr className="bg-muted">
-                  <th className="border p-2 text-left">Inv BarCode</th>
-                  <th className="border p-2 text-left">Embalagem</th>
-                  <th className="border p-2 text-left">Price LC</th>
+                  <th className="border p-2 text-left">{t.productDetailUi.invBarcode}</th>
+                  <th className="border p-2 text-left">{t.productDetailUi.packaging}</th>
+                  <th className="border p-2 text-left">{t.productDetailUi.priceLc}</th>
                   <th className="border p-2 text-left">PLU</th>
-                  <th className="border p-2 text-left">Ultimo Custo</th>
+                  <th className="border p-2 text-left">{t.productDetailUi.lastCostCol}</th>
                 </tr>
               </thead>
               <tbody>
@@ -449,7 +451,7 @@ export function ProductDetailDialog({
               </tbody>
             </table>
             <Button variant="outline" size="sm" className="mt-2" onClick={() => set('barcodes', [...formData.barcodes, { barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }])}>
-              <Plus className="w-3 h-3 mr-1" /> Adicionar Barcode
+              <Plus className="w-3 h-3 mr-1" /> {t.productDetailUi.addBarcode}
             </Button>
           </TabsContent>
         </Tabs>

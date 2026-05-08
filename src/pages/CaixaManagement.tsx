@@ -18,7 +18,7 @@ import {
 import { Caixa, CaixaSession, CashTransaction } from '@/types/accounting';
 import { MoneyTransferDialog } from '@/components/accounting/MoneyTransferDialog';
 import { format } from 'date-fns';
-import { pt } from 'date-fns/locale';
+import { pt, enUS } from 'date-fns/locale';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -118,7 +118,9 @@ const initialTransactionData: TransactionFormData = {
 };
 
 export default function CaixaManagement() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const dfLocale = language === 'pt' ? pt : enUS;
   const { currentBranch } = useBranchContext();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -149,7 +151,7 @@ export default function CaixaManagement() {
   const loadData = async () => {
     // Auto-seed a default Caixa for the current branch if none exists
     if (currentBranch?.id) {
-      await ensureBranchCaixa(currentBranch.id, currentBranch.name || 'Sede');
+      await ensureBranchCaixa(currentBranch.id, currentBranch.name || t.branchUi.headOffice);
     }
     setCaixas(await getCaixas(currentBranch?.id));
     setSessions(await getCaixaSessions());
@@ -190,20 +192,20 @@ export default function CaixaManagement() {
   // Create new Caixa
   const handleCreateCaixa = () => {
     if (!formData.name.trim()) {
-      toast({ title: 'Erro', description: 'Nome da caixa é obrigatório', variant: 'destructive' });
+      toast({ title: t.caixaUi.toastErrorTitle, description: t.caixaUi.cashRegisterNameRequired, variant: 'destructive' });
       return;
     }
 
     createCaixa(
       currentBranch?.id || 'default',
-      currentBranch?.name || 'Sede',
+      currentBranch?.name || t.branchUi.headOffice,
       formData.name,
       formData.openingBalance,
       formData.pettyLimit,
       formData.dailyLimit
     );
 
-    toast({ title: 'Sucesso', description: 'Caixa criada com sucesso' });
+    toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.cashRegisterCreated });
     setIsCreateDialogOpen(false);
     setFormData(initialFormData);
     loadData();
@@ -221,7 +223,7 @@ export default function CaixaManagement() {
       requiresApproval: formData.requiresApproval,
     });
 
-    toast({ title: 'Sucesso', description: 'Configurações actualizadas' });
+    toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.settingsUpdated });
     setIsEditDialogOpen(false);
     loadData();
   };
@@ -232,7 +234,7 @@ export default function CaixaManagement() {
     
     const existingSession = await getOpenCaixaSession(selectedCaixa.id);
     if (existingSession) {
-      toast({ title: 'Aviso', description: 'Já existe uma sessão aberta para esta caixa', variant: 'destructive' });
+      toast({ title: t.caixaUi.toastWarningTitle, description: t.caixaUi.sessionAlreadyOpen, variant: 'destructive' });
       return;
     }
 
@@ -240,10 +242,13 @@ export default function CaixaManagement() {
       selectedCaixa.id,
       currentBranch?.id || 'default',
       selectedCaixa.currentBalance,
-      user?.name || 'Sistema'
+      user?.name || t.caixaUi.systemUser
     );
 
-    toast({ title: 'Sessão Aberta', description: `Caixa "${selectedCaixa.name}" aberta para operações` });
+    toast({
+      title: t.caixaUi.sessionOpenedTitle,
+      description: t.caixaUi.sessionOpenedDesc.replace('{name}', selectedCaixa.name),
+    });
     setIsOpenSessionDialogOpen(false);
     loadData();
   };
@@ -255,7 +260,7 @@ export default function CaixaManagement() {
     closeCaixaSession(
       selectedSession.id,
       closingBalance,
-      user?.name || 'Sistema',
+      user?.name || t.caixaUi.systemUser,
       closingNotes
     );
 
@@ -265,12 +270,13 @@ export default function CaixaManagement() {
     
     if (Math.abs(difference) > 0) {
       toast({ 
-        title: 'Sessão Fechada com Diferença', 
-        description: `Diferença de ${difference.toLocaleString('pt-AO')} Kz detectada`,
+        title: t.caixaUi.sessionClosedWithDiffTitle,
+        description: t.caixaUi.discrepancyDetected
+          .replace('{amount}', difference.toLocaleString(uiLocale)),
         variant: difference !== 0 ? 'destructive' : 'default'
       });
     } else {
-      toast({ title: 'Sessão Fechada', description: 'Caixa fechada com sucesso' });
+      toast({ title: t.caixaUi.sessionClosedTitle, description: t.caixaUi.cashRegisterClosedSuccess });
     }
 
     setIsCloseSessionDialogOpen(false);
@@ -283,7 +289,7 @@ export default function CaixaManagement() {
   const handleAddTransaction = () => {
     if (!selectedCaixa) return;
     if (transactionData.amount <= 0) {
-      toast({ title: 'Erro', description: 'Valor deve ser maior que zero', variant: 'destructive' });
+      toast({ title: t.caixaUi.toastErrorTitle, description: t.caixaUi.amountMustBeGreaterThanZero, variant: 'destructive' });
       return;
     }
 
@@ -291,8 +297,9 @@ export default function CaixaManagement() {
     if (transactionData.type === 'withdrawal' && selectedCaixa.pettyLimit) {
       if (transactionData.amount > selectedCaixa.pettyLimit) {
         toast({ 
-          title: 'Limite Excedido', 
-          description: `Valor excede o limite de ${selectedCaixa.pettyLimit.toLocaleString('pt-AO')} Kz para operações individuais`,
+          title: t.caixaUi.limitExceededTitle,
+          description: t.caixaUi.amountExceedsPettyLimit
+            .replace('{limit}', selectedCaixa.pettyLimit.toLocaleString(uiLocale)),
           variant: 'destructive'
         });
         return;
@@ -305,7 +312,7 @@ export default function CaixaManagement() {
       transactionData.type,
       transactionData.amount,
       transactionData.description,
-      user?.name || 'Sistema',
+      user?.name || t.caixaUi.systemUser,
       undefined,
       transactionData.payee || undefined,
       'manual',
@@ -321,7 +328,7 @@ export default function CaixaManagement() {
       transactionData.type === 'withdrawal' ? 'out' : 'in'
     );
 
-    toast({ title: 'Sucesso', description: 'Movimento registado' });
+    toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.transactionRecorded });
     setIsTransactionDialogOpen(false);
     setTransactionData(initialTransactionData);
     loadData();
@@ -366,7 +373,7 @@ export default function CaixaManagement() {
   // Open transaction dialog
   const handleOpenTransactionDialog = (caixa: Caixa) => {
     if (caixa.status !== 'open') {
-      toast({ title: 'Aviso', description: 'Abra a sessão primeiro para registar movimentos', variant: 'destructive' });
+      toast({ title: t.caixaUi.toastWarningTitle, description: t.caixaUi.openSessionFirst, variant: 'destructive' });
       return;
     }
     setSelectedCaixa(caixa);
@@ -434,7 +441,7 @@ export default function CaixaManagement() {
               <TrendingUp className="w-5 h-5 text-primary" />
               <div>
                 <div className="text-xl font-bold text-primary">
-                  +{stats.todayIn.toLocaleString('pt-AO')} Kz
+                  +{stats.todayIn.toLocaleString(uiLocale)} Kz
                 </div>
                 <div className="text-sm text-muted-foreground">Entradas Hoje</div>
               </div>
@@ -447,7 +454,7 @@ export default function CaixaManagement() {
               <TrendingDown className="w-5 h-5 text-destructive" />
               <div>
                 <div className="text-xl font-bold text-destructive">
-                  -{stats.todayOut.toLocaleString('pt-AO')} Kz
+                  -{stats.todayOut.toLocaleString(uiLocale)} Kz
                 </div>
                 <div className="text-sm text-muted-foreground">Saídas Hoje</div>
               </div>
@@ -514,11 +521,11 @@ export default function CaixaManagement() {
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div className="p-2 bg-muted rounded">
                       <p className="text-xs text-muted-foreground">Limite Transacção</p>
-                      <p className="font-medium">{(caixa.pettyLimit || 0).toLocaleString('pt-AO')} Kz</p>
+                      <p className="font-medium">{(caixa.pettyLimit || 0).toLocaleString(uiLocale)} Kz</p>
                     </div>
                     <div className="p-2 bg-muted rounded">
                       <p className="text-xs text-muted-foreground">Limite Diário</p>
-                      <p className="font-medium">{(caixa.dailyLimit || 0).toLocaleString('pt-AO')} Kz</p>
+                      <p className="font-medium">{(caixa.dailyLimit || 0).toLocaleString(uiLocale)} Kz</p>
                     </div>
                   </div>
 
@@ -527,7 +534,9 @@ export default function CaixaManagement() {
                     <div className="p-2 bg-primary/5 rounded border border-primary/20">
                       <div className="flex items-center gap-2 text-sm">
                         <Clock className="w-4 h-4 text-primary" />
-                        <span>Aberto às {format(new Date(todaySession.openedAt), 'HH:mm')}</span>
+                        <span>
+                          {t.caixaUi.openedAt.replace('{time}', format(new Date(todaySession.openedAt), 'HH:mm', { locale: dfLocale }))}
+                        </span>
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">
                         Por: {todaySession.openedBy}
@@ -601,7 +610,7 @@ export default function CaixaManagement() {
               <Input
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Ex: Caixa Principal, Caixa 1"
+                placeholder={t.caixaUi.cashRegisterNamePlaceholder}
               />
             </div>
             <div className="space-y-2">
@@ -717,7 +726,7 @@ export default function CaixaManagement() {
             <AlertDialogTitle>Abrir Sessão de Caixa</AlertDialogTitle>
             <AlertDialogDescription>
               Vai abrir a caixa "{selectedCaixa?.name}" com um saldo de{' '}
-              <strong>{selectedCaixa?.currentBalance.toLocaleString('pt-AO')} Kz</strong>.
+              <strong>{selectedCaixa?.currentBalance.toLocaleString(uiLocale)} Kz</strong>.
               <br /><br />
               Esta acção iniciará o registo de movimentos para hoje.
             </AlertDialogDescription>
@@ -749,21 +758,21 @@ export default function CaixaManagement() {
               <div className="grid grid-cols-2 gap-4 p-4 bg-muted rounded-lg">
                 <div>
                   <p className="text-sm text-muted-foreground">Saldo Abertura</p>
-                  <p className="font-bold">{selectedSession.openingBalance.toLocaleString('pt-AO')} Kz</p>
+                  <p className="font-bold">{selectedSession.openingBalance.toLocaleString(uiLocale)} Kz</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Saldo Esperado</p>
                   <p className="font-bold">
-                    {(selectedSession.openingBalance + selectedSession.totalIn - selectedSession.totalOut).toLocaleString('pt-AO')} Kz
+                    {(selectedSession.openingBalance + selectedSession.totalIn - selectedSession.totalOut).toLocaleString(uiLocale)} Kz
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Total Entradas</p>
-                  <p className="font-bold text-primary">+{selectedSession.totalIn.toLocaleString('pt-AO')} Kz</p>
+                  <p className="font-bold text-primary">+{selectedSession.totalIn.toLocaleString(uiLocale)} Kz</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Total Saídas</p>
-                  <p className="font-bold text-destructive">-{selectedSession.totalOut.toLocaleString('pt-AO')} Kz</p>
+                  <p className="font-bold text-destructive">-{selectedSession.totalOut.toLocaleString(uiLocale)} Kz</p>
                 </div>
               </div>
             )}
@@ -776,7 +785,7 @@ export default function CaixaManagement() {
                 step="0.01"
                 value={closingBalance || ''}
                 onChange={(e) => setClosingBalance(parseFloat(e.target.value) || 0)}
-                placeholder="Conte o dinheiro na caixa"
+                placeholder={t.caixaUi.countCashPlaceholder}
                 className="text-lg"
               />
             </div>
@@ -797,7 +806,8 @@ export default function CaixaManagement() {
                     <>
                       <AlertTriangle className="w-5 h-5 text-destructive" />
                       <span className="font-medium text-destructive">
-                        Diferença de {(closingBalance - (selectedSession.openingBalance + selectedSession.totalIn - selectedSession.totalOut)).toLocaleString('pt-AO')} Kz
+                        {t.caixaUi.differenceAmount
+                          .replace('{amount}', (closingBalance - (selectedSession.openingBalance + selectedSession.totalIn - selectedSession.totalOut)).toLocaleString(uiLocale))}
                       </span>
                     </>
                   )}
@@ -810,7 +820,7 @@ export default function CaixaManagement() {
               <Textarea
                 value={closingNotes}
                 onChange={(e) => setClosingNotes(e.target.value)}
-                placeholder="Observações sobre o fecho da caixa"
+                placeholder={t.caixaUi.closingNotesPlaceholder}
                 rows={2}
               />
             </div>
@@ -879,7 +889,8 @@ export default function CaixaManagement() {
               />
               {selectedCaixa?.pettyLimit && transactionData.type === 'withdrawal' && (
                 <p className="text-xs text-muted-foreground">
-                  Limite por transacção: {selectedCaixa.pettyLimit.toLocaleString('pt-AO')} Kz
+                  {t.caixaUi.transactionLimit
+                    .replace('{limit}', selectedCaixa.pettyLimit.toLocaleString(uiLocale))}
                 </p>
               )}
             </div>
@@ -960,7 +971,7 @@ export default function CaixaManagement() {
                     caixaTransactions.slice(0, 20).map(tx => (
                       <TableRow key={tx.id}>
                         <TableCell className="text-sm">
-                          {format(new Date(tx.createdAt), 'dd/MM HH:mm', { locale: pt })}
+                          {format(new Date(tx.createdAt), 'dd/MM HH:mm', { locale: dfLocale })}
                         </TableCell>
                         <TableCell>
                           <Badge variant={tx.direction === 'in' ? 'default' : 'secondary'} className="gap-1">
@@ -974,10 +985,10 @@ export default function CaixaManagement() {
                         </TableCell>
                         <TableCell className="max-w-[200px] truncate">{tx.description}</TableCell>
                         <TableCell className={`text-right font-medium ${tx.direction === 'in' ? 'text-primary' : 'text-destructive'}`}>
-                          {tx.direction === 'in' ? '+' : '-'}{tx.amount.toLocaleString('pt-AO')}
+                          {tx.direction === 'in' ? '+' : '-'}{tx.amount.toLocaleString(uiLocale)}
                         </TableCell>
                         <TableCell className="text-right">
-                          {tx.balanceAfter.toLocaleString('pt-AO')}
+                          {tx.balanceAfter.toLocaleString(uiLocale)}
                         </TableCell>
                       </TableRow>
                     ))
@@ -1012,15 +1023,15 @@ export default function CaixaManagement() {
                       .slice(0, 10)
                       .map(session => (
                         <TableRow key={session.id}>
-                          <TableCell>{format(new Date(session.date), 'dd/MM/yyyy')}</TableCell>
-                          <TableCell>{session.openingBalance.toLocaleString('pt-AO')} Kz</TableCell>
+                          <TableCell>{format(new Date(session.date), 'dd/MM/yyyy', { locale: dfLocale })}</TableCell>
+                          <TableCell>{session.openingBalance.toLocaleString(uiLocale)} Kz</TableCell>
                           <TableCell>
                             {session.closingBalance !== undefined 
-                              ? `${session.closingBalance.toLocaleString('pt-AO')} Kz`
+                              ? `${session.closingBalance.toLocaleString(uiLocale)} Kz`
                               : '-'}
                           </TableCell>
-                          <TableCell className="text-primary">+{session.totalIn.toLocaleString('pt-AO')}</TableCell>
-                          <TableCell className="text-destructive">-{session.totalOut.toLocaleString('pt-AO')}</TableCell>
+                          <TableCell className="text-primary">+{session.totalIn.toLocaleString(uiLocale)}</TableCell>
+                          <TableCell className="text-destructive">-{session.totalOut.toLocaleString(uiLocale)}</TableCell>
                           <TableCell>
                             <Badge variant={session.status === 'open' ? 'default' : 'secondary'}>
                               {session.status === 'open' ? 'Aberta' : 'Fechada'}

@@ -9,6 +9,7 @@ import { Download, Clock, AlertTriangle, AlertCircle, CheckCircle } from 'lucide
 import { format, differenceInDays, parseISO } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { exportToExcel } from '@/lib/excel';
+import { useTranslation } from '@/i18n';
 
 interface AgingEntry {
   clientId: string;
@@ -30,6 +31,8 @@ interface AgingEntry {
 }
 
 export default function AccountsReceivableReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { clients } = useClients();
   const { sales } = useSales();
   const [expandedClient, setExpandedClient] = useState<string | null>(null);
@@ -126,7 +129,7 @@ export default function AccountsReceivableReport() {
   }, [agingReport]);
 
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-AO', { 
+    return new Intl.NumberFormat(locale, {
       style: 'currency', 
       currency: 'AOA',
       minimumFractionDigits: 0 
@@ -135,27 +138,27 @@ export default function AccountsReceivableReport() {
 
   const getAgingBadge = (daysOverdue: number) => {
     if (daysOverdue <= 30) {
-      return <Badge variant="secondary" className="bg-green-500/10 text-green-500">Actual</Badge>;
+      return <Badge variant="secondary" className="bg-green-500/10 text-green-500">{t.reportsUi.current0to30}</Badge>;
     } else if (daysOverdue <= 60) {
-      return <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-500">31-60 dias</Badge>;
+      return <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-500">{t.reportsUi.days31to60}</Badge>;
     } else if (daysOverdue <= 90) {
-      return <Badge variant="secondary" className="bg-orange-500/10 text-orange-500">61-90 dias</Badge>;
+      return <Badge variant="secondary" className="bg-orange-500/10 text-orange-500">{t.reportsUi.days61to90}</Badge>;
     } else {
-      return <Badge variant="destructive">+90 dias</Badge>;
+      return <Badge variant="destructive">{t.reportsUi.days90plus}</Badge>;
     }
   };
 
   const handleExport = () => {
     const data = agingReport.map(entry => ({
-      'Cliente': entry.clientName,
-      'NIF': entry.clientNif,
-      'Actual (0-30)': entry.current,
-      '31-60 dias': entry.days30,
-      '61-90 dias': entry.days60,
-      '+90 dias': entry.days90,
-      'Total': entry.total,
-      'Limite Crédito': entry.creditLimit,
-      '% Utilizado': ((entry.total / entry.creditLimit) * 100).toFixed(1),
+      [t.reportsUi.client]: entry.clientName,
+      [t.reportsUi.nif]: entry.clientNif,
+      [t.reportsUi.current0to30]: entry.current,
+      [t.reportsUi.days31to60]: entry.days30,
+      [t.reportsUi.days61to90]: entry.days60,
+      [t.reportsUi.days90plus]: entry.days90,
+      [t.reportsUi.total]: entry.total,
+      [t.reportsUi.creditLimit]: entry.creditLimit,
+      [t.reportsUi.percentUsed]: ((entry.total / entry.creditLimit) * 100).toFixed(1),
     }));
     
     exportToExcel(data, `ContasReceber_Aging_${format(new Date(), 'yyyyMMdd')}`);
@@ -169,7 +172,7 @@ export default function AccountsReceivableReport() {
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 mb-2">
               <CheckCircle className="w-4 h-4 text-green-500" />
-              <p className="text-sm text-muted-foreground">Actual (0-30)</p>
+              <p className="text-sm text-muted-foreground">{t.reportsUi.current0to30}</p>
             </div>
             <p className="text-2xl font-bold text-green-500">{formatCurrency(summaryStats.current)}</p>
           </CardContent>
@@ -178,7 +181,7 @@ export default function AccountsReceivableReport() {
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 mb-2">
               <Clock className="w-4 h-4 text-yellow-500" />
-              <p className="text-sm text-muted-foreground">31-60 dias</p>
+              <p className="text-sm text-muted-foreground">{t.reportsUi.days31to60}</p>
             </div>
             <p className="text-2xl font-bold text-yellow-500">{formatCurrency(summaryStats.days30)}</p>
           </CardContent>
@@ -187,7 +190,7 @@ export default function AccountsReceivableReport() {
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 mb-2">
               <AlertTriangle className="w-4 h-4 text-orange-500" />
-              <p className="text-sm text-muted-foreground">61-90 dias</p>
+              <p className="text-sm text-muted-foreground">{t.reportsUi.days61to90}</p>
             </div>
             <p className="text-2xl font-bold text-orange-500">{formatCurrency(summaryStats.days60)}</p>
           </CardContent>
@@ -196,14 +199,14 @@ export default function AccountsReceivableReport() {
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 mb-2">
               <AlertCircle className="w-4 h-4 text-red-500" />
-              <p className="text-sm text-muted-foreground">+90 dias</p>
+              <p className="text-sm text-muted-foreground">{t.reportsUi.days90plus}</p>
             </div>
             <p className="text-2xl font-bold text-red-500">{formatCurrency(summaryStats.days90)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground mb-2">Total a Receber</p>
+            <p className="text-sm text-muted-foreground mb-2">{t.reportsUi.totalToReceive}</p>
             <p className="text-2xl font-bold">{formatCurrency(summaryStats.total)}</p>
           </CardContent>
         </Card>
@@ -216,7 +219,7 @@ export default function AccountsReceivableReport() {
             <div>
               <CardTitle className="flex items-center gap-2">
                 <Clock className="w-5 h-5" />
-                Análise de Antiguidade - Contas a Receber
+                {t.reportsUi.receivablesTitle}
               </CardTitle>
               <CardDescription>
                 Saldos de clientes organizados por tempo de vencimento
@@ -224,7 +227,7 @@ export default function AccountsReceivableReport() {
             </div>
             <Button variant="outline" onClick={handleExport}>
               <Download className="w-4 h-4 mr-2" />
-              Exportar Excel
+              {t.reportsUi.exportExcel}
             </Button>
           </div>
         </CardHeader>
@@ -232,21 +235,21 @@ export default function AccountsReceivableReport() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Cliente</TableHead>
-                <TableHead>NIF</TableHead>
-                <TableHead className="text-right text-green-500">Actual</TableHead>
-                <TableHead className="text-right text-yellow-500">31-60</TableHead>
-                <TableHead className="text-right text-orange-500">61-90</TableHead>
-                <TableHead className="text-right text-red-500">+90</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead>Utilização Crédito</TableHead>
+                <TableHead>{t.reportsUi.client}</TableHead>
+                <TableHead>{t.reportsUi.nif}</TableHead>
+                <TableHead className="text-right text-green-500">{t.reportsUi.current0to30}</TableHead>
+                <TableHead className="text-right text-yellow-500">{t.reportsUi.days31to60}</TableHead>
+                <TableHead className="text-right text-orange-500">{t.reportsUi.days61to90}</TableHead>
+                <TableHead className="text-right text-red-500">{t.reportsUi.days90plus}</TableHead>
+                <TableHead className="text-right">{t.reportsUi.total}</TableHead>
+                <TableHead>{t.reportsUi.percentUsed}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {agingReport.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                    Nenhum saldo em aberto encontrado
+                    {t.common.noResults}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -294,7 +297,7 @@ export default function AccountsReceivableReport() {
                       {expandedClient === entry.clientId && entry.invoices.length > 0 && (
                         <TableRow>
                           <TableCell colSpan={8} className="bg-muted/30 p-4">
-                            <p className="text-sm font-medium mb-2">Faturas em Aberto:</p>
+                            <p className="text-sm font-medium mb-2">{t.reportsUi.openInvoices}</p>
                             <div className="space-y-2">
                               {entry.invoices.map(inv => (
                                 <div key={inv.id} className="flex items-center justify-between p-2 bg-background rounded">
