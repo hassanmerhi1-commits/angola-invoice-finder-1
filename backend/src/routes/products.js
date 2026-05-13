@@ -161,6 +161,12 @@ module.exports = function(broadcastTable) {
   // Batch import products
   router.post('/batch', async (req, res) => {
     try {
+      if (!db.sqlite) {
+        return res.status(501).json({
+          error:
+            'Product batch import is implemented for SQLite only. Use POST /api/products for single items, or run the app in SQLite mode for bulk import.',
+        });
+      }
       const { products } = req.body;
       if (!Array.isArray(products) || products.length === 0) {
         return res.status(400).json({ error: 'products array is required' });

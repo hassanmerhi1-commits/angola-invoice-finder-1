@@ -37,6 +37,24 @@ function sanitizeBranchId(value) {
   return uuid || null;
 }
 
+async function resolveWarehouseId(client, value) {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed) return null;
+
+  const uuid = normalizeUuid(trimmed);
+  if (uuid) return uuid;
+
+  // The embedded SQLite database uses stable text ids such as "branch-main".
+  // PostgreSQL migrations use UUID columns, so keep non-UUID ids SQLite-only.
+  if (db.engine !== 'sqlite') return null;
+
+  const branchResult = await client.query(
+    'SELECT id FROM branches WHERE id = $1 AND is_active = true LIMIT 1',
+    [trimmed]
+  );
+  return branchResult.rows[0]?.id || null;
+}
+
 function requireParam(value, name) {
   if (value === undefined || value === null || value === '') {
     throw new Error(`Parâmetro obrigatório em falta: ${name}`);
@@ -223,12 +241,12 @@ async function recordStockMovement(client, params) {
   requireParam(warehouseId, 'warehouseId');
   requireParam(movementType, 'movementType');
   const qty = requirePositive(quantity, 'quantity');
-  const warehouseUuid = sanitizeBranchId(warehouseId);
+  const resolvedWarehouseId = await resolveWarehouseId(client, warehouseId);
 
   if (qty === 0) throw new Error('Quantidade deve ser maior que zero');
-  if (!warehouseUuid) throw new Error(`warehouseId inválido: ${warehouseId}`);
+  if (!resolvedWarehouseId) throw new Error(`warehouseId inválido: ${warehouseId}`);
 
-  const resolvedProductId = await resolveStockProductId(client, productId, warehouseUuid);
+  const resolvedProductId = await resolveStockProductId(client, productId, resolvedWarehouseId);
   const referenceUuid = normalizeUuid(referenceId);
   const createdByUuid = normalizeUuid(createdBy);
 
@@ -248,7 +266,7 @@ async function recordStockMovement(client, params) {
     const stockResult = await client.query(
       `SELECT COALESCE(SUM(CASE WHEN movement_type = 'IN' THEN quantity ELSE -quantity END), 0) AS movement_stock
        FROM stock_movements WHERE product_id = $1 AND warehouse_id = $2`,
-      [resolvedProductId, warehouseUuid]
+      [resolvedProductId, resolvedWarehouseId]
     );
     const movementStock = parseFloat(stockResult.rows[0].movement_stock);
     const available = Math.max(movementStock, parseFloat(product.stock || 0));
@@ -264,7 +282,7 @@ async function recordStockMovement(client, params) {
      (id, product_id, warehouse_id, movement_type, quantity, unit_cost,
       reference_type, reference_id, reference_number, notes, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-    [movementId, resolvedProductId, warehouseUuid, movementType, qty, unitCost || 0,
+    [movementId, resolvedProductId, resolvedWarehouseId, movementType, qty, unitCost || 0,
      referenceType, referenceUuid, referenceNumber || '', notes || '', createdByUuid]
   );
 
@@ -995,6 +1013,24 @@ async function processPayment(client, paymentData) {
         paymentItemId: paymentOpenItem.id, invoiceItemIds: clearIds,
         amounts: clearAmounts, clearedBy: createdBy,
       });
+    }
+
+    // Traceability chain (ERP): link payment to each cleared document
+    for (const inv of openInvoices.rows) {
+      try {
+        await linkDocuments(
+          client,
+          paymentType,               // source_type
+          paymentId,                 // source_id
+          paymentNumber,             // source_number
+          inv.document_type,         // target_type
+          inv.document_id,           // target_id
+          inv.document_number        // target_number
+        );
+      } catch (e) {
+        // non-blocking: avoid failing payment if link insert fails
+        console.warn('[TX ENGINE] document link skipped:', e.message);
+      }
     }
   }
 

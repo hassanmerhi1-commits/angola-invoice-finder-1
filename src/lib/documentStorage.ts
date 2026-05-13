@@ -7,7 +7,11 @@ const STORAGE_KEY = 'kwanzaerp_documents';
 export async function getDocuments(type?: DocumentType, branchId?: string): Promise<ERPDocument[]> {
   if (isElectronMode()) {
     const rows = await dbGetAll<any>('erp_documents');
-    let docs = rows.map(mapDocFromDb);
+    const dbDocs = rows.map(mapDocFromDb);
+    const localDocs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
+    const byId = new Map<string, ERPDocument>();
+    for (const doc of [...localDocs, ...dbDocs]) byId.set(doc.id, doc);
+    let docs = Array.from(byId.values());
     if (type) docs = docs.filter(d => d.documentType === type);
     if (branchId) docs = docs.filter(d => d.branchId === branchId);
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -22,7 +26,8 @@ export async function getDocumentById(id: string): Promise<ERPDocument | undefin
   if (isElectronMode()) {
     const rows = await dbGetAll<any>('erp_documents');
     const row = rows.find((r: any) => r.id === id);
-    return row ? mapDocFromDb(row) : undefined;
+    if (row) return mapDocFromDb(row);
+    return lsGet<ERPDocument[]>(STORAGE_KEY, []).find(d => d.id === id);
   }
   return lsGet<ERPDocument[]>(STORAGE_KEY, []).find(d => d.id === id);
 }
@@ -35,10 +40,18 @@ export async function getNextSequence(type: DocumentType, branchId: string): Pro
 export async function saveDocument(doc: ERPDocument): Promise<ERPDocument> {
   if (isElectronMode()) {
     const saved = await dbInsert('erp_documents', mapDocToDb(doc));
-    if (!saved) {
-      throw new Error('Não foi possível gravar o documento ERP na base de dados local.');
+    if (saved) {
+      return doc;
     }
-    return doc;
+    // In the SQLite/Express runtime, Electron IPC storage is intentionally disabled.
+    // Keep a renderer-local copy so document views and print flows still work.
+    const docs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
+    const idx = docs.findIndex(d => d.id === doc.id);
+    const nextDoc = { ...doc, updatedAt: new Date().toISOString() };
+    if (idx >= 0) docs[idx] = nextDoc;
+    else docs.push(nextDoc);
+    lsSet(STORAGE_KEY, docs);
+    return nextDoc;
   }
   const docs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
   const idx = docs.findIndex(d => d.id === doc.id);

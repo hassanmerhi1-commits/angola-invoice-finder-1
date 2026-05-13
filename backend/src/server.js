@@ -1,5 +1,5 @@
 /**
- * NEXOR ERP — unified Express server (SQLite via ./db.js, all /api routes).
+ * NEXOR ERP — unified Express server (SQLite or PostgreSQL via ./db.js, all /api routes).
  */
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 
@@ -51,7 +51,7 @@ app.get(/^\/app(?:\/.*)?$/, (req, res) => {
 
 app.get('/api/health', async (_req, res) => {
   try {
-    const row = await db.query("SELECT datetime('now') AS now");
+    const row = await db.query(db.engine === 'postgres' ? "SELECT NOW() AS now" : "SELECT datetime('now') AS now");
     let products = 0;
     try {
       const c = await db.query('SELECT COUNT(*) AS n FROM products');
@@ -59,7 +59,7 @@ app.get('/api/health', async (_req, res) => {
     } catch (_) {}
     res.json({
       ok: true,
-      engine: 'sqlite',
+      engine: db.engine || 'sqlite',
       time: row.rows[0]?.now,
       products,
       unified: true,

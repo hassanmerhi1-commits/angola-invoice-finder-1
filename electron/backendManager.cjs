@@ -237,6 +237,96 @@ function buildBackendNodePath() {
   return Array.from(new Set(candidates)).join(path.delimiter);
 }
 
+/** npm `electron` package — same binary this app uses; required for ELECTRON_RUN_AS_NODE + native ABI. */
+function resolveElectronDistBinaryFromProject() {
+  try {
+    const pkgJson = require.resolve('electron/package.json', { paths: [path.join(__dirname, '..')] });
+    const electronRoot = path.dirname(pkgJson);
+    const dist = path.join(electronRoot, 'dist');
+    let candidate = null;
+    if (process.platform === 'win32') {
+      candidate = path.join(dist, 'electron.exe');
+    } else if (process.platform === 'darwin') {
+      candidate = path.join(dist, 'Electron.app', 'Contents', 'MacOS', 'Electron');
+    } else {
+      candidate = path.join(dist, 'electron');
+    }
+    if (candidate && fs.existsSync(candidate)) return candidate;
+  } catch (e) {
+    console.warn('[BackendManager] could not resolve node_modules/electron dist:', e?.message || e);
+  }
+  return null;
+}
+
+function isNodeExecutable(filePath) {
+  if (!filePath) return false;
+  const b = path.basename(filePath).toLowerCase();
+  return b === 'node.exe' || b === 'node';
+}
+
+function isLikelyElectronExecutable(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return false;
+  const b = path.basename(filePath).toLowerCase();
+  if (process.platform === 'win32') return b === 'electron.exe';
+  if (process.platform === 'darwin') {
+    // Real app is always under …/Electron.app/Contents/MacOS/Electron; CLI shims may be named "electron".
+    return filePath.includes('Electron.app') || b === 'electron';
+  }
+  return b === 'electron';
+}
+
+/**
+ * Embedded backend loads `better-sqlite3` from backend/node_modules.
+ * `npm run rebuild:backend` runs @electron/rebuild → native targets **Electron's** NODE_MODULE_VERSION.
+ * Spawning with plain `node.exe` while getPath('exe') is Node breaks SQLite init → Express never listens.
+ */
+function resolveEmbeddedBackendRunner() {
+  const fromOverride = process.env.NEXOR_EMBEDDED_NODE_EXE;
+  if (fromOverride && fs.existsSync(fromOverride)) {
+    return { runner: fromOverride, electronRunAsNode: true, source: 'NEXOR_EMBEDDED_NODE_EXE' };
+  }
+
+  let getPathExe = null;
+  try {
+    getPathExe = app.getPath('exe');
+  } catch (_) {}
+
+  if (app.isPackaged) {
+    const runner = getPathExe || process.execPath;
+    if (isNodeExecutable(runner)) {
+      throw new Error(
+        `Packaged app executable is Node (${runner}) — expected the real app .exe. Cannot start embedded backend.`
+      );
+    }
+    return { runner, electronRunAsNode: true, source: 'packaged-app-exe' };
+  }
+
+  const distBinary = resolveElectronDistBinaryFromProject();
+  const candidates = [getPathExe, distBinary, process.execPath].filter(Boolean);
+  const seen = new Set();
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (!fs.existsSync(candidate)) continue;
+    if (isNodeExecutable(candidate)) continue;
+    if (isLikelyElectronExecutable(candidate)) {
+      return { runner: candidate, electronRunAsNode: true, source: path.basename(candidate) };
+    }
+  }
+
+  if (distBinary && fs.existsSync(distBinary)) {
+    return { runner: distBinary, electronRunAsNode: true, source: 'node_modules/electron/dist' };
+  }
+
+  const fallback = process.execPath;
+  console.warn(
+    '[BackendManager] Using Node to run embedded backend (no Electron dist found). '
+      + 'If saves fail, run: cd backend && npm rebuild better-sqlite3 — '
+      + 'or install devDependency `electron` and use npm run rebuild:backend.'
+  );
+  return { runner: fallback, electronRunAsNode: false, source: 'node-fallback' };
+}
+
 // --------------------------------------------------------------------------
 // 2) Port detection
 // --------------------------------------------------------------------------
@@ -293,33 +383,12 @@ function shouldSpawnForMode(mode) {
 // --------------------------------------------------------------------------
 function spawnBackend(entryPath, port, sqlitePathOverride = null) {
   const cwd = resolveBackendCwd(entryPath);
-  const nodePath = buildBackendNodePath();
+  const nodePathExtra = buildBackendNodePath();
+  const cwdNodeModules = path.join(cwd, 'node_modules');
+  const nodePath = [cwdNodeModules, nodePathExtra].filter(Boolean).join(path.delimiter);
   const sqlitePath = sqlitePathOverride || path.join(app.getPath('userData'), 'erp.db');
 
-  // CRITICAL: Always use the Electron executable (never system node).
-  // app.getPath('exe') returns the NEXOR ERP.exe path even on Windows
-  // where PATH might shadow with system node v24 — that previously caused
-  // "Cannot find module 'dotenv'" because system Node can't see the
-  // bundled backend node_modules.
-  // ELECTRON_RUN_AS_NODE=1 makes the Electron binary behave as a pure
-  // Node v20 process (no Chromium), which DOES see the resources tree.
-  let runnerExe;
-  try {
-    runnerExe = app.getPath('exe');
-  } catch (_) {
-    runnerExe = process.execPath;
-  }
-
-  const exeBase = path.basename(runnerExe).toLowerCase();
-  const isNodeExe = exeBase === 'node.exe' || exeBase === 'node';
-  // In dev, Electron is often launched via a Node CLI shim — getPath('exe') is node.exe.
-  // Use that Node to run the backend so better-sqlite3 matches `npm rebuild` in backend/.
-  const usePackagedRunner = app.isPackaged;
-  if (isNodeExe && usePackagedRunner) {
-    const err = `Refusing to spawn backend with system Node (${runnerExe}) in packaged app. Expected Electron exe.`;
-    console.error(`[BackendManager] ${err}`);
-    throw new Error(err);
-  }
+  const { runner: runnerExe, electronRunAsNode, source: runnerSource } = resolveEmbeddedBackendRunner();
 
   // Verify the backend's own node_modules made it into the install.
   // If dotenv isn't there, the installer was built without bundling
@@ -339,16 +408,22 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
     NODE_ENV: process.env.NODE_ENV || 'production',
     NODE_PATH: nodePath,
     ELECTRON_NO_ATTACH_CONSOLE: '1',
+    // Embedded ERP must use local SQLite (see IP file / SQLITE_PATH). Inherited
+    // DATABASE_URL / DB_ENGINE from the shell or backend/.env would switch
+    // backend/src/db.js to PostgreSQL, fail readiness (we probe sqlite), or
+    // crash when Docker is down — looks like "HTTP service not running".
+    DATABASE_URL: '',
+    DB_ENGINE: 'sqlite',
   };
-  if (isNodeExe) {
-    delete env.ELECTRON_RUN_AS_NODE;
-  } else {
+  if (electronRunAsNode) {
     env.ELECTRON_RUN_AS_NODE = '1';
+  } else {
+    delete env.ELECTRON_RUN_AS_NODE;
   }
   delete env.ELECTRON_RUN_AS_NODE_DISABLE_NODE_OPTIONS;
 
   console.log(
-    `[BackendManager] spawning: ${runnerExe} ${entryPath} (cwd=${cwd}, plainNode=${isNodeExe})`
+    `[BackendManager] spawning: ${runnerExe} ${entryPath} (cwd=${cwd}, runner=${runnerSource}, ELECTRON_RUN_AS_NODE=${electronRunAsNode ? '1' : 'off'})`
   );
   console.log(`[BackendManager] SQLite file: ${sqlitePath}`);
   const proc = spawn(runnerExe, [entryPath], {
@@ -356,6 +431,11 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
     env,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  proc.on('error', (err) => {
+    console.error('[BackendManager] spawn error:', err?.message || err);
+    writeLog(logStream, 'spawn-error', Buffer.from(String(err?.message || err)));
   });
 
   proc.stdout.on('data', (chunk) => {
@@ -399,8 +479,8 @@ function waitForBackendReady(port, timeoutMs = 15000) {
             res.statusCode === 200
             && payload
             && payload.ok === true
-            && payload.engine === 'sqlite'
-            && payload.unified === true;
+            && payload.unified === true
+            && (payload.engine === 'sqlite' || payload.engine === 'postgres');
           if (ok) return resolve(true);
           if (Date.now() - start > timeoutMs) return resolve(false);
           setTimeout(tryOnce, 400);
@@ -459,7 +539,14 @@ async function start(opts = {}) {
   }
 
   console.log(`[BackendManager] spawning backend on port ${port} (mode=${mode}) entry=${entry}`);
-  childProc = spawnBackend(entry, port, sqlitePath);
+  let proc;
+  try {
+    proc = spawnBackend(entry, port, sqlitePath);
+  } catch (e) {
+    console.error('[BackendManager] spawn failed:', e?.message || e);
+    return { error: String(e?.message || e), code: 'SPAWN_FAILED', mode };
+  }
+  childProc = proc;
   boundPort = port;
 
   // Don't return until /api/health responds (or we time out).
@@ -541,8 +628,8 @@ function probeHealthOnce(port, timeoutMs = HEALTH_TIMEOUT_MS) {
           res.statusCode === 200
           && payload
           && payload.ok === true
-          && payload.engine === 'sqlite'
-          && payload.unified === true;
+          && payload.unified === true
+          && (payload.engine === 'sqlite' || payload.engine === 'postgres');
         resolve(ok);
       });
     });

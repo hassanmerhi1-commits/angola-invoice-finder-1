@@ -71,10 +71,11 @@ export default function Branches() {
         toast.success(t.branchesUi.updatedSuccess);
       } else {
         const response = await api.branches.create(formData);
+        if (response.error) throw new Error(response.error);
         if (response.data) {
           toast.success(t.branchesUi.createdSuccess);
         } else {
-          // API unavailable - save to localStorage as fallback
+          // Embedded API unreachable — save to localStorage so UI still has data (demo / offline).
           const { saveBranch } = await import('@/lib/storage');
           const newBranch: Branch = {
             id: generateId(),

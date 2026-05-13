@@ -68,6 +68,8 @@ export interface ElectronAPI {
     read: () => Promise<string>;
     write: (content: string) => Promise<{ success: boolean; error?: string }>;
     parse: () => Promise<IPFileConfig>;
+    /** Same as parse() but synchronous — reads live IP file (authoritative role vs localStorage). */
+    parseSync: () => IPFileConfig;
   };
 
   // Company management

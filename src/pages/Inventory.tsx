@@ -1,5 +1,6 @@
 import { generateId } from '@/lib/utils';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useProducts } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { Product, StockMovement } from '@/types/erp';
@@ -47,13 +48,13 @@ import { InventoryAdjustmentDialog } from '@/components/inventory/InventoryAdjus
 import { StockEntryDialog } from '@/components/inventory/StockEntryDialog';
 import { StockExitDialog } from '@/components/inventory/StockExitDialog';
 import { toast } from 'sonner';
-import { useNavigate } from 'react-router-dom';
 import { logTransaction } from '@/lib/transactionHistory';
 import { saveStockMovement } from '@/lib/storage';
 import { useTranslation } from '@/i18n';
 
 export default function Inventory() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { currentBranch, branches } = useBranchContext();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
@@ -178,6 +179,15 @@ export default function Inventory() {
     setSelectedProduct(product || null);
     setDialogOpen(true);
   };
+
+  // TopNav toolbar "Novo"
+  useEffect(() => {
+    const st = location.state as { nexorToolbarNewProduct?: boolean } | null;
+    if (!st?.nexorToolbarNewProduct) return;
+    setSelectedProduct(null);
+    setDialogOpen(true);
+    navigate('.', { replace: true, state: {} });
+  }, [location.state, navigate]);
 
   const handleSaveProduct = (product: Product) => {
     if (selectedProduct) {
@@ -365,7 +375,7 @@ export default function Inventory() {
         <Alert className="mx-3 mt-3 rounded-xl bg-accent border-primary/20">
           <Building2 className="h-4 w-4 text-primary" />
           <AlertDescription className="text-foreground">
-            <strong>Sede - Visão Global:</strong> A visualizar inventário de todas as filiais com quantidades separadas por filial.
+            <strong>{t.inventoryPageUi.headOfficeTitle}</strong> {t.inventoryPageUi.headOfficeDesc}
           </AlertDescription>
         </Alert>
       )}
@@ -374,7 +384,7 @@ export default function Inventory() {
         <Alert className="mx-3 mt-3 rounded-xl bg-warning/10 border-warning/20">
           <AlertCircle className="h-4 w-4 text-warning" />
           <AlertDescription className="text-foreground">
-            <strong>Modo Filial:</strong> Informações de stock não disponíveis. Apenas preços e códigos de produtos são exibidos.
+            <strong>{t.inventoryPageUi.branchModeTitle}</strong> {t.inventoryPageUi.branchModeDesc}
           </AlertDescription>
         </Alert>
       )}
@@ -385,7 +395,7 @@ export default function Inventory() {
         <div className="w-px h-5 bg-border mx-1" />
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => handleOpenDialog()}>
           <Plus className="w-3 h-3" />
-          Novo
+          {t.common.new}
         </Button>
         <Button 
           variant="outline" 
@@ -395,7 +405,7 @@ export default function Inventory() {
           onClick={() => selectedProduct && handleOpenDialog(selectedProduct)}
         >
           <Edit className="w-3 h-3" />
-          Editar
+          {t.common.edit}
         </Button>
         <Button 
           variant="outline" 
@@ -410,12 +420,12 @@ export default function Inventory() {
           }}
         >
           <Trash2 className="w-3 h-3" />
-          Eliminar
+          {t.common.delete}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
           <Filter className="w-3 h-3" />
-          Filtro
+          {t.common.filters}
         </Button>
         <Button 
           variant="outline" 
@@ -424,7 +434,7 @@ export default function Inventory() {
           onClick={() => setStockEntryDialogOpen(true)}
         >
           <PackagePlus className="w-3 h-3" />
-          Ajustar Entrada
+          {t.inventoryPageUi.adjustEntry}
         </Button>
         <Button 
           variant="outline" 
@@ -433,7 +443,7 @@ export default function Inventory() {
           onClick={() => setStockExitDialogOpen(true)}
         >
           <PackageMinus className="w-3 h-3" />
-          Ajustar Saída
+          {t.inventoryPageUi.adjustExit}
         </Button>
         <Button 
           variant="outline" 
@@ -442,7 +452,7 @@ export default function Inventory() {
           onClick={() => setImportDialogOpen(true)}
         >
           <Upload className="w-3 h-3" />
-          Importar Excel
+          {t.common.import}
         </Button>
         <Button 
           variant="outline" 
@@ -450,11 +460,11 @@ export default function Inventory() {
           className="h-7 text-xs gap-1"
           onClick={() => {
             exportProductsToExcel(products);
-            toast.success('Produtos exportados para Excel');
+            toast.success(t.inventoryPageUi.exportedToExcel);
           }}
         >
           <Download className="w-3 h-3" />
-          Exportar Excel
+          {t.common.export}
         </Button>
         <Button 
           variant="outline" 
@@ -463,7 +473,7 @@ export default function Inventory() {
           onClick={() => setCountSheetDialogOpen(true)}
         >
           <ClipboardList className="w-3 h-3" />
-          Folha Contagem
+          {t.inventoryPageUi.countSheet}
         </Button>
         <Button 
           variant="outline" 
@@ -472,7 +482,7 @@ export default function Inventory() {
           onClick={() => setReconciliationDialogOpen(true)}
         >
           <ClipboardCheck className="w-3 h-3" />
-          Reconciliar
+          {t.inventoryPageUi.reconcile}
         </Button>
         <Button 
           variant="outline" 
@@ -481,7 +491,7 @@ export default function Inventory() {
           onClick={() => setAdjustmentDialogOpen(true)}
         >
           <Calculator className="w-3 h-3" />
-          Ajustar Stock
+          {t.inventoryPageUi.adjustStock}
         </Button>
         <Button 
           variant="outline" 
@@ -491,7 +501,7 @@ export default function Inventory() {
           disabled={!selectedProduct && displayProducts.length === 0}
         >
           <Printer className="w-3 h-3" />
-          Etiquetas
+          {t.inventoryPageUi.labels}
         </Button>
 
         <div className="flex-1" />
@@ -520,46 +530,46 @@ export default function Inventory() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0">
           <TabsTrigger value="lista" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Lista
+            {t.inventoryPageUi.tabs.list}
           </TabsTrigger>
           <TabsTrigger value="extracto" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Extracto
+            {t.inventoryPageUi.tabs.statement}
           </TabsTrigger>
           <TabsTrigger value="mes" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Mês
+            {t.inventoryPageUi.tabs.month}
           </TabsTrigger>
           <TabsTrigger value="qtd-detalhada" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Qtd Detalhada
+            {t.inventoryPageUi.tabs.detailedQty}
           </TabsTrigger>
           <TabsTrigger value="transferencia" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Transferência Pendente
+            {t.inventoryPageUi.tabs.pendingTransfer}
           </TabsTrigger>
           <TabsTrigger value="grafico" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Gráfico
+            {t.inventoryPageUi.tabs.chart}
           </TabsTrigger>
           <TabsTrigger value="preco-compra" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Preço de Compra
+            {t.inventoryPageUi.tabs.purchasePrice}
           </TabsTrigger>
           <TabsTrigger value="no-serie" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            No. de Serie
+            {t.inventoryPageUi.tabs.serialNo}
           </TabsTrigger>
           <TabsTrigger value="info-produto" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Informações de Produto
+            {t.inventoryPageUi.tabs.productInfo}
           </TabsTrigger>
           <TabsTrigger value="cost-history" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Cost History
+            {t.inventoryPageUi.tabs.costHistory}
           </TabsTrigger>
           <TabsTrigger value="pedidos" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Pedidos
+            {t.inventoryPageUi.tabs.orders}
           </TabsTrigger>
           <TabsTrigger value="barcode-qty" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Barcode Qty
+            {t.inventoryPageUi.tabs.barcodeQty}
           </TabsTrigger>
           <TabsTrigger value="vendas-mensais" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Vendas Mensais
+            {t.inventoryPageUi.tabs.monthlySales}
           </TabsTrigger>
           <TabsTrigger value="auditoria" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            Auditoria
+            {t.inventoryPageUi.tabs.audit}
           </TabsTrigger>
         </TabsList>
 
@@ -568,27 +578,27 @@ export default function Inventory() {
           <div className="flex-1" />
           <Button variant="outline" size="sm" className="h-6 text-xs gap-1">
             <FileText className="w-3 h-3" />
-            Nota
+            {t.inventoryPageUi.note}
           </Button>
           <Button variant="secondary" size="sm" className="h-6 text-xs">
-            Todos
+            {t.common.all}
           </Button>
           <Button variant="outline" size="sm" className="h-6 text-xs text-green-600">
-            Qty &gt;0
+            {t.inventoryPageUi.qtyGt0}
           </Button>
           <Button variant="outline" size="sm" className="h-6 text-xs text-red-600">
-            Qty &lt;0
+            {t.inventoryPageUi.qtyLt0}
           </Button>
           <Button variant="outline" size="sm" className="h-6 text-xs">
-            &lt;Cost
+            {t.inventoryPageUi.costLt}
           </Button>
           <Button variant="outline" size="sm" className="h-6 text-xs gap-1">
             <BarChart3 className="w-3 h-3" />
-            Gráfico
+            {t.inventoryPageUi.chart}
           </Button>
           <Button variant="outline" size="sm" className="h-6 text-xs gap-1">
             <Eye className="w-3 h-3" />
-            Visualização
+            {t.inventoryPageUi.view}
           </Button>
         </div>
 
@@ -609,7 +619,7 @@ export default function Inventory() {
           {!selectedProduct ? (
             <Card>
               <CardContent className="pt-6">
-                <p className="text-muted-foreground text-center">Selecione um produto na lista para ver o extracto</p>
+                <p className="text-muted-foreground text-center">{t.inventoryPageUi.selectProductToViewStatement}</p>
               </CardContent>
             </Card>
           ) : (
@@ -618,12 +628,12 @@ export default function Inventory() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="font-semibold text-base">{selectedProduct.sku} — {selectedProduct.name}</h3>
-                    <p className="text-sm text-muted-foreground">Movimentos de stock ligados ao produto selecionado</p>
+                    <p className="text-sm text-muted-foreground">{t.inventoryPageUi.statementSubtitle}</p>
                   </div>
                   <div className="flex gap-4 text-sm">
-                    <span><strong>Entradas:</strong> {movementSummary.entries}</span>
-                    <span><strong>Saídas:</strong> {movementSummary.exits}</span>
-                    <span><strong>Saldo Movimento:</strong> {movementSummary.entries - movementSummary.exits}</span>
+                    <span><strong>{t.inventoryPageUi.entriesLabel}</strong> {movementSummary.entries}</span>
+                    <span><strong>{t.inventoryPageUi.exitsLabel}</strong> {movementSummary.exits}</span>
+                    <span><strong>{t.inventoryPageUi.movementBalanceLabel}</strong> {movementSummary.entries - movementSummary.exits}</span>
                   </div>
                 </div>
 
@@ -631,13 +641,13 @@ export default function Inventory() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Data/Hora</TableHead>
-                        <TableHead>Tipo</TableHead>
-                        <TableHead>Motivo</TableHead>
-                        <TableHead>Documento</TableHead>
+                        <TableHead>{t.inventoryPageUi.table.dateTime}</TableHead>
+                        <TableHead>{t.inventoryPageUi.table.type}</TableHead>
+                        <TableHead>{t.inventoryPageUi.table.reason}</TableHead>
+                        <TableHead>{t.inventoryPageUi.table.document}</TableHead>
                         <TableHead className="text-right">Qtd</TableHead>
-                        <TableHead className="text-right">Custo</TableHead>
-                        <TableHead>Notas</TableHead>
+                        <TableHead className="text-right">{t.inventoryPageUi.table.cost}</TableHead>
+                        <TableHead>{t.inventoryPageUi.table.notes}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -670,7 +680,7 @@ export default function Inventory() {
         <TabsContent value="mes" className="flex-1 m-0 p-4">
           <Card>
             <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">Movimentos mensais</p>
+              <p className="text-muted-foreground text-center">{t.inventoryPageUi.monthlyMovements}</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -685,12 +695,12 @@ export default function Inventory() {
               <div className="text-center space-y-4">
                 <ArrowRightLeft className="w-12 h-12 mx-auto text-muted-foreground" />
                 <div>
-                  <h3 className="font-semibold text-lg">Transferência de Stock</h3>
-                  <p className="text-muted-foreground mb-4">Movimente produtos entre filiais e armazéns</p>
+                  <h3 className="font-semibold text-lg">{t.inventoryPageUi.transferTitle}</h3>
+                  <p className="text-muted-foreground mb-4">{t.inventoryPageUi.transferDesc}</p>
                 </div>
                 <Button onClick={() => navigate('/stock-transfer')}>
                   <ArrowRightLeft className="w-4 h-4 mr-2" />
-                  Ir para Transferências
+                  {t.inventoryPageUi.goToTransfers}
                 </Button>
               </div>
             </CardContent>
@@ -700,7 +710,7 @@ export default function Inventory() {
         <TabsContent value="grafico" className="flex-1 m-0 p-4">
           <Card>
             <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">Gráficos de movimentação</p>
+              <p className="text-muted-foreground text-center">{t.inventoryPageUi.movementCharts}</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -708,7 +718,7 @@ export default function Inventory() {
         <TabsContent value="preco-compra" className="flex-1 m-0 p-4">
           <Card>
             <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">Histórico de preços de compra</p>
+              <p className="text-muted-foreground text-center">{t.inventoryPageUi.purchasePriceHistory}</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -716,7 +726,7 @@ export default function Inventory() {
         <TabsContent value="no-serie" className="flex-1 m-0 p-4">
           <Card>
             <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">Números de série</p>
+              <p className="text-muted-foreground text-center">{t.inventoryPageUi.serialNumbers}</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -727,19 +737,19 @@ export default function Inventory() {
               <CardContent className="pt-6">
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div><strong>SKU:</strong> {selectedProduct.sku}</div>
-                  <div><strong>Nome:</strong> {selectedProduct.name}</div>
-                  <div><strong>Categoria:</strong> {selectedProduct.category}</div>
-                  <div><strong>Preço:</strong> {selectedProduct.price.toLocaleString('pt-AO')} Kz</div>
-                  <div><strong>Custo:</strong> {selectedProduct.cost.toLocaleString('pt-AO')} Kz</div>
-                  <div><strong>Stock:</strong> {selectedProduct.stock} {selectedProduct.unit}</div>
-                  <div><strong>IVA:</strong> {selectedProduct.taxRate}%</div>
+                  <div><strong>{t.inventoryPageUi.productInfo.name}</strong> {selectedProduct.name}</div>
+                  <div><strong>{t.inventoryPageUi.productInfo.category}</strong> {selectedProduct.category}</div>
+                  <div><strong>{t.inventoryPageUi.productInfo.price}</strong> {selectedProduct.price.toLocaleString(uiLocale)} Kz</div>
+                  <div><strong>{t.inventoryPageUi.productInfo.cost}</strong> {selectedProduct.cost.toLocaleString(uiLocale)} Kz</div>
+                  <div><strong>{t.inventoryPageUi.productInfo.stock}</strong> {selectedProduct.stock} {selectedProduct.unit}</div>
+                  <div><strong>{t.inventoryPageUi.productInfo.vat}</strong> {selectedProduct.taxRate}%</div>
                 </div>
               </CardContent>
             </Card>
           ) : (
             <Card>
               <CardContent className="pt-6">
-                <p className="text-muted-foreground text-center">Selecione um produto para ver informações</p>
+                <p className="text-muted-foreground text-center">{t.inventoryPageUi.selectProductToViewInfo}</p>
               </CardContent>
             </Card>
           )}
@@ -748,7 +758,7 @@ export default function Inventory() {
         <TabsContent value="cost-history" className="flex-1 m-0 p-4">
           <Card>
             <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">Histórico de custos</p>
+              <p className="text-muted-foreground text-center">{t.inventoryPageUi.costHistoryPlaceholder}</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -756,7 +766,7 @@ export default function Inventory() {
         <TabsContent value="pedidos" className="flex-1 m-0 p-4">
           <Card>
             <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">Pedidos relacionados</p>
+              <p className="text-muted-foreground text-center">{t.inventoryPageUi.relatedOrders}</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -764,7 +774,7 @@ export default function Inventory() {
         <TabsContent value="barcode-qty" className="flex-1 m-0 p-4">
           <Card>
             <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">Quantidades por código de barras</p>
+              <p className="text-muted-foreground text-center">{t.inventoryPageUi.barcodeQuantities}</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -772,7 +782,7 @@ export default function Inventory() {
         <TabsContent value="vendas-mensais" className="flex-1 m-0 p-4">
           <Card>
             <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">Vendas mensais do produto</p>
+              <p className="text-muted-foreground text-center">{t.inventoryPageUi.monthlyProductSales}</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -780,7 +790,7 @@ export default function Inventory() {
         <TabsContent value="auditoria" className="flex-1 m-0 p-4">
           <Card>
             <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">Histórico de auditoria</p>
+              <p className="text-muted-foreground text-center">{t.inventoryPageUi.auditHistory}</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -789,12 +799,12 @@ export default function Inventory() {
       {/* Status bar */}
       <div className="flex items-center justify-between px-3 py-1 bg-muted/50 border-t text-xs text-muted-foreground">
         <div className="flex items-center gap-4">
-          {isHeadOffice && <span className="text-primary font-medium">📊 Sede - Todas as Filiais ({branches.length})</span>}
+          {isHeadOffice && <span className="text-primary font-medium">📊 {t.inventoryPageUi.status.headOfficeAllBranches.replace('{count}', String(branches.length))}</span>}
           {isFilial && <span>📍 {currentBranch?.name}</span>}
-          <span className="text-destructive">Qtd &lt; 0</span>
-          <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 px-2 rounded">Qtd Minima</span>
+          <span className="text-destructive">{t.inventoryPageUi.status.qtyLt0}</span>
+          <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 px-2 rounded">{t.inventoryPageUi.status.minQty}</span>
         </div>
-        <span>{displayProducts.length} produtos</span>
+        <span>{t.inventoryPageUi.status.productsCount.replace('{count}', String(displayProducts.length))}</span>
       </div>
 
       <ProductDetailDialog
@@ -808,8 +818,8 @@ export default function Inventory() {
       <ExcelImportDialog<ExcelProduct>
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
-        title="Importar Produtos"
-        description="Importe produtos a partir de um ficheiro Excel ou CSV"
+        title={t.inventoryPageUi.importDialogTitle}
+        description={t.inventoryPageUi.importDialogDesc}
         parseFile={parseExcelFile}
         validateData={validateImportedProducts}
         onImport={handleImportProducts}

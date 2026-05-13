@@ -30,6 +30,50 @@ async function ensureFreightExpenseAccount(client) {
   );
 }
 
+async function ensureSupplierJournalAccounts(client, journalLines = [], entityBalanceUpdate = null, openItem = null) {
+  const supplierLines = journalLines.filter((line) => /^3\.2\.\d+$/i.test(String(line.accountCode || '').trim()));
+  if (supplierLines.length === 0) return;
+
+  const parent = await client.query(
+    `SELECT id FROM chart_of_accounts WHERE code = '3.2' AND is_active = true LIMIT 1`
+  );
+  if (parent.rows.length === 0) {
+    throw new Error('Conta 3.2 não encontrada para lançar fornecedor');
+  }
+
+  const parentId = parent.rows[0].id;
+  for (const line of supplierLines) {
+    const code = String(line.accountCode || '').trim();
+    const existing = await client.query(
+      `SELECT id FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
+      [code]
+    );
+    if (existing.rows.length > 0) continue;
+
+    const supplierName =
+      String(line.accountName || '').trim()
+      || String(entityBalanceUpdate?.entityName || '').trim()
+      || String(openItem?.entityName || '').trim()
+      || `Fornecedor ${code}`;
+    const supplierNif = String(entityBalanceUpdate?.entityNif || '').trim();
+
+    await client.query(
+      `INSERT INTO chart_of_accounts
+       (id, code, name, description, account_type, account_nature, parent_id, level, is_header, is_active, opening_balance, current_balance)
+       VALUES ($1, $2, $3, $4, 'liability', 'credit', $5, 3, false, true, 0, 0)
+       ON CONFLICT (code) DO NOTHING`,
+      [randomUUID(), code, supplierName, supplierNif ? `NIF: ${supplierNif}` : '', parentId]
+    );
+  }
+
+  await client.query(
+    `UPDATE chart_of_accounts SET children_count = (
+       SELECT COUNT(*) FROM chart_of_accounts WHERE parent_id = $1 AND is_active = true
+     ) WHERE id = $1`,
+    [parentId]
+  );
+}
+
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
@@ -152,7 +196,8 @@ module.exports = function(broadcastTable) {
         transactionType, documentId, documentNumber, branchId,
         userId, date, description, amount, currency,
         stockEntries, journalLines, openItem, documentLinks,
-        priceUpdates, entityBalanceUpdate
+        priceUpdates, entityBalanceUpdate,
+        taxLines
       } = req.body;
 
       const effectivePriceUpdates = new Map(
@@ -243,6 +288,7 @@ module.exports = function(broadcastTable) {
         if (journalLines.some((line) => line.accountCode === '6.2.6')) {
           await ensureFreightExpenseAccount(client);
         }
+        await ensureSupplierJournalAccounts(client, journalLines, entityBalanceUpdate, openItem);
 
         const entry = await createJournalEntry(client, {
           description,
@@ -258,6 +304,74 @@ module.exports = function(broadcastTable) {
           })),
         });
         result.journalEntryId = entry.id;
+      }
+
+      // Phase 3.5: Tax Engine (IVA / Retenção / IS)
+      if (Array.isArray(taxLines) && taxLines.length > 0) {
+        const d = new Date(date || new Date().toISOString());
+        const periodYear = d.getFullYear();
+        const periodMonth = d.getMonth() + 1;
+
+        // Ensure idempotency for retries
+        await client.query('DELETE FROM tax_lines WHERE document_type = $1 AND document_id = $2', [transactionType, documentId]);
+        await client.query('DELETE FROM tax_summaries WHERE document_type = $1 AND document_id = $2', [transactionType, documentId]);
+
+        for (const tl of taxLines) {
+          const taxCode = String(tl.taxCode || '').trim();
+          const taxRate = Number(tl.taxRate || 0);
+          const baseAmount = Number(tl.baseAmount || 0);
+          const taxAmount = Number(tl.taxAmount || 0);
+          const lineNumber = Number(tl.lineNumber || 1);
+          const isInclusive = !!tl.isInclusive;
+
+          if (!taxCode || !isFinite(baseAmount) || !isFinite(taxAmount)) continue;
+
+          let taxCodeId = null;
+          try {
+            const tc = await client.query('SELECT id FROM tax_codes WHERE code = $1 LIMIT 1', [taxCode]);
+            taxCodeId = tc.rows[0]?.id || null;
+          } catch {
+            taxCodeId = null;
+          }
+
+          await client.query(
+            `INSERT INTO tax_lines
+             (document_type, document_id, line_number, tax_code_id, tax_code, tax_rate, base_amount, tax_amount, is_inclusive)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [transactionType, documentId, lineNumber, taxCodeId, taxCode, taxRate, baseAmount, taxAmount, isInclusive]
+          );
+        }
+
+        // Create document-level summaries (grouped by tax code/rate)
+        const summaryRows = await client.query(
+          `SELECT tax_code, tax_rate,
+                  SUM(base_amount) AS total_base,
+                  SUM(tax_amount) AS total_tax
+           FROM tax_lines
+           WHERE document_type = $1 AND document_id = $2
+           GROUP BY tax_code, tax_rate`,
+          [transactionType, documentId]
+        );
+
+        const direction = transactionType === 'sale' ? 'output' : 'input';
+        for (const row of summaryRows.rows) {
+          await client.query(
+            `INSERT INTO tax_summaries
+             (document_type, document_id, tax_code, tax_rate, total_base, total_tax, direction, period_year, period_month)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            [
+              transactionType,
+              documentId,
+              row.tax_code,
+              Number(row.tax_rate || 0),
+              Number(row.total_base || 0),
+              Number(row.total_tax || 0),
+              direction,
+              periodYear,
+              periodMonth,
+            ]
+          );
+        }
       }
 
       // Phase 4: Open Item (through engine)
@@ -295,6 +409,28 @@ module.exports = function(broadcastTable) {
           await client.query('UPDATE clients SET current_balance = COALESCE(current_balance, 0) + $1 WHERE id = $2', [ebu.amount, ebu.entityId]);
         }
       }
+
+      // Phase 7: Audit log (ERP traceability)
+      await auditLog(client, {
+        tableName: 'transactions',
+        recordId: documentId,
+        action: 'process',
+        userId,
+        userName: req.body.userName,
+        branchId,
+        oldValues: null,
+        newValues: {
+          transactionType,
+          documentNumber,
+          date,
+          amount,
+          currency,
+          stockEntriesCount: stockEntries?.length || 0,
+          journalLinesCount: journalLines?.length || 0,
+          taxLinesCount: Array.isArray(taxLines) ? taxLines.length : 0,
+        },
+        description: `${transactionType} ${documentNumber} processed`,
+      });
 
       await client.query('COMMIT');
 

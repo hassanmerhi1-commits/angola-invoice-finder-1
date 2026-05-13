@@ -16,19 +16,34 @@ npm install
 
 ## Environment Setup
 
-Create a `.env` file:
+Copy `backend/.env.example` to `backend/.env` and edit.
+
+**SQLite (default)** — leave `DATABASE_URL` unset; optional `SQLITE_PATH` for the `.db` file.
+
+**PostgreSQL** — set:
 
 ```env
-DATABASE_URL=postgresql://postgres:your_password@localhost:5432/kwanza_erp
+DATABASE_URL=postgres://postgres:yel3an7azi@127.0.0.1:5432/kwanza_erp
+DB_ENGINE=postgres
 PORT=3000
-JWT_SECRET=your-super-secret-key-change-this
 ```
+
+Use the same password as `docker-compose.yml` (`POSTGRES_PASSWORD`, default `yel3an7azi`) or your own Postgres instance.
 
 ## Database Setup
 
-1. Install PostgreSQL
-2. Create database: `createdb kwanza_erp`
-3. Run migrations: `npm run migrate`
+### PostgreSQL with Docker (from **repository root**)
+
+```bash
+docker compose up -d postgres
+cd backend && npm run migrate
+```
+
+Or from root: `npm run postgres:up` then `npm run postgres:migrate`.
+
+### Manual PostgreSQL
+
+Create database `kwanza_erp`, then `cd backend && npm run migrate`.
 
 ## Start Server
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useProducts, useCart, useSales, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
@@ -81,6 +81,12 @@ export default function POS() {
       toast.info(t.posUi.cartCleared);
     }
   }, [cart]);
+
+  // TopNav "Nova Venda" clears the cart (same as shortcut behaviour).
+  useEffect(() => {
+    window.addEventListener('nexor:pos-new-sale', handleClearCart);
+    return () => window.removeEventListener('nexor:pos-new-sale', handleClearCart);
+  }, [handleClearCart]);
 
   const focusSearch = useCallback(() => {
     searchInputRef.current?.focus();

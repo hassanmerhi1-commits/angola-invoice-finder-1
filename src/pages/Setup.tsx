@@ -98,6 +98,13 @@ export default function Setup() {
         const result = await window.electronAPI!.db.init();
         if (!result.success) throw new Error(result.error);
 
+        localStorage.setItem('kwanza_is_server', 'true');
+        localStorage.removeItem('kwanza_client_config');
+        try {
+          const { invalidateElectronApiBaseCache } = await import('@/lib/api/config');
+          invalidateElectronApiBaseCache();
+        } catch { /* ignore */ }
+
         toast.success(t.setupUi.serverConfigured, {
           description: `${t.setupUi.dbPathLabel}: ${dbPath}\n${t.setupUi.otherComputersConnect.replace('{ip}', detectedIp)}`
         });
@@ -130,6 +137,21 @@ export default function Setup() {
         await window.electronAPI!.ipfile.write(ipFileContent.trim());
         const result = await window.electronAPI!.db.init();
         if (!result.success) throw new Error(result.error);
+
+        const serverIp = ipFileContent.trim();
+        localStorage.setItem('kwanza_is_server', 'false');
+        localStorage.setItem(
+          'kwanza_client_config',
+          JSON.stringify({
+            serverIp,
+            httpPort: 3000,
+            serverPort: 4546,
+          }),
+        );
+        try {
+          const { invalidateElectronApiBaseCache } = await import('@/lib/api/config');
+          invalidateElectronApiBaseCache();
+        } catch { /* ignore */ }
 
         toast.success(t.setupUi.clientConfigured, {
           description: t.setupUi.connectedToServer.replace('{server}', ipFileContent.trim())

@@ -31,15 +31,15 @@ interface ProductDetailDialogProps {
 }
 
 const UNITS = [
-  { value: 'un', label: 'Unidade' },
-  { value: 'kg', label: 'Quilograma' },
-  { value: 'g', label: 'Grama' },
-  { value: 'l', label: 'Litro' },
-  { value: 'ml', label: 'Mililitro' },
-  { value: 'cx', label: 'Caixa' },
-  { value: 'emb', label: 'Embalagem' },
-  { value: 'pct', label: 'Pacote' },
-];
+  { value: 'un', labelKey: 'un' },
+  { value: 'kg', labelKey: 'kg' },
+  { value: 'g', labelKey: 'g' },
+  { value: 'l', labelKey: 'l' },
+  { value: 'ml', labelKey: 'ml' },
+  { value: 'cx', labelKey: 'cx' },
+  { value: 'emb', labelKey: 'emb' },
+  { value: 'pct', labelKey: 'pct' },
+] as const;
 
 const IVA_RATES = [0, 5, 7, 14];
 
@@ -302,7 +302,11 @@ export function ProductDetailDialog({
                   <Select value={formData.unit} onValueChange={v => set('unit', v)}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-popover border shadow-lg z-50">
-                      {UNITS.map(u => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                      {UNITS.map((u) => (
+                        <SelectItem key={u.value} value={u.value}>
+                          {t.productDetailUi.units[u.labelKey as keyof typeof t.productDetailUi.units] as string}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </Row>

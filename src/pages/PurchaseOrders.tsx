@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useProducts, useSuppliers, usePurchaseOrders, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
@@ -34,6 +34,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { navigateThenStartPurchaseCreate } from '@/lib/nexorPurchaseCreate';
 import { Search, Plus, Eye, CheckCircle, Package, ShoppingCart, Trash2, Barcode, ScanLine, Truck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -54,6 +55,7 @@ const getStatusBadge = (t: any, status: string) => {
 
 export default function PurchaseOrders() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
@@ -100,8 +102,8 @@ export default function PurchaseOrders() {
   const [scanMode, setScanMode] = useState<'create' | 'receive' | null>(null);
 
   const handleOpenPurchaseInvoice = useCallback(() => {
-    navigate("/purchase-invoices?mode=create");
-  }, [navigate]);
+    navigateThenStartPurchaseCreate(navigate, location.pathname);
+  }, [navigate, location.pathname]);
 
   // Handle barcode scan for adding products
   const handleBarcodeScan = useCallback((barcode: string) => {

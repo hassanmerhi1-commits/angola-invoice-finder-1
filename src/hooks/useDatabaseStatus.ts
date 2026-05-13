@@ -37,7 +37,10 @@ export function useDatabaseStatus() {
         try {
           const dbStatus = await window.electronAPI.db.getStatus();
           if (dbStatus?.success) {
-            const mode = dbStatus.mode === 'server' || dbStatus.mode === 'client'
+            const mode =
+              dbStatus.mode === 'server'
+              || dbStatus.mode === 'client'
+              || dbStatus.mode === 'standalone'
               ? dbStatus.mode
               : 'unknown';
             const parsedPath = typeof dbStatus.path === 'string' ? dbStatus.path : null;

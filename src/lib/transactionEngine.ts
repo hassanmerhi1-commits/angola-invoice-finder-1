@@ -37,6 +37,15 @@ export interface JournalLine {
   note?: string;
 }
 
+export interface TaxLineEntry {
+  lineNumber: number;
+  taxCode: string;
+  taxRate: number;
+  baseAmount: number;
+  taxAmount: number;
+  isInclusive?: boolean;
+}
+
 export interface OpenItemEntry {
   entityType: 'customer' | 'supplier';
   entityId: string;
@@ -69,6 +78,7 @@ export interface TransactionRequest {
   currency?: string;
   stockEntries?: StockEntry[];
   journalLines?: JournalLine[];
+  taxLines?: TaxLineEntry[];
   openItem?: OpenItemEntry;
   documentLinks?: DocumentLinkEntry[];
   priceUpdates?: {

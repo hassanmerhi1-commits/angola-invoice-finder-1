@@ -1,21 +1,35 @@
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const Database = require('better-sqlite3');
+const { Pool } = require('pg');
+
+const DB_ENGINE = (process.env.DB_ENGINE || '').trim().toLowerCase(); // 'sqlite' | 'postgres'
+const USE_POSTGRES = DB_ENGINE === 'postgres' || !!process.env.DATABASE_URL;
+
+/** Load only when using SQLite — avoids native addon when running PostgreSQL-only. */
+let Database = null;
+if (!USE_POSTGRES) {
+  Database = require('better-sqlite3');
+}
 
 const dbPath = process.env.SQLITE_PATH
   ? path.resolve(process.env.SQLITE_PATH)
   : path.resolve('C:\\nexor\\erp.db');
 
 const dbDir = path.dirname(dbPath);
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+if (!USE_POSTGRES) {
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
 }
 
-const sqlite = new Database(dbPath);
-sqlite.pragma('foreign_keys = ON');
-sqlite.pragma('journal_mode = WAL');
-sqlite.pragma('busy_timeout = 5000');
+let sqlite = null;
+if (!USE_POSTGRES) {
+  sqlite = new Database(dbPath);
+  sqlite.pragma('foreign_keys = ON');
+  sqlite.pragma('journal_mode = WAL');
+  sqlite.pragma('busy_timeout = 5000');
+}
 
 const schemaPath = process.env.SQLITE_SCHEMA_PATH
   ? path.resolve(process.env.SQLITE_SCHEMA_PATH)
@@ -31,6 +45,7 @@ function readSql(filePath) {
 }
 
 function hasAnyUserTable() {
+  if (!sqlite) return false;
   const row = sqlite.prepare(
     "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%';"
   ).get();
@@ -38,6 +53,7 @@ function hasAnyUserTable() {
 }
 
 function tableHasRows(tableName) {
+  if (!sqlite) return false;
   try {
     const row = sqlite.prepare(`SELECT 1 AS ok FROM ${tableName} LIMIT 1`).get();
     return !!row;
@@ -47,6 +63,7 @@ function tableHasRows(tableName) {
 }
 
 function tableExists(tableName) {
+  if (!sqlite) return false;
   const row = sqlite
     .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
     .get(tableName);
@@ -54,6 +71,7 @@ function tableExists(tableName) {
 }
 
 function tryAlterAdd(table, columnSql) {
+  if (!sqlite) return;
   try {
     sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${columnSql}`);
   } catch (_) {}
@@ -78,6 +96,7 @@ function seedAccountingPeriods() {
 
 /** Tables required by transaction engine + REST routes (SQLite DDL). */
 function ensureAppTablesAndColumns() {
+  if (!sqlite) return;
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS clients (
       id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -299,6 +318,52 @@ function ensureAppTablesAndColumns() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS tax_codes (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      rate REAL NOT NULL DEFAULT 0,
+      tax_type TEXT NOT NULL DEFAULT 'IVA',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      description TEXT DEFAULT '',
+      account_code_output TEXT,
+      account_code_input TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS tax_lines (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      document_type TEXT NOT NULL,
+      document_id TEXT NOT NULL,
+      line_number INTEGER NOT NULL,
+      tax_code_id TEXT,
+      tax_code TEXT NOT NULL,
+      tax_rate REAL NOT NULL,
+      base_amount REAL NOT NULL,
+      tax_amount REAL NOT NULL,
+      is_inclusive INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tax_lines_doc ON tax_lines(document_type, document_id);
+
+    CREATE TABLE IF NOT EXISTS tax_summaries (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      document_type TEXT NOT NULL,
+      document_id TEXT NOT NULL,
+      tax_code TEXT NOT NULL,
+      tax_rate REAL NOT NULL,
+      total_base REAL NOT NULL,
+      total_tax REAL NOT NULL,
+      direction TEXT NOT NULL,
+      period_year INTEGER,
+      period_month INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tax_summaries_doc ON tax_summaries(document_type, document_id);
+    CREATE INDEX IF NOT EXISTS idx_tax_summaries_period ON tax_summaries(period_year, period_month);
+
     CREATE TABLE IF NOT EXISTS cost_centers (
       id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
       code TEXT NOT NULL UNIQUE,
@@ -326,6 +391,7 @@ function ensureAppTablesAndColumns() {
   tryAlterAdd('purchase_orders', 'freight_distributed INTEGER DEFAULT 0');
   tryAlterAdd('purchase_order_items', 'freight_allocation REAL DEFAULT 0');
   tryAlterAdd('purchase_order_items', 'effective_cost REAL DEFAULT 0');
+  tryAlterAdd('suppliers', 'balance REAL NOT NULL DEFAULT 0');
   // Legacy databases can have a minimal products table; ensure import/API columns exist.
   tryAlterAdd('products', 'barcode TEXT');
   tryAlterAdd('products', "category TEXT DEFAULT 'GERAL'");
@@ -347,6 +413,26 @@ function ensureAppTablesAndColumns() {
   tryAlterAdd('products', "created_at TEXT NOT NULL DEFAULT (datetime('now'))");
   tryAlterAdd('products', "updated_at TEXT NOT NULL DEFAULT (datetime('now'))");
   tryAlterAdd('products', 'version INTEGER NOT NULL DEFAULT 0');
+  tryAlterAdd('products', "tax_code TEXT DEFAULT 'IVA14'");
+
+  const taxCodeCount = sqlite.prepare('SELECT COUNT(*) AS count FROM tax_codes').get();
+  if (Number(taxCodeCount?.count || 0) === 0) {
+    const insertTaxCode = sqlite.prepare(`
+      INSERT OR IGNORE INTO tax_codes
+        (code, name, rate, tax_type, account_code_output, account_code_input, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    [
+      ['IVA14', 'IVA Normal', 14, 'IVA', '3.3.2', '3.3.1', 'Taxa normal de IVA em Angola'],
+      ['IVA0', 'IVA Zero', 0, 'IVA', '3.3.2', '3.3.1', 'Taxa zero de IVA'],
+      ['ISENTO', 'Isento de IVA', 0, 'IVA', null, null, 'Operacoes isentas de IVA'],
+      ['IVA5', 'IVA Reduzida', 5, 'IVA', '3.3.2', '3.3.1', 'Taxa reduzida de IVA'],
+      ['IVA7', 'IVA Intermedia', 7, 'IVA', '3.3.2', '3.3.1', 'Taxa intermedia de IVA'],
+      ['RET3.5', 'Retencao na Fonte 3.5%', 3.5, 'RETENCAO', '3.4.1', '3.4.1', 'Retencao na fonte de rendimentos'],
+      ['RET6.5', 'Retencao na Fonte 6.5%', 6.5, 'RETENCAO', '3.4.1', '3.4.1', 'Retencao na fonte de servicos'],
+      ['IS', 'Imposto de Selo', 0.1, 'IS', '3.5.1', '3.5.1', 'Imposto de selo'],
+    ].forEach((row) => insertTaxCode.run(...row));
+  }
 
   if (!sqlite.prepare('SELECT 1 AS ok FROM cost_centers LIMIT 1').get()) {
     sqlite.prepare(
@@ -357,7 +443,66 @@ function ensureAppTablesAndColumns() {
   seedAccountingPeriods();
 }
 
+function seedDefaultChartOfAccounts() {
+  if (!sqlite) return;
+
+  const accounts = [
+    ['1', 'Meios Fixos e Investimentos', 'asset', 'debit', 1, 1, null],
+    ['2', 'Existências', 'asset', 'debit', 1, 1, null],
+    ['2.1', 'Compras', 'asset', 'debit', 2, 1, '2'],
+    ['2.1.1', 'Mercadorias', 'asset', 'debit', 3, 0, '2.1'],
+    ['2.2', 'Mercadorias', 'asset', 'debit', 2, 0, '2'],
+    ['3', 'Terceiros', 'asset', 'debit', 1, 1, null],
+    ['3.1', 'Clientes', 'asset', 'debit', 2, 0, '3'],
+    ['3.1.1', 'Clientes c/c', 'asset', 'debit', 3, 0, '3.1'],
+    ['3.2', 'Fornecedores', 'liability', 'credit', 2, 0, '3'],
+    ['3.2.1', 'Fornecedores c/c', 'liability', 'credit', 3, 0, '3.2'],
+    ['3.3', 'Estado e Outros Entes Públicos', 'liability', 'credit', 2, 1, '3'],
+    ['3.3.1', 'IVA Dedutível', 'liability', 'debit', 3, 0, '3.3'],
+    ['3.3.2', 'IVA Liquidado', 'liability', 'credit', 3, 0, '3.3'],
+    ['3.4', 'Pessoal', 'liability', 'credit', 2, 1, '3'],
+    ['3.4.1', 'Retenção na Fonte a Pagar', 'liability', 'credit', 3, 0, '3.4'],
+    ['3.5', 'Outros Impostos', 'liability', 'credit', 2, 1, '3'],
+    ['3.5.1', 'Imposto de Selo a Pagar', 'liability', 'credit', 3, 0, '3.5'],
+    ['4', 'Meios Monetários', 'asset', 'debit', 1, 1, null],
+    ['4.1', 'Caixa', 'asset', 'debit', 2, 0, '4'],
+    ['4.1.1', 'Caixa Principal', 'asset', 'debit', 3, 0, '4.1'],
+    ['4.2', 'Depósitos à Ordem', 'asset', 'debit', 2, 0, '4'],
+    ['4.2.1', 'Banco Principal', 'asset', 'debit', 3, 0, '4.2'],
+    ['5', 'Capital Próprio', 'equity', 'credit', 1, 1, null],
+    ['6', 'Gastos e Perdas', 'expense', 'debit', 1, 1, null],
+    ['6.1', 'Custo das Mercadorias Vendidas', 'expense', 'debit', 2, 0, '6'],
+    ['6.2', 'Fornecimentos e Serviços Externos', 'expense', 'debit', 2, 1, '6'],
+    ['6.2.6', 'Transporte sobre Compras', 'expense', 'debit', 3, 0, '6.2'],
+    ['7', 'Rendimentos e Ganhos', 'revenue', 'credit', 1, 1, null],
+    ['7.1', 'Vendas', 'revenue', 'credit', 2, 0, '7'],
+    ['7.1.1', 'Vendas de Mercadorias', 'revenue', 'credit', 3, 0, '7.1'],
+  ];
+
+  const idForCode = (code) => `coa-${String(code).replace(/[^A-Za-z0-9]/g, '-')}`;
+  const insert = sqlite.prepare(`
+    INSERT OR IGNORE INTO chart_of_accounts
+      (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `);
+  const updateParent = sqlite.prepare('UPDATE chart_of_accounts SET parent_id = ? WHERE code = ?');
+
+  for (const [code, name, type, nature, level, isHeader, parentCode] of accounts) {
+    insert.run(idForCode(code), code, name, type, nature, parentCode ? idForCode(parentCode) : null, level, isHeader);
+    if (parentCode) updateParent.run(idForCode(parentCode), code);
+  }
+
+  sqlite.exec(`
+    UPDATE chart_of_accounts
+    SET children_count = (
+      SELECT COUNT(*) FROM chart_of_accounts child
+      WHERE child.parent_id = chart_of_accounts.id AND child.is_active = 1
+    )
+  `);
+}
+
 function bootstrapSchemaAndSeed() {
+  if (!sqlite) return;
   const schemaSql = readSql(schemaPath);
   const seedSql = readSql(seedPath);
 
@@ -409,6 +554,7 @@ function bootstrapSchemaAndSeed() {
       contact_person TEXT DEFAULT '',
       payment_terms TEXT DEFAULT '30_days',
       notes TEXT DEFAULT '',
+      balance REAL NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -505,6 +651,8 @@ function bootstrapSchemaAndSeed() {
     );
   `);
 
+  seedDefaultChartOfAccounts();
+
   const hasBranch = sqlite.prepare('SELECT 1 AS ok FROM branches LIMIT 1').get();
   if (!hasBranch) {
     sqlite.prepare(
@@ -584,49 +732,99 @@ function execTransactionalCommand(rawText) {
   return null;
 }
 
+function normalizeSqliteParam(value) {
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'undefined') return null;
+  return value;
+}
+
+function normalizeSqliteParams(params = []) {
+  return Array.isArray(params) ? params.map(normalizeSqliteParam) : params;
+}
+
+function expandPgPlaceholdersForSqlite(sqlText, params = []) {
+  if (!Array.isArray(params) || !/\$\d+/.test(String(sqlText))) {
+    return normalizeSqliteParams(params);
+  }
+
+  const expanded = [];
+  const matches = String(sqlText).matchAll(/\$(\d+)/g);
+  for (const match of matches) {
+    expanded.push(params[Number(match[1]) - 1]);
+  }
+  return normalizeSqliteParams(expanded);
+}
+
 function runSqliteQuery(text, params = []) {
   const sql = toSqliteSql(text).trim();
   const stmt = sqlite.prepare(sql);
+  const sqliteParams = expandPgPlaceholdersForSqlite(text, params);
   const isSelect = /^select\b/i.test(sql);
   const hasReturning = /\breturning\b/i.test(sql);
 
   if (isSelect) {
-    const rows = stmt.all(params);
+    const rows = stmt.all(sqliteParams);
     return { rows, rowCount: rows.length };
   }
   if (hasReturning) {
-    const rows = stmt.all(params);
+    const rows = stmt.all(sqliteParams);
     return { rows, rowCount: rows.length };
   }
-  const info = stmt.run(params);
+  const info = stmt.run(sqliteParams);
   return { rows: [], rowCount: info.changes, lastInsertRowid: info.lastInsertRowid };
 }
 
 async function query(text, params = []) {
+  if (USE_POSTGRES) {
+    // `pg` supports BEGIN/COMMIT/ROLLBACK natively; keep same return shape.
+    const result = await pgPool.query(text, params);
+    return { rows: result.rows || [], rowCount: result.rowCount };
+  }
+
   const trimmed = String(text || '').trim();
   const tcmd = execTransactionalCommand(trimmed);
   if (tcmd) return tcmd;
   return runSqliteQuery(text, params);
 }
 
-const pool = {
-  connect: async () => ({
-    query,
-    release: () => {},
-  }),
-};
+let pgPool = null;
+let pool = null;
+if (USE_POSTGRES) {
+  pgPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: Number(process.env.PG_POOL_MAX || 10),
+    idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 30000),
+    connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 10000),
+  });
+  pool = pgPool;
+} else {
+  pool = {
+    connect: async () => ({
+      query,
+      release: () => {},
+    }),
+  };
+}
 
 try {
-  bootstrapSchemaAndSeed();
-  const health = sqlite.prepare("SELECT datetime('now') AS now").get();
-  const productsExists = tableExists('products');
-  const productsCount = productsExists
-    ? sqlite.prepare('SELECT COUNT(*) AS total FROM products').get()?.total || 0
-    : 0;
-  console.log('[DB] Connected to SQLite:', dbPath, 'at', health.now);
-  console.log(`[DB] products_table=${productsExists} products_count=${productsCount}`);
+  if (!USE_POSTGRES) {
+    bootstrapSchemaAndSeed();
+    const health = sqlite.prepare("SELECT datetime('now') AS now").get();
+    const productsExists = tableExists('products');
+    const productsCount = productsExists
+      ? sqlite.prepare('SELECT COUNT(*) AS total FROM products').get()?.total || 0
+      : 0;
+    console.log('[DB] Connected to SQLite:', dbPath, 'at', health.now);
+    console.log(`[DB] products_table=${productsExists} products_count=${productsCount}`);
+  } else {
+    console.log('[DB] Using PostgreSQL:', process.env.DATABASE_URL ? '[DATABASE_URL set]' : '[missing DATABASE_URL]');
+  }
 } catch (error) {
-  console.error('[DB ERROR] Cannot open SQLite database:', error.message);
+  if (USE_POSTGRES) {
+    console.error('[DB ERROR] PostgreSQL init failed:', error.message);
+  } else {
+    console.error('[DB ERROR] Cannot open SQLite database:', error.message);
+  }
 }
 
 module.exports = {
@@ -634,4 +832,5 @@ module.exports = {
   sqlite,
   pool,
   dbPath,
+  engine: USE_POSTGRES ? 'postgres' : 'sqlite',
 };

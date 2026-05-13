@@ -579,9 +579,27 @@ export async function deleteClient(clientId: string): Promise<void> {
 export async function getSuppliers(): Promise<Supplier[]> {
   if (isElectronMode()) {
     const rows = await dbGetAll<any>('suppliers');
-    return rows.map(mapSupplierFromDb);
+    const fromDb = rows.map(mapSupplierFromDb);
+    /** When SQLite is served by Express, main-process IPC DB pool is null — suppliers may be cached here until API works. */
+    const fromLs = lsGet<Supplier[]>(STORAGE_KEYS.suppliers, []);
+    const byId = new Map<string, Supplier>();
+    for (const s of fromDb) byId.set(s.id, s);
+    for (const s of fromLs) {
+      if (!byId.has(s.id)) byId.set(s.id, s);
+    }
+    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
   return lsGet<Supplier[]>(STORAGE_KEYS.suppliers, []);
+}
+
+/** Browser-only cache used when Electron IPC DB is unavailable (SQLite owned by embedded Express). */
+export function saveSupplierLocalFallback(supplier: Supplier): void {
+  const suppliers = lsGet<Supplier[]>(STORAGE_KEYS.suppliers, []);
+  const index = suppliers.findIndex(s => s.id === supplier.id);
+  const next = { ...supplier, updatedAt: new Date().toISOString() };
+  if (index >= 0) suppliers[index] = next;
+  else suppliers.push(next);
+  lsSet(STORAGE_KEYS.suppliers, suppliers);
 }
 
 export async function saveSupplier(supplier: Supplier): Promise<void> {

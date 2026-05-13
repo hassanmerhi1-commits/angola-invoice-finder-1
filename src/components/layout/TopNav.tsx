@@ -1,5 +1,5 @@
 // NEXOR ERP - Modern Top Navigation
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Branch, User } from '@/types/erp';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { navigateThenStartPurchaseCreate, resolvePurchasePathname } from '@/lib/nexorPurchaseCreate';
 import { 
   Building2, User as UserIcon, LogOut, Settings, Menu,
   LayoutDashboard, ShoppingCart, FileText, Package, Users,
@@ -29,6 +30,7 @@ import {
   FolderOpen, BookOpen, Landmark, CreditCard, DollarSign,
   Shield, Wallet, PieChart, TrendingUp, Globe, Keyboard,
   Monitor, Bell,
+  type LucideIcon,
 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
@@ -43,6 +45,34 @@ interface TopNavProps {
   onBranchChange: (branch: Branch) => void;
   onLogout: () => void;
 }
+
+/** Stable ids for the row-3 action toolbar (matches handler switch). */
+type ToolbarActionKey =
+  | 'all'
+  | 'new'
+  | 'delete'
+  | 'edit'
+  | 'transfer'
+  | 'adjustExit'
+  | 'inventoryEntry'
+  | 'minQty'
+  | 'salesInvoice'
+  | 'receipt'
+  | 'payment'
+  | 'purchaseInvoice'
+  | 'journalEntry'
+  | 'print'
+  | 'agtSend'
+  | 'newSale'
+  | 'save'
+  | 'void';
+
+type ToolbarButtonConfig = {
+  actionKey: ToolbarActionKey;
+  label: string;
+  icon: LucideIcon;
+  variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link' | 'modern' | 'modern-outline';
+};
 
 export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout }: TopNavProps) {
   const { t } = useTranslation();
@@ -158,48 +188,114 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
   // ========== ACTION TOOLBAR ==========
   const getButtonVariant = (variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link' | 'modern' | 'modern-outline') => variant ?? 'outline';
 
-  const getActionButtons = () => {
-    const p = location.pathname;
+  const handleToolbarNew = useCallback(() => {
+    const p = resolvePurchasePathname(location.pathname);
+    // Exact segment matching — avoid `includes('stock')` matching /stock-transfer, etc.
+    if (p === '/purchase-invoices' || p.startsWith('/purchase-invoices/')) {
+      navigateThenStartPurchaseCreate(navigate, location.pathname);
+      return;
+    }
+    if (p === '/purchase-orders' || p.startsWith('/purchase-orders/')) {
+      navigateThenStartPurchaseCreate(navigate, location.pathname);
+      return;
+    }
+    if (p === '/suppliers' || p.startsWith('/suppliers/')) {
+      navigate('/suppliers', { state: { nexorToolbarNewSupplier: true } });
+      return;
+    }
+    if (p === '/inventory' || p.startsWith('/inventory/')) {
+      navigate('/inventory', { state: { nexorToolbarNewProduct: true } });
+      return;
+    }
+    if (p === '/invoices') {
+      window.dispatchEvent(new CustomEvent('nexor:invoices-new'));
+      return;
+    }
+  }, [location.pathname, navigate]);
+
+  const handleToolbarClick = useCallback(
+    (actionKey: ToolbarActionKey) => {
+      switch (actionKey) {
+        case 'new':
+          handleToolbarNew();
+          return;
+        case 'purchaseInvoice':
+          navigateThenStartPurchaseCreate(navigate, location.pathname);
+          return;
+        case 'journalEntry':
+          navigate('/journals');
+          return;
+        case 'salesInvoice':
+          navigate('/invoices');
+          window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new')), 150);
+          return;
+        case 'receipt':
+          navigate('/invoices');
+          window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new-receipt')), 150);
+          return;
+        case 'payment':
+          navigate('/payments');
+          return;
+        case 'newSale':
+          window.dispatchEvent(new CustomEvent('nexor:pos-new-sale'));
+          return;
+        default:
+          return;
+      }
+    },
+    [handleToolbarNew, navigate, location.pathname],
+  );
+
+  const getActionButtons = (): ToolbarButtonConfig[] => {
+    const p = resolvePurchasePathname(location.pathname);
     if (p === '/' || p === '') return [];
 
-    const base = [
-      { label: t.topNav.toolbar.all, icon: FolderOpen, variant: 'outline' as const },
-      { label: t.topNav.toolbar.new, icon: Plus, variant: 'default' as const },
-      { label: t.topNav.toolbar.delete, icon: Trash2, variant: 'destructive' as const },
-      { label: t.topNav.toolbar.edit, icon: Pencil, variant: 'outline' as const },
+    const base: ToolbarButtonConfig[] = [
+      { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen, variant: 'outline' },
+      { actionKey: 'new', label: t.topNav.toolbar.new, icon: Plus, variant: 'default' },
+      { actionKey: 'delete', label: t.topNav.toolbar.delete, icon: Trash2, variant: 'destructive' },
+      { actionKey: 'edit', label: t.topNav.toolbar.edit, icon: Pencil, variant: 'outline' },
     ];
+
+    // Before `includes('invoices')` — `/purchase-invoices` matches that substring and would get the wrong toolbar.
+    if (p === '/purchase-invoices' || p.startsWith('/purchase-invoices/')) {
+      return base;
+    }
+    if (p === '/purchase-orders' || p.startsWith('/purchase-orders/')) {
+      return base;
+    }
 
     if (p.includes('inventory') || p.includes('stock')) {
       return [
         ...base,
-        { label: t.topNav.toolbar.transfer, icon: ArrowRightLeft, variant: 'outline' as const },
-        { label: t.topNav.toolbar.adjustExit, icon: RefreshCw, variant: 'outline' as const },
-        { label: t.topNav.toolbar.inventoryEntry, icon: Download, variant: 'outline' as const },
-        { label: t.topNav.toolbar.minQty, icon: Filter, variant: 'outline' as const },
+        { actionKey: 'transfer', label: t.topNav.toolbar.transfer, icon: ArrowRightLeft, variant: 'outline' },
+        { actionKey: 'adjustExit', label: t.topNav.toolbar.adjustExit, icon: RefreshCw, variant: 'outline' },
+        { actionKey: 'inventoryEntry', label: t.topNav.toolbar.inventoryEntry, icon: Download, variant: 'outline' },
+        { actionKey: 'minQty', label: t.topNav.toolbar.minQty, icon: Filter, variant: 'outline' },
       ];
     }
     if (p.includes('chart-of-accounts')) {
       return [
         ...base,
-        { label: t.topNav.toolbar.salesInvoice, icon: FileText, variant: 'outline' as const },
-        { label: t.topNav.toolbar.receipt, icon: Receipt, variant: 'outline' as const },
-        { label: t.topNav.toolbar.payment, icon: DollarSign, variant: 'outline' as const },
-        { label: t.topNav.toolbar.purchaseInvoice, icon: Truck, variant: 'outline' as const },
-        { label: t.topNav.toolbar.journalEntry, icon: BookOpen, variant: 'outline' as const },
+        { actionKey: 'salesInvoice', label: t.topNav.toolbar.salesInvoice, icon: FileText, variant: 'outline' },
+        { actionKey: 'receipt', label: t.topNav.toolbar.receipt, icon: Receipt, variant: 'outline' },
+        { actionKey: 'payment', label: t.topNav.toolbar.payment, icon: DollarSign, variant: 'outline' },
+        { actionKey: 'purchaseInvoice', label: t.topNav.toolbar.purchaseInvoice, icon: Truck, variant: 'outline' },
+        { actionKey: 'journalEntry', label: t.topNav.toolbar.journalEntry, icon: BookOpen, variant: 'outline' },
       ];
     }
     if (p.includes('invoices') || p.includes('fiscal') || p.includes('proforma')) {
       return [
         ...base,
-        { label: t.topNav.file.print, icon: Printer, variant: 'outline' as const },
-        { label: t.topNav.toolbar.agtSend, icon: Upload, variant: 'outline' as const },
+        { actionKey: 'print', label: t.topNav.file.print, icon: Printer, variant: 'outline' },
+        { actionKey: 'agtSend', label: t.topNav.toolbar.agtSend, icon: Upload, variant: 'outline' },
       ];
     }
     if (p.includes('pos')) {
       return [
-        { label: t.topNav.toolbar.newSale, icon: Plus, variant: 'default' as const },
-        { label: t.topNav.toolbar.save, icon: Save, variant: 'outline' as const },
-        { label: t.topNav.toolbar.void, icon: X, variant: 'destructive' as const },
+        { actionKey: 'newSale', label: t.topNav.toolbar.newSale, icon: Plus, variant: 'default' },
+        { actionKey: 'save', label: t.topNav.toolbar.save, icon: Save, variant: 'outline' },
+        { actionKey: 'void', label: t.topNav.toolbar.void, icon: X, variant: 'destructive' },
       ];
     }
     return base;
@@ -332,7 +428,14 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       {actionButtons.length > 0 && (
         <div className="h-10 px-3 bg-background hidden lg:flex items-center gap-1.5 border-b overflow-x-auto">
           {actionButtons.filter(Boolean).map((btn, idx) => (
-            <Button key={idx} variant={getButtonVariant(btn?.variant)} size="sm" className="h-7 text-xs gap-1.5 px-3 rounded-lg">
+            <Button
+              key={`${btn.actionKey}-${idx}`}
+              type="button"
+              variant={getButtonVariant(btn?.variant)}
+              size="sm"
+              className="h-7 text-xs gap-1.5 px-3 rounded-lg"
+              onClick={() => handleToolbarClick(btn.actionKey)}
+            >
               <btn.icon className="w-3.5 h-3.5" />
               {btn.label}
             </Button>

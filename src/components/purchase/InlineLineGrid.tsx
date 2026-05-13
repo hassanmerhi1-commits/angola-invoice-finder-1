@@ -3,6 +3,7 @@ import { PurchaseInvoiceLine, calculateLine } from '@/lib/purchaseInvoiceStorage
 import { Button } from '@/components/ui/button';
 import { Trash2, Plus, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTranslation } from '@/i18n';
 
 interface InlineLineGridProps {
   lines: PurchaseInvoiceLine[];
@@ -25,6 +26,8 @@ export function InlineLineGrid({
   freightAllocations = {},
   warehouseName = '',
 }: InlineLineGridProps) {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const [selectedRow, setSelectedRow] = useState<number>(-1);
   const [editCell, setEditCell] = useState<{ row: number; field: EditableField } | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -99,7 +102,7 @@ export function InlineLineGrid({
     return () => window.removeEventListener('keydown', handler);
   }, [onOpenProductPicker]);
 
-  const fmt = (n: number) => n.toLocaleString('pt-AO', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  const fmt = (n: number) => n.toLocaleString(uiLocale, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
   const renderCell = (row: number, field: EditableField, value: number) => {
     const isEditing = editCell?.row === row && editCell?.field === field;
@@ -139,12 +142,12 @@ export function InlineLineGrid({
       {/* Toolbar */}
       <div className="flex items-center gap-1.5 px-2 py-1 bg-muted/50 border-b border-border/50 shrink-0">
         <Button variant="outline" size="sm" className="h-6 gap-1 text-[10px] px-2.5 hover:bg-primary/10 transition-colors duration-150" onClick={onOpenProductPicker}>
-          <Plus className="h-3 w-3" /> Inserir
+          <Plus className="h-3 w-3" /> {t.purchaseInvoicesUi.gridInsert}
         </Button>
         <Button variant="ghost" size="sm" className="h-6 gap-1 text-[10px] px-2.5 hover:bg-accent/60 transition-colors duration-150" onClick={onOpenProductPicker}>
-          <Search className="h-3 w-3" /> Encontrar
+          <Search className="h-3 w-3" /> {t.purchaseInvoicesUi.gridFind}
         </Button>
-        <span className="text-[8px] text-muted-foreground ml-auto font-mono">F2 pesquisar | Tab navegar | Enter próxima linha</span>
+        <span className="text-[8px] text-muted-foreground ml-auto font-mono">{t.purchaseInvoicesUi.gridShortcuts}</span>
       </div>
 
       {/* Grid */}
@@ -153,30 +156,30 @@ export function InlineLineGrid({
           <thead className="sticky top-0 z-10">
             <tr className="bg-muted/80 text-muted-foreground font-semibold text-[9px]">
               <th className="w-5 px-0.5 py-0.5 text-center border-r border-border/50">#</th>
-              <th className="w-16 px-1 py-0.5 text-left border-r border-border/50">Código</th>
-              <th className="min-w-[120px] px-1 py-0.5 text-left border-r border-border/50">Descrição</th>
-              <th className="w-12 px-0.5 py-0.5 text-right border-r border-border/50">Qtd</th>
-              <th className="w-8 px-0.5 py-0.5 text-right border-r border-border/50">Emb</th>
-              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">Preço</th>
-              <th className="w-10 px-0.5 py-0.5 text-right border-r border-border/50">D%</th>
-              <th className="w-8 px-0.5 py-0.5 text-right border-r border-border/50">D2%</th>
-              <th className="w-12 px-0.5 py-0.5 text-right border-r border-border/50">TotQtd</th>
-              <th className="w-20 px-0.5 py-0.5 text-right border-r border-border/50">Total</th>
-              <th className="w-8 px-0.5 py-0.5 text-right border-r border-border/50">IVA</th>
-              <th className="w-18 px-0.5 py-0.5 text-right border-r border-border/50">Preço IVA</th>
+              <th className="w-16 px-1 py-0.5 text-left border-r border-border/50">{t.purchaseInvoicesUi.gridColCode}</th>
+              <th className="min-w-[120px] px-1 py-0.5 text-left border-r border-border/50">{t.purchaseInvoicesUi.gridColDesc}</th>
+              <th className="w-12 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColQty}</th>
+              <th className="w-8 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColPack}</th>
+              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColPrice}</th>
+              <th className="w-10 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColDisc}</th>
+              <th className="w-8 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColDisc2}</th>
+              <th className="w-12 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColTotQty}</th>
+              <th className="w-20 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColTotal}</th>
+              <th className="w-8 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColVat}</th>
+              <th className="w-18 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColPriceVat}</th>
               {/* Price levels */}
-              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">Preço 1</th>
-              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">Preço 2</th>
-              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">Preço 3</th>
-              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">Preço 4</th>
+              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColPrice1}</th>
+              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColPrice2}</th>
+              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColPrice3}</th>
+              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColPrice4}</th>
               {/* Costs */}
-              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">Últ.Custo</th>
-              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">C.Médio</th>
+              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColLastCost}</th>
+              <th className="w-16 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColAvgCost}</th>
               {/* Info */}
-              <th className="w-12 px-0.5 py-0.5 text-left border-r border-border/50">Armaz</th>
-              <th className="w-10 px-0.5 py-0.5 text-right border-r border-border/50">Stock</th>
-              <th className="w-8 px-0.5 py-0.5 text-center border-r border-border/50">Un</th>
-              <th className="w-16 px-0.5 py-0.5 text-left border-r border-border/50">Barcode</th>
+              <th className="w-12 px-0.5 py-0.5 text-left border-r border-border/50">{t.purchaseInvoicesUi.gridColWh}</th>
+              <th className="w-10 px-0.5 py-0.5 text-right border-r border-border/50">{t.purchaseInvoicesUi.gridColStock}</th>
+              <th className="w-8 px-0.5 py-0.5 text-center border-r border-border/50">{t.purchaseInvoicesUi.gridColUnit}</th>
+              <th className="w-16 px-0.5 py-0.5 text-left border-r border-border/50">{t.purchaseInvoicesUi.gridColBarcode}</th>
               <th className="w-5 px-0 py-0.5" />
             </tr>
           </thead>
@@ -234,7 +237,14 @@ export function InlineLineGrid({
             {lines.length === 0 && (
               <tr>
                 <td colSpan={23} className="text-center py-6 text-muted-foreground text-xs">
-                  Clique em "Inserir" ou pressione <kbd className="px-1 py-0.5 bg-muted rounded text-[10px] font-mono border">F2</kbd> para adicionar produtos
+                  {t.purchaseInvoicesUi.gridEmptyHint.split('__F2__').map((part, i, arr) => (
+                    <span key={i}>
+                      {part}
+                      {i < arr.length - 1 ? (
+                        <kbd className="px-1 py-0.5 bg-muted rounded text-[10px] font-mono border">F2</kbd>
+                      ) : null}
+                    </span>
+                  ))}
                 </td>
               </tr>
             )}
@@ -245,11 +255,15 @@ export function InlineLineGrid({
       {/* Bottom info */}
       {lines.length > 0 && (
         <div className="flex items-center justify-between px-2 py-1 bg-muted/40 border-t border-border/50 text-[10px] font-mono text-muted-foreground shrink-0">
-          <span className="bg-accent/40 px-1.5 py-0.5 rounded text-[9px]">{lines.length} produto{lines.length !== 1 ? 's' : ''}</span>
+          <span className="bg-accent/40 px-1.5 py-0.5 rounded text-[9px]">
+            {lines.length === 1
+              ? t.purchaseInvoicesUi.gridFooterProductsOne.replace('{count}', String(lines.length))
+              : t.purchaseInvoicesUi.gridFooterProductsOther.replace('{count}', String(lines.length))}
+          </span>
           <div className="flex gap-4">
-            <span>Qtd: <strong className="text-foreground">{lines.reduce((s, l) => s + l.totalQty, 0)}</strong></span>
-            <span>Base: <strong className="text-foreground">{fmt(lines.reduce((s, l) => s + l.total, 0))}</strong></span>
-            <span>c/IVA: <strong className="text-foreground">{fmt(lines.reduce((s, l) => s + l.totalWithIva, 0))}</strong></span>
+            <span>{t.purchaseInvoicesUi.qtyTotal} <strong className="text-foreground">{lines.reduce((s, l) => s + l.totalQty, 0)}</strong></span>
+            <span>{t.purchaseInvoicesUi.gridFooterBaseLabel} <strong className="text-foreground">{fmt(lines.reduce((s, l) => s + l.total, 0))}</strong></span>
+            <span>{t.purchaseInvoicesUi.gridFooterInclVat} <strong className="text-foreground">{fmt(lines.reduce((s, l) => s + l.totalWithIva, 0))}</strong></span>
           </div>
         </div>
       )}

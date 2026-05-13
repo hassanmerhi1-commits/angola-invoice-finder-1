@@ -3,7 +3,7 @@ import { generateId } from '@/lib/utils';
 // Transactional writes always use the backend HTTP API so browser and desktop share the same execution path
 // Electron IPC stays available only for desktop-only utilities and non-transactional reads
 
-import { getApiUrl, isDemoMode } from './config';
+import { getApiUrl, getApiUrlAsync, invalidateElectronApiBaseCache, isDemoMode } from './config';
 
 export interface ApiResponse<T> {
   data?: T;
@@ -81,6 +81,16 @@ async function ipcDelete(table: string, id: string): Promise<ApiResponse<any>> {
   }
 }
 
+/** If HTTP reached the API but returned 4xx/5xx, do not fall back to IPC (masks real errors and often hits “Express unreachable”). */
+function shouldTrySupplierIpcAfterApiFailure(apiResult: ApiResponse<any>): boolean {
+  if (apiResult.data != null) return false;
+  const err = (apiResult.error || '').trim();
+  if (!err) return true;
+  if (/^HTTP \d{3}/.test(err)) return false;
+  if (err.toLowerCase().includes('demo mode')) return false;
+  return true;
+}
+
 // ==================== HTTP FALLBACK (web preview/demo) ====================
 async function apiFetch<T>(
   endpoint: string,
@@ -92,7 +102,11 @@ async function apiFetch<T>(
   }
 
   const buildUrl = (base: string) => `${base}/api${endpoint}`;
-  let baseUrl = getApiUrl();
+  const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
+  let baseUrl =
+    el?.isElectron
+      ? await getApiUrlAsync()
+      : getApiUrl();
   let url = buildUrl(baseUrl);
   const token = getAuthToken();
   
@@ -120,13 +134,33 @@ async function apiFetch<T>(
 
     return { data: payload as T };
   } catch (error) {
-    // Electron retry: if backend port changed/stale, resolve fresh port from main process and retry once.
+    // Electron: drop stale cached base, re-resolve via IPC + port scan, retry once.
     const isElectron = typeof window !== 'undefined' && !!window.electronAPI?.isElectron;
-    if (isElectron && window.electronAPI?.backend?.getPort) {
+    if (isElectron) {
+      try {
+        invalidateElectronApiBaseCache();
+        const resolved = await getApiUrlAsync({ waitForPortMs: 8000 });
+        const retryUrl = buildUrl(resolved);
+        const retryResponse = await fetch(retryUrl, { ...options, headers });
+        const retryContentType = retryResponse.headers.get('content-type') || '';
+        const retryIsJson = retryContentType.includes('application/json');
+        const retryPayload = retryIsJson
+          ? await retryResponse.json().catch(() => null)
+          : await retryResponse.text().catch(() => '');
+        if (!retryResponse.ok) {
+          const retryErrorMessage = typeof retryPayload === 'string'
+            ? retryPayload
+            : retryPayload?.error || (Array.isArray(retryPayload?.errors) ? retryPayload.errors.join('; ') : retryPayload?.message);
+          return { error: retryErrorMessage || `HTTP ${retryResponse.status}` };
+        }
+        return { data: retryPayload as T };
+      } catch {
+        /* fall through */
+      }
       try {
         const freshPort = await window.electronAPI.backend.getPort();
         if (typeof freshPort === 'number' && freshPort > 0) {
-          const freshBase = `http://localhost:${freshPort}`;
+          const freshBase = `http://127.0.0.1:${freshPort}`;
           if (freshBase !== baseUrl) {
             baseUrl = freshBase;
             url = buildUrl(baseUrl);
@@ -312,14 +346,32 @@ export const api = {
     },
   },
 
-  // Branches
+  // Branches — Electron + SQLite: IPC main store does not persist branches (only Express DB does).
+  // Use the same embedded HTTP API as the browser so list/create/update hit backend/src/routes/branches.js.
   branches: {
-    list: () => {
-      if (isElectronMode()) return ipcGetAll('branches');
+    list: async () => {
+      if (isElectronMode()) {
+        const apiResult = await apiFetch<any[]>('/branches');
+        if (Array.isArray(apiResult.data)) return { data: apiResult.data };
+        return ipcGetAll('branches');
+      }
       return apiFetch<any[]>('/branches');
     },
-    create: (data: any) => {
+    create: async (data: any) => {
       if (isElectronMode()) {
+        const body = {
+          name: data.name,
+          code: data.code || '',
+          address: data.address || '',
+          phone: data.phone || '',
+          isMain: !!data.isMain,
+        };
+        const apiResult = await apiFetch<any>('/branches', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        if (apiResult.error) return apiResult;
+        if (apiResult.data != null) return apiResult;
         const branch = {
           id: generateId(),
           name: data.name,
@@ -333,8 +385,21 @@ export const api = {
       }
       return apiFetch<any>('/branches', { method: 'POST', body: JSON.stringify(data) });
     },
-    update: (id: string, data: any) => {
+    update: async (id: string, data: any) => {
       if (isElectronMode()) {
+        const body = {
+          name: data.name,
+          code: data.code || '',
+          address: data.address || '',
+          phone: data.phone || '',
+          isMain: !!data.isMain,
+        };
+        const apiResult = await apiFetch<any>(`/branches/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          body: JSON.stringify(body),
+        });
+        if (apiResult.error) return apiResult;
+        if (apiResult.data != null) return apiResult;
         return ipcUpdate('branches', id, {
           name: data.name,
           code: data.code || '',
@@ -343,7 +408,7 @@ export const api = {
           is_main: data.isMain,
         });
       }
-      return apiFetch<any>(`/branches/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+      return apiFetch<any>(`/branches/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) });
     },
   },
 
@@ -461,6 +526,7 @@ export const api = {
       if (isElectronMode()) {
         const apiResult = await apiFetch<any>('/suppliers', { method: 'POST', body: JSON.stringify(data) });
         if (apiResult.data) return apiResult;
+        if (!shouldTrySupplierIpcAfterApiFailure(apiResult)) return apiResult;
         const payload = mapSupplierPayloadForElectron(data);
         const result = await ipcInsert('suppliers', payload);
         if (result.data) {
@@ -474,6 +540,7 @@ export const api = {
       if (isElectronMode()) {
         const apiResult = await apiFetch<any>('/suppliers/batch', { method: 'POST', body: JSON.stringify({ suppliers }) });
         if (apiResult.data) return apiResult;
+        if (!shouldTrySupplierIpcAfterApiFailure(apiResult)) return apiResult;
         let imported = 0, failed = 0;
         const errors: any[] = [];
 
@@ -521,6 +588,7 @@ export const api = {
       if (isElectronMode()) {
         const apiResult = await apiFetch<any>(`/suppliers/${id}`, { method: 'PUT', body: JSON.stringify(data) });
         if (apiResult.data) return apiResult;
+        if (!shouldTrySupplierIpcAfterApiFailure(apiResult)) return apiResult;
         const payload = mapSupplierPayloadForElectron({ ...data, id, updated_at: new Date().toISOString() });
         delete payload.id;
         const result = await ipcUpdate('suppliers', id, payload);
@@ -535,6 +603,7 @@ export const api = {
       if (isElectronMode()) {
         const apiResult = await apiFetch<any>(`/suppliers/${id}`, { method: 'DELETE' });
         if (apiResult.data) return apiResult;
+        if (!shouldTrySupplierIpcAfterApiFailure(apiResult)) return apiResult;
         return ipcDelete('suppliers', id);
       }
       return apiFetch<any>(`/suppliers/${id}`, { method: 'DELETE' });

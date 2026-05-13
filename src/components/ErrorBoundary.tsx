@@ -39,6 +39,7 @@ export class ErrorBoundary extends React.Component<
   }
 }
 
+/** Requires `LanguageProvider` above `ErrorBoundary` in App (see App.tsx). */
 function ErrorBoundaryFallback({ message, onReset }: { message?: string; onReset: () => void }) {
   const { t } = useLanguage();
   return (
@@ -49,6 +50,7 @@ function ErrorBoundaryFallback({ message, onReset }: { message?: string; onReset
           {message || t.errorBoundaryUi.defaultMessage}
         </p>
         <button
+          type="button"
           onClick={onReset}
           className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm"
         >

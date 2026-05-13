@@ -87,6 +87,9 @@ mkdirSync(appDir, { recursive: true });
 mkdirSync(runtimeNodeModulesDir, { recursive: true });
 mkdirSync(path.join(appDir, 'public'), { recursive: true });
 
+console.log('[build-portable-fast] Rebuilding backend better-sqlite3 for Electron (required for packaged portable)…');
+execFileSync('node', [path.join(root, 'scripts', 'rebuild-backend-native.mjs')], { cwd: root, stdio: 'inherit' });
+
 copyIfExists(path.join(root, 'dist'), path.join(appDir, 'dist'));
 copyIfExists(path.join(root, 'electron'), path.join(appDir, 'electron'));
 copyIfExists(path.join(root, 'backend'), backendDir);

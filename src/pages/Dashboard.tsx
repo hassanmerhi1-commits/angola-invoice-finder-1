@@ -315,12 +315,12 @@ export default function Dashboard() {
         </div>
         <div className="flex-1 flex flex-col gap-2 p-3">
           {[
-            { label: 'Balancete', icon: PieChart, path: '/reports', color: 'bg-primary/10 text-primary' },
-            { label: 'Faturas', icon: FileText, path: '/invoices', color: 'bg-green-500/10 text-green-600' },
+            { label: t.reportsCenterUi.tabTrialBalance, icon: PieChart, path: '/reports', color: 'bg-primary/10 text-primary' },
+            { label: t.nav.invoices, icon: FileText, path: '/invoices', color: 'bg-green-500/10 text-green-600' },
             { label: t.dashboardUi.bi.salesProfit, icon: TrendingUp, path: '/reports', color: 'bg-orange-500/10 text-orange-600' },
-            { label: 'Compras', icon: Truck, path: '/purchase-orders', color: 'bg-blue-500/10 text-blue-600' },
-            { label: 'Impostos', icon: Receipt, path: '/tax-management', color: 'bg-destructive/10 text-destructive' },
-            { label: 'Stock', icon: Package, path: '/inventory', color: 'bg-primary/10 text-primary' },
+            { label: t.nav.purchaseOrders, icon: Truck, path: '/purchase-orders', color: 'bg-blue-500/10 text-blue-600' },
+            { label: t.nav.taxManagement, icon: Receipt, path: '/tax-management', color: 'bg-destructive/10 text-destructive' },
+            { label: t.nav.inventory, icon: Package, path: '/inventory', color: 'bg-primary/10 text-primary' },
           ].map((item) => (
             <button
               key={item.label}

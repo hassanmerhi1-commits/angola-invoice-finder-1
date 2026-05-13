@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useCallback, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useSuppliers } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
@@ -73,6 +73,7 @@ const initialFormData = {
 
 export default function Suppliers() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { suppliers, saveSupplier, deleteSupplier, createSupplier, refreshSuppliers } = useSuppliers();
@@ -112,6 +113,16 @@ export default function Suppliers() {
     }
     setDialogOpen(true);
   };
+
+  // TopNav toolbar "Novo" (router state — avoids stray window events)
+  useEffect(() => {
+    const st = location.state as { nexorToolbarNewSupplier?: boolean } | null;
+    if (!st?.nexorToolbarNewSupplier) return;
+    setSelectedSupplier(null);
+    setFormData(initialFormData);
+    setDialogOpen(true);
+    navigate('.', { replace: true, state: {} });
+  }, [location.state, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

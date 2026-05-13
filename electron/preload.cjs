@@ -37,6 +37,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     read: () => ipcRenderer.invoke('ipfile:read'),
     write: (content) => ipcRenderer.invoke('ipfile:write', content),
     parse: () => ipcRenderer.invoke('ipfile:parse'),
+    parseSync: () => {
+      try {
+        const raw = ipcRenderer.sendSync('ipfile:parseSync');
+        return typeof raw === 'string' ? JSON.parse(raw) : { valid: false };
+      } catch {
+        return { valid: false };
+      }
+    },
   },
 
   // Company management

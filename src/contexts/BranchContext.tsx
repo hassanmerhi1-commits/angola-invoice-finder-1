@@ -41,15 +41,14 @@ export function BranchProvider({ children }: { children: ReactNode }) {
         localStorage.setItem('kwanzaerp_branches', JSON.stringify(mapped));
 
         const savedBranchId = localStorage.getItem('kwanza_current_branch_id');
-        const saved = savedBranchId ? mapped.find((b) => b.id === savedBranchId) : null;
-        if (saved) {
-          setCurrentBranchState(saved);
-        } else {
-          const mainBranch = mapped.find((b) => b.isMain);
-          if (mainBranch) {
-            localStorage.setItem('kwanza_current_branch_id', mainBranch.id);
-            setCurrentBranchState(mainBranch);
-          }
+        const saved = savedBranchId
+          ? mapped.find((b) => String(b.id) === String(savedBranchId))
+          : null;
+        const mainBranch = mapped.find((b) => b.isMain);
+        const fallback = saved || mainBranch || mapped[0];
+        if (fallback) {
+          localStorage.setItem('kwanza_current_branch_id', String(fallback.id));
+          setCurrentBranchState(fallback);
         }
       } else {
         throw new Error('No branches from API');
@@ -66,15 +65,14 @@ export function BranchProvider({ children }: { children: ReactNode }) {
         const data: Branch[] = raw ? JSON.parse(raw) : [];
         setBranches(data);
         const savedBranchId = localStorage.getItem('kwanza_current_branch_id');
-        const saved = savedBranchId ? data.find(b => b.id === savedBranchId) : null;
-        if (saved) {
-          setCurrentBranchState(saved);
-        } else {
-          const mainBranch = data.find(b => b.isMain);
-          if (mainBranch) {
-            localStorage.setItem('kwanza_current_branch_id', mainBranch.id);
-            setCurrentBranchState(mainBranch);
-          }
+        const saved = savedBranchId
+          ? data.find((b) => String(b.id) === String(savedBranchId))
+          : null;
+        const mainBranch = data.find((b) => b.isMain);
+        const fallback = saved || mainBranch || data[0];
+        if (fallback) {
+          localStorage.setItem('kwanza_current_branch_id', String(fallback.id));
+          setCurrentBranchState(fallback);
         }
       } catch { /* ignore */ }
     } finally {

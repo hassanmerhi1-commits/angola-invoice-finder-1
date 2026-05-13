@@ -1,7 +1,8 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { generateId } from '@/lib/utils';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
+import QRCode from 'qrcode';
 import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { api } from '@/lib/api/client';
@@ -51,6 +52,97 @@ import {
 import { saveDocument, getDocuments } from '@/lib/documentStorage';
 import type { ERPDocument } from '@/types/documents';
 import { usePurchaseOrders } from '@/hooks/useERP';
+import { CompanySettings, getCompanySettings } from '@/lib/companySettings';
+import {
+  writePurchaseCreateIntent,
+  readPurchaseCreateIntentPending,
+  clearPurchaseCreateIntent,
+  NEXOR_PURCHASE_NEW_QUERY_KEY,
+  PURCHASE_INVOICES_NEW_PATH,
+} from '@/lib/nexorPurchaseCreate';
+
+function ivaRateToTaxCode(rate: number): string {
+  const r = Number(rate || 0);
+  if (Math.abs(r - 14) < 0.0001) return 'IVA14';
+  if (Math.abs(r - 7) < 0.0001) return 'IVA7';
+  if (Math.abs(r - 5) < 0.0001) return 'IVA5';
+  if (Math.abs(r - 0) < 0.0001) return 'IVA0';
+  // fallback to a generic IVA code (tax engine allows custom codes)
+  return `IVA${String(r).replace('.', '_')}`;
+}
+
+function roundMoney(value: number): number {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
+function withholdingRateToTaxCode(rate: number): string {
+  const r = Number(rate || 0);
+  if (Math.abs(r - 3.5) < 0.0001) return 'RET3.5';
+  if (Math.abs(r - 6.5) < 0.0001) return 'RET6.5';
+  if (r <= 0) return '';
+  return `RET${String(r).replace('.', '_')}`;
+}
+
+function buildBarcodePattern(value: string): Array<{ x: number; width: number }> {
+  const normalized = String(value || 'NEXOR').replace(/\s+/g, '');
+  const bars: Array<{ x: number; width: number }> = [];
+  let x = 2;
+
+  // Start guard
+  [2, 1, 2].forEach((width) => {
+    bars.push({ x, width });
+    x += width + 1;
+  });
+
+  Array.from(normalized).forEach((char, index) => {
+    const code = char.charCodeAt(0) + index * 7;
+    const sequence = [
+      (code % 4) + 1,
+      ((code >> 2) % 3) + 1,
+      ((code >> 4) % 4) + 1,
+      ((code >> 1) % 2) + 1,
+    ];
+    sequence.forEach((width) => {
+      bars.push({ x, width });
+      x += width + 1;
+    });
+    x += 1;
+  });
+
+  // End guard
+  [2, 1, 2].forEach((width) => {
+    bars.push({ x, width });
+    x += width + 1;
+  });
+
+  return bars;
+}
+
+function buildBarcodeSvgMarkup(value: string): string {
+  const bars = buildBarcodePattern(value);
+  const width = Math.max(120, (bars.at(-1)?.x || 0) + 6);
+  const rects = bars.map(bar => `<rect x="${bar.x}" y="0" width="${bar.width}" height="42" fill="#000"/>`).join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 42" preserveAspectRatio="none" role="img" aria-label="Barcode">${rects}</svg>`;
+}
+
+function buildPurchaseInvoiceQRCodeString(invoice: PurchaseInvoice, company: CompanySettings): string {
+  const issueDate = new Date(invoice.date || invoice.createdAt || Date.now());
+  const companyName = company.tradeName || company.name || 'NEXOR ERP';
+  const fields = [
+    `A:${company.nif || ''}`,
+    `B:${companyName}`,
+    `C:${invoice.supplierNif || ''}`,
+    `D:FC`,
+    `E:${invoice.supplierInvoiceNo || invoice.invoiceNumber}`,
+    `F:${issueDate.toISOString().slice(0, 10).replace(/-/g, '')}`,
+    `G:${invoice.invoiceNumber}`,
+    `H:${Number(invoice.subtotal || 0).toFixed(2)}`,
+    `I:${Number(invoice.ivaTotal || 0).toFixed(2)}`,
+    `J:${Number(invoice.total || 0).toFixed(2)}`,
+    `K:${company.agtCertificateNumber || 'N/A'}`,
+  ];
+  return fields.join('*');
+}
 
 const getPurchaseInvoiceStatusBadge = (
   t: any,
@@ -165,7 +257,11 @@ function SupplierPickerDialog({
   );
 }
 
-async function syncPurchaseInvoiceDocument(invoice: PurchaseInvoice) {
+async function syncPurchaseInvoiceDocument(
+  invoice: PurchaseInvoice,
+  /** Same as `supplierInvoiceNoStripPrefix` in i18n — stored on the document for round-trip import. */
+  supplierInvoiceInternalPrefix: string,
+) {
   const lines = invoice.lines.map(line => {
     const gross = line.totalQty * line.unitPrice;
     const discountAmount = Math.max(gross - line.total, 0);
@@ -215,7 +311,7 @@ async function syncPurchaseInvoiceDocument(invoice: PurchaseInvoice) {
     dueDate: invoice.paymentDate,
     notes: invoice.extraNote,
     internalNotes: invoice.supplierInvoiceNo
-      ? t.purchaseInvoicesUi.supplierInvoiceNoPrefix.replace('{no}', invoice.supplierInvoiceNo)
+      ? `${supplierInvoiceInternalPrefix}${invoice.supplierInvoiceNo}`
       : undefined,
     createdBy: invoice.createdBy,
     createdByName: invoice.createdByName,
@@ -238,6 +334,8 @@ function ProductPickerDialog({
   onSelect: (p: Product) => void;
   onCreateNew: () => void;
 }) {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const [search, setSearch] = useState('');
   const filtered = useMemo(() => {
     if (!search) return products.slice(0, 100);
@@ -254,9 +352,9 @@ function ProductPickerDialog({
       <DialogContent className="max-w-4xl max-h-[80vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
-            <span>Lista de Produtos</span>
+            <span>{t.purchaseInvoicesUi.productListTitle}</span>
             <Button variant="outline" size="sm" className="gap-1" onClick={() => { onClose(); onCreateNew(); }}>
-              <Plus className="h-4 w-4" /> Novo Produto
+              <Plus className="h-4 w-4" /> {t.purchaseInvoicesUi.newProductBtn}
             </Button>
           </DialogTitle>
         </DialogHeader>
@@ -270,13 +368,13 @@ function ProductPickerDialog({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Produto</TableHead>
-                <TableHead>Descrição</TableHead>
-                <TableHead className="text-right">Preço</TableHead>
-                <TableHead className="text-right">Stock</TableHead>
-                <TableHead className="text-right">IVA</TableHead>
-                <TableHead>Unidade</TableHead>
-                <TableHead>Categoria</TableHead>
+                <TableHead>{t.purchaseInvoicesUi.gridColCode}</TableHead>
+                <TableHead>{t.common.name}</TableHead>
+                <TableHead className="text-right">{t.common.price}</TableHead>
+                <TableHead className="text-right">{t.purchaseInvoicesUi.gridColStock}</TableHead>
+                <TableHead className="text-right">{t.purchaseInvoicesUi.gridColVat}</TableHead>
+                <TableHead>{t.purchaseInvoicesUi.gridColUnit}</TableHead>
+                <TableHead>{t.purchaseInvoicesUi.productPickerCategory}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -289,7 +387,7 @@ function ProductPickerDialog({
                   <TableCell className="font-mono text-xs">{p.sku}</TableCell>
                   <TableCell className="font-medium">{p.name}</TableCell>
                   <TableCell className="text-right font-mono">
-                    {(p.cost || p.price || 0).toLocaleString('pt-AO')}
+                    {(p.cost || p.price || 0).toLocaleString(uiLocale)}
                   </TableCell>
                   <TableCell className="text-right">{p.stock}</TableCell>
                   <TableCell className="text-right">{p.taxRate}%</TableCell>
@@ -300,10 +398,10 @@ function ProductPickerDialog({
               {filtered.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                    Nenhum produto encontrado
+                    {t.purchaseInvoicesUi.poNoProductsFound}
                     <br />
                     <Button variant="link" size="sm" className="mt-2 gap-1" onClick={() => { onClose(); onCreateNew(); }}>
-                      <Plus className="h-4 w-4" /> Criar novo produto
+                      <Plus className="h-4 w-4" /> {t.purchaseInvoicesUi.productPickerCreateNew}
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -324,6 +422,7 @@ function AccountPickerDialog({
   onClose: () => void;
   onSelect: (code: string, name: string) => void;
 }) {
+  const { t } = useTranslation();
   const [search, setSearch] = useState('');
   const accounts = useMemo(() => {
     try {
@@ -345,7 +444,7 @@ function AccountPickerDialog({
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-xl max-h-[70vh]">
         <DialogHeader>
-          <DialogTitle>Pesquisar Conta</DialogTitle>
+          <DialogTitle>{t.purchaseInvoicesUi.accountSearchTitle}</DialogTitle>
         </DialogHeader>
         <Input placeholder={t.purchaseInvoicesUi.searchByCodeOrName} value={search} onChange={e => setSearch(e.target.value)} autoFocus />
         <ScrollArea className="h-[350px]">
@@ -382,10 +481,16 @@ function buildPurchaseInvoiceJournalLines({
   subtotal,
   ivaTotal,
   supplierTotal,
+  withholdingAmount,
+  withholdingAccountCode,
+  stampAmount,
+  stampAccountCode,
   landingCosts,
   freightSourceAccount,
   freightSourceName,
   manualLines,
+  labelFreightLine,
+  labelDeductibleVat,
 }: {
   documentId: string;
   invoiceNumber: string;
@@ -397,14 +502,26 @@ function buildPurchaseInvoiceJournalLines({
   subtotal: number;
   ivaTotal: number;
   supplierTotal: number;
+  withholdingAmount?: number;
+  withholdingAccountCode?: string;
+  stampAmount?: number;
+  stampAccountCode?: string;
   landingCosts: number;
   freightSourceAccount: string;
   freightSourceName: string;
   manualLines: PurchaseInvoiceJournalLine[];
+  /** Display names — must not rely on `t` from React scope (this helper is module-level). */
+  labelFreightLine: string;
+  labelDeductibleVat: string;
 }): PurchaseInvoiceJournalLine[] {
   const postedLines: PurchaseInvoiceJournalLine[] = [];
   let autoIndex = 0;
   const nextId = (suffix: string) => `${documentId}_${suffix}_${++autoIndex}`;
+
+  const wht = roundMoney(withholdingAmount || 0);
+  const whtAcc = (withholdingAccountCode || '3.4.1').trim() || '3.4.1';
+  const isTax = roundMoney(stampAmount || 0);
+  const isAcc = (stampAccountCode || '3.5.1').trim() || '3.5.1';
 
   if (subtotal > 0) {
     postedLines.push({
@@ -418,11 +535,24 @@ function buildPurchaseInvoiceJournalLines({
     });
   }
 
+  // Imposto de Selo (IS): treat as acquisition cost + tax payable (Angola)
+  if (isTax > 0) {
+    postedLines.push({
+      id: nextId('stamp_debit'),
+      accountCode: purchaseAccountCode || '2.1.1',
+      accountName: 'Compra de Mercadorias',
+      currency,
+      note: `Imposto de Selo - FC ${invoiceNumber}`,
+      debit: isTax,
+      credit: 0,
+    });
+  }
+
   if (landingCosts > 0) {
     postedLines.push({
       id: nextId('freight_debit'),
       accountCode: '6.2.6',
-      accountName: t.purchaseInvoicesUi.transportOnPurchases,
+      accountName: labelFreightLine,
       currency,
       note: `Frete / Transporte - FC ${invoiceNumber}`,
       debit: landingCosts,
@@ -434,11 +564,24 @@ function buildPurchaseInvoiceJournalLines({
     postedLines.push({
       id: nextId('iva'),
       accountCode: ivaAccountCode || '3.3.1',
-      accountName: t.purchaseInvoicesUi.deductibleVat,
+      accountName: labelDeductibleVat,
       currency,
       note: `IVA - FC ${invoiceNumber}`,
       debit: ivaTotal,
       credit: 0,
+    });
+  }
+
+  // Retenção na Fonte: reduce supplier payable; create tax payable
+  if (wht > 0) {
+    postedLines.push({
+      id: nextId('withholding'),
+      accountCode: whtAcc,
+      accountName: 'Retenção na Fonte a Pagar',
+      currency,
+      note: `Retenção na Fonte - FC ${invoiceNumber}`,
+      debit: 0,
+      credit: wht,
     });
   }
 
@@ -449,8 +592,21 @@ function buildPurchaseInvoiceJournalLines({
     currency,
     note: `FC ${invoiceNumber}`,
     debit: 0,
-    credit: supplierTotal,
+    credit: Math.max(roundMoney(supplierTotal) - wht, 0),
   });
+
+  // Imposto de Selo payable
+  if (isTax > 0) {
+    postedLines.push({
+      id: nextId('stamp_credit'),
+      accountCode: isAcc,
+      accountName: 'Imposto de Selo a Pagar',
+      currency,
+      note: `Imposto de Selo - FC ${invoiceNumber}`,
+      debit: 0,
+      credit: isTax,
+    });
+  }
 
   if (landingCosts > 0) {
     postedLines.push({
@@ -481,49 +637,263 @@ function InvoiceViewDialog({
   onClose: () => void;
   invoice: PurchaseInvoice | null;
 }) {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const [previewQrCodeUrl, setPreviewQrCodeUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!invoice) {
+      setPreviewQrCodeUrl(null);
+      return;
+    }
+
+    let active = true;
+    const companySettings = getCompanySettings();
+    QRCode.toDataURL(buildPurchaseInvoiceQRCodeString(invoice, companySettings), {
+      width: 120,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: {
+        dark: '#000000',
+        light: '#FFFFFF',
+      },
+    })
+      .then((url) => {
+        if (active) setPreviewQrCodeUrl(url);
+      })
+      .catch(() => {
+        if (active) setPreviewQrCodeUrl(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [invoice]);
+
   if (!invoice) return null;
 
-  const handlePrint = () => {
+  const company = getCompanySettings();
+  const companyName = company.tradeName || company.name || 'NEXOR ERP';
+  const companyLocation = [company.city, company.province, company.country].filter(Boolean).join(' - ');
+  const previewMoney = (value: number) => Number(value || 0).toLocaleString(uiLocale, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const previewQty = (value: number) => Number(value || 0).toLocaleString(uiLocale, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const previewIssueDate = new Date(invoice.date || invoice.createdAt || Date.now());
+  const previewDueDate = new Date(invoice.paymentDate || invoice.date || Date.now());
+  const previewBarcodeValue = invoice.supplierInvoiceNo || invoice.invoiceNumber;
+  const previewBarcodeBars = buildBarcodePattern(previewBarcodeValue);
+  const previewBarcodeWidth = Math.max(120, (previewBarcodeBars.at(-1)?.x || 0) + 6);
+  const previewTaxRate = invoice.ivaTotal > 0 && invoice.subtotal > 0 ? (invoice.ivaTotal / invoice.subtotal) * 100 : 0;
+  const previewGross = invoice.subtotal + invoice.ivaTotal;
+  const previewDiscount = invoice.lines.reduce((s, l) => s + ((l.totalQty * l.unitPrice) - l.total), 0);
+
+  const handlePrint = async () => {
+    const escapeHtml = (value: unknown) => String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+    const money = (value: number) => Number(value || 0).toLocaleString(uiLocale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    const qty = (value: number) => Number(value || 0).toLocaleString(uiLocale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    const barcodeValue = invoice.supplierInvoiceNo || invoice.invoiceNumber;
+    const barcodeBars = buildBarcodeSvgMarkup(barcodeValue);
+    let qrCodeSvg = '<div class="qr-placeholder">QR</div>';
+    try {
+      qrCodeSvg = await QRCode.toString(buildPurchaseInvoiceQRCodeString(invoice, company), {
+        type: 'svg',
+        width: 94,
+        margin: 1,
+        errorCorrectionLevel: 'M',
+      });
+    } catch {
+      qrCodeSvg = '<div class="qr-placeholder">QR</div>';
+    }
+    const issueDate = new Date(invoice.date || invoice.createdAt || Date.now());
+    const dueDate = new Date(invoice.paymentDate || invoice.date || Date.now());
+    const subtotalWithTax = invoice.subtotal + invoice.ivaTotal;
     const lines = invoice.lines.map(l => `
       <tr>
-        <td style="font-family:monospace;font-size:11px">${l.productCode}</td>
-        <td>${l.description}</td>
-        <td style="text-align:right">${l.totalQty}</td>
-        <td style="text-align:right;font-family:monospace">${l.unitPrice.toLocaleString('pt-AO')}</td>
-        <td style="text-align:right">${l.ivaRate}%</td>
-        <td style="text-align:right;font-family:monospace;font-weight:bold">${l.totalWithIva.toLocaleString('pt-AO')}</td>
-      </tr>
-    `).join('');
-    const journalRows = invoice.journalLines.map(j => `
-      <tr>
-        <td style="font-family:monospace">${j.accountCode}</td>
-        <td>${j.accountName}</td>
-        <td>${j.note}</td>
-        <td style="text-align:right;font-family:monospace">${j.debit > 0 ? j.debit.toLocaleString('pt-AO') : '—'}</td>
-        <td style="text-align:right;font-family:monospace">${j.credit > 0 ? j.credit.toLocaleString('pt-AO') : '—'}</td>
+        <td class="mono">${escapeHtml(l.productCode || l.barcode || '')}</td>
+        <td>${escapeHtml(l.description)}</td>
+        <td class="num">${qty(l.totalQty)}</td>
+        <td class="center">${escapeHtml(l.unit || 'UND')}</td>
+        <td class="num">${money(l.unitPrice)}</td>
+        <td class="num">${money(l.discountPct || 0)}</td>
+        <td class="num">${money(l.ivaRate)}</td>
+        <td class="num">${money(l.totalWithIva)}</td>
+        <td class="num">${money(l.ivaAmount)}</td>
       </tr>
     `).join('');
     const html = `<html><head><title>FC ${invoice.invoiceNumber}</title>
-      <style>body{font-family:Arial,sans-serif;font-size:12px;margin:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:4px 8px}th{background:#f5f5f5;text-align:left}h2{color:#c2410c}@media print{body{margin:0}}</style>
+      <style>
+        @page{size:A4;margin:10mm}
+        *{box-sizing:border-box}
+        body{font-family:Arial,Helvetica,sans-serif;font-size:10.5px;color:#111;margin:0;background:#fff}
+        .page{width:190mm;min-height:277mm;margin:0 auto;padding:4mm 2mm;position:relative}
+        .header{display:grid;grid-template-columns:30mm 1fr 58mm;gap:8mm;align-items:start}
+        .logo{width:27mm;height:22mm;border:1px solid #bbb;display:flex;align-items:center;justify-content:center;overflow:hidden;font-weight:900;font-size:20px;color:#8b1d1d;letter-spacing:-1px;text-align:center}
+        .logo img{max-width:100%;max-height:100%;object-fit:contain}
+        .supplier h1{font-size:14px;margin:0 0 2px 0;line-height:1.05;text-transform:uppercase}
+        .supplier div,.meta div,.customer div{line-height:1.28}
+        .meta{text-align:center;font-size:9.5px}
+        .meta .copy{font-weight:700;margin-bottom:5px}
+        .meta .docno{font-weight:700}
+        .barcode{height:16mm;margin:7px auto 2px;max-width:52mm;background:#fff}
+        .barcode svg{width:100%;height:100%;display:block}
+        .barcode-label{font-family:"Courier New",monospace;font-size:8px;letter-spacing:1px}
+        .qr-code{width:23mm;height:23mm;margin:3mm auto 0;border:1px solid #111;padding:1mm;background:#fff}
+        .qr-code svg{width:100%;height:100%;display:block}
+        .qr-placeholder{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-weight:700;border:1px dashed #777}
+        .qr-label{font-size:7.5px;font-weight:700;margin-top:1px}
+        .rule{border-top:1px solid #333;margin:5px 0}
+        .small-label{font-size:9px;font-weight:700;text-transform:uppercase}
+        .customer-box{display:grid;grid-template-columns:1fr 45mm;gap:8mm;align-items:end;margin-top:3mm}
+        .customer{text-align:left}
+        .date-grid{display:grid;grid-template-columns:1fr 1fr 1fr;text-align:center;font-size:9.5px}
+        .date-grid strong{display:block;border-bottom:1px solid #777;margin-bottom:2px}
+        .ref-row{display:grid;grid-template-columns:40mm 1fr;border-top:1px solid #333;border-bottom:1px solid #333;margin-top:5mm;padding:2px 0;font-size:9px;font-weight:700}
+        table{width:100%;border-collapse:collapse}
+        .items{margin-top:1mm}
+        .items th{font-size:9px;text-align:left;border-bottom:1px solid #333;padding:3px 4px}
+        .items td{font-size:9.5px;padding:4px 4px;vertical-align:top}
+        .items tbody tr{height:8mm}
+        .mono{font-family:"Courier New",monospace}
+        .num{text-align:right;font-family:"Courier New",monospace;white-space:nowrap}
+        .center{text-align:center}
+        .bottom{position:absolute;left:2mm;right:2mm;bottom:11mm}
+        .tax-and-total{display:grid;grid-template-columns:1fr 66mm;gap:18mm;align-items:start}
+        .tax-title{font-size:9px;font-weight:700;border-bottom:1px solid #333;margin-bottom:2px}
+        .tax th,.tax td{border:1px solid #333;padding:3px 4px;font-size:9px}
+        .tax th{font-weight:700;text-align:left}
+        .totals td{border:1px solid #333;padding:4px 6px;font-size:10px}
+        .totals .label{font-weight:700;text-transform:uppercase}
+        .totals .value{text-align:right;font-family:"Courier New",monospace;font-weight:700}
+        .grand td{font-size:14px;font-weight:900}
+        .note-line{margin-top:12mm;border-bottom:1px solid #333;width:92mm;font-size:9px;font-weight:700}
+        .operator{margin-top:8mm;border:1px solid #333;padding:4px 6px;width:64mm;margin-left:auto;font-size:10px}
+        .bank{margin-top:7mm;font-weight:700}
+        .footer-msg{text-align:center;margin-top:11mm;font-weight:700;font-size:10px}
+        .page-no{text-align:right;margin-top:5mm;font-size:9px;font-weight:700}
+        @media print{body{margin:0}.page{margin:0;min-height:277mm}}
+      </style>
     </head><body>
-      <h2>FATURA DE COMPRA</h2>
-      <p>
-        <strong>${invoice.invoiceNumber}</strong>
-        {invoice.supplierInvoiceNo ? t.purchaseInvoicesUi.supplierInvoiceLabel.replace('{no}', invoice.supplierInvoiceNo) : ''}
-      </p>
-      <table style="width:auto;border:none;margin-bottom:16px"><tr style="border:none">
-        <td style="border:none"><strong>Fornecedor:</strong> ${invoice.supplierName}</td>
-        <td style="border:none"><strong>Data:</strong> ${new Date(invoice.date).toLocaleDateString('pt-AO')}</td>
-        <td style="border:none"><strong>Armazém:</strong> ${invoice.warehouseName}</td>
-        <td style="border:none"><strong>Moeda:</strong> ${invoice.currency}</td>
-      </tr></table>
-      <table><thead><tr><th>Produto</th><th>Descrição</th><th>Qtd</th><th>Preço</th><th>IVA</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table>
-      <div style="text-align:right;margin-top:12px">
-        <p>Sub Total: <strong>${invoice.subtotal.toLocaleString('pt-AO')} ${invoice.currency}</strong></p>
-        <p style="color:#c2410c">IVA: <strong>${invoice.ivaTotal.toLocaleString('pt-AO')} ${invoice.currency}</strong></p>
-        <p style="font-size:16px">Líquido: <strong>${invoice.total.toLocaleString('pt-AO')} ${invoice.currency}</strong></p>
+      <div class="page">
+        <div class="header">
+          <div class="logo">${company.logo ? `<img src="${escapeHtml(company.logo)}" alt="${escapeHtml(companyName)}">` : escapeHtml(companyName.slice(0, 2).toUpperCase())}</div>
+          <div class="supplier">
+            <h1>${escapeHtml(companyName)}</h1>
+            <div><strong>Tel:</strong> ${escapeHtml(company.phone || 'Desconhecido')}</div>
+            <div><strong>Email:</strong> ${escapeHtml(company.email || '')}</div>
+            <div><strong>NIF:</strong> ${escapeHtml(company.nif || 'Desconhecido')}</div>
+            <div>${escapeHtml(company.address || '')}</div>
+            <div>${escapeHtml(companyLocation)}</div>
+          </div>
+          <div class="meta">
+            <div class="copy">Original</div>
+            <div class="docno">Factura Compra Nº : ${escapeHtml(invoice.supplierInvoiceNo || invoice.invoiceNumber)}</div>
+            <div class="barcode">${barcodeBars}</div>
+            <div class="barcode-label">${escapeHtml(barcodeValue)}</div>
+            <div class="qr-code">${qrCodeSvg}</div>
+            <div class="qr-label">QR CODE AGT</div>
+          </div>
+        </div>
+
+        <div class="customer-box">
+          <div>
+            <div class="small-label">NOTA:</div>
+            <div class="rule"></div>
+            <div class="small-label">ARMAZEM: ${escapeHtml(invoice.warehouseName || invoice.branchName || '')}</div>
+            <div class="small-label" style="margin-top:3mm">CLIENTE V/REF</div>
+            <div class="mono">${escapeHtml(invoice.ref || invoice.orderNo || '')}</div>
+          </div>
+          <div class="customer">
+            <div style="font-weight:700;text-align:center">Fornecedor</div>
+            <div><strong>${escapeHtml(invoice.supplierName || 'Fornecedor')}</strong></div>
+            <div><strong>NIF:</strong> ${escapeHtml(invoice.supplierNif || 'Desconhecido')}</div>
+            <div><strong>ENDEREÇO:</strong> ${escapeHtml(invoice.address || 'Desconhecido')}</div>
+            <div><strong>TELE:</strong> ${escapeHtml(invoice.supplierPhone || 'Desconhecido')}</div>
+            <div><strong>AO</strong></div>
+          </div>
+        </div>
+
+        <div class="date-grid" style="margin-left:105mm;margin-top:2mm;width:82mm">
+          <div><strong>Hora</strong>${escapeHtml(invoice.issueTime || new Date(invoice.createdAt).toLocaleTimeString('pt-AO'))}</div>
+          <div><strong>DATA EMISSÃO</strong>${issueDate.toISOString().slice(0, 10)}</div>
+          <div><strong>DATA VENCIMENTO</strong>${dueDate.toISOString().slice(0, 10)}</div>
+        </div>
+
+        <div class="ref-row">
+          <div>REFERENCIA</div>
+          <div>DESCRICAO</div>
+        </div>
+
+        <table class="items">
+          <thead>
+            <tr>
+              <th style="width:25mm">REFERENCIA</th>
+              <th>DESCRICAO</th>
+              <th class="num" style="width:18mm">QTD.</th>
+              <th class="center" style="width:13mm">UNI</th>
+              <th class="num" style="width:20mm">P.Unit(S/IMP.)</th>
+              <th class="num" style="width:15mm">DESC.%</th>
+              <th class="num" style="width:14mm">TAXA%</th>
+              <th class="num" style="width:23mm">TOTAL</th>
+              <th class="num" style="width:23mm">IVA VALOR</th>
+            </tr>
+          </thead>
+          <tbody>${lines}</tbody>
+        </table>
+
+        <div class="bottom">
+          <div style="font-size:8px;margin-bottom:2mm">D/IM. Processado por programa validado 396/AGT/2023 - ${escapeHtml(companyName)}</div>
+          <div class="tax-and-total">
+            <div>
+              <div class="tax-title">RESUMO DE IMPOSTOS</div>
+              <table class="tax">
+                <thead>
+                  <tr><th>DESIGNAÇÃO</th><th>TAXA%</th><th>INCIDENCIA</th><th>IMPOSTO</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>NORMAL IVA</td>
+                    <td class="center">${money(invoice.ivaTotal > 0 && invoice.subtotal > 0 ? (invoice.ivaTotal / invoice.subtotal) * 100 : 0).replace(',00', '')}</td>
+                    <td class="num">${money(invoice.subtotal)}</td>
+                    <td class="num">${money(invoice.ivaTotal)}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="note-line">Motivo de Isencao</div>
+              <div class="bank">${escapeHtml(company.bankName || 'Banco')}&nbsp;&nbsp;-&nbsp;&nbsp;${escapeHtml(company.iban || '')}</div>
+            </div>
+            <div>
+              <table class="totals">
+                <tbody>
+                  <tr><td class="label">VALOR</td><td class="value">${money(subtotalWithTax)}</td></tr>
+                  <tr><td class="label">DESCONTO</td><td class="value">${money(invoice.lines.reduce((s, l) => s + ((l.totalQty * l.unitPrice) - l.total), 0))}</td></tr>
+                  <tr><td class="label">SUB TOTAL</td><td class="value">${money(subtotalWithTax)}</td></tr>
+                  <tr><td class="label">IMPOSTO</td><td class="value">${money(invoice.ivaTotal)}</td></tr>
+                  <tr class="grand"><td class="label">TOTAL</td><td class="value">${escapeHtml(invoice.currency)} ${money(invoice.total)}</td></tr>
+                </tbody>
+              </table>
+              <div class="operator">Operador: ${escapeHtml(invoice.createdByName || 'Sistema')}</div>
+            </div>
+          </div>
+          <div class="footer-msg">Os Bens/Serviços foram colocados a disposicao do adquirente na data de factura</div>
+          <div class="page-no">Pagina Nº 1 de 1</div>
+        </div>
       </div>
-      ${invoice.journalLines.length > 0 ? `<h3>Entrada Diário</h3><table><thead><tr><th>Conta</th><th>Nome</th><th>Nota</th><th>Débito</th><th>Crédito</th></tr></thead><tbody>${journalRows}</tbody></table>` : ''}
     </body></html>`;
 
     // Use iframe to avoid popup blocker
@@ -548,88 +918,167 @@ function InvoiceViewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl max-h-[85vh]">
+      <DialogContent className="max-w-6xl max-h-[92vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
-            <span className="text-orange-600 font-bold">COMPRA</span>
+            <span className="text-orange-600 font-bold">{t.purchaseInvoicesUi.editorTitle}</span>
             <span>{invoice.invoiceNumber}</span>
             <Badge variant={getPurchaseInvoiceStatusBadge(t, invoice.status).variant}>
               {getPurchaseInvoiceStatusBadge(t, invoice.status).label}
             </Badge>
             <Button variant="outline" size="sm" className="ml-auto gap-1" onClick={handlePrint}>
-              <Printer className="h-4 w-4" /> Imprimir
+              <Printer className="h-4 w-4" /> {t.purchaseInvoicesUi.poPrint}
             </Button>
           </DialogTitle>
         </DialogHeader>
-        <ScrollArea className="max-h-[65vh]">
-          <div className="space-y-4 p-1">
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div><span className="text-muted-foreground">Fornecedor:</span> <strong>{invoice.supplierName}</strong></div>
-              <div><span className="text-muted-foreground">Data:</span> {format(new Date(invoice.date), 'dd/MM/yyyy')}</div>
-              <div><span className="text-muted-foreground">Armazém:</span> {invoice.warehouseName}</div>
-              <div><span className="text-muted-foreground">Moeda:</span> {invoice.currency}</div>
-              {invoice.supplierInvoiceNo && (
-                <div><span className="text-muted-foreground">Nº Fatura Fornecedor:</span> <strong>{invoice.supplierInvoiceNo}</strong></div>
-              )}
-            </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Produto</TableHead>
-                  <TableHead>Descrição</TableHead>
-                  <TableHead className="text-right">Qtd</TableHead>
-                  <TableHead className="text-right">Preço</TableHead>
-                  <TableHead className="text-right">IVA</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {invoice.lines.map(l => (
-                  <TableRow key={l.id}>
-                    <TableCell className="font-mono text-xs">{l.productCode}</TableCell>
-                    <TableCell>{l.description}</TableCell>
-                    <TableCell className="text-right">{l.totalQty}</TableCell>
-                    <TableCell className="text-right font-mono">{l.unitPrice.toLocaleString('pt-AO')}</TableCell>
-                    <TableCell className="text-right">{l.ivaRate}%</TableCell>
-                    <TableCell className="text-right font-mono font-medium">{l.totalWithIva.toLocaleString('pt-AO')}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <div className="flex justify-end">
-              <div className="space-y-1 text-sm w-64">
-                <div className="flex justify-between"><span>Sub Total:</span> <strong className="font-mono">{invoice.subtotal.toLocaleString('pt-AO')}</strong></div>
-                <div className="flex justify-between text-orange-600"><span>IVA:</span> <strong className="font-mono">{invoice.ivaTotal.toLocaleString('pt-AO')}</strong></div>
-                <div className="flex justify-between text-lg border-t pt-1"><span>Líquido:</span> <strong className="font-mono">{invoice.total.toLocaleString('pt-AO')}</strong></div>
+        <ScrollArea className="max-h-[78vh] bg-muted/40 rounded-md">
+          <div className="mx-auto my-4 bg-white text-black shadow-xl border p-6 text-[10px]" style={{ width: '210mm', minHeight: '297mm' }}>
+            <div className="grid grid-cols-[32mm_1fr_62mm] gap-6 items-start">
+              <div className="w-[28mm] h-[23mm] border border-zinc-400 flex items-center justify-center overflow-hidden text-2xl font-black text-red-900 tracking-tighter text-center">
+                {company.logo ? (
+                  <img src={company.logo} alt={companyName} className="max-h-full max-w-full object-contain" />
+                ) : (
+                  companyName.slice(0, 2).toUpperCase()
+                )}
+              </div>
+              <div className="leading-tight">
+                <h2 className="text-[15px] font-black uppercase leading-none mb-1">{companyName}</h2>
+                <div><strong>Tel:</strong> {company.phone || 'Desconhecido'}</div>
+                <div><strong>Email:</strong> {company.email || ''}</div>
+                <div><strong>NIF:</strong> {company.nif || 'Desconhecido'}</div>
+                <div>{company.address || ''}</div>
+                <div>{companyLocation}</div>
+              </div>
+              <div className="text-center text-[9px] leading-tight">
+                <div className="font-bold mb-2">Original</div>
+                <div className="font-bold">Factura Compra Nº : {invoice.supplierInvoiceNo || invoice.invoiceNumber}</div>
+                <svg
+                  viewBox={`0 0 ${previewBarcodeWidth} 42`}
+                  preserveAspectRatio="none"
+                  role="img"
+                  aria-label="Barcode"
+                  className="w-full h-12 mt-2 mb-1 bg-white"
+                >
+                  {previewBarcodeBars.map((bar, index) => (
+                    <rect key={index} x={bar.x} y="0" width={bar.width} height="42" fill="#000" />
+                  ))}
+                </svg>
+                <div className="font-mono tracking-widest text-[8px]">{previewBarcodeValue}</div>
+                <div className="mx-auto mt-3 h-[23mm] w-[23mm] border border-black bg-white p-1">
+                  {previewQrCodeUrl ? (
+                    <img src={previewQrCodeUrl} alt="QR Code AGT" className="h-full w-full object-contain" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center border border-dashed border-zinc-500 font-bold">
+                      QR
+                    </div>
+                  )}
+                </div>
+                <div className="mt-1 text-[7.5px] font-bold">QR CODE AGT</div>
               </div>
             </div>
-            {invoice.journalLines.length > 0 && (
-              <>
-                <h4 className="font-semibold text-sm mt-4">Entrada Diário</h4>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Conta</TableHead>
-                      <TableHead>Nome</TableHead>
-                      <TableHead>Nota</TableHead>
-                      <TableHead className="text-right">Débito</TableHead>
-                      <TableHead className="text-right">Crédito</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {invoice.journalLines.map(j => (
-                      <TableRow key={j.id}>
-                        <TableCell className="font-mono text-xs">{j.accountCode}</TableCell>
-                        <TableCell>{j.accountName}</TableCell>
-                        <TableCell className="text-xs">{j.note}</TableCell>
-                        <TableCell className="text-right font-mono">{j.debit > 0 ? j.debit.toLocaleString('pt-AO') : '—'}</TableCell>
-                        <TableCell className="text-right font-mono">{j.credit > 0 ? j.credit.toLocaleString('pt-AO') : '—'}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </>
-            )}
+
+            <div className="grid grid-cols-[1fr_55mm] gap-8 mt-5 items-end">
+              <div>
+                <div className="font-bold text-[9px]">NOTA:</div>
+                <div className="border-t border-black mt-3" />
+                <div className="font-bold mt-4">ARMAZEM: {invoice.warehouseName || invoice.branchName || ''}</div>
+                <div className="font-bold mt-4">CLIENTE V/REF</div>
+                <div className="font-mono">{invoice.ref || invoice.orderNo || ''}</div>
+              </div>
+              <div className="leading-tight">
+                <div className="font-bold text-center">Fornecedor</div>
+                <div><strong>{invoice.supplierName || 'Fornecedor'}</strong></div>
+                <div><strong>NIF:</strong> {invoice.supplierNif || 'Desconhecido'}</div>
+                <div><strong>ENDEREÇO:</strong> {invoice.address || 'Desconhecido'}</div>
+                <div><strong>TELE:</strong> {invoice.supplierPhone || 'Desconhecido'}</div>
+                <div><strong>AO</strong></div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 text-center text-[9px] ml-auto mt-3 w-[86mm]">
+              <div><div className="font-bold border-b border-zinc-600">Hora</div>{invoice.issueTime || format(new Date(invoice.createdAt), 'HH:mm:ss')}</div>
+              <div><div className="font-bold border-b border-zinc-600">DATA EMISSÃO</div>{previewIssueDate.toISOString().slice(0, 10)}</div>
+              <div><div className="font-bold border-b border-zinc-600">DATA VENCIMENTO</div>{previewDueDate.toISOString().slice(0, 10)}</div>
+            </div>
+
+            <div className="grid grid-cols-[38mm_1fr] border-y border-black mt-5 py-1 font-bold text-[9px]">
+              <div>REFERENCIA</div>
+              <div>DESCRICAO</div>
+            </div>
+
+            <table className="w-full border-collapse mt-1">
+              <thead>
+                <tr className="border-b border-black text-[9px]">
+                  <th className="text-left py-1 w-[25mm]">REFERENCIA</th>
+                  <th className="text-left py-1">DESCRICAO</th>
+                  <th className="text-right py-1 w-[18mm]">QTD.</th>
+                  <th className="text-center py-1 w-[13mm]">UNI</th>
+                  <th className="text-right py-1 w-[22mm]">P.Unit(S/IMP.)</th>
+                  <th className="text-right py-1 w-[15mm]">DESC.%</th>
+                  <th className="text-right py-1 w-[14mm]">TAXA%</th>
+                  <th className="text-right py-1 w-[24mm]">TOTAL</th>
+                  <th className="text-right py-1 w-[24mm]">IVA VALOR</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoice.lines.map(l => (
+                  <tr key={l.id} className="h-8 align-top text-[9.5px]">
+                    <td className="font-mono py-1">{l.productCode || l.barcode || ''}</td>
+                    <td className="py-1 font-semibold">{l.description}</td>
+                    <td className="text-right py-1 font-mono">{previewQty(l.totalQty)}</td>
+                    <td className="text-center py-1">{l.unit || 'UND'}</td>
+                    <td className="text-right py-1 font-mono">{previewMoney(l.unitPrice)}</td>
+                    <td className="text-right py-1 font-mono">{previewMoney(l.discountPct || 0)}</td>
+                    <td className="text-right py-1 font-mono">{previewMoney(l.ivaRate)}</td>
+                    <td className="text-right py-1 font-mono">{previewMoney(l.totalWithIva)}</td>
+                    <td className="text-right py-1 font-mono">{previewMoney(l.ivaAmount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="mt-[96mm]">
+              <div className="text-[8px] mb-1">D/IM. Processado por programa validado 396/AGT/2023 - {companyName}</div>
+              <div className="grid grid-cols-[1fr_66mm] gap-16">
+                <div>
+                  <div className="font-bold border-b border-black mb-1">RESUMO DE IMPOSTOS</div>
+                  <table className="w-full border-collapse text-[9px]">
+                    <thead>
+                      <tr>
+                        <th className="border border-black p-1 text-left">DESIGNAÇÃO</th>
+                        <th className="border border-black p-1 text-left">TAXA%</th>
+                        <th className="border border-black p-1 text-left">INCIDENCIA</th>
+                        <th className="border border-black p-1 text-left">IMPOSTO</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="border border-black p-1">NORMAL IVA</td>
+                        <td className="border border-black p-1 text-center">{previewMoney(previewTaxRate).replace(',00', '')}</td>
+                        <td className="border border-black p-1 text-right font-mono">{previewMoney(invoice.subtotal)}</td>
+                        <td className="border border-black p-1 text-right font-mono">{previewMoney(invoice.ivaTotal)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div className="border-b border-black w-[92mm] mt-12 font-bold">Motivo de Isencao</div>
+                  <div className="font-bold mt-8">{company.bankName || 'Banco'}&nbsp;&nbsp;-&nbsp;&nbsp;{company.iban || ''}</div>
+                </div>
+                <div>
+                  <table className="w-full border-collapse text-[10px]">
+                    <tbody>
+                      <tr><td className="border border-black p-1 font-bold">VALOR</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewGross)}</td></tr>
+                      <tr><td className="border border-black p-1 font-bold">DESCONTO</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewDiscount)}</td></tr>
+                      <tr><td className="border border-black p-1 font-bold">SUB TOTAL</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewGross)}</td></tr>
+                      <tr><td className="border border-black p-1 font-bold">IMPOSTO</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(invoice.ivaTotal)}</td></tr>
+                      <tr><td className="border border-black p-2 font-black text-lg">TOTAL</td><td className="border border-black p-2 text-right font-mono font-black text-lg">{invoice.currency} {previewMoney(invoice.total)}</td></tr>
+                    </tbody>
+                  </table>
+                  <div className="border border-black mt-8 p-1">Operador: {invoice.createdByName || 'Sistema'}</div>
+                </div>
+              </div>
+              <div className="text-center font-bold mt-12">Os Bens/Serviços foram colocados a disposicao do adquirente na data de factura</div>
+              <div className="text-right font-bold mt-5">Pagina Nº 1 de 1</div>
+            </div>
           </div>
         </ScrollArea>
       </DialogContent>
@@ -637,11 +1086,36 @@ function InvoiceViewDialog({
   );
 }
 
+function readModeParamFromHash(): string | null {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash || '';
+  const qi = hash.indexOf('?');
+  if (qi < 0) return null;
+  try {
+    return new URLSearchParams(hash.slice(qi + 1)).get('mode');
+  } catch {
+    return null;
+  }
+}
+
+function readNexorPiNewFromHash(): string | null {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash || '';
+  const qi = hash.indexOf('?');
+  if (qi < 0) return null;
+  try {
+    return new URLSearchParams(hash.slice(qi + 1)).get(NEXOR_PURCHASE_NEW_QUERY_KEY);
+  } catch {
+    return null;
+  }
+}
+
 // ═══════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════
 export default function PurchaseInvoices() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
@@ -650,6 +1124,8 @@ export default function PurchaseInvoices() {
   const { suppliers, refreshSuppliers, createSupplier } = useSuppliers();
   const { toast } = useToast();
   const navigate = useNavigate();
+  /** Prevents repeated startCreate+navigate while session intent stays hot (fixes render thrash / frozen UI). */
+  const urlCreateAppliedRef = useRef(false);
 
    // State
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
@@ -837,13 +1313,16 @@ export default function PurchaseInvoices() {
   // ─────── Create mode ───────
   const startCreate = useCallback(() => {
     const now = new Date().toISOString();
+    const defaultBranch = branches.find((b) => b.id === currentBranch?.id) || branches[0];
+    const wid = defaultBranch?.id || currentBranch?.id || '';
+    const wname = defaultBranch?.name || currentBranch?.name || '';
     setSaveError(null);
     setForm({
       date: now.split('T')[0],
       paymentDate: now.split('T')[0],
       currency: 'KZ',
-      warehouseId: currentBranch?.id || '',
-      warehouseName: currentBranch?.name || '',
+      warehouseId: wid,
+      warehouseName: wname,
       priceType: 'last_price',
       purchaseAccountCode: '2.1.1',
       ivaAccountCode: '3.3.1',
@@ -862,15 +1341,111 @@ export default function PurchaseInvoices() {
     setFreightSourceName('Caixa');
     setActiveTab('fatura');
     setMode('create');
-  }, [currentBranch]);
+  }, [currentBranch, branches]);
 
+  /** Leaving `/purchase-invoices/new` avoids staying on a route that always re-triggers create on mount. */
+  const goToPurchaseListRoute = useCallback(() => {
+    if (location.pathname === PURCHASE_INVOICES_NEW_PATH) {
+      navigate('/purchase-invoices', { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
+  // Keep warehouse value valid when branches load after opening create (avoid orphan ids / type mismatch).
   useEffect(() => {
-    if (searchParams.get('mode') !== 'create' || mode === 'create') return;
+    if (mode !== 'create') return;
+    if (!branches.length) return;
+    const id = form.warehouseId != null && form.warehouseId !== '' ? String(form.warehouseId) : '';
+    const ok = id.length > 0 && branches.some((b) => b.id != null && String(b.id) === id);
+    if (!ok) {
+      const b =
+        branches.find((x) => x.id != null && String(x.id) === String(currentBranch?.id)) || branches[0];
+      if (b?.id != null && b.id !== '') {
+        setForm((p) => ({ ...p, warehouseId: b.id, warehouseName: b.name }));
+      }
+    }
+  }, [mode, branches, currentBranch?.id, form.warehouseId]);
+
+  useLayoutEffect(() => {
+    const fromRouter = searchParams.get('mode');
+    const fromHash = readModeParamFromHash();
+    const urlMode = fromRouter ?? fromHash;
+    const nexorToolbarNew =
+      searchParams.get(NEXOR_PURCHASE_NEW_QUERY_KEY) ?? readNexorPiNewFromHash();
+
+    if (mode === 'create') {
+      clearPurchaseCreateIntent();
+      urlCreateAppliedRef.current = false;
+      return;
+    }
+
+    if (location.pathname === PURCHASE_INVOICES_NEW_PATH) {
+      urlCreateAppliedRef.current = false;
+      startCreate();
+      return;
+    }
+
+    if (urlMode === 'product-picker') {
+      setProductPickerOpen(true);
+      const next = new URLSearchParams(searchParams.toString());
+      next.delete('mode');
+      next.delete('standalone');
+      next.delete(NEXOR_PURCHASE_NEW_QUERY_KEY);
+      const qs = next.toString();
+      navigate(
+        { pathname: location.pathname, search: qs ? `?${qs}` : '' },
+        { replace: true },
+      );
+      return;
+    }
+
+    if (urlMode === 'create') {
+      writePurchaseCreateIntent();
+    }
+
+    let shouldEnterCreate = urlMode === 'create' || !!nexorToolbarNew;
+    if (!shouldEnterCreate) {
+      shouldEnterCreate = readPurchaseCreateIntentPending();
+    }
+
+    if (!shouldEnterCreate) return;
+    if (urlCreateAppliedRef.current) return;
+
+    urlCreateAppliedRef.current = true;
+
     startCreate();
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.delete('mode');
-    setSearchParams(nextParams, { replace: true });
-  }, [searchParams, setSearchParams, mode, startCreate]);
+
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete('mode');
+    next.delete('standalone');
+    next.delete(NEXOR_PURCHASE_NEW_QUERY_KEY);
+    const qs = next.toString();
+    navigate(
+      { pathname: location.pathname, search: qs ? `?${qs}` : '' },
+      { replace: true },
+    );
+  }, [searchParams, mode, startCreate, navigate, location.pathname, location.search]);
+
+  // Main process still injects intent asynchronously via executeJavaScript — defer one tick so we never miss it.
+  useEffect(() => {
+    if (mode !== 'list') return;
+    const tid = window.setTimeout(() => {
+      if (urlCreateAppliedRef.current) return;
+      if (!readPurchaseCreateIntentPending()) return;
+      urlCreateAppliedRef.current = true;
+      startCreate();
+      clearPurchaseCreateIntent();
+      const next = new URLSearchParams(searchParams.toString());
+      next.delete('mode');
+      next.delete('standalone');
+      next.delete(NEXOR_PURCHASE_NEW_QUERY_KEY);
+      const qs = next.toString();
+      navigate(
+        { pathname: location.pathname, search: qs ? `?${qs}` : '' },
+        { replace: true },
+      );
+    }, 0);
+    return () => window.clearTimeout(tid);
+  }, [mode, startCreate, navigate, location.pathname, searchParams]);
 
    // Select supplier — auto-create CoA sub-account under 3.2 Fornecedores
   const handleSelectSupplier = useCallback(async (s: Supplier) => {
@@ -925,8 +1500,11 @@ export default function PurchaseInvoices() {
 
   const handleCloseCreate = useCallback(() => {
     setSaveError(null);
+    clearPurchaseCreateIntent();
+    urlCreateAppliedRef.current = false;
     setMode("list");
-  }, []);
+    goToPurchaseListRoute();
+  }, [goToPurchaseListRoute]);
 
   const openSupplierPicker = useCallback(async () => {
     await refreshSuppliers();
@@ -951,6 +1529,24 @@ export default function PurchaseInvoices() {
   // Totals
   const totals = useMemo(() => calculateInvoiceTotals(lines), [lines]);
 
+  // Angola purchase taxes (document-level)
+  const withholdingRate = Number(form.taxRate2 || 0); // Retenção na Fonte (%)
+  const stampRate = Number(form.surchargePercent || 0); // Imposto de Selo (%)
+  const taxBaseSubtotalPlusFreight = useMemo(
+    () => roundMoney(totals.subtotal + totalLandingCosts),
+    [totals.subtotal, totalLandingCosts]
+  );
+  const withholdingAmount = useMemo(
+    () => roundMoney(taxBaseSubtotalPlusFreight * (withholdingRate / 100)),
+    [taxBaseSubtotalPlusFreight, withholdingRate]
+  );
+  const stampAmount = useMemo(
+    () => roundMoney(taxBaseSubtotalPlusFreight * (stampRate / 100)),
+    [taxBaseSubtotalPlusFreight, stampRate]
+  );
+  const supplierGrossTotal = totals.total;
+  const supplierNetPayable = Math.max(roundMoney(supplierGrossTotal - withholdingAmount), 0);
+
   const postedJournalPreview = useMemo(() => buildPurchaseInvoiceJournalLines({
     documentId: 'preview',
     invoiceNumber: form.supplierInvoiceNo || form.ref || t.purchaseInvoicesUi.previewInvoiceNumber,
@@ -962,11 +1558,18 @@ export default function PurchaseInvoices() {
     subtotal: totals.subtotal,
     ivaTotal: totals.ivaTotal,
     supplierTotal: totals.total,
+    withholdingAmount,
+    stampAmount,
     landingCosts: totalLandingCosts,
     freightSourceAccount,
     freightSourceName,
     manualLines: journalLines,
+    labelFreightLine: t.purchaseInvoicesUi.transportOnPurchases,
+    labelDeductibleVat: t.purchaseInvoicesUi.deductibleVat,
   }), [
+    t.purchaseInvoicesUi.previewInvoiceNumber,
+    t.purchaseInvoicesUi.transportOnPurchases,
+    t.purchaseInvoicesUi.deductibleVat,
     form.currency,
     form.ivaAccountCode,
     form.purchaseAccountCode,
@@ -977,10 +1580,12 @@ export default function PurchaseInvoices() {
     freightSourceAccount,
     freightSourceName,
     journalLines,
+    stampAmount,
     totals.ivaTotal,
     totals.subtotal,
     totals.total,
     totalLandingCosts,
+    withholdingAmount,
   ]);
 
   const postedJournalTotals = useMemo(() => {
@@ -1078,6 +1683,30 @@ export default function PurchaseInvoices() {
       return;
     }
 
+    // ERP validation: avoid duplicate supplier invoice number (same supplier + same supplier invoice no)
+    const supplierInvoiceNo = String(formWithSupplier.supplierInvoiceNo || '').trim();
+    if (supplierInvoiceNo) {
+      const dup = invoices.find((inv) => {
+        if (!inv.supplierInvoiceNo) return false;
+        const sameNo = inv.supplierInvoiceNo.trim().toLowerCase() === supplierInvoiceNo.toLowerCase();
+        const sameSupplier =
+          (inv.supplierAccountCode && inv.supplierAccountCode === (form.supplierAccountCode || '')) ||
+          (inv.supplierNif && form.supplierNif && inv.supplierNif === form.supplierNif) ||
+          (inv.supplierName && form.supplierName && inv.supplierName.trim().toLowerCase() === form.supplierName.trim().toLowerCase());
+        return sameNo && sameSupplier;
+      });
+
+      if (dup) {
+        setSaveError(t.purchaseInvoicesUi.duplicateSupplierInvoiceNo);
+        toast({
+          title: t.common.error,
+          description: t.purchaseInvoicesUi.duplicateSupplierInvoiceNo,
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+
     // Resolve supplier account code — with explicit error handling
     let resolvedSupplierAccountCode = form.supplierAccountCode || '';
     console.log('[PurchaseInvoices] Initial supplierAccountCode:', resolvedSupplierAccountCode);
@@ -1118,12 +1747,17 @@ export default function PurchaseInvoices() {
       return;
     }
 
-    // Warehouse is for stock movements; Branch is the current operating branch
-    const resolvedWarehouseId = form.warehouseId || currentBranch?.id || '';
-    const resolvedWarehouseName = form.warehouseName || currentBranch?.name || '';
-    // branchId = current branch context (for document ownership / filtering)
-    const resolvedBranchId = currentBranch?.id || resolvedWarehouseId;
-    const resolvedBranchName = currentBranch?.name || resolvedWarehouseName;
+    // Warehouse drives stock; branch on the document = active context, or selected warehouse when context is missing.
+    const resolvedWarehouseId =
+      String(form.warehouseId ?? '').trim() || String(currentBranch?.id ?? '').trim() || '';
+    const whMeta = branches.find((b) => String(b.id) === String(resolvedWarehouseId));
+    const resolvedWarehouseName =
+      String(form.warehouseName ?? '').trim() || whMeta?.name || currentBranch?.name || '';
+
+    const resolvedBranchId =
+      String(currentBranch?.id ?? '').trim() || String(resolvedWarehouseId).trim() || '';
+    const resolvedBranchName =
+      currentBranch?.name || whMeta?.name || resolvedWarehouseName || '';
 
     if (!resolvedBranchId) {
       setSaveError(t.purchaseInvoicesUi.noActiveBranchSelectWarehouse);
@@ -1148,7 +1782,7 @@ export default function PurchaseInvoices() {
     console.log('[PurchaseInvoices] All validations passed, building invoice...');
 
     const now = new Date().toISOString();
-    const branchCode = currentBranch?.code || 'SEDE';
+    const branchCode = currentBranch?.code || whMeta?.code || 'SEDE';
 
     const manualJournalLines = journalLines;
 
@@ -1177,9 +1811,11 @@ export default function PurchaseInvoices() {
       ivaAccountCode: form.ivaAccountCode || '3.3.1',
       transactionType: form.transactionType || 'ALL',
       currencyRate: form.currencyRate || 1,
-      taxRate2: form.taxRate2 || 1000,
+      // Angola: Retenção na Fonte (%)
+      taxRate2: Number(form.taxRate2 || 0),
       orderNo: form.orderNo,
-      surchargePercent: form.surchargePercent || 0,
+      // Angola: Imposto de Selo (%)
+      surchargePercent: Number(form.surchargePercent || 0),
       changePrice: form.changePrice || false,
       isPending: form.isPending || false,
       extraNote: form.extraNote,
@@ -1187,7 +1823,8 @@ export default function PurchaseInvoices() {
       journalLines: [],
       subtotal: totals.subtotal,
       ivaTotal: totals.ivaTotal,
-      total: totals.total,
+      // Net payable to supplier (gross - withholding). Stamp tax is booked separately as tax payable.
+      total: supplierNetPayable,
       status: 'confirmed',
       branchId: resolvedBranchId,
       branchName: resolvedBranchName,
@@ -1207,11 +1844,15 @@ export default function PurchaseInvoices() {
       supplierName: invoice.supplierName,
       subtotal: invoice.subtotal,
       ivaTotal: invoice.ivaTotal,
-      supplierTotal: invoice.total,
+      supplierTotal: supplierGrossTotal,
+      withholdingAmount,
+      stampAmount,
       landingCosts: totalLandingCosts,
       freightSourceAccount,
       freightSourceName,
       manualLines: manualJournalLines,
+      labelFreightLine: t.purchaseInvoicesUi.transportOnPurchases,
+      labelDeductibleVat: t.purchaseInvoicesUi.deductibleVat,
     });
 
     try {
@@ -1238,6 +1879,40 @@ export default function PurchaseInvoices() {
         currency: invoice.currency,
         description: `Fatura de Compra ${invoice.invoiceNumber} — ${invoice.supplierName}`,
         amount: invoice.total,
+
+        // Angola Tax Engine: persist IVA (input) lines for IVA return + audit
+        taxLines: [
+          ...invoice.lines
+            .map((l, idx) => ({
+              lineNumber: idx + 1,
+              taxCode: ivaRateToTaxCode(l.ivaRate),
+              taxRate: l.ivaRate,
+              baseAmount: l.total,
+              taxAmount: l.ivaAmount,
+              isInclusive: false,
+            }))
+            .filter((tl) => Number(tl.baseAmount || 0) !== 0 || Number(tl.taxAmount || 0) !== 0),
+          ...(withholdingAmount > 0
+            ? [{
+                lineNumber: 10000,
+                taxCode: withholdingRateToTaxCode(withholdingRate),
+                taxRate: withholdingRate,
+                baseAmount: taxBaseSubtotalPlusFreight,
+                taxAmount: withholdingAmount,
+                isInclusive: false,
+              }]
+            : []),
+          ...(stampAmount > 0
+            ? [{
+                lineNumber: 10001,
+                taxCode: 'IS',
+                taxRate: stampRate,
+                baseAmount: taxBaseSubtotalPlusFreight,
+                taxAmount: stampAmount,
+                isInclusive: false,
+              }]
+            : []),
+        ].filter((tl) => !!tl.taxCode),
 
         // Phase 1: Stock entries — scoped to the selected warehouse
         stockEntries: invoice.lines
@@ -1312,7 +1987,7 @@ export default function PurchaseInvoices() {
       }
 
       await savePurchaseInvoice(invoice);
-      await syncPurchaseInvoiceDocument(invoice);
+      await syncPurchaseInvoiceDocument(invoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix);
       await Promise.all([refreshProducts(), refreshSuppliers()]);
 
       toast({
@@ -1324,6 +1999,7 @@ export default function PurchaseInvoices() {
       // Show the saved invoice immediately for printing
       setViewInvoice(invoice);
       setMode('list');
+      goToPurchaseListRoute();
     } catch (error: any) {
       console.error('[PurchaseInvoices] Failed to save purchase invoice:', error);
       setSaveError(error?.message || t.purchaseInvoicesUi.notSyncedWithStockSupplier);
@@ -1333,7 +2009,7 @@ export default function PurchaseInvoices() {
         variant: 'destructive',
       });
     }
-  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts]);
+  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute]);
 
   // ═══════════════ RENDER ═══════════════
 
@@ -1360,8 +2036,8 @@ export default function PurchaseInvoices() {
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
-              <h1 className="text-2xl font-bold text-foreground">Compras</h1>
-              <p className="text-sm text-muted-foreground">Gestão de encomendas e facturas de compra</p>
+              <h1 className="text-2xl font-bold text-foreground">{t.purchaseInvoicesUi.listTitle}</h1>
+              <p className="text-sm text-muted-foreground">{t.purchaseInvoicesUi.listSubtitle}</p>
             </div>
           </div>
           <div className="flex gap-2">
@@ -1371,11 +2047,11 @@ export default function PurchaseInvoices() {
                 setPoNewItem({ productId: '', quantity: 1, unitCost: 0 });
                 setPoCreateOpen(true);
               }}>
-                <Plus className="h-4 w-4" /> Nova Encomenda
+                <Plus className="h-4 w-4" /> {t.purchaseInvoicesUi.newOrder}
               </Button>
             )}
-            <Button onClick={() => setSearchParams({ mode: "create" })} className="gap-2">
-              <Plus className="h-4 w-4" /> Nova Fatura de Compra
+            <Button onClick={() => startCreate()} className="gap-2">
+              <Plus className="h-4 w-4" /> {t.purchaseInvoicesUi.newPurchaseInvoiceBtn}
             </Button>
             <Button
               variant="outline"
@@ -1385,7 +2061,7 @@ export default function PurchaseInvoices() {
                 setOpenReturnCreateSignal(prev => prev + 1);
               }}
             >
-              <RotateCcw className="h-4 w-4" /> Devolução
+              <RotateCcw className="h-4 w-4" /> {t.purchaseInvoicesUi.returnAction}
             </Button>
             <Button
               variant="outline"
@@ -1395,7 +2071,7 @@ export default function PurchaseInvoices() {
                 setShowCreateSupplier(true);
               }}
             >
-              <Plus className="h-4 w-4" /> Gerir Novo Fornecedor
+              <Plus className="h-4 w-4" /> {t.purchaseInvoicesUi.addSupplier}
             </Button>
           </div>
         </div>
@@ -1404,15 +2080,15 @@ export default function PurchaseInvoices() {
         <Tabs value={listTab} onValueChange={v => setListTab(v as any)}>
           <TabsList>
             <TabsTrigger value="faturas" className="gap-1">
-              <FileText className="h-4 w-4" /> Faturas de Compra
+              <FileText className="h-4 w-4" /> {t.purchaseInvoicesUi.tabPurchaseInvoices}
               <Badge variant="secondary" className="ml-1 text-[10px]">{invoices.length}</Badge>
             </TabsTrigger>
             <TabsTrigger value="encomendas" className="gap-1">
-              <ShoppingCart className="h-4 w-4" /> Encomendas
+              <ShoppingCart className="h-4 w-4" /> {t.purchaseInvoicesUi.tabOrders}
               <Badge variant="secondary" className="ml-1 text-[10px]">{orders.length}</Badge>
             </TabsTrigger>
             <TabsTrigger value="devolucoes" className="gap-1">
-              <RotateCcw className="h-4 w-4" /> Devoluções
+              <RotateCcw className="h-4 w-4" /> {t.purchaseInvoicesUi.tabReturns}
               <Badge variant="secondary" className="ml-1 text-[10px]">{returnCount}</Badge>
             </TabsTrigger>
           </TabsList>
@@ -1426,13 +2102,13 @@ export default function PurchaseInvoices() {
                 <Input placeholder={t.purchaseInvoicesUi.searchInvoiceOrSupplierPlaceholder} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-9" />
               </div>
               <div>
-                <Label className="text-xs text-muted-foreground">Fornecedor</Label>
+                <Label className="text-xs text-muted-foreground">{t.purchaseInvoicesUi.filterSupplier}</Label>
                 <Select value={filterSupplier} onValueChange={setFilterSupplier}>
                   <SelectTrigger className="w-48 h-9">
-                    <SelectValue placeholder="Todos fornecedores" />
+                    <SelectValue placeholder={t.purchaseInvoicesUi.allSuppliersPlaceholder} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__all__">Todos</SelectItem>
+                    <SelectItem value="__all__">{t.common.all}</SelectItem>
                     {[...new Set(invoices.map(i => i.supplierName).filter(Boolean))].sort().map(name => (
                       <SelectItem key={name} value={name}>{name}</SelectItem>
                     ))}
@@ -1440,27 +2116,27 @@ export default function PurchaseInvoices() {
                 </Select>
               </div>
               <div>
-                <Label className="text-xs text-muted-foreground">De</Label>
+                <Label className="text-xs text-muted-foreground">{t.purchaseInvoicesUi.filterFrom}</Label>
                 <Input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)} className="h-9 w-36" />
               </div>
               <div>
-                <Label className="text-xs text-muted-foreground">Até</Label>
+                <Label className="text-xs text-muted-foreground">{t.purchaseInvoicesUi.filterTo}</Label>
                 <Input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)} className="h-9 w-36" />
               </div>
               {(filterSupplier && filterSupplier !== '__all__' || filterDateFrom || filterDateTo) && (
                 <Button variant="ghost" size="sm" onClick={() => { setFilterSupplier('__all__'); setFilterDateFrom(''); setFilterDateTo(''); }}>
-                  <X className="h-4 w-4 mr-1" /> Limpar
+                  <X className="h-4 w-4 mr-1" /> {t.purchaseInvoicesUi.clearFilters}
                 </Button>
               )}
             </div>
 
             {/* Summary Bar */}
             <div className="flex gap-4 text-xs items-center px-3 py-2 rounded-md bg-muted/50 border border-border/50">
-              <span className="text-muted-foreground font-medium">{invoiceTotals.count} facturas</span>
+              <span className="text-muted-foreground font-medium">{t.purchaseInvoicesUi.summaryInvoiceCount.replace('{count}', String(invoiceTotals.count))}</span>
               <div className="h-4 w-px bg-border" />
-              <span>Sub Total: <strong className="font-mono text-sm">{invoiceTotals.subtotal.toLocaleString('pt-AO')}</strong></span>
-              <span className="text-destructive">IVA: <strong className="font-mono text-sm">{invoiceTotals.iva.toLocaleString('pt-AO')}</strong></span>
-              <span>Total: <strong className="font-mono text-sm font-bold">{invoiceTotals.total.toLocaleString('pt-AO')} Kz</strong></span>
+              <span>Sub Total: <strong className="font-mono text-sm">{invoiceTotals.subtotal.toLocaleString(uiLocale)}</strong></span>
+              <span className="text-destructive">IVA: <strong className="font-mono text-sm">{invoiceTotals.iva.toLocaleString(uiLocale)}</strong></span>
+              <span>Total: <strong className="font-mono text-sm font-bold">{invoiceTotals.total.toLocaleString(uiLocale)} Kz</strong></span>
             </div>
 
             <Card>
@@ -1468,16 +2144,16 @@ export default function PurchaseInvoices() {
                 <Table>
                   <TableHeader>
                     <TableRow className="text-[11px]">
-                      <TableHead className="py-2">Nº Fatura</TableHead>
-                      <TableHead className="py-2">Nº Fat. Fornecedor</TableHead>
-                      <TableHead className="py-2">Fornecedor</TableHead>
-                      <TableHead className="py-2">Data</TableHead>
-                      <TableHead className="py-2">Armazém</TableHead>
-                      <TableHead className="py-2 text-right">Sub Total</TableHead>
-                      <TableHead className="py-2 text-right">IVA</TableHead>
-                      <TableHead className="py-2 text-right">Líquido</TableHead>
-                      <TableHead className="py-2">Estado</TableHead>
-                      <TableHead className="py-2 text-right">Acções</TableHead>
+                      <TableHead className="py-2">{t.purchaseInvoicesUi.colInvoiceNo}</TableHead>
+                      <TableHead className="py-2">{t.purchaseInvoicesUi.colSupplierInvNo}</TableHead>
+                      <TableHead className="py-2">{t.purchaseInvoicesUi.colSupplier}</TableHead>
+                      <TableHead className="py-2">{t.purchaseInvoicesUi.colDate}</TableHead>
+                      <TableHead className="py-2">{t.purchaseInvoicesUi.colWarehouse}</TableHead>
+                      <TableHead className="py-2 text-right">{t.purchaseInvoicesUi.colSubtotal}</TableHead>
+                      <TableHead className="py-2 text-right">{t.purchaseInvoicesUi.colVat}</TableHead>
+                      <TableHead className="py-2 text-right">{t.purchaseInvoicesUi.colNet}</TableHead>
+                      <TableHead className="py-2">{t.purchaseInvoicesUi.colStatus}</TableHead>
+                      <TableHead className="py-2 text-right">{t.purchaseInvoicesUi.colActions}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1492,9 +2168,9 @@ export default function PurchaseInvoices() {
                         <TableCell className="text-[11px] py-1 font-medium">{inv.supplierName}</TableCell>
                         <TableCell className="text-[11px] py-1">{format(new Date(inv.date), 'dd/MM/yyyy')}</TableCell>
                         <TableCell className="text-[11px] py-1">{inv.warehouseName}</TableCell>
-                        <TableCell className="text-right font-mono text-[11px] py-1">{inv.subtotal.toLocaleString('pt-AO')}</TableCell>
-                        <TableCell className="text-right font-mono text-[11px] py-1 text-destructive">{inv.ivaTotal.toLocaleString('pt-AO')}</TableCell>
-                        <TableCell className="text-right font-mono text-[11px] py-1 font-bold">{inv.total.toLocaleString('pt-AO')}</TableCell>
+                        <TableCell className="text-right font-mono text-[11px] py-1">{inv.subtotal.toLocaleString(uiLocale)}</TableCell>
+                        <TableCell className="text-right font-mono text-[11px] py-1 text-destructive">{inv.ivaTotal.toLocaleString(uiLocale)}</TableCell>
+                        <TableCell className="text-right font-mono text-[11px] py-1 font-bold">{inv.total.toLocaleString(uiLocale)}</TableCell>
                         <TableCell className="py-1">
                           <Badge variant={getPurchaseInvoiceStatusBadge(t, inv.status).variant} className="text-[9px] px-1.5 py-0">
                             {getPurchaseInvoiceStatusBadge(t, inv.status).label}
@@ -1516,10 +2192,10 @@ export default function PurchaseInvoices() {
                       <TableRow>
                         <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">
                           <FileText className="h-10 w-10 mx-auto mb-2 opacity-50" />
-                          Nenhuma fatura de compra encontrada
+                          {t.purchaseInvoicesUi.emptyNoInvoices}
                           <br />
-                          <Button variant="link" size="sm" className="mt-2" onClick={() => setSearchParams({ mode: "create" })}>
-                            <Plus className="h-4 w-4 mr-1" /> Criar nova fatura de compra
+                          <Button variant="link" size="sm" className="mt-2" onClick={() => startCreate()}>
+                            <Plus className="h-4 w-4 mr-1" /> {t.purchaseInvoicesUi.emptyCreateInvoice}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -1537,13 +2213,13 @@ export default function PurchaseInvoices() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Nº Encomenda</TableHead>
-                      <TableHead>Fornecedor</TableHead>
-                      <TableHead>Filial</TableHead>
-                      <TableHead>Data</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
-                      <TableHead>Estado</TableHead>
-                      <TableHead className="text-right">Acções</TableHead>
+                      <TableHead>{t.purchaseInvoicesUi.colOrderNo}</TableHead>
+                      <TableHead>{t.purchaseInvoicesUi.colSupplier}</TableHead>
+                      <TableHead>{t.purchaseInvoicesUi.colBranch}</TableHead>
+                      <TableHead>{t.purchaseInvoicesUi.colDate}</TableHead>
+                      <TableHead className="text-right">{t.purchaseInvoicesUi.colTotal}</TableHead>
+                      <TableHead>{t.purchaseInvoicesUi.colStatus}</TableHead>
+                      <TableHead className="text-right">{t.purchaseInvoicesUi.colActions}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1553,7 +2229,7 @@ export default function PurchaseInvoices() {
                         <TableCell>{order.supplierName}</TableCell>
                         <TableCell>{order.branchName}</TableCell>
                         <TableCell>{order.createdAt ? format(new Date(order.createdAt), 'dd/MM/yyyy') : '—'}</TableCell>
-                        <TableCell className="text-right font-medium font-mono">{(order.total || 0).toLocaleString('pt-AO')} Kz</TableCell>
+                        <TableCell className="text-right font-medium font-mono">{(order.total || 0).toLocaleString(uiLocale)} Kz</TableCell>
                         <TableCell>
                           <Badge variant={getPurchaseOrderStatusBadge(t, order.status).variant}>
                             {getPurchaseOrderStatusBadge(t, order.status).label}
@@ -1561,17 +2237,17 @@ export default function PurchaseInvoices() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex gap-1 justify-end">
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPoViewOrder(order)} title="Ver / Imprimir">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPoViewOrder(order)} title={t.purchaseInvoicesUi.titleViewPrint}>
                               <Eye className="h-4 w-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPoViewOrder(order)} title="Imprimir">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPoViewOrder(order)} title={t.purchaseInvoicesUi.titlePrint}>
                               <Printer className="h-4 w-4" />
                             </Button>
                             {order.status === 'pending' && (
                               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
                                 approveOrder(order.id, user?.id || '');
-                                toast({ title: 'Encomenda aprovada', description: order.orderNumber });
-                              }} title="Aprovar">
+                                toast({ title: t.purchaseInvoicesUi.toastOrderApproved, description: order.orderNumber });
+                              }} title={t.purchaseInvoicesUi.titleApprove}>
                                 <CheckCircle className="h-4 w-4 text-primary" />
                               </Button>
                             )}
@@ -1581,15 +2257,15 @@ export default function PurchaseInvoices() {
                                 const qtys: Record<string, number> = {};
                                 order.items.forEach((item: any) => { qtys[item.productId] = item.quantity; });
                                 setPoReceivedQtys(qtys);
-                              }} title="Receber mercadoria">
+                              }} title={t.purchaseInvoicesUi.titleReceiveGoods}>
                                 <Package className="h-4 w-4 text-primary" />
                               </Button>
                             )}
                             {(order.status === 'draft' || order.status === 'pending') && (
                               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
                                 cancelOrder(order.id);
-                                toast({ title: 'Encomenda cancelada', description: order.orderNumber });
-                              }} title="Cancelar">
+                                toast({ title: t.purchaseInvoicesUi.toastOrderCancelled, description: order.orderNumber });
+                              }} title={t.purchaseInvoicesUi.titleCancel}>
                                 <Trash2 className="h-4 w-4 text-destructive" />
                               </Button>
                             )}
@@ -1601,13 +2277,13 @@ export default function PurchaseInvoices() {
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                           <ShoppingCart className="h-10 w-10 mx-auto mb-2 opacity-50" />
-                          Nenhuma encomenda encontrada
+                          {t.purchaseInvoicesUi.emptyNoOrders}
                           <br />
                           <Button variant="link" size="sm" className="mt-2" onClick={() => {
                             setPoForm({ supplierId: '', branchId: currentBranch?.id || '', notes: '', expectedDeliveryDate: '', items: [] });
                             setPoCreateOpen(true);
                           }}>
-                            <Plus className="h-4 w-4 mr-1" /> Criar nova encomenda
+                            <Plus className="h-4 w-4 mr-1" /> {t.purchaseInvoicesUi.emptyCreateOrder}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -1630,12 +2306,12 @@ export default function PurchaseInvoices() {
         <Dialog open={poCreateOpen} onOpenChange={setPoCreateOpen}>
           <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Nova Encomenda de Compra</DialogTitle>
+              <DialogTitle>{t.purchaseInvoicesUi.poNewTitle}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>Fornecedor *</Label>
+                  <Label>{t.purchaseInvoicesUi.poSupplierStar}</Label>
                   <Select value={poForm.supplierId} onValueChange={v => setPoForm(p => ({ ...p, supplierId: v }))}>
                     <SelectTrigger><SelectValue placeholder={t.purchaseInvoicesUi.selectSupplierPlaceholder} /></SelectTrigger>
                     <SelectContent>
@@ -1646,29 +2322,45 @@ export default function PurchaseInvoices() {
                   </Select>
                 </div>
                 <div>
-                  <Label>Filial Destino *</Label>
-                  <Select value={poForm.branchId} onValueChange={v => setPoForm(p => ({ ...p, branchId: v }))}>
-                    <SelectTrigger><SelectValue placeholder={t.purchaseInvoicesUi.selectBranchPlaceholder} /></SelectTrigger>
-                    <SelectContent>
-                      {branches.filter(b => b.id).map(b => (
-                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="po-create-branch">{t.purchaseInvoicesUi.poBranchStar}</Label>
+                  {branches.filter((b) => b.id != null && String(b.id) !== '').length === 0 ? (
+                    <div className="h-10 flex items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+                      —
+                    </div>
+                  ) : (
+                    <select
+                      id="po-create-branch"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                      value={(() => {
+                        const valid = branches.filter((b) => b.id != null && String(b.id) !== '');
+                        const cur = poForm.branchId ? String(poForm.branchId) : '';
+                        return valid.some((b) => String(b.id) === cur) ? cur : String(valid[0]!.id);
+                      })()}
+                      onChange={(e) => setPoForm((p) => ({ ...p, branchId: e.target.value }))}
+                    >
+                      {branches
+                        .filter((b) => b.id != null && String(b.id) !== '')
+                        .map((b) => (
+                          <option key={String(b.id)} value={String(b.id)}>
+                            {b.name}
+                          </option>
+                        ))}
+                    </select>
+                  )}
                 </div>
                 <div>
-                  <Label>Data Prevista de Entrega</Label>
+                  <Label>{t.purchaseInvoicesUi.poExpectedDelivery}</Label>
                   <Input type="date" value={poForm.expectedDeliveryDate} onChange={e => setPoForm(p => ({ ...p, expectedDeliveryDate: e.target.value }))} />
                 </div>
                 <div>
-                  <Label>Notas</Label>
+                  <Label>{t.purchaseInvoicesUi.poNotes}</Label>
                   <Input value={poForm.notes} onChange={e => setPoForm(p => ({ ...p, notes: e.target.value }))} placeholder={t.purchaseInvoicesUi.notesPlaceholder} />
                 </div>
               </div>
 
               {/* Add product - inline search (no nested dialog) */}
               <div className="border rounded-lg p-3 space-y-3">
-                <Label className="font-medium">Adicionar Produto</Label>
+                <Label className="font-medium">{t.purchaseInvoicesUi.poAddProductSection}</Label>
                 <div className="grid grid-cols-4 gap-3">
                   <div className="col-span-2 relative">
                     <Input
@@ -1682,7 +2374,7 @@ export default function PurchaseInvoices() {
                     />
                     {poNewItem.productId && !poProductSearch && (
                       <div className="absolute inset-0 flex items-center px-3 pointer-events-none">
-                        <span className="text-sm truncate">{products.find(p => p.id === poNewItem.productId)?.name || 'Produto'}</span>
+                        <span className="text-sm truncate">{products.find(p => p.id === poNewItem.productId)?.name || t.purchaseInvoicesUi.poProductFallback}</span>
                       </div>
                     )}
                     {poProductDropdownOpen && (
@@ -1692,7 +2384,7 @@ export default function PurchaseInvoices() {
                           const filtered = products.filter(p =>
                             !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode?.toLowerCase().includes(q)
                           ).slice(0, 50);
-                          if (filtered.length === 0) return <div className="p-3 text-sm text-muted-foreground text-center">Nenhum produto encontrado</div>;
+                          if (filtered.length === 0) return <div className="p-3 text-sm text-muted-foreground text-center">{t.purchaseInvoicesUi.poNoProductsFound}</div>;
                           return filtered.map(p => (
                             <div
                               key={p.id}
@@ -1711,8 +2403,8 @@ export default function PurchaseInvoices() {
                       </div>
                     )}
                   </div>
-                  <Input type="number" min="1" placeholder="Qtd" value={poNewItem.quantity} onChange={e => setPoNewItem(p => ({ ...p, quantity: parseInt(e.target.value) || 1 }))} />
-                  <Input type="number" min="0" step="0.01" placeholder="Custo Un." value={poNewItem.unitCost} onChange={e => setPoNewItem(p => ({ ...p, unitCost: parseFloat(e.target.value) || 0 }))} />
+                  <Input type="number" min="1" placeholder={t.purchaseInvoicesUi.poQtyPlaceholder} value={poNewItem.quantity} onChange={e => setPoNewItem(p => ({ ...p, quantity: parseInt(e.target.value) || 1 }))} />
+                  <Input type="number" min="0" step="0.01" placeholder={t.purchaseInvoicesUi.poUnitCostPlaceholder} value={poNewItem.unitCost} onChange={e => setPoNewItem(p => ({ ...p, unitCost: parseFloat(e.target.value) || 0 }))} />
                 </div>
                 <Button variant="secondary" size="sm" onClick={() => {
                   if (!poNewItem.productId || poNewItem.quantity <= 0) return;
@@ -1724,7 +2416,7 @@ export default function PurchaseInvoices() {
                   setPoNewItem({ productId: '', quantity: 1, unitCost: 0 });
                   setPoProductSearch('');
                 }}>
-                  <Plus className="h-4 w-4 mr-1" /> Adicionar
+                  <Plus className="h-4 w-4 mr-1" /> {t.purchaseInvoicesUi.poAddLineBtn}
                 </Button>
               </div>
 
@@ -1733,10 +2425,10 @@ export default function PurchaseInvoices() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Produto</TableHead>
-                      <TableHead className="text-right">Qtd</TableHead>
-                      <TableHead className="text-right">Custo Un.</TableHead>
-                      <TableHead className="text-right">Subtotal</TableHead>
+                      <TableHead>{t.purchaseInvoicesUi.poTableProduct}</TableHead>
+                      <TableHead className="text-right">{t.purchaseInvoicesUi.poTableQtyShort}</TableHead>
+                      <TableHead className="text-right">{t.purchaseInvoicesUi.poTableUnitCost}</TableHead>
+                      <TableHead className="text-right">{t.purchaseInvoicesUi.poTableSubtotalShort}</TableHead>
                       <TableHead></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1747,8 +2439,8 @@ export default function PurchaseInvoices() {
                         <TableRow key={item.productId}>
                           <TableCell>{prod?.name || item.productId}</TableCell>
                           <TableCell className="text-right">{item.quantity}</TableCell>
-                          <TableCell className="text-right font-mono">{item.unitCost.toLocaleString('pt-AO')} Kz</TableCell>
-                          <TableCell className="text-right font-mono font-medium">{(item.quantity * item.unitCost).toLocaleString('pt-AO')} Kz</TableCell>
+                          <TableCell className="text-right font-mono">{item.unitCost.toLocaleString(uiLocale)} Kz</TableCell>
+                          <TableCell className="text-right font-mono font-medium">{(item.quantity * item.unitCost).toLocaleString(uiLocale)} Kz</TableCell>
                           <TableCell>
                             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPoForm(p => ({ ...p, items: p.items.filter(i => i.productId !== item.productId) }))}>
                               <Trash2 className="h-4 w-4" />
@@ -1758,8 +2450,8 @@ export default function PurchaseInvoices() {
                       );
                     })}
                     <TableRow className="bg-muted/30">
-                      <TableCell colSpan={3} className="text-right font-medium">Total:</TableCell>
-                      <TableCell className="text-right font-mono font-bold">{poForm.items.reduce((s, i) => s + i.quantity * i.unitCost, 0).toLocaleString('pt-AO')} Kz</TableCell>
+                      <TableCell colSpan={3} className="text-right font-medium">{t.purchaseInvoicesUi.poTotalRow}</TableCell>
+                      <TableCell className="text-right font-mono font-bold">{poForm.items.reduce((s, i) => s + i.quantity * i.unitCost, 0).toLocaleString(uiLocale)} Kz</TableCell>
                       <TableCell></TableCell>
                     </TableRow>
                   </TableBody>
@@ -1767,7 +2459,7 @@ export default function PurchaseInvoices() {
               )}
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setPoCreateOpen(false)}>Cancelar</Button>
+              <Button variant="outline" onClick={() => setPoCreateOpen(false)}>{t.common.cancel}</Button>
               <Button disabled={!poForm.supplierId || !poForm.branchId || poForm.items.length === 0} onClick={() => {
                 const items = poForm.items.map(item => {
                   const prod = products.find(p => p.id === item.productId);
@@ -1784,18 +2476,18 @@ export default function PurchaseInvoices() {
                 });
                 createOrder(poForm.supplierId, poForm.branchId, items as any, user?.id || '', poForm.notes || undefined, poForm.expectedDeliveryDate || undefined)
                   .then(() => {
-                    toast({ title: 'Encomenda criada com sucesso' });
+                    toast({ title: t.purchaseInvoicesUi.poCreatedToast });
                     setPoCreateOpen(false);
                   })
                   .catch((error) => {
                     toast({
-                      title: 'Erro ao criar encomenda',
-                      description: error?.message || 'Falha ao criar a encomenda.',
+                      title: t.purchaseInvoicesUi.poCreateErrorTitle,
+                      description: error?.message || t.purchaseInvoicesUi.poCreateErrorDesc,
                       variant: 'destructive',
                     });
                   });
               }}>
-                <Save className="h-4 w-4 mr-1" /> Criar Encomenda
+                <Save className="h-4 w-4 mr-1" /> {t.purchaseInvoicesUi.poCreateBtn}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1805,45 +2497,45 @@ export default function PurchaseInvoices() {
         <Dialog open={!!poViewOrder} onOpenChange={() => setPoViewOrder(null)}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Encomenda {poViewOrder?.orderNumber}</DialogTitle>
+              <DialogTitle>{t.purchaseInvoicesUi.poDialogTitle.replace('{no}', poViewOrder?.orderNumber || '')}</DialogTitle>
             </DialogHeader>
             {poViewOrder && (
               <div className="space-y-4" id="po-print-area">
                 <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div><span className="text-muted-foreground">Nº Encomenda:</span><p className="font-bold font-mono text-lg">{poViewOrder.orderNumber}</p></div>
-                  <div><span className="text-muted-foreground">Fornecedor:</span><p className="font-medium">{poViewOrder.supplierName}</p></div>
-                  <div><span className="text-muted-foreground">Filial:</span><p className="font-medium">{poViewOrder.branchName}</p></div>
-                  <div><span className="text-muted-foreground">Data:</span><p className="font-medium">{poViewOrder.createdAt ? format(new Date(poViewOrder.createdAt), 'dd/MM/yyyy HH:mm', { locale: pt }) : '—'}</p></div>
+                  <div><span className="text-muted-foreground">{t.purchaseInvoicesUi.poOrderNumberLabel}</span><p className="font-bold font-mono text-lg">{poViewOrder.orderNumber}</p></div>
+                  <div><span className="text-muted-foreground">{t.purchaseInvoicesUi.printSupplier}</span><p className="font-medium">{poViewOrder.supplierName}</p></div>
+                  <div><span className="text-muted-foreground">{t.purchaseInvoicesUi.printBranch}</span><p className="font-medium">{poViewOrder.branchName}</p></div>
+                  <div><span className="text-muted-foreground">{t.purchaseInvoicesUi.printDate}</span><p className="font-medium">{poViewOrder.createdAt ? format(new Date(poViewOrder.createdAt), 'dd/MM/yyyy HH:mm', { locale: pt }) : '—'}</p></div>
                   {poViewOrder.expectedDeliveryDate && (
-                    <div><span className="text-muted-foreground">Entrega Prevista:</span><p className="font-medium">{format(new Date(poViewOrder.expectedDeliveryDate), 'dd/MM/yyyy')}</p></div>
+                    <div><span className="text-muted-foreground">{t.purchaseInvoicesUi.printExpectedDelivery}</span><p className="font-medium">{format(new Date(poViewOrder.expectedDeliveryDate), 'dd/MM/yyyy')}</p></div>
                   )}
-                  <div><span className="text-muted-foreground">Estado:</span>
+                  <div><span className="text-muted-foreground">{t.purchaseInvoicesUi.printStatus}</span>
                     <Badge variant={getPurchaseOrderStatusBadge(t, poViewOrder.status).variant} className="ml-2">
                       {getPurchaseOrderStatusBadge(t, poViewOrder.status).label}
                     </Badge>
                   </div>
                   {poViewOrder.notes && (
-                    <div className="col-span-2"><span className="text-muted-foreground">Observações:</span><p className="font-medium">{poViewOrder.notes}</p></div>
+                    <div className="col-span-2"><span className="text-muted-foreground">{t.purchaseInvoicesUi.printNotes}</span><p className="font-medium">{poViewOrder.notes}</p></div>
                   )}
                 </div>
                 <Table>
-                  <TableHeader><TableRow><TableHead>#</TableHead><TableHead>Produto</TableHead><TableHead className="text-right">Qtd</TableHead><TableHead className="text-right">Custo Unit.</TableHead><TableHead className="text-right">Subtotal</TableHead></TableRow></TableHeader>
+                  <TableHeader><TableRow><TableHead>#</TableHead><TableHead>{t.purchaseInvoicesUi.poTableProduct}</TableHead><TableHead className="text-right">{t.purchaseInvoicesUi.poTableQtyShort}</TableHead><TableHead className="text-right">{t.purchaseInvoicesUi.poTableUnitCost}</TableHead><TableHead className="text-right">{t.purchaseInvoicesUi.poTableSubtotalShort}</TableHead></TableRow></TableHeader>
                   <TableBody>
                     {poViewOrder.items.map((item: any, idx: number) => (
                       <TableRow key={item.productId || idx}>
                         <TableCell className="text-muted-foreground">{idx + 1}</TableCell>
                         <TableCell><p className="font-medium">{item.productName || item.product_name}</p><p className="text-xs text-muted-foreground">{item.sku}</p></TableCell>
                         <TableCell className="text-right">{item.quantity}</TableCell>
-                        <TableCell className="text-right">{(item.unitCost || item.unit_cost || 0).toLocaleString('pt-AO')} Kz</TableCell>
-                        <TableCell className="text-right">{(item.subtotal || 0).toLocaleString('pt-AO')} Kz</TableCell>
+                        <TableCell className="text-right">{(item.unitCost || item.unit_cost || 0).toLocaleString(uiLocale)} Kz</TableCell>
+                        <TableCell className="text-right">{(item.subtotal || 0).toLocaleString(uiLocale)} Kz</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
                 <div className="border-t pt-2 space-y-1 text-sm text-right">
-                  <p>Subtotal: <span className="font-mono font-medium">{(poViewOrder.subtotal || 0).toLocaleString('pt-AO')} Kz</span></p>
-                  <p>IVA: <span className="font-mono font-medium">{(poViewOrder.taxAmount || poViewOrder.tax_amount || 0).toLocaleString('pt-AO')} Kz</span></p>
-                  <p className="text-lg font-bold">Total: {(poViewOrder.total || 0).toLocaleString('pt-AO')} Kz</p>
+                  <p>{t.purchaseInvoicesUi.poViewSubtotal} <span className="font-mono font-medium">{(poViewOrder.subtotal || 0).toLocaleString(uiLocale)} Kz</span></p>
+                  <p>{t.purchaseInvoicesUi.poViewVat} <span className="font-mono font-medium">{(poViewOrder.taxAmount || poViewOrder.tax_amount || 0).toLocaleString(uiLocale)} Kz</span></p>
+                  <p className="text-lg font-bold">{t.purchaseInvoicesUi.poViewTotal} {(poViewOrder.total || 0).toLocaleString(uiLocale)} Kz</p>
                 </div>
               </div>
             )}
@@ -1853,7 +2545,8 @@ export default function PurchaseInvoices() {
                 if (!area) return;
                 const printWindow = window.open('', '_blank', 'width=800,height=600');
                 if (!printWindow) return;
-                printWindow.document.write(`<!DOCTYPE html><html><head><title>Encomenda ${poViewOrder?.orderNumber}</title><style>
+                const poStatusLabel = poViewOrder ? getPurchaseOrderStatusBadge(t, poViewOrder.status).label : '';
+                printWindow.document.write(`<!DOCTYPE html><html><head><title>${t.purchaseInvoicesUi.poDialogTitle.replace('{no}', String(poViewOrder?.orderNumber || ''))}</title><style>
                   body { font-family: Arial, sans-serif; padding: 30px; color: #111; }
                   h1 { font-size: 22px; margin-bottom: 5px; }
                   h2 { font-size: 14px; color: #666; margin-bottom: 20px; }
@@ -1868,34 +2561,34 @@ export default function PurchaseInvoices() {
                   .totals .grand { font-size: 16px; font-weight: bold; }
                   @media print { body { padding: 10px; } }
                 </style></head><body>
-                  <h1>Ordem de Compra</h1>
+                  <h1>${t.purchaseInvoicesUi.poPrintHeading}</h1>
                   <h2>${poViewOrder?.orderNumber}</h2>
                   <div class="info">
-                    <div><span class="label">Fornecedor:</span><br/><span class="value">${poViewOrder?.supplierName}</span></div>
-                    <div><span class="label">Filial:</span><br/><span class="value">${poViewOrder?.branchName}</span></div>
-                    <div><span class="label">Data:</span><br/><span class="value">${poViewOrder ? format(new Date(poViewOrder.createdAt), 'dd/MM/yyyy HH:mm') : ''}</span></div>
-                    <div><span class="label">Estado:</span><br/><span class="value">${poViewOrder?.status === 'pending' ? 'Pendente' : poViewOrder?.status === 'approved' ? 'Aprovado' : poViewOrder?.status === 'received' ? 'Recebido' : poViewOrder?.status}</span></div>
-                    ${poViewOrder?.expectedDeliveryDate ? `<div><span class="label">Entrega Prevista:</span><br/><span class="value">${format(new Date(poViewOrder.expectedDeliveryDate), 'dd/MM/yyyy')}</span></div>` : ''}
-                    ${poViewOrder?.notes ? `<div class="col-span-2"><span class="label">Observações:</span><br/><span class="value">${poViewOrder.notes}</span></div>` : ''}
+                    <div><span class="label">${t.purchaseInvoicesUi.printSupplier}</span><br/><span class="value">${poViewOrder?.supplierName}</span></div>
+                    <div><span class="label">${t.purchaseInvoicesUi.printBranch}</span><br/><span class="value">${poViewOrder?.branchName}</span></div>
+                    <div><span class="label">${t.purchaseInvoicesUi.printDate}</span><br/><span class="value">${poViewOrder ? format(new Date(poViewOrder.createdAt), 'dd/MM/yyyy HH:mm') : ''}</span></div>
+                    <div><span class="label">${t.purchaseInvoicesUi.printStatus}</span><br/><span class="value">${poStatusLabel}</span></div>
+                    ${poViewOrder?.expectedDeliveryDate ? `<div><span class="label">${t.purchaseInvoicesUi.printExpectedDelivery}</span><br/><span class="value">${format(new Date(poViewOrder.expectedDeliveryDate), 'dd/MM/yyyy')}</span></div>` : ''}
+                    ${poViewOrder?.notes ? `<div class="col-span-2"><span class="label">${t.purchaseInvoicesUi.printNotes}</span><br/><span class="value">${poViewOrder.notes}</span></div>` : ''}
                   </div>
                   <table>
-                    <thead><tr><th>#</th><th>Produto</th><th>SKU</th><th class="right">Qtd</th><th class="right">Custo Unit.</th><th class="right">Subtotal</th></tr></thead>
+                    <thead><tr><th>#</th><th>${t.purchaseInvoicesUi.printProduct}</th><th>${t.purchaseInvoicesUi.printSku}</th><th class="right">${t.purchaseInvoicesUi.printQty}</th><th class="right">${t.purchaseInvoicesUi.printUnitCost}</th><th class="right">${t.purchaseInvoicesUi.printSubtotalLine}</th></tr></thead>
                     <tbody>${(poViewOrder?.items || []).map((item: any, i: number) => 
-                      `<tr><td>${i+1}</td><td>${item.productName || item.product_name || ''}</td><td>${item.sku || ''}</td><td class="right">${item.quantity}</td><td class="right">${(item.unitCost || item.unit_cost || 0).toLocaleString('pt-AO')} Kz</td><td class="right">${(item.subtotal || 0).toLocaleString('pt-AO')} Kz</td></tr>`
+                      `<tr><td>${i+1}</td><td>${item.productName || item.product_name || ''}</td><td>${item.sku || ''}</td><td class="right">${item.quantity}</td><td class="right">${(item.unitCost || item.unit_cost || 0).toLocaleString(uiLocale)} Kz</td><td class="right">${(item.subtotal || 0).toLocaleString(uiLocale)} Kz</td></tr>`
                     ).join('')}</tbody>
                   </table>
                   <div class="totals">
-                    <p>Subtotal: ${(poViewOrder?.subtotal || 0).toLocaleString('pt-AO')} Kz</p>
-                    <p>IVA: ${(poViewOrder?.taxAmount || poViewOrder?.tax_amount || 0).toLocaleString('pt-AO')} Kz</p>
-                    <p class="grand">Total: ${(poViewOrder?.total || 0).toLocaleString('pt-AO')} Kz</p>
+                    <p>${t.purchaseInvoicesUi.poViewSubtotal} ${(poViewOrder?.subtotal || 0).toLocaleString(uiLocale)} Kz</p>
+                    <p>${t.purchaseInvoicesUi.poViewVat} ${(poViewOrder?.taxAmount || poViewOrder?.tax_amount || 0).toLocaleString(uiLocale)} Kz</p>
+                    <p class="grand">${t.purchaseInvoicesUi.poViewTotal} ${(poViewOrder?.total || 0).toLocaleString(uiLocale)} Kz</p>
                   </div>
                 </body></html>`);
                 printWindow.document.close();
                 setTimeout(() => { printWindow.print(); }, 300);
               }}>
-                <Printer className="h-4 w-4" /> Imprimir
+                <Printer className="h-4 w-4" /> {t.purchaseInvoicesUi.poPrint}
               </Button>
-              <Button variant="outline" onClick={() => setPoViewOrder(null)}>Fechar</Button>
+              <Button variant="outline" onClick={() => setPoViewOrder(null)}>{t.purchaseInvoicesUi.poClose}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1904,17 +2597,17 @@ export default function PurchaseInvoices() {
         <Dialog open={!!poReceiveOrder} onOpenChange={() => setPoReceiveOrder(null)}>
           <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Receber Mercadoria — {poReceiveOrder?.orderNumber}</DialogTitle>
+              <DialogTitle>{t.purchaseInvoicesUi.poReceiveTitle.replace('{no}', poReceiveOrder?.orderNumber || '')}</DialogTitle>
             </DialogHeader>
             {poReceiveOrder && (
               <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">Confirme as quantidades recebidas. O stock será actualizado automaticamente.</p>
+                <p className="text-sm text-muted-foreground">{t.purchaseInvoicesUi.poReceiveHint}</p>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Produto</TableHead>
-                      <TableHead className="text-right">Encomendado</TableHead>
-                      <TableHead className="text-right">Recebido</TableHead>
+                      <TableHead>{t.purchaseInvoicesUi.poColProduct}</TableHead>
+                      <TableHead className="text-right">{t.purchaseInvoicesUi.poColOrdered}</TableHead>
+                      <TableHead className="text-right">{t.purchaseInvoicesUi.poColReceived}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1934,14 +2627,17 @@ export default function PurchaseInvoices() {
               </div>
             )}
             <DialogFooter>
-              <Button variant="outline" onClick={() => setPoReceiveOrder(null)}>Cancelar</Button>
+              <Button variant="outline" onClick={() => setPoReceiveOrder(null)}>{t.common.cancel}</Button>
               <Button onClick={() => {
                 if (!poReceiveOrder) return;
                 receiveOrder(poReceiveOrder.id, user?.id || '', poReceivedQtys);
-                toast({ title: 'Mercadoria recebida', description: `${poReceiveOrder.orderNumber} — stock actualizado` });
+                toast({
+                  title: t.purchaseInvoicesUi.poReceiveToast,
+                  description: t.purchaseInvoicesUi.poReceiveToastDesc.replace('{no}', poReceiveOrder.orderNumber),
+                });
                 setPoReceiveOrder(null);
               }}>
-                <CheckCircle className="h-4 w-4 mr-1" /> Confirmar Recepção
+                <CheckCircle className="h-4 w-4 mr-1" /> {t.purchaseInvoicesUi.poReceiveConfirm}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1952,7 +2648,7 @@ export default function PurchaseInvoices() {
 
   // ─── CREATE MODE ─── Smart ERP Dense Layout
   return (
-    <div className="flex flex-col h-[calc(100vh-48px)] overflow-hidden text-xs animate-fade-in">
+    <div className="flex flex-col min-h-0 flex-1 h-full overflow-hidden text-xs animate-fade-in">
       {/* ═══ TOP BAR ═══ */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-muted/60 border-b border-border shrink-0">
         <div className="flex items-center gap-2">
@@ -1970,21 +2666,21 @@ export default function PurchaseInvoices() {
           {/* Supplier balance badge — always visible when supplier selected */}
           {form.supplierName && (
             <div className="flex items-center gap-1.5 ml-2 px-2 py-0.5 rounded bg-accent/40 border border-border/50 transition-all duration-200">
-              <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Saldo</span>
+              <span className="text-[9px] text-muted-foreground uppercase tracking-wider">{t.purchaseInvoicesUi.balanceLabel}</span>
               <span className={`font-mono text-sm font-bold ${(form.supplierBalance || 0) > 0 ? 'text-destructive' : (form.supplierBalance || 0) < 0 ? 'text-green-600' : 'text-muted-foreground'}`}>
-                {(form.supplierBalance || 0).toLocaleString('pt-AO', { minimumFractionDigits: 2 })}
+                {(form.supplierBalance || 0).toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
               </span>
               <span className="text-[9px] text-muted-foreground">{form.currency || 'KZ'}</span>
             </div>
           )}
         </div>
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-black tracking-tight text-destructive">COMPRA</h2>
+          <h2 className="text-lg font-black tracking-tight text-destructive">{t.purchaseInvoicesUi.editorTitle}</h2>
           <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={handleCloseCreate}>
-            <X className="h-3 w-3" /> Cancelar
+            <X className="h-3 w-3" /> {t.common.cancel}
           </Button>
           <Button size="sm" className="h-7 gap-1 text-xs" onClick={handleSave}>
-            <Save className="h-3 w-3" /> Guardar
+            <Save className="h-3 w-3" /> {t.common.save}
           </Button>
         </div>
       </div>
@@ -1992,28 +2688,28 @@ export default function PurchaseInvoices() {
       {/* ═══ DENSE FORM BAR ═══ */}
       <div className="grid grid-cols-12 gap-x-2 gap-y-0.5 px-3 py-1.5 bg-card border-b border-border shrink-0 items-end">
         <div className="col-span-1">
-          <label className="text-[10px] text-muted-foreground leading-none">No</label>
-          <Input value={form.ref || ''} onChange={e => setForm(p => ({ ...p, ref: e.target.value }))} placeholder="Auto" className="h-7 text-xs px-1.5" />
+          <label className="text-[10px] text-muted-foreground leading-none">{t.purchaseInvoicesUi.fieldNo}</label>
+          <Input value={form.ref || ''} onChange={e => setForm(p => ({ ...p, ref: e.target.value }))} placeholder={t.purchaseInvoicesUi.autoPlaceholder} className="h-7 text-xs px-1.5" />
         </div>
         <div className="col-span-2">
-          <label className="text-[10px] text-muted-foreground leading-none">Nº Fat. Fornecedor</label>
+          <label className="text-[10px] text-muted-foreground leading-none">{t.purchaseInvoicesUi.fieldSupplierInvoiceNo}</label>
           <Input value={(form as any).supplierInvoiceNo || ''} onChange={e => setForm(p => ({ ...p, supplierInvoiceNo: e.target.value }))} className="h-7 text-xs px-1.5" />
         </div>
         <div className="col-span-1">
-          <label className="text-[10px] text-muted-foreground leading-none">Ref</label>
+          <label className="text-[10px] text-muted-foreground leading-none">{t.purchaseInvoicesUi.fieldRef}</label>
           <Input value={form.ref2 || ''} onChange={e => setForm(p => ({ ...p, ref2: e.target.value }))} className="h-7 text-xs px-1.5" />
         </div>
         <div className="col-span-1">
-          <label className="text-[10px] text-muted-foreground leading-none">Data</label>
+          <label className="text-[10px] text-muted-foreground leading-none">{t.purchaseInvoicesUi.fieldDate}</label>
           <Input type="date" value={form.date || ''} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="h-7 text-xs px-1" />
         </div>
         <div className="col-span-1">
-          <label className="text-[10px] text-muted-foreground leading-none">Pagamento</label>
+          <label className="text-[10px] text-muted-foreground leading-none">{t.purchaseInvoicesUi.fieldPayment}</label>
           <Input type="date" value={form.paymentDate || ''} onChange={e => setForm(p => ({ ...p, paymentDate: e.target.value }))} className="h-7 text-xs px-1" />
         </div>
         <div className="col-span-1">
-          <label className="text-[10px] text-muted-foreground leading-none">Moeda</label>
-          <Select value={form.currency} onValueChange={v => setForm(p => ({ ...p, currency: v }))}>
+          <label className="text-[10px] text-muted-foreground leading-none">{t.purchaseInvoicesUi.fieldCurrency}</label>
+          <Select value={form.currency || 'KZ'} onValueChange={v => setForm(p => ({ ...p, currency: v }))}>
             <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="KZ">KZ</SelectItem>
@@ -2023,63 +2719,89 @@ export default function PurchaseInvoices() {
           </Select>
         </div>
         <div className="col-span-2">
-          <label className="text-[10px] text-muted-foreground leading-none">Armazém</label>
-          <Select value={form.warehouseId} onValueChange={v => {
-            const br = branches.find(b => b.id === v);
-            setForm(p => ({ ...p, warehouseId: v, warehouseName: br?.name || v }));
-          }}>
-            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {branches.filter(b => b.id).map(b => (
-                <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <label className="text-[10px] text-muted-foreground leading-none" htmlFor="purchase-create-warehouse">
+            {t.purchaseInvoicesUi.fieldWarehouse}
+          </label>
+          {branches.filter((b) => b.id != null && String(b.id) !== '').length === 0 ? (
+            <div className="h-7 flex items-center rounded-md border border-input bg-muted/40 px-2 text-[10px] text-muted-foreground">
+              —
+            </div>
+          ) : (
+            <select
+              id="purchase-create-warehouse"
+              className="flex h-7 w-full rounded-md border border-input bg-background px-2 py-0 text-xs ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50"
+              value={(() => {
+                const withIds = branches.filter((b) => b.id != null && String(b.id) !== '');
+                const ids = withIds.map((b) => String(b.id));
+                const cur = form.warehouseId != null && form.warehouseId !== '' ? String(form.warehouseId) : '';
+                return ids.includes(cur) ? cur : String(withIds[0]!.id);
+              })()}
+              onChange={(e) => {
+                const v = e.target.value;
+                const br = branches.find((b) => String(b.id) === v);
+                setForm((p) => ({
+                  ...p,
+                  warehouseId: br?.id ?? v,
+                  warehouseName: br?.name ?? '',
+                }));
+              }}
+            >
+              {branches
+                .filter((b) => b.id != null && String(b.id) !== '')
+                .map((b) => (
+                  <option key={String(b.id)} value={String(b.id)}>
+                    {b.name}
+                  </option>
+                ))}
+            </select>
+          )}
         </div>
         <div className="col-span-1">
-          <label className="text-[10px] text-muted-foreground leading-none">Tipo Preço</label>
+          <label className="text-[10px] text-muted-foreground leading-none">{t.purchaseInvoicesUi.fieldPriceType}</label>
           <Select value={form.priceType} onValueChange={v => setForm(p => ({ ...p, priceType: v as any }))}>
             <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="last_price">Last Price</SelectItem>
-              <SelectItem value="average_price">Avg Price</SelectItem>
-              <SelectItem value="manual">Manual</SelectItem>
+              <SelectItem value="last_price">{t.purchaseInvoicesUi.priceTypeLast}</SelectItem>
+              <SelectItem value="average_price">{t.purchaseInvoicesUi.priceTypeAvg}</SelectItem>
+              <SelectItem value="manual">{t.purchaseInvoicesUi.priceTypeManual}</SelectItem>
             </SelectContent>
           </Select>
         </div>
         <div className="col-span-2 flex items-end gap-1">
           <div className="flex items-center gap-1">
             <Checkbox id="cp" checked={form.changePrice} onCheckedChange={v => setForm(p => ({ ...p, changePrice: !!v }))} className="h-3.5 w-3.5" />
-            <label htmlFor="cp" className="text-[10px]">Change Price</label>
+            <label htmlFor="cp" className="text-[10px]">{t.purchaseInvoicesUi.labelChangePrice}</label>
           </div>
           <div className="flex items-center gap-1">
             <Checkbox id="pend" checked={form.isPending} onCheckedChange={v => setForm(p => ({ ...p, isPending: !!v }))} className="h-3.5 w-3.5" />
-            <label htmlFor="pend" className="text-[10px]">Pendente</label>
+            <label htmlFor="pend" className="text-[10px]">{t.purchaseInvoicesUi.labelPending}</label>
           </div>
         </div>
       </div>
 
       {/* ═══ ACCOUNTING ROW (compact) ═══ */}
       <div className="flex items-center gap-3 px-3 py-1 bg-muted/30 border-b border-border shrink-0 text-[10px]">
-        <span className="text-muted-foreground">Conta Compra:</span>
+        <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelPurchaseAccount}</span>
         <Input value={form.purchaseAccountCode || ''} onChange={e => setForm(p => ({ ...p, purchaseAccountCode: e.target.value }))} className="h-6 w-16 text-[10px] font-mono px-1" />
-        <span className="text-muted-foreground">IVA:</span>
+        <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelVatAcct}</span>
         <Input value={form.ivaAccountCode || ''} onChange={e => setForm(p => ({ ...p, ivaAccountCode: e.target.value }))} className="h-6 w-16 text-[10px] font-mono px-1" />
-        <span className="text-muted-foreground">TX:</span>
+        <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelTx}</span>
         <Input value={form.transactionType || ''} onChange={e => setForm(p => ({ ...p, transactionType: e.target.value }))} className="h-6 w-14 text-[10px] font-mono px-1" />
-        <span className="text-muted-foreground">Câmbio:</span>
+        <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelFx}</span>
         <Input type="number" value={form.currencyRate || 1} onChange={e => setForm(p => ({ ...p, currencyRate: parseFloat(e.target.value) || 1 }))} className="h-6 w-16 text-[10px] font-mono px-1" />
-        <span className="text-muted-foreground">Taxa 2:</span>
-        <Input type="number" value={form.taxRate2 || 1000} onChange={e => setForm(p => ({ ...p, taxRate2: parseFloat(e.target.value) || 0 }))} className="h-6 w-16 text-[10px] font-mono px-1" />
-        <span className="text-muted-foreground">Ordem:</span>
+        <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelWhPct}</span>
+        <Input type="number" value={form.taxRate2 || 0} onChange={e => setForm(p => ({ ...p, taxRate2: parseFloat(e.target.value) || 0 }))} className="h-6 w-16 text-[10px] font-mono px-1" />
+        <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelStampPct}</span>
+        <Input type="number" value={form.surchargePercent || 0} onChange={e => setForm(p => ({ ...p, surchargePercent: parseFloat(e.target.value) || 0 }))} className="h-6 w-16 text-[10px] font-mono px-1" />
+        <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelOrderNo}</span>
         <Input value={form.orderNo || ''} onChange={e => setForm(p => ({ ...p, orderNo: e.target.value }))} className="h-6 w-20 text-[10px] font-mono px-1" />
         {/* Freight inline */}
         <div className="ml-auto flex items-center gap-2 border-l border-border pl-3">
-          <span className="text-amber-600 dark:text-amber-400 font-semibold">🚚 Frete:</span>
+          <span className="text-amber-600 dark:text-amber-400 font-semibold">🚚 {t.purchaseInvoicesUi.labelFreight}</span>
           <Input type="number" min="0" step="0.01" value={freightCost || ''} onChange={e => setFreightCost(parseFloat(e.target.value) || 0)} className="h-6 w-20 text-[10px] font-mono px-1" placeholder="0" />
-          <span className="text-muted-foreground">Outras:</span>
+          <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelOtherCosts}</span>
           <Input type="number" min="0" step="0.01" value={freightOtherCosts || ''} onChange={e => setFreightOtherCosts(parseFloat(e.target.value) || 0)} className="h-6 w-20 text-[10px] font-mono px-1" placeholder="0" />
-          <span className="text-muted-foreground">Saída:</span>
+          <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelSourceOut}</span>
           <div className="flex items-center gap-0.5">
             <Input value={freightSourceAccount} onChange={e => setFreightSourceAccount(e.target.value)} className="h-6 w-14 text-[10px] font-mono px-1" />
             <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => { setFreightPickerOpen(true); setAccountPickerOpen(true); }}>
@@ -2088,7 +2810,7 @@ export default function PurchaseInvoices() {
           </div>
           {totalLandingCosts > 0 && (
             <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
-              = {totalLandingCosts.toLocaleString('pt-AO')} Kz
+              = {totalLandingCosts.toLocaleString(uiLocale)} Kz
             </span>
           )}
         </div>
@@ -2098,8 +2820,8 @@ export default function PurchaseInvoices() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 min-h-0">
         <div className="px-3 pt-1 shrink-0">
           <TabsList className="h-7">
-            <TabsTrigger value="fatura" className="text-xs h-6 gap-1 px-3"><FileText className="h-3 w-3" /> Fatura</TabsTrigger>
-            <TabsTrigger value="diario" className="text-xs h-6 gap-1 px-3"><BookOpen className="h-3 w-3" /> Diário</TabsTrigger>
+            <TabsTrigger value="fatura" className="text-xs h-6 gap-1 px-3"><FileText className="h-3 w-3" /> {t.purchaseInvoicesUi.tabInvoice}</TabsTrigger>
+            <TabsTrigger value="diario" className="text-xs h-6 gap-1 px-3"><BookOpen className="h-3 w-3" /> {t.purchaseInvoicesUi.tabJournal}</TabsTrigger>
           </TabsList>
         </div>
 
@@ -2109,7 +2831,7 @@ export default function PurchaseInvoices() {
           {saveError && (
             <Alert variant="destructive" className="mb-2">
               <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Erro</AlertTitle>
+              <AlertTitle>{t.purchaseInvoicesUi.errorLabel}</AlertTitle>
               <AlertDescription>{saveError}</AlertDescription>
             </Alert>
           )}
@@ -2127,7 +2849,7 @@ export default function PurchaseInvoices() {
           {/* Freight allocation preview */}
           {totalLandingCosts > 0 && lines.length > 0 && (
             <div className="border rounded px-2 py-1 bg-muted/30 mt-1">
-              <p className="text-[10px] font-medium text-muted-foreground mb-0.5">Distribuição do frete:</p>
+              <p className="text-[10px] font-medium text-muted-foreground mb-0.5">{t.purchaseInvoicesUi.freightAllocation}</p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-0">
                 {lines.filter(l => l.productId && l.totalQty > 0).map(l => {
                   const perUnit = freightAllocations[l.productId] || 0;
@@ -2136,7 +2858,7 @@ export default function PurchaseInvoices() {
                     <div key={l.productId} className="flex justify-between text-[10px]">
                       <span className="truncate max-w-[120px]">{l.description}</span>
                       <span className="font-mono text-muted-foreground ml-1">
-                        {l.unitPrice.toLocaleString('pt-AO')}+{perUnit.toFixed(2)}=<strong className="text-foreground">{effectiveCost.toFixed(2)}</strong>
+                        {l.unitPrice.toLocaleString(uiLocale)}+{perUnit.toFixed(2)}=<strong className="text-foreground">{effectiveCost.toFixed(2)}</strong>
                       </span>
                     </div>
                   );
@@ -2152,7 +2874,7 @@ export default function PurchaseInvoices() {
                 value={form.extraNote || ''}
                 onChange={e => setForm(p => ({ ...p, extraNote: e.target.value }))}
                 className="text-xs h-10 resize-none"
-                placeholder="Nota extra..."
+                placeholder={t.purchaseInvoicesUi.placeholderExtraNote}
               />
             </div>
           )}
@@ -2161,9 +2883,9 @@ export default function PurchaseInvoices() {
         {/* ──── DIÁRIO TAB ──── */}
         <TabsContent value="diario" className="flex-1 min-h-0 overflow-auto px-3 pb-1 mt-1 space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold">Lançamentos automáticos + manuais</h3>
+            <h3 className="text-xs font-semibold">{t.purchaseInvoicesUi.journalHeading}</h3>
             <Button variant="outline" size="sm" className="h-6 gap-1 text-[10px]" onClick={addJournalLine}>
-              <Plus className="h-3 w-3" /> Adicionar
+              <Plus className="h-3 w-3" /> {t.purchaseInvoicesUi.addLine}
             </Button>
           </div>
 
@@ -2171,11 +2893,11 @@ export default function PurchaseInvoices() {
             <Table>
               <TableHeader>
                 <TableRow className="text-[10px] h-7">
-                  <TableHead className="py-1">Conta</TableHead>
-                  <TableHead className="py-1">Nome</TableHead>
-                  <TableHead className="py-1">Nota</TableHead>
-                  <TableHead className="py-1 w-24 text-right">Débito</TableHead>
-                  <TableHead className="py-1 w-24 text-right">Crédito</TableHead>
+                  <TableHead className="py-1">{t.purchaseInvoicesUi.jColAccount}</TableHead>
+                  <TableHead className="py-1">{t.purchaseInvoicesUi.jColName}</TableHead>
+                  <TableHead className="py-1">{t.purchaseInvoicesUi.jColNote}</TableHead>
+                  <TableHead className="py-1 w-24 text-right">{t.purchaseInvoicesUi.jColDebit}</TableHead>
+                  <TableHead className="py-1 w-24 text-right">{t.purchaseInvoicesUi.jColCredit}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2184,18 +2906,18 @@ export default function PurchaseInvoices() {
                     <TableCell className="font-mono py-0.5">{line.accountCode || '—'}</TableCell>
                     <TableCell className="py-0.5">{line.accountName || '—'}</TableCell>
                     <TableCell className="py-0.5 text-muted-foreground">{line.note || '—'}</TableCell>
-                    <TableCell className="text-right font-mono py-0.5">{line.debit > 0 ? line.debit.toLocaleString('pt-AO') : '—'}</TableCell>
-                    <TableCell className="text-right font-mono py-0.5">{line.credit > 0 ? line.credit.toLocaleString('pt-AO') : '—'}</TableCell>
+                    <TableCell className="text-right font-mono py-0.5">{line.debit > 0 ? line.debit.toLocaleString(uiLocale) : '—'}</TableCell>
+                    <TableCell className="text-right font-mono py-0.5">{line.credit > 0 ? line.credit.toLocaleString(uiLocale) : '—'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
             <div className="flex justify-end border-t px-3 py-1.5 text-xs bg-muted/30">
               <div className="flex gap-6">
-                <span>Débito: <strong className="font-mono">{postedJournalTotals.debit.toLocaleString('pt-AO')}</strong></span>
-                <span>Crédito: <strong className="font-mono">{postedJournalTotals.credit.toLocaleString('pt-AO')}</strong></span>
+                <span>{t.purchaseInvoicesUi.jDebitTotal} <strong className="font-mono">{postedJournalTotals.debit.toLocaleString(uiLocale)}</strong></span>
+                <span>{t.purchaseInvoicesUi.jCreditTotal} <strong className="font-mono">{postedJournalTotals.credit.toLocaleString(uiLocale)}</strong></span>
                 <span className={Math.abs(postedJournalTotals.difference) > 0.01 ? 'text-destructive font-bold' : 'text-green-600'}>
-                  Dif: <strong className="font-mono">{postedJournalTotals.difference.toLocaleString('pt-AO')}</strong>
+                  {t.purchaseInvoicesUi.jDiff} <strong className="font-mono">{postedJournalTotals.difference.toLocaleString(uiLocale)}</strong>
                 </span>
               </div>
             </div>
@@ -2207,12 +2929,12 @@ export default function PurchaseInvoices() {
               <Table>
                 <TableHeader>
                   <TableRow className="text-[10px] h-7">
-                    <TableHead className="py-1">Conta</TableHead>
-                    <TableHead className="py-1">Nome</TableHead>
-                    <TableHead className="py-1">Moeda</TableHead>
-                    <TableHead className="py-1 min-w-[120px]">Nota</TableHead>
-                    <TableHead className="py-1 w-24 text-right">Débito</TableHead>
-                    <TableHead className="py-1 w-24 text-right">Crédito</TableHead>
+                    <TableHead className="py-1">{t.purchaseInvoicesUi.jColAccount}</TableHead>
+                    <TableHead className="py-1">{t.purchaseInvoicesUi.jColName}</TableHead>
+                    <TableHead className="py-1">{t.purchaseInvoicesUi.jColCurrency}</TableHead>
+                    <TableHead className="py-1 min-w-[120px]">{t.purchaseInvoicesUi.jColNote}</TableHead>
+                    <TableHead className="py-1 w-24 text-right">{t.purchaseInvoicesUi.jColDebit}</TableHead>
+                    <TableHead className="py-1 w-24 text-right">{t.purchaseInvoicesUi.jColCredit}</TableHead>
                     <TableHead className="py-1 w-6" />
                   </TableRow>
                 </TableHeader>
@@ -2266,27 +2988,49 @@ export default function PurchaseInvoices() {
       {/* ═══ STICKY FOOTER TOTALS BAR ═══ */}
       <div className="flex items-center justify-between px-4 py-2 bg-card border-t-2 border-primary/30 shrink-0 shadow-[0_-2px_8px_-2px_hsl(var(--primary)/0.1)]">
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <span className="bg-muted px-2 py-0.5 rounded-full font-medium">{lines.length} produto{lines.length !== 1 ? 's' : ''}</span>
-          <span>Qtd: <strong className="text-foreground font-mono text-sm">{lines.reduce((s, l) => s + l.totalQty, 0)}</strong></span>
+          <span className="bg-muted px-2 py-0.5 rounded-full font-medium">
+            {lines.length === 1
+              ? t.purchaseInvoicesUi.productsOne.replace('{count}', String(lines.length))
+              : t.purchaseInvoicesUi.productsOther.replace('{count}', String(lines.length))}
+          </span>
+          <span>{t.purchaseInvoicesUi.qtyTotal} <strong className="text-foreground font-mono text-sm">{lines.reduce((s, l) => s + l.totalQty, 0)}</strong></span>
         </div>
         <div className="flex items-center gap-6 text-sm">
           <div className="text-right transition-all duration-200">
-            <span className="text-[9px] text-muted-foreground block leading-none uppercase tracking-wider">Sub Total</span>
-            <span className="font-mono font-semibold">{totals.subtotal.toLocaleString('pt-AO')}</span>
+            <span className="text-[9px] text-muted-foreground block leading-none uppercase tracking-wider">{t.purchaseInvoicesUi.footerSubtotal}</span>
+            <span className="font-mono font-semibold">{totals.subtotal.toLocaleString(uiLocale)}</span>
           </div>
           {totalLandingCosts > 0 && (
             <div className="text-right animate-fade-in">
-              <span className="text-[9px] text-amber-600 dark:text-amber-400 block leading-none uppercase tracking-wider">Frete</span>
-              <span className="font-mono font-semibold text-amber-600 dark:text-amber-400">{totalLandingCosts.toLocaleString('pt-AO')}</span>
+              <span className="text-[9px] text-amber-600 dark:text-amber-400 block leading-none uppercase tracking-wider">{t.purchaseInvoicesUi.footerFreight}</span>
+              <span className="font-mono font-semibold text-amber-600 dark:text-amber-400">{totalLandingCosts.toLocaleString(uiLocale)}</span>
+            </div>
+          )}
+          {(withholdingAmount > 0 || stampAmount > 0) && (
+            <div className="text-right">
+              <span className="text-[9px] text-muted-foreground block leading-none uppercase tracking-wider">{t.purchaseInvoicesUi.footerBase}</span>
+              <span className="font-mono font-semibold">{taxBaseSubtotalPlusFreight.toLocaleString(uiLocale)}</span>
             </div>
           )}
           <div className="text-right">
-            <span className="text-[9px] text-destructive block leading-none uppercase tracking-wider">IVA</span>
-            <span className="font-mono font-semibold text-destructive">{totals.ivaTotal.toLocaleString('pt-AO')}</span>
+            <span className="text-[9px] text-destructive block leading-none uppercase tracking-wider">{t.purchaseInvoicesUi.footerVat}</span>
+            <span className="font-mono font-semibold text-destructive">{totals.ivaTotal.toLocaleString(uiLocale)}</span>
           </div>
+          {withholdingAmount > 0 && (
+            <div className="text-right">
+              <span className="text-[9px] text-muted-foreground block leading-none uppercase tracking-wider">{t.purchaseInvoicesUi.footerRetention}</span>
+              <span className="font-mono font-semibold">{withholdingAmount.toLocaleString(uiLocale)}</span>
+            </div>
+          )}
+          {stampAmount > 0 && (
+            <div className="text-right">
+              <span className="text-[9px] text-muted-foreground block leading-none uppercase tracking-wider">{t.purchaseInvoicesUi.footerStamp}</span>
+              <span className="font-mono font-semibold">{stampAmount.toLocaleString(uiLocale)}</span>
+            </div>
+          )}
           <div className="text-right border-l-2 border-primary/20 pl-4">
-            <span className="text-[9px] text-muted-foreground block leading-none uppercase tracking-wider">Líquido</span>
-            <span className="font-mono font-bold text-lg tracking-tight">{totals.total.toLocaleString('pt-AO')}</span>
+            <span className="text-[9px] text-muted-foreground block leading-none uppercase tracking-wider">{t.purchaseInvoicesUi.footerNet}</span>
+            <span className="font-mono font-bold text-lg tracking-tight">{supplierNetPayable.toLocaleString(uiLocale)}</span>
           </div>
           <span className="text-[10px] text-muted-foreground font-semibold">{form.currency || 'KZ'}</span>
         </div>
@@ -2334,7 +3078,10 @@ export default function PurchaseInvoices() {
         onSave={async (newProduct) => {
           const savedProduct = await addProductToStock(newProduct);
           handleAddProduct(savedProduct);
-          toast({ title: 'Produto criado', description: `${savedProduct.name} adicionado ao stock e à fatura` });
+          toast({
+            title: t.purchaseInvoicesUi.productCreatedTitle,
+            description: t.purchaseInvoicesUi.productCreatedDesc.replace('{name}', savedProduct.name),
+          });
         }}
       />
 
@@ -2342,44 +3089,44 @@ export default function PurchaseInvoices() {
       <Dialog open={showCreateSupplier} onOpenChange={setShowCreateSupplier}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Novo Fornecedor</DialogTitle>
+            <DialogTitle>{t.purchaseInvoicesUi.newSupplierDialogTitle}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label>Nome *</Label>
+              <Label>{t.purchaseInvoicesUi.labelName}</Label>
               <Input value={newSupplierForm.name} onChange={e => setNewSupplierForm(f => ({ ...f, name: e.target.value }))} placeholder={t.purchaseInvoicesUi.supplierNamePlaceholder} />
             </div>
             <div>
-              <Label>NIF</Label>
-              <Input value={newSupplierForm.nif} onChange={e => setNewSupplierForm(f => ({ ...f, nif: e.target.value }))} placeholder="NIF" />
+              <Label>{t.purchaseInvoicesUi.labelVatId}</Label>
+              <Input value={newSupplierForm.nif} onChange={e => setNewSupplierForm(f => ({ ...f, nif: e.target.value }))} placeholder={t.purchaseInvoicesUi.placeholderTaxId} />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <Label>Email</Label>
-                <Input value={newSupplierForm.email} onChange={e => setNewSupplierForm(f => ({ ...f, email: e.target.value }))} placeholder="Email" />
+                <Label>{t.purchaseInvoicesUi.labelEmail}</Label>
+                <Input value={newSupplierForm.email} onChange={e => setNewSupplierForm(f => ({ ...f, email: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelEmail} />
               </div>
               <div>
-                <Label>Telefone</Label>
-                <Input value={newSupplierForm.phone} onChange={e => setNewSupplierForm(f => ({ ...f, phone: e.target.value }))} placeholder="Telefone" />
+                <Label>{t.purchaseInvoicesUi.labelPhone}</Label>
+                <Input value={newSupplierForm.phone} onChange={e => setNewSupplierForm(f => ({ ...f, phone: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelPhone} />
               </div>
             </div>
             <div>
-              <Label>Morada</Label>
-              <Input value={newSupplierForm.address} onChange={e => setNewSupplierForm(f => ({ ...f, address: e.target.value }))} placeholder="Morada" />
+              <Label>{t.purchaseInvoicesUi.labelAddress}</Label>
+              <Input value={newSupplierForm.address} onChange={e => setNewSupplierForm(f => ({ ...f, address: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelAddress} />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <Label>Cidade</Label>
-                <Input value={newSupplierForm.city} onChange={e => setNewSupplierForm(f => ({ ...f, city: e.target.value }))} placeholder="Cidade" />
+                <Label>{t.purchaseInvoicesUi.labelCity}</Label>
+                <Input value={newSupplierForm.city} onChange={e => setNewSupplierForm(f => ({ ...f, city: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelCity} />
               </div>
               <div>
-                <Label>País</Label>
+                <Label>{t.purchaseInvoicesUi.labelCountry}</Label>
                 <Input value={newSupplierForm.country} onChange={e => setNewSupplierForm(f => ({ ...f, country: e.target.value }))} />
               </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreateSupplier(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setShowCreateSupplier(false)}>{t.common.cancel}</Button>
             <Button
               disabled={!newSupplierForm.name.trim()}
               onClick={async () => {
@@ -2406,7 +3153,7 @@ export default function PurchaseInvoices() {
                 }
               }}
             >
-              <Save className="h-4 w-4 mr-1" /> Guardar
+              <Save className="h-4 w-4 mr-1" /> {t.common.save}
             </Button>
           </DialogFooter>
         </DialogContent>

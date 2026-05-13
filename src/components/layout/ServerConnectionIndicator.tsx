@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getApiUrl, isWebPreview } from '@/lib/api/config';
+import { getApiUrl, getApiUrlAsync, isWebPreview } from '@/lib/api/config';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Database, Server, RefreshCw, CheckCircle2, XCircle, Container, Monitor } from 'lucide-react';
@@ -54,14 +54,18 @@ export function ServerConnectionIndicator() {
         const status = await (window as any).electronAPI.db.getStatus();
         if (status?.success !== false) {
           setElectronStatus(status);
-          setBackendReachable(status.connected || status.mode === 'server');
+          setBackendReachable(
+            status.connected
+            || status.mode === 'server'
+            || status.mode === 'standalone'
+          );
         } else {
           setElectronStatus(null);
           setBackendReachable(false);
         }
         // Also try the Express backend for extra info
         try {
-          const apiUrl = getApiUrl();
+          const apiUrl = await getApiUrlAsync({ waitForPortMs: 4000 });
           const response = await fetch(`${new URL(apiUrl).origin}/api/health`, {
             signal: AbortSignal.timeout(3000),
           });
@@ -116,7 +120,11 @@ export function ServerConnectionIndicator() {
     : (health?.database?.connected ?? false);
   
   const systemReachable = isElectron
-    ? (electronStatus?.mode === 'server' || electronStatus?.mode === 'client')
+    ? (
+        electronStatus?.mode === 'server'
+        || electronStatus?.mode === 'client'
+        || electronStatus?.mode === 'standalone'
+      )
     : backendReachable;
 
   const allGood = systemReachable && dbConnected;
@@ -129,7 +137,15 @@ export function ServerConnectionIndicator() {
   };
 
   const modeLabel = isElectron
-    ? (electronStatus?.mode === 'server' ? 'Servidor' : electronStatus?.mode === 'client' ? 'Cliente' : 'N/A')
+    ? (
+        electronStatus?.mode === 'server'
+          ? 'Servidor'
+          : electronStatus?.mode === 'client'
+            ? 'Cliente'
+            : electronStatus?.mode === 'standalone'
+              ? 'Local'
+              : 'N/A'
+      )
     : 'Web';
 
   return (
@@ -208,7 +224,13 @@ export function ServerConnectionIndicator() {
                     {t.connectionUi.mode}
                   </span>
                   <Badge variant="outline" className="text-[10px]">
-                    {electronStatus.mode === 'server' ? `🖥️ ${t.connectionUi.server}` : electronStatus.mode === 'client' ? `💻 ${t.connectionUi.client}` : '❓ N/A'}
+                    {electronStatus.mode === 'server'
+                      ? `🖥️ ${t.connectionUi.server}`
+                      : electronStatus.mode === 'client'
+                        ? `💻 ${t.connectionUi.client}`
+                        : electronStatus.mode === 'standalone'
+                          ? '📁 Local'
+                          : '❓ N/A'}
                   </Badge>
                 </div>
               </div>

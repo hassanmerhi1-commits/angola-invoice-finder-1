@@ -18,7 +18,216 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const http = require('http');
 const backendManager = require('./backendManager.cjs');
+
+/** Log line when localhost has no unified Express (often better-sqlite3 ABI mismatch). */
+function embeddedExpressUnreachableLogLine() {
+  let logDir = '';
+  try {
+    if (app?.isReady?.()) logDir = path.join(app.getPath('userData'), 'logs');
+  } catch (_) {}
+  const logPart = logDir ? ` Logs: ${logDir}` : '';
+  return (
+    'Express backend unreachable — embedded ERP HTTP is not answering on this PC.'
+    + logPart
+    + ' Dev: from repo run "npm run rebuild:backend" then restart. Installed .exe: rebuild installer (npm run electron:build) so backend/node_modules matches Electron; then reinstall.'
+  );
+}
+
+/** Short text for IPC error payloads (toasts); full help goes to stderr. */
+function embeddedExpressUnreachableMessage() {
+  try {
+    console.error('[DB→Express]', embeddedExpressUnreachableLogLine());
+  } catch (_) {}
+  let logDir = '';
+  try {
+    if (app?.isReady?.()) logDir = path.join(app.getPath('userData'), 'logs');
+  } catch (_) {}
+  return (
+    'Cannot save: local ERP server is offline (embedded Express). '
+    + (logDir ? `See logs in ${logDir}. ` : '')
+    + 'Fix: npm run rebuild:backend in the project, restart; if you use the Windows installer, run npm run electron:build and reinstall.'
+  );
+}
+
+/** Port for the auto-spawned Express process (SQLite lives there when main-process pool is null). */
+function getEmbeddedExpressPort() {
+  try {
+    const p = backendManager.getPort();
+    return typeof p === 'number' && p > 0 && p < 65536 ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Same shape as backendManager health: unified ERP /api/health only (not random servers on the port). */
+function probeUnifiedExpressHealth(port, timeoutMs = 750) {
+  return new Promise((resolve) => {
+    const req = http.get(
+      { host: '127.0.0.1', port, path: '/api/health', timeout: timeoutMs },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          let payload = null;
+          try {
+            payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          } catch {
+            payload = null;
+          }
+          const ok =
+            res.statusCode === 200
+            && payload
+            && payload.ok === true
+            && payload.unified === true
+            && (payload.engine === 'sqlite' || payload.engine === 'postgres');
+          resolve(ok);
+        });
+      }
+    );
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+/** Remember a port found by scanning so we do not re-scan every IPC call. */
+let cachedExpressProbePort = null;
+
+/**
+ * Port for HTTP calls from main → embedded Express when pool is null.
+ * Uses backendManager port when set; otherwise probes 3000..3009 (matches renderer getApiUrlAsync).
+ */
+async function resolveExpressTargetPort(ignoreManagerPort = false) {
+  if (!ignoreManagerPort) {
+    const managed = getEmbeddedExpressPort();
+    if (managed) return managed;
+    if (cachedExpressProbePort != null) {
+      const ok = await probeUnifiedExpressHealth(cachedExpressProbePort, 500);
+      if (ok) return cachedExpressProbePort;
+      cachedExpressProbePort = null;
+    }
+  }
+  const probes = [];
+  for (let p = 3000; p < 3010; p++) {
+    probes.push(probeUnifiedExpressHealth(p, 1100).then((ok) => (ok ? p : null)));
+  }
+  const hits = await Promise.all(probes);
+  const found = hits.find((x) => x != null);
+  if (found) cachedExpressProbePort = found;
+  return found || null;
+}
+
+function performExpressJsonRequest(port, method, pathname, bodyObj) {
+  const payload = bodyObj != null ? JSON.stringify(bodyObj) : null;
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: pathname,
+        method,
+        headers: {
+          Accept: 'application/json',
+          ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+        },
+        timeout: 20000,
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', (c) => {
+          raw += c;
+        });
+        res.on('end', () => {
+          let json = null;
+          try {
+            json = raw ? JSON.parse(raw) : null;
+          } catch {
+            json = { error: raw?.slice?.(0, 200) || 'Invalid JSON' };
+          }
+          resolve({ status: res.statusCode || 0, json });
+        });
+      }
+    );
+    req.on('error', (e) => {
+      console.warn('[DB→Express]', method, pathname, port, e.message);
+      resolve(null);
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+/** Brief pause — embedded Express can lag the UI right after spawn or wake-from-sleep. */
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * If this PC is the DB server (SQLite path in IP file) but Express never bound a port
+ * (failed spawn at startup, child crash, etc.), try spawning it again before supplier IPC.
+ */
+async function ensureEmbeddedBackendRunningIfNeeded() {
+  try {
+    if (getEmbeddedExpressPort()) return;
+    const ipConfig = parseIPFile();
+    if (!ipConfig.valid || !ipConfig.isServer || !ipConfig.path) return;
+    console.warn('[DB→Express] Embedded ERP HTTP not listening — starting backend process…');
+    cachedExpressProbePort = null;
+    const r = await backendManager.start({ mode: 'server', sqlitePath: ipConfig.path.trim() });
+    if (r?.started && r.port) {
+      await delay(800);
+    } else if (r?.error) {
+      console.warn('[DB→Express] backendManager.start:', r.error);
+    }
+  } catch (e) {
+    console.warn('[DB→Express] ensureEmbeddedBackendRunningIfNeeded:', e?.message || e);
+  }
+}
+
+/**
+ * Localhost-only JSON call to embedded Express (same DB file as desktop ERP).
+ * Retries across transient ECONNREFUSED / race right after backend start.
+ */
+async function requestExpressJson(method, pathname, bodyObj) {
+  await ensureEmbeddedBackendRunningIfNeeded();
+
+  const maxAttempts = 6;
+  const pauseMs = 400;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let port = await resolveExpressTargetPort(false);
+    if (!port) {
+      if (attempt === 1) await ensureEmbeddedBackendRunningIfNeeded();
+      if (attempt < maxAttempts - 1) await delay(pauseMs);
+      continue;
+    }
+
+    let result = await performExpressJsonRequest(port, method, pathname, bodyObj);
+    if (result != null) return result;
+
+    cachedExpressProbePort = null;
+    port = await resolveExpressTargetPort(true);
+    if (!port) {
+      if (attempt < maxAttempts - 1) await delay(pauseMs);
+      continue;
+    }
+
+    result = await performExpressJsonRequest(port, method, pathname, bodyObj);
+    if (result != null) return result;
+
+    if (attempt < maxAttempts - 1) await delay(pauseMs);
+  }
+
+  return null;
+}
 
 ipcMain.on('backend:getPortSync', (event) => {
   const st = backendManager.getStatus();
@@ -362,7 +571,13 @@ async function connectPostgres(connectionString) {
 }
 
 async function dbGetAll(table) {
-  if (!pool) return [];
+  if (!pool) {
+    if (table === 'suppliers') {
+      const r = await requestExpressJson('GET', '/api/suppliers', null);
+      if (r && r.status === 200 && Array.isArray(r.json)) return r.json;
+    }
+    return [];
+  }
   try {
     const result = await pool.query(
       'SELECT data FROM nexor_records WHERE table_name = ? ORDER BY updated_at DESC',
@@ -377,7 +592,13 @@ async function dbGetAll(table) {
 }
 
 async function dbGetById(table, id) {
-  if (!pool) return null;
+  if (!pool) {
+    if (table === 'suppliers') {
+      const rows = await dbGetAll('suppliers');
+      return rows.find((row) => String(row.id) === String(id)) || null;
+    }
+    return null;
+  }
   try {
     const result = await pool.query(
       'SELECT data FROM nexor_records WHERE table_name = ? AND id = ? LIMIT 1',
@@ -391,7 +612,32 @@ async function dbGetById(table, id) {
 }
 
 async function dbInsert(table, data, companyId = null) {
-  if (!pool) return { success: false, error: 'Database not connected' };
+  if (!pool) {
+    if (table === 'suppliers' && data) {
+      const body = {
+        name: data.name || '',
+        nif: data.nif || '',
+        email: data.email || '',
+        phone: data.phone || '',
+        address: data.address || '',
+        city: data.city || '',
+        country: data.country || 'Angola',
+        contactPerson: data.contact_person ?? data.contactPerson ?? '',
+        paymentTerms: data.payment_terms ?? data.paymentTerms ?? '30_days',
+        notes: data.notes || '',
+      };
+      const r = await requestExpressJson('POST', '/api/suppliers', body);
+      if (r && r.status >= 200 && r.status < 300 && r.json && !r.json.error) {
+        try {
+          broadcastUpdate(table, 'insert', r.json.id, companyId);
+        } catch (_) {}
+        return { success: true };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
+    return { success: false, error: 'Database not connected' };
+  }
   try {
     const now = new Date().toISOString();
     await pool.query(
@@ -419,7 +665,33 @@ async function dbInsert(table, data, companyId = null) {
 }
 
 async function dbUpdate(table, id, data, companyId = null) {
-  if (!pool) return { success: false, error: 'Database not connected' };
+  if (!pool) {
+    if (table === 'suppliers' && id && data) {
+      const body = {
+        name: data.name || '',
+        nif: data.nif || '',
+        email: data.email || '',
+        phone: data.phone || '',
+        address: data.address || '',
+        city: data.city || '',
+        country: data.country || 'Angola',
+        contactPerson: data.contact_person ?? data.contactPerson ?? '',
+        paymentTerms: data.payment_terms ?? data.paymentTerms ?? '30_days',
+        notes: data.notes || '',
+        isActive: data.is_active ?? data.isActive ?? true,
+      };
+      const r = await requestExpressJson('PUT', `/api/suppliers/${encodeURIComponent(id)}`, body);
+      if (r && r.status >= 200 && r.status < 300 && r.json && !r.json.error) {
+        try {
+          broadcastUpdate(table, 'update', id, companyId);
+        } catch (_) {}
+        return { success: true };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
+    return { success: false, error: 'Database not connected' };
+  }
   try {
     const existing = await dbGetById(table, id);
     const previousValue = existing;
@@ -450,7 +722,20 @@ async function dbUpdate(table, id, data, companyId = null) {
 }
 
 async function dbDelete(table, id, companyId = null) {
-  if (!pool) return { success: false, error: 'Database not connected' };
+  if (!pool) {
+    if (table === 'suppliers' && id) {
+      const r = await requestExpressJson('DELETE', `/api/suppliers/${encodeURIComponent(id)}`, null);
+      if (r && r.status >= 200 && r.status < 300) {
+        try {
+          broadcastUpdate(table, 'delete', id, companyId);
+        } catch (_) {}
+        return { success: true };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
+    return { success: false, error: 'Database not connected' };
+  }
   try {
     const previousValue = await dbGetById(table, id);
     await pool.query(`DELETE FROM nexor_records WHERE table_name = ? AND id = ?`, [table, id]);
@@ -955,9 +1240,12 @@ function loadRendererRoute(targetWindow, route = '/') {
   }
 
   if (source.type === 'server') {
-    const routePath = normalizedRoute === '/' ? '' : normalizedRoute;
     const fallbackSource = getLocalRendererSource();
     let recovered = false;
+    // Must match HashRouter (same as dev): route + query live in the fragment, not in pathname.
+    // Loading `${base}/purchase-invoices?mode=…` leaves hash empty → blank/wrong screen until reload.
+    const baseUrl = String(source.url || '').replace(/\/$/, '');
+    const serverLoadUrl = `${baseUrl}/#${normalizedRoute}`;
 
     const cleanup = () => {
       targetWindow.webContents.removeListener('did-fail-load', handleFail);
@@ -979,7 +1267,7 @@ function loadRendererRoute(targetWindow, route = '/') {
 
     const handleFail = (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame) return;
-      fallbackToLocal(`${errorDescription || 'Load failed'} (${validatedURL || source.url}${routePath})`);
+      fallbackToLocal(`${errorDescription || 'Load failed'} (${validatedURL || serverLoadUrl})`);
     };
 
     const handleGone = (_event, details) => {
@@ -989,7 +1277,7 @@ function loadRendererRoute(targetWindow, route = '/') {
     cleanup();
     targetWindow.webContents.once('did-fail-load', handleFail);
     targetWindow.webContents.once('render-process-gone', handleGone);
-    targetWindow.loadURL(`${source.url}${routePath}`).catch((error) => fallbackToLocal(error?.message || 'loadURL failed'));
+    targetWindow.loadURL(serverLoadUrl).catch((error) => fallbackToLocal(error?.message || 'loadURL failed'));
     return;
   }
 
@@ -1030,7 +1318,23 @@ function openPurchaseInvoiceWindow() {
     show: false,
   });
 
-  loadRendererRoute(purchaseInvoiceWindow, '/purchase-invoices-window?mode=create&standalone=1');
+  // Open editor route directly — hash URLs put ?query inside #...; a redirect from
+  // /purchase-invoices-window often lost location.search so mode=create never applied.
+  loadRendererRoute(purchaseInvoiceWindow, '/purchase-invoices/new');
+
+  // Ensure intent is visible before React mounts (hash/query parsing can lag one frame).
+  // Child windows have their own sessionStorage — mirror logged-in session so ProtectedRoute works (same key as useERP.ts).
+  purchaseInvoiceWindow.webContents.once('dom-ready', () => {
+    purchaseInvoiceWindow.webContents
+      .executeJavaScript(
+        `try{
+          sessionStorage.setItem('kwanzaerp_session_authenticated','1');
+          localStorage.setItem('nexor_pi_intent_create_v1',String(Date.now()));
+        }catch(e){}`,
+        true,
+      )
+      .catch(() => {});
+  });
 
   purchaseInvoiceWindow.once('ready-to-show', () => {
     purchaseInvoiceWindow.show();
@@ -1071,7 +1375,13 @@ function openPurchaseProductPickerWindow(parentWindow) {
       show: false,
     });
 
-    loadRendererRoute(purchaseProductPickerWindow, '/purchase-invoices-window?mode=product-picker&standalone=1');
+    loadRendererRoute(purchaseProductPickerWindow, '/purchase-invoices?mode=product-picker&standalone=1');
+
+    purchaseProductPickerWindow.webContents.once('dom-ready', () => {
+      purchaseProductPickerWindow.webContents
+        .executeJavaScript(`try{sessionStorage.setItem('kwanzaerp_session_authenticated','1');}catch(e){}`, true)
+        .catch(() => {});
+    });
 
     purchaseProductPickerWindow.once('ready-to-show', () => {
       purchaseProductPickerWindow.show();
@@ -1195,6 +1505,12 @@ app.whenReady().then(async () => {
     try {
       mainWindow?.webContents.send('backend:status', status);
     } catch (_) { /* renderer may be reloading */ }
+    const p = backendManager.getPort();
+    if (mainWindow && !mainWindow.isDestroyed() && typeof p === 'number' && p > 0 && p < 65536) {
+      mainWindow.webContents
+        .executeJavaScript(`window.__KWANZA_BACKEND_PORT__ = ${p};`, true)
+        .catch(() => {});
+    }
   });
 
   // Start Express before loading the UI so the first /api calls are not ECONNREFUSED.
@@ -1299,6 +1615,15 @@ ipcMain.handle('ipfile:write', (_, content) => {
 
 ipcMain.handle('ipfile:parse', () => parseIPFile());
 
+/** Sync parse for hot paths (API base URL) — avoids trusting stale localStorage vs on-disk IP file. */
+ipcMain.on('ipfile:parseSync', (event) => {
+  try {
+    event.returnValue = JSON.stringify(parseIPFile());
+  } catch (e) {
+    event.returnValue = JSON.stringify({ valid: false, error: e.message, path: null, isServer: false });
+  }
+});
+
 // Company management
 ipcMain.handle('company:list', () => {
   if (isServerMode) return ensureCompaniesRegistry();
@@ -1325,14 +1650,42 @@ ipcMain.handle('company:setActive', async (_, companyId) => {
 });
 
 // Database operations (transparently routed)
-ipcMain.handle('db:getStatus', () => ({
-  success: true,
-  mode: isServerMode ? 'server' : (serverAddress ? 'client' : 'unconfigured'),
-  path: pgConnectionString,
-  serverAddress,
-  wsPort: WS_PORT,
-  connected: isServerMode ? !!pool : (wsClient?.readyState === WebSocket.OPEN),
-}));
+ipcMain.handle('db:getStatus', async () => {
+  const expressPort = await resolveExpressTargetPort(false);
+  const expressUp = !!expressPort;
+  /** LAN client: talk to server over WebSocket only. */
+  const clientWsOk =
+    !isServerMode && !!serverAddress && wsClient?.readyState === WebSocket.OPEN;
+  /** Server PC: SQLite is in Express when `pool` is null (normal for .db files). */
+  const serverOk = isServerMode && (!!pool || expressUp);
+  /**
+   * First-run / incomplete setup: IP file empty or invalid, but backendManager still spawns
+   * embedded Express → SQLite at userData. Previously `connected` stayed false (only WS counted).
+   */
+  const standaloneEmbeddedOk =
+    !isServerMode && !serverAddress && expressUp;
+
+  const connected = serverOk || clientWsOk || standaloneEmbeddedOk;
+
+  const mode = isServerMode
+    ? 'server'
+    : serverAddress
+      ? 'client'
+      : expressUp
+        ? 'standalone'
+        : 'unconfigured';
+
+  return {
+    success: true,
+    mode,
+    path: pgConnectionString,
+    serverAddress,
+    wsPort: WS_PORT,
+    connected,
+    expressBackend: expressUp,
+    expressPort: expressPort || null,
+  };
+});
 
 ipcMain.handle('db:init', () => initDatabase());
 
@@ -1401,9 +1754,18 @@ ipcMain.handle('db:create', async () => {
 ipcMain.handle('db:testConnection', async () => {
   if (isServerMode) {
     try {
-      if (!pool) return { success: false, mode: 'server', error: 'No pool' };
-      await pool.query('SELECT 1');
-      return { success: true, mode: 'server' };
+      if (pool) {
+        await pool.query('SELECT 1');
+        return { success: true, mode: 'server' };
+      }
+      const port = await resolveExpressTargetPort(false);
+      if (port) {
+        const r = await requestExpressJson('GET', '/api/health', null);
+        if (r && r.status === 200 && r.json?.ok !== false) {
+          return { success: true, mode: 'server', via: 'express', port };
+        }
+      }
+      return { success: false, mode: 'server', error: 'No database pool and Express backend not reachable' };
     } catch (e) {
       return { success: false, mode: 'server', error: e.message };
     }

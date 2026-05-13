@@ -1,9 +1,10 @@
 import React from "react";
+import { invalidateElectronApiBaseCache } from "@/lib/api/config";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, HashRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, HashRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useERP";
 import { LanguageProvider, useLanguage } from "@/i18n";
 import { BranchProvider } from "@/contexts/BranchContext";
@@ -51,6 +52,23 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
+/**
+ * Preserves `?query` when redirecting (e.g. legacy `#/purchase-invoices-window?mode=create`).
+ * With HashRouter, `location.search` is sometimes empty even when the hash contains `?mode=…`
+ * — recover from `window.location.hash` so Electron/deep links keep query params.
+ */
+function RedirectPreserveSearch({ to }: { to: string }) {
+  const { search } = useLocation();
+  let q = search;
+  if (!q && typeof window !== "undefined") {
+    const hash = window.location.hash || "";
+    const qi = hash.indexOf("?");
+    if (qi >= 0) q = hash.slice(qi);
+  }
+  const base = to.endsWith("/") ? to.slice(0, -1) : to;
+  return <Navigate to={`${base}${q}`} replace />;
+}
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
   
@@ -69,9 +87,22 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function readSetupCompleteFromStorage(): boolean | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const v = localStorage.getItem('kwanza_setup_complete');
+    if (v === 'true') return true;
+    if (v === 'false') return false;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 function AppRoutes() {
   const { user } = useAuth();
-  const [setupComplete, setSetupComplete] = React.useState<boolean | null>(null);
+  /** Avoid a blank/spinner-only first paint in extra Electron windows while setup IPC catches up. */
+  const [setupComplete, setSetupComplete] = React.useState<boolean | null>(readSetupCompleteFromStorage);
   const isElectron = typeof window !== "undefined" && !!window.electronAPI?.isElectron;
 
   React.useEffect(() => {
@@ -80,6 +111,12 @@ function AppRoutes() {
     const check = async () => {
       try {
         if (isElectron && window.electronAPI?.setup?.getConfig) {
+          const snapRoleKeys = () => ({
+            client: localStorage.getItem('kwanza_client_config'),
+            isServer: localStorage.getItem('kwanza_is_server'),
+          });
+          const beforeRole = snapRoleKeys();
+
           const setup = await window.electronAPI.setup.getConfig();
           const cfg = setup?.success ? setup.config : null;
           const complete = !!cfg?.setupComplete;
@@ -96,13 +133,25 @@ function AppRoutes() {
               localStorage.setItem('kwanza_server_config', JSON.stringify({ databasePath: cfg.serverConfig.databasePath }));
               localStorage.removeItem('kwanza_client_config');
             } else if (!isServer && cfg?.clientConfig?.serverIp) {
-              localStorage.setItem('kwanza_client_config', JSON.stringify({ serverIp: cfg.clientConfig.serverIp, serverPort: cfg.clientConfig.serverPort || 4546 }));
+              localStorage.setItem(
+                'kwanza_client_config',
+                JSON.stringify({
+                  serverIp: cfg.clientConfig.serverIp,
+                  httpPort: 3000,
+                  serverPort: cfg.clientConfig.serverPort || 4546,
+                }),
+              );
               localStorage.removeItem('kwanza_server_config');
             }
           } else {
             localStorage.removeItem('kwanza_is_server');
             localStorage.removeItem('kwanza_server_config');
             localStorage.removeItem('kwanza_client_config');
+          }
+
+          const afterRole = snapRoleKeys();
+          if (beforeRole.client !== afterRole.client || beforeRole.isServer !== afterRole.isServer) {
+            invalidateElectronApiBaseCache();
           }
 
           setSetupComplete(complete);
@@ -169,6 +218,8 @@ function AppRoutes() {
         <Route path="/categories" element={<Categories />} />
         <Route path="/suppliers" element={<Suppliers />} />
         <Route path="/purchase-orders" element={<PurchaseOrders />} />
+        {/* Must be before `/purchase-invoices` — distinct route gives reliable HashRouter navigation for “Nova fatura”. */}
+        <Route path="/purchase-invoices/new" element={<PurchaseInvoices />} />
         <Route path="/purchase-invoices" element={<PurchaseInvoices />} />
         <Route path="/daily-reports" element={<DailyReports />} />
         <Route path="/clients" element={<Clients />} />
@@ -200,7 +251,7 @@ function AppRoutes() {
         <Route path="/exchange-rates" element={<ExchangeRates />} />
         <Route path="/bank-reconciliation" element={<BankReconciliation />} />
       </Route>
-      <Route path="/purchase-invoices-window" element={<Navigate to="/purchase-invoices" replace />} />
+      <Route path="/purchase-invoices-window" element={<RedirectPreserveSearch to="/purchase-invoices" />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
@@ -225,10 +276,20 @@ const App = () => {
     ? '/app'
     : undefined;
 
+  React.useEffect(() => {
+    if (!isElectron) return;
+    const api = (window as any).electronAPI;
+    if (!api?.backend?.onStatus) return;
+    const onBackendEvent = () => {
+      invalidateElectronApiBaseCache();
+    };
+    api.backend.onStatus(onBackendEvent);
+  }, [isElectron]);
+
   return (
-    <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <LanguageProvider>
+    <QueryClientProvider client={queryClient}>
+      <LanguageProvider>
+        <ErrorBoundary>
           <BranchProvider>
             <TooltipProvider>
               <Toaster />
@@ -236,9 +297,9 @@ const App = () => {
               <LanguageKeyedRouter isElectron={isElectron} browserBasename={browserBasename} />
             </TooltipProvider>
           </BranchProvider>
-        </LanguageProvider>
-      </QueryClientProvider>
-    </ErrorBoundary>
+        </ErrorBoundary>
+      </LanguageProvider>
+    </QueryClientProvider>
   );
 };
 

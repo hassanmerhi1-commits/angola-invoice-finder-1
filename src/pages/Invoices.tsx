@@ -2,7 +2,7 @@
 // Multi-tab document browser with linked conversion flow
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
@@ -26,6 +26,7 @@ import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from 
 import { getDocuments, convertDocument } from '@/lib/documentStorage';
 import { DocumentFormDialog } from '@/components/documents/DocumentFormDialog';
 import { DocumentFlowViewer } from '@/components/documents/DocumentFlowViewer';
+import { navigateThenStartPurchaseCreate } from '@/lib/nexorPurchaseCreate';
 
 // Build flow nodes from a document and its linked chain
 function buildFlowNodes(doc: ERPDocument): { type: string; number: string; date: string; status: 'completed' | 'active' | 'pending'; amount?: number }[] {
@@ -101,6 +102,7 @@ export default function Invoices() {
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const navigate = useNavigate();
+  const location = useLocation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
   const [activeTab, setActiveTab] = useState<DocumentType | 'all'>('all');
@@ -123,6 +125,28 @@ export default function Invoices() {
     const type = activeTab === 'all' ? undefined : activeTab;
     getDocuments(type, currentBranch?.id).then(setDocuments);
   }, [activeTab, currentBranch?.id, refreshKey]);
+
+  // TopNav toolbar "Novo" / shortcuts (document workspace — HashRouter)
+  useEffect(() => {
+    const openSalesInvoice = () => {
+      setFormDocType('fatura_venda');
+      setEditDoc(null);
+      setPrefillDoc(null);
+      setFormOpen(true);
+    };
+    const openReceipt = () => {
+      setFormDocType('recibo');
+      setEditDoc(null);
+      setPrefillDoc(null);
+      setFormOpen(true);
+    };
+    window.addEventListener('nexor:invoices-new', openSalesInvoice);
+    window.addEventListener('nexor:invoices-new-receipt', openReceipt);
+    return () => {
+      window.removeEventListener('nexor:invoices-new', openSalesInvoice);
+      window.removeEventListener('nexor:invoices-new-receipt', openReceipt);
+    };
+  }, []);
 
   const filteredDocs = useMemo(() => {
     if (!searchTerm) return documents;
@@ -189,7 +213,7 @@ export default function Invoices() {
             {Object.entries(DOCUMENT_TYPE_CONFIG).map(([key, cfg]) => (
               <DropdownMenuItem key={key} onClick={() => {
                 if (key === 'fatura_compra') {
-                  navigate('/purchase-invoices');
+                  navigateThenStartPurchaseCreate(navigate, location.pathname);
                 } else {
                   openNewDocument(key as DocumentType);
                 }

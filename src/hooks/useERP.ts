@@ -419,6 +419,27 @@ export function useSales(branchId?: string) {
 // ============================================
 const SESSION_TOKEN_KEY = 'kwanzaerp_window_session';
 
+/** Electron: set on successful login; cleared on logout. Survives navigation but not app restart (sessionStorage). */
+export const ELECTRON_SESSION_AUTH_KEY = 'kwanzaerp_session_authenticated';
+
+function markElectronSessionAuthenticated() {
+  try {
+    if (storage.isElectronMode()) {
+      sessionStorage.setItem(ELECTRON_SESSION_AUTH_KEY, '1');
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearElectronSessionAuthenticated() {
+  try {
+    sessionStorage.removeItem(ELECTRON_SESSION_AUTH_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 type AuthState = { user: User | null; isLoading: boolean };
 let authState: AuthState = { user: null, isLoading: true };
 let authInitialized = false;
@@ -447,13 +468,55 @@ function initWindowSession() {
 
 initWindowSession();
 
+/**
+ * Electron: restore user only if this **session** logged in (`sessionStorage` is empty on cold start).
+ * Avoids skipping the login screen while still avoiding an endless spinner on secondary windows
+ * (main.cjs injects the same session flag when opening a child window).
+ */
+function hydrateElectronAuthBeforeFirstPaint() {
+  if (!storage.isElectronMode()) return;
+  if (authInitialized) return;
+  authInitialized = true;
+  let sessionOk = false;
+  try {
+    sessionOk = sessionStorage.getItem(ELECTRON_SESSION_AUTH_KEY) === '1';
+  } catch {
+    sessionOk = false;
+  }
+  const currentUser = storage.getCurrentUser();
+  if (sessionOk && currentUser?.id && currentUser?.email) {
+    authState = { user: currentUser, isLoading: false };
+    void api.auth.me().catch(() => {});
+    return;
+  }
+  authState = { user: null, isLoading: false };
+}
+hydrateElectronAuthBeforeFirstPaint();
+
 async function initAuthStateOnce() {
   if (authInitialized) return;
   authInitialized = true;
 
   const currentUser = storage.getCurrentUser();
+
+  // Electron: same rules as hydrate — only revive user when this session authenticated.
+  if (storage.isElectronMode()) {
+    let sessionOk = false;
+    try {
+      sessionOk = sessionStorage.getItem(ELECTRON_SESSION_AUTH_KEY) === '1';
+    } catch {
+      sessionOk = false;
+    }
+    if (sessionOk && currentUser?.id && currentUser?.email) {
+      setAuthState({ user: currentUser, isLoading: false });
+      void api.auth.me().catch(() => {});
+      return;
+    }
+    setAuthState({ user: null, isLoading: false });
+    return;
+  }
+
   if (currentUser && currentUser.id && currentUser.email) {
-    // Try to verify with API
     try {
       const meResult = await api.auth.me();
       if (meResult.data) {
@@ -461,9 +524,9 @@ async function initAuthStateOnce() {
         return;
       }
     } catch {
-      // API not available, check locally
+      /* API not available */
     }
-    
+
     if (isDemoMode()) {
       const users = await storage.getUsers();
       const validUser = users.find(u => u.id === currentUser.id && u.isActive);
@@ -472,6 +535,7 @@ async function initAuthStateOnce() {
         return;
       }
     }
+
     storage.setCurrentUser(null);
   }
   setAuthState({ user: null, isLoading: false });
@@ -508,6 +572,7 @@ export function useAuth() {
         };
         storage.setCurrentUser(user);
         setAuthState({ user });
+        markElectronSessionAuthenticated();
         console.log('[Auth] Logged in via backend API');
         return true;
       }
@@ -573,6 +638,7 @@ export function useAuth() {
               };
               storage.setCurrentUser(user);
               setAuthState({ user });
+              markElectronSessionAuthenticated();
               return true;
             }
           }
@@ -596,6 +662,7 @@ export function useAuth() {
         };
         storage.setCurrentUser(user);
         setAuthState({ user });
+        markElectronSessionAuthenticated();
         return true;
       }
 
@@ -615,6 +682,7 @@ export function useAuth() {
       if (foundUser) {
         storage.setCurrentUser(foundUser);
         setAuthState({ user: foundUser });
+        markElectronSessionAuthenticated();
         return true;
       }
     }
@@ -622,6 +690,7 @@ export function useAuth() {
   }, []);
 
   const logout = useCallback(() => {
+    clearElectronSessionAuthenticated();
     storage.setCurrentUser(null);
     setAuthToken(null);
     setAuthState({ user: null });
@@ -813,10 +882,15 @@ export function useSuppliers() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
   const refreshSuppliers = useCallback(async () => {
-    const data = await apiFallback<any[]>(
-      () => api.suppliers.list(),
-      () => storage.getSuppliers()
-    );
+    let data: any[];
+    try {
+      data = await apiFallback<any[]>(
+        () => api.suppliers.list(),
+        () => storage.getSuppliers()
+      );
+    } catch {
+      data = await storage.getSuppliers();
+    }
     const mapped = Array.isArray(data) ? data.map(mapSupplier) : [];
     console.log(`[ERP] Suppliers loaded: ${mapped.length} total, ${mapped.filter(s => s.isActive).length} active`);
     setSuppliers(mapped);
@@ -838,23 +912,41 @@ export function useSuppliers() {
 
   const createSupplier = useCallback(async (data: Omit<Supplier, 'id' | 'createdAt' | 'updatedAt'>): Promise<Supplier> => {
     const result = await api.suppliers.create(data);
-    if (result.error && !result.data) {
-      throw new Error(result.error);
-    }
     if (result.data) {
       await ensureSupplierAccount(result.data.id, data.name, data.nif);
       await refreshSuppliers();
       return result.data;
     }
-    // Fallback for offline/demo
+    const errMsg = (result.error || '').toLowerCase();
+    const likelyValidation =
+      errMsg.includes('duplicate') ||
+      errMsg.includes('unique') ||
+      errMsg.includes('validation') ||
+      errMsg.includes('already exists');
+    const recoverable =
+      !likelyValidation &&
+      (!result.error ||
+        errMsg.includes('database not connected') ||
+        errMsg.includes('network') ||
+        errMsg.includes('fetch') ||
+        errMsg.includes('failed to fetch') ||
+        errMsg.includes('econnrefused') ||
+        errMsg.includes('timeout') ||
+        errMsg.includes('demo mode') ||
+        errMsg.includes('backend not available'));
+    if (result.error && !recoverable) {
+      throw new Error(result.error);
+    }
+    if (result.error) {
+      console.warn('[ERP] createSupplier recoverable failure, using local cache:', result.error);
+    }
     const supplier: Supplier = {
       ...data,
       id: `supplier_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    await storage.saveSupplier(supplier);
-    // Also create sub-account locally
+    storage.saveSupplierLocalFallback(supplier);
     await ensureSupplierAccount(supplier.id, supplier.name, supplier.nif);
     await refreshSuppliers();
     return supplier;
