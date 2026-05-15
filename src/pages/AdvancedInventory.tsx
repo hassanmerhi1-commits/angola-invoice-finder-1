@@ -226,10 +226,10 @@ export default function AdvancedInventory() {
     }
   };
 
-  const handleImportConfirm = () => {
+  const handleImportConfirm = async () => {
     let imported = 0;
-    
-    importedProducts.forEach(excelProd => {
+
+    for (const excelProd of importedProducts) {
       const newProduct: Product = {
         id: `prod-${Date.now()}-${Math.random()}`,
         name: excelProd.descricao,
@@ -248,10 +248,10 @@ export default function AdvancedInventory() {
         isActive: true,
         createdAt: new Date().toISOString(),
       };
-      
-      addProduct(newProduct);
+
+      await addProduct(newProduct);
       imported++;
-    });
+    }
 
     toast.success(`${imported} products imported successfully`);
     setImportDialogOpen(false);
@@ -793,12 +793,12 @@ export default function AdvancedInventory() {
           }
         }}
         product={editingProduct}
-        onSave={(product) => {
+        onSave={async (product) => {
           if (editingProduct) {
-            updateProduct(product);
+            await updateProduct(product);
             toast.success('Product updated');
           } else {
-            addProduct(product);
+            await addProduct(product);
             toast.success('Product added');
           }
           setShowAddDialog(false);

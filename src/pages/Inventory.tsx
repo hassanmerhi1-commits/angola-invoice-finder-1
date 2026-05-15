@@ -151,13 +151,15 @@ export default function Inventory() {
     loadStockMovements();
   }, [loadStockMovements, products]);
   
-  // For head office: deduplicate products by SKU (show unique items with aggregated total)
+  // For head office: deduplicate products by SKU (show unique items with aggregated total).
+  // Use trimmed SKU, falling back to product id so blank/duplicate SKU keys do not hide new rows.
   const displayProducts = useMemo(() => {
     if (!isHeadOffice) return products;
     const seen = new Map<string, Product>();
     for (const p of products) {
-      if (!seen.has(p.sku)) {
-        seen.set(p.sku, { ...p });
+      const key = (p.sku || '').trim() || p.id;
+      if (!seen.has(key)) {
+        seen.set(key, { ...p });
       }
     }
     return Array.from(seen.values());
@@ -189,13 +191,20 @@ export default function Inventory() {
     navigate('.', { replace: true, state: {} });
   }, [location.state, navigate]);
 
-  const handleSaveProduct = (product: Product) => {
-    if (selectedProduct) {
-      updateProduct(product);
-    } else {
-      addProduct(product);
+  const handleSaveProduct = async (product: Product) => {
+    try {
+      if (selectedProduct) {
+        await updateProduct(product);
+        toast.success(t.productFormUi.productUpdated);
+      } else {
+        await addProduct(product);
+        toast.success(t.productFormUi.productCreated);
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error(message || t.productFormUi.productSaveFailed);
+      throw e;
     }
-    refreshProducts();
   };
 
   const handleSelectProduct = (product: Product) => {

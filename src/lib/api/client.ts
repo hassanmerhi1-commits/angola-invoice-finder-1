@@ -54,7 +54,10 @@ async function ipcInsert(table: string, data: any): Promise<ApiResponse<any>> {
       data.id = generateId();
     }
     const result = await window.electronAPI!.db.insert(table, data);
-    if (result.success) return { data };
+    if (result.success) {
+      const payload = result.data !== undefined && result.data !== null ? result.data : data;
+      return { data: payload };
+    }
     return { error: result.error || 'Insert failed' };
   } catch (e: any) {
     return { error: e.message || 'IPC insert error' };
@@ -475,8 +478,13 @@ export const api = {
 
   // Clients
   clients: {
-    list: () => {
-      return apiFetch<any[]>('/customers');
+    list: async () => {
+      if (isElectronMode()) {
+        const apiResult = await apiFetch<any[]>('/clients');
+        if (apiResult.data !== undefined) return apiResult;
+        return ipcGetAll<any>('clients');
+      }
+      return apiFetch<any[]>('/clients');
     },
     create: (data: any) => {
       if (isElectronMode()) return ipcInsert('clients', { id: generateId(), ...data, created_at: new Date().toISOString() });
@@ -716,6 +724,13 @@ export const api = {
     },
     receive: (id: string, receivedBy: string, receivedQuantities: Record<string, number>) => {
       return apiFetch<any>(`/purchase-orders/${id}/receive`, { method: 'POST', body: JSON.stringify({ receivedBy, receivedQuantities }) });
+    },
+    /** Status-only: PO lines fully received; stock already handled by purchase invoice. */
+    markReceivedFromInvoice: (body: { orderNumber: string; supplierId: string; receivedBy?: string }) => {
+      return apiFetch<{ success?: boolean; skipped?: boolean }>(
+        '/purchase-orders/mark-received-from-invoice',
+        { method: 'POST', body: JSON.stringify(body) },
+      );
     },
   },
 

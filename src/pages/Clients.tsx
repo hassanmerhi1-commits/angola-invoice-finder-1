@@ -80,7 +80,7 @@ export default function Clients() {
     setDialogOpen(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.name || !formData.nif) {
       toast({
         title: t.clientsUi.toastErrorTitle,
@@ -100,31 +100,40 @@ export default function Clients() {
       return;
     }
 
-    if (selectedClient) {
-      saveClient({
-        ...selectedClient,
-        ...formData,
-        creditLimit: parseFloat(formData.creditLimit) || 0,
-      });
+    try {
+      if (selectedClient) {
+        await saveClient({
+          ...selectedClient,
+          ...formData,
+          creditLimit: parseFloat(formData.creditLimit) || 0,
+        });
+        toast({
+          title: t.clientsUi.updatedTitle,
+          description: t.clientsUi.updatedDesc.replace('{name}', formData.name),
+        });
+      } else {
+        await createClient({
+          ...formData,
+          creditLimit: parseFloat(formData.creditLimit) || 0,
+          currentBalance: 0,
+          isActive: true,
+        });
+        toast({
+          title: t.clientsUi.createdTitle,
+          description: t.clientsUi.createdDesc.replace('{name}', formData.name),
+        });
+      }
+
+      setDialogOpen(false);
+      resetForm();
+    } catch (e) {
+      console.error('[Clients] save failed', e);
       toast({
-        title: t.clientsUi.updatedTitle,
-        description: t.clientsUi.updatedDesc.replace('{name}', formData.name),
-      });
-    } else {
-      createClient({
-        ...formData,
-        creditLimit: parseFloat(formData.creditLimit) || 0,
-        currentBalance: 0,
-        isActive: true,
-      });
-      toast({
-        title: t.clientsUi.createdTitle,
-        description: t.clientsUi.createdDesc.replace('{name}', formData.name),
+        title: t.clientsUi.toastErrorTitle,
+        description: t.clientsUi.saveOrCreateFailed,
+        variant: 'destructive',
       });
     }
-
-    setDialogOpen(false);
-    resetForm();
   };
 
   const handleDelete = () => {

@@ -172,13 +172,18 @@ export async function getAllProducts(): Promise<Product[]> {
   return getProducts();
 }
 
-export async function saveProduct(product: Product): Promise<void> {
+export async function saveProduct(
+  product: Product,
+  opts?: { skipProductsChangedEvent?: boolean }
+): Promise<void> {
   if (isElectronMode()) {
     const existing = await window.electronAPI!.db.getById('products', product.id);
     const payload = mapProductToDb(product);
     if (existing?.data) await dbUpdate('products', product.id, payload);
     else await dbInsert('products', payload);
-    emitProductsChanged(product.branchId);
+    if (!opts?.skipProductsChangedEvent) {
+      emitProductsChanged(product.branchId);
+    }
     auditLog(existing?.data ? 'update' : 'create', 'products', `Produto "${product.name}" (${product.sku}) ${existing?.data ? 'actualizado' : 'criado'}`, 'Sistema');
     return;
   }
@@ -188,7 +193,9 @@ export async function saveProduct(product: Product): Promise<void> {
   if (index >= 0) products[index] = product;
   else products.push(product);
   lsSet(STORAGE_KEYS.products, products);
-  emitProductsChanged(product.branchId);
+  if (!opts?.skipProductsChangedEvent) {
+    emitProductsChanged(product.branchId);
+  }
   auditLog(isNew ? 'create' : 'update', 'products', `Produto "${product.name}" (${product.sku}) ${isNew ? 'criado' : 'actualizado'}`, 'Sistema');
 }
 
@@ -557,7 +564,8 @@ export async function getClients(): Promise<Client[]> {
 
 export async function saveClient(client: Client): Promise<void> {
   if (isElectronMode()) {
-    await dbInsert('clients', mapClientToDb(client));
+    const ok = await dbInsert('clients', mapClientToDb(client));
+    if (!ok) throw new Error('[storage] Failed to save client to database');
   } else {
     const clients = lsGet<Client[]>(STORAGE_KEYS.clients, []);
     const index = clients.findIndex(c => c.id === client.id);
@@ -723,6 +731,96 @@ export async function savePurchaseOrder(order: PurchaseOrder): Promise<void> {
   else orders.push(order);
   lsSet(STORAGE_KEYS.purchaseOrders, orders);
   auditLog('create', 'purchase_orders', `OC ${order.orderNumber} - ${order.supplierName} - ${order.total.toLocaleString()} Kz`, 'Sistema');
+}
+
+/**
+ * Mark PO as received when a purchase invoice references its order number (no stock posting).
+ * - Browser + localStorage: update merged in-memory list.
+ * - Electron: run SQL updates against the embedded DB (same data the orders list uses).
+ */
+export async function markPurchaseOrderReceivedFromInvoiceNumber(
+  orderNumber: string,
+  supplierId: string,
+  receivedBy: string,
+): Promise<boolean> {
+  const numRaw = String(orderNumber || '').trim();
+  const sid = String(supplierId || '').trim();
+  if (!numRaw || !sid) return false;
+
+  if (isElectronMode() && typeof window !== 'undefined' && window.electronAPI?.db?.query) {
+    try {
+      const sel = await window.electronAPI.db.query(
+        `SELECT id, status FROM purchase_orders
+         WHERE LOWER(TRIM(COALESCE(order_number, ''))) = LOWER($1)
+           AND TRIM(supplier_id::text) = TRIM($2)
+         LIMIT 1`,
+        [numRaw, sid],
+      );
+      const row =
+        (sel as { data?: { id: string; status: string }[] })?.data?.[0] ??
+        (Array.isArray(sel) ? (sel as { id: string; status: string }[])[0] : undefined);
+      if (!row?.id) return false;
+      if (row.status === 'cancelled' || row.status === 'received') return true;
+      await window.electronAPI.db.query(
+        `UPDATE purchase_order_items SET received_quantity = quantity WHERE order_id = $1`,
+        [row.id],
+      );
+      const rb = receivedBy != null && String(receivedBy).trim() !== '' ? String(receivedBy).trim() : null;
+      try {
+        if (rb) {
+          await window.electronAPI.db.query(
+            `UPDATE purchase_orders
+             SET status = 'received',
+                 received_by = $1::uuid,
+                 received_at = CURRENT_TIMESTAMP,
+                 freight_distributed = true
+             WHERE id = $2`,
+            [rb, row.id],
+          );
+        } else {
+          await window.electronAPI.db.query(
+            `UPDATE purchase_orders
+             SET status = 'received',
+                 received_at = CURRENT_TIMESTAMP,
+                 freight_distributed = true
+             WHERE id = $1`,
+            [row.id],
+          );
+        }
+      } catch {
+        await window.electronAPI.db.query(
+          `UPDATE purchase_orders
+           SET status = 'received',
+               received_at = CURRENT_TIMESTAMP,
+               freight_distributed = true
+           WHERE id = $1`,
+          [row.id],
+        );
+      }
+      return true;
+    } catch (e) {
+      console.warn('[Storage] markPurchaseOrderReceivedFromInvoiceNumber (electron):', e);
+      return false;
+    }
+  }
+
+  const num = numRaw.toLowerCase();
+  const orders = await getPurchaseOrders();
+  const order = orders.find(
+    (o) =>
+      String(o.supplierId || '').trim() === sid &&
+      String(o.orderNumber || '').trim().toLowerCase() === num,
+  );
+  if (!order || order.status === 'cancelled' || order.status === 'received') return false;
+  order.status = 'received';
+  order.receivedBy = receivedBy;
+  order.receivedAt = new Date().toISOString();
+  (order as { freightDistributed?: boolean }).freightDistributed = true;
+  order.items.forEach((it) => {
+    it.receivedQuantity = it.quantity;
+  });
+  await savePurchaseOrder(order);
+  return true;
 }
 
 export function generatePurchaseOrderNumber(): string {

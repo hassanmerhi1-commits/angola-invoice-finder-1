@@ -22,6 +22,11 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
+import {
+  mergeInventoryFoodCategorySelectOptions,
+  resolveProductCategoryName,
+  defaultProductCategoryName,
+} from '@/lib/inventoryFoodCategories';
 
 interface ProductFormDialogProps {
   open: boolean;
@@ -40,22 +45,6 @@ const UNITS = [
   { value: 'pct', label: 'Pacote' },
 ];
 
-function resolveCategoryName(rawCategory: string | undefined, categories: Array<{ name: string }>) {
-  const cleaned = String(rawCategory || '').replace(/\s+/g, ' ').trim();
-  if (!cleaned) return categories[0]?.name || '';
-
-  const exactMatch = categories.find((category) => category.name.toLowerCase() === cleaned.toLowerCase());
-  if (exactMatch) return exactMatch.name;
-
-  const compact = cleaned.toLowerCase().replace(/\s+/g, '');
-  const repeatedMatch = categories.find((category) => {
-    const token = category.name.toLowerCase().replace(/\s+/g, '');
-    return token && compact.includes(token) && compact.replace(new RegExp(token, 'g'), '') === '';
-  });
-
-  return repeatedMatch?.name || cleaned;
-}
-
 export function ProductFormDialog({
   open,
   onOpenChange,
@@ -69,6 +58,10 @@ export function ProductFormDialog({
   const { t } = useTranslation();
   
   const activeCategories = useMemo(() => categories.filter(c => c.isActive), [categories]);
+  const categorySelectOptions = useMemo(
+    () => mergeInventoryFoodCategorySelectOptions(activeCategories),
+    [activeCategories]
+  );
 
   const [formData, setFormData] = useState({
     name: '',
@@ -93,7 +86,7 @@ export function ProductFormDialog({
         name: product.name,
         sku: product.sku,
         barcode: product.barcode || '',
-        category: resolveCategoryName(product.category, activeCategories),
+        category: resolveProductCategoryName(product.category, activeCategories),
         price: product.price,
         cost: product.cost,
         stock: product.stock,
@@ -110,7 +103,7 @@ export function ProductFormDialog({
         name: '',
         sku: '',
         barcode: '',
-        category: activeCategories[0]?.name || '',
+        category: defaultProductCategoryName(activeCategories),
         price: 0,
         cost: 0,
         stock: 0,
@@ -153,7 +146,7 @@ export function ProductFormDialog({
       name: formData.name.trim(),
       sku: formData.sku.trim().toUpperCase(),
       barcode: formData.barcode.trim() || undefined,
-      category: resolveCategoryName(formData.category, activeCategories),
+      category: resolveProductCategoryName(formData.category, activeCategories),
       price: formData.price,
       cost: formData.cost,
       firstCost: product?.firstCost || formData.cost,
@@ -237,24 +230,27 @@ export function ProductFormDialog({
               <div>
                 <Label htmlFor="category">Categoria</Label>
                 <Select
-                  value={resolveCategoryName(formData.category, activeCategories)}
+                  value={resolveProductCategoryName(formData.category, activeCategories)}
                   onValueChange={(value) => setFormData({ ...formData, category: value })}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
-                    {activeCategories.map((cat) => (
-                      <SelectItem key={cat.id} value={cat.name}>
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: cat.color || '#6b7280' }}
-                          />
-                          {cat.name}
-                        </div>
-                      </SelectItem>
-                    ))}
+                  <SelectContent className="max-h-[min(60vh,320px)]">
+                    {categorySelectOptions.map((opt) => {
+                      const cat = activeCategories.find((c) => c.id === opt.key);
+                      return (
+                        <SelectItem key={opt.key} value={opt.name}>
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-3 h-3 rounded-full shrink-0"
+                              style={{ backgroundColor: cat?.color || '#6b7280' }}
+                            />
+                            {opt.name}
+                          </div>
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>

@@ -90,6 +90,16 @@ export function useBranches() {
 // ============================================
 // Map API snake_case to frontend camelCase for products
 function mapProduct(p: any): Product {
+  const rawActive = p.isActive ?? p.is_active;
+  const isActive =
+    rawActive === undefined || rawActive === null
+      ? true
+      : rawActive === true ||
+        rawActive === 1 ||
+        rawActive === '1' ||
+        rawActive === 't' ||
+        String(rawActive).toLowerCase() === 'true';
+
   return {
     id: p.id,
     name: p.name,
@@ -112,7 +122,7 @@ function mapProduct(p: any): Product {
     branchId: p.branchId ?? p.branch_id ?? '',
     supplierId: p.supplierId ?? p.supplier_id,
     supplierName: p.supplierName ?? p.supplier_name,
-    isActive: p.isActive ?? p.is_active ?? true,
+    isActive,
     createdAt: p.createdAt ?? p.created_at ?? '',
     updatedAt: p.updatedAt ?? p.updated_at,
     version: p.version ?? undefined,
@@ -181,13 +191,36 @@ function mapStockTransfer(transfer: any): StockTransfer {
 export function useProducts(branchId?: string) {
   const [products, setProducts] = useState<Product[]>([]);
 
-  const refreshProducts = useCallback(async () => {
-    const response = await api.products.list(branchId);
-    if (response.error) {
-      throw new Error(response.error);
+  const fetchMergedProductList = useCallback(async (): Promise<Product[]> => {
+    let apiProducts: Product[] | null = null;
+    try {
+      const response = await api.products.list(branchId);
+      if (!response.error && Array.isArray(response.data)) {
+        apiProducts = response.data.map(mapProduct);
+      }
+    } catch (e) {
+      console.warn('[useProducts] API list failed:', e);
     }
-    setProducts(Array.isArray(response.data) ? response.data.map(mapProduct) : []);
+
+    let localProducts: Product[] = [];
+    try {
+      localProducts = await storage.getProducts(branchId);
+    } catch (e) {
+      console.error('[useProducts] local getProducts failed:', e);
+    }
+
+    if (apiProducts !== null) {
+      const apiIds = new Set(apiProducts.map((p) => p.id));
+      const localOnly = localProducts.filter((p) => !apiIds.has(p.id));
+      return [...apiProducts, ...localOnly];
+    }
+
+    return localProducts;
   }, [branchId]);
+
+  const refreshProducts = useCallback(async () => {
+    setProducts(await fetchMergedProductList());
+  }, [fetchMergedProductList]);
 
   useEffect(() => { refreshProducts(); }, [refreshProducts]);
 
@@ -195,7 +228,8 @@ export function useProducts(branchId?: string) {
     const handleProductsChanged = (event: Event) => {
       const customEvent = event as CustomEvent<{ branchId?: string }>;
       const changedBranchId = customEvent.detail?.branchId;
-      if (!branchId || !changedBranchId || changedBranchId === branchId) {
+      const affectsAllBranches = !changedBranchId || changedBranchId === 'all';
+      if (!branchId || affectsAllBranches || changedBranchId === branchId) {
         refreshProducts();
       }
     };
@@ -207,20 +241,62 @@ export function useProducts(branchId?: string) {
     const result = await api.products.create(product);
     if (result.data) {
       const savedProduct = mapProduct(result.data);
-      await refreshProducts();
+      try {
+        // Mirror to local cache so fetchMerged sees the row even if GET /products lags briefly.
+        await storage.saveProduct(savedProduct, { skipProductsChangedEvent: true });
+      } catch (e) {
+        console.warn('[useProducts] local cache mirror after API create failed:', e);
+      }
+      let merged = await fetchMergedProductList();
+      if (!merged.some((p) => p.id === savedProduct.id)) {
+        merged = [...merged, savedProduct];
+      }
+      setProducts(merged);
       return savedProduct;
     }
 
-    await storage.saveProduct(product);
-    await refreshProducts();
-    return product;
-  }, [refreshProducts]);
+    try {
+      await storage.saveProduct(product);
+      let merged = await fetchMergedProductList();
+      if (!merged.some((p) => p.id === product.id)) {
+        merged = [...merged, product];
+      }
+      setProducts(merged);
+      return product;
+    } catch (e) {
+      console.error('[useProducts] addProduct: API create failed and local save failed:', e);
+      throw e instanceof Error ? e : new Error('Could not save product');
+    }
+  }, [fetchMergedProductList]);
 
   const updateProduct = useCallback(async (product: Product) => {
     const result = await api.products.update(product.id, product);
-    if (!result.data) await storage.saveProduct(product);
-    await refreshProducts();
-  }, [refreshProducts]);
+    let resolved = product;
+    if (!result.data) {
+      try {
+        await storage.saveProduct(product);
+      } catch (e) {
+        console.error('[useProducts] updateProduct: API and local save failed:', e);
+        throw e instanceof Error ? e : new Error('Could not update product');
+      }
+    } else {
+      resolved = mapProduct(result.data);
+      try {
+        await storage.saveProduct(resolved, { skipProductsChangedEvent: true });
+      } catch (e) {
+        console.warn('[useProducts] local cache mirror after API update failed:', e);
+      }
+    }
+    let merged = await fetchMergedProductList();
+    const idx = merged.findIndex((p) => p.id === resolved.id);
+    if (idx < 0) {
+      merged = [...merged, resolved];
+    } else {
+      merged = merged.slice();
+      merged[idx] = resolved;
+    }
+    setProducts(merged);
+  }, [fetchMergedProductList]);
 
   const deleteProduct = useCallback(async (productId: string) => {
     const result = await api.products.delete(productId);
@@ -754,30 +830,63 @@ export function useDailyReports(branchId?: string) {
 // ============================================
 // CLIENTS
 // ============================================
+function mapClientApiRow(c: any): Client {
+  return {
+    id: String(c.id ?? ''),
+    name: c.name || '',
+    nif: c.nif || '',
+    email: c.email || '',
+    phone: c.phone || '',
+    address: c.address || '',
+    city: c.city || '',
+    country: c.country || 'Angola',
+    creditLimit: Number(c.creditLimit ?? c.credit_limit ?? 0),
+    currentBalance: Number(c.currentBalance ?? c.current_balance ?? 0),
+    isActive: c.isActive ?? c.is_active ?? true,
+    createdAt: c.createdAt ?? c.created_at ?? new Date().toISOString(),
+    updatedAt: c.updatedAt ?? c.updated_at ?? new Date().toISOString(),
+  };
+}
+
 export function useClients() {
   const [clients, setClients] = useState<Client[]>([]);
 
   const refreshClients = useCallback(async () => {
-    const response = await api.clients.list();
-    if (response.error) {
-      throw new Error(response.error);
+    let apiRows: any[] = [];
+    try {
+      const response = await api.clients.list();
+      if (!response.error && Array.isArray(response.data)) {
+        apiRows = response.data;
+      }
+    } catch (e) {
+      console.warn('[useClients] API list failed', e);
     }
-    const mapped = (response.data || []).map((c: any) => ({
-      id: c.id,
-      name: c.name || '',
-      nif: c.nif || '',
-      email: c.email || '',
-      phone: c.phone || '',
-      address: c.address || '',
-      city: c.city || '',
-      country: c.country || 'Angola',
-      creditLimit: Number(c.creditLimit ?? c.credit_limit ?? 0),
-      currentBalance: Number(c.currentBalance ?? c.current_balance ?? 0),
-      isActive: c.isActive ?? c.is_active ?? true,
-      createdAt: c.createdAt ?? c.created_at ?? new Date().toISOString(),
-      updatedAt: c.updatedAt ?? c.updated_at ?? new Date().toISOString(),
-    }));
-    setClients(mapped);
+
+    let fromStorage: Client[] = [];
+    try {
+      fromStorage = await storage.getClients();
+    } catch (e) {
+      console.warn('[useClients] storage.getClients failed', e);
+    }
+
+    // Merge: API rows first, then storage-only (fixes empty HTTP [] while local/SQLite has rows;
+    // Electron create via IPC + list via HTTP was hiding new clients.)
+    const byId = new Map<string, Client>();
+    for (const row of apiRows) {
+      const c = mapClientApiRow(row);
+      if (c.id) byId.set(c.id, c);
+    }
+    for (const c of fromStorage) {
+      const id = String(c.id ?? '');
+      if (!id) continue;
+      if (!byId.has(id)) byId.set(id, mapClientApiRow(c));
+    }
+
+    setClients(
+      Array.from(byId.values()).sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+      ),
+    );
   }, []);
 
   useEffect(() => { refreshClients(); }, [refreshClients]);
@@ -796,13 +905,19 @@ export function useClients() {
 
   const createClient = useCallback(async (data: Omit<Client, 'id' | 'createdAt' | 'updatedAt'>): Promise<Client> => {
     const result = await api.clients.create(data);
-    if (result.data) {
+    const row = result.data as Record<string, unknown> | undefined;
+    const apiOk =
+      row != null &&
+      !result.error &&
+      (String((row as { id?: unknown }).id ?? '').length > 0 ||
+        typeof (row as { name?: unknown }).name === 'string');
+    if (apiOk) {
       await refreshClients();
-      return result.data;
+      return mapClientApiRow(row);
     }
     const client: Client = {
       ...data,
-      id: `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: `client_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

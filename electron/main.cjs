@@ -576,6 +576,10 @@ async function dbGetAll(table) {
       const r = await requestExpressJson('GET', '/api/suppliers', null);
       if (r && r.status === 200 && Array.isArray(r.json)) return r.json;
     }
+    if (table === 'clients') {
+      const r = await requestExpressJson('GET', '/api/clients', null);
+      if (r && r.status === 200 && Array.isArray(r.json)) return r.json;
+    }
     return [];
   }
   try {
@@ -595,6 +599,10 @@ async function dbGetById(table, id) {
   if (!pool) {
     if (table === 'suppliers') {
       const rows = await dbGetAll('suppliers');
+      return rows.find((row) => String(row.id) === String(id)) || null;
+    }
+    if (table === 'clients') {
+      const rows = await dbGetAll('clients');
       return rows.find((row) => String(row.id) === String(id)) || null;
     }
     return null;
@@ -632,6 +640,28 @@ async function dbInsert(table, data, companyId = null) {
           broadcastUpdate(table, 'insert', r.json.id, companyId);
         } catch (_) {}
         return { success: true };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
+    if (table === 'clients' && data) {
+      const body = {
+        name: data.name || '',
+        nif: data.nif || '',
+        email: data.email || '',
+        phone: data.phone || '',
+        address: data.address || '',
+        city: data.city || '',
+        country: data.country || data.province || 'Angola',
+        creditLimit: Number(data.credit_limit ?? data.creditLimit ?? 0),
+        currentBalance: Number(data.balance ?? data.current_balance ?? data.currentBalance ?? 0),
+      };
+      const r = await requestExpressJson('POST', '/api/clients', body);
+      if (r && r.status >= 200 && r.status < 300 && r.json && !r.json.error) {
+        try {
+          broadcastUpdate(table, 'insert', r.json.id, companyId);
+        } catch (_) {}
+        return { success: true, data: r.json };
       }
       const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
       return { success: false, error: errMsg };
@@ -690,6 +720,29 @@ async function dbUpdate(table, id, data, companyId = null) {
       const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
       return { success: false, error: errMsg };
     }
+    if (table === 'clients' && id && data) {
+      const body = {
+        name: data.name || '',
+        nif: data.nif || '',
+        email: data.email || '',
+        phone: data.phone || '',
+        address: data.address || '',
+        city: data.city || '',
+        country: data.country || data.province || 'Angola',
+        creditLimit: Number(data.credit_limit ?? data.creditLimit ?? 0),
+        currentBalance: Number(data.balance ?? data.current_balance ?? data.currentBalance ?? 0),
+        isActive: data.is_active ?? data.isActive ?? true,
+      };
+      const r = await requestExpressJson('PUT', `/api/clients/${encodeURIComponent(id)}`, body);
+      if (r && r.status >= 200 && r.status < 300 && r.json && !r.json.error) {
+        try {
+          broadcastUpdate(table, 'update', id, companyId);
+        } catch (_) {}
+        return { success: true };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
     return { success: false, error: 'Database not connected' };
   }
   try {
@@ -725,6 +778,17 @@ async function dbDelete(table, id, companyId = null) {
   if (!pool) {
     if (table === 'suppliers' && id) {
       const r = await requestExpressJson('DELETE', `/api/suppliers/${encodeURIComponent(id)}`, null);
+      if (r && r.status >= 200 && r.status < 300) {
+        try {
+          broadcastUpdate(table, 'delete', id, companyId);
+        } catch (_) {}
+        return { success: true };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
+    if (table === 'clients' && id) {
+      const r = await requestExpressJson('DELETE', `/api/clients/${encodeURIComponent(id)}`, null);
       if (r && r.status >= 200 && r.status < 300) {
         try {
           broadcastUpdate(table, 'delete', id, companyId);

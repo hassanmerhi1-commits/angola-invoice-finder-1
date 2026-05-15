@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Plus, Trash2, Search, Save, Printer, X } from 'lucide-react';
+import { Plus, Trash2, Search, Save } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DocumentType, DocumentLine, ERPDocument, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
 import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocument } from '@/lib/documentStorage';
@@ -35,6 +35,10 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const { currentBranch } = useBranchContext();
   const { products } = useProducts(currentBranch?.id);
   const config = DOCUMENT_TYPE_CONFIG[documentType];
+  const typeUi = (t.documentFormUi.types as Record<DocumentType, { full: string; short: string }>)[documentType];
+  const finalConsumerName = t.pos.finalConsumer;
+  const fmt = (n: number, opts?: Intl.NumberFormatOptions) =>
+    n.toLocaleString(locale, { minimumFractionDigits: opts?.minimumFractionDigits, maximumFractionDigits: opts?.maximumFractionDigits });
 
   // Form state
   const [entityName, setEntityName] = useState('');
@@ -138,7 +142,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
   const handleSave = async (status: 'draft' | 'confirmed') => {
     if (!entityName && config.entityType === 'customer') {
-      setEntityName('Consumidor Final');
+      setEntityName(finalConsumerName);
     }
     if (lines.length === 0) {
       toast.error(t.documentFormUi.addAtLeastOneLine);
@@ -149,7 +153,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       if (editDocument) {
         const updated: ERPDocument = {
           ...editDocument,
-          entityName: entityName || 'Consumidor Final',
+          entityName: entityName || finalConsumerName,
           entityNif,
           entityAddress,
           entityPhone,
@@ -165,7 +169,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         };
         await saveDocument(updated);
         onSaved?.(updated);
-        toast.success(`${config.shortLabel} actualizado`);
+        toast.success(t.documentFormUi.documentUpdatedToast.replace('{short}', typeUi.short));
       } else {
         // For confirmed fatura_venda, route through the backend transaction engine
         // so stock is decremented and journal entries (including branch Caixa) are created
@@ -176,13 +180,16 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               const product = products.find(p => p.id === line.productId);
               if (!product) return null;
               return line.quantity > product.stock
-                ? `${line.description} (disp. ${product.stock}, solicitado ${line.quantity})`
+                ? t.documentFormUi.stockLineDetail
+                    .replace('{name}', line.description)
+                    .replace('{available}', String(product.stock))
+                    .replace('{requested}', String(line.quantity))
                 : null;
             })
             .filter(Boolean);
 
           if (insufficientStock.length > 0) {
-            throw new Error(`Stock insuficiente: ${insufficientStock.join('; ')}`);
+            throw new Error(`${t.documentFormUi.stockInsufficientPrefix} ${insufficientStock.join('; ')}`);
           }
 
           const saleItems = lines.map(l => ({
@@ -223,11 +230,11 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             amountPaid: config.requiresPayment ? amountPaid : totals.total,
             change: config.requiresPayment ? Math.max(0, amountPaid - totals.total) : 0,
             customerNif: entityNif || undefined,
-            customerName: (entityName || 'Consumidor Final') || undefined,
+            customerName: (entityName || finalConsumerName) || undefined,
           });
 
           if (!saleResult.data) {
-            const saleError = saleResult.error || 'Falha ao processar venda no servidor';
+            const saleError = saleResult.error || t.documentFormUi.saleServerFailed;
             if (saleError.includes('chk_products_stock_nonneg') || saleError.toLowerCase().includes('stock insuficiente')) {
               throw new Error(t.documentFormUi.insufficientStockToCompleteSaleInvoice);
             }
@@ -243,7 +250,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             user?.id || '',
             user?.name || '',
             {
-              entityName: entityName || 'Consumidor Final',
+              entityName: entityName || finalConsumerName,
               entityNif,
               entityAddress,
               entityPhone,
@@ -257,7 +264,11 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             }
           );
           onSaved?.(doc);
-          toast.success(`${config.shortLabel} ${doc.documentNumber} criado — Stock e Caixa actualizados`);
+          toast.success(
+            t.documentFormUi.documentCreatedWithStockToast
+              .replace('{short}', typeUi.short)
+              .replace('{number}', doc.documentNumber),
+          );
         } else {
           // All other document types (proforma, draft, etc.) — save locally
           const doc = await createDocument(
@@ -268,7 +279,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             user?.id || '',
             user?.name || '',
             {
-              entityName: entityName || 'Consumidor Final',
+              entityName: entityName || finalConsumerName,
               entityNif,
               entityAddress,
               entityPhone,
@@ -287,7 +298,11 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             }
           );
           onSaved?.(doc);
-          toast.success(`${config.shortLabel} ${doc.documentNumber} criado`);
+          toast.success(
+            t.documentFormUi.documentCreatedToast
+              .replace('{short}', typeUi.short)
+              .replace('{number}', doc.documentNumber),
+          );
         }
       }
       onOpenChange(false);
@@ -302,20 +317,21 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2 bg-muted/50 border-b">
           <DialogTitle className={cn("text-sm font-bold", config.color)}>
-            {editDocument ? `Editar ${config.shortLabel}` : `Novo ${config.label}`}
-            {editDocument && ` - ${editDocument.documentNumber}`}
+            {editDocument
+              ? `${t.documentFormUi.editPrefix} ${typeUi.short} — ${editDocument.documentNumber}`
+              : `${t.documentFormUi.newPrefix} ${typeUi.full}`}
             {prefillFrom && (
               <span className="text-muted-foreground font-normal ml-2">
-                (de {prefillFrom.documentNumber})
+                {t.documentFormUi.fromDocument.replace('{number}', prefillFrom.documentNumber)}
               </span>
             )}
           </DialogTitle>
           <div className="flex gap-1">
             <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleSave('draft')}>
-              <Save className="w-3 h-3" /> Guardar Rascunho
+              <Save className="w-3 h-3" /> {t.documentFormUi.saveDraft}
             </Button>
             <Button size="sm" className="h-7 text-xs gap-1" onClick={() => handleSave('confirmed')}>
-              <Save className="w-3 h-3" /> Confirmar
+              <Save className="w-3 h-3" /> {t.documentFormUi.confirmSave}
             </Button>
           </div>
         </div>
@@ -324,19 +340,19 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           {/* Entity info row */}
           <div className="grid grid-cols-4 gap-3">
             <div className="space-y-1">
-              <Label className="text-xs">{config.entityType === 'customer' ? 'Cliente' : 'Fornecedor'}</Label>
-              <Input value={entityName} onChange={e => setEntityName(e.target.value)} placeholder="Consumidor Final" className="h-8 text-xs" />
+              <Label className="text-xs">{config.entityType === 'customer' ? t.documentFormUi.customer : t.documentFormUi.supplier}</Label>
+              <Input value={entityName} onChange={e => setEntityName(e.target.value)} placeholder={finalConsumerName} className="h-8 text-xs" />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">NIF</Label>
+              <Label className="text-xs">{t.documentFormUi.nif}</Label>
               <Input value={entityNif} onChange={e => setEntityNif(e.target.value)} placeholder="999999999" className="h-8 text-xs" />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Endereço</Label>
+              <Label className="text-xs">{t.documentFormUi.address}</Label>
               <Input value={entityAddress} onChange={e => setEntityAddress(e.target.value)} className="h-8 text-xs" />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Telefone</Label>
+              <Label className="text-xs">{t.documentFormUi.phone}</Label>
               <Input value={entityPhone} onChange={e => setEntityPhone(e.target.value)} className="h-8 text-xs" />
             </div>
           </div>
@@ -345,32 +361,32 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           <div className="grid grid-cols-4 gap-3">
             {documentType === 'proforma' && (
               <div className="space-y-1">
-                <Label className="text-xs">Válido Até</Label>
+                <Label className="text-xs">{t.documentFormUi.validUntil}</Label>
                 <Input type="date" value={validUntil} onChange={e => setValidUntil(e.target.value)} className="h-8 text-xs" />
               </div>
             )}
             {(documentType !== 'proforma') && (
               <div className="space-y-1">
-                <Label className="text-xs">Data Vencimento</Label>
+                <Label className="text-xs">{t.documentFormUi.dueDate}</Label>
                 <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="h-8 text-xs" />
               </div>
             )}
             {config.requiresPayment && (
               <>
                 <div className="space-y-1">
-                  <Label className="text-xs">Método Pagamento</Label>
+                  <Label className="text-xs">{t.documentFormUi.paymentMethod}</Label>
                   <Select value={paymentMethod} onValueChange={setPaymentMethod}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="cash">Numerário</SelectItem>
-                      <SelectItem value="card">Cartão</SelectItem>
-                      <SelectItem value="transfer">Transferência</SelectItem>
-                      <SelectItem value="cheque">Cheque</SelectItem>
+                      <SelectItem value="cash">{t.paymentsUi.methods.cash}</SelectItem>
+                      <SelectItem value="card">{t.paymentsUi.methods.card}</SelectItem>
+                      <SelectItem value="transfer">{t.paymentsUi.methods.transfer}</SelectItem>
+                      <SelectItem value="cheque">{t.paymentsUi.methods.cheque}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Valor Pago</Label>
+                  <Label className="text-xs">{t.documentFormUi.amountPaid}</Label>
                   <Input type="number" value={amountPaid} onChange={e => setAmountPaid(Number(e.target.value))} className="h-8 text-xs" />
                 </div>
               </>
@@ -380,7 +396,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           {/* Product search + add */}
           <div className="flex gap-2 items-end">
             <div className="flex-1 space-y-1">
-              <Label className="text-xs">Adicionar Produto</Label>
+              <Label className="text-xs">{t.documentFormUi.addProduct}</Label>
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
                 <Input value={productSearch} onChange={e => setProductSearch(e.target.value)}
@@ -388,7 +404,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               </div>
             </div>
             <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => addLine()}>
-              <Plus className="w-3 h-3" /> Linha Manual
+              <Plus className="w-3 h-3" /> {t.documentFormUi.manualLine}
             </Button>
           </div>
 
@@ -409,10 +425,10 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           <Tabs value={activeLineTab} onValueChange={setActiveLineTab}>
             <TabsList className="h-7 p-0 bg-muted/30 rounded-none border-b w-full justify-start">
               <TabsTrigger value="linhas" className="text-xs h-7 rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-                Linhas ({lines.length})
+                {t.documentFormUi.linesCount.replace('{count}', String(lines.length))}
               </TabsTrigger>
               <TabsTrigger value="notas" className="text-xs h-7 rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-                Notas
+                {t.documentFormUi.notesTab}
               </TabsTrigger>
             </TabsList>
 
@@ -421,16 +437,16 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                 <table className="w-full text-xs">
                   <thead className="bg-muted/60 border-b">
                     <tr>
-                      <th className="px-2 py-1.5 text-left w-8">#</th>
-                      <th className="px-2 py-1.5 text-left w-20">Código</th>
-                      <th className="px-2 py-1.5 text-left">Descrição</th>
-                      <th className="px-2 py-1.5 text-right w-16">Qtd</th>
-                      <th className="px-2 py-1.5 text-right w-24">Preço (s/IVA)</th>
-                      <th className="px-2 py-1.5 text-right w-16">Desc%</th>
-                      <th className="px-2 py-1.5 text-right w-20">Base Trib.</th>
-                      <th className="px-2 py-1.5 text-right w-14">IVA%</th>
-                      <th className="px-2 py-1.5 text-right w-24">Valor IVA</th>
-                      <th className="px-2 py-1.5 text-right w-28">Total c/IVA</th>
+                      <th className="px-2 py-1.5 text-left w-8">{t.documentFormUi.colHash}</th>
+                      <th className="px-2 py-1.5 text-left w-20">{t.documentFormUi.colCode}</th>
+                      <th className="px-2 py-1.5 text-left">{t.documentFormUi.colDescription}</th>
+                      <th className="px-2 py-1.5 text-right w-16">{t.documentFormUi.colQty}</th>
+                      <th className="px-2 py-1.5 text-right w-24">{t.documentFormUi.colPriceExVat}</th>
+                      <th className="px-2 py-1.5 text-right w-16">{t.documentFormUi.colDiscPct}</th>
+                      <th className="px-2 py-1.5 text-right w-20">{t.documentFormUi.colTaxableBase}</th>
+                      <th className="px-2 py-1.5 text-right w-14">{t.documentFormUi.colVatPct}</th>
+                      <th className="px-2 py-1.5 text-right w-24">{t.documentFormUi.colVatAmount}</th>
+                      <th className="px-2 py-1.5 text-right w-28">{t.documentFormUi.colTotalIncVat}</th>
                       <th className="px-2 py-1.5 w-8"></th>
                     </tr>
                   </thead>
@@ -458,14 +474,14 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                             className="h-6 text-xs text-right border-0 bg-transparent p-0 focus:bg-background focus:border w-full" />
                         </td>
                         <td className="px-2 py-1 text-right font-mono text-muted-foreground">
-                          {((line.quantity * line.unitPrice) * (1 - (line.discount || 0) / 100)).toLocaleString('pt-AO')}
+                          {fmt((line.quantity * line.unitPrice) * (1 - (line.discount || 0) / 100))}
                         </td>
                         <td className="px-2 py-1">
                           <Input type="number" value={line.taxRate} onChange={e => updateLine(idx, 'taxRate', Number(e.target.value))}
                             className="h-6 text-xs text-right border-0 bg-transparent p-0 focus:bg-background focus:border w-full" />
                         </td>
-                        <td className="px-2 py-1 text-right font-mono">{line.taxAmount.toLocaleString('pt-AO')}</td>
-                        <td className="px-2 py-1 text-right font-mono font-medium">{line.lineTotal.toLocaleString('pt-AO')}</td>
+                        <td className="px-2 py-1 text-right font-mono">{fmt(line.taxAmount)}</td>
+                        <td className="px-2 py-1 text-right font-mono font-medium">{fmt(line.lineTotal)}</td>
                         <td className="px-2 py-1">
                           <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => removeLine(idx)}>
                             <Trash2 className="w-3 h-3 text-destructive" />
@@ -474,7 +490,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                       </tr>
                     ))}
                     {lines.length === 0 && (
-                      <tr><td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">Nenhuma linha adicionada</td></tr>
+                      <tr><td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">{t.documentFormUi.lineEmpty}</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -492,21 +508,21 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               <table className="w-full text-xs">
                 <thead className="bg-muted/60">
                   <tr>
-                    <th className="px-3 py-1.5 text-left font-medium">Quadro Resumo de Impostos</th>
-                    <th className="px-3 py-1.5 text-right font-medium">Base Incidência</th>
-                    <th className="px-3 py-1.5 text-right font-medium">Taxa IVA</th>
-                    <th className="px-3 py-1.5 text-right font-medium">Valor IVA</th>
-                    <th className="px-3 py-1.5 text-right font-medium">Total</th>
+                    <th className="px-3 py-1.5 text-left font-medium">{t.documentFormUi.taxSummaryTitle}</th>
+                    <th className="px-3 py-1.5 text-right font-medium">{t.documentFormUi.taxableBase}</th>
+                    <th className="px-3 py-1.5 text-right font-medium">{t.documentFormUi.vatRate}</th>
+                    <th className="px-3 py-1.5 text-right font-medium">{t.documentFormUi.vatAmount}</th>
+                    <th className="px-3 py-1.5 text-right font-medium">{t.documentFormUi.total}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {ivaSummary.map(([rate, vals]) => (
                     <tr key={rate} className="border-t">
-                      <td className="px-3 py-1">{rate === 0 ? 'Isento' : `IVA ${rate}%`}</td>
-                      <td className="px-3 py-1 text-right font-mono">{vals.base.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz</td>
+                      <td className="px-3 py-1">{rate === 0 ? t.documentFormUi.exempt : t.documentFormUi.vatAtRate.replace('{rate}', String(rate))}</td>
+                      <td className="px-3 py-1 text-right font-mono">{fmt(vals.base, { minimumFractionDigits: 2 })} Kz</td>
                       <td className="px-3 py-1 text-right">{rate}%</td>
-                      <td className="px-3 py-1 text-right font-mono">{vals.iva.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz</td>
-                      <td className="px-3 py-1 text-right font-mono font-medium">{vals.total.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz</td>
+                      <td className="px-3 py-1 text-right font-mono">{fmt(vals.iva, { minimumFractionDigits: 2 })} Kz</td>
+                      <td className="px-3 py-1 text-right font-mono font-medium">{fmt(vals.total, { minimumFractionDigits: 2 })} Kz</td>
                     </tr>
                   ))}
                 </tbody>
@@ -517,16 +533,16 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           {/* Totals panel */}
           <div className="flex justify-end">
             <div className="w-72 space-y-1 text-xs border rounded p-3 bg-muted/30">
-              <div className="flex justify-between"><span>Subtotal (s/IVA):</span><span className="font-mono">{totals.subtotal.toLocaleString('pt-AO')} Kz</span></div>
-              <div className="flex justify-between text-muted-foreground"><span>Desconto:</span><span className="font-mono">-{totals.totalDiscount.toLocaleString('pt-AO')} Kz</span></div>
-              <div className="flex justify-between text-muted-foreground"><span>Total IVA:</span><span className="font-mono">{totals.totalTax.toLocaleString('pt-AO')} Kz</span></div>
+              <div className="flex justify-between"><span>{t.documentFormUi.subtotalExVat}</span><span className="font-mono">{fmt(totals.subtotal)} Kz</span></div>
+              <div className="flex justify-between text-muted-foreground"><span>{t.documentFormUi.discount}</span><span className="font-mono">-{fmt(totals.totalDiscount)} Kz</span></div>
+              <div className="flex justify-between text-muted-foreground"><span>{t.documentFormUi.totalVat}</span><span className="font-mono">{fmt(totals.totalTax)} Kz</span></div>
               <div className="border-t pt-1 flex justify-between font-bold text-sm">
-                <span>Total c/IVA:</span><span className="font-mono">{totals.total.toLocaleString('pt-AO')} Kz</span>
+                <span>{t.documentFormUi.totalIncVat}</span><span className="font-mono">{fmt(totals.total)} Kz</span>
               </div>
               {config.requiresPayment && (
                 <>
-                  <div className="flex justify-between text-green-600"><span>Pago:</span><span className="font-mono">{amountPaid.toLocaleString('pt-AO')} Kz</span></div>
-                  <div className="flex justify-between text-destructive font-medium"><span>Em Dívida:</span><span className="font-mono">{(totals.total - amountPaid).toLocaleString('pt-AO')} Kz</span></div>
+                  <div className="flex justify-between text-green-600"><span>{t.documentFormUi.paid}</span><span className="font-mono">{fmt(amountPaid)} Kz</span></div>
+                  <div className="flex justify-between text-destructive font-medium"><span>{t.documentFormUi.outstanding}</span><span className="font-mono">{fmt(totals.total - amountPaid)} Kz</span></div>
                 </>
               )}
             </div>

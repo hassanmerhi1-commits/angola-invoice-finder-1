@@ -21,7 +21,7 @@ import {
 } from '@/lib/purchaseInvoiceStorage';
 import { processTransaction } from '@/lib/transactionEngine';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
-import { Supplier, Product } from '@/types/erp';
+import { Supplier, Product, PurchaseOrder } from '@/types/erp';
 import { ProductDetailDialog } from '@/components/inventory/ProductDetailDialog';
 import { InlineLineGrid } from '@/components/purchase/InlineLineGrid';
 import { PurchaseReturnsTab } from '@/components/purchase/PurchaseReturnsTab';
@@ -50,6 +50,7 @@ import {
   ShoppingCart, Filter, Calendar, Download, RotateCcw,
 } from 'lucide-react';
 import { saveDocument, getDocuments } from '@/lib/documentStorage';
+import { markPurchaseOrderReceivedFromInvoiceNumber } from '@/lib/storage';
 import type { ERPDocument } from '@/types/documents';
 import { usePurchaseOrders } from '@/hooks/useERP';
 import { CompanySettings, getCompanySettings } from '@/lib/companySettings';
@@ -1120,7 +1121,8 @@ export default function PurchaseInvoices() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { currentBranch, branches } = useBranchContext();
-  const { products, addProduct: addProductToStock, refreshProducts } = useProducts(currentBranch?.id);
+  // Purchase pickers need the full product master (all warehouses); branch is chosen on the order/line, not here.
+  const { products, addProduct: addProductToStock, refreshProducts } = useProducts(undefined);
   const { suppliers, refreshSuppliers, createSupplier } = useSuppliers();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -1159,6 +1161,8 @@ export default function PurchaseInvoices() {
   const [freightSourceAccount, setFreightSourceAccount] = useState('4.1.1'); // default Cash
   const [freightSourceName, setFreightSourceName] = useState('Cash');
   const [freightPickerOpen, setFreightPickerOpen] = useState(false);
+  /** Purchase invoice create: optional PO to pre-fill lines for the selected supplier. */
+  const [fillFromPoId, setFillFromPoId] = useState('');
   // PO inline state
   const [poCreateOpen, setPoCreateOpen] = useState(false);
   const [poViewOrder, setPoViewOrder] = useState<any | null>(null);
@@ -1171,7 +1175,15 @@ export default function PurchaseInvoices() {
   const [poProductDropdownOpen, setPoProductDropdownOpen] = useState(false);
 
   // Purchase orders
-  const { orders, createOrder, approveOrder, receiveOrder, cancelOrder } = usePurchaseOrders();
+  const { orders, createOrder, receiveOrder, cancelOrder, refreshOrders } = usePurchaseOrders();
+
+  useEffect(() => {
+    if (mode === 'create') void refreshProducts();
+  }, [mode, refreshProducts]);
+
+  useEffect(() => {
+    if (poCreateOpen) void refreshProducts();
+  }, [poCreateOpen, refreshProducts]);
 
   const totalLandingCosts = freightCost + freightOtherCosts;
 
@@ -1189,6 +1201,31 @@ export default function PurchaseInvoices() {
   }, [lines, totalLandingCosts]);
 
   const activeSuppliers = useMemo(() => suppliers.filter(s => s.isActive), [suppliers]);
+
+  const supplierPurchaseOrders = useMemo(() => {
+    const sid = ((form as { supplierId?: string }).supplierId || '').trim();
+    if (!sid) return [];
+    const wid = ((form.warehouseId || currentBranch?.id || '') as string).trim();
+    let list = orders.filter(
+      (o) =>
+        o.supplierId === sid &&
+        o.status !== 'cancelled' &&
+        Array.isArray(o.items) &&
+        o.items.length > 0,
+    );
+    if (wid) {
+      const sameBranch = list.filter((o) => o.branchId === wid);
+      if (sameBranch.length > 0) list = sameBranch;
+    }
+    return [...list].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  }, [orders, (form as { supplierId?: string }).supplierId, form.warehouseId, currentBranch?.id]);
+
+  useEffect(() => {
+    if (!fillFromPoId) return;
+    if (!supplierPurchaseOrders.some((o) => o.id === fillFromPoId)) setFillFromPoId('');
+  }, [fillFromPoId, supplierPurchaseOrders]);
 
   // Load invoices — pull from BOTH purchase invoice storage AND document storage
   useEffect(() => {
@@ -1339,6 +1376,7 @@ export default function PurchaseInvoices() {
     setFreightOtherCosts(0);
     setFreightSourceAccount('4.1.1');
     setFreightSourceName('Caixa');
+    setFillFromPoId('');
     setActiveTab('fatura');
     setMode('create');
   }, [currentBranch, branches]);
@@ -1449,6 +1487,7 @@ export default function PurchaseInvoices() {
 
    // Select supplier — auto-create CoA sub-account under 3.2 Fornecedores
   const handleSelectSupplier = useCallback(async (s: Supplier) => {
+    setFillFromPoId('');
     const accountCode = await ensureSupplierAccount(s.id, s.name, s.nif);
     // Fetch real supplier balance from open items
     let balance = 0;
@@ -1494,6 +1533,72 @@ export default function PurchaseInvoices() {
     setLines(prev => [...prev, newLine]);
   }, [form.warehouseId, form.warehouseName, currentBranch]);
 
+  const applyLinesFromPurchaseOrder = useCallback(
+    (order: PurchaseOrder) => {
+      const wid = (form.warehouseId || currentBranch?.id || '').trim();
+      const wname = form.warehouseName || currentBranch?.name || '';
+      const rows: PurchaseInvoiceLine[] = [];
+      for (const it of order.items || []) {
+        const qty = Number(it.quantity || 0);
+        if (qty <= 0) continue;
+        const unitCost = Number(it.unitCost || 0);
+        const product = products.find((p) => p.id === it.productId);
+        const ivaRate =
+          product?.taxRate != null && product.taxRate > 0
+            ? product.taxRate
+            : it.taxRate != null && it.taxRate > 0
+              ? it.taxRate
+              : 14;
+        rows.push(
+          calculateLine({
+            productId: it.productId,
+            productCode: product?.sku || it.sku || '',
+            description: product?.name || it.productName || '',
+            quantity: qty,
+            packaging: 1,
+            unitPrice: unitCost,
+            discountPct: 0,
+            discountPct2: 0,
+            ivaRate,
+            warehouseId: wid,
+            warehouseName: wname,
+            currentStock: product?.stock ?? 0,
+            unit: product?.unit || 'UN',
+            barcode: product?.barcode,
+            price1: product?.price || 0,
+            price2: product?.price2 || 0,
+            price3: product?.price3 || 0,
+            price4: product?.price4 || 0,
+            lastCost: product?.lastCost || product?.cost || 0,
+            avgCost: product?.avgCost || product?.cost || 0,
+          }),
+        );
+      }
+      if (rows.length === 0) {
+        toast({
+          title: t.common.error,
+          description: t.purchaseInvoicesUi.fillFromOrderNoLines,
+          variant: 'destructive',
+        });
+        return;
+      }
+      setLines(rows);
+      setForm((prev) => ({
+        ...prev,
+        orderNo: order.orderNumber,
+      }));
+      const fc = Number(order.freightCost || 0);
+      const oc = Number(order.otherCosts || 0);
+      if (fc > 0) setFreightCost(fc);
+      if (oc > 0) setFreightOtherCosts(oc);
+      toast({
+        title: t.purchaseInvoicesUi.fillFromOrderToastTitle,
+        description: t.purchaseInvoicesUi.fillFromOrderToastDesc.replace('{orderNo}', order.orderNumber),
+      });
+    },
+    [form.warehouseId, form.warehouseName, currentBranch, products, toast, t],
+  );
+
   const handleOpenProductPicker = useCallback(() => {
     setProductPickerOpen(true);
   }, []);
@@ -1502,6 +1607,7 @@ export default function PurchaseInvoices() {
     setSaveError(null);
     clearPurchaseCreateIntent();
     urlCreateAppliedRef.current = false;
+    setFillFromPoId('');
     setMode("list");
     goToPurchaseListRoute();
   }, [goToPurchaseListRoute]);
@@ -1988,6 +2094,29 @@ export default function PurchaseInvoices() {
 
       await savePurchaseInvoice(invoice);
       await syncPurchaseInvoiceDocument(invoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix);
+
+      const orderNoRef = String(invoice.orderNo || form.orderNo || form.ref || '').trim();
+      if (orderNoRef && resolvedSupplierId) {
+        const linkRes = await api.purchaseOrders.markReceivedFromInvoice({
+          orderNumber: orderNoRef,
+          supplierId: resolvedSupplierId,
+          receivedBy: user?.id || '',
+        });
+        if (linkRes.data?.success || linkRes.data?.skipped) {
+          await refreshOrders();
+        } else {
+          const ok = await markPurchaseOrderReceivedFromInvoiceNumber(
+            orderNoRef,
+            resolvedSupplierId,
+            user?.id || '',
+          );
+          if (ok) await refreshOrders();
+          else if (linkRes.error) {
+            console.warn('[PurchaseInvoices] Could not mark linked PO as received:', linkRes.error);
+          }
+        }
+      }
+
       await Promise.all([refreshProducts(), refreshSuppliers()]);
 
       toast({
@@ -2009,7 +2138,7 @@ export default function PurchaseInvoices() {
         variant: 'destructive',
       });
     }
-  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute]);
+  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders]);
 
   // ═══════════════ RENDER ═══════════════
 
@@ -2243,15 +2372,7 @@ export default function PurchaseInvoices() {
                             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPoViewOrder(order)} title={t.purchaseInvoicesUi.titlePrint}>
                               <Printer className="h-4 w-4" />
                             </Button>
-                            {order.status === 'pending' && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
-                                approveOrder(order.id, user?.id || '');
-                                toast({ title: t.purchaseInvoicesUi.toastOrderApproved, description: order.orderNumber });
-                              }} title={t.purchaseInvoicesUi.titleApprove}>
-                                <CheckCircle className="h-4 w-4 text-primary" />
-                              </Button>
-                            )}
-                            {order.status === 'approved' && (
+                            {['approved', 'partial'].includes(order.status) && (
                               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
                                 setPoReceiveOrder(order);
                                 const qtys: Record<string, number> = {};
@@ -2671,6 +2792,44 @@ export default function PurchaseInvoices() {
                 {(form.supplierBalance || 0).toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
               </span>
               <span className="text-[9px] text-muted-foreground">{form.currency || 'KZ'}</span>
+            </div>
+          )}
+          {form.supplierName && supplierPurchaseOrders.length > 0 && (
+            <div className="flex items-center gap-2 ml-1 min-w-0">
+              <span className="text-[9px] text-muted-foreground uppercase tracking-wider shrink-0">
+                {t.purchaseInvoicesUi.fillFromOrderLabel}
+              </span>
+              <Select
+                value={fillFromPoId || '__none__'}
+                onValueChange={(v) => {
+                  if (v === '__none__') {
+                    setFillFromPoId('');
+                    return;
+                  }
+                  setFillFromPoId(v);
+                  const o = supplierPurchaseOrders.find((x) => x.id === v);
+                  if (o) applyLinesFromPurchaseOrder(o);
+                }}
+              >
+                <SelectTrigger className="h-7 min-w-[200px] max-w-[min(100vw-12rem,28rem)] text-xs">
+                  <SelectValue placeholder={t.purchaseInvoicesUi.fillFromOrderPlaceholder} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">{t.purchaseInvoicesUi.fillFromOrderNone}</SelectItem>
+                  {supplierPurchaseOrders.map((o) => {
+                    const st = getPurchaseOrderStatusBadge(t, o.status);
+                    const d = o.createdAt ? format(new Date(o.createdAt), 'dd/MM/yyyy') : '';
+                    return (
+                      <SelectItem key={o.id} value={o.id}>
+                        {o.orderNumber}
+                        {d ? ` · ${d}` : ''}
+                        {' · '}
+                        {st.label}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
             </div>
           )}
         </div>

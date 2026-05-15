@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { navigateThenStartPurchaseCreate, resolvePurchasePathname } from '@/lib/nexorPurchaseCreate';
+import { NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 import { 
   Building2, User as UserIcon, LogOut, Settings, Menu,
   LayoutDashboard, ShoppingCart, FileText, Package, Users,
@@ -35,6 +36,7 @@ import {
 import { useTranslation } from '@/i18n';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { ServerConnectionIndicator } from '@/components/layout/ServerConnectionIndicator';
+import { CalculatorDialog } from '@/components/utilities/CalculatorDialog';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import defaultLogo from '/favicon.png?url';
 
@@ -79,6 +81,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [calculatorOpen, setCalculatorOpen] = useState(false);
   const { logo, companyName } = useCompanyLogo();
 
   // ========== MENU BAR ==========
@@ -159,7 +162,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       items: [
         { label: t.topNav.utilities.changePassword, icon: Shield },
         { label: t.topNav.utilities.maintenance, icon: Settings },
-        { label: t.topNav.utilities.calculator, icon: Calculator },
+        { label: t.topNav.utilities.calculator, icon: Calculator, action: () => setCalculatorOpen(true) },
         { label: 'separator' },
         { label: t.topNav.utilities.sync, icon: Upload, path: '/data-sync' },
       ],
@@ -196,7 +199,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       return;
     }
     if (p === '/purchase-orders' || p.startsWith('/purchase-orders/')) {
-      navigateThenStartPurchaseCreate(navigate, location.pathname);
+      window.dispatchEvent(new CustomEvent('nexor:purchase-orders-new'));
       return;
     }
     if (p === '/suppliers' || p.startsWith('/suppliers/')) {
@@ -211,16 +214,21 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       window.dispatchEvent(new CustomEvent('nexor:invoices-new'));
       return;
     }
+    if (p === '/vendas' || p.startsWith('/vendas/')) {
+      navigate('/pos', { state: NEXOR_POS_NEW_SALE_NAV_STATE });
+      return;
+    }
   }, [location.pathname, navigate]);
 
   const handleToolbarClick = useCallback(
     (actionKey: ToolbarActionKey) => {
+      const path = resolvePurchasePathname(location.pathname);
       switch (actionKey) {
         case 'new':
           handleToolbarNew();
           return;
         case 'purchaseInvoice':
-          navigateThenStartPurchaseCreate(navigate, location.pathname);
+          navigate('/purchase-orders');
           return;
         case 'journalEntry':
           navigate('/journals');
@@ -237,13 +245,20 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           navigate('/payments');
           return;
         case 'newSale':
-          window.dispatchEvent(new CustomEvent('nexor:pos-new-sale'));
+          if (path === '/pos' || path.startsWith('/pos/')) {
+            navigate(
+              { pathname: location.pathname, search: location.search, hash: location.hash },
+              { state: NEXOR_POS_NEW_SALE_NAV_STATE },
+            );
+          } else {
+            navigate('/pos', { state: NEXOR_POS_NEW_SALE_NAV_STATE });
+          }
           return;
         default:
           return;
       }
     },
-    [handleToolbarNew, navigate, location.pathname],
+    [handleToolbarNew, navigate, location.pathname, location.search, location.hash],
   );
 
   const getActionButtons = (): ToolbarButtonConfig[] => {
@@ -289,6 +304,13 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         ...base,
         { actionKey: 'print', label: t.topNav.file.print, icon: Printer, variant: 'outline' },
         { actionKey: 'agtSend', label: t.topNav.toolbar.agtSend, icon: Upload, variant: 'outline' },
+      ];
+    }
+    if (p === '/vendas' || p.startsWith('/vendas/')) {
+      return [
+        { actionKey: 'newSale', label: t.topNav.toolbar.newSale, icon: Plus, variant: 'default' },
+        { actionKey: 'save', label: t.topNav.toolbar.save, icon: Save, variant: 'outline' },
+        { actionKey: 'void', label: t.topNav.toolbar.void, icon: X, variant: 'destructive' },
       ];
     }
     if (p.includes('pos')) {
@@ -513,6 +535,12 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           </div>
         </nav>
       )}
+
+      <CalculatorDialog
+        open={calculatorOpen}
+        onOpenChange={setCalculatorOpen}
+        title={t.topNav.utilities.calculator}
+      />
     </header>
   );
 }

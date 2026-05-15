@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useProducts, useCart, useSales, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
@@ -13,11 +14,14 @@ import { Cart } from '@/components/pos/Cart';
 import { CheckoutDialog } from '@/components/pos/CheckoutDialog';
 import { ReceiptDialog } from '@/components/pos/ReceiptDialog';
 import { BranchSelector } from '@/components/BranchSelector';
-import { Search, ScanBarcode, Keyboard } from 'lucide-react';
+import { Search, ScanBarcode, Keyboard, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
+import { readNexorPosNewSaleFlag, NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 
 export default function POS() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { currentBranch } = useBranchContext();
   const { products, refreshProducts } = useProducts(currentBranch?.id);
   const { user } = useAuth();
@@ -82,11 +86,28 @@ export default function POS() {
     }
   }, [cart]);
 
-  // TopNav "Nova Venda" clears the cart (same as shortcut behaviour).
+  /** Same as receipt “Nova venda”: cart + checkout + receipt + last sale (TopNav / deep links). */
+  const beginNewSaleSession = useCallback(() => {
+    cart.clearCart();
+    setCheckoutOpen(false);
+    setReceiptOpen(false);
+    setLastSale(null);
+  }, [cart]);
+
   useEffect(() => {
-    window.addEventListener('nexor:pos-new-sale', handleClearCart);
-    return () => window.removeEventListener('nexor:pos-new-sale', handleClearCart);
-  }, [handleClearCart]);
+    if (!readNexorPosNewSaleFlag(location.state)) return;
+    beginNewSaleSession();
+    navigate(
+      { pathname: location.pathname, search: location.search, hash: location.hash },
+      { replace: true, state: {} },
+    );
+  }, [location.state, location.pathname, location.search, location.hash, navigate, beginNewSaleSession]);
+
+  useEffect(() => {
+    const onToolbarNewSale = () => beginNewSaleSession();
+    window.addEventListener('nexor:pos-new-sale', onToolbarNewSale);
+    return () => window.removeEventListener('nexor:pos-new-sale', onToolbarNewSale);
+  }, [beginNewSaleSession]);
 
   const focusSearch = useCallback(() => {
     searchInputRef.current?.focus();
@@ -188,9 +209,7 @@ export default function POS() {
   };
 
   const handleNewSale = () => {
-    cart.clearCart();
-    setReceiptOpen(false);
-    setLastSale(null);
+    beginNewSaleSession();
   };
 
   return (
@@ -198,9 +217,24 @@ export default function POS() {
       {/* Products Section */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <div className="p-4 border-b">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <BranchSelector compact />
-            <div className="relative flex-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 text-xs gap-1.5 lg:hidden shrink-0"
+              onClick={() =>
+                navigate(
+                  { pathname: location.pathname, search: location.search, hash: location.hash },
+                  { state: NEXOR_POS_NEW_SALE_NAV_STATE },
+                )
+              }
+            >
+              <ShoppingCart className="w-3.5 h-3.5" />
+              {t.topNav.toolbar.newSale}
+            </Button>
+            <div className="relative flex-1 min-w-[12rem]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 ref={searchInputRef}

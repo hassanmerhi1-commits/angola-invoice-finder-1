@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useSales, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { Sale } from '@/types/erp';
@@ -23,6 +24,7 @@ import { printReceipt, getPrinterConfig } from '@/lib/thermalPrinter';
 import { getCompanySettings } from '@/lib/companySettings';
 import { AGTQRCode } from '@/components/invoice/AGTQRCode';
 import { toast } from 'sonner';
+import { NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 
 const paymentLabels: Record<string, { labelKey: 'cash' | 'card' | 'transfer' | 'mixed'; icon: any; color: string }> = {
   cash: { labelKey: 'cash', icon: Banknote, color: 'text-success' },
@@ -38,6 +40,7 @@ const statusConfig: Record<string, { labelKey: 'completed' | 'voided' | 'pending
 };
 
 export default function Vendas() {
+  const navigate = useNavigate();
   const { currentBranch } = useBranchContext();
   const { sales, refreshSales } = useSales(currentBranch?.id);
   const company = getCompanySettings();
@@ -111,6 +114,15 @@ export default function Vendas() {
 
         <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={() => refreshSales()}>
           <RefreshCw className="w-3.5 h-3.5" /> {t.common.refresh}
+        </Button>
+
+        <Button
+          variant="default"
+          size="sm"
+          className="h-8 text-xs gap-1.5"
+          onClick={() => navigate('/pos', { state: NEXOR_POS_NEW_SALE_NAV_STATE })}
+        >
+          <ShoppingCart className="w-3.5 h-3.5" /> {t.topNav.toolbar.newSale}
         </Button>
 
         <div className="flex-1" />

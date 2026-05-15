@@ -27,6 +27,76 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  /**
+   * When a purchase invoice is saved with an order number, mark that PO as received
+   * without running goods receipt (stock already updated by the invoice transaction).
+   */
+  router.post('/mark-received-from-invoice', async (req, res) => {
+    try {
+      const { orderNumber, supplierId, receivedBy } = req.body || {};
+      const num = orderNumber != null ? String(orderNumber).trim() : '';
+      if (!num || !supplierId) {
+        return res.status(400).json({ error: 'orderNumber and supplierId are required' });
+      }
+      const find = await db.query(
+        `SELECT id, status FROM purchase_orders
+         WHERE LOWER(TRIM(COALESCE(order_number, ''))) = LOWER($1)
+           AND TRIM(supplier_id::text) = TRIM($2)
+         LIMIT 1`,
+        [num, supplierId]
+      );
+      if (find.rows.length === 0) {
+        return res.status(404).json({ error: 'Purchase order not found for this supplier and order number' });
+      }
+      const { id: orderId, status } = find.rows[0];
+      if (status === 'cancelled' || status === 'received') {
+        await broadcastTable('purchase_orders');
+        return res.json({ success: true, skipped: true });
+      }
+      await db.query(
+        `UPDATE purchase_order_items SET received_quantity = quantity WHERE order_id = $1`,
+        [orderId]
+      );
+      const rb = receivedBy != null && String(receivedBy).trim() !== '' ? String(receivedBy).trim() : null;
+      try {
+        if (rb) {
+          await db.query(
+            `UPDATE purchase_orders
+             SET status = 'received',
+                 received_by = $1::uuid,
+                 received_at = CURRENT_TIMESTAMP,
+                 freight_distributed = true
+             WHERE id = $2`,
+            [rb, orderId]
+          );
+        } else {
+          await db.query(
+            `UPDATE purchase_orders
+             SET status = 'received',
+                 received_at = CURRENT_TIMESTAMP,
+                 freight_distributed = true
+             WHERE id = $1`,
+            [orderId]
+          );
+        }
+      } catch (uuidErr) {
+        await db.query(
+          `UPDATE purchase_orders
+           SET status = 'received',
+               received_at = CURRENT_TIMESTAMP,
+               freight_distributed = true
+           WHERE id = $1`,
+          [orderId]
+        );
+      }
+      await broadcastTable('purchase_orders');
+      res.json({ success: true });
+    } catch (error) {
+      console.error('[PURCHASE ORDERS ERROR]', error);
+      res.status(500).json({ error: error.message || 'Failed to mark order received' });
+    }
+  });
+
   // CREATE: Delegated to Transaction Engine
   router.post('/', async (req, res) => {
     const client = await db.pool.connect();

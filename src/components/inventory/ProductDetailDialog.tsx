@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Product } from '@/types/erp';
 import { useBranches, useCategories, useSuppliers } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
@@ -22,6 +22,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Check, X, Plus } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { useBranchContext } from '@/contexts/BranchContext';
+import {
+  mergeInventoryFoodCategorySelectOptions,
+  resolveProductCategoryName,
+  defaultProductCategoryName,
+} from '@/lib/inventoryFoodCategories';
 
 interface ProductDetailDialogProps {
   open: boolean;
@@ -42,22 +48,6 @@ const UNITS = [
 ] as const;
 
 const IVA_RATES = [0, 5, 7, 14];
-
-function resolveCategoryName(rawCategory: string | undefined, categories: Array<{ name: string }>) {
-  const cleaned = String(rawCategory || '').replace(/\s+/g, ' ').trim();
-  if (!cleaned) return categories[0]?.name || '';
-
-  const exactMatch = categories.find((category) => category.name.toLowerCase() === cleaned.toLowerCase());
-  if (exactMatch) return exactMatch.name;
-
-  const compact = cleaned.toLowerCase().replace(/\s+/g, '');
-  const repeatedMatch = categories.find((category) => {
-    const token = category.name.toLowerCase().replace(/\s+/g, '');
-    return token && compact.includes(token) && compact.replace(new RegExp(token, 'g'), '') === '';
-  });
-
-  return repeatedMatch?.name || cleaned;
-}
 
 // Simple row component for the form grid
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -88,10 +78,15 @@ export function ProductDetailDialog({
   const { branches } = useBranches();
   const { categories } = useCategories();
   const { suppliers } = useSuppliers();
+  const { currentBranch } = useBranchContext();
   const { t } = useTranslation();
 
   const activeCategories = useMemo(() => categories.filter(c => c.isActive), [categories]);
   const activeSuppliers = useMemo(() => suppliers.filter(s => s.isActive), [suppliers]);
+  const categorySelectOptions = useMemo(
+    () => mergeInventoryFoodCategorySelectOptions(activeCategories),
+    [activeCategories]
+  );
 
   // Fetch latest USD→AOA exchange rate for dual-currency cost display
   const [usdRate, setUsdRate] = useState<number>(0);
@@ -145,7 +140,7 @@ export function ProductDetailDialog({
         id: product.id,
         sku: product.sku,
         name: product.name,
-        category: resolveCategoryName(product.category, activeCategories),
+        category: resolveProductCategoryName(product.category, activeCategories),
         unit: product.unit,
         iva: product.taxRate,
         tipo: 'INVENTARIO',
@@ -174,7 +169,7 @@ export function ProductDetailDialog({
         id: '',
         sku: '',
         name: '',
-        category: activeCategories[0]?.name || '',
+        category: defaultProductCategoryName(activeCategories),
         unit: 'un',
         iva: 14,
         tipo: 'INVENTARIO',
@@ -191,13 +186,13 @@ export function ProductDetailDialog({
         avgCost: 0,
         lastCost: 0,
         stock: 0,
-        branchId: 'all',
+        branchId: currentBranch && !currentBranch.isMain ? currentBranch.id : 'all',
         isActive: true,
         barcode: '',
         barcodes: [{ barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }],
       });
     }
-  }, [product, open, activeCategories]);
+  }, [product, open, activeCategories, currentBranch?.id, currentBranch?.isMain]);
 
   const set = (field: string, value: any) => setFormData(prev => ({ ...prev, [field]: value }));
 
@@ -227,7 +222,7 @@ export function ProductDetailDialog({
       name: formData.name,
       sku: formData.sku || `SKU-${Date.now()}`,
       barcode: formData.barcode || formData.barcodes[0]?.barPrice || undefined,
-      category: resolveCategoryName(formData.category, activeCategories),
+      category: resolveProductCategoryName(formData.category, activeCategories),
       price: formData.price,
       price2: formData.price2 || undefined,
       price3: formData.price3 || undefined,
@@ -273,10 +268,12 @@ export function ProductDetailDialog({
                   <Input value={formData.name} onChange={e => set('name', e.target.value)} className="h-7 text-xs" />
                 </Row>
                 <Row label={t.inventory.category}>
-                  <Select value={resolveCategoryName(formData.category, activeCategories)} onValueChange={v => set('category', v)}>
+                  <Select value={resolveProductCategoryName(formData.category, activeCategories)} onValueChange={v => set('category', v)}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-50">
-                      {activeCategories.map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
+                    <SelectContent className="bg-popover border shadow-lg z-50 max-h-[min(60vh,320px)]">
+                      {categorySelectOptions.map((c) => (
+                        <SelectItem key={c.key} value={c.name}>{c.name}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </Row>

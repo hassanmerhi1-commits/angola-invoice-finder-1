@@ -2,7 +2,7 @@
 // Multi-tab document browser with linked conversion flow
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
@@ -26,7 +26,6 @@ import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from 
 import { getDocuments, convertDocument } from '@/lib/documentStorage';
 import { DocumentFormDialog } from '@/components/documents/DocumentFormDialog';
 import { DocumentFlowViewer } from '@/components/documents/DocumentFlowViewer';
-import { navigateThenStartPurchaseCreate } from '@/lib/nexorPurchaseCreate';
 
 // Build flow nodes from a document and its linked chain
 function buildFlowNodes(doc: ERPDocument): { type: string; number: string; date: string; status: 'completed' | 'active' | 'pending'; amount?: number }[] {
@@ -102,7 +101,6 @@ export default function Invoices() {
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const navigate = useNavigate();
-  const location = useLocation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
   const [activeTab, setActiveTab] = useState<DocumentType | 'all'>('all');
@@ -191,7 +189,14 @@ export default function Invoices() {
       user?.name || ''
     );
     if (result) {
-      toast.success(`${DOCUMENT_TYPE_CONFIG[targetType].shortLabel} ${result.documentNumber} criado a partir de ${doc.documentNumber}`);
+      const typeLabels = t.documentFormUi.types as Record<DocumentType, { full: string; short: string }>;
+      const targetShort = typeLabels[targetType]?.short ?? DOCUMENT_TYPE_CONFIG[targetType].shortLabel;
+      toast.success(
+        t.invoicesUi.conversionCreated
+          .replace('{type}', targetShort)
+          .replace('{number}', result.documentNumber)
+          .replace('{source}', doc.documentNumber),
+      );
       refresh();
     } else {
       toast.error(t.invoicesUi.conversionNotAllowed);
@@ -206,28 +211,33 @@ export default function Invoices() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
-              <Plus className="w-3 h-3" /> Novo Documento <ChevronDown className="w-3 h-3" />
+              <Plus className="w-3 h-3" /> {t.invoicesUi.newDocument} <ChevronDown className="w-3 h-3" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
-            {Object.entries(DOCUMENT_TYPE_CONFIG).map(([key, cfg]) => (
+            {(Object.keys(DOCUMENT_TYPE_CONFIG) as DocumentType[]).map((key) => {
+              const cfg = DOCUMENT_TYPE_CONFIG[key];
+              const typeLabels = t.documentFormUi.types as Record<DocumentType, { full: string; short: string }>;
+              const label = typeLabels[key]?.full ?? cfg.label;
+              return (
               <DropdownMenuItem key={key} onClick={() => {
                 if (key === 'fatura_compra') {
-                  navigateThenStartPurchaseCreate(navigate, location.pathname);
+                  navigate('/purchase-orders');
                 } else {
-                  openNewDocument(key as DocumentType);
+                  openNewDocument(key);
                 }
               }}>
                 <span className={cn("mr-2", cfg.color)}>■</span>
-                {cfg.label}
+                {label}
               </DropdownMenuItem>
-            ))}
+              );
+            })}
           </DropdownMenuContent>
         </DropdownMenu>
 
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedDoc}
           onClick={() => selectedDoc && openEditDocument(selectedDoc)}>
-          <Eye className="w-3 h-3" /> Ver / Editar
+          <Eye className="w-3 h-3" /> {t.invoicesUi.viewEdit}
         </Button>
 
         {/* Convert button */}
@@ -235,16 +245,20 @@ export default function Invoices() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-blue-600 border-blue-200">
-                <ArrowRightLeft className="w-3 h-3" /> Converter <ChevronDown className="w-3 h-3" />
+                <ArrowRightLeft className="w-3 h-3" /> {t.invoicesUi.convert} <ChevronDown className="w-3 h-3" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              {DOCUMENT_TYPE_CONFIG[selectedDoc.documentType].canConvertTo.map(targetType => (
+              {DOCUMENT_TYPE_CONFIG[selectedDoc.documentType].canConvertTo.map(targetType => {
+                const typeLabels = t.documentFormUi.types as Record<DocumentType, { full: string; short: string }>;
+                const convLabel = typeLabels[targetType]?.full ?? DOCUMENT_TYPE_CONFIG[targetType].label;
+                return (
                 <DropdownMenuItem key={targetType} onClick={() => handleConvert(selectedDoc, targetType)}>
                   <ArrowRight className="w-3 h-3 mr-2" />
-                  {DOCUMENT_TYPE_CONFIG[targetType].label}
+                  {convLabel}
                 </DropdownMenuItem>
-              ))}
+                );
+              })}
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -252,11 +266,11 @@ export default function Invoices() {
         <div className="w-px h-5 bg-border mx-1" />
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedDoc}
           onClick={() => selectedDoc && printDocument(selectedDoc)}>
-          <Printer className="w-3 h-3" /> Imprimir
+          <Printer className="w-3 h-3" /> {t.invoicesUi.print}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedDoc}
           onClick={() => selectedDoc && downloadDocumentHTML(selectedDoc)}>
-          <Download className="w-3 h-3" /> PDF
+          <Download className="w-3 h-3" /> {t.invoicesUi.pdf}
         </Button>
         <Button variant="outline" size="icon" className="h-7 w-7" onClick={refresh}>
           <RefreshCw className="w-3 h-3" />
@@ -266,18 +280,18 @@ export default function Invoices() {
 
         {/* Document flow legend */}
         <div className="hidden md:flex items-center gap-1 text-[10px] text-muted-foreground mr-2">
-          <span className="text-blue-600 font-medium">Proforma</span>
+          <span className="text-blue-600 font-medium">{t.invoicesUi.flowProforma}</span>
           <ArrowRight className="w-3 h-3" />
-          <span className="text-green-600 font-medium">Fatura</span>
+          <span className="text-green-600 font-medium">{t.invoicesUi.flowInvoice}</span>
           <ArrowRight className="w-3 h-3" />
-          <span className="text-emerald-600 font-medium">Recibo</span>
+          <span className="text-emerald-600 font-medium">{t.invoicesUi.flowReceipt}</span>
           <ArrowRight className="w-3 h-3" />
-          <span className="text-red-600 font-medium">Pagamento</span>
+          <span className="text-red-600 font-medium">{t.invoicesUi.flowPayment}</span>
         </div>
 
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-          <Input placeholder="Pesquisar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+          <Input placeholder={t.invoicesUi.searchPlaceholder} value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
             className="h-7 text-xs pl-7 w-40" />
         </div>
       </div>
@@ -308,7 +322,7 @@ export default function Invoices() {
                 <th className="px-3 py-2 text-left font-semibold w-36">{t.invoicesUi.documentNo}</th>
                 <th className="px-3 py-2 text-left font-semibold w-24">{t.common.date}</th>
                 <th className="px-3 py-2 text-left font-semibold">{activeTab === 'fatura_compra' || activeTab === 'pagamento' ? t.paymentsUi.supplier : t.paymentsUi.customer}</th>
-                <th className="px-3 py-2 text-left font-semibold w-24">NIF</th>
+                <th className="px-3 py-2 text-left font-semibold w-24">{t.invoicesUi.nif}</th>
                 <th className="px-3 py-2 text-right font-semibold w-28">{t.common.total}</th>
                 <th className="px-3 py-2 text-right font-semibold w-28">{t.invoicesUi.paid}</th>
                 <th className="px-3 py-2 text-right font-semibold w-28">{t.invoicesUi.due}</th>

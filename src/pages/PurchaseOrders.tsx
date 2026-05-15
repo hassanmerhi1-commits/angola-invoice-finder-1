@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useProducts, useSuppliers, usePurchaseOrders, useAuth } from '@/hooks/useERP';
@@ -60,12 +60,11 @@ export default function PurchaseOrders() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { branches, currentBranch } = useBranchContext();
-  const { products } = useProducts(currentBranch?.id);
+  const { products, refreshProducts } = useProducts(undefined);
   const { suppliers } = useSuppliers();
   const { 
     orders, 
     createOrder, 
-    approveOrder, 
     receiveOrder, 
     cancelOrder 
   } = usePurchaseOrders();
@@ -104,6 +103,16 @@ export default function PurchaseOrders() {
   const handleOpenPurchaseInvoice = useCallback(() => {
     navigateThenStartPurchaseCreate(navigate, location.pathname);
   }, [navigate, location.pathname]);
+
+  useEffect(() => {
+    const openCreate = () => setCreateDialogOpen(true);
+    window.addEventListener('nexor:purchase-orders-new', openCreate);
+    return () => window.removeEventListener('nexor:purchase-orders-new', openCreate);
+  }, []);
+
+  useEffect(() => {
+    if (createDialogOpen) void refreshProducts();
+  }, [createDialogOpen, refreshProducts]);
 
   // Handle barcode scan for adding products
   const handleBarcodeScan = useCallback((barcode: string) => {
@@ -331,22 +340,6 @@ export default function PurchaseOrders() {
     }
   };
 
-  const handleApprove = async (order: PurchaseOrder) => {
-    try {
-      await approveOrder(order.id, user?.id || '');
-      toast({
-        title: 'Encomenda aprovada',
-        description: `Encomenda ${order.orderNumber} foi aprovada`,
-      });
-    } catch (error: any) {
-      toast({
-        title: t.purchaseOrdersUi.approveFailedTitle,
-        description: error.message || t.purchaseOrdersUi.approveFailedDesc,
-        variant: 'destructive',
-      });
-    }
-  };
-
   const handleOpenReceive = (order: PurchaseOrder) => {
     setSelectedOrder(order);
     const quantities: Record<string, number> = {};
@@ -546,17 +539,7 @@ export default function PurchaseOrders() {
                         >
                           <Eye className="w-4 h-4" />
                         </Button>
-                        {order.status === 'pending' && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleApprove(order)}
-                            title="Aprovar"
-                          >
-                            <CheckCircle className="w-4 h-4 text-green-500" />
-                          </Button>
-                        )}
-                        {order.status === 'approved' && (
+                        {['approved', 'partial'].includes(order.status) && (
                           <Button
                             variant="ghost"
                             size="icon"

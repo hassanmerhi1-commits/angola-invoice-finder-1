@@ -83,7 +83,7 @@ export default function Dashboard() {
     { label: t.dashboardUi.quickActions.posSales, icon: ShoppingCart, path: '/pos', gradient: 'gradient-primary' },
     { label: t.dashboardUi.quickActions.invoices, icon: FileText, path: '/invoices', gradient: 'gradient-accent' },
     { label: t.dashboardUi.quickActions.inventory, icon: Package, path: '/inventory', gradient: 'gradient-success' },
-    { label: t.dashboardUi.quickActions.purchases, icon: Truck, path: '/purchase-orders', gradient: 'gradient-warm' },
+    { label: t.dashboardUi.quickActions.purchases, icon: Truck, path: '/purchase-invoices', gradient: 'gradient-warm' },
     { label: t.dashboardUi.quickActions.clients, icon: Users, path: '/clients', gradient: 'gradient-primary' },
     { label: t.dashboardUi.quickActions.chartOfAccounts, icon: BookOpen, path: '/chart-of-accounts', gradient: 'gradient-accent' },
     { label: t.dashboardUi.quickActions.transfers, icon: ArrowRightLeft, path: '/stock-transfer', gradient: 'gradient-success' },
@@ -318,7 +318,7 @@ export default function Dashboard() {
             { label: t.reportsCenterUi.tabTrialBalance, icon: PieChart, path: '/reports', color: 'bg-primary/10 text-primary' },
             { label: t.nav.invoices, icon: FileText, path: '/invoices', color: 'bg-green-500/10 text-green-600' },
             { label: t.dashboardUi.bi.salesProfit, icon: TrendingUp, path: '/reports', color: 'bg-orange-500/10 text-orange-600' },
-            { label: t.nav.purchaseOrders, icon: Truck, path: '/purchase-orders', color: 'bg-blue-500/10 text-blue-600' },
+            { label: t.nav.purchaseOrders, icon: Truck, path: '/purchase-invoices', color: 'bg-blue-500/10 text-blue-600' },
             { label: t.nav.taxManagement, icon: Receipt, path: '/tax-management', color: 'bg-destructive/10 text-destructive' },
             { label: t.nav.inventory, icon: Package, path: '/inventory', color: 'bg-primary/10 text-primary' },
           ].map((item) => (
