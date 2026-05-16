@@ -22,6 +22,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useClients, useSuppliers } from '@/hooks/useERP';
 import type { OpenItem, Payment } from '@/types/erp';
+import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
 
 // Demo data for localStorage mode
 function mapPaymentRow(p: any): Payment {
@@ -92,6 +93,8 @@ function usePaymentsData() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => subscribeSupplierReturnsChanged(refresh), [refresh]);
 
   const createPayment = useCallback(async (paymentData: any) => {
     const res = await api.payments.create(paymentData);

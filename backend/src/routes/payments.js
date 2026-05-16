@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { processPayment } = require('../transactionEngine');
+const { ENTITY_BALANCE_SELECT } = require('../entityBalanceSql');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -115,10 +116,7 @@ module.exports = function(broadcastTable) {
       const pResult = await db.query(pQuery, pParams);
 
       // 3) Current balance
-      const balResult = await db.query(
-        `SELECT * FROM v_entity_balance WHERE entity_type = $1 AND entity_id = $2`,
-        [entityType, entityId]
-      );
+      const balResult = await db.query(ENTITY_BALANCE_SELECT, [entityType, entityId]);
 
       res.json({
         openItems: oiResult.rows,

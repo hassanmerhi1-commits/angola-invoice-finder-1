@@ -129,16 +129,26 @@ export function useChartOfAccounts() {
       setIsLoading(true);
       const response = await api.chartOfAccounts.list();
       if (response.error) throw new Error(response.error);
-      const remoteAccounts = sortAccountsByCode(response.data || []);
+      let remoteAccounts = sortAccountsByCode(response.data || []);
+      if (remoteAccounts.length === 0) {
+        const local = loadLocalAccounts(t);
+        if (local.length > 0) remoteAccounts = local;
+      }
       setAccounts(remoteAccounts);
       setError(null);
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch accounts');
-      console.error('[useChartOfAccounts] Error:', err);
+      const local = loadLocalAccounts(t);
+      if (local.length > 0) {
+        setAccounts(local);
+        setError(null);
+      } else {
+        setError(err.message || 'Failed to fetch accounts');
+        console.error('[useChartOfAccounts] Error:', err);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [t]);
 
   // Auto-seed branch caixa accounts once after first load
   useEffect(() => {

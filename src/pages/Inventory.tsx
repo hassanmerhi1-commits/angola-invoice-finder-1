@@ -40,6 +40,19 @@ import { AdvancedDataGrid } from '@/components/inventory/AdvancedDataGrid';
 import { ShelfLabelPrintDialog } from '@/components/inventory/ShelfLabelPrintDialog';
 import { ProductDetailDialog } from '@/components/inventory/ProductDetailDialog';
 import { BranchStockDetail } from '@/components/inventory/BranchStockDetail';
+import {
+  filterMovementsForProduct,
+  InventoryMonthlyMovementsPanel,
+  InventoryMovementChartPanel,
+  InventoryCostHistoryPanel,
+  InventoryPurchasePricePanel,
+  InventoryMonthlySalesPanel,
+  InventoryProductOrdersPanel,
+  InventoryBarcodeQtyPanel,
+  InventoryProductAuditPanel,
+  InventoryPendingTransfersPanel,
+  InventorySerialNumbersPanel,
+} from '@/components/inventory/InventoryProductPanels';
 import { BranchSelector } from '@/components/BranchSelector';
 import { exportProductsToExcel, parseExcelFile, validateImportedProducts, downloadImportTemplate, ExcelProduct } from '@/lib/excel';
 import { ExcelImportDialog } from '@/components/import/ExcelImportDialog';
@@ -187,7 +200,11 @@ export default function Inventory() {
     const stockBySku = new Map<string, number>();
     for (const row of branchRows) {
       const key = (row.sku || '').trim() || row.id;
-      stockBySku.set(key, Math.max(stockBySku.get(key) || 0, row.stock || 0));
+      const prev = stockBySku.get(key);
+      const rowStock = row.stock ?? 0;
+      if (prev === undefined || row.branchId === currentBranch?.id) {
+        stockBySku.set(key, rowStock);
+      }
     }
 
     return products.map((p) => {
@@ -388,19 +405,6 @@ export default function Inventory() {
     { key: 'categoria', label: 'Categoria' },
   ];
 
-  const selectedProductMovements = useMemo(() => {
-    if (!selectedProduct) return [];
-
-    return stockMovements
-      .filter(m => m.productId === selectedProduct.id || m.sku === selectedProduct.sku)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [selectedProduct, stockMovements]);
-
-  const movementSummary = useMemo(() => selectedProductMovements.reduce((acc, movement) => ({
-    entries: acc.entries + (movement.type === 'IN' ? movement.quantity : 0),
-    exits: acc.exits + (movement.type === 'OUT' ? movement.quantity : 0),
-  }), { entries: 0, exits: 0 }), [selectedProductMovements]);
-
   const getMovementReasonLabel = (reason: StockMovement['reason']) => {
     switch (reason) {
       case 'purchase': return t.inventoryUi.reasonPurchase;
@@ -414,6 +418,29 @@ export default function Inventory() {
       default: return reason;
     }
   };
+
+  const selectedProductMovements = useMemo(() => {
+    return filterMovementsForProduct(stockMovements, selectedProduct, allBranchProducts)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [selectedProduct, stockMovements, allBranchProducts]);
+
+  const panelProps = useMemo(
+    () => ({
+      product: selectedProduct,
+      movements: stockMovements,
+      allBranchProducts,
+      uiLocale,
+      getReasonLabel: getMovementReasonLabel,
+    }),
+    [selectedProduct, stockMovements, allBranchProducts, uiLocale, getMovementReasonLabel]
+  );
+
+  const tabPanelClass = 'flex-1 min-h-0 m-0 p-4 overflow-auto data-[state=inactive]:hidden';
+
+  const movementSummary = useMemo(() => selectedProductMovements.reduce((acc, movement) => ({
+    entries: acc.entries + (movement.type === 'IN' ? movement.quantity : 0),
+    exits: acc.exits + (movement.type === 'OUT' ? movement.quantity : 0),
+  }), { entries: 0, exits: 0 }), [selectedProductMovements]);
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -575,7 +602,7 @@ export default function Inventory() {
       </div>
 
       {/* Sub-tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0">
           <TabsTrigger value="lista" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             {t.inventoryPageUi.tabs.list}
@@ -650,7 +677,7 @@ export default function Inventory() {
           </Button>
         </div>
 
-        <TabsContent value="lista" forceMount className="flex-1 m-0 p-2 data-[state=inactive]:hidden">
+        <TabsContent value="lista" forceMount className="flex-1 min-h-0 m-0 p-2 data-[state=inactive]:hidden overflow-auto">
           <AdvancedDataGrid 
             products={displayProducts}
             onSelectProduct={handleSelectProduct}
@@ -662,7 +689,7 @@ export default function Inventory() {
           />
         </TabsContent>
 
-        <TabsContent value="extracto" className="flex-1 m-0 p-4">
+        <TabsContent value="extracto" className={tabPanelClass}>
           {!selectedProduct ? (
             <Card>
               <CardContent className="pt-6">
@@ -724,61 +751,39 @@ export default function Inventory() {
           )}
         </TabsContent>
 
-        <TabsContent value="mes" className="flex-1 m-0 p-4">
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">{t.inventoryPageUi.monthlyMovements}</p>
-            </CardContent>
-          </Card>
+        <TabsContent value="mes" className={tabPanelClass}>
+          <InventoryMonthlyMovementsPanel
+            product={selectedProduct}
+            movements={stockMovements}
+            allBranchProducts={allBranchProducts}
+          />
         </TabsContent>
 
-        <TabsContent value="qtd-detalhada" className="flex-1 m-0 p-4 overflow-auto">
+        <TabsContent value="qtd-detalhada" className={tabPanelClass}>
           <BranchStockDetail selectedProduct={selectedProduct} />
         </TabsContent>
 
-        <TabsContent value="transferencia" className="flex-1 m-0 p-4">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-center space-y-4">
-                <ArrowRightLeft className="w-12 h-12 mx-auto text-muted-foreground" />
-                <div>
-                  <h3 className="font-semibold text-lg">{t.inventoryPageUi.transferTitle}</h3>
-                  <p className="text-muted-foreground mb-4">{t.inventoryPageUi.transferDesc}</p>
-                </div>
-                <Button onClick={() => navigate('/stock-transfer')}>
-                  <ArrowRightLeft className="w-4 h-4 mr-2" />
-                  {t.inventoryPageUi.goToTransfers}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+        <TabsContent value="transferencia" className={tabPanelClass}>
+          <InventoryPendingTransfersPanel product={selectedProduct} />
         </TabsContent>
 
-        <TabsContent value="grafico" className="flex-1 m-0 p-4">
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">{t.inventoryPageUi.movementCharts}</p>
-            </CardContent>
-          </Card>
+        <TabsContent value="grafico" className={tabPanelClass}>
+          <InventoryMovementChartPanel
+            product={selectedProduct}
+            movements={stockMovements}
+            allBranchProducts={allBranchProducts}
+          />
         </TabsContent>
 
-        <TabsContent value="preco-compra" className="flex-1 m-0 p-4">
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">{t.inventoryPageUi.purchasePriceHistory}</p>
-            </CardContent>
-          </Card>
+        <TabsContent value="preco-compra" className={tabPanelClass}>
+          <InventoryPurchasePricePanel {...panelProps} />
         </TabsContent>
 
-        <TabsContent value="no-serie" className="flex-1 m-0 p-4">
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">{t.inventoryPageUi.serialNumbers}</p>
-            </CardContent>
-          </Card>
+        <TabsContent value="no-serie" className={tabPanelClass}>
+          <InventorySerialNumbersPanel product={selectedProduct} />
         </TabsContent>
 
-        <TabsContent value="info-produto" className="flex-1 m-0 p-4">
+        <TabsContent value="info-produto" className={tabPanelClass}>
           {selectedProduct ? (
             <Card>
               <CardContent className="pt-6">
@@ -802,44 +807,24 @@ export default function Inventory() {
           )}
         </TabsContent>
 
-        <TabsContent value="cost-history" className="flex-1 m-0 p-4">
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">{t.inventoryPageUi.costHistoryPlaceholder}</p>
-            </CardContent>
-          </Card>
+        <TabsContent value="cost-history" className={tabPanelClass}>
+          <InventoryCostHistoryPanel {...panelProps} />
         </TabsContent>
 
-        <TabsContent value="pedidos" className="flex-1 m-0 p-4">
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">{t.inventoryPageUi.relatedOrders}</p>
-            </CardContent>
-          </Card>
+        <TabsContent value="pedidos" className={tabPanelClass}>
+          <InventoryProductOrdersPanel product={selectedProduct} />
         </TabsContent>
 
-        <TabsContent value="barcode-qty" className="flex-1 m-0 p-4">
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">{t.inventoryPageUi.barcodeQuantities}</p>
-            </CardContent>
-          </Card>
+        <TabsContent value="barcode-qty" className={tabPanelClass}>
+          <InventoryBarcodeQtyPanel product={selectedProduct} allBranchProducts={allBranchProducts} />
         </TabsContent>
 
-        <TabsContent value="vendas-mensais" className="flex-1 m-0 p-4">
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">{t.inventoryPageUi.monthlyProductSales}</p>
-            </CardContent>
-          </Card>
+        <TabsContent value="vendas-mensais" className={tabPanelClass}>
+          <InventoryMonthlySalesPanel {...panelProps} />
         </TabsContent>
 
-        <TabsContent value="auditoria" className="flex-1 m-0 p-4">
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-muted-foreground text-center">{t.inventoryPageUi.auditHistory}</p>
-            </CardContent>
-          </Card>
+        <TabsContent value="auditoria" className={tabPanelClass}>
+          <InventoryProductAuditPanel product={selectedProduct} />
         </TabsContent>
       </Tabs>
 

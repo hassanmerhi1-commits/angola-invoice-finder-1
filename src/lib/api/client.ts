@@ -526,9 +526,22 @@ export const api = {
       if (isElectronMode()) {
         const apiResult = await apiFetch<any[]>('/suppliers');
         if (apiResult.data !== undefined) return apiResult;
-        return ipcQuery<any>('SELECT * FROM suppliers ORDER BY name');
+        return ipcQuery<any>(
+          `SELECT s.*,
+                  COALESCE((
+                    SELECT SUM(CASE WHEN oi.is_debit THEN oi.remaining_amount ELSE -oi.remaining_amount END)
+                    FROM open_items oi
+                    WHERE oi.entity_type = 'supplier' AND oi.entity_id = s.id
+                  ), 0) AS balance
+           FROM suppliers s
+           WHERE s.is_active = 1
+           ORDER BY s.name`
+        );
       }
       return apiFetch<any[]>('/suppliers');
+    },
+    reconcileBalances: () => {
+      return apiFetch<{ repaired: number; updated: number }>('/suppliers/reconcile-balances', { method: 'POST' });
     },
     create: async (data: any) => {
       if (isElectronMode()) {
@@ -745,8 +758,23 @@ export const api = {
 
   // Chart of Accounts
   chartOfAccounts: {
-    list: () => {
-      return apiFetch<any[]>('/accounts');
+    list: async () => {
+      const apiResult = await apiFetch<any[]>('/chart-of-accounts');
+      if (apiResult.data !== undefined && !apiResult.error) return apiResult;
+      if (isElectronMode()) {
+        return ipcQuery<any>(`
+          SELECT
+            coa.*,
+            parent.name AS parent_name,
+            parent.code AS parent_code,
+            (SELECT COUNT(*) FROM chart_of_accounts child WHERE child.parent_id = coa.id) AS children_count
+          FROM chart_of_accounts coa
+          LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
+          WHERE coa.is_active = 1
+          ORDER BY coa.code
+        `);
+      }
+      return apiResult;
     },
     get: (id: string) => {
       if (isElectronMode()) return ipcQuery<any>('SELECT * FROM chart_of_accounts WHERE id = $1', [id]).then(r => ({ data: r.data?.[0] }));
@@ -769,7 +797,15 @@ export const api = {
       if (endDate) params.append('end_date', endDate);
       return apiFetch<any>(`/chart-of-accounts/${id}/balance?${params}`);
     },
-    getTrialBalance: (startDate?: string, endDate?: string) => {
+    getTrialBalance: async (startDate?: string, endDate?: string) => {
+      const params = new URLSearchParams();
+      if (startDate) params.append('start_date', startDate);
+      if (endDate) params.append('end_date', endDate);
+      const qs = params.toString();
+      const apiResult = await apiFetch<any[]>(
+        `/chart-of-accounts/reports/trial-balance${qs ? `?${qs}` : ''}`,
+      );
+      if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       if (isElectronMode()) {
         return ipcQuery<any>(
           `SELECT ca.*, 
@@ -780,13 +816,10 @@ export const api = {
            LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id AND je.is_posted = true
            WHERE ca.is_active = true
            GROUP BY ca.id
-           ORDER BY ca.code`
+           ORDER BY ca.code`,
         );
       }
-      const params = new URLSearchParams();
-      if (startDate) params.append('start_date', startDate);
-      if (endDate) params.append('end_date', endDate);
-      return apiFetch<any[]>(`/chart-of-accounts/reports/trial-balance?${params}`);
+      return apiResult;
     },
     create: (data: any) => {
       if (isElectronMode()) return ipcInsert('chart_of_accounts', { id: generateId(), ...data, is_active: true, current_balance: 0, created_at: new Date().toISOString() });
@@ -800,7 +833,15 @@ export const api = {
       if (isElectronMode()) return ipcDelete('chart_of_accounts', id);
       return apiFetch<any>(`/chart-of-accounts/${id}`, { method: 'DELETE' });
     },
-    getLedger: (id: string, startDate?: string, endDate?: string) => {
+    getLedger: async (id: string, startDate?: string, endDate?: string) => {
+      const p = new URLSearchParams();
+      if (startDate) p.append('start_date', startDate);
+      if (endDate) p.append('end_date', endDate);
+      const qs = p.toString();
+      const apiResult = await apiFetch<any[]>(
+        `/chart-of-accounts/${encodeURIComponent(id)}/ledger${qs ? `?${qs}` : ''}`,
+      );
+      if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       if (isElectronMode()) {
         let sql = `
           SELECT jel.*, je.entry_number, je.entry_date, je.description as journal_description,
@@ -817,56 +858,48 @@ export const api = {
         sql += ' ORDER BY je.entry_date DESC, je.created_at DESC';
         return ipcQuery<any>(sql, params);
       }
-      const p = new URLSearchParams();
-      if (startDate) p.append('start_date', startDate);
-      if (endDate) p.append('end_date', endDate);
-      return apiFetch<any[]>(`/chart-of-accounts/${id}/ledger?${p}`);
+      return apiResult;
     },
   },
 
-  // Journal Entries
+  // Journal Entries — always read from Express API (journal data lives in embedded SQLite)
   journalEntries: {
     list: (params?: { branchId?: string; referenceType?: string; startDate?: string; endDate?: string }) => {
-      if (isElectronMode()) {
-        let sql = 'SELECT * FROM journal_entries WHERE 1=1';
-        const sqlParams: any[] = [];
-        let idx = 1;
-        if (params?.branchId) { sql += ` AND branch_id = $${idx++}`; sqlParams.push(params.branchId); }
-        if (params?.referenceType) { sql += ` AND reference_type = $${idx++}`; sqlParams.push(params.referenceType); }
-        if (params?.startDate) { sql += ` AND entry_date >= $${idx++}`; sqlParams.push(params.startDate); }
-        if (params?.endDate) { sql += ` AND entry_date <= $${idx++}`; sqlParams.push(params.endDate); }
-        sql += ' ORDER BY entry_date DESC, created_at DESC';
-        return ipcQuery<any>(sql, sqlParams);
-      }
       const searchParams = new URLSearchParams();
       if (params?.branchId) searchParams.append('branchId', params.branchId);
       if (params?.referenceType) searchParams.append('referenceType', params.referenceType);
       if (params?.startDate) searchParams.append('startDate', params.startDate);
       if (params?.endDate) searchParams.append('endDate', params.endDate);
-      return apiFetch<any[]>(`/journal-entries?${searchParams}`);
+      const qs = searchParams.toString();
+      return apiFetch<any[]>(`/journal-entries${qs ? `?${qs}` : ''}`);
     },
     get: (id: string) => {
-      if (isElectronMode()) return ipcQuery<any>('SELECT * FROM journal_entries WHERE id = $1', [id]).then(r => ({ data: r.data?.[0] }));
-      return apiFetch<any>(`/journal-entries/${id}`);
+      return apiFetch<any>(`/journal-entries/${encodeURIComponent(id)}`);
     },
     getByReference: (type: string, id: string) => {
-      if (isElectronMode()) return ipcQuery<any>('SELECT * FROM journal_entries WHERE reference_type = $1 AND reference_id = $2', [type, id]);
-      return apiFetch<any[]>(`/journal-entries/reference/${type}/${id}`);
+      return apiFetch<any[]>(
+        `/journal-entries/reference/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
+      );
     },
-    summary: (params?: { branchId?: string; startDate?: string; endDate?: string }) => {
+    summary: async (params?: { branchId?: string; startDate?: string; endDate?: string }) => {
+      const searchParams = new URLSearchParams();
+      if (params?.branchId) searchParams.append('branchId', params.branchId);
+      if (params?.startDate) searchParams.append('startDate', params.startDate);
+      if (params?.endDate) searchParams.append('endDate', params.endDate);
+      const qs = searchParams.toString();
+      const apiResult = await apiFetch<any[]>(
+        `/journal-entries/reports/summary${qs ? `?${qs}` : ''}`,
+      );
+      if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       if (isElectronMode()) {
         return ipcQuery<any>(
           `SELECT reference_type, COUNT(*) as count, 
            SUM(total_debit) as total_debit, SUM(total_credit) as total_credit
            FROM journal_entries WHERE is_posted = true
-           GROUP BY reference_type ORDER BY reference_type`
+           GROUP BY reference_type ORDER BY reference_type`,
         );
       }
-      const searchParams = new URLSearchParams();
-      if (params?.branchId) searchParams.append('branchId', params.branchId);
-      if (params?.startDate) searchParams.append('startDate', params.startDate);
-      if (params?.endDate) searchParams.append('endDate', params.endDate);
-      return apiFetch<any[]>(`/journal-entries/reports/summary?${searchParams}`);
+      return apiResult;
     },
   },
 
@@ -964,10 +997,14 @@ export const api = {
           if (dateTo)   { pSql += ` AND created_at <= $${idx++}`; pParams.push(dateTo + 'T23:59:59'); }
           pSql += ' ORDER BY created_at ASC';
 
+          const balSql = `SELECT
+            COALESCE(SUM(CASE WHEN is_debit = 1 THEN remaining_amount ELSE -remaining_amount END), 0) AS balance,
+            COALESCE(SUM(CASE WHEN status != 'cleared' THEN 1 ELSE 0 END), 0) AS open_items_count
+            FROM open_items WHERE entity_type = $1 AND entity_id = $2`;
           const [oiRes, pRes, balRes] = await Promise.all([
             ipcQuery<any>(oiSql, oiParams),
             ipcQuery<any>(pSql, pParams),
-            ipcQuery<any>(`SELECT * FROM v_entity_balance WHERE entity_type = $1 AND entity_id = $2`, [entityType, entityId]),
+            ipcQuery<any>(balSql, [entityType, entityId]),
           ]);
 
           return { data: { openItems: oiRes.data || [], payments: pRes.data || [], balance: balRes.data?.[0] || { balance: 0 } } } as ApiResponse<any>;
@@ -1090,18 +1127,7 @@ export const api = {
 
   // Audit Trail
   audit: {
-    list: (params?: { tableName?: string; action?: string; userId?: string; startDate?: string; endDate?: string; limit?: number }) => {
-      if (isElectronMode()) {
-        let sql = 'SELECT * FROM audit_logs WHERE 1=1';
-        const sqlParams: any[] = [];
-        let idx = 1;
-        if (params?.tableName) { sql += ` AND entity_type = $${idx++}`; sqlParams.push(params.tableName); }
-        if (params?.action) { sql += ` AND action = $${idx++}`; sqlParams.push(params.action); }
-        if (params?.userId) { sql += ` AND user_id = $${idx++}`; sqlParams.push(params.userId); }
-        sql += ` ORDER BY timestamp DESC LIMIT $${idx++}`;
-        sqlParams.push(params?.limit || 100);
-        return ipcQuery<any>(sql, sqlParams);
-      }
+    list: async (params?: { tableName?: string; action?: string; userId?: string; startDate?: string; endDate?: string; limit?: number }) => {
       const sp = new URLSearchParams();
       if (params?.tableName) sp.append('tableName', params.tableName);
       if (params?.action) sp.append('action', params.action);
@@ -1109,7 +1135,21 @@ export const api = {
       if (params?.startDate) sp.append('startDate', params.startDate);
       if (params?.endDate) sp.append('endDate', params.endDate);
       if (params?.limit) sp.append('limit', params.limit.toString());
-      return apiFetch<any[]>(`/audit?${sp}`);
+      const qs = sp.toString();
+      const apiResult = await apiFetch<any[]>(`/audit${qs ? `?${qs}` : ''}`);
+      if (apiResult.data !== undefined && !apiResult.error) return apiResult;
+      if (isElectronMode()) {
+        let sql = 'SELECT * FROM audit_log WHERE 1=1';
+        const sqlParams: any[] = [];
+        let idx = 1;
+        if (params?.tableName) { sql += ` AND table_name = $${idx++}`; sqlParams.push(params.tableName); }
+        if (params?.action) { sql += ` AND action = $${idx++}`; sqlParams.push(params.action); }
+        if (params?.userId) { sql += ` AND user_id = $${idx++}`; sqlParams.push(params.userId); }
+        sql += ` ORDER BY created_at DESC LIMIT $${idx++}`;
+        sqlParams.push(params?.limit || 200);
+        return ipcQuery<any>(sql, sqlParams);
+      }
+      return apiResult;
     },
     recordHistory: (tableName: string, recordId: string) => {
       if (isElectronMode()) return ipcQuery<any>(
@@ -1324,27 +1364,97 @@ export const api = {
     },
   },
 
-  // Users
+  // Users — Electron uses embedded Express SQLite (same as branches)
   users: {
-    list: () => {
-      if (isElectronMode()) return ipcQuery<any>('SELECT id, name, email, role, branch_id, is_active, created_at FROM users ORDER BY name');
+    list: async () => {
+      if (isElectronMode()) {
+        const apiResult = await apiFetch<any[]>('/auth/users');
+        if (Array.isArray(apiResult.data)) return apiResult;
+        return ipcQuery<any>(
+          'SELECT id, name, email, role, branch_id, is_active, created_at, updated_at FROM users ORDER BY name',
+        );
+      }
       return apiFetch<any[]>('/auth/users');
     },
+    create: async (data: any) => {
+      const body = {
+        name: data.name,
+        email: data.email,
+        role: data.role || 'cashier',
+        branchId: data.branchId,
+        password: data.password,
+      };
+      if (isElectronMode()) {
+        const apiResult = await apiFetch<any>('/auth/users', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        if (apiResult.data != null && !apiResult.error) return apiResult;
+        return ipcInsert('users', {
+          id: generateId(),
+          name: body.name,
+          email: body.email,
+          role: body.role,
+          branch_id: body.branchId,
+          password_hash: body.password || '',
+          is_active: 1,
+          created_at: new Date().toISOString(),
+        });
+      }
+      return apiFetch<any>('/auth/users', { method: 'POST', body: JSON.stringify(body) });
+    },
+    update: async (id: string, data: any) => {
+      const body = {
+        name: data.name,
+        email: data.email,
+        role: data.role,
+        branchId: data.branchId ?? data.branch_id,
+        isActive: data.isActive ?? data.is_active,
+        password: data.password,
+      };
+      if (isElectronMode()) {
+        const apiResult = await apiFetch<any>(`/auth/users/${id}`, {
+          method: 'PUT',
+          body: JSON.stringify(body),
+        });
+        if (apiResult.data != null && !apiResult.error) return apiResult;
+        return ipcUpdate('users', id, {
+          ...data,
+          branch_id: body.branchId,
+          is_active: body.isActive,
+        });
+      }
+      return apiFetch<any>(`/auth/users/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+    },
+    delete: async (id: string) => {
+      if (isElectronMode()) {
+        const apiResult = await apiFetch<any>(`/auth/users/${id}`, { method: 'DELETE' });
+        if (!apiResult.error) return apiResult;
+        return ipcUpdate('users', id, { is_active: false, isActive: false });
+      }
+      return apiFetch<any>(`/auth/users/${id}`, { method: 'DELETE' });
+    },
+  },
+
+  supplierReturns: {
+    list: async (branchId?: string) => {
+      const endpoint = branchId
+        ? `/supplier-returns?branchId=${encodeURIComponent(branchId)}`
+        : '/supplier-returns';
+      if (isElectronMode()) {
+        const apiResult = await apiFetch<any[]>(endpoint);
+        if (Array.isArray(apiResult.data)) return apiResult;
+      }
+      return apiFetch<any[]>(endpoint);
+    },
     create: (data: any) => {
-      if (isElectronMode()) return ipcInsert('users', {
-        id: generateId(), ...data,
-        password_hash: data.password || data.password_hash || '',
-        is_active: true, created_at: new Date().toISOString(),
-      });
-      return apiFetch<any>('/auth/users', { method: 'POST', body: JSON.stringify(data) });
+      return apiFetch<any>('/supplier-returns', { method: 'POST', body: JSON.stringify(data) });
     },
     update: (id: string, data: any) => {
-      if (isElectronMode()) return ipcUpdate('users', id, data);
-      return apiFetch<any>(`/auth/users/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+      return apiFetch<any>(`/supplier-returns/${id}`, { method: 'PUT', body: JSON.stringify(data) });
     },
     delete: (id: string) => {
-      if (isElectronMode()) return ipcDelete('users', id);
-      return apiFetch<any>(`/auth/users/${id}`, { method: 'DELETE' });
+      return apiFetch<any>(`/supplier-returns/${id}`, { method: 'DELETE' });
     },
   },
 

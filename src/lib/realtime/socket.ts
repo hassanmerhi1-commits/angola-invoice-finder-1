@@ -13,7 +13,8 @@ type TableName =
   | 'suppliers' 
   | 'daily_reports' 
   | 'stock_transfers' 
-  | 'purchase_orders';
+  | 'purchase_orders'
+  | 'supplier_returns';
 
 type TableListener = (data: any[]) => void;
 

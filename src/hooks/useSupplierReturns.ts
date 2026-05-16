@@ -9,6 +9,10 @@ import {
   generateSupplierReturnNumber 
 } from '@/lib/supplierReturns';
 import { api } from '@/lib/api/client';
+import {
+  afterSupplierReturnMutation,
+  subscribeSupplierReturnsChanged,
+} from '@/lib/supplierReturnSync';
 
 export function useSupplierReturns(branchId?: string) {
   const [supplierReturns, setSupplierReturns] = useState<SupplierReturn[]>([]);
@@ -21,6 +25,8 @@ export function useSupplierReturns(branchId?: string) {
   useEffect(() => {
     refreshReturns();
   }, [refreshReturns]);
+
+  useEffect(() => subscribeSupplierReturnsChanged(refreshReturns), [refreshReturns]);
 
   const createSupplierReturn = useCallback(async (
     branchId: string,
@@ -80,7 +86,7 @@ export function useSupplierReturns(branchId?: string) {
             warehouseId: branchId,
             movementType: 'OUT',
             quantity: item.quantity,
-            referenceType: 'return',
+            referenceType: 'supplier_return',
             referenceId: supplierReturn.id,
             referenceNumber: returnNumber,
             notes: `Devolução a fornecedor: ${reasonDescription}`,
@@ -93,6 +99,10 @@ export function useSupplierReturns(branchId?: string) {
       }
     }
 
+    await afterSupplierReturnMutation({
+      invoiceId: purchaseOrder.id,
+      branchId,
+    });
     await refreshReturns();
     return supplierReturn;
   }, [refreshReturns]);
@@ -105,6 +115,10 @@ export function useSupplierReturns(branchId?: string) {
       returnDoc.approvedBy = approvedBy;
       returnDoc.approvedAt = new Date().toISOString();
       await saveSupplierReturn(returnDoc);
+      await afterSupplierReturnMutation({
+        invoiceId: returnDoc.purchaseOrderId,
+        branchId: returnDoc.branchId,
+      });
       await refreshReturns();
     }
   }, [refreshReturns]);
@@ -116,6 +130,10 @@ export function useSupplierReturns(branchId?: string) {
       returnDoc.status = 'shipped';
       returnDoc.shippedAt = new Date().toISOString();
       await saveSupplierReturn(returnDoc);
+      await afterSupplierReturnMutation({
+        invoiceId: returnDoc.purchaseOrderId,
+        branchId: returnDoc.branchId,
+      });
       await refreshReturns();
     }
   }, [refreshReturns]);
@@ -123,10 +141,14 @@ export function useSupplierReturns(branchId?: string) {
   const completeReturn = useCallback(async (returnId: string) => {
     const returns = await getSupplierReturns();
     const returnDoc = returns.find(r => r.id === returnId);
-    if (returnDoc && returnDoc.status === 'shipped') {
+    if (returnDoc && (returnDoc.status === 'shipped' || returnDoc.status === 'approved')) {
       returnDoc.status = 'completed';
       returnDoc.completedAt = new Date().toISOString();
       await saveSupplierReturn(returnDoc);
+      await afterSupplierReturnMutation({
+        invoiceId: returnDoc.purchaseOrderId,
+        branchId: returnDoc.branchId,
+      });
       await refreshReturns();
     }
   }, [refreshReturns]);
@@ -155,6 +177,10 @@ export function useSupplierReturns(branchId?: string) {
       
       returnDoc.status = 'cancelled';
       await saveSupplierReturn(returnDoc);
+      await afterSupplierReturnMutation({
+        invoiceId: returnDoc.purchaseOrderId,
+        branchId: returnDoc.branchId,
+      });
       await refreshReturns();
     }
   }, [refreshReturns]);

@@ -12,6 +12,7 @@
  */
 
 import { api } from '@/lib/api/client';
+import { notifyJournalEntriesChanged } from '@/lib/supplierReturnSync';
 import { isDemoMode } from '@/lib/api/config';
 import { OpenItem, DocumentLink } from '@/types/erp';
 import { updateCoABalancesFromJournal } from '@/lib/chartOfAccountsEngine';
@@ -129,7 +130,7 @@ export async function processTransaction(request: TransactionRequest): Promise<T
   try {
     const apiResult = await api.transactions.process(request);
 
-    if (apiResult.data && apiResult.data.success) {
+    if (apiResult.data?.success) {
       result.success = true;
       result.stockMovementIds = apiResult.data.stockMovementIds || [];
       result.journalEntryId = apiResult.data.journalEntryId;
@@ -137,9 +138,19 @@ export async function processTransaction(request: TransactionRequest): Promise<T
       result.documentLinkIds = apiResult.data.documentLinkIds || [];
 
       console.log(`[TransactionEngine] ✅ ${request.transactionType} ${request.documentNumber} processed via API`);
+      if (result.journalEntryId) {
+        notifyJournalEntriesChanged();
+      }
     } else if (apiResult.error) {
       console.error(`[TransactionEngine] ❌ API error for ${request.transactionType} ${request.documentNumber}:`, apiResult.error);
       result.errors.push(apiResult.error);
+      return result;
+    } else if (apiResult.data && !apiResult.data.success) {
+      const msg =
+        (Array.isArray(apiResult.data.errors) && apiResult.data.errors.join('; ')) ||
+        apiResult.data.error ||
+        'Transaction failed';
+      result.errors.push(msg);
       return result;
     }
   } catch (error) {
@@ -226,6 +237,7 @@ async function processTransactionLocal(request: TransactionRequest): Promise<Tra
       });
       localStorage.setItem(JE_KEY, JSON.stringify(entries));
       result.journalEntryId = entryId;
+      notifyJournalEntriesChanged();
 
       // Phase 2b: Update Chart of Accounts balances from journal lines
       try {

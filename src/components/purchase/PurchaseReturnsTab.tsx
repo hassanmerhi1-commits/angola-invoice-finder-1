@@ -23,6 +23,9 @@ import {
   generateSupplierReturnNumber,
 } from '@/lib/supplierReturns';
 import { processTransaction } from '@/lib/transactionEngine';
+import { computeSupplierReturnPayableTotal } from '@/lib/supplierReturnPayable';
+import { useSuppliers } from '@/hooks/useERP';
+import { afterSupplierReturnMutation } from '@/lib/supplierReturnSync';
 import { saveDocument } from '@/lib/documentStorage';
 import type { ERPDocument } from '@/types/documents';
 import { useTranslation } from '@/i18n';
@@ -61,6 +64,8 @@ interface ReturnLineForm {
   productId: string;
   productName: string;
   sku: string;
+  invoiceRemainingQty: number;
+  stockOnHand: number;
   maxQty: number;
   quantity: number;
   unitCost: number;
@@ -70,9 +75,15 @@ interface ReturnLineForm {
 
 interface PurchaseReturnsTabProps {
   openCreateSignal?: number;
+  preselectInvoiceId?: string | null;
+  onReturnsChanged?: () => void;
 }
 
-export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabProps) {
+export function PurchaseReturnsTab({
+  openCreateSignal = 0,
+  preselectInvoiceId = null,
+  onReturnsChanged,
+}: PurchaseReturnsTabProps) {
   const { toast } = useToast();
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
@@ -121,6 +132,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
 
   // View dialog
   const [viewReturn, setViewReturn] = useState<SupplierReturn | null>(null);
+  const { refreshSuppliers } = useSuppliers();
   const selectedBranch = useMemo(
     () => branches.find(branch => branch.id === (selectedInvoice?.branchId || currentBranch?.id)) || currentBranch || null,
     [branches, currentBranch, selectedInvoice?.branchId]
@@ -169,25 +181,59 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
     return result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [returns, search, filterStatus]);
 
-  // Select invoice → populate lines
-  const handleSelectInvoice = useCallback((inv: PurchaseInvoice) => {
-    setSelectedInvoice(inv);
-    setReturnLines(inv.lines.map(line => {
-      const remainingQty = Math.max(line.totalQty - getAlreadyReturnedQty(inv.id, line.id, line.productId), 0);
+  const buildReturnLinesForInvoice = useCallback(async (inv: PurchaseInvoice): Promise<ReturnLineForm[]> => {
+    const stockBySku = new Map<string, number>();
+    const stockByProductId = new Map<string, number>();
+    try {
+      const resp = await api.products.list(inv.branchId);
+      for (const p of resp.data || []) {
+        stockByProductId.set(p.id, Number(p.stock) || 0);
+        const skuKey = String(p.sku || '').trim().toLowerCase();
+        if (skuKey) stockBySku.set(skuKey, Number(p.stock) || 0);
+      }
+    } catch {
+      // Stock display falls back to invoice-only limits
+    }
+
+    return inv.lines.map(line => {
+      const invoiceRemainingQty = Math.max(
+        line.totalQty - getAlreadyReturnedQty(inv.id, line.id, line.productId),
+        0,
+      );
+      const skuKey = String(line.productCode || '').trim().toLowerCase();
+      const stockOnHand = stockBySku.get(skuKey) ?? stockByProductId.get(line.productId) ?? 0;
+      const maxQty = Math.min(invoiceRemainingQty, stockOnHand);
       return {
         sourceLineId: line.id,
         productId: line.productId,
         productName: line.description,
         sku: line.productCode,
-        maxQty: remainingQty,
-        quantity: remainingQty,
+        invoiceRemainingQty,
+        stockOnHand,
+        maxQty,
+        quantity: maxQty,
         unitCost: line.unitPrice,
         taxRate: line.ivaRate,
-        selected: remainingQty > 0,
+        selected: maxQty > 0,
       };
-    }));
-    setInvoicePickerOpen(false);
+    });
   }, [getAlreadyReturnedQty]);
+
+  // Select invoice → populate lines
+  const handleSelectInvoice = useCallback(async (inv: PurchaseInvoice) => {
+    setSelectedInvoice(inv);
+    setReturnLines(await buildReturnLinesForInvoice(inv));
+    setInvoicePickerOpen(false);
+  }, [buildReturnLinesForInvoice]);
+
+  useEffect(() => {
+    if (!preselectInvoiceId || invoices.length === 0) return;
+    const inv = invoices.find((i) => i.id === preselectInvoiceId);
+    if (inv && inv.status === 'confirmed' && inv.purchaseReturnsStatus !== 'full') {
+      handleSelectInvoice(inv);
+      setCreateOpen(true);
+    }
+  }, [preselectInvoiceId, invoices, handleSelectInvoice]);
 
   // Create return
   const handleCreate = useCallback(async () => {
@@ -198,32 +244,25 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
       toast({ title: t.purchaseReturnsUi.errorTitle, description: t.purchaseReturnsUi.invoiceBranchNotFound, variant: 'destructive' });
       return;
     }
-      const recalculatedLines = selectedInvoice.lines.map((invoiceLine) => {
-        const formLine = returnLines.find(line => line.sourceLineId === invoiceLine.id);
-        const remainingQty = Math.max(
-          invoiceLine.totalQty - getAlreadyReturnedQty(selectedInvoice.id, invoiceLine.id, invoiceLine.productId),
-          0,
-        );
+      const freshLines = await buildReturnLinesForInvoice(selectedInvoice);
+      const freshByLineId = new Map(freshLines.map(l => [l.sourceLineId, l]));
 
-        return {
-          invoiceLine,
-          formLine,
-          remainingQty,
-        };
-      });
-
-      const selectedLines = recalculatedLines
-        .filter(({ formLine }) => formLine?.selected && (formLine.quantity || 0) > 0)
-        .map(({ invoiceLine, formLine, remainingQty }) => ({
-          sourceLineId: invoiceLine.id,
-          productId: invoiceLine.productId,
-          productName: invoiceLine.description,
-          sku: invoiceLine.productCode,
-          quantity: formLine?.quantity || 0,
-          unitCost: formLine?.unitCost || invoiceLine.unitPrice,
-          taxRate: formLine?.taxRate ?? invoiceLine.ivaRate,
-          maxQty: remainingQty,
-        }));
+      const selectedLines = returnLines
+        .filter(formLine => formLine.selected && (formLine.quantity || 0) > 0)
+        .map(formLine => {
+          const fresh = freshByLineId.get(formLine.sourceLineId) ?? formLine;
+          const invoiceLine = selectedInvoice.lines.find(l => l.id === formLine.sourceLineId)!;
+          return {
+            sourceLineId: formLine.sourceLineId,
+            productId: formLine.productId,
+            productName: formLine.productName,
+            sku: formLine.sku,
+            quantity: formLine.quantity,
+            unitCost: formLine.unitCost || invoiceLine.unitPrice,
+            taxRate: formLine.taxRate ?? invoiceLine.ivaRate,
+            maxQty: fresh.maxQty,
+          };
+        });
 
     if (selectedLines.length === 0) {
       toast({ title: t.purchaseReturnsUi.errorTitle, description: t.purchaseReturnsUi.selectAtLeastOneLine, variant: 'destructive' });
@@ -264,27 +303,41 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
 
       const subtotal = items.reduce((s, i) => s + i.subtotal, 0);
       const taxAmount = items.reduce((s, i) => s + i.taxAmount, 0);
-      const total = subtotal + taxAmount;
+      const grossTotal = subtotal + taxAmount;
+      const total = computeSupplierReturnPayableTotal(selectedInvoice, grossTotal);
+      const payableRatio = grossTotal > 0 ? total / grossTotal : 1;
+      const journalSubtotal = Math.round(subtotal * payableRatio * 100) / 100;
+      const journalTaxAmount = Math.round(taxAmount * payableRatio * 100) / 100;
+      const journalTotal = Math.round((journalSubtotal + journalTaxAmount) * 100) / 100;
 
-      // Resolve real supplier ID from suppliers list by matching name/NIF
-      let resolvedSupplierId = '';
-      try {
-        const suppliersResp = await api.suppliers.list();
-        const allSuppliers = suppliersResp.data || [];
-        const matched = allSuppliers.find((s: any) =>
-          s.name === selectedInvoice.supplierName ||
-          (selectedInvoice.supplierNif && s.nif === selectedInvoice.supplierNif)
-        );
-        resolvedSupplierId = matched?.id || '';
-      } catch {
-        // fallback: try localStorage
-        const raw = localStorage.getItem('kwanzaerp_suppliers');
-        const suppliers = raw ? JSON.parse(raw) : [];
-        const matched = suppliers.find((s: any) =>
-          s.name === selectedInvoice.supplierName ||
-          (selectedInvoice.supplierNif && s.nif === selectedInvoice.supplierNif)
-        );
-        resolvedSupplierId = matched?.id || '';
+      // Resolve supplier id (prefer id stored on invoice from purchase posting)
+      let resolvedSupplierId = selectedInvoice.supplierId || '';
+      if (!resolvedSupplierId) {
+        try {
+          const suppliersResp = await api.suppliers.list();
+          const allSuppliers = suppliersResp.data || [];
+          const invName = selectedInvoice.supplierName?.trim().toLowerCase() || '';
+          const matched = allSuppliers.find((s: any) => {
+            const sName = String(s.name || '').trim().toLowerCase();
+            return (
+              sName === invName ||
+              (selectedInvoice.supplierNif && s.nif === selectedInvoice.supplierNif)
+            );
+          });
+          resolvedSupplierId = matched?.id || '';
+        } catch {
+          const raw = localStorage.getItem('kwanzaerp_suppliers');
+          const suppliers = raw ? JSON.parse(raw) : [];
+          const invName = selectedInvoice.supplierName?.trim().toLowerCase() || '';
+          const matched = suppliers.find((s: any) => {
+            const sName = String(s.name || '').trim().toLowerCase();
+            return (
+              sName === invName ||
+              (selectedInvoice.supplierNif && s.nif === selectedInvoice.supplierNif)
+            );
+          });
+          resolvedSupplierId = matched?.id || '';
+        }
       }
 
       const returnDoc: SupplierReturn = {
@@ -359,7 +412,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
       const ivaAccountCode = selectedInvoice.ivaAccountCode || '3.3.1';
       const supplierAccountCode = selectedInvoice.supplierAccountCode || '3.2.1';
 
-      const txResult = await processTransaction({
+      const txPayload: Parameters<typeof processTransaction>[0] = {
           transactionType: 'credit_note',
           documentId: returnDoc.id,
           documentNumber: returnNumber,
@@ -369,27 +422,26 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
           userName: user?.name || user?.username || 'Sistema',
           date: new Date().toISOString().slice(0, 10),
           description: `Devolução de compra - ${returnNumber} — ${selectedInvoice.supplierName}`,
-          amount: total,
-
-          // Phase 1: Stock OUT entries
-          stockEntries: items.map(item => ({
-            productId: item.productId,
-            productName: item.productName,
-            productSku: item.sku,
-            quantity: item.quantity,
-            unitCost: item.unitCost,
-            direction: 'OUT' as const,
-            warehouseId: invoiceBranchId,
-          })),
-
-          // Phase 3: Reverse journal entries (mirror of purchase invoice)
-          // Purchase invoice: Debit 2.1.1 (Purchase) + Debit 3.3.1 (IVA) / Credit Supplier
-          // Return reversal: Debit Supplier / Credit 2.1.1 (Purchase) + Credit 3.3.1 (IVA)
+          amount: journalTotal,
+          stockEntries: items.map(item => {
+            const invLine = selectedInvoice.lines.find(l =>
+              item.sourceLineId ? l.id === item.sourceLineId : l.productId === item.productId,
+            );
+            return {
+              productId: item.productId,
+              productName: item.productName,
+              productSku: item.sku,
+              quantity: item.quantity,
+              unitCost: item.unitCost,
+              direction: 'OUT' as const,
+              warehouseId: invLine?.warehouseId || selectedInvoice.warehouseId || invoiceBranchId,
+            };
+          }),
           journalLines: [
             {
               accountCode: supplierAccountCode,
               accountName: `Fornecedor ${selectedInvoice.supplierName}`,
-              debit: total,
+              debit: journalTotal,
               credit: 0,
               note: `Devolução ${returnNumber}`,
             },
@@ -397,30 +449,17 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
               accountCode: purchaseAccountCode,
               accountName: 'Compra de Mercadorias',
               debit: 0,
-              credit: subtotal,
+              credit: journalSubtotal,
               note: `Devolução ${returnNumber} — base`,
             },
-            ...(taxAmount > 0 ? [{
+            ...(journalTaxAmount > 0 ? [{
               accountCode: ivaAccountCode,
               accountName: t.purchaseReturnsUi.taxDeductible,
               debit: 0,
-              credit: taxAmount,
+              credit: journalTaxAmount,
               note: `Devolução ${returnNumber} — IVA`,
             }] : []),
           ],
-
-          // Phase 4: Open item (credit note reduces supplier payable)
-          openItem: {
-            entityType: 'supplier' as const,
-            entityId: resolvedSupplierId,
-            entityName: selectedInvoice.supplierName,
-            documentType: 'credit_note' as const,
-            originalAmount: total,
-            isDebit: false,
-            currency: selectedInvoice.currency === 'KZ' ? 'AOA' : selectedInvoice.currency,
-          },
-
-          // Phase 5: Document link (return → original invoice)
           documentLinks: [{
             sourceType: 'nota_debito',
             sourceId: returnDoc.id,
@@ -429,16 +468,28 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
             targetId: selectedInvoice.id,
             targetNumber: selectedInvoice.invoiceNumber,
           }],
+        };
 
-          // Phase 6: Update supplier balance (decrease)
-          entityBalanceUpdate: {
-            entityType: 'supplier',
-            entityId: resolvedSupplierId,
-            entityName: selectedInvoice.supplierName,
-            entityNif: selectedInvoice.supplierNif,
-            amount: -total,
-          },
-        });
+      if (resolvedSupplierId) {
+        txPayload.openItem = {
+          entityType: 'supplier',
+          entityId: resolvedSupplierId,
+          entityName: selectedInvoice.supplierName,
+          documentType: 'credit_note',
+          originalAmount: journalTotal,
+          isDebit: false,
+          currency: selectedInvoice.currency === 'KZ' ? 'AOA' : selectedInvoice.currency,
+        };
+        txPayload.entityBalanceUpdate = {
+          entityType: 'supplier',
+          entityId: resolvedSupplierId,
+          entityName: selectedInvoice.supplierName,
+          entityNif: selectedInvoice.supplierNif,
+          amount: -journalTotal,
+        };
+      }
+
+      const txResult = await processTransaction(txPayload);
 
       if (!txResult.success) {
         throw new Error(txResult.errors.join('; ') || 'Falha ao actualizar stock, conta corrente e contabilidade.');
@@ -446,6 +497,17 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
 
       await saveSupplierReturn(returnDoc);
       await saveDocument(debitNoteDoc);
+      await afterSupplierReturnMutation({
+        invoiceId: selectedInvoice.id,
+        branchId: invoiceBranchId,
+      });
+      try {
+        await api.suppliers.reconcileBalances();
+      } catch {
+        // non-blocking
+      }
+      await refreshSuppliers();
+      onReturnsChanged?.();
 
       toast({ title: t.purchaseReturnsUi.returnCreated, description: `${returnNumber} — ${selectedLines.length} linha(s)` });
       setCreateOpen(false);
@@ -456,7 +518,7 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
     } finally {
       setSaving(false);
     }
-  }, [selectedInvoice, user, returnLines, reason, reasonDescription, notes, selectedBranch, loadData, toast]);
+  }, [selectedInvoice, user, returnLines, reason, reasonDescription, notes, selectedBranch, loadData, onReturnsChanged, toast, buildReturnLinesForInvoice, getAlreadyReturnedQty]);
 
   const resetForm = () => {
     setSelectedInvoice(null);
@@ -473,9 +535,11 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
     ret.approvedBy = user?.name || 'Sistema';
     ret.approvedAt = new Date().toISOString();
     await saveSupplierReturn(ret);
+    await afterSupplierReturnMutation({ invoiceId: ret.purchaseOrderId, branchId: ret.branchId });
+    onReturnsChanged?.();
     toast({ title: t.purchaseReturnsUi.returnApproved });
     await loadData();
-  }, [user, loadData, toast]);
+  }, [user, loadData, onReturnsChanged, toast]);
 
   const handleCancel = useCallback(async (ret: SupplierReturn) => {
     if (ret.status !== 'pending') return;
@@ -499,18 +563,22 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
     }
     ret.status = 'cancelled';
     await saveSupplierReturn(ret);
+    await afterSupplierReturnMutation({ invoiceId: ret.purchaseOrderId, branchId: ret.branchId });
+    onReturnsChanged?.();
     toast({ title: t.purchaseReturnsUi.returnVoided, description: t.purchaseReturnsUi.stockRestored });
     await loadData();
-  }, [user, loadData, toast]);
+  }, [user, loadData, onReturnsChanged, toast]);
 
   const handleComplete = useCallback(async (ret: SupplierReturn) => {
     if (ret.status !== 'approved' && ret.status !== 'shipped') return;
     ret.status = 'completed';
     ret.completedAt = new Date().toISOString();
     await saveSupplierReturn(ret);
+    await afterSupplierReturnMutation({ invoiceId: ret.purchaseOrderId, branchId: ret.branchId });
+    onReturnsChanged?.();
     toast({ title: t.purchaseReturnsUi.returnCompleted });
     await loadData();
-  }, [loadData, toast]);
+  }, [loadData, onReturnsChanged, toast]);
 
   const fmtKz = (v: number) => new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 2 }).format(v);
 
@@ -690,7 +758,8 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
                         <TableHead className="w-[40px]">✓</TableHead>
                         <TableHead>SKU</TableHead>
                         <TableHead>Descrição</TableHead>
-                        <TableHead className="text-right">{t.purchaseReturnsUi.remainingQty}</TableHead>
+                        <TableHead className="text-right">{t.purchaseReturnsUi.invoiceRemainingQty}</TableHead>
+                        <TableHead className="text-right">{t.purchaseReturnsUi.stockOnHand}</TableHead>
                         <TableHead className="text-right w-[100px]">{t.purchaseReturnsUi.returnQty}</TableHead>
                         <TableHead className="text-right">{t.purchaseReturnsUi.unitPrice}</TableHead>
                         <TableHead className="text-right">{t.purchaseReturnsUi.vatPercent}</TableHead>
@@ -715,7 +784,8 @@ export function PurchaseReturnsTab({ openCreateSignal = 0 }: PurchaseReturnsTabP
                             </TableCell>
                             <TableCell className="font-mono">{line.sku}</TableCell>
                             <TableCell>{line.productName}</TableCell>
-                             <TableCell className="text-right font-mono">{line.maxQty}</TableCell>
+                             <TableCell className="text-right font-mono">{line.invoiceRemainingQty}</TableCell>
+                            <TableCell className="text-right font-mono">{line.stockOnHand}</TableCell>
                             <TableCell className="text-right">
                               <Input
                                 type="number"

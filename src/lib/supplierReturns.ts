@@ -1,7 +1,7 @@
-// Supplier Returns Types and Storage
-// DUAL-MODE: Electron → SQLite | Web → localStorage
-import { PurchaseOrder, PurchaseOrderItem } from '@/types/erp';
-import { isElectronMode, dbGetAll, dbInsert, lsGet, lsSet } from '@/lib/dbHelper';
+// Supplier Returns Types and Storage — API-first (Express SQLite), localStorage fallback
+import { api } from '@/lib/api/client';
+import { lsGet, lsSet } from '@/lib/dbHelper';
+import { notifySupplierReturnsChanged } from '@/lib/supplierReturnSync';
 
 export interface SupplierReturn {
   id: string;
@@ -43,88 +43,117 @@ export interface SupplierReturnItem {
 
 const STORAGE_KEY = 'kwanzaerp_supplier_returns';
 
-export async function getSupplierReturns(branchId?: string): Promise<SupplierReturn[]> {
-  if (isElectronMode()) {
-    const rows = await dbGetAll<any>('supplier_returns');
-    let returns = rows.map(mapReturnFromDb);
-    if (branchId) returns = returns.filter(r => r.branchId === branchId);
-    return returns;
+function normalizeReturn(row: Record<string, unknown>): SupplierReturn {
+  let items: SupplierReturnItem[] = [];
+  if (Array.isArray(row.items)) {
+    items = row.items as SupplierReturnItem[];
+  } else if (row.items_json) {
+    try {
+      items = JSON.parse(String(row.items_json));
+    } catch {
+      items = [];
+    }
   }
-  const returns = lsGet<SupplierReturn[]>(STORAGE_KEY, []);
-  return branchId ? returns.filter(r => r.branchId === branchId) : returns;
+
+  return {
+    id: String(row.id),
+    returnNumber: String(row.returnNumber ?? row.return_number ?? ''),
+    branchId: String(row.branchId ?? row.branch_id ?? ''),
+    branchName: String(row.branchName ?? row.branch_name ?? ''),
+    purchaseOrderId: String(row.purchaseOrderId ?? row.purchase_order_id ?? ''),
+    purchaseOrderNumber: String(row.purchaseOrderNumber ?? row.purchase_order_number ?? ''),
+    supplierId: String(row.supplierId ?? row.supplier_id ?? ''),
+    supplierName: String(row.supplierName ?? row.supplier_name ?? ''),
+    reason: (row.reason as SupplierReturn['reason']) || 'other',
+    reasonDescription: String(row.reasonDescription ?? row.reason_description ?? ''),
+    items,
+    subtotal: Number(row.subtotal ?? 0),
+    taxAmount: Number(row.taxAmount ?? row.tax_amount ?? 0),
+    total: Number(row.total ?? 0),
+    status: (row.status as SupplierReturn['status']) || 'pending',
+    createdBy: String(row.createdBy ?? row.created_by ?? ''),
+    createdAt: String(row.createdAt ?? row.created_at ?? new Date().toISOString()),
+    approvedBy: row.approvedBy || row.approved_by ? String(row.approvedBy ?? row.approved_by) : undefined,
+    approvedAt: row.approvedAt || row.approved_at ? String(row.approvedAt ?? row.approved_at) : undefined,
+    shippedAt: row.shippedAt || row.shipped_at ? String(row.shippedAt ?? row.shipped_at) : undefined,
+    completedAt: row.completedAt || row.completed_at ? String(row.completedAt ?? row.completed_at) : undefined,
+    notes: row.notes ? String(row.notes) : undefined,
+  };
+}
+
+function readLocalReturns(branchId?: string): SupplierReturn[] {
+  const all = lsGet<SupplierReturn[]>(STORAGE_KEY, []).map((row) =>
+    normalizeReturn(row as unknown as Record<string, unknown>),
+  );
+  return branchId ? all.filter((r) => r.branchId === branchId) : all;
+}
+
+function saveLocalReturns(returns: SupplierReturn[]) {
+  lsSet(STORAGE_KEY, returns);
+}
+
+function mergeLocalReturn(returnDoc: SupplierReturn) {
+  const all = readLocalReturns();
+  const idx = all.findIndex((r) => r.id === returnDoc.id);
+  if (idx >= 0) all[idx] = returnDoc;
+  else all.push(returnDoc);
+  saveLocalReturns(all);
+}
+
+function mergeApiListIntoLocal(normalized: SupplierReturn[], branchId?: string) {
+  if (branchId) {
+    const otherBranches = readLocalReturns().filter((r) => r.branchId !== branchId);
+    saveLocalReturns([...otherBranches, ...normalized]);
+    return normalized;
+  }
+  saveLocalReturns(normalized);
+  return normalized;
+}
+
+export async function getSupplierReturns(branchId?: string): Promise<SupplierReturn[]> {
+  try {
+    const response = await api.supplierReturns.list(branchId);
+    if (!response.error && Array.isArray(response.data)) {
+      const normalized = response.data.map((row) =>
+        normalizeReturn(row as Record<string, unknown>),
+      );
+      return mergeApiListIntoLocal(normalized, branchId);
+    }
+  } catch (error) {
+    console.warn('[supplierReturns] API list failed:', error);
+  }
+  return readLocalReturns(branchId);
 }
 
 export async function saveSupplierReturn(returnDoc: SupplierReturn): Promise<void> {
-  if (isElectronMode()) {
-    await dbInsert('supplier_returns', mapReturnToDb(returnDoc));
-    return;
+  try {
+    const knownOnServer = readLocalReturns().some((r) => r.id === returnDoc.id);
+    let response = knownOnServer
+      ? await api.supplierReturns.update(returnDoc.id, returnDoc)
+      : await api.supplierReturns.create(returnDoc);
+
+    if (response.error && /exist|duplicate|unique|409/i.test(String(response.error))) {
+      response = await api.supplierReturns.update(returnDoc.id, returnDoc);
+    }
+
+    if (response.data && !response.error) {
+      mergeLocalReturn(normalizeReturn(response.data as Record<string, unknown>));
+      notifySupplierReturnsChanged();
+      return;
+    }
+    if (response.error) {
+      throw new Error(response.error);
+    }
+  } catch (error) {
+    console.warn('[supplierReturns] API save failed, using localStorage:', error);
   }
-  const returns = lsGet<SupplierReturn[]>(STORAGE_KEY, []);
-  const index = returns.findIndex(r => r.id === returnDoc.id);
-  if (index >= 0) {
-    returns[index] = returnDoc;
-  } else {
-    returns.push(returnDoc);
-  }
-  lsSet(STORAGE_KEY, returns);
+
+  mergeLocalReturn(returnDoc);
+  notifySupplierReturnsChanged();
 }
 
 export function generateSupplierReturnNumber(branchCode: string): string {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const seq = Date.now().toString().slice(-4);
   return `DF ${branchCode}/${today}/${seq}`;
-}
-
-// DB mappers
-function mapReturnFromDb(row: any): SupplierReturn {
-  return {
-    id: row.id,
-    returnNumber: row.return_number || '',
-    branchId: row.branch_id || '',
-    branchName: row.branch_name || '',
-    purchaseOrderId: row.purchase_order_id || '',
-    purchaseOrderNumber: row.purchase_order_number || '',
-    supplierId: row.supplier_id || '',
-    supplierName: row.supplier_name || '',
-    reason: row.reason || 'other',
-    reasonDescription: row.reason_description || '',
-    items: row.items_json ? JSON.parse(row.items_json) : [],
-    subtotal: Number(row.subtotal || 0),
-    taxAmount: Number(row.tax_amount || 0),
-    total: Number(row.total || 0),
-    status: row.status || 'pending',
-    createdBy: row.created_by || '',
-    createdAt: row.created_at || '',
-    approvedBy: row.approved_by,
-    approvedAt: row.approved_at,
-    shippedAt: row.shipped_at,
-    completedAt: row.completed_at,
-    notes: row.notes,
-  };
-}
-
-function mapReturnToDb(ret: SupplierReturn): any {
-  return {
-    id: ret.id,
-    return_number: ret.returnNumber,
-    branch_id: ret.branchId,
-    branch_name: ret.branchName,
-    purchase_order_id: ret.purchaseOrderId,
-    purchase_order_number: ret.purchaseOrderNumber,
-    supplier_id: ret.supplierId,
-    supplier_name: ret.supplierName,
-    reason: ret.reason,
-    reason_description: ret.reasonDescription,
-    items_json: JSON.stringify(ret.items),
-    subtotal: ret.subtotal,
-    tax_amount: ret.taxAmount,
-    total: ret.total,
-    status: ret.status,
-    created_by: ret.createdBy,
-    approved_by: ret.approvedBy || '',
-    approved_at: ret.approvedAt || '',
-    shipped_at: ret.shippedAt || '',
-    completed_at: ret.completedAt || '',
-    notes: ret.notes || '',
-  };
 }

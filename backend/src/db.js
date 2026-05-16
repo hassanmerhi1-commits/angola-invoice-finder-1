@@ -465,6 +465,101 @@ function ensureAppTablesAndColumns() {
 
   seedAccountingPeriods();
   repairMisboundProductColumns();
+  backfillJournalEntryBranchIds();
+  backfillAllSkuStockFromMovements();
+  ensureEntityBalanceView();
+  scheduleSupplierBalanceRepair();
+}
+
+function ensureEntityBalanceView() {
+  if (USE_POSTGRES) return;
+  try {
+    sqlite.exec(`
+      CREATE VIEW IF NOT EXISTS v_entity_balance AS
+      SELECT
+        entity_type,
+        entity_id,
+        COALESCE(SUM(CASE WHEN is_debit = 1 THEN remaining_amount ELSE -remaining_amount END), 0) AS balance,
+        COALESCE(SUM(CASE WHEN status != 'cleared' THEN 1 ELSE 0 END), 0) AS open_items_count
+      FROM open_items
+      GROUP BY entity_type, entity_id
+    `);
+  } catch (err) {
+    console.warn('[DB] v_entity_balance view:', err.message);
+  }
+}
+
+function scheduleSupplierBalanceRepair() {
+  const { runSupplierBalanceRepair } = require('./supplierBalanceRepair');
+  setImmediate(() => {
+    runSupplierBalanceRepair().catch((err) => {
+      console.warn('[DB] Supplier balance repair failed:', err.message);
+    });
+  });
+}
+
+function backfillAllSkuStockFromMovements() {
+  if (!sqlite || !tableExists('stock_movements') || !tableExists('products')) return;
+  try {
+    const pairs = sqlite.prepare(`
+      SELECT DISTINCT TRIM(pm.sku) AS sku, sm.warehouse_id AS warehouse_id
+      FROM stock_movements sm
+      INNER JOIN products pm ON pm.id = sm.product_id
+      WHERE pm.sku IS NOT NULL AND TRIM(pm.sku) != ''
+        AND sm.warehouse_id IS NOT NULL AND TRIM(sm.warehouse_id) != ''
+    `).all();
+    const sumStmt = sqlite.prepare(`
+      SELECT COALESCE(SUM(
+        CASE
+          WHEN sm.movement_type = 'IN' THEN sm.quantity
+          WHEN sm.movement_type = 'OUT' THEN -sm.quantity
+          ELSE 0
+        END
+      ), 0) AS total
+      FROM stock_movements sm
+      INNER JOIN products pm ON pm.id = sm.product_id
+      WHERE sm.warehouse_id = ?
+        AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(?)
+    `);
+    const updateStmt = sqlite.prepare(`
+      UPDATE products
+      SET stock = ?, updated_at = datetime('now')
+      WHERE COALESCE(is_active, 1) != 0
+        AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER(?)
+        AND (branch_id = ? OR branch_id IS NULL)
+    `);
+    for (const row of pairs) {
+      const sumRow = sumStmt.get(row.warehouse_id, row.sku);
+      const total = Math.max(0, Number(sumRow?.total || 0));
+      updateStmt.run(total, row.sku, row.warehouse_id);
+    }
+    if (pairs.length > 0) {
+      console.log(`[DB] Reconciled stock for ${pairs.length} SKU/warehouse pair(s) from movements`);
+    }
+  } catch (error) {
+    console.warn('[DB] SKU stock backfill skipped:', error.message);
+  }
+}
+
+function backfillJournalEntryBranchIds() {
+  if (!sqlite || !tableExists('journal_entries')) return;
+  try {
+    const mainBranch =
+      sqlite.prepare(
+        `SELECT id FROM branches WHERE is_main = 1 AND is_active = 1 ORDER BY created_at LIMIT 1`,
+      ).get()
+      || sqlite.prepare(`SELECT id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1`).get();
+    if (!mainBranch?.id) return;
+    sqlite
+      .prepare(
+        `UPDATE journal_entries
+         SET branch_id = ?
+         WHERE branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`,
+      )
+      .run(mainBranch.id);
+  } catch (error) {
+    console.warn('[DB] journal_entries branch backfill skipped:', error.message);
+  }
 }
 
 function ensureDailyReportsSchemaSqlite() {
@@ -771,6 +866,31 @@ function bootstrapSchemaAndSeed() {
       branch_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS supplier_returns (
+      id TEXT PRIMARY KEY,
+      return_number TEXT NOT NULL,
+      branch_id TEXT,
+      branch_name TEXT DEFAULT '',
+      purchase_order_id TEXT,
+      purchase_order_number TEXT DEFAULT '',
+      supplier_id TEXT DEFAULT '',
+      supplier_name TEXT DEFAULT '',
+      reason TEXT DEFAULT 'other',
+      reason_description TEXT DEFAULT '',
+      items_json TEXT DEFAULT '[]',
+      subtotal REAL NOT NULL DEFAULT 0,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_by TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      approved_by TEXT DEFAULT '',
+      approved_at TEXT,
+      shipped_at TEXT,
+      completed_at TEXT,
+      notes TEXT DEFAULT ''
     );
   `);
 

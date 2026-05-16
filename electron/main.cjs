@@ -476,6 +476,7 @@ const ERP_TABLES = [
   'invoices', 'daily_reports', 'caixas', 'caixa_sessions', 'caixa_transactions',
   'bank_accounts', 'bank_transactions', 'expenses',
   'money_transfers', 'open_items', 'document_links',
+  'supplier_returns',
   'settings', 'audit_logs'
 ];
 
@@ -608,6 +609,14 @@ async function dbGetAll(table) {
       const r = await requestExpressJson('GET', '/api/products', null);
       if (r && r.status === 200 && Array.isArray(r.json)) return r.json;
     }
+    if (table === 'supplier_returns') {
+      const r = await requestExpressJson('GET', '/api/supplier-returns', null);
+      if (r && r.status === 200 && Array.isArray(r.json)) return r.json;
+    }
+    if (table === 'journal_entries') {
+      const r = await requestExpressJson('GET', '/api/journal-entries', null);
+      if (r && r.status === 200 && Array.isArray(r.json)) return r.json;
+    }
     return [];
   }
   try {
@@ -716,6 +725,17 @@ async function dbInsert(table, data, companyId = null) {
       const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
       return { success: false, error: errMsg };
     }
+    if (table === 'supplier_returns' && data) {
+      const r = await requestExpressJson('POST', '/api/supplier-returns', data);
+      if (r && r.status >= 200 && r.status < 300 && r.json && !r.json.error) {
+        try {
+          broadcastUpdate(table, 'insert', r.json.id, companyId);
+        } catch (_) {}
+        return { success: true, data: r.json };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
     return { success: false, error: 'Database not connected' };
   }
   try {
@@ -796,6 +816,17 @@ async function dbUpdate(table, id, data, companyId = null) {
     if (table === 'products' && id && data) {
       const body = mapElectronProductRowToApiBody({ ...data, id });
       const r = await requestExpressJson('PUT', `/api/products/${encodeURIComponent(id)}`, body);
+      if (r && r.status >= 200 && r.status < 300 && r.json && !r.json.error) {
+        try {
+          broadcastUpdate(table, 'update', id, companyId);
+        } catch (_) {}
+        return { success: true, data: r.json };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
+    if (table === 'supplier_returns' && id && data) {
+      const r = await requestExpressJson('PUT', `/api/supplier-returns/${encodeURIComponent(id)}`, data);
       if (r && r.status >= 200 && r.status < 300 && r.json && !r.json.error) {
         try {
           broadcastUpdate(table, 'update', id, companyId);

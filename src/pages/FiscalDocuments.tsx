@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useBranches, useSales, useAuth, useProducts, usePurchaseOrders } from '@/hooks/useERP';
 import { 
   useCreditNotes, 
@@ -45,6 +46,7 @@ import { enUS } from 'date-fns/locale';
 
 export default function FiscalDocuments() {
   const { t, language } = useTranslation();
+  const fd = t.fiscalDocumentsUi;
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
   const { user } = useAuth();
@@ -59,6 +61,7 @@ export default function FiscalDocuments() {
   const { companyInfo, saveCompanyInfo } = useCompanyInfo();
   const { generateSAFT } = useSAFTExport();
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   // Dialog states
   const [creditNoteDialog, setCreditNoteDialog] = useState(false);
@@ -299,10 +302,10 @@ export default function FiscalDocuments() {
     }));
   };
 
-  const handleCreateSupplierReturn = () => {
+  const handleCreateSupplierReturn = async () => {
     if (!selectedPO || !currentBranch || !user) return;
-    
-    const itemsToReturn = returnItems.filter(i => i.quantity > 0);
+
+    const itemsToReturn = returnItems.filter((i) => i.quantity > 0);
     if (itemsToReturn.length === 0) {
       toast({
         title: t.common.error,
@@ -312,25 +315,37 @@ export default function FiscalDocuments() {
       return;
     }
 
-    createSupplierReturn(
-      currentBranch.id,
-      currentBranch.code,
-      selectedPO,
-      returnReason,
-      returnDescription,
-      itemsToReturn,
-      user.id,
-      returnNotes,
-      deductStock
-    );
+    try {
+      await createSupplierReturn(
+        currentBranch.id,
+        currentBranch.code || currentBranch.name?.slice(0, 4).toUpperCase() || 'SEDE',
+        selectedPO,
+        returnReason,
+        returnDescription,
+        itemsToReturn,
+        user.id,
+        returnNotes,
+        deductStock,
+      );
 
-    toast({
-      title: t.fiscalDocumentsUi.supplierReturnCreatedTitle,
-      description: t.fiscalDocumentsUi.supplierReturnCreatedSuccess,
-    });
+      toast({
+        title: t.fiscalDocumentsUi.supplierReturnCreatedTitle,
+        description: t.fiscalDocumentsUi.supplierReturnCreatedSuccess,
+      });
 
-    setSupplierReturnDialog(false);
-    resetSupplierReturnForm();
+      setSupplierReturnDialog(false);
+      resetSupplierReturnForm();
+    } catch (error) {
+      toast({
+        title: t.common.error,
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const openPurchaseInvoiceReturns = () => {
+    navigate('/purchase-invoices', { state: { openReturns: true } });
   };
 
   const resetSupplierReturnForm = () => {
@@ -344,11 +359,11 @@ export default function FiscalDocuments() {
 
   const getReturnStatusBadge = (status: string) => {
     switch (status) {
-      case 'pending': return <Badge variant="secondary">Pendente</Badge>;
-      case 'approved': return <Badge variant="default">Aprovada</Badge>;
-      case 'shipped': return <Badge className="bg-blue-500">Enviada</Badge>;
-      case 'completed': return <Badge className="bg-green-500">Concluída</Badge>;
-      case 'cancelled': return <Badge variant="destructive">Cancelada</Badge>;
+      case 'pending': return <Badge variant="secondary">{fd.returnStatusPending}</Badge>;
+      case 'approved': return <Badge variant="default">{fd.returnStatusApproved}</Badge>;
+      case 'shipped': return <Badge className="bg-blue-500">{fd.returnStatusShipped}</Badge>;
+      case 'completed': return <Badge className="bg-green-500">{fd.returnStatusCompleted}</Badge>;
+      case 'cancelled': return <Badge variant="destructive">{fd.returnStatusCancelled}</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
   };
@@ -382,19 +397,19 @@ export default function FiscalDocuments() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Documentos Fiscais</h1>
+          <h1 className="text-2xl font-bold">{t.nav.fiscalDocuments}</h1>
           <p className="text-muted-foreground">
-            Gestão de documentos em conformidade com AGT
+            {fd.pageSubtitle}
           </p>
         </div>
         <div className="flex gap-3">
           <Button variant="modern-outline" size="lg" onClick={() => setCompanyDialog(true)}>
             <Building2 />
-            Dados Empresa
+            {fd.companyDataBtn}
           </Button>
           <Button variant="modern" size="lg" onClick={() => setSaftDialog(true)}>
             <Download />
-            Exportar SAF-T
+            {fd.exportSaftBtn}
           </Button>
         </div>
       </div>
@@ -403,59 +418,59 @@ export default function FiscalDocuments() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Notas de Crédito</CardTitle>
+            <CardTitle className="text-sm font-medium">{fd.statCreditNotes}</CardTitle>
             <FileMinus className="h-4 w-4 text-red-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{creditNotes.length}</div>
             <p className="text-xs text-muted-foreground">
-              {creditNotes.reduce((sum, n) => sum + n.total, 0).toLocaleString(uiLocale)} Kz total
+              {fd.kzTotal.replace('{amount}', creditNotes.reduce((sum, n) => sum + n.total, 0).toLocaleString(uiLocale))}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Notas de Débito</CardTitle>
+            <CardTitle className="text-sm font-medium">{fd.statDebitNotes}</CardTitle>
             <FilePlus className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{debitNotes.length}</div>
             <p className="text-xs text-muted-foreground">
-              {debitNotes.reduce((sum, n) => sum + n.total, 0).toLocaleString(uiLocale)} Kz total
+              {fd.kzTotal.replace('{amount}', debitNotes.reduce((sum, n) => sum + n.total, 0).toLocaleString(uiLocale))}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Guias de Transporte</CardTitle>
+            <CardTitle className="text-sm font-medium">{fd.statTransport}</CardTitle>
             <Truck className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{transportDocs.length}</div>
             <p className="text-xs text-muted-foreground">
-              {transportDocs.filter(d => d.status === 'in_transit').length} em trânsito
+              {fd.inTransit.replace('{count}', String(transportDocs.filter(d => d.status === 'in_transit').length))}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Devoluções Fornecedor</CardTitle>
+            <CardTitle className="text-sm font-medium">{fd.statSupplierReturns}</CardTitle>
             <RotateCcw className="h-4 w-4 text-orange-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{supplierReturns.length}</div>
             <p className="text-xs text-muted-foreground">
-              {supplierReturns.reduce((sum, r) => sum + r.total, 0).toLocaleString(uiLocale)} Kz total
+              {fd.kzTotal.replace('{amount}', supplierReturns.reduce((sum, r) => sum + r.total, 0).toLocaleString(uiLocale))}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Facturas</CardTitle>
+            <CardTitle className="text-sm font-medium">{fd.statTotalInvoices}</CardTitle>
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -472,19 +487,19 @@ export default function FiscalDocuments() {
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="credit">
             <FileMinus className="w-4 h-4 mr-2" />
-            Notas de Crédito
+            {fd.tabCreditNotes}
           </TabsTrigger>
           <TabsTrigger value="debit">
             <FilePlus className="w-4 h-4 mr-2" />
-            Notas de Débito
+            {fd.tabDebitNotes}
           </TabsTrigger>
           <TabsTrigger value="supplier-returns">
             <RotateCcw className="w-4 h-4 mr-2" />
-            Devoluções Fornecedor
+            {fd.tabSupplierReturns}
           </TabsTrigger>
           <TabsTrigger value="transport">
             <Truck className="w-4 h-4 mr-2" />
-            Guias de Transporte
+            {fd.tabTransport}
           </TabsTrigger>
         </TabsList>
 
@@ -493,31 +508,31 @@ export default function FiscalDocuments() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Notas de Crédito</CardTitle>
-                <CardDescription>Documentos de devolução e correcção</CardDescription>
+                <CardTitle>{fd.creditNotesTitle}</CardTitle>
+                <CardDescription>{fd.creditNotesDesc}</CardDescription>
               </div>
               <Button variant="modern" size="lg" onClick={() => setCreditNoteDialog(true)}>
                 <Plus />
-                Nova Nota de Crédito
+                {fd.newCreditNote}
               </Button>
             </CardHeader>
             <CardContent>
               {creditNotes.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
                   <FileMinus className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                  <p>Nenhuma nota de crédito emitida</p>
+                  <p>{fd.noCreditNotes}</p>
                 </div>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Nº Documento</TableHead>
-                      <TableHead>Data</TableHead>
-                      <TableHead>Factura Original</TableHead>
-                      <TableHead>Motivo</TableHead>
-                      <TableHead>Cliente</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
-                      <TableHead>Estado</TableHead>
+                      <TableHead>{fd.colDocNumber}</TableHead>
+                      <TableHead>{fd.colDate}</TableHead>
+                      <TableHead>{fd.colOriginalInvoice}</TableHead>
+                      <TableHead>{fd.colReason}</TableHead>
+                      <TableHead>{fd.colCustomer}</TableHead>
+                      <TableHead className="text-right">{fd.colTotal}</TableHead>
+                      <TableHead>{fd.colStatus}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -555,31 +570,31 @@ export default function FiscalDocuments() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Notas de Débito</CardTitle>
-                <CardDescription>Documentos de cobrança adicional</CardDescription>
+                <CardTitle>{fd.debitNotesTitle}</CardTitle>
+                <CardDescription>{fd.debitNotesDesc}</CardDescription>
               </div>
               <Button variant="modern" size="lg" onClick={() => setDebitNoteDialog(true)}>
                 <Plus />
-                Nova Nota de Débito
+                {fd.newDebitNote}
               </Button>
             </CardHeader>
             <CardContent>
               {debitNotes.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
                   <FilePlus className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                  <p>Nenhuma nota de débito emitida</p>
+                  <p>{fd.noDebitNotes}</p>
                 </div>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Nº Documento</TableHead>
-                      <TableHead>Data</TableHead>
-                      <TableHead>Factura Ref.</TableHead>
-                      <TableHead>Motivo</TableHead>
-                      <TableHead>Cliente</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
-                      <TableHead>Estado</TableHead>
+                      <TableHead>{fd.colDocNumber}</TableHead>
+                      <TableHead>{fd.colDate}</TableHead>
+                      <TableHead>{fd.colRefInvoice}</TableHead>
+                      <TableHead>{fd.colReason}</TableHead>
+                      <TableHead>{fd.colCustomer}</TableHead>
+                      <TableHead className="text-right">{fd.colTotal}</TableHead>
+                      <TableHead>{fd.colStatus}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -617,32 +632,38 @@ export default function FiscalDocuments() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Devoluções a Fornecedor</CardTitle>
-                <CardDescription>Devolução de mercadorias recebidas</CardDescription>
+                <CardTitle>{fd.supplierReturnsTitle}</CardTitle>
+                <CardDescription>{fd.supplierReturnsDesc}</CardDescription>
               </div>
-              <Button variant="modern" size="lg" onClick={() => setSupplierReturnDialog(true)}>
-                <Plus />
-                Nova Devolução
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="lg" onClick={openPurchaseInvoiceReturns}>
+                  <FileText className="h-4 w-4" />
+                  {fd.openPurchaseReturns}
+                </Button>
+                <Button variant="modern" size="lg" onClick={() => setSupplierReturnDialog(true)}>
+                  <Plus />
+                  {fd.newSupplierReturn}
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {supplierReturns.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
                   <RotateCcw className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                  <p>Nenhuma devolução a fornecedor registada</p>
+                  <p>{fd.noSupplierReturnsRegistered}</p>
                 </div>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Nº Devolução</TableHead>
-                      <TableHead>Data</TableHead>
-                      <TableHead>Encomenda Orig.</TableHead>
-                      <TableHead>Fornecedor</TableHead>
-                      <TableHead>Motivo</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
-                      <TableHead>Estado</TableHead>
-                      <TableHead>Acções</TableHead>
+                      <TableHead>{fd.colReturnNumber}</TableHead>
+                      <TableHead>{fd.colDate}</TableHead>
+                      <TableHead>{fd.colOriginOrder}</TableHead>
+                      <TableHead>{fd.colSupplier}</TableHead>
+                      <TableHead>{fd.colReason}</TableHead>
+                      <TableHead className="text-right">{fd.colTotal}</TableHead>
+                      <TableHead>{fd.colStatus}</TableHead>
+                      <TableHead>{fd.colActions}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -654,10 +675,10 @@ export default function FiscalDocuments() {
                         <TableCell>{ret.supplierName}</TableCell>
                         <TableCell>
                           <Badge variant="outline">
-                            {ret.reason === 'damaged' ? 'Danificado' : 
-                             ret.reason === 'wrong_item' ? 'Item Errado' :
-                             ret.reason === 'quality' ? 'Qualidade' :
-                             ret.reason === 'overstock' ? 'Excesso' : 'Outro'}
+                            {ret.reason === 'damaged' ? fd.returnReasonDamaged :
+                             ret.reason === 'wrong_item' ? fd.returnReasonWrongItem :
+                             ret.reason === 'quality' ? fd.returnReasonQuality :
+                             ret.reason === 'overstock' ? fd.returnReasonOverstock : fd.other}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right font-bold">{ret.total.toLocaleString(uiLocale)} Kz</TableCell>
@@ -670,7 +691,7 @@ export default function FiscalDocuments() {
                                   variant="ghost" 
                                   size="sm"
                                   onClick={() => approveReturn(ret.id, user?.id || '')}
-                                  title="Aprovar"
+                                  title={fd.actionApprove}
                                 >
                                   <CheckCircle className="w-4 h-4" />
                                 </Button>
@@ -678,7 +699,7 @@ export default function FiscalDocuments() {
                                   variant="ghost" 
                                   size="sm"
                                   onClick={() => cancelReturn(ret.id, user?.id || '')}
-                                  title="Cancelar"
+                                  title={fd.actionCancel}
                                 >
                                   <XCircle className="w-4 h-4" />
                                 </Button>
@@ -689,7 +710,7 @@ export default function FiscalDocuments() {
                                 variant="ghost" 
                                 size="sm"
                                 onClick={() => markAsShipped(ret.id)}
-                                title="Marcar como Enviado"
+                                title={fd.actionMarkShipped}
                               >
                                 <Truck className="w-4 h-4" />
                               </Button>
@@ -699,7 +720,7 @@ export default function FiscalDocuments() {
                                 variant="ghost" 
                                 size="sm"
                                 onClick={() => completeReturn(ret.id)}
-                                title="Concluir"
+                                title={fd.actionComplete}
                               >
                                 <CheckCircle className="w-4 h-4" />
                               </Button>
@@ -720,32 +741,32 @@ export default function FiscalDocuments() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Guias de Transporte</CardTitle>
-                <CardDescription>Documentos de movimentação de mercadorias</CardDescription>
+                <CardTitle>{fd.transportTitle}</CardTitle>
+                <CardDescription>{fd.transportDesc}</CardDescription>
               </div>
               <Button variant="modern" size="lg" onClick={() => setTransportDocDialog(true)}>
                 <Plus />
-                Nova Guia
+                {fd.newTransportShort}
               </Button>
             </CardHeader>
             <CardContent>
               {transportDocs.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
                   <Truck className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                  <p>Nenhuma guia de transporte emitida</p>
+                  <p>{fd.noTransport}</p>
                 </div>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Nº Documento</TableHead>
-                      <TableHead>Tipo</TableHead>
-                      <TableHead>Data Carga</TableHead>
-                      <TableHead>Origem</TableHead>
-                      <TableHead>Destino</TableHead>
-                      <TableHead>Itens</TableHead>
-                      <TableHead>Estado</TableHead>
-                      <TableHead>Acções</TableHead>
+                      <TableHead>{fd.colDocNumber}</TableHead>
+                      <TableHead>{fd.colType}</TableHead>
+                      <TableHead>{fd.colLoadingDate}</TableHead>
+                      <TableHead>{fd.colOrigin}</TableHead>
+                      <TableHead>{fd.colDestination}</TableHead>
+                      <TableHead>{fd.colItems}</TableHead>
+                      <TableHead>{fd.colStatus}</TableHead>
+                      <TableHead>{fd.colActions}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -810,8 +831,8 @@ export default function FiscalDocuments() {
       <Dialog open={creditNoteDialog} onOpenChange={setCreditNoteDialog}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Nova Nota de Crédito</DialogTitle>
-            <DialogDescription>Selecione a factura e os itens a creditar</DialogDescription>
+            <DialogTitle>{fd.newCreditNoteTitle}</DialogTitle>
+            <DialogDescription>{fd.newCreditNoteSubtitle}</DialogDescription>
           </DialogHeader>
 
           {!selectedSale ? (
@@ -837,7 +858,7 @@ export default function FiscalDocuments() {
                       <span>{sale.total.toLocaleString(uiLocale)} Kz</span>
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      {sale.customerName || 'Consumidor Final'} • {format(new Date(sale.createdAt), 'dd/MM/yyyy')}
+                      {sale.customerName || fd.finalConsumer} • {format(new Date(sale.createdAt), 'dd/MM/yyyy')}
                     </div>
                   </div>
                 ))}
@@ -848,42 +869,42 @@ export default function FiscalDocuments() {
               <div className="p-3 bg-muted rounded-lg">
                 <div className="flex justify-between items-center">
                   <div>
-                    <p className="font-medium">Factura: {selectedSale.invoiceNumber}</p>
+                    <p className="font-medium">{fd.invoiceLabel} {selectedSale.invoiceNumber}</p>
                     <p className="text-sm text-muted-foreground">
                       {selectedSale.customerName || t.fiscalDocumentsUi.finalConsumer} • {selectedSale.total.toLocaleString(uiLocale)} Kz
                     </p>
                   </div>
                   <Button variant="outline" size="sm" onClick={() => setSelectedSale(null)}>
-                    Alterar
+                    {fd.changeInvoice}
                   </Button>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Motivo</Label>
+                  <Label>{fd.reasonLabel}</Label>
                   <Select value={creditReason} onValueChange={(v: any) => setCreditReason(v)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="return">Devolução de Mercadoria</SelectItem>
-                      <SelectItem value="discount">Desconto Posterior</SelectItem>
-                      <SelectItem value="error">Erro de Facturação</SelectItem>
-                      <SelectItem value="other">Outro</SelectItem>
+                      <SelectItem value="return">{fd.creditReasonReturnFull}</SelectItem>
+                      <SelectItem value="discount">{fd.creditReasonDiscountFull}</SelectItem>
+                      <SelectItem value="error">{fd.creditReasonErrorFull}</SelectItem>
+                      <SelectItem value="other">{fd.other}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Repor Stock</Label>
+                  <Label>{fd.restoreStockLabel}</Label>
                   <Select value={restoreStock ? 'yes' : 'no'} onValueChange={(v) => setRestoreStock(v === 'yes')}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="yes">Sim, repor stock</SelectItem>
-                      <SelectItem value="no">Não repor</SelectItem>
+                      <SelectItem value="yes">{fd.restoreStockYes}</SelectItem>
+                      <SelectItem value="no">{fd.restoreStockNo}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -899,15 +920,15 @@ export default function FiscalDocuments() {
               </div>
 
               <div className="space-y-2">
-                <Label>Itens a Creditar</Label>
+                <Label>{fd.itemsToCredit}</Label>
                 <div className="border rounded-lg">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Produto</TableHead>
-                        <TableHead className="text-right">Qtd</TableHead>
-                        <TableHead className="text-right">{t.fiscalDocumentsUi.colPrice}</TableHead>
-                        <TableHead className="text-right">Total</TableHead>
+                        <TableHead>{fd.colProduct}</TableHead>
+                        <TableHead className="text-right">{fd.colQty}</TableHead>
+                        <TableHead className="text-right">{fd.colPrice}</TableHead>
+                        <TableHead className="text-right">{fd.colTotal}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -947,13 +968,13 @@ export default function FiscalDocuments() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => { setCreditNoteDialog(false); resetCreditForm(); }}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button 
               onClick={handleCreateCreditNote}
               disabled={!selectedSale || creditItems.every(i => i.quantity === 0)}
             >
-              Emitir Nota de Crédito
+              {fd.issueCreditNote}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -970,7 +991,7 @@ export default function FiscalDocuments() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>NIF Cliente</Label>
+                <Label>{fd.customerNifLabel}</Label>
                 <Input 
                   value={debitCustomerNif}
                   onChange={(e) => setDebitCustomerNif(e.target.value)}
@@ -978,7 +999,7 @@ export default function FiscalDocuments() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Nome Cliente</Label>
+                <Label>{t.common.name}</Label>
                 <Input 
                   value={debitCustomerName}
                   onChange={(e) => setDebitCustomerName(e.target.value)}
@@ -997,8 +1018,8 @@ export default function FiscalDocuments() {
                   <SelectContent>
                     <SelectItem value="price_adjustment">{t.fiscalDocumentsUi.debitReasonPriceAdjustment}</SelectItem>
                     <SelectItem value="additional_charge">{t.fiscalDocumentsUi.debitReasonAdditionalCharge}</SelectItem>
-                    <SelectItem value="interest">Juros de Mora</SelectItem>
-                    <SelectItem value="other">Outro</SelectItem>
+                    <SelectItem value="interest">{fd.debitReasonInterest}</SelectItem>
+                    <SelectItem value="other">{fd.other}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1015,9 +1036,9 @@ export default function FiscalDocuments() {
 
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <Label>Itens</Label>
+                <Label>{fd.itemsLabel}</Label>
                 <Button variant="outline" size="sm" onClick={addDebitItem}>
-                  <Plus className="w-4 h-4 mr-1" /> Adicionar
+                  <Plus className="w-4 h-4 mr-1" /> {fd.addBtn}
                 </Button>
               </div>
               <div className="space-y-2">
@@ -1031,7 +1052,7 @@ export default function FiscalDocuments() {
                     />
                     <Input
                       type="number"
-                      placeholder="Qtd"
+                      placeholder={fd.colQty}
                       value={item.quantity}
                       onChange={(e) => updateDebitItem(idx, 'quantity', parseFloat(e.target.value) || 0)}
                     />
@@ -1055,13 +1076,13 @@ export default function FiscalDocuments() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => { setDebitNoteDialog(false); resetDebitForm(); }}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button 
               onClick={handleCreateDebitNote}
               disabled={debitItems.every(i => !i.description || i.subtotal === 0)}
             >
-              Emitir Nota de Débito
+              {fd.issueDebitNote}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1071,65 +1092,65 @@ export default function FiscalDocuments() {
       <Dialog open={transportDocDialog} onOpenChange={setTransportDocDialog}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Nova Guia de Transporte</DialogTitle>
-            <DialogDescription>Documento de movimentação de mercadorias</DialogDescription>
+            <DialogTitle>{fd.newTransportTitle}</DialogTitle>
+            <DialogDescription>{fd.newTransportSubtitle}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Tipo de Transporte</Label>
+                <Label>{fd.transportTypeLabel}</Label>
                 <Select value={transportType} onValueChange={(v: any) => setTransportType(v)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="delivery">Entrega a Cliente</SelectItem>
-                    <SelectItem value="transfer">Transferência entre Filiais</SelectItem>
-                    <SelectItem value="return">Devolução a Fornecedor</SelectItem>
+                    <SelectItem value="delivery">{fd.transportTypeDeliveryFull}</SelectItem>
+                    <SelectItem value="transfer">{fd.transportTypeTransferFull}</SelectItem>
+                    <SelectItem value="return">{fd.transportTypeReturnFull}</SelectItem>
                     <SelectItem value="consignment">{t.fiscalDocumentsUi.transportTypeConsignment}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Matrícula Veículo</Label>
+                <Label>{fd.vehiclePlateLabel}</Label>
                 <Input 
                   value={vehiclePlate}
                   onChange={(e) => setVehiclePlate(e.target.value)}
-                  placeholder="LD-00-00-AA"
+                  placeholder={fd.vehiclePlatePlaceholder}
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-4">
-                <h4 className="font-medium">Origem</h4>
+                <h4 className="font-medium">{fd.originTitle}</h4>
                 <div className="space-y-2">
-                  <Label>Morada</Label>
+                  <Label>{fd.addressLabel}</Label>
                   <Input value={originAddress} onChange={(e) => setOriginAddress(e.target.value)} />
                 </div>
                 <div className="space-y-2">
-                  <Label>Cidade</Label>
+                  <Label>{fd.cityLabel}</Label>
                   <Input value={originCity} onChange={(e) => setOriginCity(e.target.value)} />
                 </div>
               </div>
               <div className="space-y-4">
-                <h4 className="font-medium">Destino</h4>
+                <h4 className="font-medium">{fd.destinationTitle}</h4>
                 <div className="space-y-2">
-                  <Label>Morada</Label>
+                  <Label>{fd.addressLabel}</Label>
                   <Input value={destAddress} onChange={(e) => setDestAddress(e.target.value)} />
                 </div>
                 <div className="space-y-2">
-                  <Label>Cidade</Label>
+                  <Label>{fd.cityLabel}</Label>
                   <Input value={destCity} onChange={(e) => setDestCity(e.target.value)} />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-2">
-                    <Label>NIF Destino</Label>
+                    <Label>{fd.destNifLabel}</Label>
                     <Input value={destNif} onChange={(e) => setDestNif(e.target.value)} />
                   </div>
                   <div className="space-y-2">
-                    <Label>Nome</Label>
+                    <Label>{fd.nameLabel}</Label>
                     <Input value={destName} onChange={(e) => setDestName(e.target.value)} />
                   </div>
                 </div>
@@ -1138,7 +1159,7 @@ export default function FiscalDocuments() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Data de Carga</Label>
+                <Label>{fd.loadingDateLabel}</Label>
                 <Input 
                   type="date"
                   value={loadingDate}
@@ -1146,7 +1167,7 @@ export default function FiscalDocuments() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Hora de Carga</Label>
+                <Label>{fd.loadingTimeLabel}</Label>
                 <Input 
                   type="time"
                   value={loadingTime}
@@ -1156,16 +1177,16 @@ export default function FiscalDocuments() {
             </div>
 
             <div className="space-y-2">
-              <Label>Transportador</Label>
+              <Label>{fd.transporterLabel}</Label>
               <Input 
                 value={transporterName}
                 onChange={(e) => setTransporterName(e.target.value)}
-                placeholder="Nome do transportador"
+                placeholder={fd.transporterPlaceholder}
               />
             </div>
 
             <div className="space-y-2">
-              <Label>Produtos a Transportar</Label>
+              <Label>{fd.productsToTransport}</Label>
               <div className="grid grid-cols-3 gap-2 max-h-32 overflow-y-auto border rounded p-2">
                 {products.map(product => (
                   <Button
@@ -1183,9 +1204,9 @@ export default function FiscalDocuments() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Produto</TableHead>
-                        <TableHead>SKU</TableHead>
-                        <TableHead className="text-right">Quantidade</TableHead>
+                        <TableHead>{fd.colProduct}</TableHead>
+                        <TableHead>{fd.colSku}</TableHead>
+                        <TableHead className="text-right">{fd.colQuantity}</TableHead>
                         <TableHead></TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1225,24 +1246,24 @@ export default function FiscalDocuments() {
             </div>
 
             <div className="space-y-2">
-              <Label>Observações</Label>
+              <Label>{fd.notesLabel}</Label>
               <Textarea 
                 value={transportNotes}
                 onChange={(e) => setTransportNotes(e.target.value)}
-                placeholder="Notas adicionais..."
+                placeholder={fd.additionalNotesPlaceholder}
               />
             </div>
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => { setTransportDocDialog(false); resetTransportForm(); }}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button 
               onClick={handleCreateTransportDoc}
               disabled={transportItems.length === 0 || !destAddress}
             >
-              Emitir Guia de Transporte
+              {fd.issueTransport}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1252,19 +1273,19 @@ export default function FiscalDocuments() {
       <Dialog open={saftDialog} onOpenChange={setSaftDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Exportar SAF-T</DialogTitle>
-            <DialogDescription>Gerar ficheiro SAF-T para a AGT</DialogDescription>
+            <DialogTitle>{fd.exportSaftTitle}</DialogTitle>
+            <DialogDescription>{fd.exportSaftSubtitle}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="flex items-center gap-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800">
               <AlertCircle className="w-5 h-5" />
-              <span className="text-sm">O SAF-T incluirá todas as facturas, notas e guias do período seleccionado.</span>
+              <span className="text-sm">{fd.saftWarning}</span>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Data Início</Label>
+                <Label>{fd.startDateLabel}</Label>
                 <Input 
                   type="date"
                   value={saftStartDate}
@@ -1272,7 +1293,7 @@ export default function FiscalDocuments() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Data Fim</Label>
+                <Label>{fd.endDateLabel}</Label>
                 <Input 
                   type="date"
                   value={saftEndDate}
@@ -1282,19 +1303,19 @@ export default function FiscalDocuments() {
             </div>
 
             <div className="p-3 bg-muted rounded-lg text-sm">
-              <p><strong>Empresa:</strong> {companyInfo.name}</p>
+              <p><strong>{fd.companyLabel}</strong> {companyInfo.name}</p>
               <p><strong>NIF:</strong> {companyInfo.nif}</p>
-              <p><strong>Filial:</strong> {currentBranch?.name || 'Todas'}</p>
+              <p><strong>{fd.branchLabel}</strong> {currentBranch?.name || fd.allBranches}</p>
             </div>
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setSaftDialog(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleExportSAFT}>
               <Download className="w-4 h-4 mr-2" />
-              Exportar XML
+              {fd.exportXml}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1304,14 +1325,14 @@ export default function FiscalDocuments() {
       <Dialog open={companyDialog} onOpenChange={setCompanyDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Dados da Empresa</DialogTitle>
-            <DialogDescription>Informações fiscais para documentos</DialogDescription>
+            <DialogTitle>{fd.companyDialogTitle}</DialogTitle>
+            <DialogDescription>{fd.companyDialogSubtitle}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Nome da Empresa</Label>
+                <Label>{fd.companyNameLabel}</Label>
                 <Input 
                   value={editCompanyInfo.name}
                   onChange={(e) => setEditCompanyInfo({...editCompanyInfo, name: e.target.value})}
@@ -1327,7 +1348,7 @@ export default function FiscalDocuments() {
             </div>
 
             <div className="space-y-2">
-              <Label>Morada</Label>
+              <Label>{fd.addressLabel}</Label>
               <Input 
                 value={editCompanyInfo.address}
                 onChange={(e) => setEditCompanyInfo({...editCompanyInfo, address: e.target.value})}
@@ -1343,7 +1364,7 @@ export default function FiscalDocuments() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Código Postal</Label>
+                <Label>{fd.postalCodeLabel}</Label>
                 <Input 
                   value={editCompanyInfo.postalCode}
                   onChange={(e) => setEditCompanyInfo({...editCompanyInfo, postalCode: e.target.value})}
@@ -1353,14 +1374,14 @@ export default function FiscalDocuments() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Telefone</Label>
+                <Label>{fd.phoneLabel}</Label>
                 <Input 
                   value={editCompanyInfo.phone}
                   onChange={(e) => setEditCompanyInfo({...editCompanyInfo, phone: e.target.value})}
                 />
               </div>
               <div className="space-y-2">
-                <Label>Email</Label>
+                <Label>{fd.emailLabel}</Label>
                 <Input 
                   value={editCompanyInfo.email}
                   onChange={(e) => setEditCompanyInfo({...editCompanyInfo, email: e.target.value})}
@@ -1379,10 +1400,10 @@ export default function FiscalDocuments() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setCompanyDialog(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleSaveCompanyInfo}>
-              Guardar
+              {fd.saveCompany}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1392,16 +1413,16 @@ export default function FiscalDocuments() {
       <Dialog open={supplierReturnDialog} onOpenChange={setSupplierReturnDialog}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Nova Devolução a Fornecedor</DialogTitle>
-            <DialogDescription>Seleccione a encomenda e os itens a devolver</DialogDescription>
+            <DialogTitle>{fd.newSupplierReturnTitle}</DialogTitle>
+            <DialogDescription>{fd.newSupplierReturnSubtitle}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             {!selectedPO ? (
               <div className="space-y-4">
-                <Label>Seleccione uma Encomenda Recebida</Label>
+                <Label>{fd.selectReceivedOrder}</Label>
                 {receivedOrders.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-8">Nenhuma encomenda recebida disponível</p>
+                  <p className="text-muted-foreground text-center py-8">{fd.noOrdersAvailable}</p>
                 ) : (
                   <div className="max-h-64 overflow-y-auto space-y-2">
                     {receivedOrders.map(po => (
@@ -1431,7 +1452,7 @@ export default function FiscalDocuments() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label>Motivo</Label>
+                    <Label>{fd.reasonLabel}</Label>
                     <Select value={returnReason} onValueChange={(v: any) => setReturnReason(v)}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -1445,22 +1466,22 @@ export default function FiscalDocuments() {
                   </div>
                   <div>
                     <Label>Descrição</Label>
-                    <Input value={returnDescription} onChange={(e) => setReturnDescription(e.target.value)} placeholder="Descreva o motivo..." />
+                    <Input value={returnDescription} onChange={(e) => setReturnDescription(e.target.value)} placeholder={fd.returnDescriptionPlaceholder} />
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <Checkbox checked={deductStock} onCheckedChange={(c) => setDeductStock(!!c)} />
-                  <Label>Deduzir stock automaticamente</Label>
+                  <Label>{fd.deductStockAuto}</Label>
                 </div>
 
                 <div>
-                  <Label>Itens a Devolver (introduza a quantidade)</Label>
+                  <Label>{fd.itemsToReturnLabel}</Label>
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Produto</TableHead>
-                        <TableHead className="text-right">Recebido</TableHead>
+                        <TableHead>{fd.colProduct}</TableHead>
+                        <TableHead className="text-right">{fd.colReceived}</TableHead>
                         <TableHead className="text-right">A Devolver</TableHead>
                         <TableHead className="text-right">Valor</TableHead>
                       </TableRow>
@@ -1503,10 +1524,10 @@ export default function FiscalDocuments() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setSupplierReturnDialog(false); resetSupplierReturnForm(); }}>Cancelar</Button>
+            <Button variant="outline" onClick={() => { setSupplierReturnDialog(false); resetSupplierReturnForm(); }}>{t.common.cancel}</Button>
             <Button onClick={handleCreateSupplierReturn} disabled={!selectedPO || returnItems.every(i => i.quantity === 0)}>
               <RotateCcw className="w-4 h-4 mr-2" />
-              Criar Devolução
+              {fd.createReturn}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -97,10 +97,15 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
   const refTypeLabels: Record<string, string> = {
     sale: t.ledgerUi.refSale,
     purchase: t.ledgerUi.refPurchase,
+    purchase_invoice: t.ledgerUi.refPurchase,
+    credit_note: t.ledgerUi.refCreditNote,
     payment: t.ledgerUi.refPayment,
+    payment_receipt: t.ledgerUi.refReceipt,
+    payment_out: t.ledgerUi.refPayment,
     receipt: t.ledgerUi.refReceipt,
     transfer: t.ledgerUi.refTransfer,
     expense: t.ledgerUi.refExpense,
+    adjustment: t.ledgerUi.refManual,
     manual: t.ledgerUi.refManual,
   };
 

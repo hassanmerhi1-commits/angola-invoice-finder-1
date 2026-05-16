@@ -146,7 +146,7 @@ export default function UserManagement() {
       setCreateDialogOpen(false);
       setFormData({ name: '', email: '', username: '', role: 'cashier', branchId: '', password: '' });
     } catch (error) {
-      toast.error('Failed to create user');
+      toast.error(error instanceof Error ? error.message : 'Failed to create user');
     }
   };
 

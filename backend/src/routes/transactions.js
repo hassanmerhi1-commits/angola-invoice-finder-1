@@ -3,7 +3,18 @@
 const express = require('express');
 const db = require('../db');
 const { randomUUID } = require('crypto');
-const { recordStockMovement, createOpenItem, linkDocuments, validatePeriod, auditLog } = require('../transactionEngine');
+const {
+  recordStockMovement,
+  resolveStockEntryDirection,
+  normalizeStandaloneMovementType,
+  createOpenItem,
+  reduceSupplierInvoiceOpenItem,
+  syncSupplierBalanceFromOpenItems,
+  isOpenItemDebitFlag,
+  linkDocuments,
+  validatePeriod,
+  auditLog,
+} = require('../transactionEngine');
 const { createJournalEntry } = require('../accounting');
 
 async function ensureFreightExpenseAccount(client) {
@@ -28,6 +39,52 @@ async function ensureFreightExpenseAccount(client) {
      ON CONFLICT (code) DO NOTHING`,
     [randomUUID(), parentResult.rows[0].id]
   );
+}
+
+async function ensureJournalLineAccounts(client, journalLines = [], entityBalanceUpdate = null, openItem = null) {
+  const configs = [
+    { pattern: /^3\.2\.\d+$/i, parentCode: '3.2', accountType: 'liability', accountNature: 'credit' },
+    { pattern: /^3\.3\.\d+$/i, parentCode: '3.3', accountType: 'liability', accountNature: 'debit' },
+    { pattern: /^2\.1\.\d+$/i, parentCode: '2.1', accountType: 'asset', accountNature: 'debit' },
+  ];
+
+  for (const line of journalLines) {
+    const code = String(line.accountCode || '').trim();
+    if (!code) continue;
+
+    const existing = await client.query(
+      `SELECT id FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
+      [code],
+    );
+    if (existing.rows.length > 0) continue;
+
+    const cfg = configs.find((c) => c.pattern.test(code));
+    if (!cfg) {
+      throw new Error(`Conta contabilística não encontrada: ${code}`);
+    }
+
+    const parent = await client.query(
+      `SELECT id FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
+      [cfg.parentCode],
+    );
+    if (parent.rows.length === 0) {
+      throw new Error(`Conta pai ${cfg.parentCode} não encontrada para criar ${code}`);
+    }
+
+    const accountName =
+      String(line.accountName || '').trim()
+      || String(line.note || '').trim()
+      || String(entityBalanceUpdate?.entityName || '').trim()
+      || String(openItem?.entityName || '').trim()
+      || code;
+
+    await client.query(
+      `INSERT INTO chart_of_accounts
+       (id, code, name, description, account_type, account_nature, parent_id, level, is_header, is_active, opening_balance, current_balance)
+       VALUES ($1, $2, $3, '', $4, $5, $6, 3, false, true, 0, 0)`,
+      [randomUUID(), code, accountName, cfg.accountType, cfg.accountNature, parent.rows[0].id],
+    );
+  }
 }
 
 async function ensureSupplierJournalAccounts(client, journalLines = [], entityBalanceUpdate = null, openItem = null) {
@@ -100,7 +157,12 @@ module.exports = function(broadcastTable) {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
-      const movement = await recordStockMovement(client, req.body);
+      const movementType = normalizeStandaloneMovementType(req.body);
+      const movement = await recordStockMovement(client, {
+        ...req.body,
+        movementType,
+        referenceType: req.body.referenceType ?? req.body.reference_type ?? 'adjustment',
+      });
       await client.query('COMMIT');
       await broadcastTable('products');
       res.status(201).json(movement);
@@ -232,13 +294,19 @@ module.exports = function(broadcastTable) {
             );
           }
 
+          const stockDirection = resolveStockEntryDirection(entry, transactionType, openItem);
+          const stockReferenceType =
+            transactionType === 'credit_note' && openItem?.entityType === 'supplier'
+              ? 'supplier_return'
+              : transactionType;
+
           const movement = await recordStockMovement(client, {
             productId: entry.productId,
             warehouseId: entry.warehouseId,
-            movementType: entry.direction,
+            movementType: stockDirection,
             quantity: entry.quantity,
             unitCost: effectiveUnitCost,
-            referenceType: transactionType,
+            referenceType: stockReferenceType,
             referenceId: documentId,
             referenceNumber: documentNumber,
             createdBy: userId,
@@ -288,6 +356,7 @@ module.exports = function(broadcastTable) {
         if (journalLines.some((line) => line.accountCode === '6.2.6')) {
           await ensureFreightExpenseAccount(client);
         }
+        await ensureJournalLineAccounts(client, journalLines, entityBalanceUpdate, openItem);
         await ensureSupplierJournalAccounts(client, journalLines, entityBalanceUpdate, openItem);
 
         const entry = await createJournalEntry(client, {
@@ -376,20 +445,65 @@ module.exports = function(broadcastTable) {
 
       // Phase 4: Open Item (through engine)
       if (openItem) {
-        const oi = await createOpenItem(client, {
-          entityType: openItem.entityType,
-          entityId: openItem.entityId,
-          documentType: openItem.documentType,
-          documentId,
-          documentNumber,
-          documentDate: date || new Date().toISOString().split('T')[0],
-          dueDate: openItem.dueDate || null,
-          originalAmount: openItem.originalAmount,
-          isDebit: openItem.isDebit,
-          branchId,
-          currency: openItem.currency || currency || 'AOA',
-        });
-        result.openItemId = oi.id;
+        const invoiceLink = (documentLinks || []).find((dl) =>
+          ['fatura_compra', 'purchase_invoice'].includes(String(dl.targetType || ''))
+        );
+        const isLinkedSupplierReturn =
+          transactionType === 'credit_note' &&
+          openItem.entityType === 'supplier' &&
+          !isOpenItemDebitFlag(openItem.isDebit) &&
+          !!invoiceLink;
+
+        if (isLinkedSupplierReturn) {
+          const applied = await reduceSupplierInvoiceOpenItem(client, {
+            entityId: openItem.entityId,
+            invoiceDocumentId: invoiceLink.targetId,
+            amount: openItem.originalAmount,
+          });
+          if (applied) {
+            result.openItemId = applied.id;
+            openItem.entityId = applied.entityId || openItem.entityId;
+            if (entityBalanceUpdate && entityBalanceUpdate.entityType === 'supplier') {
+              entityBalanceUpdate.entityId = applied.entityId || entityBalanceUpdate.entityId;
+            }
+            console.log(
+              `[TX API] Supplier return ${documentNumber}: reduced invoice ${applied.documentNumber} open item by ${applied.applied}`
+            );
+          } else {
+            const oi = await createOpenItem(client, {
+              entityType: openItem.entityType,
+              entityId: openItem.entityId,
+              documentType: openItem.documentType,
+              documentId,
+              documentNumber,
+              documentDate: date || new Date().toISOString().split('T')[0],
+              dueDate: openItem.dueDate || null,
+              originalAmount: openItem.originalAmount,
+              isDebit: openItem.isDebit,
+              branchId,
+              currency: openItem.currency || currency || 'AOA',
+            });
+            result.openItemId = oi.id;
+            console.warn(
+              `[TX API] Supplier return ${documentNumber}: invoice open item not found — created standalone credit open item`
+            );
+          }
+        } else {
+          const oi = await createOpenItem(client, {
+            entityType: openItem.entityType,
+            entityId: openItem.entityId,
+            documentType: openItem.documentType,
+            documentId,
+            documentNumber,
+            documentDate: date || new Date().toISOString().split('T')[0],
+            dueDate: openItem.dueDate || null,
+            originalAmount: openItem.originalAmount,
+            isDebit: openItem.isDebit,
+            branchId,
+            currency: openItem.currency || currency || 'AOA',
+          });
+          result.openItemId = oi.id;
+        }
       }
 
       // Phase 5: Document Links (through engine)
@@ -400,11 +514,11 @@ module.exports = function(broadcastTable) {
         }
       }
 
-      // Phase 6: Entity Balance Update
+      // Phase 6: Entity balance — suppliers: sync from open_items (source of truth)
       if (entityBalanceUpdate) {
         const ebu = entityBalanceUpdate;
-        if (ebu.entityType === 'supplier') {
-          await client.query('UPDATE suppliers SET balance = COALESCE(balance, 0) + $1 WHERE id = $2', [ebu.amount, ebu.entityId]);
+        if (ebu.entityType === 'supplier' && ebu.entityId) {
+          await syncSupplierBalanceFromOpenItems(client, ebu.entityId);
         } else if (ebu.entityType === 'customer') {
           await client.query('UPDATE clients SET current_balance = COALESCE(current_balance, 0) + $1 WHERE id = $2', [ebu.amount, ebu.entityId]);
         }
@@ -438,6 +552,9 @@ module.exports = function(broadcastTable) {
       console.log(`[TX API] ${transactionType} ${documentNumber}: stock=${result.stockMovementIds.length}, journal=${!!result.journalEntryId}, openItem=${!!result.openItemId} ✓`);
 
       await broadcastTable('products');
+      if (result.journalEntryId) {
+        await broadcastTable('journal_entries');
+      }
       res.status(201).json(result);
     } catch (error) {
       await client.query('ROLLBACK');

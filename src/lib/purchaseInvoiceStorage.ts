@@ -52,6 +52,7 @@ export interface PurchaseInvoice {
   invoiceNumber: string;
   supplierAccountCode: string;
   supplierName: string;
+  supplierId?: string;
   supplierNif?: string;
   supplierPhone?: string;
   supplierBalance: number;
@@ -520,6 +521,7 @@ function mapPIFromDb(row: any): PurchaseInvoice {
     invoiceNumber: row.invoice_number || row.invoiceNumber || '',
     supplierAccountCode: row.supplier_account_code || row.supplierAccountCode || '',
     supplierName: row.supplier_name || row.supplierName || '',
+    supplierId: row.supplier_id || row.supplierId || '',
     supplierNif: row.supplier_nif,
     supplierPhone: row.supplier_phone,
     supplierBalance: Number(row.supplier_balance || 0),
@@ -575,6 +577,7 @@ function mapPIToDb(invoice: PurchaseInvoice): any {
     invoice_number: invoice.invoiceNumber,
     supplier_account_code: invoice.supplierAccountCode,
     supplier_name: invoice.supplierName,
+    supplier_id: invoice.supplierId || '',
     supplier_nif: invoice.supplierNif || '',
     supplier_phone: invoice.supplierPhone || '',
     supplier_balance: invoice.supplierBalance,

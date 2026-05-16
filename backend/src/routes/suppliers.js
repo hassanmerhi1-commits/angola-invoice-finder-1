@@ -88,7 +88,17 @@ module.exports = function(broadcastTable) {
 
   router.get('/', async (req, res) => {
     try {
-      const result = await db.query('SELECT * FROM suppliers WHERE is_active = true ORDER BY name');
+      const result = await db.query(
+        `SELECT s.*,
+                COALESCE((
+                  SELECT SUM(CASE WHEN oi.is_debit = 1 OR oi.is_debit = TRUE THEN oi.remaining_amount ELSE -oi.remaining_amount END)
+                  FROM open_items oi
+                  WHERE oi.entity_type = 'supplier' AND oi.entity_id = s.id
+                ), 0) AS balance
+         FROM suppliers s
+         WHERE s.is_active = true
+         ORDER BY s.name`
+      );
       res.json(result.rows);
     } catch (error) {
       console.error('[SUPPLIERS ERROR]', error);
@@ -245,6 +255,18 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       console.error('[SUPPLIERS ERROR]', error);
       res.status(500).json({ error: 'Failed to update supplier' });
+    }
+  });
+
+  router.post('/reconcile-balances', async (req, res) => {
+    try {
+      const { runSupplierBalanceRepair } = require('../supplierBalanceRepair');
+      const result = await runSupplierBalanceRepair();
+      await broadcastTable('suppliers');
+      res.json(result);
+    } catch (error) {
+      console.error('[SUPPLIERS ERROR] reconcile-balances:', error);
+      res.status(500).json({ error: error.message || 'Failed to reconcile supplier balances' });
     }
   });
 

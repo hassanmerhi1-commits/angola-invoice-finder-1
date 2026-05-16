@@ -9,6 +9,13 @@ function normalizeUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed) ? trimmed : null;
 }
 
+/** Branch / document ids may be non-UUID strings in SQLite — keep for filtering in Journals. */
+function normalizeOptionalId(value) {
+  if (value == null || value === '') return null;
+  const trimmed = String(value).trim();
+  return trimmed || null;
+}
+
 /**
  * Generate a unique document number from document_sequences (with row-level locking).
  * Falls back to COUNT-based generation if the table doesn't exist yet.
@@ -102,6 +109,7 @@ async function createJournalEntry(client, params) {
   const prefixMap = {
     sale: 'VD', purchase: 'CP', purchase_invoice: 'CP', transfer: 'TRF',
     expense: 'DSP', adjustment: 'AJ', receipt: 'REC', payment: 'PAG',
+    credit_note: 'NC', debit_note: 'ND', payment_receipt: 'REC', payment_out: 'PAG',
   };
   const prefix = prefixMap[referenceType] || 'JE';
   const entryNumber = await generateSequenceNumber(client, 'journal', prefix);
@@ -128,8 +136,8 @@ async function createJournalEntry(client, params) {
       total_debit, total_credit, is_posted, posted_at, branch_id, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, CURRENT_TIMESTAMP, $9, $10)`,
      [entryId, entryNumber, entryDate || new Date().toISOString().split('T')[0],
-      description, referenceType, normalizeUuid(referenceId),
-      totalDebit, totalCredit, normalizeUuid(branchId), normalizeUuid(createdBy)]
+      description, referenceType, normalizeOptionalId(referenceId),
+      totalDebit, totalCredit, normalizeOptionalId(branchId), normalizeOptionalId(createdBy)]
   );
 
   // Insert journal entry lines

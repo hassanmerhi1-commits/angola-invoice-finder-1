@@ -36,16 +36,18 @@ export function InvoiceViewDialog({
   sale,
   branch,
 }: InvoiceViewDialogProps) {
-  if (!sale || !branch) return null;
   const { t, language } = useTranslation();
+  const iv = t.invoiceViewUi;
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+
+  if (!sale || !branch) return null;
 
   const company = getCompanySettings();
 
   const handlePrintThermal = () => {
     const config = getPrinterConfig();
     printViaBrowser(sale, branch, config.paperWidth);
-    toast.success(t.invoiceViewUi.thermalSent);
+    toast.success(iv.thermalSent);
   };
 
   const handlePrintA4 = async () => {
@@ -55,25 +57,31 @@ export function InvoiceViewDialog({
         showNotes: true,
         documentType: 'FR',
       });
-      toast.success(t.invoiceViewUi.a4Sent);
+      toast.success(iv.a4Sent);
     } catch (error) {
-      toast.error(t.invoiceViewUi.printError);
+      toast.error(iv.printError);
       console.error('Print error:', error);
     }
   };
 
   const handleDownloadPDF = async () => {
     await handlePrintA4();
-    toast.info(t.invoiceViewUi.saveAsPdfHint);
+    toast.info(iv.saveAsPdfHint);
   };
-
 
   const paymentMethodLabels: Record<string, string> = {
-    cash: t.invoiceViewUi.paymentCash,
-    card: t.invoiceViewUi.paymentCard,
-    transfer: t.invoiceViewUi.paymentTransfer,
-    mixed: t.invoiceViewUi.paymentMixed,
+    cash: iv.paymentCash,
+    card: iv.paymentCard,
+    transfer: iv.paymentTransfer,
+    mixed: iv.paymentMixed,
   };
+
+  const agtStatusLabel =
+    sale.agtStatus === 'validated'
+      ? iv.agtValidated
+      : sale.agtStatus === 'rejected'
+        ? iv.agtRejected
+        : iv.agtPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -81,13 +89,11 @@ export function InvoiceViewDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="w-5 h-5" />
-            {t.invoiceViewUi.title} {sale.invoiceNumber}
+            {iv.title} {sale.invoiceNumber}
           </DialogTitle>
         </DialogHeader>
 
-        {/* Invoice Document */}
         <div className="bg-white text-black rounded-lg border shadow-sm">
-          {/* Header */}
           <div className="p-6 border-b">
             <div className="flex justify-between items-start">
               <div className="flex items-start gap-4">
@@ -111,7 +117,7 @@ export function InvoiceViewDialog({
               </div>
               <div className="text-right">
                 <Badge variant={sale.status === 'completed' ? 'default' : 'destructive'}>
-                  {sale.status === 'completed' ? t.invoiceViewUi.issued : t.invoiceViewUi.voided}
+                  {sale.status === 'completed' ? iv.issued : iv.voided}
                 </Badge>
                 <p className="mt-2 text-lg font-bold">{sale.invoiceNumber}</p>
                 <p className="text-sm text-gray-600">
@@ -124,30 +130,28 @@ export function InvoiceViewDialog({
             </div>
           </div>
 
-          {/* Customer Info */}
           <div className="p-4 bg-gray-50 border-b">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-xs text-gray-500">Cliente</p>
-                <p className="font-medium">{sale.customerName || 'Consumidor Final'}</p>
+                <p className="text-xs text-gray-500">{iv.customer}</p>
+                <p className="font-medium">{sale.customerName || iv.finalConsumer}</p>
               </div>
               <div>
-                <p className="text-xs text-gray-500">NIF do Cliente</p>
+                <p className="text-xs text-gray-500">{iv.customerNif}</p>
                 <p className="font-medium">{sale.customerNif || '999999990'}</p>
               </div>
             </div>
           </div>
 
-          {/* Items Table */}
           <div className="p-4">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b">
-                  <th className="text-left py-2">Descrição</th>
-                  <th className="text-center py-2">Qtd</th>
-                  <th className="text-right py-2">Preço Unit.</th>
-                  <th className="text-right py-2">IVA</th>
-                  <th className="text-right py-2">Subtotal</th>
+                  <th className="text-left py-2">{iv.colDescription}</th>
+                  <th className="text-center py-2">{iv.colQty}</th>
+                  <th className="text-right py-2">{iv.colUnitPrice}</th>
+                  <th className="text-right py-2">{iv.colVat}</th>
+                  <th className="text-right py-2">{iv.colSubtotal}</th>
                 </tr>
               </thead>
               <tbody>
@@ -159,11 +163,11 @@ export function InvoiceViewDialog({
                     </td>
                     <td className="text-center py-2">{item.quantity}</td>
                     <td className="text-right py-2">
-                      {item.unitPrice.toLocaleString('pt-AO')} Kz
+                      {item.unitPrice.toLocaleString(locale)} Kz
                     </td>
                     <td className="text-right py-2">14%</td>
                     <td className="text-right py-2 font-medium">
-                      {item.subtotal.toLocaleString('pt-AO')} Kz
+                      {item.subtotal.toLocaleString(locale)} Kz
                     </td>
                   </tr>
                 ))}
@@ -171,52 +175,49 @@ export function InvoiceViewDialog({
             </table>
           </div>
 
-          {/* Totals */}
           <div className="p-4 bg-gray-50 border-t">
             <div className="flex justify-end">
               <div className="w-64 space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span>Subtotal (s/ IVA):</span>
-                  <span>{sale.subtotal.toLocaleString('pt-AO')} Kz</span>
+                  <span>{iv.subtotalExVat}</span>
+                  <span>{sale.subtotal.toLocaleString(locale)} Kz</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span>IVA (14%):</span>
-                  <span>{sale.taxAmount.toLocaleString('pt-AO')} Kz</span>
+                  <span>{iv.vat14}</span>
+                  <span>{sale.taxAmount.toLocaleString(locale)} Kz</span>
                 </div>
                 {sale.discount > 0 && (
                   <div className="flex justify-between text-sm text-red-600">
-                    <span>Desconto:</span>
-                    <span>-{sale.discount.toLocaleString('pt-AO')} Kz</span>
+                    <span>{iv.discount}</span>
+                    <span>-{sale.discount.toLocaleString(locale)} Kz</span>
                   </div>
                 )}
                 <Separator />
                 <div className="flex justify-between text-lg font-bold">
-                  <span>TOTAL:</span>
-                  <span>{sale.total.toLocaleString('pt-AO')} Kz</span>
+                  <span>{iv.total}</span>
+                  <span>{sale.total.toLocaleString(locale)} Kz</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Payment Info */}
           <div className="p-4 border-t">
             <div className="grid grid-cols-3 gap-4 text-sm">
               <div>
-                <p className="text-xs text-gray-500">Forma de Pagamento</p>
+                <p className="text-xs text-gray-500">{iv.paymentMethod}</p>
                 <p className="font-medium">{paymentMethodLabels[sale.paymentMethod]}</p>
               </div>
               <div>
-                <p className="text-xs text-gray-500">Valor Recebido</p>
-                <p className="font-medium">{sale.amountPaid.toLocaleString('pt-AO')} Kz</p>
+                <p className="text-xs text-gray-500">{iv.amountReceived}</p>
+                <p className="font-medium">{sale.amountPaid.toLocaleString(locale)} Kz</p>
               </div>
               <div>
-                <p className="text-xs text-gray-500">Troco</p>
-                <p className="font-medium">{sale.change.toLocaleString('pt-AO')} Kz</p>
+                <p className="text-xs text-gray-500">{iv.change}</p>
+                <p className="font-medium">{sale.change.toLocaleString(locale)} Kz</p>
               </div>
             </div>
           </div>
 
-          {/* AGT QR Code Section */}
           <div className="p-4 border-t bg-gray-50">
             <div className="flex items-start gap-6">
               <AGTQRCode 
@@ -226,17 +227,16 @@ export function InvoiceViewDialog({
                 showVerificationText={true}
               />
               <div className="flex-1 text-xs text-gray-600 space-y-1">
-                <p><strong>Informação Fiscal</strong></p>
+                <p><strong>{iv.fiscalInfo}</strong></p>
                 <p>Hash: {getInvoiceHash(sale)}</p>
-                <p>Tipo: FR (Factura-Recibo)</p>
-                <p>Software certificado pela AGT</p>
+                <p>{iv.docTypeFr}</p>
+                <p>{iv.agtCertifiedSoftware}</p>
                 {sale.agtCode && <p>CUCE: {sale.agtCode}</p>}
                 {sale.agtStatus && (
                   <p>
-                    Estado AGT: {' '}
+                    {iv.agtStatus}{' '}
                     <Badge variant={sale.agtStatus === 'validated' ? 'default' : 'secondary'}>
-                      {sale.agtStatus === 'validated' ? 'Validado' : 
-                       sale.agtStatus === 'rejected' ? 'Rejeitado' : 'Pendente'}
+                      {agtStatusLabel}
                     </Badge>
                   </p>
                 )}
@@ -244,28 +244,26 @@ export function InvoiceViewDialog({
             </div>
           </div>
 
-          {/* Footer */}
           <div className="p-4 border-t text-center text-xs text-gray-500">
-            <p>Documento processado por programa certificado AGT - {company.tradeName || company.name || 'NEXOR ERP'}</p>
-            <p className="mt-1">Este documento não serve como fatura para efeitos fiscais sem validação AGT</p>
+            <p>{iv.agtFooterCertified.replace('{name}', company.tradeName || company.name || 'NEXOR ERP')}</p>
+            <p className="mt-1">{iv.agtFooterDisclaimer}</p>
           </div>
         </div>
 
-        {/* Actions */}
         <div className="space-y-2 pt-4">
           <div className="flex gap-2">
             <Button variant="outline" onClick={handlePrintA4} className="flex-1">
               <FileOutput className="w-4 h-4 mr-2" />
-              Imprimir A4
+              {iv.printA4}
             </Button>
             <Button variant="outline" onClick={handlePrintThermal} className="flex-1">
               <Receipt className="w-4 h-4 mr-2" />
-              Recibo Térmico
+              {iv.thermalReceipt}
             </Button>
           </div>
           <Button variant="outline" onClick={handleDownloadPDF} className="w-full">
             <Download className="w-4 h-4 mr-2" />
-            Guardar como PDF
+            {iv.saveAsPdf}
           </Button>
         </div>
       </DialogContent>

@@ -25,6 +25,11 @@ import { Supplier, Product, PurchaseOrder } from '@/types/erp';
 import { ProductDetailDialog } from '@/components/inventory/ProductDetailDialog';
 import { InlineLineGrid } from '@/components/purchase/InlineLineGrid';
 import { PurchaseReturnsTab } from '@/components/purchase/PurchaseReturnsTab';
+import { getSupplierReturns } from '@/lib/supplierReturns';
+import {
+  subscribeSupplierReturnsChanged,
+  syncAllPurchaseInvoiceReturnStatuses,
+} from '@/lib/supplierReturnSync';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -728,11 +733,12 @@ function buildPurchaseInvoiceJournalLines({
 
 // ─────────── Invoice View Dialog ───────────
 function InvoiceViewDialog({
-  open, onClose, invoice,
+  open, onClose, invoice, onCreateReturn,
 }: {
   open: boolean;
   onClose: () => void;
   invoice: PurchaseInvoice | null;
+  onCreateReturn?: (invoice: PurchaseInvoice) => void;
 }) {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
@@ -1023,6 +1029,19 @@ function InvoiceViewDialog({
             <Badge variant={getPurchaseInvoiceStatusBadge(t, invoice.status).variant}>
               {getPurchaseInvoiceStatusBadge(t, invoice.status).label}
             </Badge>
+            {invoice.status === 'confirmed' && invoice.purchaseReturnsStatus !== 'full' && onCreateReturn && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                onClick={() => {
+                  onCreateReturn(invoice);
+                  onClose();
+                }}
+              >
+                <RotateCcw className="h-4 w-4" /> {t.purchaseInvoicesUi.returnFromInvoice}
+              </Button>
+            )}
             <Button variant="outline" size="sm" className="ml-auto gap-1" onClick={handlePrint}>
               <Printer className="h-4 w-4" /> {t.purchaseInvoicesUi.poPrint}
             </Button>
@@ -1241,6 +1260,7 @@ export default function PurchaseInvoices() {
   const [newSupplierForm, setNewSupplierForm] = useState({ name: '', nif: '', email: '', phone: '', address: '', city: '', country: 'Angola', contactPerson: '', notes: '' });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [openReturnCreateSignal, setOpenReturnCreateSignal] = useState(0);
+  const [returnPreselectInvoiceId, setReturnPreselectInvoiceId] = useState<string | null>(null);
   // List mode state
   const [listTab, setListTab] = useState<'faturas' | 'encomendas' | 'devolucoes'>('faturas');
   const [returnCount, setReturnCount] = useState(0);
@@ -1323,91 +1343,113 @@ export default function PurchaseInvoices() {
     if (!supplierPurchaseOrders.some((o) => o.id === fillFromPoId)) setFillFromPoId('');
   }, [fillFromPoId, supplierPurchaseOrders]);
 
-  // Load invoices — pull from BOTH purchase invoice storage AND document storage
-  useEffect(() => {
-    const loadAll = async () => {
-      // Primary: purchase invoice storage
-      const piInvoices = await getPurchaseInvoices(currentBranch?.id);
-      
-      // Fallback: also load from document storage (fatura_compra type)
-      const docInvoices = await getDocuments('fatura_compra', currentBranch?.id);
-      
-      // Merge: use PI storage as primary, fill gaps from doc storage
-      const piIds = new Set(piInvoices.map(i => i.id));
-      const docOnlyInvoices: PurchaseInvoice[] = docInvoices
-        .filter(d => !piIds.has(d.id))
-        .map(d => ({
-          id: d.id,
-          invoiceNumber: d.documentNumber,
-          supplierAccountCode: d.accountCode || '',
-          supplierName: d.entityName,
-          supplierNif: d.entityNif,
-          supplierPhone: d.entityPhone,
-          supplierBalance: 0,
-          supplierInvoiceNo: d.internalNotes?.replace(t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix, '') || '',
-          date: d.issueDate,
-          paymentDate: d.dueDate || d.issueDate,
-          currency: d.currency === 'AOA' ? 'KZ' : d.currency || 'KZ',
+  const loadInvoiceList = useCallback(async () => {
+    const piInvoices = await getPurchaseInvoices(currentBranch?.id);
+    const docInvoices = await getDocuments('fatura_compra', currentBranch?.id);
+    const piIds = new Set(piInvoices.map((i) => i.id));
+    const docOnlyInvoices: PurchaseInvoice[] = docInvoices
+      .filter((d) => !piIds.has(d.id))
+      .map((d) => ({
+        id: d.id,
+        invoiceNumber: d.documentNumber,
+        supplierAccountCode: d.accountCode || '',
+        supplierName: d.entityName,
+        supplierNif: d.entityNif,
+        supplierPhone: d.entityPhone,
+        supplierBalance: 0,
+        supplierInvoiceNo:
+          d.internalNotes?.replace(t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix, '') || '',
+        date: d.issueDate,
+        paymentDate: d.dueDate || d.issueDate,
+        currency: d.currency === 'AOA' ? 'KZ' : d.currency || 'KZ',
+        warehouseId: d.branchId,
+        warehouseName: d.branchName,
+        priceType: 'last_price' as const,
+        purchaseAccountCode: '2.1.1',
+        ivaAccountCode: '3.3.1',
+        transactionType: 'ALL',
+        currencyRate: 1,
+        taxRate2: 0,
+        surchargePercent: 0,
+        changePrice: false,
+        isPending: false,
+        lines: (d.lines || []).map((l) => ({
+          id: l.id,
+          productId: l.productId || '',
+          productCode: l.productSku || '',
+          description: l.description,
+          quantity: l.quantity,
+          packaging: 1,
+          unitPrice: l.unitPrice,
+          discountPct: l.discount || 0,
+          discountPct2: 0,
+          totalQty: l.quantity,
+          total: l.lineTotal - (l.taxAmount || 0),
+          ivaRate: l.taxRate || 0,
+          ivaAmount: l.taxAmount || 0,
+          totalWithIva: l.lineTotal,
           warehouseId: d.branchId,
           warehouseName: d.branchName,
-          priceType: 'last_price' as const,
-          purchaseAccountCode: '2.1.1',
-          ivaAccountCode: '3.3.1',
-          transactionType: 'ALL',
-          currencyRate: 1,
-          taxRate2: 0,
-          surchargePercent: 0,
-          changePrice: false,
-          isPending: false,
-          lines: (d.lines || []).map(l => ({
-            id: l.id,
-            productId: l.productId || '',
-            productCode: l.productSku || '',
-            description: l.description,
-            quantity: l.quantity,
-            packaging: 1,
-            unitPrice: l.unitPrice,
-            discountPct: l.discount || 0,
-            discountPct2: 0,
-            totalQty: l.quantity,
-            total: l.lineTotal - (l.taxAmount || 0),
-            ivaRate: l.taxRate || 0,
-            ivaAmount: l.taxAmount || 0,
-            totalWithIva: l.lineTotal,
-            warehouseId: d.branchId,
-            warehouseName: d.branchName,
-            currentStock: 0,
-            unit: l.unit || 'UN',
-          })),
-          journalLines: [],
-          subtotal: d.subtotal,
-          ivaTotal: d.totalTax,
-          total: d.total,
-          status: d.status === 'cancelled' ? 'cancelled' as const : 'confirmed' as const,
-          branchId: d.branchId,
-          branchName: d.branchName,
-          createdBy: d.createdBy || '',
-          createdByName: d.createdByName || '',
-          createdAt: d.createdAt,
-          updatedAt: d.updatedAt,
-        }));
-      
-      setInvoices([...piInvoices, ...docOnlyInvoices]);
-    };
-    loadAll();
-  }, [currentBranch?.id]);
+          currentStock: 0,
+          unit: l.unit || 'UN',
+        })),
+        journalLines: [],
+        subtotal: d.subtotal,
+        ivaTotal: d.totalTax,
+        total: d.total,
+        status: d.status === 'cancelled' ? ('cancelled' as const) : ('confirmed' as const),
+        branchId: d.branchId,
+        branchName: d.branchName,
+        createdBy: d.createdBy || '',
+        createdByName: d.createdByName || '',
+        createdAt: d.createdAt,
+        updatedAt: d.updatedAt,
+      }));
 
-  // Load return count for badge
+    setInvoices([...piInvoices, ...docOnlyInvoices]);
+  }, [currentBranch?.id, t]);
+
+  const refreshReturnMetrics = useCallback(async () => {
+    try {
+      await syncAllPurchaseInvoiceReturnStatuses(currentBranch?.id);
+      const returns = await getSupplierReturns(currentBranch?.id);
+      setReturnCount(returns.length);
+      await loadInvoiceList();
+      await refreshProducts();
+      refreshSuppliers();
+    } catch {
+      setReturnCount(0);
+    }
+  }, [currentBranch?.id, loadInvoiceList, refreshProducts, refreshSuppliers]);
+
+  const openReturnFromInvoice = useCallback((invoiceId?: string) => {
+    setReturnPreselectInvoiceId(invoiceId ?? null);
+    setListTab('devolucoes');
+    setOpenReturnCreateSignal((s) => s + 1);
+  }, []);
+
   useEffect(() => {
-    const loadReturnCount = async () => {
+    const init = async () => {
+      await syncAllPurchaseInvoiceReturnStatuses(currentBranch?.id);
+      await loadInvoiceList();
       try {
-        const { getSupplierReturns } = await import('@/lib/supplierReturns');
         const returns = await getSupplierReturns(currentBranch?.id);
         setReturnCount(returns.length);
-      } catch { setReturnCount(0); }
+      } catch {
+        setReturnCount(0);
+      }
     };
-    loadReturnCount();
-  }, [currentBranch?.id]);
+    init();
+  }, [currentBranch?.id, loadInvoiceList]);
+
+  useEffect(() => subscribeSupplierReturnsChanged(refreshReturnMetrics), [refreshReturnMetrics]);
+
+  useEffect(() => {
+    const nav = location.state as { openReturns?: boolean; returnInvoiceId?: string } | null;
+    if (!nav?.openReturns) return;
+    openReturnFromInvoice(nav.returnInvoiceId);
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [location.state, location.pathname, navigate, openReturnFromInvoice]);
 
   // Filtered list with date range and supplier filters
   const filtered = useMemo(() => {
@@ -2019,6 +2061,7 @@ export default function PurchaseInvoices() {
       invoiceNumber: generatePurchaseInvoiceNumber(branchCode),
       supplierAccountCode: resolvedSupplierAccountCode,
       supplierName: matchedSupplier?.name || form.supplierName || '',
+      supplierId: resolvedSupplierId,
       supplierNif: matchedSupplier?.nif || form.supplierNif,
       supplierPhone: matchedSupplier?.phone || form.supplierPhone,
       supplierBalance: form.supplierBalance || 0,
@@ -2239,6 +2282,11 @@ export default function PurchaseInvoices() {
         }
       }
 
+      try {
+        await api.suppliers.reconcileBalances();
+      } catch {
+        // non-blocking
+      }
       await Promise.all([refreshProducts(), refreshSuppliers()]);
 
       toast({
@@ -2307,10 +2355,7 @@ export default function PurchaseInvoices() {
             <Button
               variant="outline"
               className="gap-2"
-              onClick={() => {
-                setListTab('devolucoes');
-                setOpenReturnCreateSignal(prev => prev + 1);
-              }}
+              onClick={() => openReturnFromInvoice()}
             >
               <RotateCcw className="h-4 w-4" /> {t.purchaseInvoicesUi.returnAction}
             </Button>
@@ -2423,9 +2468,21 @@ export default function PurchaseInvoices() {
                         <TableCell className="text-right font-mono text-[11px] py-1 text-destructive">{inv.ivaTotal.toLocaleString(uiLocale)}</TableCell>
                         <TableCell className="text-right font-mono text-[11px] py-1 font-bold">{inv.total.toLocaleString(uiLocale)}</TableCell>
                         <TableCell className="py-1">
-                          <Badge variant={getPurchaseInvoiceStatusBadge(t, inv.status).variant} className="text-[9px] px-1.5 py-0">
-                            {getPurchaseInvoiceStatusBadge(t, inv.status).label}
-                          </Badge>
+                          <div className="flex flex-wrap gap-1">
+                            <Badge variant={getPurchaseInvoiceStatusBadge(t, inv.status).variant} className="text-[9px] px-1.5 py-0">
+                              {getPurchaseInvoiceStatusBadge(t, inv.status).label}
+                            </Badge>
+                            {inv.purchaseReturnsStatus === 'partial' && (
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0 text-amber-700 border-amber-600">
+                                {t.purchaseInvoicesUi.returnStatusPartial}
+                              </Badge>
+                            )}
+                            {inv.purchaseReturnsStatus === 'full' && (
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0 text-green-700 border-green-600">
+                                {t.purchaseInvoicesUi.returnStatusFull}
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right py-1">
                           <div className="flex gap-0.5 justify-end">
@@ -2435,6 +2492,20 @@ export default function PurchaseInvoices() {
                             <Button variant="ghost" size="icon" className="h-6 w-6" onClick={e => { e.stopPropagation(); setViewInvoice(inv); }}>
                               <Printer className="h-3.5 w-3.5" />
                             </Button>
+                            {inv.status === 'confirmed' && inv.purchaseReturnsStatus !== 'full' && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-primary"
+                                title={t.purchaseInvoicesUi.returnFromInvoice}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openReturnFromInvoice(inv.id);
+                                }}
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -2539,11 +2610,20 @@ export default function PurchaseInvoices() {
 
           {/* ═══ DEVOLUÇÕES TAB ═══ */}
           <TabsContent value="devolucoes" className="space-y-3 mt-2">
-            <PurchaseReturnsTab openCreateSignal={openReturnCreateSignal} />
+            <PurchaseReturnsTab
+              openCreateSignal={openReturnCreateSignal}
+              preselectInvoiceId={returnPreselectInvoiceId}
+              onReturnsChanged={refreshReturnMetrics}
+            />
           </TabsContent>
         </Tabs>
 
-        <InvoiceViewDialog open={!!viewInvoice} onClose={() => setViewInvoice(null)} invoice={viewInvoice} />
+        <InvoiceViewDialog
+          open={!!viewInvoice}
+          onClose={() => setViewInvoice(null)}
+          invoice={viewInvoice}
+          onCreateReturn={(inv) => openReturnFromInvoice(inv.id)}
+        />
 
         {/* ═══ PO CREATE DIALOG ═══ */}
         <Dialog open={poCreateOpen} onOpenChange={setPoCreateOpen}>

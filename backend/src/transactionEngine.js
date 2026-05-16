@@ -225,6 +225,156 @@ async function resolveStockProductId(client, productIdOrCode, warehouseId) {
   throw new Error(`Produto não encontrado para movimento de stock: ${productIdOrCode}`);
 }
 
+/**
+ * Find or create a product row owned by `branchId` (required for filial stock).
+ * Shared catalog rows (branch_id NULL) must be cloned — stock on the shared row does not show at filials.
+ */
+async function resolveOrCloneProductForBranch(client, src, branchId) {
+  const toBranch = String(branchId || '').trim();
+  if (!toBranch) throw new Error('branchId inválido para produto de destino');
+
+  if (src.branch_id && String(src.branch_id) === toBranch) {
+    return src.id;
+  }
+
+  const sku = src.sku != null ? String(src.sku).trim() : '';
+  if (sku) {
+    const destCheck = await client.query(
+      `SELECT id FROM products
+       WHERE is_active = true AND branch_id = $1 AND LOWER(TRIM(sku)) = LOWER($2)
+       LIMIT 1`,
+      [toBranch, sku]
+    );
+    if (destCheck.rows.length > 0) {
+      return destCheck.rows[0].id;
+    }
+  }
+
+  const cloneId = randomUUID();
+  const unitCost = parseFloat(src.cost) || 0;
+  await client.query(
+    `INSERT INTO products (
+       id, name, sku, barcode, category, price, cost, first_cost, last_cost, avg_cost,
+       stock, unit, tax_rate, branch_id, is_active
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7, $7, 0, $8, $9, $10, true)`,
+    [
+      cloneId,
+      src.name,
+      sku || src.sku || '',
+      src.barcode || '',
+      src.category || 'GERAL',
+      parseFloat(src.price) || 0,
+      unitCost,
+      src.unit || 'UN',
+      parseFloat(src.tax_rate) || 14,
+      toBranch,
+    ]
+  );
+  console.log(`[TX ENGINE] Cloned product ${sku || src.id} → branch ${toBranch} (${cloneId})`);
+  return cloneId;
+}
+
+/** Resolve stock IN/OUT from entry payload + transaction context (sales NC = IN, supplier return = OUT). */
+function resolveStockEntryDirection(entry, transactionType, openItem) {
+  const raw = entry?.direction ?? entry?.type ?? entry?.movementType ?? entry?.movement_type ?? '';
+  const normalized = String(raw).trim().toUpperCase();
+
+  if (transactionType === 'credit_note' && openItem?.entityType === 'supplier') {
+    return 'OUT';
+  }
+  if (transactionType === 'credit_note' && normalized === 'OUT') {
+    return 'OUT';
+  }
+  if (transactionType === 'credit_note' && openItem?.entityType === 'customer') {
+    return 'IN';
+  }
+  if (transactionType === 'purchase_invoice') {
+    return 'IN';
+  }
+
+  if (normalized === 'IN' || normalized === 'OUT') {
+    return normalized;
+  }
+  throw new Error(`Direção de stock inválida (use IN ou OUT): ${raw || '(vazio)'}`);
+}
+
+function normalizeStandaloneMovementType(body) {
+  const ref = String(body.referenceType ?? body.reference_type ?? '').trim().toLowerCase();
+  if (ref === 'supplier_return' || ref === 'purchase_return') {
+    return 'OUT';
+  }
+  if (ref === 'sale_return' || ref === 'customer_return') {
+    return 'IN';
+  }
+
+  const raw = body.movementType ?? body.movement_type ?? body.direction ?? body.type ?? '';
+  const normalized = String(raw).trim().toUpperCase();
+  if (normalized === 'IN' || normalized === 'OUT') {
+    return normalized;
+  }
+  throw new Error(`Tipo de movimento inválido (use IN ou OUT): ${raw || '(vazio)'}`);
+}
+
+/** After movements, align products.stock with movement ledger for this SKU at this warehouse. */
+async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
+  const skuTrim = String(sku || '').trim();
+  const wh = String(warehouseId || '').trim();
+  if (!skuTrim || !wh) return;
+
+  const sumResult = await client.query(
+    `SELECT COALESCE(SUM(
+       CASE
+         WHEN sm.movement_type = 'IN' THEN sm.quantity
+         WHEN sm.movement_type = 'OUT' THEN -sm.quantity
+         ELSE 0
+       END
+     ), 0) AS total
+     FROM stock_movements sm
+     INNER JOIN products pm ON pm.id = sm.product_id
+     WHERE sm.warehouse_id = $1
+       AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER($2)`,
+    [wh, skuTrim]
+  );
+  const total = Math.max(0, parseFloat(sumResult.rows[0]?.total || 0));
+
+  await client.query(
+    `UPDATE products
+     SET stock = $1, updated_at = CURRENT_TIMESTAMP
+     WHERE COALESCE(is_active, 1) != 0
+       AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)
+       AND (branch_id = $3 OR branch_id IS NULL)`,
+    [total, skuTrim, wh]
+  );
+}
+
+async function resolveProductForWarehouse(client, productId, warehouseId) {
+  const resolvedId = await resolveStockProductId(client, productId, warehouseId);
+  const meta = await client.query(
+    `SELECT id, branch_id, name, sku, barcode, category, price, cost, unit, tax_rate
+     FROM products WHERE id = $1`,
+    [resolvedId]
+  );
+  if (meta.rows.length === 0) {
+    return resolvedId;
+  }
+
+  const src = meta.rows[0];
+  const branchKey = String(warehouseId || '').trim();
+  if (!branchKey) {
+    return resolvedId;
+  }
+
+  if (src.branch_id && String(src.branch_id) === branchKey) {
+    return resolvedId;
+  }
+
+  if (!src.branch_id) {
+    return resolveOrCloneProductForBranch(client, src, branchKey);
+  }
+
+  return resolvedId;
+}
+
 // ==================== STOCK MOVEMENTS ====================
 
 /**
@@ -246,7 +396,17 @@ async function recordStockMovement(client, params) {
   if (qty === 0) throw new Error('Quantidade deve ser maior que zero');
   if (!resolvedWarehouseId) throw new Error(`warehouseId inválido: ${warehouseId}`);
 
-  const resolvedProductId = await resolveStockProductId(client, productId, resolvedWarehouseId);
+  let normalizedMovementType = String(movementType).trim().toUpperCase();
+  const ref = String(referenceType || '').trim().toLowerCase();
+  if (ref === 'supplier_return' || ref === 'purchase_return') {
+    normalizedMovementType = 'OUT';
+  } else if (ref === 'sale_return' || ref === 'customer_return') {
+    normalizedMovementType = 'IN';
+  } else if (normalizedMovementType !== 'IN' && normalizedMovementType !== 'OUT') {
+    throw new Error(`Tipo de movimento inválido: ${movementType}`);
+  }
+
+  const resolvedProductId = await resolveProductForWarehouse(client, productId, resolvedWarehouseId);
   const referenceUuid = normalizeUuid(referenceId);
   const createdByUuid = normalizeUuid(createdBy);
 
@@ -261,18 +421,48 @@ async function recordStockMovement(client, params) {
 
   const product = productResult.rows[0];
 
-  if (movementType === 'OUT') {
-    // Check available stock (from movements view + legacy field)
+  if (normalizedMovementType === 'OUT') {
     const stockResult = await client.query(
       `SELECT COALESCE(SUM(CASE WHEN movement_type = 'IN' THEN quantity ELSE -quantity END), 0) AS movement_stock
        FROM stock_movements WHERE product_id = $1 AND warehouse_id = $2`,
       [resolvedProductId, resolvedWarehouseId]
     );
-    const movementStock = parseFloat(stockResult.rows[0].movement_stock);
-    const available = Math.max(movementStock, parseFloat(product.stock || 0));
+    let movementStock = parseFloat(stockResult.rows[0].movement_stock);
 
-    if (available + 0.0001 < qty) {
-      throw new Error(`Stock insuficiente para ${product.name}. Disponível: ${available}, Solicitado: ${qty}`);
+    const skuRow = await client.query('SELECT sku FROM products WHERE id = $1', [resolvedProductId]);
+    const sku = skuRow.rows[0]?.sku != null ? String(skuRow.rows[0].sku).trim() : '';
+    if (sku) {
+      const skuStockResult = await client.query(
+        `SELECT COALESCE(SUM(
+           CASE WHEN sm.movement_type = 'IN' THEN sm.quantity ELSE -sm.quantity END
+         ), 0) AS movement_stock
+         FROM stock_movements sm
+         INNER JOIN products pm ON pm.id = sm.product_id
+         WHERE sm.warehouse_id = $1
+           AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER($2)`,
+        [resolvedWarehouseId, sku]
+      );
+      movementStock = Math.max(movementStock, parseFloat(skuStockResult.rows[0]?.movement_stock || 0));
+
+      const legacyStockResult = await client.query(
+        `SELECT COALESCE(SUM(stock), 0) AS legacy_stock
+         FROM products
+         WHERE is_active = true
+           AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
+           AND (branch_id = $2 OR branch_id IS NULL)`,
+        [sku, resolvedWarehouseId]
+      );
+      const legacySkuStock = parseFloat(legacyStockResult.rows[0]?.legacy_stock || 0);
+      const available = Math.max(movementStock, legacySkuStock, parseFloat(product.stock || 0));
+
+      if (available + 0.0001 < qty) {
+        throw new Error(`Stock insuficiente para ${product.name}. Disponível: ${available}, Solicitado: ${qty}`);
+      }
+    } else {
+      const available = Math.max(movementStock, parseFloat(product.stock || 0));
+      if (available + 0.0001 < qty) {
+        throw new Error(`Stock insuficiente para ${product.name}. Disponível: ${available}, Solicitado: ${qty}`);
+      }
     }
   }
 
@@ -282,18 +472,24 @@ async function recordStockMovement(client, params) {
      (id, product_id, warehouse_id, movement_type, quantity, unit_cost,
       reference_type, reference_id, reference_number, notes, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-    [movementId, resolvedProductId, resolvedWarehouseId, movementType, qty, unitCost || 0,
+    [movementId, resolvedProductId, resolvedWarehouseId, normalizedMovementType, qty, unitCost || 0,
      referenceType, referenceUuid, referenceNumber || '', notes || '', createdByUuid]
   );
 
-  // Update denormalized products.stock
-  const stockChange = movementType === 'IN' ? qty : -qty;
+  // Update denormalized products.stock on the movement row, then reconcile all SKU rows at this warehouse
+  const stockChange = normalizedMovementType === 'IN' ? qty : -qty;
   await client.query(
     'UPDATE products SET stock = stock + $1 WHERE id = $2',
     [stockChange, resolvedProductId]
   );
 
-  return { id: movementId, product_id: resolvedProductId, movement_type: movementType, quantity: qty };
+  const skuForReconcile = await client.query('SELECT sku FROM products WHERE id = $1', [resolvedProductId]);
+  const skuValue = skuForReconcile.rows[0]?.sku;
+  if (skuValue) {
+    await reconcileSkuStockAtWarehouse(client, skuValue, resolvedWarehouseId);
+  }
+
+  return { id: movementId, product_id: resolvedProductId, movement_type: normalizedMovementType, quantity: qty };
 }
 
 /**
@@ -362,6 +558,86 @@ async function clearOpenItems(client, params) {
     }
   }
   return clearings;
+}
+
+/**
+ * Apply a purchase return against the original invoice open item (supplier payable).
+ * Avoids leaving the full invoice open while also posting a separate credit note.
+ */
+function isOpenItemDebitFlag(value) {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+async function syncSupplierBalanceFromOpenItems(client, supplierId) {
+  if (!supplierId) return;
+  await client.query(
+    `UPDATE suppliers SET balance = COALESCE((
+       SELECT SUM(CASE WHEN is_debit = 1 OR is_debit = TRUE THEN remaining_amount ELSE -remaining_amount END)
+       FROM open_items
+       WHERE entity_type = 'supplier' AND entity_id = $1
+     ), 0)
+     WHERE id = $1`,
+    [supplierId]
+  );
+}
+
+async function reduceSupplierInvoiceOpenItem(client, { entityId, invoiceDocumentId, amount }) {
+  const reduction = Number(amount || 0);
+  if (!invoiceDocumentId || reduction <= 0) return null;
+
+  // Match invoice open item by document id (entity_id may differ if return used another lookup)
+  let result = await client.query(
+    `SELECT id, entity_id, remaining_amount, document_number
+     FROM open_items
+     WHERE entity_type = 'supplier'
+       AND document_id = $1
+       AND is_debit = 1
+       AND status != 'cleared'
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [invoiceDocumentId]
+  );
+
+  if (!result.rows.length && entityId) {
+    result = await client.query(
+      `SELECT id, entity_id, remaining_amount, document_number
+       FROM open_items
+       WHERE entity_type = 'supplier'
+         AND entity_id = $1
+         AND document_id = $2
+         AND is_debit = 1
+         AND status != 'cleared'
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [entityId, invoiceDocumentId]
+    );
+  }
+
+  if (!result.rows.length) return null;
+
+  const row = result.rows[0];
+  const applied = Math.min(reduction, Number(row.remaining_amount || 0));
+  if (applied <= 0) return null;
+
+  await client.query(
+    `UPDATE open_items SET
+       remaining_amount = remaining_amount - $1,
+       status = CASE WHEN remaining_amount - $1 <= 0.01 THEN 'cleared' ELSE 'partial' END,
+       cleared_at = CASE WHEN remaining_amount - $1 <= 0.01 THEN CURRENT_TIMESTAMP ELSE cleared_at END
+     WHERE id = $2`,
+    [applied, row.id]
+  );
+
+  console.log(
+    `[TX ENGINE] Supplier return applied to invoice open item ${row.document_number}: -${applied} (remaining was ${row.remaining_amount})`
+  );
+
+  return {
+    id: row.id,
+    entityId: row.entity_id,
+    applied,
+    documentNumber: row.document_number,
+  };
 }
 
 // ==================== DOCUMENT LINKS ====================
@@ -855,55 +1131,6 @@ async function processTransferApprove(client, transferId, approvedBy) {
   return transfer;
 }
 
-/**
- * Find or create a product row owned by `branchId` (required for filial stock).
- * Shared catalog rows (branch_id NULL) must be cloned — stock on the shared row does not show at filials.
- */
-async function resolveOrCloneProductForBranch(client, src, branchId) {
-  const toBranch = String(branchId || '').trim();
-  if (!toBranch) throw new Error('branchId inválido para produto de destino');
-
-  if (src.branch_id && String(src.branch_id) === toBranch) {
-    return src.id;
-  }
-
-  const sku = src.sku != null ? String(src.sku).trim() : '';
-  if (sku) {
-    const destCheck = await client.query(
-      `SELECT id FROM products
-       WHERE is_active = true AND branch_id = $1 AND LOWER(TRIM(sku)) = LOWER($2)
-       LIMIT 1`,
-      [toBranch, sku]
-    );
-    if (destCheck.rows.length > 0) {
-      return destCheck.rows[0].id;
-    }
-  }
-
-  const cloneId = randomUUID();
-  const unitCost = parseFloat(src.cost) || 0;
-  await client.query(
-    `INSERT INTO products (
-       id, name, sku, barcode, category, price, cost, first_cost, last_cost, avg_cost,
-       stock, unit, tax_rate, branch_id, is_active
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7, $7, 0, $8, $9, $10, true)`,
-    [
-      cloneId,
-      src.name,
-      sku || src.sku || '',
-      src.barcode || '',
-      src.category || 'GERAL',
-      parseFloat(src.price) || 0,
-      unitCost,
-      src.unit || 'UN',
-      parseFloat(src.tax_rate) || 14,
-      toBranch,
-    ]
-  );
-  console.log(`[TX ENGINE] Cloned product ${sku || src.id} → branch ${toBranch} (${cloneId})`);
-  return cloneId;
-}
-
 // ==================== PROCESS TRANSFER RECEIVE (Stock IN) ====================
 
 async function processTransferReceive(client, transferId, receivedQuantities, receivedBy) {
@@ -1108,10 +1335,16 @@ async function processPayment(client, paymentData) {
 module.exports = {
   // Stock
   recordStockMovement,
+  reconcileSkuStockAtWarehouse,
+  resolveStockEntryDirection,
+  normalizeStandaloneMovementType,
   getStock,
   // Open Items
   createOpenItem,
   clearOpenItems,
+  reduceSupplierInvoiceOpenItem,
+  syncSupplierBalanceFromOpenItems,
+  isOpenItemDebitFlag,
   // Documents
   linkDocuments,
   // Period

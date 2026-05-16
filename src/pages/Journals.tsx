@@ -21,6 +21,23 @@ import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Account } from '@/types/accounting';
 import { api } from '@/lib/api/client';
+import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
+import { useTrialBalance } from '@/hooks/useChartOfAccounts';
+import { useSales } from '@/hooks/useERP';
+
+function mapJournalLineFromApi(l: Record<string, unknown>, entryId: string) {
+  const debit = Number(l.debit_amount ?? l.debitAmount ?? l.debit ?? 0);
+  const credit = Number(l.credit_amount ?? l.creditAmount ?? l.credit ?? 0);
+  const accountCode = String(l.account_code ?? l.accountCode ?? '');
+  return {
+    id: String(l.id ?? `${entryId}_${accountCode}_${debit}_${credit}`),
+    accountCode,
+    accountName: String(l.account_name ?? l.accountName ?? ''),
+    description: String(l.description ?? ''),
+    debit,
+    credit,
+  };
+}
 
 const COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts';
 
@@ -48,14 +65,40 @@ interface DisplayEntry {
 
 const ENTRY_TYPES = [
   { value: 'venda', labelKey: 'sale', color: 'text-blue-600' },
+  { value: 'sale', labelKey: 'sale', color: 'text-blue-600' },
   { value: 'compra', labelKey: 'purchase', color: 'text-orange-600' },
+  { value: 'purchase_invoice', labelKey: 'purchase', color: 'text-orange-600' },
+  { value: 'credit_note', labelKey: 'creditNote', color: 'text-rose-600' },
+  { value: 'debit_note', labelKey: 'debitNote', color: 'text-rose-700' },
   { value: 'recibo', labelKey: 'receipt', color: 'text-green-600' },
+  { value: 'payment_receipt', labelKey: 'receipt', color: 'text-green-600' },
   { value: 'pagamento', labelKey: 'payment', color: 'text-red-600' },
+  { value: 'payment_out', labelKey: 'payment', color: 'text-red-600' },
   { value: 'ajuste', labelKey: 'adjustment', color: 'text-purple-600' },
+  { value: 'adjustment', labelKey: 'adjustment', color: 'text-purple-600' },
   { value: 'abertura', labelKey: 'opening', color: 'text-muted-foreground' },
   { value: 'fecho', labelKey: 'closing', color: 'text-muted-foreground' },
   { value: 'manual', labelKey: 'manual', color: 'text-amber-600' },
 ];
+
+const FILTER_ENTRY_TYPES = [
+  { value: 'venda', labelKey: 'sale' },
+  { value: 'compra', labelKey: 'purchase' },
+  { value: 'purchase_invoice', labelKey: 'purchase' },
+  { value: 'credit_note', labelKey: 'creditNote' },
+  { value: 'debit_note', labelKey: 'debitNote' },
+  { value: 'recibo', labelKey: 'receipt' },
+  { value: 'pagamento', labelKey: 'payment' },
+  { value: 'ajuste', labelKey: 'adjustment' },
+  { value: 'manual', labelKey: 'manual' },
+];
+
+function resolveEntryType(type: string) {
+  return (
+    ENTRY_TYPES.find((entry) => entry.value === type)
+    || { value: type, labelKey: 'manual', color: 'text-muted-foreground' }
+  );
+}
 
 function useJournalEntries(
   branchId: string | undefined,
@@ -67,9 +110,19 @@ function useJournalEntries(
     const allEntries: DisplayEntry[] = [];
 
     try {
-      // Fetch journal entries from API
-      const response = await api.journalEntries.list({ branchId });
-      const journalEntries = response.data || [];
+      // Load all entries from Express DB; filter by branch including legacy rows with null branch_id
+      const response = await api.journalEntries.list();
+      if (response.error) {
+        console.warn('[Journals] Failed to load journal entries:', response.error);
+      }
+      const rows = Array.isArray(response.data) ? response.data : [];
+      const journalEntries = branchId
+        ? rows.filter(
+            (je: Record<string, unknown>) =>
+              !je.branch_id && !je.branchId
+              || String(je.branch_id ?? je.branchId) === branchId,
+          )
+        : rows;
       for (const je of journalEntries) {
         allEntries.push({
           id: je.id,
@@ -82,14 +135,9 @@ function useJournalEntries(
           totalCredit: Number(je.total_credit || je.totalCredit || 0),
           isPosted: true,
           createdBy: je.created_by || je.createdBy || ui.systemUser,
-          lines: (je.lines || []).map((l: any) => ({
-            id: `${je.id}_${l.account_code || l.accountCode}_${l.debit}_${l.credit}`,
-            accountCode: l.account_code || l.accountCode || '',
-            accountName: l.account_name || l.accountName || '',
-            description: l.description || '',
-            debit: Number(l.debit || 0),
-            credit: Number(l.credit || 0),
-          })),
+          lines: (je.lines || []).map((l: Record<string, unknown>) =>
+            mapJournalLineFromApi(l, je.id),
+          ),
         });
       }
     } catch {
@@ -161,6 +209,8 @@ function useJournalEntries(
 
   useEffect(() => { void loadAll(); }, [loadAll]);
 
+  useEffect(() => subscribeSupplierReturnsChanged(() => { void loadAll(); }), [loadAll]);
+
   return { entries, refetch: loadAll };
 }
 
@@ -172,6 +222,191 @@ interface NewEntryLine {
   description: string;
   debit: string;
   credit: string;
+}
+
+function JournalsTrialBalancePanel() {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  const [startDate, setStartDate] = useState(monthStart.toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const { data, isLoading, error, refetch, totals } = useTrialBalance(startDate, endDate);
+
+  const rows = data.filter(r => !r.is_header && (Number(r.total_debits) > 0 || Number(r.total_credits) > 0));
+
+  return (
+    <div className="flex flex-col h-full p-3 gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted-foreground">{t.common.from}:</span>
+        <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="h-7 text-xs w-32" />
+        <span className="text-xs text-muted-foreground">{t.common.to}:</span>
+        <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="h-7 text-xs w-32" />
+        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={refetch}>
+          <RefreshCw className="w-3 h-3 mr-1" /> {t.common.refresh}
+        </Button>
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <div className="flex-1 overflow-auto border rounded-lg">
+        {isLoading ? (
+          <div className="flex justify-center py-12">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+          </div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead className="bg-muted/60 border-b sticky top-0">
+              <tr>
+                <th className="px-3 py-2 text-left">{t.journalsUi.account}</th>
+                <th className="px-3 py-2 text-left">{t.common.name}</th>
+                <th className="px-3 py-2 text-right">{t.journalsUi.debit}</th>
+                <th className="px-3 py-2 text-right">{t.journalsUi.credit}</th>
+                <th className="px-3 py-2 text-right">{t.chartOfAccountsUi.colBalance}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {rows.map(row => (
+                <tr key={row.id} className="hover:bg-accent/30">
+                  <td className="px-3 py-1.5 font-mono">{row.code}</td>
+                  <td className="px-3 py-1.5">{row.name}</td>
+                  <td className="px-3 py-1.5 text-right font-mono text-green-600">
+                    {Number(row.total_debits) > 0 ? Number(row.total_debits).toLocaleString(uiLocale) : ''}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono text-red-600">
+                    {Number(row.total_credits) > 0 ? Number(row.total_credits).toLocaleString(uiLocale) : ''}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono">{Number(row.closing_balance).toLocaleString(uiLocale)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-muted/80 border-t font-bold">
+              <tr>
+                <td className="px-3 py-2" colSpan={2}>{t.common.total}</td>
+                <td className="px-3 py-2 text-right font-mono text-green-600">{totals.debits.toLocaleString(uiLocale)}</td>
+                <td className="px-3 py-2 text-right font-mono text-red-600">{totals.credits.toLocaleString(uiLocale)}</td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        )}
+        {!isLoading && rows.length === 0 && (
+          <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.noEntriesFound}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function JournalsAuditPanel() {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.audit.list({ limit: 200 });
+      setRows(res.data || []);
+    } catch {
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => subscribeSupplierReturnsChanged(() => { void load(); }), [load]);
+
+  return (
+    <div className="flex flex-col h-full p-3 gap-2">
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={load}>
+          <RefreshCw className="w-3 h-3 mr-1" /> {t.common.refresh}
+        </Button>
+      </div>
+      <div className="flex-1 overflow-auto border rounded-lg">
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+          </div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead className="bg-muted/60 border-b sticky top-0">
+              <tr>
+                <th className="px-3 py-2 text-left">{t.common.date}</th>
+                <th className="px-3 py-2 text-left">{t.common.type}</th>
+                <th className="px-3 py-2 text-left">{t.common.description}</th>
+                <th className="px-3 py-2 text-left">{t.common.user}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {rows.map(row => (
+                <tr key={row.id} className="hover:bg-accent/30">
+                  <td className="px-3 py-1.5 text-muted-foreground">
+                    {new Date(row.created_at || row.timestamp || '').toLocaleString(uiLocale)}
+                  </td>
+                  <td className="px-3 py-1.5 font-mono">{row.table_name || row.entity_type || '—'}</td>
+                  <td className="px-3 py-1.5">{row.description || row.action || '—'}</td>
+                  <td className="px-3 py-1.5">{row.user_name || row.userName || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {!loading && rows.length === 0 && (
+          <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.auditHintDesc}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function JournalsCashiersPanel({ branchId }: { branchId?: string }) {
+  const { t, language } = useTranslation();
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const { sales } = useSales(branchId);
+
+  const cashierRows = useMemo(() => {
+    const map = new Map<string, { name: string; sales: number; count: number }>();
+    for (const sale of sales) {
+      if (sale.status && sale.status !== 'completed') continue;
+      const key = sale.cashierId || sale.cashierName || t.journalsUi.systemUser;
+      const label = sale.cashierName || key;
+      const prev = map.get(key) || { name: label, sales: 0, count: 0 };
+      prev.sales += Number(sale.total) || 0;
+      prev.count += 1;
+      map.set(key, prev);
+    }
+    return Array.from(map.values()).sort((a, b) => b.sales - a.sales);
+  }, [sales, t.journalsUi.systemUser]);
+
+  return (
+    <div className="flex flex-col h-full p-3">
+      <div className="flex-1 overflow-auto border rounded-lg">
+        <table className="w-full text-xs">
+          <thead className="bg-muted/60 border-b sticky top-0">
+            <tr>
+              <th className="px-3 py-2 text-left">{t.common.user}</th>
+              <th className="px-3 py-2 text-right">{t.journalsUi.cashierSalesCount}</th>
+              <th className="px-3 py-2 text-right">{t.journalsUi.cashierSalesTotal}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {cashierRows.map(row => (
+              <tr key={row.name}>
+                <td className="px-3 py-1.5">{row.name}</td>
+                <td className="px-3 py-1.5 text-right font-mono">{row.count}</td>
+                <td className="px-3 py-1.5 text-right font-mono">{row.sales.toLocaleString(uiLocale)} Kz</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {cashierRows.length === 0 && (
+          <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.cashiersHintDesc}</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function createEmptyLine(): NewEntryLine {
@@ -227,7 +462,13 @@ export default function Journals() {
       const matchesSearch = !searchTerm ||
         e.entryNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
         e.description.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesType = filterType === 'all' || e.type === filterType;
+      const matchesType =
+        filterType === 'all'
+        || e.type === filterType
+        || (filterType === 'compra' && e.type === 'purchase_invoice')
+        || (filterType === 'venda' && e.type === 'sale')
+        || (filterType === 'recibo' && e.type === 'payment_receipt')
+        || (filterType === 'pagamento' && e.type === 'payment_out');
       const matchesDateFrom = !dateFrom || e.date >= dateFrom;
       const matchesDateTo = !dateTo || e.date <= dateTo + 'T23:59:59';
       return matchesSearch && matchesType && matchesDateFrom && matchesDateTo;
@@ -359,46 +600,27 @@ export default function Journals() {
         credit: parseFloat(line.credit) || 0,
       }));
       
+      const docId = `manual_${Date.now()}`;
       const response = await api.transactions.process({
-        type: 'manual_journal',
-        description: newEntryDescription,
-        referenceType: newEntryType,
-        referenceId: `manual_${Date.now()}`,
+        transactionType: 'adjustment',
+        documentId: docId,
+        documentNumber: `JE-${String(Date.now()).slice(-6)}`,
         branchId: currentBranch?.id || '',
-        entryDate: newEntryDate,
-        createdBy: user?.name || 'Sistema',
-        journalEntries: lines,
+        branchName: currentBranch?.name || '',
+        userId: user?.id || '',
+        userName: user?.name || 'Sistema',
+        date: newEntryDate,
+        description: newEntryDescription,
+        journalLines: lines,
       });
       
+      if (response.error || (response.data && response.data.success === false)) {
+        throw new Error(response.error || response.data?.errors?.join?.('; ') || 'Failed to post journal');
+      }
       createdEntry = response.data || { entryNumber: `JE-${Date.now()}` };
-    } catch {
-      // Fallback: save to localStorage
-      const entryNumber = `JE-${Date.now().toString().slice(-6)}`;
-      createdEntry = { entryNumber };
-      const entry = {
-        id: `je_${Date.now()}`,
-        entryNumber,
-        description: newEntryDescription,
-        referenceType: newEntryType,
-        referenceId: `manual_${Date.now()}`,
-        branchId: currentBranch?.id || '',
-        entryDate: newEntryDate,
-        createdBy: user?.name || 'Sistema',
-        totalDebit: newEntryTotalDebit,
-        totalCredit: newEntryTotalCredit,
-        createdAt: new Date().toISOString(),
-        lines: validLines.map((line) => ({
-          accountCode: line.accountCode,
-          accountName: line.accountName,
-          description: line.description || newEntryDescription,
-          debit: parseFloat(line.debit) || 0,
-          credit: parseFloat(line.credit) || 0,
-        })),
-      };
-      const raw = localStorage.getItem('kwanzaerp_journal_entries');
-      const all = raw ? JSON.parse(raw) : [];
-      all.push(entry);
-      localStorage.setItem('kwanzaerp_journal_entries', JSON.stringify(all));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t.journalsUi.entryCreateFailed);
+      return;
     }
 
     toast.success(t.journalsUi.entryCreated.replace('{number}', createdEntry.entryNumber), {
@@ -433,9 +655,9 @@ export default function Journals() {
           <SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder={t.common.type} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{t.common.all}</SelectItem>
-            {ENTRY_TYPES.map(t => (
-              <SelectItem key={t.value} value={t.value}>
-                {t.journalsUi.entryTypes[t.labelKey as keyof typeof t.journalsUi.entryTypes] as string}
+            {FILTER_ENTRY_TYPES.map((ft) => (
+              <SelectItem key={ft.value} value={ft.value}>
+                {t.journalsUi.entryTypes[ft.labelKey as keyof typeof t.journalsUi.entryTypes] as string}
               </SelectItem>
             ))}
           </SelectContent>
@@ -483,7 +705,7 @@ export default function Journals() {
             </thead>
             <tbody className="divide-y divide-border/50">
               {filteredEntries.map(entry => {
-                const typeConfig = ENTRY_TYPES.find(t => t.value === entry.type);
+                const typeConfig = resolveEntryType(entry.type);
                 return (
                   <tr key={entry.id}
                     className={cn("cursor-pointer hover:bg-accent/50 transition-colors",
@@ -529,28 +751,16 @@ export default function Journals() {
           )}
         </TabsContent>
 
-        <TabsContent value="balancete" className="flex-1 m-0 p-4">
-          <Card><CardContent className="pt-6 text-center text-muted-foreground">
-            <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p>{t.journalsUi.trialBalanceHint}</p>
-            <p className="text-xs mt-1">{t.journalsUi.selectPeriodAndGenerate}</p>
-          </CardContent></Card>
+        <TabsContent value="balancete" className="flex-1 m-0 overflow-hidden">
+          <JournalsTrialBalancePanel />
         </TabsContent>
 
-        <TabsContent value="auditoria" className="flex-1 m-0 p-4">
-          <Card><CardContent className="pt-6 text-center text-muted-foreground">
-            <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p>{t.journalsUi.auditHintTitle}</p>
-            <p className="text-xs mt-1">{t.journalsUi.auditHintDesc}</p>
-          </CardContent></Card>
+        <TabsContent value="auditoria" className="flex-1 m-0 overflow-hidden">
+          <JournalsAuditPanel />
         </TabsContent>
 
-        <TabsContent value="cashiers" className="flex-1 m-0 p-4">
-          <Card><CardContent className="pt-6 text-center text-muted-foreground">
-            <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p>{t.journalsUi.cashiersHintTitle}</p>
-            <p className="text-xs mt-1">{t.journalsUi.cashiersHintDesc}</p>
-          </CardContent></Card>
+        <TabsContent value="cashiers" className="flex-1 m-0 overflow-hidden">
+          <JournalsCashiersPanel branchId={currentBranch?.id} />
         </TabsContent>
       </Tabs>
 
@@ -565,8 +775,8 @@ export default function Journals() {
               <div className="grid grid-cols-3 gap-4 text-sm">
                 <div><span className="text-muted-foreground">{t.common.date}:</span> {new Date(selectedEntry.date).toLocaleDateString(uiLocale)}</div>
                 <div><span className="text-muted-foreground">{t.common.type}:</span> {(() => {
-                  const et = ENTRY_TYPES.find(t => t.value === selectedEntry.type);
-                  return et ? (t.journalsUi.entryTypes[et.labelKey as keyof typeof t.journalsUi.entryTypes] as string) : selectedEntry.type;
+                  const et = resolveEntryType(selectedEntry.type);
+                  return t.journalsUi.entryTypes[et.labelKey as keyof typeof t.journalsUi.entryTypes] as string;
                 })()}</div>
                 <div><span className="text-muted-foreground">{t.common.user}:</span> {selectedEntry.createdBy}</div>
               </div>

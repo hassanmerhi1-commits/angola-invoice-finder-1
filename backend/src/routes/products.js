@@ -40,45 +40,13 @@ module.exports = function(broadcastTable) {
             COALESCE(bp.last_cost, p.last_cost, bp.cost, p.cost) AS last_cost,
             COALESCE(bp.avg_cost, p.avg_cost, bp.cost, p.cost) AS avg_cost,
             CASE
-              WHEN bp.id IS NOT NULL THEN MAX(
-                COALESCE(bp.stock, 0),
-                COALESCE((
-                  SELECT SUM(
-                    CASE
-                      WHEN sm.movement_type = 'IN' THEN sm.quantity
-                      WHEN sm.movement_type = 'OUT' THEN -sm.quantity
-                      ELSE 0
-                    END
-                  )
-                  FROM stock_movements sm
-                  INNER JOIN products pm ON pm.id = sm.product_id
-                  WHERE sm.warehouse_id = $1
-                    AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
-                    AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
-                ), 0)
-              )
-              WHEN p.branch_id = $1 THEN MAX(
-                COALESCE(p.stock, 0),
-                COALESCE((
-                  SELECT SUM(
-                    CASE
-                      WHEN sm.movement_type = 'IN' THEN sm.quantity
-                      WHEN sm.movement_type = 'OUT' THEN -sm.quantity
-                      ELSE 0
-                    END
-                  )
-                  FROM stock_movements sm
-                  INNER JOIN products pm ON pm.id = sm.product_id
-                  WHERE sm.warehouse_id = $1
-                    AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
-                    AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
-                ), 0)
-              )
-              WHEN p.branch_id IS NULL AND COALESCE(
-                (SELECT b.is_main FROM branches b WHERE b.id = $1 LIMIT 1),
-                0
-              ) = 1 THEN COALESCE(p.stock, 0)
-              ELSE COALESCE((
+              WHEN p.sku IS NOT NULL AND TRIM(p.sku) != '' AND EXISTS (
+                SELECT 1
+                FROM stock_movements sm
+                INNER JOIN products pm ON pm.id = sm.product_id
+                WHERE sm.warehouse_id = $1
+                  AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
+              ) THEN MAX(0, COALESCE((
                 SELECT SUM(
                   CASE
                     WHEN sm.movement_type = 'IN' THEN sm.quantity
@@ -89,9 +57,9 @@ module.exports = function(broadcastTable) {
                 FROM stock_movements sm
                 INNER JOIN products pm ON pm.id = sm.product_id
                 WHERE sm.warehouse_id = $1
-                  AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
                   AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
-              ), 0)
+              ), 0))
+              ELSE COALESCE(bp.stock, p.stock, 0)
             END AS stock,
             COALESCE(bp.unit, p.unit) AS unit,
             COALESCE(bp.tax_rate, p.tax_rate) AS tax_rate,

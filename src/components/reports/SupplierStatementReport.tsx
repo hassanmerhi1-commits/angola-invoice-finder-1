@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { getPurchaseInvoices, type PurchaseInvoice } from '@/lib/purchaseInvoiceStorage';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,8 +13,45 @@ import { format, parseISO, subMonths } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { exportToExcel } from '@/lib/excel';
 import { api } from '@/lib/api/client';
-import { getPurchaseInvoices, PurchaseInvoice } from '@/lib/purchaseInvoiceStorage';
 import { useTranslation } from '@/i18n';
+
+function isOiDebit(value: unknown): boolean {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+type RawRecord = Record<string, unknown>;
+
+function normalizeStatementPayload(data: unknown) {
+  const d = (data && typeof data === 'object' ? data : {}) as RawRecord;
+  return {
+    openItems: (d.openItems ?? d.open_items ?? []) as RawRecord[],
+    payments: (d.payments ?? []) as RawRecord[],
+    balance: (d.balance ?? { balance: 0 }) as { balance?: number },
+  };
+}
+
+function normalizeOpenItem(oi: RawRecord) {
+  return {
+    id: oi.id,
+    document_type: oi.document_type ?? oi.documentType,
+    document_number: oi.document_number ?? oi.documentNumber,
+    document_date: oi.document_date ?? oi.documentDate,
+    original_amount: oi.original_amount ?? oi.originalAmount,
+    remaining_amount: oi.remaining_amount ?? oi.remainingAmount,
+    is_debit: oi.is_debit ?? oi.isDebit,
+  };
+}
+
+function invoiceMatchesSupplier(inv: PurchaseInvoice, supplierId: string, supplier?: { id: string; nif: string; name: string }) {
+  if (!supplier) return false;
+  return (
+    inv.supplierId === supplierId ||
+    inv.supplierAccountCode === supplierId ||
+    inv.supplierAccountCode === supplier.id ||
+    (!!inv.supplierNif && inv.supplierNif === supplier.nif) ||
+    inv.supplierName.trim().toLowerCase() === supplier.name.trim().toLowerCase()
+  );
+}
 
 interface StatementEntry {
   id: string;
@@ -43,7 +81,9 @@ export default function SupplierStatementReport() {
     return suppliers.find(s => s.id === selectedSupplier);
   }, [suppliers, selectedSupplier]);
 
-  // Fetch statement from backend + localStorage fallback
+  const fetchGenerationRef = useRef(0);
+
+  // Fetch statement from open_items + payments, supplemented by purchase invoices
   useEffect(() => {
     if (!selectedSupplier) {
       setStatementEntries([]);
@@ -51,138 +91,166 @@ export default function SupplierStatementReport() {
       return;
     }
 
+    const generation = ++fetchGenerationRef.current;
+    const supplier = suppliers.find((s) => s.id === selectedSupplier);
+
     const fetchStatement = async () => {
       setLoading(true);
       try {
-        // 1) Try API (open_items + payments from DB)
-        let apiEntries: Omit<StatementEntry, 'balance'>[] = [];
-        let apiBalance = 0;
-        const seenRefs = new Set<string>(); // track references to prevent duplicates
+        const entries: Omit<StatementEntry, 'balance'>[] = [];
+        let apiBalance: number | null = null;
+        const seenRefs = new Set<string>();
 
-        try {
-          const res = await api.payments.statement('supplier', selectedSupplier, dateFrom, dateTo);
-          if (!res.error) {
-            const data = res.data as any;
-            const { openItems = [], payments = [], balance = { balance: 0 } } = data;
-            apiBalance = parseFloat(balance.balance) || 0;
+        const [stmtRes, balRes] = await Promise.all([
+          api.payments.statement('supplier', selectedSupplier, dateFrom, dateTo),
+          api.payments.balance('supplier', selectedSupplier),
+        ]);
 
-            for (const oi of openItems) {
-              const docType = oi.document_type as string;
-              const docNumber = oi.document_number || '';
-              let type: StatementEntry['type'] = 'purchase';
-              let description = '';
+        if (generation !== fetchGenerationRef.current) return;
 
-              // Skip payment-type entries from open_items — they'll come from payments table
-              if (docType === 'payment' || docType === 'advance_payment') continue;
+        if (!balRes.error && balRes.data != null) {
+          apiBalance = Number((balRes.data as { balance?: number }).balance ?? 0);
+        }
 
-              if (docType === 'invoice' || docType === 'purchase_invoice') {
-                type = 'purchase';
-                description = t.supplierStatementUi.purchaseInvoice;
-              } else if (docType === 'credit_note') {
-                type = 'credit_note';
-                description = t.supplierStatementUi.creditNote;
-              } else if (docType === 'debit_note') {
-                type = 'debit_note';
-                description = t.supplierStatementUi.debitNote;
-              } else if (docType === 'advance') {
-                type = 'advance';
-                description = t.supplierStatementUi.advance;
-              } else {
-                description = docType;
-              }
+        if (!stmtRes.error && stmtRes.data) {
+          const { openItems, payments, balance } = normalizeStatementPayload(stmtRes.data);
+          if (apiBalance === null) {
+            apiBalance = Number(balance.balance ?? 0);
+          }
 
-              const amount = parseFloat(oi.original_amount) || 0;
-              seenRefs.add(docNumber);
-              apiEntries.push({
-                id: oi.id,
-                date: oi.document_date,
-                type,
-                reference: docNumber,
-                description,
-                debit: !oi.is_debit ? amount : 0,
-                credit: oi.is_debit ? amount : 0,
-              });
+          for (const raw of openItems) {
+            const oi = normalizeOpenItem(raw);
+            const docType = String(oi.document_type ?? '');
+            const docNumber = String(oi.document_number ?? '');
+            if (docType === 'payment' || docType === 'advance_payment') continue;
+            if (docNumber && seenRefs.has(`oi:${docNumber}`)) continue;
+
+            const original = Number(oi.original_amount ?? 0);
+            const remaining = Number(oi.remaining_amount ?? oi.original_amount ?? 0);
+            const isDebit = isOiDebit(oi.is_debit);
+            const settled = Math.max(0, original - remaining);
+
+            let type: StatementEntry['type'] = 'purchase';
+            let description = '';
+
+            if (docType === 'invoice' || docType === 'purchase_invoice') {
+              type = 'purchase';
+              description = t.supplierStatementUi.purchaseInvoice;
+            } else if (docType === 'credit_note' || docType === 'supplier_return' || docType === 'purchase_return') {
+              type = 'credit_note';
+              description = t.supplierStatementUi.creditNote;
+            } else if (docType === 'debit_note') {
+              type = 'debit_note';
+              description = t.supplierStatementUi.debitNote;
+            } else if (docType === 'advance') {
+              type = 'advance';
+              description = t.supplierStatementUi.advance;
+            } else {
+              description = docType;
             }
 
-            for (const p of payments) {
-              const payRef = p.payment_number || '';
-              // Skip if we already have this reference from open_items
-              if (seenRefs.has(payRef)) continue;
-              seenRefs.add(payRef);
+            if (docNumber) seenRefs.add(`oi:${docNumber}`);
 
-              const amount = parseFloat(p.amount) || 0;
-              apiEntries.push({
-                id: p.id,
-                date: p.created_at,
-                type: 'payment',
-                reference: payRef,
-                description: t.supplierStatementUi.paymentWithMethod
-                  .replace('{method}',
-                    p.payment_method === 'cash' ? t.chartsUi.methodCash :
-                    p.payment_method === 'transfer' ? t.chartsUi.methodTransfer :
-                    p.payment_method === 'cheque' ? t.supplierStatementUi.methodCheque :
-                    p.payment_method
-                  ),
-                debit: amount,
+            entries.push({
+              id: String(oi.id ?? docNumber),
+              date: String(oi.document_date ?? ''),
+              type,
+              reference: docNumber,
+              description,
+              debit: isDebit ? 0 : original,
+              credit: isDebit ? original : 0,
+            });
+
+            if (isDebit && settled > 0.01) {
+              entries.push({
+                id: `${oi.id}-settled`,
+                date: String(oi.document_date ?? ''),
+                type: 'credit_note',
+                reference: docNumber,
+                description: `${t.supplierStatementUi.creditNote} (${docNumber})`,
+                debit: settled,
                 credit: 0,
               });
             }
           }
-        } catch (err) {
-          console.warn('[SupplierStatement] API fetch failed, using localStorage:', err);
+
+          for (const raw of payments) {
+            const payRef = String(raw.payment_number ?? raw.paymentNumber ?? '');
+            if (payRef && seenRefs.has(`pay:${payRef}`)) continue;
+            if (payRef) seenRefs.add(`pay:${payRef}`);
+
+            const amount = Number(raw.amount ?? 0);
+            const method = raw.payment_method ?? raw.paymentMethod;
+            entries.push({
+              id: String(raw.id ?? payRef),
+              date: String(raw.created_at ?? raw.createdAt ?? ''),
+              type: 'payment',
+              reference: payRef,
+              description: t.supplierStatementUi.paymentWithMethod.replace(
+                '{method}',
+                method === 'cash'
+                  ? t.chartsUi.methodCash
+                  : method === 'transfer'
+                    ? t.chartsUi.methodTransfer
+                    : method === 'cheque'
+                      ? t.supplierStatementUi.methodCheque
+                      : String(method ?? '')
+              ),
+              debit: amount,
+              credit: 0,
+            });
+          }
         }
 
-        // 2) Also pull from localStorage purchase invoices (web fallback)
-        const localInvoices = await getPurchaseInvoices();
-        const supplierData = suppliers.find(s => s.id === selectedSupplier);
-        const existingIds = new Set(apiEntries.map(e => e.id));
+        if (supplier) {
+          const purchaseInvoices = await getPurchaseInvoices();
+          if (generation !== fetchGenerationRef.current) return;
 
-        for (const inv of localInvoices) {
-          if (existingIds.has(inv.id)) continue; // skip duplicates
-          // Match supplier by ID, NIF, or name
-          const matches = supplierData && (
-            inv.supplierAccountCode === supplierData.id ||
-            inv.supplierNif === supplierData.nif ||
-            inv.supplierName.trim().toLowerCase() === supplierData.name.trim().toLowerCase()
-          );
-          if (!matches) continue;
-          // Date filter
-          const invDate = inv.date || inv.createdAt;
-          if (invDate < dateFrom || invDate > dateTo + 'T23:59:59') continue;
-
-          apiEntries.push({
-            id: inv.id,
-            date: invDate,
-            type: 'purchase',
-            reference: inv.invoiceNumber,
-            description: `${t.supplierStatementUi.purchaseInvoice} ${inv.invoiceNumber}`,
-            debit: 0,
-            credit: inv.total,
-          });
+          for (const inv of purchaseInvoices) {
+            if (!invoiceMatchesSupplier(inv, selectedSupplier, supplier)) continue;
+            const ref = inv.invoiceNumber;
+            if (ref && seenRefs.has(`oi:${ref}`)) continue;
+            const invDate = inv.date || inv.createdAt;
+            if (!invDate || invDate < dateFrom || invDate > `${dateTo}T23:59:59`) continue;
+            if (ref) seenRefs.add(`oi:${ref}`);
+            entries.push({
+              id: inv.id,
+              date: invDate,
+              type: 'purchase',
+              reference: ref,
+              description: `${t.supplierStatementUi.purchaseInvoice} ${ref}`,
+              debit: 0,
+              credit: inv.total,
+            });
+          }
         }
 
-        // Sort by date
-        apiEntries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        // Calculate running balance
         let runningBalance = 0;
-        const finalEntries: StatementEntry[] = apiEntries.map(e => {
+        const finalEntries: StatementEntry[] = entries.map((e) => {
           runningBalance += e.credit - e.debit;
           return { ...e, balance: runningBalance };
         });
 
+        if (generation !== fetchGenerationRef.current) return;
         setStatementEntries(finalEntries);
-        setCurrentBalance(apiBalance || runningBalance);
+        setCurrentBalance(apiBalance ?? runningBalance);
       } catch (err) {
         console.error('[SupplierStatement] Fetch error:', err);
-        setStatementEntries([]);
+        if (generation === fetchGenerationRef.current) {
+          setStatementEntries([]);
+          setCurrentBalance(0);
+        }
       } finally {
-        setLoading(false);
+        if (generation === fetchGenerationRef.current) {
+          setLoading(false);
+        }
       }
     };
 
     fetchStatement();
-  }, [selectedSupplier, dateFrom, dateTo, suppliers]);
+  }, [selectedSupplier, dateFrom, dateTo, language, suppliers, t]);
 
   const totals = useMemo(() => {
     return statementEntries.reduce((acc, entry) => ({

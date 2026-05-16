@@ -5,6 +5,7 @@ import {
   formatVerificationText,
   getInvoiceHash 
 } from '@/lib/agtQRCode';
+import { useTranslation } from '@/i18n';
 
 interface AGTQRCodeProps {
   sale: Sale;
@@ -21,6 +22,8 @@ export function AGTQRCode({
   showVerificationText = true,
   className = '',
 }: AGTQRCodeProps) {
+  const { t } = useTranslation();
+  const iv = t.invoiceViewUi;
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,7 +43,7 @@ export function AGTQRCode({
         }
       } catch (err) {
         if (isMounted) {
-          setError('Erro ao gerar QR Code');
+          setError(iv.qrGenerateError);
           console.error('QR Code generation error:', err);
         }
       }
@@ -101,7 +104,7 @@ export function AGTQRCode({
       {/* AGT Compliance Notice */}
       <div className="mt-1 text-center">
         <span className="text-[7px] text-gray-400">
-          Documento processado por programa certificado AGT
+          {iv.agtCertifiedNotice}
         </span>
       </div>
     </div>
