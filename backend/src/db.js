@@ -267,6 +267,27 @@ function ensureAppTablesAndColumns() {
       posted_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS daily_reports (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      date TEXT NOT NULL,
+      branch_id TEXT,
+      branch_name TEXT,
+      total_sales REAL DEFAULT 0,
+      total_transactions INTEGER DEFAULT 0,
+      cash_total REAL DEFAULT 0,
+      card_total REAL DEFAULT 0,
+      transfer_total REAL DEFAULT 0,
+      tax_collected REAL DEFAULT 0,
+      opening_balance REAL DEFAULT 0,
+      closing_balance REAL DEFAULT 0,
+      status TEXT DEFAULT 'open',
+      closed_by TEXT,
+      closed_at TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(date, branch_id)
+    );
+
     CREATE TABLE IF NOT EXISTS stock_transfers (
       id TEXT PRIMARY KEY,
       transfer_number TEXT,
@@ -412,6 +433,8 @@ function ensureAppTablesAndColumns() {
   tryAlterAdd('products', 'is_active INTEGER NOT NULL DEFAULT 1');
   tryAlterAdd('products', "created_at TEXT NOT NULL DEFAULT (datetime('now'))");
   tryAlterAdd('products', "updated_at TEXT NOT NULL DEFAULT (datetime('now'))");
+
+  ensureDailyReportsSchemaSqlite();
   tryAlterAdd('products', 'version INTEGER NOT NULL DEFAULT 0');
   tryAlterAdd('products', "tax_code TEXT DEFAULT 'IVA14'");
 
@@ -441,6 +464,106 @@ function ensureAppTablesAndColumns() {
   }
 
   seedAccountingPeriods();
+  repairMisboundProductColumns();
+}
+
+function ensureDailyReportsSchemaSqlite() {
+  if (!sqlite) return;
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS daily_reports (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      date TEXT NOT NULL,
+      branch_id TEXT,
+      branch_name TEXT,
+      total_sales REAL DEFAULT 0,
+      total_transactions INTEGER DEFAULT 0,
+      cash_total REAL DEFAULT 0,
+      card_total REAL DEFAULT 0,
+      transfer_total REAL DEFAULT 0,
+      tax_collected REAL DEFAULT 0,
+      opening_balance REAL DEFAULT 0,
+      closing_balance REAL DEFAULT 0,
+      status TEXT DEFAULT 'open',
+      closed_by TEXT,
+      closed_at TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  try {
+    sqlite.exec(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_reports_date_branch ON daily_reports(date, branch_id)'
+    );
+  } catch (err) {
+    console.warn('[DB] daily_reports unique index:', err.message);
+  }
+}
+
+async function ensureDailyReportsSchema() {
+  if (USE_POSTGRES) {
+    await query(`
+      CREATE TABLE IF NOT EXISTS daily_reports (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        date DATE NOT NULL,
+        branch_id UUID REFERENCES branches(id),
+        branch_name VARCHAR(255),
+        total_sales DECIMAL(15, 2) DEFAULT 0,
+        total_transactions INTEGER DEFAULT 0,
+        cash_total DECIMAL(15, 2) DEFAULT 0,
+        card_total DECIMAL(15, 2) DEFAULT 0,
+        transfer_total DECIMAL(15, 2) DEFAULT 0,
+        tax_collected DECIMAL(15, 2) DEFAULT 0,
+        opening_balance DECIMAL(15, 2) DEFAULT 0,
+        closing_balance DECIMAL(15, 2) DEFAULT 0,
+        status VARCHAR(50) DEFAULT 'open',
+        closed_by UUID REFERENCES users(id),
+        closed_at TIMESTAMP,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(date, branch_id)
+      )
+    `);
+    return;
+  }
+  ensureDailyReportsSchemaSqlite();
+}
+
+/** Fix rows saved while INSERT bound $11+ to wrong columns (extra cost params). */
+function repairMisboundProductColumns() {
+  if (!sqlite) return;
+  try {
+    const rows = sqlite.prepare(`
+      SELECT id, stock, unit, tax_rate, cost, is_active, branch_id
+      FROM products
+      WHERE (typeof(is_active) = 'text' AND is_active NOT IN ('0', '1'))
+         OR (
+           branch_id IS NOT NULL
+           AND instr(branch_id, '-') = 0
+           AND branch_id GLOB '*[0-9]*'
+         )
+    `).all();
+    if (!rows.length) return;
+
+    const upd = sqlite.prepare(`
+      UPDATE products
+      SET stock = ?, unit = ?, tax_rate = ?, branch_id = NULL, is_active = 1,
+          supplier_id = NULL, updated_at = datetime('now')
+      WHERE id = ?
+    `);
+    for (const row of rows) {
+      const shiftedStock = parseFloat(String(row.branch_id)) || Number(row.stock) || 0;
+      const shiftedUnit =
+        typeof row.is_active === 'string' && row.is_active.length <= 6
+          ? String(row.is_active)
+          : String(row.unit || 'un');
+      let tax = Number(row.tax_rate);
+      if (!Number.isFinite(tax) || tax === Number(row.cost)) tax = 14;
+      upd.run(shiftedStock, shiftedUnit, tax, row.id);
+    }
+    console.log(`[DB] Repaired ${rows.length} product row(s) with misbound INSERT columns`);
+  } catch (e) {
+    console.warn('[DB] repairMisboundProductColumns:', e.message);
+  }
 }
 
 function seedDefaultChartOfAccounts() {
@@ -833,4 +956,5 @@ module.exports = {
   pool,
   dbPath,
   engine: USE_POSTGRES ? 'postgres' : 'sqlite',
+  ensureDailyReportsSchema,
 };

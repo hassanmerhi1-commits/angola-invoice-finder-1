@@ -217,6 +217,13 @@ export function ProductDetailDialog({
     : '0.00';
 
   const handleSave = async () => {
+    const resolvedBranchId =
+      currentBranch && !currentBranch.isMain
+        ? currentBranch.id
+        : formData.branchId === 'all'
+          ? ''
+          : formData.branchId;
+
     const savedProduct: Product = {
       id: formData.id || `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       name: formData.name,
@@ -234,7 +241,7 @@ export function ProductDetailDialog({
       stock: formData.stock,
       unit: formData.unit,
       taxRate: formData.iva,
-      branchId: formData.branchId,
+      branchId: resolvedBranchId,
       supplierName: formData.fornecedorName || undefined,
       isActive: formData.isActive,
       createdAt: product?.createdAt || new Date().toISOString(),

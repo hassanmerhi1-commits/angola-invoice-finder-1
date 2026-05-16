@@ -258,6 +258,102 @@ function SupplierPickerDialog({
   );
 }
 
+type NewSupplierFormState = {
+  name: string;
+  nif: string;
+  email: string;
+  phone: string;
+  address: string;
+  city: string;
+  country: string;
+  contactPerson: string;
+  notes: string;
+};
+
+function emptyNewSupplierForm(): NewSupplierFormState {
+  return {
+    name: '', nif: '', email: '', phone: '', address: '', city: '',
+    country: 'Angola', contactPerson: '', notes: '',
+  };
+}
+
+function CreateSupplierDialog({
+  open,
+  onOpenChange,
+  form,
+  setForm,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  form: NewSupplierFormState;
+  setForm: React.Dispatch<React.SetStateAction<NewSupplierFormState>>;
+  onSave: () => void | Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t.purchaseInvoicesUi.newSupplierDialogTitle}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>{t.purchaseInvoicesUi.labelName}</Label>
+            <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder={t.purchaseInvoicesUi.supplierNamePlaceholder} />
+          </div>
+          <div>
+            <Label>{t.purchaseInvoicesUi.labelVatId}</Label>
+            <Input value={form.nif} onChange={e => setForm(f => ({ ...f, nif: e.target.value }))} placeholder={t.purchaseInvoicesUi.placeholderTaxId} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label>{t.purchaseInvoicesUi.labelEmail}</Label>
+              <Input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelEmail} />
+            </div>
+            <div>
+              <Label>{t.purchaseInvoicesUi.labelPhone}</Label>
+              <Input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelPhone} />
+            </div>
+          </div>
+          <div>
+            <Label>{t.purchaseInvoicesUi.labelAddress}</Label>
+            <Input value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelAddress} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label>{t.purchaseInvoicesUi.labelCity}</Label>
+              <Input value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelCity} />
+            </div>
+            <div>
+              <Label>{t.purchaseInvoicesUi.labelCountry}</Label>
+              <Input value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t.common.cancel}</Button>
+          <Button
+            disabled={!form.name.trim() || saving}
+            onClick={async () => {
+              setSaving(true);
+              try {
+                await onSave();
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            <Save className="h-4 w-4 mr-1" /> {t.common.save}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 async function syncPurchaseInvoiceDocument(
   invoice: PurchaseInvoice,
   /** Same as `supplierInvoiceNoStripPrefix` in i18n — stored on the document for round-trip import. */
@@ -1506,6 +1602,32 @@ export default function PurchaseInvoices() {
     }));
   }, []);
 
+  const saveNewSupplier = useCallback(async () => {
+    const created = await createSupplier({
+      name: newSupplierForm.name.trim(),
+      nif: newSupplierForm.nif.trim() || '',
+      email: newSupplierForm.email.trim(),
+      phone: newSupplierForm.phone.trim(),
+      address: newSupplierForm.address.trim(),
+      city: newSupplierForm.city.trim(),
+      country: newSupplierForm.country.trim() || 'Angola',
+      contactPerson: newSupplierForm.contactPerson.trim(),
+      notes: newSupplierForm.notes.trim(),
+      isActive: true,
+      balance: 0,
+      paymentTerms: '30_days',
+    } as Supplier);
+    setShowCreateSupplier(false);
+    await refreshSuppliers();
+    if (mode === 'create') {
+      await handleSelectSupplier(created);
+    }
+    toast({
+      title: t.purchaseInvoicesUi.supplierCreatedTitle,
+      description: t.purchaseInvoicesUi.supplierCreatedDesc.replace('{name}', created.name),
+    });
+  }, [createSupplier, newSupplierForm, refreshSuppliers, mode, handleSelectSupplier, toast, t]);
+
   // Add product line
   const handleAddProduct = useCallback((p: Product) => {
     const newLine = calculateLine({
@@ -2196,7 +2318,7 @@ export default function PurchaseInvoices() {
               variant="outline"
               className="gap-2"
               onClick={() => {
-                setNewSupplierForm({ name: '', nif: '', email: '', phone: '', address: '', city: '', country: 'Angola', contactPerson: '', notes: '' });
+                setNewSupplierForm(emptyNewSupplierForm());
                 setShowCreateSupplier(true);
               }}
             >
@@ -2763,6 +2885,22 @@ export default function PurchaseInvoices() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <CreateSupplierDialog
+          open={showCreateSupplier}
+          onOpenChange={setShowCreateSupplier}
+          form={newSupplierForm}
+          setForm={setNewSupplierForm}
+          onSave={async () => {
+            try {
+              await saveNewSupplier();
+            } catch (err: unknown) {
+              const message = err instanceof Error ? err.message : t.purchaseInvoicesUi.createSupplierFailed;
+              toast({ title: t.common.error, description: message, variant: 'destructive' });
+              throw err;
+            }
+          }}
+        />
       </div>
     );
   }
@@ -3204,7 +3342,7 @@ export default function PurchaseInvoices() {
         onRefresh={refreshSuppliers}
         onCreateNew={() => {
           setSupplierPickerOpen(false);
-          setNewSupplierForm({ name: '', nif: '', email: '', phone: '', address: '', city: '', country: 'Angola', contactPerson: '', notes: '' });
+          setNewSupplierForm(emptyNewSupplierForm());
           setShowCreateSupplier(true);
         }}
       />
@@ -3244,79 +3382,21 @@ export default function PurchaseInvoices() {
         }}
       />
 
-      {/* Inline Create Supplier Dialog */}
-      <Dialog open={showCreateSupplier} onOpenChange={setShowCreateSupplier}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t.purchaseInvoicesUi.newSupplierDialogTitle}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>{t.purchaseInvoicesUi.labelName}</Label>
-              <Input value={newSupplierForm.name} onChange={e => setNewSupplierForm(f => ({ ...f, name: e.target.value }))} placeholder={t.purchaseInvoicesUi.supplierNamePlaceholder} />
-            </div>
-            <div>
-              <Label>{t.purchaseInvoicesUi.labelVatId}</Label>
-              <Input value={newSupplierForm.nif} onChange={e => setNewSupplierForm(f => ({ ...f, nif: e.target.value }))} placeholder={t.purchaseInvoicesUi.placeholderTaxId} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label>{t.purchaseInvoicesUi.labelEmail}</Label>
-                <Input value={newSupplierForm.email} onChange={e => setNewSupplierForm(f => ({ ...f, email: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelEmail} />
-              </div>
-              <div>
-                <Label>{t.purchaseInvoicesUi.labelPhone}</Label>
-                <Input value={newSupplierForm.phone} onChange={e => setNewSupplierForm(f => ({ ...f, phone: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelPhone} />
-              </div>
-            </div>
-            <div>
-              <Label>{t.purchaseInvoicesUi.labelAddress}</Label>
-              <Input value={newSupplierForm.address} onChange={e => setNewSupplierForm(f => ({ ...f, address: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelAddress} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label>{t.purchaseInvoicesUi.labelCity}</Label>
-                <Input value={newSupplierForm.city} onChange={e => setNewSupplierForm(f => ({ ...f, city: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelCity} />
-              </div>
-              <div>
-                <Label>{t.purchaseInvoicesUi.labelCountry}</Label>
-                <Input value={newSupplierForm.country} onChange={e => setNewSupplierForm(f => ({ ...f, country: e.target.value }))} />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreateSupplier(false)}>{t.common.cancel}</Button>
-            <Button
-              disabled={!newSupplierForm.name.trim()}
-              onClick={async () => {
-                try {
-                  const created = await createSupplier({
-                    name: newSupplierForm.name.trim(),
-                    nif: newSupplierForm.nif.trim() || '',
-                    email: newSupplierForm.email.trim(),
-                    phone: newSupplierForm.phone.trim(),
-                    address: newSupplierForm.address.trim(),
-                    city: newSupplierForm.city.trim(),
-                    country: newSupplierForm.country.trim() || 'Angola',
-                    contactPerson: newSupplierForm.contactPerson.trim(),
-                    notes: newSupplierForm.notes.trim(),
-                    isActive: true,
-                    balance: 0,
-                    paymentTerms: '30_days',
-                  } as any);
-                  setShowCreateSupplier(false);
-                  handleSelectSupplier(created);
-                  toast({ title: t.purchaseInvoicesUi.supplierCreatedTitle, description: t.purchaseInvoicesUi.supplierCreatedDesc.replace('{name}', created.name) });
-                } catch (err: any) {
-                  toast({ title: t.common.error, description: err.message || t.purchaseInvoicesUi.createSupplierFailed, variant: 'destructive' });
-                }
-              }}
-            >
-              <Save className="h-4 w-4 mr-1" /> {t.common.save}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <CreateSupplierDialog
+        open={showCreateSupplier}
+        onOpenChange={setShowCreateSupplier}
+        form={newSupplierForm}
+        setForm={setNewSupplierForm}
+        onSave={async () => {
+          try {
+            await saveNewSupplier();
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : t.purchaseInvoicesUi.createSupplierFailed;
+            toast({ title: t.common.error, description: message, variant: 'destructive' });
+            throw err;
+          }
+        }}
+      />
     </div>
   );
 }

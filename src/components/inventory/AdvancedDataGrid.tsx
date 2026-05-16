@@ -106,14 +106,7 @@ export function AdvancedDataGrid({
   }, [hideStock]);
 
   const getStockTotal = (product: Product): number => {
-    if (isHeadOffice && Object.keys(allBranchProducts).length > 0) {
-      let total = 0;
-      Object.values(allBranchProducts).forEach(prods => {
-        const match = prods.find(p => p.sku === product.sku || p.id === product.id);
-        if (match) total += match.stock || 0;
-      });
-      return total;
-    }
+    // Stock is resolved in Inventory displayProducts (Sede = sum per SKU, filial = branch only).
     return product.stock || 0;
   };
 

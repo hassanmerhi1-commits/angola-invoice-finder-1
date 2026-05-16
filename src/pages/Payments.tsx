@@ -24,6 +24,46 @@ import { useClients, useSuppliers } from '@/hooks/useERP';
 import type { OpenItem, Payment } from '@/types/erp';
 
 // Demo data for localStorage mode
+function mapPaymentRow(p: any): Payment {
+  return {
+    id: p.id,
+    paymentNumber: p.payment_number || p.paymentNumber || '',
+    paymentType: p.payment_type || p.paymentType,
+    entityType: p.entity_type || p.entityType,
+    entityId: p.entity_id || p.entityId,
+    entityName: p.entity_name || p.entityName,
+    paymentMethod: p.payment_method || p.paymentMethod,
+    amount: parseFloat(p.amount),
+    currency: p.currency || 'AOA',
+    reference: p.reference,
+    notes: p.notes,
+    branchId: p.branch_id || p.branchId,
+    createdBy: p.created_by || p.createdBy,
+    createdAt: p.created_at || p.createdAt,
+  };
+}
+
+function mapOpenItemRow(oi: any): OpenItem {
+  return {
+    id: oi.id,
+    entityType: oi.entity_type || oi.entityType,
+    entityId: oi.entity_id || oi.entityId,
+    documentType: oi.document_type || oi.documentType,
+    documentId: oi.document_id || oi.documentId,
+    documentNumber: oi.document_number || oi.documentNumber,
+    documentDate: oi.document_date || oi.documentDate,
+    dueDate: oi.due_date || oi.dueDate,
+    originalAmount: parseFloat(oi.original_amount ?? oi.originalAmount ?? 0),
+    remainingAmount: parseFloat(oi.remaining_amount ?? oi.remainingAmount ?? 0),
+    isDebit: oi.is_debit ?? oi.isDebit,
+    status: oi.status,
+    currency: oi.currency || 'AOA',
+    branchId: oi.branch_id || oi.branchId,
+    createdAt: oi.created_at || oi.createdAt,
+    clearedAt: oi.cleared_at || oi.clearedAt,
+  };
+}
+
 function usePaymentsData() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [openItems, setOpenItems] = useState<OpenItem[]>([]);
@@ -32,24 +72,18 @@ function usePaymentsData() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const paymentsRes = await api.payments.list();
+      const [paymentsRes, openRes] = await Promise.all([
+        api.payments.list(),
+        api.transactions.openItems(),
+      ]);
+      if (paymentsRes.error) {
+        console.error('[PAYMENTS] List error:', paymentsRes.error);
+      }
       if (paymentsRes.data) {
-        setPayments(paymentsRes.data.map((p: any) => ({
-          id: p.id,
-          paymentNumber: p.payment_number,
-          paymentType: p.payment_type,
-          entityType: p.entity_type,
-          entityId: p.entity_id,
-          entityName: p.entity_name,
-          paymentMethod: p.payment_method,
-          amount: parseFloat(p.amount),
-          currency: p.currency || 'AOA',
-          reference: p.reference,
-          notes: p.notes,
-          branchId: p.branch_id,
-          createdBy: p.created_by,
-          createdAt: p.created_at,
-        })));
+        setPayments(paymentsRes.data.map(mapPaymentRow));
+      }
+      if (openRes.data) {
+        setOpenItems(openRes.data.map(mapOpenItemRow));
       }
     } catch (e) {
       console.error('[PAYMENTS] Failed to load:', e);
@@ -69,24 +103,11 @@ function usePaymentsData() {
   const loadOpenItems = useCallback(async (entityType: string, entityId: string) => {
     const res = await api.payments.openItems(entityType, entityId);
     if (res.data) {
-      setOpenItems(res.data.map((oi: any) => ({
-        id: oi.id,
-        entityType: oi.entity_type,
-        entityId: oi.entity_id,
-        documentType: oi.document_type,
-        documentId: oi.document_id,
-        documentNumber: oi.document_number,
-        documentDate: oi.document_date,
-        dueDate: oi.due_date,
-        originalAmount: parseFloat(oi.original_amount),
-        remainingAmount: parseFloat(oi.remaining_amount),
-        isDebit: oi.is_debit,
-        status: oi.status,
-        currency: oi.currency || 'AOA',
-        branchId: oi.branch_id,
-        createdAt: oi.created_at,
-        clearedAt: oi.cleared_at,
-      })));
+      const scoped = res.data.map(mapOpenItemRow);
+      setOpenItems((prev) => {
+        const others = prev.filter((oi) => !(oi.entityType === entityType && oi.entityId === entityId));
+        return [...others, ...scoped];
+      });
     }
   }, []);
 
@@ -164,20 +185,26 @@ export default function Payments() {
     const entity = entities.find(e => e.id === entityId);
     const selected = entityOpenItems.filter(oi => selectedOpenItems.has(oi.id));
 
+    const branchId = currentBranch?.id || user?.branchId || 'branch-main';
+    const createdBy = user?.id || user?.email || 'user-admin';
+
     try {
-      await createPayment({
+      const saved = await createPayment({
         paymentType,
         entityType: paymentType === 'receipt' ? 'customer' : 'supplier',
         entityId,
         entityName: entity?.name || '',
         paymentMethod,
         amount: Number(amount),
-        branchId: currentBranch?.id || '',
-        createdBy: user?.id || '',
+        branchId,
+        createdBy,
         reference,
         notes,
         invoiceIds: selected.map(oi => oi.documentId),
       });
+      if (saved) {
+        setPayments((prev) => [mapPaymentRow(saved), ...prev]);
+      }
       toast.success(paymentType === 'receipt' ? t.paymentsUi.receiptRecorded : t.paymentsUi.paymentRecorded);
       setShowNewDialog(false);
       resetForm();

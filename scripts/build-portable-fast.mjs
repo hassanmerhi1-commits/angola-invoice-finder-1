@@ -62,6 +62,7 @@ const builderConfig = {
   electronVersion,
   compression: 'store',
   npmRebuild: false,
+  afterPack: path.join(root, 'scripts', 'after-pack-rebuild-backend.cjs'),
   directories: {
     app: appDir,
     output: uniqueOutDir,
@@ -134,4 +135,13 @@ for (const name of readdirSync(uniqueOutDir)) {
       cpSync(src, path.join(releaseDir, fallbackName), { force: true });
     }
   }
+}
+
+const stagedUnpack = path.join(uniqueOutDir, 'win-unpacked');
+if (existsSync(stagedUnpack)) {
+  console.log('[build-portable-fast] Verifying packaged backend health…');
+  execFileSync('node', [path.join(root, 'scripts', 'verify-packaged-backend.mjs'), stagedUnpack], {
+    cwd: root,
+    stdio: 'inherit',
+  });
 }

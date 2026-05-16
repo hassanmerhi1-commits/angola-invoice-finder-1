@@ -9,6 +9,7 @@ import {
 import { Building2, MapPin } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useTranslation } from '@/i18n';
+import { formatBranchDisplayName } from '@/lib/branchDisplay';
 
 interface BranchSelectorProps {
   compact?: boolean;
@@ -37,7 +38,7 @@ export function BranchSelector({ compact = false, className = '' }: BranchSelect
           <Building2 className={compact ? 'h-3 w-3' : 'h-4 w-4'} />
           <SelectValue placeholder={t.branchUi.selectBranch}>
             {currentBranch ? (
-              <span className="truncate">{currentBranch.name}</span>
+              <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
             ) : (
               t.branchUi.selectBranch
             )}
@@ -49,7 +50,7 @@ export function BranchSelector({ compact = false, className = '' }: BranchSelect
           <SelectItem key={branch.id} value={branch.id}>
             <div className="flex items-center gap-2">
               <MapPin className="h-3 w-3 text-muted-foreground" />
-              <span className="truncate">{branch.name}</span>
+              <span className="truncate">{formatBranchDisplayName(branch)}</span>
               {branch.isMain && (
                 <Badge variant="secondary" className="ml-1 text-[10px] px-1 py-0">
                   {t.branchUi.headOffice}

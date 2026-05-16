@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useDailyReports, useAuth } from '@/hooks/useERP';
+import { toast } from 'sonner';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,13 +28,17 @@ export default function DailyReports() {
   const dfLocale = language === 'pt' ? pt : enUS;
   const { user } = useAuth();
   const { branches, currentBranch } = useBranchContext();
-  const { reports, generateReport, closeDay, refreshReports } = useDailyReports(currentBranch?.id);
-  
+  const isMainOffice = currentBranch?.isMain;
+  const [selectedBranch, setSelectedBranch] = useState<string>(currentBranch?.id || 'all');
+  const listBranchId = isMainOffice && selectedBranch === 'all'
+    ? undefined
+    : (isMainOffice ? selectedBranch : currentBranch?.id);
+  const { reports, generateReport, closeDay, refreshReports } = useDailyReports(listBranchId);
+
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: new Date(),
     to: new Date(),
   });
-  const [selectedBranch, setSelectedBranch] = useState<string>(currentBranch?.id || 'all');
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [selectedReport, setSelectedReport] = useState<string | null>(null);
   const [closingBalance, setClosingBalance] = useState('');
@@ -45,9 +50,8 @@ export default function DailyReports() {
   const [detailReportEndDate, setDetailReportEndDate] = useState('');
   const [detailReportBranchId, setDetailReportBranchId] = useState<string | undefined>();
   const [detailReportBranchName, setDetailReportBranchName] = useState<string | undefined>();
+  const [generating, setGenerating] = useState(false);
 
-  const isMainOffice = currentBranch?.isMain;
-  
   // Filter reports by date range
   const filteredReports = reports.filter(r => {
     const reportDate = new Date(r.date);
@@ -58,11 +62,34 @@ export default function DailyReports() {
     return matchesBranch && matchesDateRange;
   });
 
-  const handleGenerateReport = () => {
-    const branchId = isMainOffice && selectedBranch && selectedBranch !== 'all' ? selectedBranch : currentBranch?.id;
-    const selectedDate = dateRange?.from ? dateRange.from.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
-    if (branchId) {
-      generateReport(branchId, selectedDate);
+  const toLocalDateString = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const handleGenerateReport = async () => {
+    const branchId = isMainOffice && selectedBranch && selectedBranch !== 'all'
+      ? selectedBranch
+      : currentBranch?.id;
+    const selectedDate = dateRange?.from
+      ? toLocalDateString(dateRange.from)
+      : toLocalDateString(new Date());
+    if (!branchId) {
+      toast.error(t.dailyReportsUi.selectBranchRequired);
+      return;
+    }
+    setGenerating(true);
+    try {
+      await generateReport(branchId, selectedDate);
+      toast.success(t.dailyReportsUi.generateSuccess);
+    } catch (e) {
+      console.error('[DAILY REPORTS] Generate failed:', e);
+      const msg = e instanceof Error ? e.message : t.dailyReportsUi.generateError;
+      toast.error(msg || t.dailyReportsUi.generateError);
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -210,7 +237,7 @@ export default function DailyReports() {
             </div>
             {isMainOffice && (
               <div className="flex-1">
-                <Label htmlFor="branch">Filial</Label>
+                <Label htmlFor="branch">{t.dailyReportsUi.branchLabel}</Label>
                 <Select value={selectedBranch} onValueChange={setSelectedBranch}>
                   <SelectTrigger>
                     <SelectValue placeholder={t.dailyReportsUi.allBranches} />
@@ -227,9 +254,9 @@ export default function DailyReports() {
               </div>
             )}
             <div className="flex items-end gap-2">
-              <Button onClick={handleGenerateReport}>
+              <Button onClick={handleGenerateReport} disabled={generating}>
                 <CalendarIcon className="w-4 h-4 mr-2" />
-                {t.dailyReportsUi.generateButton}
+                {generating ? t.common.loading : t.dailyReportsUi.generateButton}
               </Button>
               <Button 
                 variant="outline" 

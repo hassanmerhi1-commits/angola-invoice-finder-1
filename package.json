@@ -13,11 +13,11 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:18080 && cross-env ELECTRON_DEV=true electron .\"",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:18080 && node scripts/launch-electron-dev.cjs\"",
     "rebuild:backend": "node scripts/rebuild-backend-native.mjs",
     "postgres:up": "docker compose up -d postgres",
     "postgres:migrate": "npm run migrate --prefix backend",
-    "electron:build": "npm run build && npm run rebuild:backend && electron-builder --win",
+    "electron:build": "npm run build && npm run rebuild:backend && electron-builder --win && node scripts/verify-packaged-backend.mjs",
     "electron:build:mac": "npm run build && npm run rebuild:backend && electron-builder --mac",
     "electron:build:linux": "npm run build && npm run rebuild:backend && electron-builder --linux",
     "i18n:audit": "node scripts/i18n-audit.mjs"

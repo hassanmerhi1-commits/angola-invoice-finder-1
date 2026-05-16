@@ -36,7 +36,9 @@ import {
 } from 'lucide-react';
 
 export default function ProFormaPage() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const p = t.proFormaUi;
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { currentBranch } = useBranchContext();
   const { user } = useAuth();
   const { products } = useProducts(currentBranch?.id);
@@ -83,31 +85,31 @@ export default function ProFormaPage() {
   // stats loaded via useEffect above
 
   const filteredProformas = useMemo(() => {
-    return proformas.filter(p => {
-      const matchesSearch = 
-        p.documentNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.customerName.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
+    return proformas.filter((pf) => {
+      const matchesSearch =
+        pf.documentNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        pf.customerName.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesStatus = statusFilter === 'all' || pf.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
   }, [proformas, searchTerm, statusFilter]);
 
   const filteredProducts = useMemo(() => {
     if (!productSearch) return products.slice(0, 20);
-    return products.filter(p =>
-      p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-      p.sku.toLowerCase().includes(productSearch.toLowerCase())
+    return products.filter((product) =>
+      product.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+      product.sku.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 20);
   }, [products, productSearch]);
 
-  const formatMoney = (value: number) => 
-    value.toLocaleString('pt-AO', { minimumFractionDigits: 2 }) + ' Kz';
+  const formatMoney = (value: number) =>
+    `${value.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} ${t.common.currency}`;
 
-  const formatDate = (date: string) => 
-    new Date(date).toLocaleDateString('pt-AO');
+  const formatDate = (date: string) =>
+    new Date(date).toLocaleDateString(uiLocale);
 
   const getStatusBadge = (status: ProForma['status']) => {
-    const variants: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: any }> = {
+    const variants: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: typeof Clock }> = {
       draft: { variant: 'secondary', icon: Clock },
       sent: { variant: 'default', icon: Send },
       accepted: { variant: 'default', icon: CheckCircle },
@@ -115,13 +117,13 @@ export default function ProFormaPage() {
       converted: { variant: 'outline', icon: ArrowRight },
       expired: { variant: 'destructive', icon: Clock },
     };
-    const labels: Record<string, string> = {
-      draft: 'Rascunho',
-      sent: 'Enviado',
-      accepted: 'Aceite',
-      rejected: 'Rejeitado',
-      converted: 'Convertido',
-      expired: 'Expirado',
+    const labels: Record<ProForma['status'], string> = {
+      draft: p.statusDraft,
+      sent: p.statusSent,
+      accepted: p.statusAccepted,
+      rejected: p.statusRejected,
+      converted: p.statusConverted,
+      expired: p.statusExpired,
     };
     const { variant, icon: Icon } = variants[status];
     return (
@@ -190,46 +192,49 @@ export default function ProFormaPage() {
     setProductSearch('');
   };
 
-  const handleCreateProforma = () => {
+  const handleCreateProforma = async () => {
     if (!currentBranch || !user) return;
     if (!customerName.trim()) {
-      toast.error(t.proFormaUi.customerNameRequired);
+      toast.error(p.customerNameRequired);
       return;
     }
     if (selectedItems.length === 0) {
-      toast.error('Adicione pelo menos um produto');
+      toast.error(p.addAtLeastOneProduct);
       return;
     }
 
-    createProForma(
-      currentBranch.id,
-      currentBranch.code,
-      currentBranch.name,
-      selectedItems,
-      {
-        name: customerName,
-        nif: customerNif || undefined,
-        email: customerEmail || undefined,
-        phone: customerPhone || undefined,
-        address: customerAddress || undefined,
-      },
-      validDays,
-      user.name,
-      notes || undefined
-    );
-
-    toast.success('Pro Forma criada com sucesso');
-    setShowCreateDialog(false);
-    resetCreateForm();
+    try {
+      await createProForma(
+        currentBranch.id,
+        currentBranch.code,
+        currentBranch.name,
+        selectedItems,
+        {
+          name: customerName,
+          nif: customerNif || undefined,
+          email: customerEmail || undefined,
+          phone: customerPhone || undefined,
+          address: customerAddress || undefined,
+        },
+        validDays,
+        user.name,
+        notes || undefined
+      );
+      toast.success(p.createdSuccess);
+      setShowCreateDialog(false);
+      resetCreateForm();
+    } catch {
+      toast.error(p.createFailed);
+    }
   };
 
   const handlePrint = async (proforma: ProForma) => {
     if (!currentBranch) return;
     try {
-      await printProFormaA4(proforma, currentBranch);
-      toast.success(t.proFormaUi.sentToPrint);
-    } catch (error) {
-      toast.error('Erro ao imprimir');
+      await printProFormaA4(proforma, currentBranch, language);
+      toast.success(p.sentToPrint);
+    } catch {
+      toast.error(p.printError);
     }
   };
 
@@ -246,11 +251,11 @@ export default function ProFormaPage() {
     );
 
     if (sale) {
-      toast.success(`Factura ${sale.invoiceNumber} criada com sucesso`);
+      toast.success(p.invoiceCreatedSuccess.replace('{number}', sale.invoiceNumber));
       setShowConvertDialog(false);
       setSelectedProforma(null);
     } else {
-      toast.error('Erro ao converter pro forma');
+      toast.error(p.convertError);
     }
   };
 
@@ -258,18 +263,18 @@ export default function ProFormaPage() {
     if (!currentBranch || !user) return;
     const newProforma = await duplicateProForma(proforma.id, currentBranch.code, user.name);
     if (newProforma) {
-      toast.success(`Pro Forma duplicada: ${newProforma.documentNumber}`);
+      toast.success(p.duplicatedSuccess.replace('{number}', newProforma.documentNumber));
     }
   };
 
   const handleDelete = (proforma: ProForma) => {
     if (proforma.status === 'converted') {
-      toast.error(t.proFormaUi.cannotDeleteConverted);
+      toast.error(p.cannotDeleteConverted);
       return;
     }
-    if (confirm(t.proFormaUi.deleteConfirm)) {
+    if (confirm(p.deleteConfirm)) {
       deleteProForma(proforma.id);
-      toast.success('Pro Forma eliminada');
+      toast.success(p.deletedSuccess);
     }
   };
 
@@ -278,19 +283,17 @@ export default function ProFormaPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Pro Forma / Orçamentos</h1>
-          <p className="text-muted-foreground">
-            Gerencie orçamentos e converta em facturas
-          </p>
+          <h1 className="text-3xl font-bold">{p.pageTitle}</h1>
+          <p className="text-muted-foreground">{p.pageSubtitle}</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={refresh}>
             <RefreshCw className="h-4 w-4 mr-2" />
-            Atualizar
+            {t.common.refresh}
           </Button>
           <Button onClick={() => setShowCreateDialog(true)}>
             <Plus className="h-4 w-4 mr-2" />
-            Nova Pro Forma
+            {p.newProForma}
           </Button>
         </div>
       </div>
@@ -300,37 +303,37 @@ export default function ProFormaPage() {
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold">{stats.total}</div>
-            <p className="text-xs text-muted-foreground">Total</p>
+            <p className="text-xs text-muted-foreground">{p.statTotal}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold text-yellow-600">{stats.draft}</div>
-            <p className="text-xs text-muted-foreground">Rascunhos</p>
+            <p className="text-xs text-muted-foreground">{p.statDrafts}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold text-blue-600">{stats.sent}</div>
-            <p className="text-xs text-muted-foreground">Enviados</p>
+            <p className="text-xs text-muted-foreground">{p.statSent}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold text-green-600">{stats.accepted}</div>
-            <p className="text-xs text-muted-foreground">Aceites</p>
+            <p className="text-xs text-muted-foreground">{p.statAccepted}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold text-purple-600">{stats.converted}</div>
-            <p className="text-xs text-muted-foreground">Convertidos</p>
+            <p className="text-xs text-muted-foreground">{p.statConverted}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold">{formatMoney(stats.pendingValue)}</div>
-            <p className="text-xs text-muted-foreground">Valor Pendente</p>
+            <p className="text-xs text-muted-foreground">{p.statPendingValue}</p>
           </CardContent>
         </Card>
       </div>
@@ -340,7 +343,7 @@ export default function ProFormaPage() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
           <Input
-            placeholder={t.proFormaUi.searchPlaceholder}
+            placeholder={p.searchPlaceholder}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-10"
@@ -348,15 +351,15 @@ export default function ProFormaPage() {
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Filtrar por status" />
+            <SelectValue placeholder={p.filterByStatus} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Todos</SelectItem>
-            <SelectItem value="draft">Rascunho</SelectItem>
-            <SelectItem value="sent">Enviado</SelectItem>
-            <SelectItem value="accepted">Aceite</SelectItem>
-            <SelectItem value="converted">Convertido</SelectItem>
-            <SelectItem value="expired">Expirado</SelectItem>
+            <SelectItem value="all">{p.filterAll}</SelectItem>
+            <SelectItem value="draft">{p.statusDraft}</SelectItem>
+            <SelectItem value="sent">{p.statusSent}</SelectItem>
+            <SelectItem value="accepted">{p.statusAccepted}</SelectItem>
+            <SelectItem value="converted">{p.statusConverted}</SelectItem>
+            <SelectItem value="expired">{p.statusExpired}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -367,13 +370,13 @@ export default function ProFormaPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Documento</TableHead>
-                <TableHead>Cliente</TableHead>
-                <TableHead>Data</TableHead>
-                <TableHead>Validade</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Ações</TableHead>
+                <TableHead>{p.colDocument}</TableHead>
+                <TableHead>{p.colCustomer}</TableHead>
+                <TableHead>{p.colDate}</TableHead>
+                <TableHead>{p.colValidity}</TableHead>
+                <TableHead className="text-right">{t.common.total}</TableHead>
+                <TableHead>{t.common.status}</TableHead>
+                <TableHead className="text-right">{p.colActions}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -381,7 +384,7 @@ export default function ProFormaPage() {
                 <TableRow>
                   <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     <FileText className="h-12 w-12 mx-auto mb-2 opacity-20" />
-                    <p>Nenhuma pro forma encontrada</p>
+                    <p>{p.emptyList}</p>
                   </TableCell>
                 </TableRow>
               ) : (
@@ -462,23 +465,23 @@ export default function ProFormaPage() {
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
-            <DialogTitle>Nova Pro Forma</DialogTitle>
+            <DialogTitle>{p.createTitle}</DialogTitle>
           </DialogHeader>
           
           <div className="flex-1 overflow-auto">
             <Tabs defaultValue="customer" className="w-full">
               <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="customer">1. Cliente</TabsTrigger>
-                <TabsTrigger value="products">2. Produtos</TabsTrigger>
-                <TabsTrigger value="details">3. Detalhes</TabsTrigger>
+                <TabsTrigger value="customer">{p.tabCustomer}</TabsTrigger>
+                <TabsTrigger value="products">{p.tabProducts}</TabsTrigger>
+                <TabsTrigger value="details">{p.tabDetails}</TabsTrigger>
               </TabsList>
 
               <TabsContent value="customer" className="space-y-4 mt-4">
                 <div>
-                  <Label>Selecionar Cliente Existente</Label>
+                  <Label>{p.selectExistingClient}</Label>
                   <Select onValueChange={handleSelectClient}>
                     <SelectTrigger>
-                      <SelectValue placeholder={t.proFormaUi.selectClientPlaceholder} />
+                      <SelectValue placeholder={p.selectClientPlaceholder} />
                     </SelectTrigger>
                     <SelectContent>
                       {clients.map(client => (
@@ -490,15 +493,15 @@ export default function ProFormaPage() {
                   </Select>
                 </div>
                 
-                <div className="text-center text-muted-foreground">ou preencha manualmente</div>
+                <div className="text-center text-muted-foreground">{p.orFillManually}</div>
                 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label>Nome *</Label>
+                    <Label>{t.common.name} *</Label>
                     <Input
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
-                      placeholder={t.proFormaUi.customerNamePlaceholder}
+                      placeholder={p.customerNamePlaceholder}
                     />
                   </div>
                   <div>
@@ -506,32 +509,32 @@ export default function ProFormaPage() {
                     <Input
                       value={customerNif}
                       onChange={(e) => setCustomerNif(e.target.value)}
-                      placeholder={t.proFormaUi.customerNifPlaceholder}
+                      placeholder={p.customerNifPlaceholder}
                     />
                   </div>
                   <div>
-                    <Label>Email</Label>
+                    <Label>{t.common.email}</Label>
                     <Input
                       type="email"
                       value={customerEmail}
                       onChange={(e) => setCustomerEmail(e.target.value)}
-                      placeholder="email@exemplo.com"
+                      placeholder={p.emailPlaceholder}
                     />
                   </div>
                   <div>
-                    <Label>Telefone</Label>
+                    <Label>{t.common.phone}</Label>
                     <Input
                       value={customerPhone}
                       onChange={(e) => setCustomerPhone(e.target.value)}
-                      placeholder="+244 9XX XXX XXX"
+                      placeholder={p.phonePlaceholder}
                     />
                   </div>
                   <div className="col-span-2">
-                    <Label>Endereço</Label>
+                    <Label>{t.common.address}</Label>
                     <Input
                       value={customerAddress}
                       onChange={(e) => setCustomerAddress(e.target.value)}
-                      placeholder={t.proFormaUi.customerAddressPlaceholder}
+                      placeholder={p.customerAddressPlaceholder}
                     />
                   </div>
                 </div>
@@ -541,7 +544,7 @@ export default function ProFormaPage() {
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
                   <Input
-                    placeholder={t.proFormaUi.searchProductsPlaceholder}
+                    placeholder={p.searchProductsPlaceholder}
                     value={productSearch}
                     onChange={(e) => setProductSearch(e.target.value)}
                     className="pl-10"
@@ -552,7 +555,7 @@ export default function ProFormaPage() {
                   {/* Product List */}
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">Produtos Disponíveis</CardTitle>
+                      <CardTitle className="text-sm">{p.availableProducts}</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <ScrollArea className="h-[250px]">
@@ -583,14 +586,14 @@ export default function ProFormaPage() {
                   {/* Selected Items */}
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">Itens Selecionados ({selectedItems.length})</CardTitle>
+                      <CardTitle className="text-sm">{p.selectedItems.replace('{count}', String(selectedItems.length))}</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <ScrollArea className="h-[250px]">
                         {selectedItems.length === 0 ? (
                           <div className="text-center py-8 text-muted-foreground">
                             <Package className="h-8 w-8 mx-auto mb-2 opacity-20" />
-                            <p>Nenhum produto selecionado</p>
+                            <p>{p.noProductSelected}</p>
                           </div>
                         ) : (
                           <div className="space-y-2">
@@ -623,7 +626,7 @@ export default function ProFormaPage() {
                         )}
                       </ScrollArea>
                       <div className="mt-4 pt-4 border-t flex justify-between">
-                        <span className="font-medium">Total:</span>
+                        <span className="font-medium">{t.common.total}:</span>
                         <span className="text-xl font-bold">{formatMoney(itemsTotal)}</span>
                       </div>
                     </CardContent>
@@ -634,27 +637,27 @@ export default function ProFormaPage() {
               <TabsContent value="details" className="space-y-4 mt-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label>Validade (dias)</Label>
+                    <Label>{p.validityDays}</Label>
                     <Select value={validDays.toString()} onValueChange={(v) => setValidDays(parseInt(v))}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="7">7 dias</SelectItem>
-                        <SelectItem value="15">15 dias</SelectItem>
-                        <SelectItem value="30">30 dias</SelectItem>
-                        <SelectItem value="60">60 dias</SelectItem>
-                        <SelectItem value="90">90 dias</SelectItem>
+                        <SelectItem value="7">{p.validity7}</SelectItem>
+                        <SelectItem value="15">{p.validity15}</SelectItem>
+                        <SelectItem value="30">{p.validity30}</SelectItem>
+                        <SelectItem value="60">{p.validity60}</SelectItem>
+                        <SelectItem value="90">{p.validity90}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
                 <div>
-                  <Label>Observações</Label>
+                  <Label>{t.common.notes}</Label>
                   <Textarea
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder={t.proFormaUi.notesPlaceholder}
+                    placeholder={p.notesPlaceholder}
                     rows={3}
                   />
                 </div>
@@ -662,14 +665,14 @@ export default function ProFormaPage() {
                 {/* Summary */}
                 <Card className="bg-muted/50">
                   <CardContent className="pt-4">
-                    <h4 className="font-medium mb-2">Resumo</h4>
+                    <h4 className="font-medium mb-2">{p.summary}</h4>
                     <div className="space-y-1 text-sm">
                       <div className="flex justify-between">
-                        <span>Cliente:</span>
+                        <span>{p.summaryCustomer}</span>
                         <span className="font-medium">{customerName || '-'}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span>Itens:</span>
+                        <span>{p.summaryItems}</span>
                         <span className="font-medium">{selectedItems.length}</span>
                       </div>
                       <div className="flex justify-between text-lg mt-2 pt-2 border-t">
@@ -685,11 +688,11 @@ export default function ProFormaPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleCreateProforma}>
               <Plus className="h-4 w-4 mr-2" />
-              Criar Pro Forma
+              {p.createProForma}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -699,7 +702,7 @@ export default function ProFormaPage() {
       <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Detalhes da Pro Forma</DialogTitle>
+            <DialogTitle>{p.viewTitle}</DialogTitle>
           </DialogHeader>
           
           {selectedProforma && (
@@ -714,12 +717,12 @@ export default function ProFormaPage() {
 
               <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
                 <div>
-                  <h4 className="font-medium mb-1">Cliente</h4>
+                  <h4 className="font-medium mb-1">{p.customerSection}</h4>
                   <p>{selectedProforma.customerName}</p>
                   {selectedProforma.customerNif && <p className="text-sm text-muted-foreground">NIF: {selectedProforma.customerNif}</p>}
                 </div>
                 <div>
-                  <h4 className="font-medium mb-1">Validade</h4>
+                  <h4 className="font-medium mb-1">{p.validitySection}</h4>
                   <p>{formatDate(selectedProforma.validUntil)}</p>
                 </div>
               </div>
@@ -727,10 +730,10 @@ export default function ProFormaPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Produto</TableHead>
-                    <TableHead className="text-right">Qtd</TableHead>
-                    <TableHead className="text-right">Preço</TableHead>
-                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead>{p.colProduct}</TableHead>
+                    <TableHead className="text-right">{p.colQty}</TableHead>
+                    <TableHead className="text-right">{p.colPrice}</TableHead>
+                    <TableHead className="text-right">{t.common.total}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -748,11 +751,11 @@ export default function ProFormaPage() {
               <div className="flex justify-end">
                 <div className="w-64 space-y-2">
                   <div className="flex justify-between">
-                    <span>Subtotal:</span>
+                    <span>{t.common.subtotal}:</span>
                     <span>{formatMoney(selectedProforma.subtotal)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>IVA:</span>
+                    <span>{p.vat}:</span>
                     <span>{formatMoney(selectedProforma.taxAmount)}</span>
                   </div>
                   <div className="flex justify-between text-lg font-bold pt-2 border-t">
@@ -765,7 +768,7 @@ export default function ProFormaPage() {
               {selectedProforma.convertedToInvoiceNumber && (
                 <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
                   <p className="text-green-700">
-                    ✓ Convertido em Factura: <strong>{selectedProforma.convertedToInvoiceNumber}</strong>
+                    ✓ {p.convertedToInvoice.replace('{number}', selectedProforma.convertedToInvoiceNumber)}
                   </p>
                 </div>
               )}
@@ -774,13 +777,13 @@ export default function ProFormaPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowViewDialog(false)}>
-              Fechar
+              {t.common.close}
             </Button>
             {selectedProforma && (
               <>
                 <Button variant="outline" onClick={() => handlePrint(selectedProforma)}>
                   <Printer className="h-4 w-4 mr-2" />
-                  Imprimir
+                  {p.print}
                 </Button>
                 {['draft', 'sent', 'accepted'].includes(selectedProforma.status) && (
                   <Button onClick={() => {
@@ -789,7 +792,7 @@ export default function ProFormaPage() {
                     setShowConvertDialog(true);
                   }}>
                     <ArrowRight className="h-4 w-4 mr-2" />
-                    Converter em Factura
+                    {p.convertToInvoice}
                   </Button>
                 )}
               </>
@@ -802,18 +805,18 @@ export default function ProFormaPage() {
       <Dialog open={showConvertDialog} onOpenChange={setShowConvertDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Converter em Factura</DialogTitle>
+            <DialogTitle>{p.convertTitle}</DialogTitle>
           </DialogHeader>
           
           {selectedProforma && (
             <div className="space-y-4">
               <div className="p-4 bg-muted/50 rounded-lg">
                 <div className="flex justify-between mb-2">
-                  <span>Pro Forma:</span>
+                  <span>{p.proFormaLabel}</span>
                   <span className="font-medium">{selectedProforma.documentNumber}</span>
                 </div>
                 <div className="flex justify-between mb-2">
-                  <span>Cliente:</span>
+                  <span>{p.summaryCustomer}</span>
                   <span className="font-medium">{selectedProforma.customerName}</span>
                 </div>
                 <div className="flex justify-between text-lg">
@@ -823,21 +826,21 @@ export default function ProFormaPage() {
               </div>
 
               <div>
-                <Label>Método de Pagamento</Label>
-                <Select value={paymentMethod} onValueChange={(v: any) => setPaymentMethod(v)}>
+                <Label>{p.paymentMethod}</Label>
+                <Select value={paymentMethod} onValueChange={(v: 'cash' | 'card' | 'transfer') => setPaymentMethod(v)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="cash">Numerário</SelectItem>
-                    <SelectItem value="card">Cartão</SelectItem>
-                    <SelectItem value="transfer">Transferência</SelectItem>
+                    <SelectItem value="cash">{p.paymentCash}</SelectItem>
+                    <SelectItem value="card">{p.paymentCard}</SelectItem>
+                    <SelectItem value="transfer">{p.paymentTransfer}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               <div>
-                <Label>Valor Pago</Label>
+                <Label>{p.amountPaid}</Label>
                 <Input
                   type="number"
                   value={amountPaid}
@@ -848,7 +851,9 @@ export default function ProFormaPage() {
               {paymentMethod === 'cash' && amountPaid > selectedProforma.total && (
                 <div className="p-3 bg-blue-50 border border-blue-200 rounded">
                   <span className="text-blue-700">
-                    Troco: <strong>{formatMoney(amountPaid - selectedProforma.total)}</strong>
+                    <span className="text-blue-700">
+                      {p.changeAmount.replace('{amount}', formatMoney(amountPaid - selectedProforma.total))}
+                    </span>
                   </span>
                 </div>
               )}
@@ -857,11 +862,11 @@ export default function ProFormaPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowConvertDialog(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleConvert}>
               <CheckCircle className="h-4 w-4 mr-2" />
-              Confirmar Conversão
+              {p.confirmConversion}
             </Button>
           </DialogFooter>
         </DialogContent>

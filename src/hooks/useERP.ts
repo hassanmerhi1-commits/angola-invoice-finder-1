@@ -5,7 +5,7 @@
  * falling back to localStorage for web preview / demo mode.
  */
 
-import { useState, useEffect, useCallback, useSyncExternalStore } from 'react';
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
 import { Branch, Product, Sale, User, CartItem, SaleItem, DailySummary, Client, StockTransfer, Supplier, PurchaseOrder, PurchaseOrderItem, Category } from '@/types/erp';
 import { api, setAuthToken } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
@@ -188,8 +188,25 @@ function mapStockTransfer(transfer: any): StockTransfer {
   };
 }
 
+function normalizeProductBranchIdForApi(branchId?: string | null): string | null | undefined {
+  if (branchId == null || branchId === '' || branchId === 'all') return null;
+  return branchId;
+}
+
+function normalizeProductSku(sku?: string): string {
+  return (sku || '').trim().toLowerCase();
+}
+
+function productBelongsToBranchList(product: Product, branchId: string, apiSkus: Set<string>): boolean {
+  if (product.branchId === branchId) return true;
+  const isShared = !product.branchId || product.branchId === 'all';
+  return isShared && !apiSkus.has(normalizeProductSku(product.sku));
+}
+
 export function useProducts(branchId?: string) {
   const [products, setProducts] = useState<Product[]>([]);
+  /** Ignores stale list fetches that finish after a newer write (e.g. add product). */
+  const listGenerationRef = useRef(0);
 
   const fetchMergedProductList = useCallback(async (): Promise<Product[]> => {
     let apiProducts: Product[] | null = null;
@@ -211,7 +228,14 @@ export function useProducts(branchId?: string) {
 
     if (apiProducts !== null) {
       const apiIds = new Set(apiProducts.map((p) => p.id));
-      const localOnly = localProducts.filter((p) => !apiIds.has(p.id));
+      const apiSkus = new Set(
+        apiProducts.map((p) => normalizeProductSku(p.sku)).filter(Boolean)
+      );
+      const localOnly = localProducts.filter((p) => {
+        if (apiIds.has(p.id)) return false;
+        if (!branchId) return true;
+        return productBelongsToBranchList(p, branchId, apiSkus);
+      });
       return [...apiProducts, ...localOnly];
     }
 
@@ -219,7 +243,11 @@ export function useProducts(branchId?: string) {
   }, [branchId]);
 
   const refreshProducts = useCallback(async () => {
-    setProducts(await fetchMergedProductList());
+    const generation = ++listGenerationRef.current;
+    const list = await fetchMergedProductList();
+    if (generation === listGenerationRef.current) {
+      setProducts(list);
+    }
   }, [fetchMergedProductList]);
 
   useEffect(() => { refreshProducts(); }, [refreshProducts]);
@@ -238,39 +266,61 @@ export function useProducts(branchId?: string) {
   }, [branchId, refreshProducts]);
 
   const addProduct = useCallback(async (product: Product): Promise<Product> => {
-    const result = await api.products.create(product);
-    if (result.data) {
-      const savedProduct = mapProduct(result.data);
-      try {
-        // Mirror to local cache so fetchMerged sees the row even if GET /products lags briefly.
-        await storage.saveProduct(savedProduct, { skipProductsChangedEvent: true });
-      } catch (e) {
-        console.warn('[useProducts] local cache mirror after API create failed:', e);
+    const writeGeneration = ++listGenerationRef.current;
+    const payload = {
+      ...product,
+      branchId: normalizeProductBranchIdForApi(product.branchId) ?? undefined,
+    };
+
+    const result = await api.products.create(payload);
+    if (!result.data) {
+      if (isDemoMode()) {
+        try {
+          await storage.saveProduct(product);
+          let merged = await fetchMergedProductList();
+          if (!merged.some((p) => p.id === product.id)) {
+            merged = [...merged, product];
+          }
+          if (writeGeneration === listGenerationRef.current) {
+            setProducts(merged);
+          }
+          return product;
+        } catch (e) {
+          console.error('[useProducts] addProduct: demo local save failed:', e);
+          throw e instanceof Error ? e : new Error('Could not save product');
+        }
       }
-      let merged = await fetchMergedProductList();
-      if (!merged.some((p) => p.id === savedProduct.id)) {
-        merged = [...merged, savedProduct];
-      }
-      setProducts(merged);
-      return savedProduct;
+      throw new Error(result.error || 'Failed to save product to database');
     }
 
+    const savedProduct = mapProduct(result.data);
     try {
-      await storage.saveProduct(product);
-      let merged = await fetchMergedProductList();
-      if (!merged.some((p) => p.id === product.id)) {
-        merged = [...merged, product];
-      }
-      setProducts(merged);
-      return product;
+      await storage.saveProduct(savedProduct, { skipProductsChangedEvent: true });
     } catch (e) {
-      console.error('[useProducts] addProduct: API create failed and local save failed:', e);
-      throw e instanceof Error ? e : new Error('Could not save product');
+      console.warn('[useProducts] local cache mirror after API create failed:', e);
     }
-  }, [fetchMergedProductList]);
+    let merged = await fetchMergedProductList();
+    if (!merged.some((p) => p.id === savedProduct.id)) {
+      merged = [...merged, savedProduct];
+    }
+    if (writeGeneration === listGenerationRef.current) {
+      setProducts(merged);
+    }
+    window.dispatchEvent(
+      new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
+        detail: { branchId: savedProduct.branchId || branchId || 'all' },
+      })
+    );
+    return savedProduct;
+  }, [branchId, fetchMergedProductList]);
 
   const updateProduct = useCallback(async (product: Product) => {
-    const result = await api.products.update(product.id, product);
+    const writeGeneration = ++listGenerationRef.current;
+    const payload = {
+      ...product,
+      branchId: normalizeProductBranchIdForApi(product.branchId) ?? undefined,
+    };
+    const result = await api.products.update(product.id, payload);
     let resolved = product;
     if (!result.data) {
       try {
@@ -295,10 +345,13 @@ export function useProducts(branchId?: string) {
       merged = merged.slice();
       merged[idx] = resolved;
     }
-    setProducts(merged);
+    if (writeGeneration === listGenerationRef.current) {
+      setProducts(merged);
+    }
   }, [fetchMergedProductList]);
 
   const deleteProduct = useCallback(async (productId: string) => {
+    ++listGenerationRef.current;
     const result = await api.products.delete(productId);
     if (!result.data) await storage.deleteProduct(productId);
     await refreshProducts();
@@ -778,6 +831,28 @@ export function useAuth() {
 // ============================================
 // DAILY REPORTS
 // ============================================
+function mapDailyReportRow(row: any): DailySummary {
+  return {
+    id: row.id,
+    date: row.date,
+    branchId: row.branchId ?? row.branch_id ?? '',
+    branchName: row.branchName ?? row.branch_name ?? '',
+    totalSales: Number(row.totalSales ?? row.total_sales ?? 0),
+    totalTransactions: Number(row.totalTransactions ?? row.total_transactions ?? 0),
+    cashTotal: Number(row.cashTotal ?? row.cash_total ?? 0),
+    cardTotal: Number(row.cardTotal ?? row.card_total ?? 0),
+    transferTotal: Number(row.transferTotal ?? row.transfer_total ?? 0),
+    taxCollected: Number(row.taxCollected ?? row.tax_collected ?? 0),
+    openingBalance: Number(row.openingBalance ?? row.opening_balance ?? 0),
+    closingBalance: Number(row.closingBalance ?? row.closing_balance ?? 0),
+    status: row.status ?? 'open',
+    closedBy: row.closedBy ?? row.closed_by,
+    closedAt: row.closedAt ?? row.closed_at,
+    notes: row.notes,
+    createdAt: row.createdAt ?? row.created_at ?? '',
+  };
+}
+
 export function useDailyReports(branchId?: string) {
   const [reports, setReports] = useState<DailySummary[]>([]);
 
@@ -786,7 +861,7 @@ export function useDailyReports(branchId?: string) {
       () => api.dailyReports.list(branchId),
       () => storage.getDailyReports(branchId)
     );
-    setReports(data);
+    setReports(Array.isArray(data) ? data.map(mapDailyReportRow) : []);
   }, [branchId]);
 
   useEffect(() => { refreshReports(); }, [refreshReports]);
@@ -794,12 +869,23 @@ export function useDailyReports(branchId?: string) {
   const generateReport = useCallback(async (branchId: string, date: string): Promise<DailySummary> => {
     const apiResult = await api.dailyReports.generate(branchId, date);
     if (apiResult.data) {
+      const mapped = mapDailyReportRow(apiResult.data);
+      await storage.persistDailyReportLocal(mapped);
       await refreshReports();
-      return apiResult.data;
+      return mapped;
     }
+    // API unavailable or table missing — build from sales and mirror locally
     const report = await storage.generateDailyReport(branchId, date);
-    await storage.saveDailyReport(report);
+    await storage.persistDailyReportLocal(report);
+    try {
+      await storage.saveDailyReport(report);
+    } catch {
+      /* optional IPC persist */
+    }
     await refreshReports();
+    if (!isDemoMode() && apiResult.error) {
+      console.warn('[DAILY REPORTS] API generate failed, used local fallback:', apiResult.error);
+    }
     return report;
   }, [refreshReports]);
 

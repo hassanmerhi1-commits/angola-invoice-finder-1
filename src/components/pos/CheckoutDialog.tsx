@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CartItem, Sale } from '@/types/erp';
 import {
   Dialog,
@@ -43,13 +43,32 @@ export function CheckoutDialog({
   const [customerName, setCustomerName] = useState('');
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
-  const change = parseFloat(amountPaid || '0') - total;
-  const isValid = parseFloat(amountPaid || '0') >= total;
+  useEffect(() => {
+    if (open) {
+      setPaymentMethod('cash');
+      setAmountPaid(total.toString());
+      setCustomerNif('');
+      setCustomerName('');
+    }
+  }, [open, total]);
+
+  const handlePaymentMethodChange = (value: Sale['paymentMethod']) => {
+    setPaymentMethod(value);
+    if (value === 'card' || value === 'transfer') {
+      setAmountPaid(total.toString());
+    }
+  };
+
+  const paidAmount =
+    paymentMethod === 'cash' ? parseFloat(amountPaid || '0') : total;
+  const change = paidAmount - total;
+  const isValid =
+    paymentMethod === 'cash' ? paidAmount >= total : total > 0;
 
   const handleComplete = () => {
     onCompleteSale(
       paymentMethod,
-      parseFloat(amountPaid),
+      paidAmount,
       customerNif || undefined,
       customerName || undefined,
     );
@@ -92,7 +111,7 @@ export function CheckoutDialog({
             <Label>{t.checkoutUi.paymentForm}</Label>
             <RadioGroup
               value={paymentMethod}
-              onValueChange={(v) => setPaymentMethod(v as Sale['paymentMethod'])}
+              onValueChange={(v) => handlePaymentMethodChange(v as Sale['paymentMethod'])}
               className="grid grid-cols-3 gap-2"
             >
               <div>

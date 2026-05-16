@@ -9,6 +9,7 @@
   },
   "compression": "store",
   "npmRebuild": false,
+  "afterPack": "scripts/after-pack-rebuild-backend.cjs",
   "extraMetadata": {
     "dependencies": {}
   },

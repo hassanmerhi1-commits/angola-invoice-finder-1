@@ -52,6 +52,7 @@ let childProc = null;
 let boundPort = null;
 let lastMode = 'unknown';
 let lastDockerOk = false;
+let lastSpawnNativeError = null;
 
 // Phase 5 state
 let healthTimer = null;
@@ -378,10 +379,21 @@ function shouldSpawnForMode(mode) {
   return mode === 'server' || mode === 'standalone' || mode === 'unknown';
 }
 
+function noteSpawnNativeError(chunk) {
+  const text = chunk.toString('utf8');
+  if (!/NODE_MODULE_VERSION|ERR_DLOPEN_FAILED|better_sqlite3\.node/i.test(text)) return;
+  lastSpawnNativeError =
+    'SQLite native module (better-sqlite3) does not match this app\'s Electron version. '
+    + 'Dev: run "npm run rebuild:backend" then restart. Installed .exe: run "npm run electron:build" and reinstall.';
+  console.error(`[BackendManager] ${lastSpawnNativeError}`);
+  console.error('[BackendManager]', text.trim().split('\n').slice(0, 8).join('\n'));
+}
+
 // --------------------------------------------------------------------------
 // Spawn
 // --------------------------------------------------------------------------
 function spawnBackend(entryPath, port, sqlitePathOverride = null) {
+  lastSpawnNativeError = null;
   const cwd = resolveBackendCwd(entryPath);
   const nodePathExtra = buildBackendNodePath();
   const cwdNodeModules = path.join(cwd, 'node_modules');
@@ -443,6 +455,7 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
     writeLog(logStream, 'stdout', chunk);
   });
   proc.stderr.on('data', (chunk) => {
+    noteSpawnNativeError(chunk);
     process.stderr.write(`[backend!] ${chunk}`);
     writeLog(logStream, 'stderr', chunk);
   });
@@ -453,6 +466,9 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
     if (childProc === proc) {
       childProc = null;
       boundPort = null;
+    }
+    if (code !== 0 && lastSpawnNativeError) {
+      emitStatus({ state: 'failed', detail: lastSpawnNativeError, code: 'SQLITE_NATIVE_MISMATCH' });
     }
   });
 
@@ -553,9 +569,11 @@ async function start(opts = {}) {
   const ready = await waitForBackendReady(port, 15000);
   if (!ready) {
     console.error('[BackendManager] backend did not become ready within 15s');
-    // We keep the child running — the server may still come up shortly. UI
-    // will reconnect via its own polling. But surface the warning.
-    return { started: true, port, mode, warning: 'backend-not-ready-in-time' };
+    const detail = lastSpawnNativeError || 'backend-not-ready-in-time';
+    if (lastSpawnNativeError) {
+      emitStatus({ state: 'failed', detail, code: 'SQLITE_NATIVE_MISMATCH' });
+    }
+    return { started: true, port, mode, warning: detail };
   }
 
   console.log(`[BackendManager] backend ready on http://127.0.0.1:${port}`);
@@ -604,6 +622,7 @@ function getStatus() {
     port: boundPort,
     mode: lastMode,
     dockerOk: lastDockerOk,
+    nativeError: lastSpawnNativeError,
   };
 }
 

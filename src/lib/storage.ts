@@ -1015,24 +1015,33 @@ export async function getDailyReports(branchId?: string): Promise<DailySummary[]
   return branchId ? reports.filter(r => r.branchId === branchId) : reports;
 }
 
-export async function saveDailyReport(report: DailySummary): Promise<void> {
-  if (isElectronMode()) {
-    await dbInsert('daily_reports', {
-      id: report.id, date: report.date, branch_id: report.branchId,
-      branch_name: report.branchName, total_sales: report.totalSales,
-      total_transactions: report.totalTransactions, cash_total: report.cashTotal,
-      card_total: report.cardTotal, transfer_total: report.transferTotal,
-      tax_collected: report.taxCollected, opening_balance: report.openingBalance,
-      closing_balance: report.closingBalance, status: report.status,
-      closed_by: report.closedBy || '', closed_at: report.closedAt || '',
-    });
-    return;
-  }
+export async function persistDailyReportLocal(report: DailySummary): Promise<void> {
   const reports = lsGet<DailySummary[]>(STORAGE_KEYS.dailyReports, []);
-  const index = reports.findIndex(r => r.id === report.id);
+  const index = reports.findIndex(
+    (r) => r.branchId === report.branchId && r.date === report.date
+  );
   if (index >= 0) reports[index] = report;
   else reports.push(report);
   lsSet(STORAGE_KEYS.dailyReports, reports);
+}
+
+export async function saveDailyReport(report: DailySummary): Promise<void> {
+  if (isElectronMode()) {
+    try {
+      await dbInsert('daily_reports', {
+        id: report.id, date: report.date, branch_id: report.branchId,
+        branch_name: report.branchName, total_sales: report.totalSales,
+        total_transactions: report.totalTransactions, cash_total: report.cashTotal,
+        card_total: report.cardTotal, transfer_total: report.transferTotal,
+        tax_collected: report.taxCollected, opening_balance: report.openingBalance,
+        closing_balance: report.closingBalance, status: report.status,
+        closed_by: report.closedBy || '', closed_at: report.closedAt || '',
+      });
+    } catch {
+      /* IPC DB may be unavailable — localStorage mirror below */
+    }
+  }
+  await persistDailyReportLocal(report);
 }
 
 export async function getTodayReport(branchId: string): Promise<DailySummary | null> {

@@ -15,10 +15,12 @@ const BranchContext = createContext<BranchContextType | undefined>(undefined);
 
 // Map API snake_case to frontend camelCase
 function mapBranch(b: any): Branch {
+  const code = String(b.code || b.branch_code || '').trim();
+  const rawName = String(b.name || '').trim();
   return {
     id: b.id,
-    name: b.name,
-    code: b.code || b.branch_code || '',
+    name: rawName || code,
+    code,
     address: b.address || '',
     phone: b.phone || '',
     isMain: b.isMain ?? b.is_main ?? false,

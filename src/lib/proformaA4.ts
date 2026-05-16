@@ -6,19 +6,26 @@
 import { ProForma } from '@/types/proforma';
 import { Branch } from '@/types/erp';
 import { getCompanySettings } from './companySettings';
+import { en } from '@/i18n/translations/en';
+import { pt } from '@/i18n/translations/pt';
+
+type PrintLanguage = 'en' | 'pt';
 
 export async function generateProFormaA4HTML(
   proforma: ProForma,
-  branch: Branch
+  branch: Branch,
+  language: PrintLanguage = 'pt'
 ): Promise<string> {
   const company = getCompanySettings();
-  
+  const L = language === 'en' ? en.proFormaUi : pt.proFormaUi;
+  const uiLocale = language === 'en' ? 'en-US' : 'pt-AO';
+
   const formatMoney = (value: number) => {
-    return value.toLocaleString('pt-AO', { minimumFractionDigits: 2 });
+    return value.toLocaleString(uiLocale, { minimumFractionDigits: 2 });
   };
 
   const formatDate = (date: string) => {
-    return new Date(date).toLocaleDateString('pt-AO', {
+    return new Date(date).toLocaleDateString(uiLocale, {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
@@ -26,21 +33,21 @@ export async function generateProFormaA4HTML(
   };
 
   const statusLabels: Record<string, string> = {
-    draft: 'Rascunho',
-    sent: 'Enviado',
-    accepted: 'Aceite',
-    rejected: 'Rejeitado',
-    converted: 'Convertido',
-    expired: 'Expirado',
+    draft: L.statusDraft,
+    sent: L.statusSent,
+    accepted: L.statusAccepted,
+    rejected: L.statusRejected,
+    converted: L.statusConverted,
+    expired: L.statusExpired,
   };
 
   return `
 <!DOCTYPE html>
-<html lang="pt">
+<html lang="${language}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ORÇAMENTO - ${proforma.documentNumber}</title>
+  <title>${L.printDocumentTitle} - ${proforma.documentNumber}</title>
   <style>
     @page {
       size: A4;
@@ -294,7 +301,7 @@ export async function generateProFormaA4HTML(
 </head>
 <body>
   <div class="invoice" style="position: relative;">
-    <div class="watermark">ORÇAMENTO</div>
+    <div class="watermark">${L.printWatermark}</div>
     
     <div class="header">
       <div class="company-info">
@@ -309,22 +316,22 @@ export async function generateProFormaA4HTML(
         </div>
       </div>
       <div class="document-info">
-        <div class="document-type">ORÇAMENTO</div>
-        <div class="document-subtitle">Pro Forma Invoice</div>
+        <div class="document-type">${L.printDocumentTitle}</div>
+        <div class="document-subtitle">${L.printDocSubtitle}</div>
         <div class="document-number">${proforma.documentNumber}</div>
         <div class="document-date">
-          Data: ${formatDate(proforma.createdAt)}
+          ${L.printDateLabel} ${formatDate(proforma.createdAt)}
         </div>
         <div class="validity-box">
-          <strong>Válido até:</strong> ${formatDate(proforma.validUntil)}<br>
-          <span style="font-size: 9px; color: #666;">Status: ${statusLabels[proforma.status]}</span>
+          <strong>${L.printValidUntil}</strong> ${formatDate(proforma.validUntil)}<br>
+          <span style="font-size: 9px; color: #666;">${L.printStatus} ${statusLabels[proforma.status]}</span>
         </div>
       </div>
     </div>
 
     <div class="parties">
       <div class="party-box">
-        <div class="party-label">Vendedor</div>
+        <div class="party-label">${L.printSeller}</div>
         <div class="party-name">${branch.name}</div>
         <div class="party-details">
           ${branch.address}<br>
@@ -332,7 +339,7 @@ export async function generateProFormaA4HTML(
         </div>
       </div>
       <div class="party-box">
-        <div class="party-label">Cliente</div>
+        <div class="party-label">${L.printClient}</div>
         <div class="party-name">${proforma.customerName}</div>
         <div class="party-details">
           ${proforma.customerNif ? `NIF: ${proforma.customerNif}<br>` : ''}
@@ -346,12 +353,12 @@ export async function generateProFormaA4HTML(
     <table class="items-table">
       <thead>
         <tr>
-          <th style="width: 40%">Descrição</th>
-          <th style="width: 10%">Qtd</th>
-          <th style="width: 15%">Preço Unit.</th>
-          <th style="width: 10%">IVA</th>
-          <th style="width: 12%">Valor IVA</th>
-          <th style="width: 13%">Total</th>
+          <th style="width: 40%">${L.printColDescription}</th>
+          <th style="width: 10%">${L.colQty}</th>
+          <th style="width: 15%">${L.printColUnitPrice}</th>
+          <th style="width: 10%">${L.vat}</th>
+          <th style="width: 12%">${L.printColVatAmount}</th>
+          <th style="width: 13%">${L.printTotal}</th>
         </tr>
       </thead>
       <tbody>
@@ -359,7 +366,7 @@ export async function generateProFormaA4HTML(
           <tr>
             <td>
               <div class="item-name">${item.productName}</div>
-              <div class="item-sku">Ref: ${item.sku}</div>
+              <div class="item-sku">${L.printRef} ${item.sku}</div>
             </td>
             <td>${item.quantity}</td>
             <td>${formatMoney(item.unitPrice)} Kz</td>
@@ -374,21 +381,21 @@ export async function generateProFormaA4HTML(
     <div class="totals-section">
       <div class="totals-box">
         <div class="total-row">
-          <span>Subtotal (s/ IVA):</span>
+          <span>${L.printSubtotalExVat}</span>
           <span>${formatMoney(proforma.subtotal)} Kz</span>
         </div>
         <div class="total-row">
-          <span>IVA:</span>
+          <span>${L.printVat}</span>
           <span>${formatMoney(proforma.taxAmount)} Kz</span>
         </div>
         ${proforma.discount > 0 ? `
         <div class="total-row" style="color: #dc2626;">
-          <span>Desconto:</span>
+          <span>${L.printDiscount}</span>
           <span>-${formatMoney(proforma.discount)} Kz</span>
         </div>
         ` : ''}
         <div class="total-row grand-total">
-          <span>TOTAL:</span>
+          <span>${L.printTotal}</span>
           <span>${formatMoney(proforma.total)} Kz</span>
         </div>
       </div>
@@ -396,36 +403,31 @@ export async function generateProFormaA4HTML(
 
     ${proforma.notes ? `
     <div class="notes-section">
-      <div class="section-label">Observações</div>
+      <div class="section-label">${L.printNotes}</div>
       <div>${proforma.notes}</div>
     </div>
     ` : ''}
 
     <div class="terms-section">
-      <div class="section-label">Termos e Condições</div>
+      <div class="section-label">${L.printTerms}</div>
       <div style="font-size: 10px; color: #555;">
-        ${proforma.termsAndConditions || `
-          • Este orçamento é válido até a data indicada acima.<br>
-          • Os preços estão sujeitos a alteração após a data de validade.<br>
-          • Pagamento deve ser efectuado conforme acordado.<br>
-          • Este documento não tem valor fiscal - não substitui a factura.
-        `}
+        ${proforma.termsAndConditions || L.printDefaultTermsHtml}
       </div>
     </div>
 
     <div class="footer">
       <div class="signature-box">
-        <div class="signature-line">Assinatura do Vendedor</div>
+        <div class="signature-line">${L.printSellerSignature}</div>
       </div>
       <div class="signature-box">
-        <div class="signature-line">Assinatura do Cliente (Aceite)</div>
+        <div class="signature-line">${L.printSignature}</div>
       </div>
     </div>
 
     <div class="document-footer">
-      <p>Este documento é um orçamento/pro forma e não tem valor fiscal.</p>
-      <p>Para efeitos fiscais, solicite a respectiva factura após confirmação da encomenda.</p>
-      <p style="margin-top: 8px;">Processado por: ${company.name} - NIF: ${company.nif}</p>
+      <p>${L.printFooterLine1}</p>
+      <p>${L.printFooterLine2}</p>
+      <p style="margin-top: 8px;">${L.printProcessedBy} ${company.name} - NIF: ${company.nif}</p>
     </div>
   </div>
 </body>
@@ -433,8 +435,12 @@ export async function generateProFormaA4HTML(
   `;
 }
 
-export async function printProFormaA4(proforma: ProForma, branch: Branch): Promise<void> {
-  const html = await generateProFormaA4HTML(proforma, branch);
+export async function printProFormaA4(
+  proforma: ProForma,
+  branch: Branch,
+  language: PrintLanguage = 'pt'
+): Promise<void> {
+  const html = await generateProFormaA4HTML(proforma, branch, language);
   
   const printWindow = window.open('', '_blank');
   if (!printWindow) {

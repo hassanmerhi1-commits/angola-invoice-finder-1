@@ -36,6 +36,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { currentBranch } = useBranchContext();
   const { language, t } = useTranslation();
+  const d = t.dashboardUi;
   const { companyName, logo } = useCompanyLogo();
   const { products } = useProducts(currentBranch?.id);
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
@@ -73,22 +74,22 @@ export default function Dashboard() {
 
   const documentFlow = useMemo(() => [
     { label: t.documents.proforma, icon: ClipboardList, path: '/proforma' },
-    { label: t.dashboardUi.documentFlow.salesInvoice, icon: FileText, path: '/invoices' },
+    { label: d.documentFlow.salesInvoice, icon: FileText, path: '/invoices' },
     { label: t.documents.receipt, icon: Receipt, path: '/invoices' },
     { label: t.documents.payment, icon: DollarSign, path: '/payments' },
-    { label: t.dashboardUi.documentFlow.statement, icon: FileCheck, path: '/extracto' },
-  ], [t]);
+    { label: d.documentFlow.statement, icon: FileCheck, path: '/extracto' },
+  ], [t, d]);
 
   const quickActions = useMemo(() => [
-    { label: t.dashboardUi.quickActions.posSales, icon: ShoppingCart, path: '/pos', gradient: 'gradient-primary' },
-    { label: t.dashboardUi.quickActions.invoices, icon: FileText, path: '/invoices', gradient: 'gradient-accent' },
-    { label: t.dashboardUi.quickActions.inventory, icon: Package, path: '/inventory', gradient: 'gradient-success' },
-    { label: t.dashboardUi.quickActions.purchases, icon: Truck, path: '/purchase-invoices', gradient: 'gradient-warm' },
-    { label: t.dashboardUi.quickActions.clients, icon: Users, path: '/clients', gradient: 'gradient-primary' },
-    { label: t.dashboardUi.quickActions.chartOfAccounts, icon: BookOpen, path: '/chart-of-accounts', gradient: 'gradient-accent' },
-    { label: t.dashboardUi.quickActions.transfers, icon: ArrowRightLeft, path: '/stock-transfer', gradient: 'gradient-success' },
-    { label: t.dashboardUi.quickActions.reports, icon: BarChart3, path: '/reports', gradient: 'gradient-warm' },
-  ], [t]);
+    { label: d.quickActions.posSales, icon: ShoppingCart, path: '/pos', gradient: 'gradient-primary' },
+    { label: d.quickActions.invoices, icon: FileText, path: '/invoices', gradient: 'gradient-accent' },
+    { label: d.quickActions.inventory, icon: Package, path: '/inventory', gradient: 'gradient-success' },
+    { label: d.quickActions.purchases, icon: Truck, path: '/purchase-invoices', gradient: 'gradient-warm' },
+    { label: d.quickActions.clients, icon: Users, path: '/clients', gradient: 'gradient-primary' },
+    { label: d.quickActions.chartOfAccounts, icon: BookOpen, path: '/chart-of-accounts', gradient: 'gradient-accent' },
+    { label: d.quickActions.transfers, icon: ArrowRightLeft, path: '/stock-transfer', gradient: 'gradient-success' },
+    { label: d.quickActions.reports, icon: BarChart3, path: '/reports', gradient: 'gradient-warm' },
+  ], [d]);
 
   return (
     <div className="h-full flex flex-col lg:flex-row">
@@ -101,7 +102,7 @@ export default function Dashboard() {
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight text-gradient">{companyName}</h1>
             <p className="text-sm text-muted-foreground font-medium">
-              {currentBranch?.name || t.dashboardUi.headquarters} • {new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+              {currentBranch?.name || d.headquarters} • {new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
             </p>
           </div>
         </div>
@@ -111,47 +112,49 @@ export default function Dashboard() {
           <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/vendas')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-muted-foreground font-medium">{t.dashboardUi.kpis.salesToday}</span>
+                <span className="text-xs text-muted-foreground font-medium">{d.kpis.salesToday}</span>
                 <ShoppingCart className="w-4 h-4 text-primary" />
               </div>
               <p className="text-xl font-bold">{fmt(kpis?.todaySales?.total ?? 0)} Kz</p>
               <p className="text-[10px] text-muted-foreground">
-                {t.dashboardUi.kpis.transactions.replace('{count}', String(kpis?.todaySales?.count ?? 0))}
+                {d.kpis.transactions.replace('{count}', String(kpis?.todaySales?.count ?? 0))}
               </p>
             </CardContent>
           </Card>
           <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/reports')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-muted-foreground font-medium">{t.dashboardUi.kpis.salesMonth}</span>
+                <span className="text-xs text-muted-foreground font-medium">{d.kpis.salesMonth}</span>
                 <TrendingUp className="w-4 h-4 text-green-600" />
               </div>
               <p className="text-xl font-bold">{fmt(kpis?.monthSales?.total ?? 0)} Kz</p>
               <p className="text-[10px] text-muted-foreground">
-                {t.dashboardUi.kpis.invoicesCount.replace('{count}', String(kpis?.monthSales?.count ?? 0))}
+                {d.kpis.invoicesCount.replace('{count}', String(kpis?.monthSales?.count ?? 0))}
               </p>
             </CardContent>
           </Card>
           <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/payments')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-muted-foreground font-medium">{t.dashboardUi.kpis.accountsReceivable}</span>
+                <span className="text-xs text-muted-foreground font-medium">{d.kpis.accountsReceivable}</span>
                 <CreditCard className="w-4 h-4 text-orange-500" />
               </div>
               <p className="text-xl font-bold text-orange-600">{fmt(kpis?.openAR?.total ?? 0)} Kz</p>
               <p className="text-[10px] text-muted-foreground">
-                {t.dashboardUi.kpis.openItems.replace('{count}', String(kpis?.openAR?.count ?? 0))}
+                {d.kpis.openItems.replace('{count}', String(kpis?.openAR?.count ?? 0))}
               </p>
             </CardContent>
           </Card>
           <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/payments')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-muted-foreground font-medium">Contas a Pagar</span>
+                <span className="text-xs text-muted-foreground font-medium">{d.kpis.accountsPayable}</span>
                 <Truck className="w-4 h-4 text-destructive" />
               </div>
               <p className="text-xl font-bold text-destructive">{fmt(kpis?.openAP?.total ?? 0)} Kz</p>
-              <p className="text-[10px] text-muted-foreground">{kpis?.openAP?.count ?? 0} itens abertos</p>
+              <p className="text-[10px] text-muted-foreground">
+                {d.kpis.openItems.replace('{count}', String(kpis?.openAP?.count ?? 0))}
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -161,25 +164,25 @@ export default function Dashboard() {
           {lowStockProducts.length > 0 && (
             <Badge variant="destructive" className="cursor-pointer gap-1.5 py-1" onClick={() => navigate('/inventory')}>
               <AlertTriangle className="w-3 h-3" />
-              {lowStockProducts.length} produtos com stock baixo
+              {d.lowStockBadge.replace('{count}', String(lowStockProducts.length))}
             </Badge>
           )}
           {overstockProducts.length > 0 && (
             <Badge variant="outline" className="cursor-pointer gap-1.5 py-1 border-amber-300 text-amber-600" onClick={() => navigate('/inventory')}>
               <Package className="w-3 h-3" />
-              {overstockProducts.length} produtos acima do máximo
+              {d.overstockBadge.replace('{count}', String(overstockProducts.length))}
             </Badge>
           )}
           {(kpis?.pendingApprovals ?? 0) > 0 && (
             <Badge variant="outline" className="cursor-pointer gap-1.5 py-1 border-orange-300 text-orange-600" onClick={() => navigate('/approvals')}>
               <GitBranch className="w-3 h-3" />
-              {kpis?.pendingApprovals} aprovações pendentes
+              {d.pendingApprovals.replace('{count}', String(kpis?.pendingApprovals ?? 0))}
             </Badge>
           )}
           {(kpis?.monthExpenses ?? 0) > 0 && (
             <Badge variant="secondary" className="gap-1.5 py-1">
               <Receipt className="w-3 h-3" />
-              Despesas mês: {fmt(kpis?.monthExpenses ?? 0)} Kz
+              {d.monthExpenses.replace('{amount}', fmt(kpis?.monthExpenses ?? 0))}
             </Badge>
           )}
         </div>
@@ -190,10 +193,10 @@ export default function Dashboard() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-xs font-bold text-destructive uppercase tracking-widest flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Alertas de Stock Baixo
+                  <AlertTriangle className="w-3.5 h-3.5" /> {d.lowStockAlerts}
                 </h3>
                 <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => navigate('/inventory')}>
-                  Ver todos →
+                  {d.viewAll} →
                 </Button>
               </div>
               <div className="space-y-1.5">
@@ -206,7 +209,7 @@ export default function Dashboard() {
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-destructive font-bold">{p.stock} {p.unit}</span>
-                      <span className="text-muted-foreground">min: {p.minStock}</span>
+                      <span className="text-muted-foreground">{d.minLabel} {p.minStock}</span>
                     </div>
                   </div>
                 ))}
@@ -218,7 +221,7 @@ export default function Dashboard() {
         {/* Document Flow */}
         <Card className="shadow-card overflow-hidden">
           <CardContent className="p-5">
-            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Fluxo Documental</h3>
+            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">{d.documentFlowTitle}</h3>
             <div className="flex items-center justify-between gap-1 flex-wrap">
               {documentFlow.map((step, idx) => (
                 <div key={step.label} className="flex items-center gap-2 flex-1 min-w-0">
@@ -240,7 +243,7 @@ export default function Dashboard() {
 
         {/* Quick Actions Grid */}
         <div>
-          <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Acesso Rápido</h3>
+          <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">{d.quickAccess}</h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {quickActions.map((action) => (
               <button
@@ -257,14 +260,14 @@ export default function Dashboard() {
 
         {/* Financial Charts */}
         <div>
-          <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Análise Financeira</h3>
+          <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">{d.financialAnalysis}</h3>
           <Tabs defaultValue="overview" className="space-y-4">
             <TabsList>
-              <TabsTrigger value="overview">Visão Geral</TabsTrigger>
-              <TabsTrigger value="cashflow">Fluxo Caixa</TabsTrigger>
-              <TabsTrigger value="products">Produtos</TabsTrigger>
-              <TabsTrigger value="aging">Aging AR</TabsTrigger>
-              <TabsTrigger value="payments">Pagamentos</TabsTrigger>
+              <TabsTrigger value="overview">{d.tabOverview}</TabsTrigger>
+              <TabsTrigger value="cashflow">{d.tabCashflow}</TabsTrigger>
+              <TabsTrigger value="products">{d.tabProducts}</TabsTrigger>
+              <TabsTrigger value="aging">{d.tabAging}</TabsTrigger>
+              <TabsTrigger value="payments">{d.tabPayments}</TabsTrigger>
             </TabsList>
             <TabsContent value="overview" className="space-y-4">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -295,15 +298,15 @@ export default function Dashboard() {
         <div className="flex gap-3 flex-wrap">
           <Button variant="outline" className="rounded-xl gap-2 shadow-sm" onClick={() => navigate('/fiscal-documents')}>
             <CheckCircle className="w-4 h-4 text-primary" />
-            Verificar Fatura
+            {d.verifyInvoice}
           </Button>
           <Button variant="outline" className="rounded-xl gap-2 shadow-sm" onClick={() => navigate('/proforma')}>
             <Search className="w-4 h-4 text-primary" />
-            Check Proforma
+            {d.checkProforma}
           </Button>
           <Button variant="outline" className="rounded-xl gap-2 shadow-sm" onClick={() => navigate('/daily-reports')}>
             <Calendar className="w-4 h-4 text-primary" />
-            Relatório Diário
+            {d.dailyReport}
           </Button>
         </div>
       </div>
@@ -311,13 +314,13 @@ export default function Dashboard() {
       {/* ====== BI SIDEBAR (Right) ====== */}
       <div className="hidden lg:flex w-48 flex-col bg-card border-l">
         <div className="p-4 border-b">
-          <h3 className="font-extrabold text-sm text-center tracking-tight">Business Intelligence</h3>
+          <h3 className="font-extrabold text-sm text-center tracking-tight">{d.biTitle}</h3>
         </div>
         <div className="flex-1 flex flex-col gap-2 p-3">
           {[
             { label: t.reportsCenterUi.tabTrialBalance, icon: PieChart, path: '/reports', color: 'bg-primary/10 text-primary' },
             { label: t.nav.invoices, icon: FileText, path: '/invoices', color: 'bg-green-500/10 text-green-600' },
-            { label: t.dashboardUi.bi.salesProfit, icon: TrendingUp, path: '/reports', color: 'bg-orange-500/10 text-orange-600' },
+            { label: d.bi.salesProfit, icon: TrendingUp, path: '/reports', color: 'bg-orange-500/10 text-orange-600' },
             { label: t.nav.purchaseOrders, icon: Truck, path: '/purchase-invoices', color: 'bg-blue-500/10 text-blue-600' },
             { label: t.nav.taxManagement, icon: Receipt, path: '/tax-management', color: 'bg-destructive/10 text-destructive' },
             { label: t.nav.inventory, icon: Package, path: '/inventory', color: 'bg-primary/10 text-primary' },
@@ -340,7 +343,7 @@ export default function Dashboard() {
             onClick={() => navigate('/chart-of-accounts')}
           >
             <FileCheck className="w-4 h-4" />
-            CONTAS / SAF-T
+            {d.accountsSaft}
           </Button>
         </div>
       </div>

@@ -238,7 +238,7 @@ ipcMain.on('backend:getPortSync', (event) => {
 ipcMain.on('backend:getHttpOriginSync', (event) => {
   const st = backendManager.getStatus();
   const p = backendManager.getPort();
-  event.returnValue = st.running && p ? `http://localhost:${p}` : '';
+  event.returnValue = st.running && p ? `http://127.0.0.1:${p}` : '';
 });
 
 // ============= SINGLE-INSTANCE LOCK (Phase 2) =============
@@ -570,6 +570,30 @@ async function connectPostgres(connectionString) {
   return pool;
 }
 
+/** Map IPC/SQLite product row → Express POST/PUT JSON body. */
+function mapElectronProductRowToApiBody(data) {
+  if (!data) return null;
+  const branchRaw = data.branch_id ?? data.branchId;
+  return {
+    name: data.name || '',
+    sku: data.sku || '',
+    barcode: data.barcode || '',
+    category: data.category_id ?? data.category ?? 'GERAL',
+    price: Number(data.price) || 0,
+    price2: Number(data.price_2 ?? data.price2) || 0,
+    price3: Number(data.price_3 ?? data.price3) || 0,
+    price4: Number(data.price_4 ?? data.price4) || 0,
+    cost: Number(data.cost) || 0,
+    stock: Number(data.stock) || 0,
+    unit: data.unit || 'un',
+    taxRate: Number(data.tax_rate ?? data.taxRate) || 14,
+    branchId: branchRaw && branchRaw !== 'all' ? branchRaw : null,
+    isActive: data.is_active !== 0 && data.is_active !== false && data.isActive !== false,
+    supplierId: data.supplier_id ?? data.supplierId ?? null,
+    supplierName: data.supplier_name ?? data.supplierName ?? null,
+  };
+}
+
 async function dbGetAll(table) {
   if (!pool) {
     if (table === 'suppliers') {
@@ -578,6 +602,10 @@ async function dbGetAll(table) {
     }
     if (table === 'clients') {
       const r = await requestExpressJson('GET', '/api/clients', null);
+      if (r && r.status === 200 && Array.isArray(r.json)) return r.json;
+    }
+    if (table === 'products') {
+      const r = await requestExpressJson('GET', '/api/products', null);
       if (r && r.status === 200 && Array.isArray(r.json)) return r.json;
     }
     return [];
@@ -603,6 +631,10 @@ async function dbGetById(table, id) {
     }
     if (table === 'clients') {
       const rows = await dbGetAll('clients');
+      return rows.find((row) => String(row.id) === String(id)) || null;
+    }
+    if (table === 'products') {
+      const rows = await dbGetAll('products');
       return rows.find((row) => String(row.id) === String(id)) || null;
     }
     return null;
@@ -657,6 +689,24 @@ async function dbInsert(table, data, companyId = null) {
         currentBalance: Number(data.balance ?? data.current_balance ?? data.currentBalance ?? 0),
       };
       const r = await requestExpressJson('POST', '/api/clients', body);
+      if (r && r.status >= 200 && r.status < 300 && r.json && !r.json.error) {
+        try {
+          broadcastUpdate(table, 'insert', r.json.id, companyId);
+        } catch (_) {}
+        return { success: true, data: r.json };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
+    if (table === 'products' && data) {
+      if (data.id) {
+        const existing = await dbGetById('products', data.id);
+        if (existing) {
+          return dbUpdate('products', data.id, data, companyId);
+        }
+      }
+      const body = mapElectronProductRowToApiBody(data);
+      const r = await requestExpressJson('POST', '/api/products', body);
       if (r && r.status >= 200 && r.status < 300 && r.json && !r.json.error) {
         try {
           broadcastUpdate(table, 'insert', r.json.id, companyId);
@@ -743,6 +793,18 @@ async function dbUpdate(table, id, data, companyId = null) {
       const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
       return { success: false, error: errMsg };
     }
+    if (table === 'products' && id && data) {
+      const body = mapElectronProductRowToApiBody({ ...data, id });
+      const r = await requestExpressJson('PUT', `/api/products/${encodeURIComponent(id)}`, body);
+      if (r && r.status >= 200 && r.status < 300 && r.json && !r.json.error) {
+        try {
+          broadcastUpdate(table, 'update', id, companyId);
+        } catch (_) {}
+        return { success: true, data: r.json };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
     return { success: false, error: 'Database not connected' };
   }
   try {
@@ -789,6 +851,17 @@ async function dbDelete(table, id, companyId = null) {
     }
     if (table === 'clients' && id) {
       const r = await requestExpressJson('DELETE', `/api/clients/${encodeURIComponent(id)}`, null);
+      if (r && r.status >= 200 && r.status < 300) {
+        try {
+          broadcastUpdate(table, 'delete', id, companyId);
+        } catch (_) {}
+        return { success: true };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
+    if (table === 'products' && id) {
+      const r = await requestExpressJson('DELETE', `/api/products/${encodeURIComponent(id)}`, null);
       if (r && r.status >= 200 && r.status < 300) {
         try {
           broadcastUpdate(table, 'delete', id, companyId);

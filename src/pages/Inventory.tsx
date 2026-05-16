@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useProducts } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
+import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { saveProduct, getProducts as storageGetProducts, getStockMovements as localGetStockMovements } from '@/lib/storage';
@@ -70,34 +71,36 @@ export default function Inventory() {
   // For head office: load all products per branch for qty breakdown
   const [allBranchProducts, setAllBranchProducts] = useState<Record<string, Product[]>>({});
   
+  const mapApiRowToProduct = useCallback((p: any): Product => ({
+    id: p.id,
+    name: p.name,
+    sku: p.sku,
+    barcode: p.barcode || '',
+    category: p.category || 'GERAL',
+    price: Number(p.price || 0),
+    cost: Number(p.cost || 0),
+    firstCost: Number(p.first_cost || p.firstCost || 0),
+    lastCost: Number(p.last_cost || p.lastCost || 0),
+    avgCost: Number(p.weighted_avg_cost || p.avg_cost || p.avgCost || 0),
+    stock: Number(p.stock || 0),
+    unit: p.unit || 'UN',
+    taxRate: Number(p.tax_rate || p.taxRate || 14),
+    branchId: p.branch_id || p.branchId || null,
+    supplierId: p.supplier_id || p.supplierId || null,
+    supplierName: p.supplier_name || p.supplierName || '',
+    isActive: p.is_active ?? p.isActive ?? true,
+    createdAt: p.created_at || p.createdAt || '',
+  }), []);
+
   const loadBranchProducts = useCallback(async () => {
-    if (!isHeadOffice) return;
     const branchProducts: Record<string, Product[]> = {};
-    for (const branch of branches) {
+    const targets = isHeadOffice ? branches : (currentBranch ? [currentBranch] : []);
+    for (const branch of targets) {
       // Use API first (source of truth), fallback to localStorage
       try {
         const result = await api.products.list(branch.id);
         if (result.data && Array.isArray(result.data)) {
-          branchProducts[branch.id] = result.data.map((p: any) => ({
-            id: p.id,
-            name: p.name,
-            sku: p.sku,
-            barcode: p.barcode || '',
-            category: p.category || 'GERAL',
-            price: Number(p.price || 0),
-            cost: Number(p.cost || 0),
-            firstCost: Number(p.first_cost || p.firstCost || 0),
-            lastCost: Number(p.last_cost || p.lastCost || 0),
-            avgCost: Number(p.weighted_avg_cost || p.avgCost || 0),
-            stock: Number(p.stock || 0),
-            unit: p.unit || 'UN',
-            taxRate: Number(p.tax_rate || p.taxRate || 14),
-            branchId: p.branch_id || p.branchId || null,
-            supplierId: p.supplier_id || p.supplierId || null,
-            supplierName: p.supplier_name || p.supplierName || '',
-            isActive: p.is_active ?? p.isActive ?? true,
-            createdAt: p.created_at || p.createdAt || '',
-          })) as Product[];
+          branchProducts[branch.id] = result.data.map(mapApiRowToProduct);
           continue;
         }
       } catch (e) {
@@ -107,7 +110,7 @@ export default function Inventory() {
       branchProducts[branch.id] = prods;
     }
     setAllBranchProducts(branchProducts);
-  }, [isHeadOffice, branches]);
+  }, [isHeadOffice, branches, currentBranch, mapApiRowToProduct]);
   
   useEffect(() => {
     loadBranchProducts();
@@ -154,16 +157,50 @@ export default function Inventory() {
   // For head office: deduplicate products by SKU (show unique items with aggregated total).
   // Use trimmed SKU, falling back to product id so blank/duplicate SKU keys do not hide new rows.
   const displayProducts = useMemo(() => {
-    if (!isHeadOffice) return products;
-    const seen = new Map<string, Product>();
-    for (const p of products) {
-      const key = (p.sku || '').trim() || p.id;
-      if (!seen.has(key)) {
-        seen.set(key, { ...p });
+    if (isHeadOffice) {
+      const bySku = new Map<string, Product>();
+      const rowStamp = (row: Product) => row.updatedAt || row.createdAt || '';
+      for (const p of products) {
+        const key = (p.sku || '').trim() || p.id;
+        const prev = bySku.get(key);
+        if (!prev) {
+          bySku.set(key, { ...p });
+          continue;
+        }
+        const primary = rowStamp(p) >= rowStamp(prev) ? p : prev;
+        bySku.set(key, {
+          ...primary,
+          stock: (prev.stock || 0) + (p.stock || 0),
+        });
       }
+      return Array.from(bySku.values());
     }
-    return Array.from(seen.values());
-  }, [products, isHeadOffice]);
+
+    const branchRows = currentBranch?.id ? allBranchProducts[currentBranch.id] : undefined;
+    if (!branchRows?.length) {
+      return products.map((p) => ({
+        ...p,
+        stock: p.branchId === currentBranch?.id ? (p.stock || 0) : 0,
+      }));
+    }
+
+    const stockBySku = new Map<string, number>();
+    for (const row of branchRows) {
+      const key = (row.sku || '').trim() || row.id;
+      stockBySku.set(key, Math.max(stockBySku.get(key) || 0, row.stock || 0));
+    }
+
+    return products.map((p) => {
+      const key = (p.sku || '').trim() || p.id;
+      if (stockBySku.has(key)) {
+        return { ...p, stock: stockBySku.get(key) ?? 0 };
+      }
+      if (p.branchId === currentBranch?.id) {
+        return { ...p, stock: p.stock || 0 };
+      }
+      return { ...p, stock: 0 };
+    });
+  }, [products, isHeadOffice, allBranchProducts, currentBranch?.id]);
   
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -200,6 +237,7 @@ export default function Inventory() {
         await addProduct(product);
         toast.success(t.productFormUi.productCreated);
       }
+      await loadBranchProducts();
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       toast.error(message || t.productFormUi.productSaveFailed);
@@ -393,7 +431,8 @@ export default function Inventory() {
         <Alert className="mx-3 mt-3 rounded-xl bg-warning/10 border-warning/20">
           <AlertCircle className="h-4 w-4 text-warning" />
           <AlertDescription className="text-foreground">
-            <strong>{t.inventoryPageUi.branchModeTitle}</strong> {t.inventoryPageUi.branchModeDesc}
+            <strong>{t.inventoryPageUi.branchModeTitle}</strong>{' '}
+            {t.inventoryPageUi.branchModeDesc.replace('{branch}', formatBranchDisplayName(currentBranch))}
           </AlertDescription>
         </Alert>
       )}
@@ -617,7 +656,6 @@ export default function Inventory() {
             onSelectProduct={handleSelectProduct}
             onDoubleClickProduct={handleDoubleClickProduct}
             selectedProductId={selectedProduct?.id}
-            hideStock={!!isFilial}
             isHeadOffice={isHeadOffice}
             branches={branches}
             allBranchProducts={allBranchProducts}
@@ -809,7 +847,7 @@ export default function Inventory() {
       <div className="flex items-center justify-between px-3 py-1 bg-muted/50 border-t text-xs text-muted-foreground">
         <div className="flex items-center gap-4">
           {isHeadOffice && <span className="text-primary font-medium">📊 {t.inventoryPageUi.status.headOfficeAllBranches.replace('{count}', String(branches.length))}</span>}
-          {isFilial && <span>📍 {currentBranch?.name}</span>}
+          {isFilial && <span>📍 {formatBranchDisplayName(currentBranch)}</span>}
           <span className="text-destructive">{t.inventoryPageUi.status.qtyLt0}</span>
           <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 px-2 rounded">{t.inventoryPageUi.status.minQty}</span>
         </div>

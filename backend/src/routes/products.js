@@ -22,16 +22,104 @@ module.exports = function(broadcastTable) {
       let query;
 
       if (branchId) {
+        const branchKey = String(branchId).trim();
+        // One row per catalog SKU; stock from branch row + movements at this warehouse (by SKU).
         query = `
-          SELECT p.*,
-            COALESCE(p.first_cost, p.cost) AS first_cost,
-            COALESCE(p.last_cost, p.cost) AS last_cost,
-            COALESCE(p.avg_cost, p.cost) AS avg_cost,
-            p.stock AS stock
+          SELECT
+            COALESCE(bp.id, p.id) AS id,
+            COALESCE(bp.name, p.name) AS name,
+            COALESCE(bp.sku, p.sku) AS sku,
+            COALESCE(bp.barcode, p.barcode) AS barcode,
+            COALESCE(bp.category, p.category) AS category,
+            COALESCE(bp.price, p.price) AS price,
+            COALESCE(bp.price2, p.price2) AS price2,
+            COALESCE(bp.price3, p.price3) AS price3,
+            COALESCE(bp.price4, p.price4) AS price4,
+            COALESCE(bp.cost, p.cost) AS cost,
+            COALESCE(bp.first_cost, p.first_cost, bp.cost, p.cost) AS first_cost,
+            COALESCE(bp.last_cost, p.last_cost, bp.cost, p.cost) AS last_cost,
+            COALESCE(bp.avg_cost, p.avg_cost, bp.cost, p.cost) AS avg_cost,
+            CASE
+              WHEN bp.id IS NOT NULL THEN MAX(
+                COALESCE(bp.stock, 0),
+                COALESCE((
+                  SELECT SUM(
+                    CASE
+                      WHEN sm.movement_type = 'IN' THEN sm.quantity
+                      WHEN sm.movement_type = 'OUT' THEN -sm.quantity
+                      ELSE 0
+                    END
+                  )
+                  FROM stock_movements sm
+                  INNER JOIN products pm ON pm.id = sm.product_id
+                  WHERE sm.warehouse_id = $1
+                    AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+                    AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
+                ), 0)
+              )
+              WHEN p.branch_id = $1 THEN MAX(
+                COALESCE(p.stock, 0),
+                COALESCE((
+                  SELECT SUM(
+                    CASE
+                      WHEN sm.movement_type = 'IN' THEN sm.quantity
+                      WHEN sm.movement_type = 'OUT' THEN -sm.quantity
+                      ELSE 0
+                    END
+                  )
+                  FROM stock_movements sm
+                  INNER JOIN products pm ON pm.id = sm.product_id
+                  WHERE sm.warehouse_id = $1
+                    AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+                    AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
+                ), 0)
+              )
+              WHEN p.branch_id IS NULL AND COALESCE(
+                (SELECT b.is_main FROM branches b WHERE b.id = $1 LIMIT 1),
+                0
+              ) = 1 THEN COALESCE(p.stock, 0)
+              ELSE COALESCE((
+                SELECT SUM(
+                  CASE
+                    WHEN sm.movement_type = 'IN' THEN sm.quantity
+                    WHEN sm.movement_type = 'OUT' THEN -sm.quantity
+                    ELSE 0
+                  END
+                )
+                FROM stock_movements sm
+                INNER JOIN products pm ON pm.id = sm.product_id
+                WHERE sm.warehouse_id = $1
+                  AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+                  AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
+              ), 0)
+            END AS stock,
+            COALESCE(bp.unit, p.unit) AS unit,
+            COALESCE(bp.tax_rate, p.tax_rate) AS tax_rate,
+            COALESCE(bp.branch_id, $1) AS branch_id,
+            COALESCE(bp.supplier_id, p.supplier_id) AS supplier_id,
+            COALESCE(bp.supplier_name, p.supplier_name) AS supplier_name,
+            COALESCE(bp.is_active, p.is_active) AS is_active,
+            COALESCE(bp.created_at, p.created_at) AS created_at,
+            COALESCE(bp.updated_at, p.updated_at) AS updated_at
           FROM products p
-          WHERE p.is_active = true AND (p.branch_id = $1 OR p.branch_id IS NULL)
-          ORDER BY p.name`;
-        params.push(branchId);
+          LEFT JOIN products bp ON COALESCE(bp.is_active, 1) != 0
+            AND bp.branch_id = $1
+            AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+            AND bp.sku = p.sku
+          WHERE COALESCE(p.is_active, 1) != 0
+            AND (
+              p.branch_id = $1
+              OR (
+                p.branch_id IS NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM products bx
+                  WHERE COALESCE(bx.is_active, 1) != 0 AND bx.branch_id = $1
+                    AND bx.sku = p.sku AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+                )
+              )
+            )
+          ORDER BY name`;
+        params.push(branchKey);
       } else {
         query = `
           SELECT p.*,
@@ -40,7 +128,7 @@ module.exports = function(broadcastTable) {
             COALESCE(p.avg_cost, p.cost) AS avg_cost,
             p.stock AS stock
           FROM products p
-          WHERE p.is_active = true
+          WHERE COALESCE(p.is_active, 1) != 0
           ORDER BY p.name`;
       }
 
@@ -64,14 +152,17 @@ module.exports = function(broadcastTable) {
       const activeInt = isActive !== false ? 1 : 0;
 
       const c = Number(cost) || 0;
+      const resolvedBranchId = sanitizeUuid(branchId);
+      // SQLite expands $10 four times from ONE param — do not pass c,c,c,c in the array.
       const result = await db.query(
         `INSERT INTO products (id, name, sku, barcode, category, price, price2, price3, price4, cost, first_cost, last_cost, avg_cost, stock, unit, tax_rate, branch_id, is_active, supplier_id, supplier_name)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $10, $10, $11, $12, $13, $14, $15, $16, $17)
          RETURNING *`,
         [
           id, name, sku, barcode, category, price, price2 || 0, price3 || 0, price4 || 0,
-          c, c, c, c,
-          stock || 0, unit || 'un', taxRate || 14, sanitizeUuid(branchId), activeInt, sanitizeUuid(supplierId), supplierName || null,
+          c,
+          stock || 0, unit || 'un', taxRate || 14, resolvedBranchId, activeInt,
+          sanitizeUuid(supplierId), supplierName || null,
         ]
       );
       
@@ -79,6 +170,12 @@ module.exports = function(broadcastTable) {
       res.status(201).json(result.rows[0]);
     } catch (error) {
       console.error('[PRODUCTS ERROR]', error);
+      const msg = String(error?.message || '');
+      if (/unique|duplicate|UNIQUE constraint/i.test(msg)) {
+        return res.status(409).json({
+          error: 'Já existe um produto com este código (SKU) nesta filial ou catálogo partilhado.',
+        });
+      }
       res.status(500).json({ error: 'Failed to create product' });
     }
   });
@@ -102,7 +199,7 @@ module.exports = function(broadcastTable) {
            WHERE id=$19 AND version=$20
            RETURNING *`,
           [name, sku, barcode, category, price, cost, stock, unit, taxRate,
-           sanitizeUuid(branchId), isActive,
+           sanitizeUuid(branchId), isActive !== false ? 1 : 0,
            price2 || 0, price3 || 0, price4 || 0,
            sanitizeUuid(supplierId), supplierName || null,
            lastCost ?? null, avgCost ?? null,
@@ -120,7 +217,7 @@ module.exports = function(broadcastTable) {
            WHERE id=$19
            RETURNING *`,
           [name, sku, barcode, category, price, cost, stock, unit, taxRate,
-           sanitizeUuid(branchId), isActive,
+           sanitizeUuid(branchId), isActive !== false ? 1 : 0,
            price2 || 0, price3 || 0, price4 || 0,
            sanitizeUuid(supplierId), supplierName || null,
            lastCost ?? null, avgCost ?? null,

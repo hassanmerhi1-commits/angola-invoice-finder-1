@@ -618,34 +618,43 @@ export const api = {
     },
   },
 
-  // Daily Reports
+  // Daily Reports — always via HTTP API (aggregates sales on the server)
   dailyReports: {
     list: (branchId?: string) => {
-      if (isElectronMode()) {
-        if (branchId) return ipcQuery<any>('SELECT * FROM daily_reports WHERE branch_id = $1 ORDER BY report_date DESC', [branchId]);
-        return ipcQuery<any>('SELECT * FROM daily_reports ORDER BY report_date DESC');
-      }
-      return apiFetch<any[]>(`/daily-reports${branchId ? `?branchId=${branchId}` : ''}`);
+      const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/daily-reports${q}`).then((res) => {
+        const localRows = JSON.parse(localStorage.getItem('kwanzaerp_daily_reports') || '[]') as any[];
+        const mergeLocal = isDemoMode() || isElectronMode();
+        if (!mergeLocal && res.data !== undefined) return res;
+
+        const apiRows = Array.isArray(res.data) ? res.data : [];
+        const byKey = new Map<string, any>();
+        for (const row of apiRows) {
+          const key = `${row.date}|${row.branch_id ?? row.branchId ?? ''}`;
+          byKey.set(key, row);
+        }
+        for (const row of localRows) {
+          const key = `${row.date}|${row.branch_id ?? row.branchId ?? ''}`;
+          if (!byKey.has(key)) byKey.set(key, row);
+        }
+        let rows = Array.from(byKey.values());
+        if (branchId) {
+          rows = rows.filter((r) => (r.branchId || r.branch_id) === branchId);
+        }
+        rows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+        return { data: rows, error: res.error };
+      });
     },
-    generate: (branchId: string, date: string) => {
-      if (isElectronMode()) {
-        return ipcInsert('daily_reports', {
-          id: generateId(), branch_id: branchId, report_date: date,
-          status: 'open', created_at: new Date().toISOString(),
-        });
-      }
-      return apiFetch<any>('/daily-reports/generate', { method: 'POST', body: JSON.stringify({ branchId, date }) });
-    },
-    close: (id: string, data: { closingBalance: number; notes: string; closedBy: string }) => {
-      if (isElectronMode()) {
-        return ipcUpdate('daily_reports', id, {
-          status: 'closed', closing_balance: data.closingBalance,
-          notes: data.notes, closed_by: data.closedBy,
-          closed_at: new Date().toISOString(),
-        });
-      }
-      return apiFetch<any>(`/daily-reports/${id}/close`, { method: 'POST', body: JSON.stringify(data) });
-    },
+    generate: (branchId: string, date: string) =>
+      apiFetch<any>('/daily-reports/generate', {
+        method: 'POST',
+        body: JSON.stringify({ branchId, date }),
+      }),
+    close: (id: string, data: { closingBalance: number; notes: string; closedBy: string }) =>
+      apiFetch<any>(`/daily-reports/${id}/close`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 
   // Stock Transfers
@@ -864,30 +873,56 @@ export const api = {
   // Payments & Open Items
   payments: {
     list: (params?: { entityType?: string; entityId?: string; branchId?: string }) => {
-      if (isElectronMode()) {
-        let sql = 'SELECT * FROM payments WHERE 1=1';
-        const sqlParams: any[] = [];
-        let idx = 1;
-        if (params?.entityType) { sql += ` AND entity_type = $${idx++}`; sqlParams.push(params.entityType); }
-        if (params?.entityId) { sql += ` AND entity_id = $${idx++}`; sqlParams.push(params.entityId); }
-        if (params?.branchId) { sql += ` AND branch_id = $${idx++}`; sqlParams.push(params.branchId); }
-        sql += ' ORDER BY created_at DESC';
-        return ipcQuery<any>(sql, sqlParams);
-      }
       const sp = new URLSearchParams();
       if (params?.entityType) sp.append('entityType', params.entityType);
       if (params?.entityId) sp.append('entityId', params.entityId);
       if (params?.branchId) sp.append('branchId', params.branchId);
-      return apiFetch<any[]>(`/payments?${sp}`);
+      const query = sp.toString();
+      return apiFetch<any[]>(`/payments${query ? `?${query}` : ''}`).then((res) => {
+        if (res.data !== undefined || !isDemoMode()) return res;
+        let rows = JSON.parse(localStorage.getItem('kwanzaerp_payments') || '[]') as any[];
+        if (params?.entityType) rows = rows.filter((p) => p.entityType === params.entityType || p.entity_type === params.entityType);
+        if (params?.entityId) rows = rows.filter((p) => p.entityId === params.entityId || p.entity_id === params.entityId);
+        if (params?.branchId) rows = rows.filter((p) => p.branchId === params.branchId || p.branch_id === params.branchId);
+        rows.sort((a, b) => String(b.createdAt || b.created_at || '').localeCompare(String(a.createdAt || a.created_at || '')));
+        return { data: rows };
+      });
     },
     create: (data: any) => {
-      return apiFetch<any>('/payments', { method: 'POST', body: JSON.stringify(data) });
+      return apiFetch<any>('/payments', { method: 'POST', body: JSON.stringify(data) }).then((res) => {
+        if (res.data !== undefined || !isDemoMode()) return res;
+        const now = new Date().toISOString();
+        const prefix = data.paymentType === 'receipt' ? 'REC' : 'PAG';
+        const stored = {
+          id: generateId(),
+          payment_number: `${prefix}-${now.slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-4)}`,
+          payment_type: data.paymentType,
+          entity_type: data.entityType,
+          entity_id: data.entityId,
+          entity_name: data.entityName,
+          payment_method: data.paymentMethod,
+          amount: data.amount,
+          currency: data.currency || 'AOA',
+          reference: data.reference || '',
+          notes: data.notes || '',
+          branch_id: data.branchId,
+          created_by: data.createdBy,
+          created_at: now,
+        };
+        const rows = JSON.parse(localStorage.getItem('kwanzaerp_payments') || '[]');
+        rows.push(stored);
+        localStorage.setItem('kwanzaerp_payments', JSON.stringify(rows));
+        return { data: stored };
+      });
     },
     openItems: (entityType: string, entityId: string) => {
-      if (isElectronMode()) return ipcQuery<any>(
-        "SELECT * FROM open_items WHERE entity_type = $1 AND entity_id = $2 AND status != 'cleared' ORDER BY document_date ASC",
-        [entityType, entityId]
-      );
+      if (isDemoMode()) {
+        const items = JSON.parse(localStorage.getItem('kwanzaerp_open_items') || '[]')
+          .filter((oi: any) => oi.entityType === entityType && oi.entityId === entityId && oi.status !== 'cleared')
+          .sort((a: any, b: any) => `${a.documentDate || ''}${a.createdAt || ''}`.localeCompare(`${b.documentDate || ''}${b.createdAt || ''}`));
+        return Promise.resolve({ data: items }) as Promise<ApiResponse<any[]>>;
+      }
+      return apiFetch<any[]>(`/payments/open-items/${entityType}/${entityId}`);
       if (isDemoMode()) {
         const items = JSON.parse(localStorage.getItem('kwanzaerp_open_items') || '[]')
           .filter((oi: any) => oi.entityType === entityType && oi.entityId === entityId && oi.status !== 'cleared')
@@ -897,13 +932,6 @@ export const api = {
       return apiFetch<any[]>(`/payments/open-items/${entityType}/${entityId}`);
     },
     balance: (entityType: string, entityId: string) => {
-      if (isElectronMode()) {
-        return ipcQuery<any>(
-          `SELECT COALESCE(SUM(CASE WHEN is_debit THEN remaining_amount ELSE -remaining_amount END), 0) as balance
-           FROM open_items WHERE entity_type = $1 AND entity_id = $2 AND status != 'cleared'`,
-          [entityType, entityId]
-        ).then(r => ({ data: r.data?.[0] }));
-      }
       if (isDemoMode()) {
         const items = JSON.parse(localStorage.getItem('kwanzaerp_open_items') || '[]')
           .filter((oi: any) => oi.entityType === entityType && oi.entityId === entityId && oi.status !== 'cleared');
@@ -1225,35 +1253,28 @@ export const api = {
   // Dashboard KPIs
   dashboard: {
     kpis: (branchId?: string) => {
-      if (isElectronMode()) {
-        return (async () => {
-          const today = new Date().toISOString().split('T')[0];
-          const monthStart = today.slice(0, 7) + '-01';
-          
-          const branchFilter = branchId ? ` AND branch_id = '${branchId}'` : '';
-          
-          const todaySales = await ipcQuery<any>(
-            `SELECT COUNT(*) as count, COALESCE(SUM(total), 0) as total FROM sales WHERE DATE(created_at) = $1${branchFilter}`, [today]
-          );
-          const monthSales = await ipcQuery<any>(
-            `SELECT COUNT(*) as count, COALESCE(SUM(total), 0) as total FROM sales WHERE created_at >= $1${branchFilter}`, [monthStart]
-          );
-          const productCount = await ipcQuery<any>(`SELECT COUNT(*) as count FROM products WHERE 1=1${branchFilter}`);
-          const lowStock = await ipcQuery<any>(`SELECT COUNT(*) as count FROM products WHERE stock <= min_stock AND min_stock > 0${branchFilter}`);
-
-          return {
-            data: {
-              todaySalesCount: parseInt(todaySales.data?.[0]?.count || '0'),
-              todaySalesTotal: parseFloat(todaySales.data?.[0]?.total || '0'),
-              monthSalesCount: parseInt(monthSales.data?.[0]?.count || '0'),
-              monthSalesTotal: parseFloat(monthSales.data?.[0]?.total || '0'),
-              productCount: parseInt(productCount.data?.[0]?.count || '0'),
-              lowStockCount: parseInt(lowStock.data?.[0]?.count || '0'),
-            }
-          };
-        })();
-      }
-      return apiFetch<any>(`/dashboard${branchId ? `?branchId=${branchId}` : ''}`);
+      const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any>(`/dashboard${q}`).then((res) => {
+        if (!res.data) return res;
+        const d = res.data;
+        return {
+          data: {
+            todaySales: {
+              count: Number(d.todaySales?.count ?? d.todaySalesCount ?? 0),
+              total: Number(d.todaySales?.total ?? d.todaySalesTotal ?? 0),
+            },
+            monthSales: {
+              count: Number(d.monthSales?.count ?? d.monthSalesCount ?? 0),
+              total: Number(d.monthSales?.total ?? d.monthSalesTotal ?? 0),
+            },
+            openAR: d.openAR ?? { count: 0, total: 0 },
+            openAP: d.openAP ?? { count: 0, total: 0 },
+            lowStockCount: Number(d.lowStockCount ?? 0),
+            pendingApprovals: Number(d.pendingApprovals ?? 0),
+            monthExpenses: Number(d.monthExpenses ?? 0),
+          },
+        };
+      });
     },
   },
 
@@ -1359,24 +1380,23 @@ export const api = {
       return apiFetch<any>('/transactions/stock-movements', { method: 'POST', body: JSON.stringify(data) });
     },
     openItems: (params?: { entityType?: string; entityId?: string; branchId?: string; status?: string }) => {
-      if (isElectronMode()) {
-        let sql = 'SELECT * FROM open_items WHERE 1=1';
-        const sqlParams: any[] = [];
-        let idx = 1;
-        if (params?.entityType) { sql += ` AND entity_type = $${idx++}`; sqlParams.push(params.entityType); }
-        if (params?.entityId) { sql += ` AND entity_id = $${idx++}`; sqlParams.push(params.entityId); }
-        if (params?.branchId) { sql += ` AND branch_id = $${idx++}`; sqlParams.push(params.branchId); }
-        if (params?.status) { sql += ` AND status = $${idx++}`; sqlParams.push(params.status); }
-        else { sql += ` AND status != 'cleared'`; }
-        sql += ' ORDER BY document_date ASC';
-        return ipcQuery<any>(sql, sqlParams);
-      }
       const sp = new URLSearchParams();
       if (params?.entityType) sp.append('entityType', params.entityType);
       if (params?.entityId) sp.append('entityId', params.entityId);
       if (params?.branchId) sp.append('branchId', params.branchId);
       if (params?.status) sp.append('status', params.status);
-      return apiFetch<any[]>(`/transactions/open-items?${sp}`);
+      const query = sp.toString();
+      return apiFetch<any[]>(`/transactions/open-items${query ? `?${query}` : ''}`).then((res) => {
+        if (res.data !== undefined || !isDemoMode()) return res;
+        let items = JSON.parse(localStorage.getItem('kwanzaerp_open_items') || '[]') as any[];
+        if (params?.entityType) items = items.filter((oi) => oi.entityType === params.entityType);
+        if (params?.entityId) items = items.filter((oi) => oi.entityId === params.entityId);
+        if (params?.branchId) items = items.filter((oi) => oi.branchId === params.branchId);
+        if (params?.status) items = items.filter((oi) => oi.status === params.status);
+        else items = items.filter((oi) => oi.status !== 'cleared');
+        items.sort((a, b) => String(a.documentDate || a.createdAt || '').localeCompare(String(b.documentDate || b.createdAt || '')));
+        return { data: items };
+      });
     },
     documentLinks: (params?: { sourceType?: string; sourceId?: string; targetType?: string; targetId?: string }) => {
       if (isElectronMode()) {

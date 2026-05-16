@@ -76,6 +76,15 @@ export function useProForma(branchId?: string) {
     };
 
     await saveProForma(proforma);
+    setProformas((prev) => {
+      const without = prev.filter((p) => p.id !== proforma.id);
+      const next = branchId
+        ? [...without, proforma].filter((p) => p.branchId === branchId)
+        : [...without, proforma];
+      return next.sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+    });
     await refresh();
 
     logTransaction({
@@ -88,7 +97,7 @@ export function useProForma(branchId?: string) {
     });
 
     return proforma;
-  }, [refresh, logTransaction]);
+  }, [branchId, refresh, logTransaction]);
 
   const updateProFormaStatus = useCallback(async (
     proformaId: string,

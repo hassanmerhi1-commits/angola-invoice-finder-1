@@ -855,6 +855,55 @@ async function processTransferApprove(client, transferId, approvedBy) {
   return transfer;
 }
 
+/**
+ * Find or create a product row owned by `branchId` (required for filial stock).
+ * Shared catalog rows (branch_id NULL) must be cloned — stock on the shared row does not show at filials.
+ */
+async function resolveOrCloneProductForBranch(client, src, branchId) {
+  const toBranch = String(branchId || '').trim();
+  if (!toBranch) throw new Error('branchId inválido para produto de destino');
+
+  if (src.branch_id && String(src.branch_id) === toBranch) {
+    return src.id;
+  }
+
+  const sku = src.sku != null ? String(src.sku).trim() : '';
+  if (sku) {
+    const destCheck = await client.query(
+      `SELECT id FROM products
+       WHERE is_active = true AND branch_id = $1 AND LOWER(TRIM(sku)) = LOWER($2)
+       LIMIT 1`,
+      [toBranch, sku]
+    );
+    if (destCheck.rows.length > 0) {
+      return destCheck.rows[0].id;
+    }
+  }
+
+  const cloneId = randomUUID();
+  const unitCost = parseFloat(src.cost) || 0;
+  await client.query(
+    `INSERT INTO products (
+       id, name, sku, barcode, category, price, cost, first_cost, last_cost, avg_cost,
+       stock, unit, tax_rate, branch_id, is_active
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7, $7, 0, $8, $9, $10, true)`,
+    [
+      cloneId,
+      src.name,
+      sku || src.sku || '',
+      src.barcode || '',
+      src.category || 'GERAL',
+      parseFloat(src.price) || 0,
+      unitCost,
+      src.unit || 'UN',
+      parseFloat(src.tax_rate) || 14,
+      toBranch,
+    ]
+  );
+  console.log(`[TX ENGINE] Cloned product ${sku || src.id} → branch ${toBranch} (${cloneId})`);
+  return cloneId;
+}
+
 // ==================== PROCESS TRANSFER RECEIVE (Stock IN) ====================
 
 async function processTransferReceive(client, transferId, receivedQuantities, receivedBy) {
@@ -886,30 +935,11 @@ async function processTransferReceive(client, transferId, receivedQuantities, re
       const src = sourceProduct.rows[0];
       const unitCost = parseFloat(src.cost) || 0;
 
-      // Check if destination branch already has this product (by SKU + branch_id)
-      let destProductId = item.product_id; // default: same product row (global products)
-      if (src.branch_id && src.branch_id !== transfer.to_branch_id) {
-        // Branch-specific product — find or create clone at destination
-        const destCheck = await client.query(
-          'SELECT id FROM products WHERE sku = $1 AND branch_id = $2 AND is_active = true LIMIT 1',
-          [src.sku, transfer.to_branch_id]
-        );
-        if (destCheck.rows.length > 0) {
-          destProductId = destCheck.rows[0].id;
-        } else {
-          // Clone product for destination branch
-          const cloneId = randomUUID();
-          await client.query(
-            `INSERT INTO products (id, name, sku, barcode, category, price, cost, stock, unit, tax_rate, branch_id, is_active)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, true)`,
-            [cloneId, src.name, src.sku, src.barcode || '', src.category || 'GERAL',
-             parseFloat(src.price) || 0, unitCost, src.unit || 'UN', parseFloat(src.tax_rate) || 14,
-             transfer.to_branch_id]
-          );
-          destProductId = cloneId;
-          console.log(`[TX ENGINE] Cloned product ${src.sku} → branch ${transfer.to_branch_id} (${cloneId})`);
-        }
-      }
+      const destProductId = await resolveOrCloneProductForBranch(
+        client,
+        src,
+        transfer.to_branch_id
+      );
 
       totalTransferValue += unitCost * receivedQty;
 
@@ -1034,8 +1064,16 @@ async function processPayment(client, paymentData) {
     }
   }
 
-  // Journal entry
-  const cashAccountCode = paymentMethod === 'cash' ? '4.1.1' : '4.2.1';
+  // Journal entry — prefer bank account for non-cash; fall back to caixa if bank not in COA
+  let cashAccountCode = paymentMethod === 'cash' ? '4.1.1' : '4.2.1';
+  const preferredCash = await findAccountByCode(client, cashAccountCode);
+  if (!preferredCash) {
+    const caixa = await findAccountByCode(client, '4.1.1');
+    if (!caixa) {
+      throw new Error(`Conta de tesouraria não encontrada no plano de contas (${cashAccountCode} / 4.1.1)`);
+    }
+    cashAccountCode = '4.1.1';
+  }
   const entityAccountCode = await getEntityAccountCode(client, entityType, entityId, entityName);
 
   const lines = paymentType === 'receipt'
