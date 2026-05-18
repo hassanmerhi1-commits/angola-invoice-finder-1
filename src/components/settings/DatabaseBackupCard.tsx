@@ -32,6 +32,7 @@ import {
 } from '@/lib/api/backup';
 import { invalidateElectronApiBaseCache } from '@/lib/api/config';
 import { downloadBackup, parseBackupFile, restoreBackup, getStorageStats } from '@/lib/backup';
+import { clearLocalErpCache } from '@/lib/clearLocalErpCache';
 
 function formatDate(iso: string, locale: string): string {
   try {
@@ -201,6 +202,13 @@ export function DatabaseBackupCard() {
     } finally {
       setRestoring(false);
     }
+  };
+
+  const handleClearLocalCache = () => {
+    const { removed } = clearLocalErpCache();
+    setPrefsStats(getStorageStats());
+    toast.success(ui.clearLocalCacheDone.replace('{count}', String(removed)));
+    window.location.reload();
   };
 
   const handlePrefsBackup = () => {
@@ -397,6 +405,16 @@ export function DatabaseBackupCard() {
           <p className="text-xs text-muted-foreground">
             {prefsStats.keys} {ui.prefsItems} · {prefsStats.sizeKB} KB
           </p>
+          <p className="text-[10px] text-muted-foreground">{ui.clearLocalCacheHint}</p>
+          <Button
+            type="button"
+            variant="secondary"
+            className="gap-2 h-10 w-full"
+            onClick={handleClearLocalCache}
+          >
+            <Trash2 className="w-4 h-4" />
+            {ui.clearLocalCache}
+          </Button>
           <div className="grid grid-cols-2 gap-3">
             <Button onClick={handlePrefsBackup} variant="outline" className="gap-2 h-10">
               <Download className="w-4 h-4" />

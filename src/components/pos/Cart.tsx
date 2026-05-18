@@ -1,6 +1,6 @@
 import { CartItem } from '@/types/erp';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { NumericInput } from '@/components/ui/numeric-input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Minus, Plus, Trash2, ShoppingCart } from 'lucide-react';
@@ -70,12 +70,13 @@ export function Cart({
                   >
                     <Minus className="w-4 h-4" />
                   </Button>
-                  <Input
-                    type="number"
-                    value={item.quantity}
-                    onChange={(e) => onUpdateQuantity(item.product.id, parseInt(e.target.value) || 0)}
-                    className="w-16 h-8 text-center"
+                  <NumericInput
+                    integer
                     min={0}
+                    max={item.product.stock}
+                    value={item.quantity}
+                    onValueChange={(qty) => onUpdateQuantity(item.product.id, qty)}
+                    className="w-16 h-8 text-center"
                   />
                   <Button
                     variant="outline"

@@ -4075,6 +4075,9 @@ export const pt: TranslationKeys = {
     triedUrl: "Endereço",
     restartHint: "PC servidor: feche o NEXOR ERP por completo e abra de novo. Cliente na rede: use o IP do servidor em Rede (ex.: http://192.168.x.x:3000).",
     retryConnection: "Tentar ligação novamente",
+    clearLocalCache: "Limpar cache local",
+    clearLocalCacheHint: "Remove cópias antigas de produtos, faturas e pagamentos guardadas no browser. Use após repor a base de dados se as listas ainda mostrarem dados antigos. Não apaga a base de dados.",
+    clearLocalCacheDone: "Cache local limpa ({count} itens). A recarregar…",
   },
 
   dataConsistencyUi: {

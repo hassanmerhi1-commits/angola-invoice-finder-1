@@ -16,6 +16,17 @@ export function useBarcodeScanner({
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
       const currentTime = Date.now();
       const timeDiff = currentTime - lastKeyTimeRef.current;
 

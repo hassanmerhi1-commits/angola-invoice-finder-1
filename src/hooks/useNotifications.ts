@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { isDemoMode } from '@/lib/api/config';
 
 export interface Notification {
   id: string;
@@ -43,8 +44,10 @@ export function useNotifications() {
     return () => window.removeEventListener('kwanza-notification', handler as EventListener);
   }, []);
 
-  // Check for low stock on interval
+  // Check for low stock on interval (demo/localStorage only — avoid stale browser cache in Electron)
   useEffect(() => {
+    if (!isDemoMode()) return;
+
     const checkLowStock = () => {
       try {
         const productsStr = localStorage.getItem('kwanzaerp_products');

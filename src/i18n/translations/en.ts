@@ -4072,6 +4072,9 @@ export const en = {
     triedUrl: "Tried",
     restartHint: "Server PC: fully quit NEXOR ERP and open it again. LAN client: use the server IP in Network settings (e.g. http://192.168.x.x:3000).",
     retryConnection: "Retry connection",
+    clearLocalCache: "Clear local cache",
+    clearLocalCacheHint: "Removes stale product, invoice, and payment copies stored in the browser. Use after a database reset if old lists still appear. Does not delete the database.",
+    clearLocalCacheDone: "Local cache cleared ({count} items). Reload the page.",
   },
 
   dataConsistencyUi: {

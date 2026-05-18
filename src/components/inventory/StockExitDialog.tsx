@@ -3,6 +3,7 @@ import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumericInput } from '@/components/ui/numeric-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -272,15 +273,14 @@ export function StockExitDialog({
                       <span className="text-xs text-muted-foreground ml-2">(Stock: {p.stock})</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        min="1"
+                      <NumericInput
+                        integer
+                        min={1}
                         max={p.stock}
-                        value={newItemQty[p.id] || 1}
-                        onChange={(e) => setNewItemQty(prev => ({ 
-                          ...prev, 
-                          [p.id]: Math.min(parseInt(e.target.value) || 1, p.stock)
-                        }))}
+                        value={newItemQty[p.id] ?? 1}
+                        onValueChange={(qty) =>
+                          setNewItemQty((prev) => ({ ...prev, [p.id]: qty }))
+                        }
                         className="w-20 h-8"
                       />
                       <Button 
@@ -330,12 +330,12 @@ export function StockExitDialog({
                       <TableCell className="text-center">{item.unit}</TableCell>
                       <TableCell className="text-center">{item.currentStock}</TableCell>
                       <TableCell>
-                        <Input
-                          type="number"
-                          min="1"
+                        <NumericInput
+                          integer
+                          min={1}
                           max={item.currentStock}
                           value={item.quantity}
-                          onChange={(e) => handleUpdateQuantity(item.productId, parseInt(e.target.value) || 0)}
+                          onValueChange={(qty) => handleUpdateQuantity(item.productId, qty)}
                           className="h-8 text-center"
                         />
                       </TableCell>

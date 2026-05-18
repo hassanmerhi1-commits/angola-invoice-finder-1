@@ -3,6 +3,7 @@ import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumericInput } from '@/components/ui/numeric-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -284,14 +285,13 @@ export function StockEntryDialog({
                       <span className="text-sm">{p.name}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        min="1"
-                        value={newItemQty[p.id] || 1}
-                        onChange={(e) => setNewItemQty(prev => ({ 
-                          ...prev, 
-                          [p.id]: parseInt(e.target.value) || 1 
-                        }))}
+                      <NumericInput
+                        integer
+                        min={1}
+                        value={newItemQty[p.id] ?? 1}
+                        onValueChange={(qty) =>
+                          setNewItemQty((prev) => ({ ...prev, [p.id]: qty }))
+                        }
                         className="w-20 h-8"
                       />
                       <Button 
@@ -343,11 +343,11 @@ export function StockEntryDialog({
                         <TableCell className="truncate max-w-[150px]" title={item.name}>{item.name}</TableCell>
                         <TableCell className="text-center">{item.unit}</TableCell>
                         <TableCell>
-                          <Input
-                            type="number"
-                            min="1"
+                          <NumericInput
+                            integer
+                            min={1}
                             value={item.quantity}
-                            onChange={(e) => handleUpdateQuantity(item.productId, parseInt(e.target.value) || 0)}
+                            onValueChange={(qty) => handleUpdateQuantity(item.productId, qty)}
                             className="h-8 text-center"
                           />
                         </TableCell>
@@ -390,21 +390,19 @@ export function StockEntryDialog({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="space-y-1">
                 <Label className="text-xs">Frete (Kz)</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  value={freightCost || ''}
-                  onChange={(e) => setFreightCost(parseFloat(e.target.value) || 0)}
+                <NumericInput
+                  min={0}
+                  value={freightCost}
+                  onValueChange={setFreightCost}
                   placeholder="0.00"
                 />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Outros Custos (Kz)</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  value={otherCosts || ''}
-                  onChange={(e) => setOtherCosts(parseFloat(e.target.value) || 0)}
+                <NumericInput
+                  min={0}
+                  value={otherCosts}
+                  onValueChange={setOtherCosts}
                   placeholder="0.00"
                 />
               </div>

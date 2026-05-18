@@ -1320,6 +1320,25 @@ export default function PurchaseInvoices() {
     if (poCreateOpen) void refreshProducts();
   }, [poCreateOpen, refreshProducts]);
 
+  useEffect(() => {
+    if (!poCreateOpen) {
+      setPoProductDropdownOpen(false);
+      setPoProductSearch('');
+    }
+  }, [poCreateOpen]);
+
+  const poProductSearchRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!poProductDropdownOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (poProductSearchRef.current && !poProductSearchRef.current.contains(e.target as Node)) {
+        setPoProductDropdownOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [poProductDropdownOpen]);
+
   const totalLandingCosts = freightCost + freightOtherCosts;
 
   // Freight allocation per product (proportional to value)
@@ -2595,11 +2614,11 @@ export default function PurchaseInvoices() {
 
         {/* ═══ PO CREATE DIALOG ═══ */}
         <Dialog open={poCreateOpen} onOpenChange={setPoCreateOpen}>
-          <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-            <DialogHeader>
+          <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col gap-0 p-0">
+            <DialogHeader className="px-6 pt-6 pb-2">
               <DialogTitle>{t.purchaseInvoicesUi.poNewTitle}</DialogTitle>
             </DialogHeader>
-            <div className="space-y-4">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden px-6 pb-2 space-y-4 min-h-0">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>{t.purchaseInvoicesUi.poSupplierStar}</Label>
@@ -2648,12 +2667,14 @@ export default function PurchaseInvoices() {
                   <Input value={poForm.notes} onChange={e => setPoForm(p => ({ ...p, notes: e.target.value }))} placeholder={t.purchaseInvoicesUi.notesPlaceholder} />
                 </div>
               </div>
+            </div>
 
-              {/* Add product - inline search (no nested dialog) */}
-              <div className="border rounded-lg p-3 space-y-3">
+            {/* Add product — outside scroll clip so dropdown receives clicks */}
+            <div className="px-6 pb-2 shrink-0">
+              <div className="border rounded-lg p-3 space-y-3 overflow-visible relative z-20">
                 <Label className="font-medium">{t.purchaseInvoicesUi.poAddProductSection}</Label>
                 <div className="grid grid-cols-4 gap-3">
-                  <div className="col-span-2 relative">
+                  <div ref={poProductSearchRef} className="col-span-2 relative">
                     <Input
                       placeholder={t.purchaseInvoicesUi.searchProductByNameSkuOrCode}
                       value={poProductSearch}
@@ -2669,7 +2690,7 @@ export default function PurchaseInvoices() {
                       </div>
                     )}
                     {poProductDropdownOpen && (
-                      <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-lg max-h-[200px] overflow-y-auto">
+                      <div className="absolute z-[100] top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-lg max-h-[200px] overflow-y-auto">
                         {(() => {
                           const q = poProductSearch.toLowerCase();
                           const filtered = products.filter(p =>
@@ -2710,8 +2731,10 @@ export default function PurchaseInvoices() {
                   <Plus className="h-4 w-4 mr-1" /> {t.purchaseInvoicesUi.poAddLineBtn}
                 </Button>
               </div>
+              </div>
 
               {/* Items list */}
+              <div className="flex-1 overflow-y-auto px-6 pb-4 min-h-0">
               {poForm.items.length > 0 && (
                 <Table>
                   <TableHeader>
@@ -2748,8 +2771,8 @@ export default function PurchaseInvoices() {
                   </TableBody>
                 </Table>
               )}
-            </div>
-            <DialogFooter>
+              </div>
+            <DialogFooter className="px-6 py-4 border-t shrink-0">
               <Button variant="outline" onClick={() => setPoCreateOpen(false)}>{t.common.cancel}</Button>
               <Button disabled={!poForm.supplierId || !poForm.branchId || poForm.items.length === 0} onClick={() => {
                 const items = poForm.items.map(item => {

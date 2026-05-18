@@ -152,7 +152,9 @@ export function CheckoutDialog({
             <div className="space-y-3">
               <Label>{t.checkoutUi.amountReceived}</Label>
               <Input
-                type="number"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
                 value={amountPaid}
                 onChange={(e) => setAmountPaid(e.target.value)}
                 className="text-xl h-14 text-center font-bold"

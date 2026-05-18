@@ -112,8 +112,8 @@ export function InlineLineGrid({
         <td className="px-0.5 py-0 border-r border-border/50" onKeyDown={handleKeyDown}>
           <input
             ref={inputRef}
-            type="number"
-            step="any"
+            type="text"
+            inputMode="decimal"
             value={editValue}
             onChange={e => setEditValue(e.target.value)}
             onBlur={commitEdit}

@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumericInput } from '@/components/ui/numeric-input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -296,40 +297,35 @@ export function ProductFormDialog({
 
               <div>
                 <Label htmlFor="cost">Custo (Kz) *</Label>
-                <Input
+                <NumericInput
                   id="cost"
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  min={0}
                   value={formData.cost}
                   onWheel={preventWheelValueChange}
-                  onChange={(e) => setFormData({ ...formData, cost: parseFloat(e.target.value) || 0 })}
+                  onValueChange={(cost) => setFormData({ ...formData, cost })}
                 />
               </div>
 
               <div>
                 <Label htmlFor="price">Preço de Venda (Kz) *</Label>
-                <Input
+                <NumericInput
                   id="price"
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  min={0}
                   value={formData.price}
                   onWheel={preventWheelValueChange}
-                  onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })}
+                  onValueChange={(price) => setFormData({ ...formData, price })}
                 />
               </div>
 
               <div>
                 <Label htmlFor="taxRate">Taxa IVA (%)</Label>
-                <Input
+                <NumericInput
                   id="taxRate"
-                  type="number"
-                  min="0"
-                  max="100"
+                  min={0}
+                  max={100}
                   value={formData.taxRate}
                   onWheel={preventWheelValueChange}
-                  onChange={(e) => setFormData({ ...formData, taxRate: parseFloat(e.target.value) || 0 })}
+                  onValueChange={(taxRate) => setFormData({ ...formData, taxRate })}
                 />
               </div>
 
@@ -342,39 +338,37 @@ export function ProductFormDialog({
 
               <div>
                 <Label htmlFor="stock">Stock Inicial</Label>
-                <Input
+                <NumericInput
                   id="stock"
-                  type="number"
-                  min="0"
+                  integer
+                  min={0}
                   value={formData.stock}
                   onWheel={preventWheelValueChange}
-                  onChange={(e) => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
+                  onValueChange={(stock) => setFormData({ ...formData, stock })}
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label htmlFor="minStock">Stock Mínimo</Label>
-                  <Input
+                  <NumericInput
                     id="minStock"
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={formData.minStock || ''}
+                    integer
+                    min={0}
+                    value={formData.minStock || 0}
                     onWheel={preventWheelValueChange}
-                    onChange={(e) => setFormData({ ...formData, minStock: parseInt(e.target.value) || 0 })}
+                    onValueChange={(minStock) => setFormData({ ...formData, minStock })}
                   />
                 </div>
                 <div>
                   <Label htmlFor="maxStock">Stock Máximo</Label>
-                  <Input
+                  <NumericInput
                     id="maxStock"
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={formData.maxStock || ''}
+                    integer
+                    min={0}
+                    value={formData.maxStock || 0}
                     onWheel={preventWheelValueChange}
-                    onChange={(e) => setFormData({ ...formData, maxStock: parseInt(e.target.value) || 0 })}
+                    onValueChange={(maxStock) => setFormData({ ...formData, maxStock })}
                   />
                 </div>
               </div>

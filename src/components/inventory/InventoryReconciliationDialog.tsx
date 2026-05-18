@@ -354,8 +354,9 @@ export function InventoryReconciliationDialog({
                         </td>
                         <td className="py-2 px-2 text-center">
                           <Input
-                            type="number"
-                            min="0"
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
                             value={entry.countedStock ?? ''}
                             onChange={(e) => handleCountChange(entry.productId, e.target.value)}
                             className="h-8 w-20 text-center mx-auto"

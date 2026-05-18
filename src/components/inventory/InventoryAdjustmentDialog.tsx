@@ -384,8 +384,9 @@ export function InventoryAdjustmentDialog({
                       <TableCell className="text-center font-medium">{item.systemStock}</TableCell>
                       <TableCell>
                         <Input
-                          type="number"
-                          min="0"
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="off"
                           value={item.physicalCount ?? ''}
                           onChange={(e) => handlePhysicalCountChange(item.productId, e.target.value)}
                           placeholder="—"

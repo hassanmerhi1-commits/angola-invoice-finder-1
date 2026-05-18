@@ -5,6 +5,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumericInput } from '@/components/ui/numeric-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -462,22 +463,22 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                             className="h-6 text-xs border-0 bg-transparent p-0 focus:bg-background focus:border" />
                         </td>
                         <td className="px-2 py-1">
-                          <Input type="number" value={line.quantity} onChange={e => updateLine(idx, 'quantity', Number(e.target.value))}
+                          <NumericInput integer min={0} value={line.quantity} onValueChange={v => updateLine(idx, 'quantity', v)}
                             className="h-6 text-xs text-right border-0 bg-transparent p-0 focus:bg-background focus:border w-full" />
                         </td>
                         <td className="px-2 py-1">
-                          <Input type="number" value={line.unitPrice} onChange={e => updateLine(idx, 'unitPrice', Number(e.target.value))}
+                          <NumericInput min={0} value={line.unitPrice} onValueChange={v => updateLine(idx, 'unitPrice', v)}
                             className="h-6 text-xs text-right border-0 bg-transparent p-0 focus:bg-background focus:border w-full" />
                         </td>
                         <td className="px-2 py-1">
-                          <Input type="number" value={line.discount} onChange={e => updateLine(idx, 'discount', Number(e.target.value))}
+                          <NumericInput min={0} value={line.discount} onValueChange={v => updateLine(idx, 'discount', v)}
                             className="h-6 text-xs text-right border-0 bg-transparent p-0 focus:bg-background focus:border w-full" />
                         </td>
                         <td className="px-2 py-1 text-right font-mono text-muted-foreground">
                           {fmt((line.quantity * line.unitPrice) * (1 - (line.discount || 0) / 100))}
                         </td>
                         <td className="px-2 py-1">
-                          <Input type="number" value={line.taxRate} onChange={e => updateLine(idx, 'taxRate', Number(e.target.value))}
+                          <NumericInput min={0} max={100} value={line.taxRate} onValueChange={v => updateLine(idx, 'taxRate', v)}
                             className="h-6 text-xs text-right border-0 bg-transparent p-0 focus:bg-background focus:border w-full" />
                         </td>
                         <td className="px-2 py-1 text-right font-mono">{fmt(line.taxAmount)}</td>
