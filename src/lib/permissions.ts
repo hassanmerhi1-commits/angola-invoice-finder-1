@@ -81,6 +81,7 @@ export const PERMISSIONS: Permission[] = [
   { id: 'admin_settings', name: 'System Settings', description: 'Configurações do sistema', category: 'admin' },
   { id: 'admin_backup', name: 'Backup Data', description: 'Cópia de segurança', category: 'admin' },
   { id: 'admin_restore', name: 'Restore Data', description: 'Restaurar dados', category: 'admin' },
+  { id: 'admin_consistency', name: 'Data Consistency', description: 'Verificar e reparar consistência', category: 'admin' },
 
   // HR
   { id: 'hr_view', name: 'View HR', description: 'Visualizar RH', category: 'hr' },

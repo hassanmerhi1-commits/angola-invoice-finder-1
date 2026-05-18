@@ -235,8 +235,9 @@ function ensureAppTablesAndColumns() {
       document_type TEXT NOT NULL,
       prefix TEXT,
       fiscal_year INTEGER NOT NULL,
+      branch_id TEXT NOT NULL DEFAULT '',
       current_number INTEGER NOT NULL DEFAULT 0,
-      UNIQUE(document_type, fiscal_year)
+      UNIQUE(document_type, fiscal_year, branch_id)
     );
 
     CREATE TABLE IF NOT EXISTS accounting_periods (
@@ -435,6 +436,9 @@ function ensureAppTablesAndColumns() {
   tryAlterAdd('products', "updated_at TEXT NOT NULL DEFAULT (datetime('now'))");
 
   ensureDailyReportsSchemaSqlite();
+  ensureUniqueIntegrityIndexesSqlite();
+  migrateDocumentSequencesBranchScopeSqlite();
+  seedDocumentSequencesSqlite();
   tryAlterAdd('products', 'version INTEGER NOT NULL DEFAULT 0');
   tryAlterAdd('products', "tax_code TEXT DEFAULT 'IVA14'");
 
@@ -468,7 +472,27 @@ function ensureAppTablesAndColumns() {
   backfillJournalEntryBranchIds();
   backfillAllSkuStockFromMovements();
   ensureEntityBalanceView();
-  scheduleSupplierBalanceRepair();
+  scheduleDataConsistencyRepair();
+}
+
+function scheduleDataConsistencyRepair() {
+  setImmediate(() => {
+    const { runDataConsistencyRepair } = require('./dataConsistencyRepair');
+    runDataConsistencyRepair()
+      .then((report) => {
+        const fixes =
+          (report.supplierBalances?.updated || 0) +
+          (report.clientBalances?.updated || 0) +
+          (report.duplicateSkusRenamed || 0) +
+          (report.productStockReconciled || 0);
+        if (fixes > 0) {
+          console.log('[DB] Data consistency repair:', JSON.stringify(report));
+        }
+      })
+      .catch((err) => {
+        console.warn('[DB] Data consistency repair skipped:', err.message);
+      });
+  });
 }
 
 function ensureEntityBalanceView() {
@@ -521,17 +545,32 @@ function backfillAllSkuStockFromMovements() {
       WHERE sm.warehouse_id = ?
         AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(?)
     `);
-    const updateStmt = sqlite.prepare(`
+    const updateByProductStmt = sqlite.prepare(`
       UPDATE products
       SET stock = ?, updated_at = datetime('now')
-      WHERE COALESCE(is_active, 1) != 0
-        AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER(?)
-        AND (branch_id = ? OR branch_id IS NULL)
+      WHERE id = ?
     `);
+    const seenProductIds = new Set();
     for (const row of pairs) {
-      const sumRow = sumStmt.get(row.warehouse_id, row.sku);
-      const total = Math.max(0, Number(sumRow?.total || 0));
-      updateStmt.run(total, row.sku, row.warehouse_id);
+      const movers = sqlite.prepare(
+        `SELECT DISTINCT product_id FROM stock_movements
+         WHERE warehouse_id = ? AND product_id IN (
+           SELECT id FROM products WHERE LOWER(TRIM(COALESCE(sku, ''))) = LOWER(?)
+         )`,
+      ).all(row.warehouse_id, row.sku);
+      for (const m of movers) {
+        if (!m.product_id || seenProductIds.has(m.product_id)) continue;
+        seenProductIds.add(m.product_id);
+        const sumRow = sqlite.prepare(
+          `SELECT COALESCE(SUM(
+             CASE WHEN movement_type = 'IN' THEN quantity
+                  WHEN movement_type = 'OUT' THEN -quantity ELSE 0 END
+           ), 0) AS total
+           FROM stock_movements WHERE product_id = ? AND warehouse_id = ?`,
+        ).get(m.product_id, row.warehouse_id);
+        const total = Number(sumRow?.total || 0);
+        updateByProductStmt.run(total, m.product_id);
+      }
     }
     if (pairs.length > 0) {
       console.log(`[DB] Reconciled stock for ${pairs.length} SKU/warehouse pair(s) from movements`);
@@ -559,6 +598,165 @@ function backfillJournalEntryBranchIds() {
       .run(mainBranch.id);
   } catch (error) {
     console.warn('[DB] journal_entries branch backfill skipped:', error.message);
+  }
+}
+
+function migrateDocumentSequencesBranchScopeSqlite() {
+  if (!sqlite || !tableExists('document_sequences')) return;
+
+  const tableSql = String(
+    sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='document_sequences'").get()?.sql || ''
+  );
+  const hasBranchInSchema = tableSql.includes('branch_id');
+
+  if (!hasBranchInSchema) {
+    try {
+      sqlite.exec(`
+        CREATE TABLE document_sequences_mig (
+          id TEXT PRIMARY KEY,
+          document_type TEXT NOT NULL,
+          prefix TEXT,
+          fiscal_year INTEGER NOT NULL,
+          branch_id TEXT NOT NULL DEFAULT '',
+          current_number INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(document_type, fiscal_year, branch_id)
+        );
+        INSERT INTO document_sequences_mig (id, document_type, prefix, fiscal_year, branch_id, current_number)
+          SELECT id, document_type, prefix, fiscal_year, '', current_number
+          FROM document_sequences;
+        DROP TABLE document_sequences;
+        ALTER TABLE document_sequences_mig RENAME TO document_sequences;
+      `);
+      console.log('[DB] document_sequences migrated to per-branch scope');
+    } catch (err) {
+      console.warn('[DB] document_sequences migration:', err.message);
+      tryAlterAdd('document_sequences', "branch_id TEXT NOT NULL DEFAULT ''");
+    }
+  }
+}
+
+function parseFcSequenceFromNumber(documentNumber, branchCode, yr) {
+  const code = String(branchCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'SEDE';
+  const perBranch = new RegExp(`^FC-${code}-${yr}-(\\d+)$`, 'i');
+  const m1 = String(documentNumber || '').match(perBranch);
+  if (m1) return parseInt(m1[1], 10);
+  const global = new RegExp(`^FC-${yr}-(\\d+)$`, 'i');
+  const m2 = String(documentNumber || '').match(global);
+  if (m2) return parseInt(m2[1], 10);
+  return 0;
+}
+
+function maxPurchaseInvoiceSequenceForBranch(branchId, branchCode, yr) {
+  if (!tableExists('open_items')) return 0;
+  const yearPrefix = `${yr}%`;
+  let maxSeq = 0;
+  try {
+    const rows = sqlite.prepare(
+      `SELECT document_number FROM open_items
+       WHERE document_type IN ('fatura_compra', 'purchase_invoice')
+         AND branch_id = ?
+         AND (document_date LIKE ? OR document_number LIKE ? OR document_number LIKE ?)`
+    ).all(branchId, yearPrefix, `FC-${branchCode}-${yr}-%`, `FC-${yr}-%`);
+    for (const row of rows) {
+      maxSeq = Math.max(maxSeq, parseFcSequenceFromNumber(row.document_number, branchCode, yr));
+    }
+  } catch {
+    /* ignore */
+  }
+  return maxSeq;
+}
+
+/** Seed document_sequences from existing rows (idempotent). */
+function seedDocumentSequencesSqlite() {
+  if (!sqlite || !tableExists('document_sequences')) return;
+  migrateDocumentSequencesBranchScopeSqlite();
+  const yr = new Date().getFullYear();
+  const yearPrefix = `${yr}%`;
+  const globalSeeds = [
+    ['invoice', 'INV', () => {
+      try {
+        return sqlite.prepare(
+          `SELECT COUNT(*) AS c FROM sales WHERE created_at LIKE ? OR invoice_number LIKE ?`
+        ).get(yearPrefix, `INV-${yr}-%`)?.c || 0;
+      } catch {
+        return 0;
+      }
+    }],
+    ['payment_receipt', 'REC', () => countTableYear('payments', "payment_type = 'receipt'")],
+    ['payment_out', 'PAG', () => countTableYear('payments', "payment_type = 'payment'")],
+    ['purchase_order', 'PO', () => countTableYear('purchase_orders')],
+    ['stock_transfer', 'TRF', () => countTableYear('stock_transfers')],
+    ['journal', 'JE', () => countTableYear('journal_entries')],
+  ];
+
+  const ins = sqlite.prepare(`
+    INSERT INTO document_sequences (id, document_type, prefix, fiscal_year, branch_id, current_number)
+    VALUES (?, ?, ?, ?, '', ?)
+    ON CONFLICT(document_type, fiscal_year, branch_id) DO UPDATE SET
+      prefix = excluded.prefix,
+      current_number = MAX(document_sequences.current_number, excluded.current_number)
+  `);
+
+  for (const [docType, prefix, countFn] of globalSeeds) {
+    try {
+      const n = Number(countFn());
+      ins.run(crypto.randomUUID(), docType, prefix, yr, n);
+    } catch (err) {
+      console.warn(`[DB] seed sequence ${docType}:`, err.message);
+    }
+  }
+
+  if (!tableExists('branches')) return;
+  const insBranch = sqlite.prepare(`
+    INSERT INTO document_sequences (id, document_type, prefix, fiscal_year, branch_id, current_number)
+    VALUES (?, 'purchase_invoice', 'FC', ?, ?, ?)
+    ON CONFLICT(document_type, fiscal_year, branch_id) DO UPDATE SET
+      current_number = MAX(document_sequences.current_number, excluded.current_number)
+  `);
+  try {
+    const branches = sqlite.prepare('SELECT id, code FROM branches WHERE is_active = 1 OR is_active IS NULL').all();
+    for (const branch of branches) {
+      const code = String(branch.code || 'SEDE').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'SEDE';
+      const maxSeq = maxPurchaseInvoiceSequenceForBranch(branch.id, code, yr);
+      insBranch.run(crypto.randomUUID(), yr, branch.id, maxSeq);
+    }
+  } catch (err) {
+    console.warn('[DB] seed purchase_invoice per branch:', err.message);
+  }
+}
+
+function countTableYear(table, extraWhere = '1=1') {
+  if (!tableExists(table)) return 0;
+  const yr = new Date().getFullYear();
+  const row = sqlite.prepare(
+    `SELECT COUNT(*) AS c FROM ${table} WHERE (${extraWhere}) AND created_at LIKE ?`
+  ).get(`${yr}%`);
+  return Number(row?.c || 0);
+}
+
+/** Enforce uniqueness on business numbers (SQLite desktop DB). */
+function ensureUniqueIntegrityIndexesSqlite() {
+  if (!sqlite) return;
+  const indexes = [
+    ['idx_sales_invoice_number', 'sales', 'invoice_number', "invoice_number IS NOT NULL AND invoice_number != ''"],
+    ['idx_payments_payment_number', 'payments', 'payment_number', "payment_number IS NOT NULL AND payment_number != ''"],
+    ['idx_po_order_number', 'purchase_orders', 'order_number', "order_number IS NOT NULL AND order_number != ''"],
+    ['idx_journal_entry_number', 'journal_entries', 'entry_number', "entry_number IS NOT NULL AND entry_number != ''"],
+    ['idx_stock_transfer_number', 'stock_transfers', 'transfer_number', "transfer_number IS NOT NULL AND transfer_number != ''"],
+    ['idx_supplier_returns_return_number', 'supplier_returns', 'return_number', "return_number IS NOT NULL AND return_number != ''"],
+    ['idx_products_sku_branch', 'products', 'sku, branch_id', "sku IS NOT NULL AND TRIM(sku) != ''"],
+    ['idx_open_items_document_id', 'open_items', 'document_id', "document_id IS NOT NULL AND document_id != ''"],
+    ['idx_purchase_invoices_number_branch', 'purchase_invoices', 'invoice_number, branch_id', "invoice_number IS NOT NULL AND invoice_number != ''"],
+  ];
+  for (const [name, table, cols, where] of indexes) {
+    if (!tableExists(table)) continue;
+    try {
+      sqlite.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${name} ON ${table}(${cols}) WHERE ${where}`
+      );
+    } catch (err) {
+      console.warn(`[DB] unique index ${name}:`, err.message);
+    }
   }
 }
 
@@ -892,7 +1090,65 @@ function bootstrapSchemaAndSeed() {
       completed_at TEXT,
       notes TEXT DEFAULT ''
     );
+
+    CREATE TABLE IF NOT EXISTS purchase_invoices (
+      id TEXT PRIMARY KEY,
+      invoice_number TEXT NOT NULL,
+      supplier_account_code TEXT DEFAULT '',
+      supplier_name TEXT NOT NULL DEFAULT '',
+      supplier_id TEXT DEFAULT '',
+      supplier_nif TEXT DEFAULT '',
+      supplier_phone TEXT DEFAULT '',
+      supplier_balance REAL NOT NULL DEFAULT 0,
+      ref TEXT DEFAULT '',
+      supplier_invoice_no TEXT DEFAULT '',
+      contact TEXT DEFAULT '',
+      department TEXT DEFAULT '',
+      ref2 TEXT DEFAULT '',
+      date TEXT NOT NULL,
+      payment_date TEXT,
+      project TEXT DEFAULT '',
+      currency TEXT DEFAULT 'KZ',
+      warehouse_id TEXT DEFAULT '',
+      warehouse_name TEXT DEFAULT '',
+      price_type TEXT DEFAULT 'last_price',
+      address TEXT DEFAULT '',
+      purchase_account_code TEXT DEFAULT '2.1.1',
+      iva_account_code TEXT DEFAULT '3.3.1',
+      transaction_type TEXT DEFAULT 'ALL',
+      currency_rate REAL NOT NULL DEFAULT 1,
+      tax_rate_2 REAL NOT NULL DEFAULT 0,
+      order_no TEXT DEFAULT '',
+      surcharge_percent REAL NOT NULL DEFAULT 0,
+      change_price INTEGER NOT NULL DEFAULT 0,
+      is_pending INTEGER NOT NULL DEFAULT 0,
+      extra_note TEXT DEFAULT '',
+      lines_json TEXT NOT NULL DEFAULT '[]',
+      journal_lines_json TEXT NOT NULL DEFAULT '[]',
+      subtotal REAL NOT NULL DEFAULT 0,
+      iva_total REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'confirmed',
+      purchase_returns_status TEXT DEFAULT 'none',
+      purchase_returns_closed_at TEXT,
+      branch_id TEXT DEFAULT '',
+      branch_name TEXT DEFAULT '',
+      created_by TEXT DEFAULT '',
+      created_by_name TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
+
+  try {
+    sqlite.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_purchase_invoices_number_branch
+        ON purchase_invoices(invoice_number, branch_id)
+        WHERE invoice_number IS NOT NULL AND invoice_number != ''
+    `);
+  } catch (err) {
+    console.warn('[DB] purchase_invoices unique index:', err.message);
+  }
 
   seedDefaultChartOfAccounts();
 
@@ -1070,6 +1326,48 @@ try {
   }
 }
 
+function openSqliteConnection() {
+  if (USE_POSTGRES) {
+    throw new Error('SQLite is not active');
+  }
+  if (sqlite) return sqlite;
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+  sqlite = new Database(dbPath);
+  sqlite.pragma('foreign_keys = ON');
+  sqlite.pragma('journal_mode = WAL');
+  sqlite.pragma('busy_timeout = 5000');
+  return sqlite;
+}
+
+/** Close SQLite handle (used before full database file restore). */
+function closeSqliteConnection() {
+  if (!sqlite) return;
+  try {
+    sqlite.pragma('wal_checkpoint(TRUNCATE)');
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    sqlite.close();
+  } catch (_) {
+    /* ignore */
+  }
+  sqlite = null;
+}
+
+/** Reopen SQLite after restore; reapplies schema guards. */
+function reopenSqliteConnection() {
+  if (USE_POSTGRES) {
+    throw new Error('SQLite is not active');
+  }
+  closeSqliteConnection();
+  openSqliteConnection();
+  ensureAppTablesAndColumns();
+  return sqlite;
+}
+
 module.exports = {
   query,
   sqlite,
@@ -1077,4 +1375,7 @@ module.exports = {
   dbPath,
   engine: USE_POSTGRES ? 'postgres' : 'sqlite',
   ensureDailyReportsSchema,
+  closeSqliteConnection,
+  reopenSqliteConnection,
+  openSqliteConnection,
 };

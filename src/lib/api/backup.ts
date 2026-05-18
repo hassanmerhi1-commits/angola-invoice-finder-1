@@ -1,0 +1,266 @@
+import {
+  getApiUrl,
+  getApiUrlAsync,
+  invalidateElectronApiBaseCache,
+  isDemoMode,
+} from '@/lib/api/config';
+
+function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('kwanza_auth_token');
+}
+
+export interface BackupInfo {
+  engine: 'sqlite' | 'postgres';
+  databasePath: string | null;
+  databaseSize: number | null;
+  backupDir: string;
+  backupExtension: '.db' | '.sql';
+  appVersion: string;
+  restoreInProgress: boolean;
+}
+
+export interface BackupFileEntry {
+  filename: string;
+  size: number;
+  createdAt: string;
+  engine: 'sqlite' | 'postgres';
+}
+
+export interface CreateBackupResult {
+  success: boolean;
+  filename: string;
+  size: number;
+  path: string;
+  engine: string;
+  timestamp: string;
+}
+
+export type BackupConnectionIssue =
+  | 'demo'
+  | 'offline'
+  | 'timeout'
+  | 'not_found'
+  | 'server_error'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'unknown';
+
+export class BackupApiError extends Error {
+  issue: BackupConnectionIssue;
+  apiBase?: string;
+
+  constructor(message: string, issue: BackupConnectionIssue, apiBase?: string) {
+    super(message);
+    this.name = 'BackupApiError';
+    this.issue = issue;
+    this.apiBase = apiBase;
+  }
+}
+
+async function resolveApiBase(forceRefresh = false): Promise<string> {
+  if (forceRefresh) invalidateElectronApiBaseCache();
+  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
+  if (isElectron) {
+    return getApiUrlAsync({ waitForPortMs: 12000 });
+  }
+  return getApiUrl();
+}
+
+async function parseError(response: Response): Promise<string> {
+  try {
+    const j = await response.json();
+    return j?.error || j?.message || `HTTP ${response.status}`;
+  } catch {
+    return `HTTP ${response.status}`;
+  }
+}
+
+function classifyFetchError(err: unknown, status?: number): BackupConnectionIssue {
+  if (status === 404) return 'not_found';
+  if (status != null && status >= 500) return 'server_error';
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes('404')) return 'not_found';
+  if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) return 'timeout';
+  if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('ECONNREFUSED')) {
+    return 'offline';
+  }
+  return 'unknown';
+}
+
+/** Verify embedded / LAN Express is up before backup routes. */
+export async function probeBackupApi(base?: string): Promise<{ ok: boolean; base: string; health?: Record<string, unknown> }> {
+  if (isDemoMode()) {
+    throw new BackupApiError('Demo mode', 'demo');
+  }
+
+  let apiBase = base ?? (await resolveApiBase());
+  const origin = new URL(apiBase).origin;
+
+  const tryHealth = async (url: string) => {
+    const res = await fetch(`${url}/api/health`, {
+      signal: AbortSignal.timeout(8000),
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) {
+      throw new BackupApiError(await parseError(res), classifyFetchError(null, res.status), url);
+    }
+    const health = await res.json().catch(() => ({}));
+    if (health?.ok !== true) {
+      throw new BackupApiError('ERP server health check failed', 'server_error', url);
+    }
+    return health as Record<string, unknown>;
+  };
+
+  try {
+    const health = await tryHealth(origin);
+    return { ok: true, base: origin, health };
+  } catch (firstErr) {
+    const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
+    if (!isElectron) throw firstErr;
+
+    invalidateElectronApiBaseCache();
+    apiBase = await resolveApiBase(true);
+    const retryOrigin = new URL(apiBase).origin;
+    try {
+      const health = await tryHealth(retryOrigin);
+      return { ok: true, base: retryOrigin, health };
+    } catch (secondErr) {
+      if (firstErr instanceof BackupApiError) throw firstErr;
+      if (secondErr instanceof BackupApiError) throw secondErr;
+      throw new BackupApiError(
+        secondErr instanceof Error ? secondErr.message : String(secondErr),
+        classifyFetchError(secondErr),
+        retryOrigin,
+      );
+    }
+  }
+}
+
+async function backupFetch<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  if (isDemoMode()) {
+    throw new BackupApiError('Demo mode', 'demo');
+  }
+
+  const token = getAuthToken();
+  const headers: HeadersInit = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {}),
+  };
+
+  const attempt = async (base: string): Promise<T> => {
+    const origin = new URL(base).origin;
+    await probeBackupApi(origin);
+    const res = await fetch(`${origin}${path}`, {
+      ...options,
+      headers,
+      signal: options.signal ?? AbortSignal.timeout(120000),
+    });
+    if (!res.ok) {
+      const msg = await parseError(res);
+      throw new BackupApiError(msg, classifyFetchError(null, res.status), origin);
+    }
+    if (res.status === 204) return undefined as T;
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      return undefined as T;
+    }
+    return res.json() as Promise<T>;
+  };
+
+  try {
+    const base = await resolveApiBase();
+    return await attempt(base);
+  } catch (err) {
+    const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
+    if (!isElectron || err instanceof BackupApiError) throw err;
+    invalidateElectronApiBaseCache();
+    const base = await resolveApiBase(true);
+    return await attempt(base);
+  }
+}
+
+export async function fetchBackupInfo(): Promise<BackupInfo> {
+  return backupFetch<BackupInfo>('/api/backup/info');
+}
+
+export async function listDatabaseBackups(): Promise<BackupFileEntry[]> {
+  return backupFetch<BackupFileEntry[]>('/api/backup');
+}
+
+export async function createDatabaseBackup(): Promise<CreateBackupResult> {
+  return backupFetch<CreateBackupResult>('/api/backup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export async function downloadDatabaseBackup(filename: string): Promise<void> {
+  const base = await resolveApiBase();
+  const origin = new URL(base).origin;
+  await probeBackupApi(origin);
+  const token = getAuthToken();
+  const res = await fetch(`${origin}/api/backup/${encodeURIComponent(filename)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    signal: AbortSignal.timeout(300000),
+  });
+  if (!res.ok) throw new BackupApiError(await parseError(res), classifyFetchError(null, res.status), origin);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export async function restoreDatabaseBackupFile(file: File): Promise<{ requiresRestart?: boolean }> {
+  const base = await resolveApiBase();
+  const origin = new URL(base).origin;
+  await probeBackupApi(origin);
+  const token = getAuthToken();
+  const buffer = await file.arrayBuffer();
+  const res = await fetch(`${origin}/api/backup/restore/upload`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-Filename': file.name,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: buffer,
+    signal: AbortSignal.timeout(600000),
+  });
+  if (!res.ok) throw new BackupApiError(await parseError(res), classifyFetchError(null, res.status), origin);
+  return res.json();
+}
+
+export async function restoreDatabaseBackupByName(filename: string): Promise<{ requiresRestart?: boolean }> {
+  return backupFetch<{ requiresRestart?: boolean }>(
+    `/api/backup/restore/${encodeURIComponent(filename)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    },
+  );
+}
+
+export async function deleteDatabaseBackup(filename: string): Promise<void> {
+  await backupFetch<void>(`/api/backup/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+}
+
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let v = bytes;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}

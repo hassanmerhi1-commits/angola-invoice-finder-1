@@ -516,6 +516,14 @@ async function createOpenItem(client, params) {
   requireParam(documentId, 'documentId');
   const amount = requirePositive(originalAmount, 'originalAmount');
 
+  const existing = await client.query(
+    'SELECT id FROM open_items WHERE document_id = $1 LIMIT 1',
+    [documentId]
+  );
+  if (existing.rows.length > 0) {
+    throw new Error(`Documento já registado: ${documentNumber || documentId}`);
+  }
+
   const oiId = randomUUID();
   await client.query(
     `INSERT INTO open_items 
@@ -677,6 +685,14 @@ async function processSale(client, saleData) {
   // ── Step 1: Generate invoice number (locked sequence) ──
   if (!invoiceNumber) {
     invoiceNumber = await generateSequenceNumber(client, 'invoice', 'INV');
+  } else {
+    const dup = await client.query(
+      'SELECT 1 FROM sales WHERE invoice_number = $1 LIMIT 1',
+      [invoiceNumber]
+    );
+    if (dup.rows.length > 0) {
+      invoiceNumber = await generateSequenceNumber(client, 'invoice', 'INV');
+    }
   }
 
   // ── Step 2: Resolve product IDs + Validate stock BEFORE any writes (FOR UPDATE) ──

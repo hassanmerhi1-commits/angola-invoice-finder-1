@@ -4,9 +4,40 @@
 
 import { Product } from '@/types/erp';
 import { api } from '@/lib/api/client';
-import { isElectronMode, dbGetAll, dbInsert, dbDelete as dbDeleteRow, lsGet, lsSet } from '@/lib/dbHelper';
+import { isDemoMode } from '@/lib/api/config';
+import { lsGet, lsSet } from '@/lib/dbHelper';
 
 const STORAGE_KEY = 'kwanzaerp_purchase_invoices';
+const LEGACY_MIGRATED_KEY = 'kwanzaerp_purchase_invoices_migrated_to_api';
+
+/** Production: SQLite via Express API. Demo/browser: localStorage only. */
+function usePurchaseInvoiceApi(): boolean {
+  return !isDemoMode();
+}
+
+async function migrateLegacyPurchaseInvoicesToApi(): Promise<void> {
+  if (!usePurchaseInvoiceApi()) return;
+  if (typeof localStorage !== 'undefined' && localStorage.getItem(LEGACY_MIGRATED_KEY) === '1') {
+    return;
+  }
+  const legacy = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []);
+  if (!legacy.length) {
+    localStorage?.setItem(LEGACY_MIGRATED_KEY, '1');
+    return;
+  }
+  const existing = await api.purchaseInvoices.list();
+  if (existing.data && existing.data.length > 0) {
+    localStorage?.setItem(LEGACY_MIGRATED_KEY, '1');
+    return;
+  }
+  for (const inv of legacy) {
+    const normalized = normalizeInvoiceWarehouse(inv);
+    await api.purchaseInvoices.save(normalized);
+  }
+  lsSet(STORAGE_KEY, []);
+  localStorage?.setItem(LEGACY_MIGRATED_KEY, '1');
+  console.log(`[PurchaseInvoice] Migrated ${legacy.length} legacy invoice(s) to API storage`);
+}
 
 export interface PurchaseInvoiceLine {
   id: string;
@@ -258,29 +289,22 @@ export async function getPurchaseInvoices(
   branchId?: string,
   branchCatalog?: BranchRef[],
 ): Promise<PurchaseInvoice[]> {
-  if (isElectronMode()) {
-    const piRows = await dbGetAll<any>('purchase_invoices');
-    const piDocs = piRows.map(mapPIFromDb);
-    const docRows = (await dbGetAll<any>('erp_documents'))
-      .filter((row) => row.document_type === 'fatura_compra')
-      .map(mapPIFromDocumentDb);
-
-    const lsDocs = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []);
-    const merged = new Map<string, PurchaseInvoice>();
-    for (const d of docRows) merged.set(d.id, normalizeInvoiceWarehouse(d));
-    for (const d of piDocs) {
-      merged.set(d.id, mergePurchaseInvoiceRecords(merged.get(d.id), d));
+  if (usePurchaseInvoiceApi()) {
+    await migrateLegacyPurchaseInvoicesToApi();
+    const res = await api.purchaseInvoices.list(branchId ? { branchId } : undefined);
+    if (res.error) {
+      console.error('[PurchaseInvoice] API list failed:', res.error);
+      return [];
     }
-    for (const d of lsDocs) {
-      merged.set(d.id, mergePurchaseInvoiceRecords(merged.get(d.id), d));
-    }
-    let docs = Array.from(merged.values());
-
+    let docs = (res.data || []).map((row) =>
+      normalizeInvoiceWarehouse(mapPIFromApiRow(row)),
+    );
     if (branchId) {
       docs = docs.filter((d) => invoiceBelongsToBranch(d, branchId, branchCatalog));
     }
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
+
   let docs = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []).map(normalizeInvoiceWarehouse);
   if (branchId) {
     docs = docs.filter((d) => invoiceBelongsToBranch(d, branchId, branchCatalog));
@@ -293,6 +317,25 @@ export async function getPurchaseInvoiceById(id: string): Promise<PurchaseInvoic
   return all.find(d => d.id === id);
 }
 
+/** Allocate next FC number from server sequence (FC-BRANCH-YYYY-NNNNN). */
+export async function allocatePurchaseInvoiceNumber(branchId: string): Promise<string> {
+  const { api } = await import('@/lib/api/client');
+  const res = await api.transactions.allocateNumber('purchase_invoice', branchId);
+  if (res.error) throw new Error(res.error);
+  const num = res.data?.documentNumber;
+  if (!num) throw new Error('Failed to allocate purchase invoice number');
+  return num;
+}
+
+/** Preview next FC number without consuming it. */
+export async function peekPurchaseInvoiceNumber(branchId: string): Promise<string | null> {
+  const { api } = await import('@/lib/api/client');
+  const res = await api.transactions.peekNextNumber('purchase_invoice', branchId);
+  if (res.error || !res.data?.documentNumber) return null;
+  return res.data.documentNumber;
+}
+
+/** @deprecated Use allocatePurchaseInvoiceNumber — local fallback for offline demo only */
 export function generatePurchaseInvoiceNumber(branchCode: string): string {
   const now = new Date();
   const date = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
@@ -301,38 +344,32 @@ export function generatePurchaseInvoiceNumber(branchCode: string): string {
 }
 
 export async function savePurchaseInvoice(invoice: PurchaseInvoice): Promise<PurchaseInvoice> {
-  if (isElectronMode()) {
-    const saved = await dbInsert('purchase_invoices', mapPIToDb(invoice));
-    if (!saved) {
-      console.warn('[PurchaseInvoice] purchase_invoices table unavailable in Electron, relying on erp_documents sync');
-    }
-    const all = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []);
-    const idx = all.findIndex(d => d.id === invoice.id);
-    if (idx >= 0) {
-      all[idx] = { ...invoice, updatedAt: new Date().toISOString() };
-    } else {
-      all.push(invoice);
-    }
-    lsSet(STORAGE_KEY, all);
-    return invoice;
+  const payload = normalizeInvoiceWarehouse({
+    ...invoice,
+    updatedAt: new Date().toISOString(),
+  });
+
+  if (usePurchaseInvoiceApi()) {
+    const res = await api.purchaseInvoices.save(payload);
+    if (res.error) throw new Error(res.error);
+    return res.data ? mapPIFromApiRow(res.data) : payload;
   }
+
   const all = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []);
-  const idx = all.findIndex(d => d.id === invoice.id);
-  if (idx >= 0) {
-    all[idx] = { ...invoice, updatedAt: new Date().toISOString() };
-  } else {
-    all.push(invoice);
-  }
+  const idx = all.findIndex((d) => d.id === payload.id);
+  if (idx >= 0) all[idx] = payload;
+  else all.push(payload);
   lsSet(STORAGE_KEY, all);
-  return invoice;
+  return payload;
 }
 
 export async function deletePurchaseInvoice(id: string): Promise<void> {
-  if (isElectronMode()) {
-    await dbDeleteRow('purchase_invoices', id);
+  if (usePurchaseInvoiceApi()) {
+    const res = await api.purchaseInvoices.delete(id);
+    if (res.error) throw new Error(res.error);
     return;
   }
-  lsSet(STORAGE_KEY, lsGet<PurchaseInvoice[]>(STORAGE_KEY, []).filter(d => d.id !== id));
+  lsSet(STORAGE_KEY, lsGet<PurchaseInvoice[]>(STORAGE_KEY, []).filter((d) => d.id !== id));
 }
 
 // ---------- Line calculations ----------
@@ -514,7 +551,15 @@ export async function applySupplierBalanceUpdate(invoice: PurchaseInvoice): Prom
   }
 }
 
-// DB mappers
+/** API returns camelCase; map legacy snake_case if needed. */
+function mapPIFromApiRow(row: PurchaseInvoice | Record<string, unknown>): PurchaseInvoice {
+  if (row && typeof row === 'object' && 'invoiceNumber' in row && !('invoice_number' in row)) {
+    return row as PurchaseInvoice;
+  }
+  return mapPIFromDb(row);
+}
+
+// DB row mappers (API / legacy)
 function mapPIFromDb(row: any): PurchaseInvoice {
   return {
     id: row.id,
@@ -562,6 +607,8 @@ function mapPIFromDb(row: any): PurchaseInvoice {
     ivaTotal: Number(row.iva_total || 0),
     total: Number(row.total || 0),
     status: row.status || 'draft',
+    purchaseReturnsStatus: row.purchase_returns_status || row.purchaseReturnsStatus || 'none',
+    purchaseReturnsClosedAt: row.purchase_returns_closed_at || row.purchaseReturnsClosedAt,
     branchId: row.branch_id || row.branchId || '',
     branchName: row.branch_name || row.branchName || '',
     createdBy: row.created_by || '',
@@ -604,6 +651,8 @@ function mapPIToDb(invoice: PurchaseInvoice): any {
     iva_total: invoice.ivaTotal,
     total: invoice.total,
     status: invoice.status,
+    purchase_returns_status: invoice.purchaseReturnsStatus || 'none',
+    purchase_returns_closed_at: invoice.purchaseReturnsClosedAt || null,
     branch_id: invoice.branchId || '',
     branch_name: invoice.branchName,
     created_by: invoice.createdBy,

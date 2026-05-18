@@ -1,0 +1,39 @@
+name: CI Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  backend-tests:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install root dependencies (Electron for native ABI tests)
+        run: npm ci
+        working-directory: .
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Rebuild better-sqlite3 for Electron
+        run: npm run rebuild:backend
+        working-directory: .
+
+      - name: Run automated tests
+        run: npm test

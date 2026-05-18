@@ -93,7 +93,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { label: t.topNav.file.save, icon: Save },
         { label: t.topNav.file.print, icon: Printer },
         { label: 'separator' },
-        { label: t.topNav.file.backup, icon: Database },
+        { label: t.topNav.file.backup, icon: Database, path: '/settings' },
         { label: t.topNav.file.import, icon: Download },
         { label: 'separator' },
         { label: t.topNav.file.exit, icon: LogOut, action: onLogout },

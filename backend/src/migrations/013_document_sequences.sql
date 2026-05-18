@@ -36,7 +36,12 @@ BEGIN
     ('payment_out', 'PAG', yr, COALESCE((SELECT COUNT(*) FROM payments WHERE payment_type = 'payment' AND EXTRACT(YEAR FROM created_at) = yr), 0)),
     ('purchase_order', 'PO', yr, COALESCE((SELECT COUNT(*) FROM purchase_orders WHERE EXTRACT(YEAR FROM created_at) = yr), 0)),
     ('stock_transfer', 'TRF', yr, COALESCE((SELECT COUNT(*) FROM stock_transfers WHERE EXTRACT(YEAR FROM created_at) = yr), 0)),
-    ('journal', 'JE', yr, COALESCE((SELECT COUNT(*) FROM journal_entries WHERE EXTRACT(YEAR FROM created_at) = yr), 0))
+    ('journal', 'JE', yr, COALESCE((SELECT COUNT(*) FROM journal_entries WHERE EXTRACT(YEAR FROM created_at) = yr), 0)),
+    ('purchase_invoice', 'FC', yr, COALESCE((
+      SELECT COUNT(*) FROM open_items
+      WHERE document_type IN ('fatura_compra', 'purchase_invoice')
+        AND EXTRACT(YEAR FROM document_date::date) = yr
+    ), 0))
   ON CONFLICT (document_type, fiscal_year) DO UPDATE
   SET
     prefix = EXCLUDED.prefix,

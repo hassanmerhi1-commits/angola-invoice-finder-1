@@ -260,13 +260,15 @@ module.exports = function(broadcastTable) {
 
   router.post('/reconcile-balances', async (req, res) => {
     try {
-      const { runSupplierBalanceRepair } = require('../supplierBalanceRepair');
-      const result = await runSupplierBalanceRepair();
+      const { runDataConsistencyRepair } = require('../dataConsistencyRepair');
+      const result = await runDataConsistencyRepair();
       await broadcastTable('suppliers');
+      await broadcastTable('clients');
+      await broadcastTable('products');
       res.json(result);
     } catch (error) {
       console.error('[SUPPLIERS ERROR] reconcile-balances:', error);
-      res.status(500).json({ error: error.message || 'Failed to reconcile supplier balances' });
+      res.status(500).json({ error: error.message || 'Failed to reconcile balances' });
     }
   });
 

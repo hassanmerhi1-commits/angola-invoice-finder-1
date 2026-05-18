@@ -192,7 +192,7 @@ export default function Payments() {
     const createdBy = user?.id || user?.email || 'user-admin';
 
     try {
-      const saved = await createPayment({
+      await createPayment({
         paymentType,
         entityType: paymentType === 'receipt' ? 'customer' : 'supplier',
         entityId,
@@ -205,9 +205,6 @@ export default function Payments() {
         notes,
         invoiceIds: selected.map(oi => oi.documentId),
       });
-      if (saved) {
-        setPayments((prev) => [mapPaymentRow(saved), ...prev]);
-      }
       toast.success(paymentType === 'receipt' ? t.paymentsUi.receiptRecorded : t.paymentsUi.paymentRecorded);
       setShowNewDialog(false);
       resetForm();

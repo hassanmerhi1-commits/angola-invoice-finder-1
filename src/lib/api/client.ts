@@ -28,6 +28,62 @@ export function setAuthToken(token: string | null): void {
   }
 }
 
+/** True for JWT from POST /api/auth/login (not Electron IPC `local-…` placeholders). */
+export function isJwtAuthToken(token: string | null | undefined): boolean {
+  if (!token || token.startsWith('local-')) return false;
+  return token.split('.').length === 3;
+}
+
+function collectLoginEmails(preferredEmail?: string): string[] {
+  const emails: string[] = [];
+  if (preferredEmail?.trim()) emails.push(preferredEmail.trim());
+
+  try {
+    const raw = localStorage.getItem('kwanzaerp_current_user');
+    if (raw) {
+      const u = JSON.parse(raw) as { email?: string; username?: string; role?: string };
+      if (u.email) emails.push(u.email);
+      const uname = (u.username || u.email?.split('@')?.[0] || '').trim().toLowerCase();
+      if (uname) {
+        emails.push(`${uname}@nexor.local`);
+        emails.push(`${uname}@kwanzaerp.ao`);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  emails.push('admin@nexor.local');
+  return [...new Set(emails.map((e) => e.toLowerCase()))];
+}
+
+/**
+ * Obtain a real JWT from the embedded Express server (required for admin API routes).
+ */
+export async function ensureBackendAuthToken(preferredEmail?: string): Promise<string | null> {
+  const existing = getAuthToken();
+  if (isJwtAuthToken(existing)) return existing;
+
+  if (existing && !isJwtAuthToken(existing)) {
+    setAuthToken(null);
+  }
+
+  if (isDemoMode()) return null;
+
+  const candidates = collectLoginEmails(preferredEmail);
+  for (const email of candidates) {
+    const result = await apiFetch<{ token: string; user: { role?: string } }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password: 'demo' }),
+    });
+    if (result.data?.token && isJwtAuthToken(result.data.token)) {
+      setAuthToken(result.data.token);
+      return result.data.token;
+    }
+  }
+  return null;
+}
+
 // ==================== IPC DATABASE HELPERS ====================
 async function ipcGetAll<T>(table: string): Promise<ApiResponse<T[]>> {
   try {
@@ -321,16 +377,15 @@ export const api = {
   auth: {
     login: async (email: string, password: string) => {
       if (isElectronMode()) {
-        const result = await ipcQuery<any>(
-          'SELECT * FROM users WHERE email = $1 AND is_active = true', [email]
-        );
-        if (result.data && result.data.length > 0) {
-          const user = result.data[0];
-          // Simple password check (in production, use bcrypt via IPC)
-          if (user.password_hash === password || user.password === password) {
-            const token = `local-${Date.now()}-${Math.random().toString(36).substr(2)}`;
-            setAuthToken(token);
-            return { data: { token, user: { id: user.id, name: user.name, email: user.email, role: user.role } } };
+        const tryEmails = collectLoginEmails(email);
+        for (const candidate of tryEmails) {
+          const httpResult = await apiFetch<{ token: string; user: any }>('/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ email: candidate, password: password || 'demo' }),
+          });
+          if (httpResult.data?.token && isJwtAuthToken(httpResult.data.token)) {
+            setAuthToken(httpResult.data.token);
+            return httpResult;
           }
         }
         return { error: 'Credenciais inválidas' };
@@ -754,6 +809,21 @@ export const api = {
         { method: 'POST', body: JSON.stringify(body) },
       );
     },
+  },
+
+  purchaseInvoices: {
+    list: (params?: { branchId?: string; status?: string }) => {
+      const sp = new URLSearchParams();
+      if (params?.branchId) sp.append('branchId', params.branchId);
+      if (params?.status) sp.append('status', params.status);
+      const qs = sp.toString();
+      return apiFetch<any[]>(`/purchase-invoices${qs ? `?${qs}` : ''}`);
+    },
+    get: (id: string) => apiFetch<any>(`/purchase-invoices/${encodeURIComponent(id)}`),
+    save: (invoice: any) =>
+      apiFetch<any>('/purchase-invoices', { method: 'POST', body: JSON.stringify(invoice) }),
+    delete: (id: string) =>
+      apiFetch<any>(`/purchase-invoices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
 
   // Chart of Accounts
@@ -1462,6 +1532,18 @@ export const api = {
   transactions: {
     process: (data: any) => {
       return apiFetch<any>('/transactions/process', { method: 'POST', body: JSON.stringify(data) });
+    },
+    peekNextNumber: (documentType: string, branchId?: string) => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<{ documentNumber: string; documentType: string; branchId?: string }>(
+        `/transactions/next-number/${encodeURIComponent(documentType)}${qs}`,
+      );
+    },
+    allocateNumber: (documentType: string, branchId?: string) => {
+      return apiFetch<{ documentNumber: string; documentType: string; branchId?: string }>('/transactions/allocate-number', {
+        method: 'POST',
+        body: JSON.stringify({ documentType, branchId }),
+      });
     },
     stockMovements: (params?: { productId?: string; warehouseId?: string; referenceType?: string; limit?: number }) => {
       const sp = new URLSearchParams();

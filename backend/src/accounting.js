@@ -1,7 +1,25 @@
 // Automatic Journal Entry Generator
 // Creates double-entry accounting records for all business transactions
-const db = require('./db');
 const { randomUUID } = require('crypto');
+
+/** Central registry of atomic document sequences (prefix + document_type key). */
+const DOCUMENT_SEQUENCE_CONFIG = {
+  invoice: { prefix: 'INV', perBranch: false },
+  purchase_invoice: { prefix: 'FC', perBranch: true },
+  payment_receipt: { prefix: 'REC', perBranch: false },
+  payment_out: { prefix: 'PAG', perBranch: false },
+  purchase_order: { prefix: 'PO', perBranch: false },
+  stock_transfer: { prefix: 'TRF', perBranch: false },
+  journal: { prefix: 'JE', perBranch: false },
+};
+
+function resolveSequenceConfig(documentType) {
+  const cfg = DOCUMENT_SEQUENCE_CONFIG[documentType];
+  if (!cfg) {
+    throw new Error(`Tipo de documento desconhecido para numeração: ${documentType}`);
+  }
+  return cfg;
+}
 
 function normalizeUuid(value) {
   if (typeof value !== 'string') return null;
@@ -16,11 +34,42 @@ function normalizeOptionalId(value) {
   return trimmed || null;
 }
 
+function normalizeBranchCode(code) {
+  const cleaned = String(code || 'SEDE').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return cleaned || 'SEDE';
+}
+
+/**
+ * @param {{ branchId?: string, branchCode?: string }} scope
+ */
+function normalizeSequenceScope(documentType, scope = {}) {
+  const cfg = resolveSequenceConfig(documentType);
+  if (!cfg.perBranch) {
+    return { branchId: '', branchCode: '' };
+  }
+  const branchId = String(scope.branchId || '').trim();
+  const branchCode = normalizeBranchCode(scope.branchCode);
+  if (!branchId) {
+    throw new Error('branchId é obrigatório para numeração por filial');
+  }
+  return { branchId, branchCode };
+}
+
+function formatSequenceNumber(prefix, yr, seqNum, scope, perBranch) {
+  const n = String(seqNum).padStart(5, '0');
+  if (perBranch) {
+    return `${prefix}-${scope.branchCode}-${yr}-${n}`;
+  }
+  return `${prefix}-${yr}-${n}`;
+}
+
 /**
  * Generate a unique document number from document_sequences (with row-level locking).
- * Falls back to COUNT-based generation if the table doesn't exist yet.
+ * @param {{ branchId?: string, branchCode?: string }} scope
  */
-async function generateSequenceNumber(client, documentType, prefix) {
+async function generateSequenceNumber(client, documentType, prefix, scope = {}) {
+  const cfg = resolveSequenceConfig(documentType);
+  const normalizedScope = normalizeSequenceScope(documentType, scope);
   const savepointName = 'document_sequence_generation';
   let savepointCreated = false;
 
@@ -31,33 +80,33 @@ async function generateSequenceNumber(client, documentType, prefix) {
     const yr = new Date().getFullYear();
     const seqResult = await client.query(
       `SELECT id, current_number FROM document_sequences
-       WHERE document_type = $1 AND fiscal_year = $2
+       WHERE document_type = $1 AND fiscal_year = $2 AND branch_id = $3
        FOR UPDATE`,
-      [documentType, yr]
+      [documentType, yr, normalizedScope.branchId]
     );
 
     if (seqResult.rows.length > 0) {
-      const nextNum = parseInt(seqResult.rows[0].current_number) + 1;
+      const nextNum = parseInt(seqResult.rows[0].current_number, 10) + 1;
       await client.query(
         `UPDATE document_sequences SET current_number = $1 WHERE id = $2`,
         [nextNum, seqResult.rows[0].id]
       );
-      return `${prefix}-${yr}-${String(nextNum).padStart(5, '0')}`;
+      await client.query(`RELEASE SAVEPOINT ${savepointName}`);
+      return formatSequenceNumber(prefix, yr, nextNum, normalizedScope, cfg.perBranch);
     }
 
-    // Auto-create row
     const insertResult = await client.query(
-      `INSERT INTO document_sequences (id, document_type, prefix, fiscal_year, current_number)
-       VALUES ($1, $2, $3, $4, 1)
-       ON CONFLICT (document_type, fiscal_year)
+      `INSERT INTO document_sequences (id, document_type, prefix, fiscal_year, branch_id, current_number)
+       VALUES ($1, $2, $3, $4, $5, 1)
+       ON CONFLICT (document_type, fiscal_year, branch_id)
        DO UPDATE SET current_number = document_sequences.current_number + 1
        RETURNING current_number`,
-      [randomUUID(), documentType, prefix, yr]
+      [randomUUID(), documentType, prefix, yr, normalizedScope.branchId]
     );
     await client.query(`RELEASE SAVEPOINT ${savepointName}`);
 
     const nextNum = parseInt(insertResult.rows[0]?.current_number ?? 1, 10);
-    return `${prefix}-${yr}-${String(nextNum).padStart(5, '0')}`;
+    return formatSequenceNumber(prefix, yr, nextNum, normalizedScope, cfg.perBranch);
   } catch (e) {
     if (savepointCreated) {
       try {
@@ -68,10 +117,40 @@ async function generateSequenceNumber(client, documentType, prefix) {
       }
     }
 
-    // Fallback if table doesn't exist
     console.warn(`[ACCOUNTING] document_sequences unavailable for ${documentType}:`, e.message);
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const yr = new Date().getFullYear();
+    if (cfg.perBranch) {
+      return `${prefix}-${normalizedScope.branchCode}-${yr}-${String(Date.now() % 10000).padStart(4, '0')}`;
+    }
     return `${prefix}${today}${String(Date.now() % 10000).padStart(4, '0')}`;
+  }
+}
+
+/**
+ * Preview the next sequence number without consuming it (for UI labels only).
+ * @param {{ branchId?: string, branchCode?: string }} scope
+ */
+async function peekSequenceNumber(client, documentType, prefix, scope = {}) {
+  const cfg = resolveSequenceConfig(documentType);
+  const normalizedScope = normalizeSequenceScope(documentType, scope);
+  const yr = new Date().getFullYear();
+  try {
+    const seqResult = await client.query(
+      `SELECT current_number FROM document_sequences
+       WHERE document_type = $1 AND fiscal_year = $2 AND branch_id = $3`,
+      [documentType, yr, normalizedScope.branchId]
+    );
+    const nextNum = seqResult.rows.length > 0
+      ? parseInt(seqResult.rows[0].current_number, 10) + 1
+      : 1;
+    return formatSequenceNumber(prefix, yr, nextNum, normalizedScope, cfg.perBranch);
+  } catch {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    if (cfg.perBranch) {
+      return `${prefix}-${normalizedScope.branchCode}-${yr}-00001`;
+    }
+    return `${prefix}${today}0001`;
   }
 }
 
@@ -97,7 +176,6 @@ async function createJournalEntry(client, params) {
     createdBy, lines, entryDate
   } = params;
 
-  // Input validation
   if (!lines || lines.length === 0) {
     throw new Error('Journal entry must have at least one line');
   }
@@ -105,7 +183,6 @@ async function createJournalEntry(client, params) {
     throw new Error('Journal entry description is required');
   }
 
-  // Generate entry number from centralized sequences
   const prefixMap = {
     sale: 'VD', purchase: 'CP', purchase_invoice: 'CP', transfer: 'TRF',
     expense: 'DSP', adjustment: 'AJ', receipt: 'REC', payment: 'PAG',
@@ -117,33 +194,29 @@ async function createJournalEntry(client, params) {
   const totalDebit = lines.reduce((sum, l) => sum + (l.debit || 0), 0);
   const totalCredit = lines.reduce((sum, l) => sum + (l.credit || 0), 0);
 
-  // STRICT: Reject unbalanced entries
   if (Math.abs(totalDebit - totalCredit) > 0.01) {
     throw new Error(`Journal entry not balanced: Debit=${totalDebit.toFixed(2)}, Credit=${totalCredit.toFixed(2)}. Difference=${Math.abs(totalDebit - totalCredit).toFixed(2)}`);
   }
 
-  // Reject zero-amount entries
   if (totalDebit === 0 && totalCredit === 0) {
     throw new Error('Journal entry cannot have zero total');
   }
 
   const entryId = randomUUID();
 
-  // Insert journal entry header
   await client.query(
     `INSERT INTO journal_entries 
      (id, entry_number, entry_date, description, reference_type, reference_id, 
       total_debit, total_credit, is_posted, posted_at, branch_id, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, CURRENT_TIMESTAMP, $9, $10)`,
-     [entryId, entryNumber, entryDate || new Date().toISOString().split('T')[0],
+    [entryId, entryNumber, entryDate || new Date().toISOString().split('T')[0],
       description, referenceType, normalizeOptionalId(referenceId),
       totalDebit, totalCredit, normalizeOptionalId(branchId), normalizeOptionalId(createdBy)]
   );
 
-  // Insert journal entry lines
   for (const line of lines) {
     if ((line.debit || 0) === 0 && (line.credit || 0) === 0) {
-      continue; // Skip zero lines
+      continue;
     }
 
     const account = await findAccountByCode(client, line.accountCode);
@@ -156,11 +229,10 @@ async function createJournalEntry(client, params) {
       `INSERT INTO journal_entry_lines 
        (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
        VALUES ($1, $2, $3, $4, $5, $6)`,
-      [lineId, entryId, account.id, line.description || description, 
-       line.debit || 0, line.credit || 0]
+      [lineId, entryId, account.id, line.description || description,
+        line.debit || 0, line.credit || 0]
     );
 
-    // Update account current_balance
     const balanceChange = (line.debit || 0) - (line.credit || 0);
     await client.query(
       `UPDATE chart_of_accounts SET 
@@ -179,5 +251,11 @@ module.exports = {
   createJournalEntry,
   findAccountByCode,
   generateSequenceNumber,
+  peekSequenceNumber,
   normalizeUuid,
+  normalizeBranchCode,
+  normalizeSequenceScope,
+  formatSequenceNumber,
+  DOCUMENT_SEQUENCE_CONFIG,
+  resolveSequenceConfig,
 };

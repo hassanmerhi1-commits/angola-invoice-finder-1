@@ -2,7 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { processSale } = require('../transactionEngine');
-const { generateSequenceNumber } = require('../accounting');
+const { peekSequenceNumber } = require('../accounting');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -47,21 +47,17 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // Generate invoice number (preview only — actual number generated atomically in processSale)
+  // Preview next invoice number (actual number assigned atomically in processSale)
   router.get('/generate-invoice-number/:branchCode', async (req, res) => {
+    const client = await db.pool.connect();
     try {
-      const { branchCode } = req.params;
-      const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const result = await db.query(
-        `SELECT COUNT(*) as count FROM sales WHERE invoice_number LIKE $1`,
-        [`FT ${branchCode}/${today}/%`]
-      );
-      const count = parseInt(result.rows[0].count) + 1;
-      const invoiceNumber = `FT ${branchCode}/${today}/${count.toString().padStart(4, '0')}`;
+      const invoiceNumber = await peekSequenceNumber(client, 'invoice', 'INV');
       res.json({ invoiceNumber });
     } catch (error) {
       console.error('[SALES ERROR]', error);
       res.status(500).json({ error: 'Failed to generate invoice number' });
+    } finally {
+      client.release();
     }
   });
 

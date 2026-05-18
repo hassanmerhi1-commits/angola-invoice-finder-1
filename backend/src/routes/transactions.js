@@ -15,7 +15,37 @@ const {
   validatePeriod,
   auditLog,
 } = require('../transactionEngine');
-const { createJournalEntry } = require('../accounting');
+const {
+  createJournalEntry,
+  generateSequenceNumber,
+  peekSequenceNumber,
+  normalizeBranchCode,
+  DOCUMENT_SEQUENCE_CONFIG,
+  resolveSequenceConfig,
+} = require('../accounting');
+
+const SEQUENCE_DOCUMENT_TYPES = new Set(Object.keys(DOCUMENT_SEQUENCE_CONFIG));
+
+async function resolveSequenceScopeForRequest(client, documentType, branchId) {
+  const cfg = resolveSequenceConfig(documentType);
+  if (!cfg.perBranch) return {};
+  const bid = String(branchId || '').trim();
+  if (!bid) {
+    throw new Error('branchId é obrigatório para numeração por filial');
+  }
+  const result = await client.query(
+    'SELECT id, code FROM branches WHERE id = $1 LIMIT 1',
+    [bid]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error('Filial não encontrada');
+  }
+  return {
+    branchId: row.id,
+    branchCode: normalizeBranchCode(row.code),
+  };
+}
 
 async function ensureFreightExpenseAccount(client) {
   const existing = await client.query(
@@ -243,6 +273,51 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       await client.query('ROLLBACK');
       res.status(500).json({ error: error.message || 'Failed to link documents' });
+    } finally {
+      client.release();
+    }
+  });
+
+  // Preview next business number (does not consume sequence)
+  router.get('/next-number/:documentType', async (req, res) => {
+    const { documentType } = req.params;
+    if (!SEQUENCE_DOCUMENT_TYPES.has(documentType)) {
+      return res.status(400).json({ error: `Invalid document type: ${documentType}` });
+    }
+    const { prefix } = resolveSequenceConfig(documentType);
+    const client = await db.pool.connect();
+    try {
+      const scope = await resolveSequenceScopeForRequest(client, documentType, req.query.branchId);
+      const documentNumber = await peekSequenceNumber(client, documentType, prefix, scope);
+      res.json({ documentNumber, documentType, branchId: scope.branchId || null });
+    } catch (error) {
+      console.error('[TX API] peek number:', error);
+      res.status(error.message?.includes('obrigatório') || error.message?.includes('encontrada') ? 400 : 500)
+        .json({ error: error.message || 'Failed to preview document number' });
+    } finally {
+      client.release();
+    }
+  });
+
+  // Allocate next business number atomically (consumes sequence)
+  router.post('/allocate-number', async (req, res) => {
+    const documentType = String(req.body?.documentType || '').trim();
+    if (!SEQUENCE_DOCUMENT_TYPES.has(documentType)) {
+      return res.status(400).json({ error: `Invalid document type: ${documentType}` });
+    }
+    const { prefix } = resolveSequenceConfig(documentType);
+    const client = await db.pool.connect();
+    try {
+      const scope = await resolveSequenceScopeForRequest(client, documentType, req.body?.branchId);
+      await client.query('BEGIN');
+      const documentNumber = await generateSequenceNumber(client, documentType, prefix, scope);
+      await client.query('COMMIT');
+      res.status(201).json({ documentNumber, documentType, branchId: scope.branchId || null });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('[TX API] allocate number:', error);
+      const status = error.message?.includes('obrigatório') || error.message?.includes('encontrada') ? 400 : 500;
+      res.status(status).json({ error: error.message || 'Failed to allocate document number' });
     } finally {
       client.release();
     }

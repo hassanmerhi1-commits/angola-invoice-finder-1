@@ -20,7 +20,13 @@
     "electron:build": "npm run build && npm run rebuild:backend && electron-builder --win && node scripts/verify-packaged-backend.mjs",
     "electron:build:mac": "npm run build && npm run rebuild:backend && electron-builder --mac",
     "electron:build:linux": "npm run build && npm run rebuild:backend && electron-builder --linux",
-    "i18n:audit": "node scripts/i18n-audit.mjs"
+    "i18n:audit": "node scripts/i18n-audit.mjs",
+    "test": "npm run test --prefix backend",
+    "check:consistency": "npm run check:consistency --prefix backend",
+    "check:integrity": "npm run check:integrity --prefix backend",
+    "repair:consistency": "npm run repair:consistency --prefix backend",
+    "test:engine": "npm run test:engine --prefix backend",
+    "test:backup": "npm run test:backup --prefix backend"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
 import { Branch, Product, Sale, User, CartItem, SaleItem, DailySummary, Client, StockTransfer, Supplier, PurchaseOrder, PurchaseOrderItem, Category } from '@/types/erp';
-import { api, setAuthToken } from '@/lib/api/client';
+import { api, ensureBackendAuthToken, setAuthToken } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
@@ -493,7 +493,6 @@ export function useSales(branchId?: string) {
 
     const invoicePreview = await api.sales.generateInvoiceNumber(branchCode);
     const apiResult = await api.sales.create({
-      invoiceNumber: invoicePreview.data?.invoiceNumber,
       branchId,
       cashierId,
       cashierName,
@@ -768,6 +767,7 @@ export function useAuth() {
               storage.setCurrentUser(user);
               setAuthState({ user });
               markElectronSessionAuthenticated();
+              void ensureBackendAuthToken(user.email);
               return true;
             }
           }
@@ -792,6 +792,7 @@ export function useAuth() {
         storage.setCurrentUser(user);
         setAuthState({ user });
         markElectronSessionAuthenticated();
+        void ensureBackendAuthToken(user.email);
         return true;
       }
 

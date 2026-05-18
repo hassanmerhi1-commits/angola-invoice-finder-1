@@ -1,0 +1,53 @@
+-- Migration 018: Canonical purchase_invoices table (header + JSON lines)
+
+CREATE TABLE IF NOT EXISTS public.purchase_invoices (
+  id UUID PRIMARY KEY,
+  invoice_number VARCHAR(100) NOT NULL,
+  supplier_account_code VARCHAR(50) DEFAULT '',
+  supplier_name VARCHAR(255) NOT NULL DEFAULT '',
+  supplier_id VARCHAR(64) DEFAULT '',
+  supplier_nif VARCHAR(50) DEFAULT '',
+  supplier_phone VARCHAR(50) DEFAULT '',
+  supplier_balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  ref VARCHAR(100) DEFAULT '',
+  supplier_invoice_no VARCHAR(100) DEFAULT '',
+  contact VARCHAR(255) DEFAULT '',
+  department VARCHAR(100) DEFAULT '',
+  ref2 VARCHAR(100) DEFAULT '',
+  date DATE NOT NULL,
+  payment_date DATE,
+  project VARCHAR(100) DEFAULT '',
+  currency VARCHAR(10) DEFAULT 'KZ',
+  warehouse_id VARCHAR(64) DEFAULT '',
+  warehouse_name VARCHAR(255) DEFAULT '',
+  price_type VARCHAR(30) DEFAULT 'last_price',
+  address TEXT DEFAULT '',
+  purchase_account_code VARCHAR(20) DEFAULT '2.1.1',
+  iva_account_code VARCHAR(20) DEFAULT '3.3.1',
+  transaction_type VARCHAR(30) DEFAULT 'ALL',
+  currency_rate DECIMAL(15, 6) NOT NULL DEFAULT 1,
+  tax_rate_2 DECIMAL(8, 4) NOT NULL DEFAULT 0,
+  order_no VARCHAR(100) DEFAULT '',
+  surcharge_percent DECIMAL(8, 4) NOT NULL DEFAULT 0,
+  change_price BOOLEAN NOT NULL DEFAULT false,
+  is_pending BOOLEAN NOT NULL DEFAULT false,
+  extra_note TEXT DEFAULT '',
+  lines_json JSONB NOT NULL DEFAULT '[]',
+  journal_lines_json JSONB NOT NULL DEFAULT '[]',
+  subtotal DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  iva_total DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  total DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  status VARCHAR(30) NOT NULL DEFAULT 'confirmed',
+  purchase_returns_status VARCHAR(20) DEFAULT 'none',
+  purchase_returns_closed_at TIMESTAMP,
+  branch_id VARCHAR(64) DEFAULT '',
+  branch_name VARCHAR(255) DEFAULT '',
+  created_by VARCHAR(64) DEFAULT '',
+  created_by_name VARCHAR(255) DEFAULT '',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_purchase_invoices_number_branch
+  ON public.purchase_invoices(invoice_number, branch_id)
+  WHERE invoice_number IS NOT NULL AND invoice_number <> '';

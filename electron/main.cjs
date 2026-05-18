@@ -2187,7 +2187,7 @@ ipcMain.handle('tx:processTransferReceive', async (_, transferId, receivedQuanti
 
 // Process Payment (payment + journal + open item clearing)
 ipcMain.handle('tx:processPayment', async (_, paymentData) => {
-  const result = await withTransaction(client => txEngine.processPayment(client, pool, paymentData));
+  const result = await withTransaction(client => txEngine.processPayment(client, paymentData));
   if (result.success) broadcastUpdate('payments', 'insert', result.data?.id);
   return result;
 });

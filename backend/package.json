@@ -7,7 +7,14 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "migrate": "node src/migrations/run.js",
-    "seed:suppliers": "node scripts/seed-two-suppliers.js"
+    "seed:suppliers": "node scripts/seed-two-suppliers.js",
+    "test": "node ../scripts/run-backend-tests.mjs",
+    "test:node": "node --test test/**/*.test.js",
+    "test:engine": "node ../scripts/run-backend-tests.mjs",
+    "test:backup": "node ../scripts/run-backend-tests.mjs",
+    "check:integrity": "node ../scripts/run-consistency-check.mjs --unique-only",
+    "check:consistency": "node ../scripts/run-consistency-check.mjs",
+    "repair:consistency": "node ../scripts/run-repair-consistency.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

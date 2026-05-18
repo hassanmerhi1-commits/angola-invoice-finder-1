@@ -17,7 +17,8 @@ import {
   calculateInvoiceTotals,
   getPurchaseInvoices,
   savePurchaseInvoice,
-  generatePurchaseInvoiceNumber,
+  allocatePurchaseInvoiceNumber,
+  peekPurchaseInvoiceNumber,
 } from '@/lib/purchaseInvoiceStorage';
 import { processTransaction } from '@/lib/transactionEngine';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
@@ -54,7 +55,7 @@ import {
   Package, ArrowLeft, CheckCircle, Printer, AlertCircle,
   ShoppingCart, Filter, Calendar, Download, RotateCcw,
 } from 'lucide-react';
-import { saveDocument, getDocuments } from '@/lib/documentStorage';
+import { saveDocument } from '@/lib/documentStorage';
 import { markPurchaseOrderReceivedFromInvoiceNumber } from '@/lib/storage';
 import type { ERPDocument } from '@/types/documents';
 import { usePurchaseOrders } from '@/hooks/useERP';
@@ -1259,6 +1260,7 @@ export default function PurchaseInvoices() {
   const [showCreateSupplier, setShowCreateSupplier] = useState(false);
   const [newSupplierForm, setNewSupplierForm] = useState({ name: '', nif: '', email: '', phone: '', address: '', city: '', country: 'Angola', contactPerson: '', notes: '' });
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [nextFcPreview, setNextFcPreview] = useState<string | null>(null);
   const [openReturnCreateSignal, setOpenReturnCreateSignal] = useState(0);
   const [returnPreselectInvoiceId, setReturnPreselectInvoiceId] = useState<string | null>(null);
   // List mode state
@@ -1276,6 +1278,23 @@ export default function PurchaseInvoices() {
   const [freightOtherCosts, setFreightOtherCosts] = useState(0);
   const [freightSourceAccount, setFreightSourceAccount] = useState('4.1.1'); // default Cash
   const [freightSourceName, setFreightSourceName] = useState('Cash');
+
+  const numberingBranchId = useMemo(() => {
+    const wh = String(form.warehouseId ?? '').trim();
+    return String(currentBranch?.id ?? '').trim() || wh;
+  }, [currentBranch?.id, form.warehouseId]);
+
+  useEffect(() => {
+    if (mode !== 'create' || !numberingBranchId) {
+      setNextFcPreview(null);
+      return;
+    }
+    let cancelled = false;
+    peekPurchaseInvoiceNumber(numberingBranchId).then((n) => {
+      if (!cancelled) setNextFcPreview(n);
+    });
+    return () => { cancelled = true; };
+  }, [mode, invoices.length, numberingBranchId]);
   const [freightPickerOpen, setFreightPickerOpen] = useState(false);
   /** Purchase invoice create: optional PO to pre-fill lines for the selected supplier. */
   const [fillFromPoId, setFillFromPoId] = useState('');
@@ -1344,70 +1363,9 @@ export default function PurchaseInvoices() {
   }, [fillFromPoId, supplierPurchaseOrders]);
 
   const loadInvoiceList = useCallback(async () => {
-    const piInvoices = await getPurchaseInvoices(currentBranch?.id);
-    const docInvoices = await getDocuments('fatura_compra', currentBranch?.id);
-    const piIds = new Set(piInvoices.map((i) => i.id));
-    const docOnlyInvoices: PurchaseInvoice[] = docInvoices
-      .filter((d) => !piIds.has(d.id))
-      .map((d) => ({
-        id: d.id,
-        invoiceNumber: d.documentNumber,
-        supplierAccountCode: d.accountCode || '',
-        supplierName: d.entityName,
-        supplierNif: d.entityNif,
-        supplierPhone: d.entityPhone,
-        supplierBalance: 0,
-        supplierInvoiceNo:
-          d.internalNotes?.replace(t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix, '') || '',
-        date: d.issueDate,
-        paymentDate: d.dueDate || d.issueDate,
-        currency: d.currency === 'AOA' ? 'KZ' : d.currency || 'KZ',
-        warehouseId: d.branchId,
-        warehouseName: d.branchName,
-        priceType: 'last_price' as const,
-        purchaseAccountCode: '2.1.1',
-        ivaAccountCode: '3.3.1',
-        transactionType: 'ALL',
-        currencyRate: 1,
-        taxRate2: 0,
-        surchargePercent: 0,
-        changePrice: false,
-        isPending: false,
-        lines: (d.lines || []).map((l) => ({
-          id: l.id,
-          productId: l.productId || '',
-          productCode: l.productSku || '',
-          description: l.description,
-          quantity: l.quantity,
-          packaging: 1,
-          unitPrice: l.unitPrice,
-          discountPct: l.discount || 0,
-          discountPct2: 0,
-          totalQty: l.quantity,
-          total: l.lineTotal - (l.taxAmount || 0),
-          ivaRate: l.taxRate || 0,
-          ivaAmount: l.taxAmount || 0,
-          totalWithIva: l.lineTotal,
-          warehouseId: d.branchId,
-          warehouseName: d.branchName,
-          currentStock: 0,
-          unit: l.unit || 'UN',
-        })),
-        journalLines: [],
-        subtotal: d.subtotal,
-        ivaTotal: d.totalTax,
-        total: d.total,
-        status: d.status === 'cancelled' ? ('cancelled' as const) : ('confirmed' as const),
-        branchId: d.branchId,
-        branchName: d.branchName,
-        createdBy: d.createdBy || '',
-        createdByName: d.createdByName || '',
-        createdAt: d.createdAt,
-        updatedAt: d.updatedAt,
-      }));
-
-    setInvoices([...piInvoices, ...docOnlyInvoices]);
-  }, [currentBranch?.id, t]);
+    const piInvoices = await getPurchaseInvoices(currentBranch?.id, branches);
+    setInvoices(piInvoices);
+  }, [currentBranch?.id, branches]);
 
   const refreshReturnMetrics = useCallback(async () => {
     try {
@@ -1819,7 +1777,7 @@ export default function PurchaseInvoices() {
 
   const postedJournalPreview = useMemo(() => buildPurchaseInvoiceJournalLines({
     documentId: 'preview',
-    invoiceNumber: form.supplierInvoiceNo || form.ref || t.purchaseInvoicesUi.previewInvoiceNumber,
+    invoiceNumber: nextFcPreview || form.supplierInvoiceNo || form.ref || t.purchaseInvoicesUi.previewInvoiceNumber,
     currency: form.currency || 'KZ',
     purchaseAccountCode: form.purchaseAccountCode || '2.1.1',
     ivaAccountCode: form.ivaAccountCode || '3.3.1',
@@ -1837,6 +1795,7 @@ export default function PurchaseInvoices() {
     labelFreightLine: t.purchaseInvoicesUi.transportOnPurchases,
     labelDeductibleVat: t.purchaseInvoicesUi.deductibleVat,
   }), [
+    nextFcPreview,
     t.purchaseInvoicesUi.previewInvoiceNumber,
     t.purchaseInvoicesUi.transportOnPurchases,
     t.purchaseInvoicesUi.deductibleVat,
@@ -2051,14 +2010,23 @@ export default function PurchaseInvoices() {
 
     console.log('[PurchaseInvoices] All validations passed, building invoice...');
 
+    let allocatedInvoiceNumber: string;
+    try {
+      allocatedInvoiceNumber = await allocatePurchaseInvoiceNumber(resolvedBranchId);
+    } catch (allocErr: unknown) {
+      const msg = allocErr instanceof Error ? allocErr.message : t.purchaseInvoicesUi.unknownError;
+      setSaveError(msg);
+      toast({ title: t.common.error, description: msg, variant: 'destructive' });
+      return;
+    }
+
     const now = new Date().toISOString();
-    const branchCode = currentBranch?.code || whMeta?.code || 'SEDE';
 
     const manualJournalLines = journalLines;
 
     const invoice: PurchaseInvoice = {
       id: generateId(),
-      invoiceNumber: generatePurchaseInvoiceNumber(branchCode),
+      invoiceNumber: allocatedInvoiceNumber,
       supplierAccountCode: resolvedSupplierAccountCode,
       supplierName: matchedSupplier?.name || form.supplierName || '',
       supplierId: resolvedSupplierId,
@@ -3053,6 +3021,9 @@ export default function PurchaseInvoices() {
         </div>
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-black tracking-tight text-destructive">{t.purchaseInvoicesUi.editorTitle}</h2>
+          {nextFcPreview && (
+            <span className="text-xs font-mono text-muted-foreground">{nextFcPreview}</span>
+          )}
           <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={handleCloseCreate}>
             <X className="h-3 w-3" /> {t.common.cancel}
           </Button>

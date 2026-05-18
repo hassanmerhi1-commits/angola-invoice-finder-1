@@ -81,6 +81,7 @@ app.use('/api/sales', require('./routes/sales')(broadcastTable));
 app.use('/api/payments', require('./routes/payments')(broadcastTable));
 app.use('/api/transactions', require('./routes/transactions')(broadcastTable));
 app.use('/api/purchase-orders', require('./routes/purchaseOrders')(broadcastTable));
+app.use('/api/purchase-invoices', require('./routes/purchaseInvoices')(broadcastTable));
 app.use('/api/supplier-returns', require('./routes/supplierReturns')(broadcastTable));
 app.use('/api/stock-transfers', require('./routes/stockTransfers')(broadcastTable));
 app.use('/api/journal-entries', require('./routes/journalEntries')(broadcastTable));
@@ -91,6 +92,7 @@ app.use('/api/exchange-rates', require('./routes/exchangeRates')(broadcastTable)
 app.use('/api/approvals', require('./routes/approvals')(broadcastTable));
 app.use('/api/audit', require('./routes/audit')(broadcastTable));
 app.use('/api/backup', require('./routes/backup')(broadcastTable));
+app.use('/api/consistency', require('./routes/consistency')(broadcastTable));
 app.use('/api/budgets', require('./routes/budgets')(broadcastTable));
 app.use('/api/daily-reports', require('./routes/dailyReports')(broadcastTable));
 app.use('/api/agt', require('./routes/agt')(broadcastTable));
