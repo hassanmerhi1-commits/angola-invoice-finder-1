@@ -229,7 +229,8 @@ async function resolveStockProductId(client, productIdOrCode, warehouseId) {
  * Find or create a product row owned by `branchId` (required for filial stock).
  * Shared catalog rows (branch_id NULL) must be cloned — stock on the shared row does not show at filials.
  */
-async function resolveOrCloneProductForBranch(client, src, branchId) {
+async function resolveOrCloneProductForBranch(client, src, branchId, options = {}) {
+  const { reuseExistingBySku = false } = options;
   const toBranch = String(branchId || '').trim();
   if (!toBranch) throw new Error('branchId inválido para produto de destino');
 
@@ -240,13 +241,24 @@ async function resolveOrCloneProductForBranch(client, src, branchId) {
   const sku = src.sku != null ? String(src.sku).trim() : '';
   if (sku) {
     const destCheck = await client.query(
-      `SELECT id FROM products
+      `SELECT id, name FROM products
        WHERE is_active = true AND branch_id = $1 AND LOWER(TRIM(sku)) = LOWER($2)
+       ORDER BY updated_at DESC, created_at DESC
        LIMIT 1`,
       [toBranch, sku]
     );
     if (destCheck.rows.length > 0) {
-      return destCheck.rows[0].id;
+      const existing = destCheck.rows[0];
+      if (String(existing.id) === String(src.id)) {
+        return existing.id;
+      }
+      if (reuseExistingBySku) {
+        return existing.id;
+      }
+      throw new Error(
+        `Código "${sku}" já pertence a outro produto nesta filial (${existing.name || existing.id}). ` +
+        `Seleccione o produto correcto ou use um código único — o stock não pode ser lançado no produto errado.`
+      );
     }
   }
 
@@ -576,6 +588,114 @@ function isOpenItemDebitFlag(value) {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
+async function resolveSupplierPayableDocumentIds(client, invoiceDocumentId) {
+  const ids = [];
+  if (invoiceDocumentId) ids.push(String(invoiceDocumentId));
+
+  try {
+    const inv = await client.query(
+      'SELECT order_no FROM purchase_invoices WHERE id = $1 LIMIT 1',
+      [invoiceDocumentId]
+    );
+    const orderNo = String(inv.rows[0]?.order_no || '').trim();
+    if (orderNo) {
+      const po = await client.query(
+        'SELECT id FROM purchase_orders WHERE order_number = $1 LIMIT 1',
+        [orderNo]
+      );
+      if (po.rows[0]?.id) ids.push(String(po.rows[0].id));
+    }
+  } catch {
+    /* purchase_invoices optional during bootstrap */
+  }
+
+  return [...new Set(ids.filter(Boolean))];
+}
+
+/**
+ * When a purchase invoice is confirmed after PO receipt, reuse the PO open item
+ * instead of creating a duplicate payable.
+ */
+async function adoptPurchaseOrderOpenItemForInvoice(client, {
+  entityId,
+  invoiceDocumentId,
+  invoiceDocumentNumber,
+  invoiceDocumentDate,
+  originalAmount,
+  dueDate,
+  currency,
+  branchId,
+}) {
+  if (!invoiceDocumentId) return null;
+
+  const documentIds = await resolveSupplierPayableDocumentIds(client, invoiceDocumentId);
+  const poIds = documentIds.filter((id) => id !== String(invoiceDocumentId));
+  if (!poIds.length) return null;
+
+  for (const poId of poIds) {
+    let result = await client.query(
+      `SELECT id, entity_id, remaining_amount, document_number
+       FROM open_items
+       WHERE entity_type = 'supplier'
+         AND document_id = $1
+         AND is_debit = 1
+         AND status != 'cleared'
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [poId]
+    );
+
+    if (!result.rows.length && entityId) {
+      result = await client.query(
+        `SELECT id, entity_id, remaining_amount, document_number
+         FROM open_items
+         WHERE entity_type = 'supplier'
+           AND entity_id = $1
+           AND document_id = $2
+           AND is_debit = 1
+           AND status != 'cleared'
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [entityId, poId]
+      );
+    }
+
+    if (!result.rows.length) continue;
+
+    const row = result.rows[0];
+    const amount = Number(originalAmount || row.remaining_amount || 0);
+    await client.query(
+      `UPDATE open_items SET
+         document_id = $1,
+         document_number = $2,
+         document_date = $3,
+         due_date = COALESCE($4, due_date),
+         original_amount = $5,
+         remaining_amount = $5,
+         currency = COALESCE($6, currency),
+         branch_id = COALESCE($7, branch_id)
+       WHERE id = $8`,
+      [
+        invoiceDocumentId,
+        invoiceDocumentNumber,
+        invoiceDocumentDate,
+        dueDate || null,
+        amount,
+        currency || 'AOA',
+        branchId || null,
+        row.id,
+      ]
+    );
+
+    console.log(
+      `[TX ENGINE] Adopted PO open item ${row.document_number} for purchase invoice ${invoiceDocumentNumber}`
+    );
+    return { id: row.id, entityId: row.entity_id || entityId };
+  }
+
+  return null;
+}
+
 async function syncSupplierBalanceFromOpenItems(client, supplierId) {
   if (!supplierId) return;
   await client.query(
@@ -593,59 +713,69 @@ async function reduceSupplierInvoiceOpenItem(client, { entityId, invoiceDocument
   const reduction = Number(amount || 0);
   if (!invoiceDocumentId || reduction <= 0) return null;
 
-  // Match invoice open item by document id (entity_id may differ if return used another lookup)
-  let result = await client.query(
-    `SELECT id, entity_id, remaining_amount, document_number
-     FROM open_items
-     WHERE entity_type = 'supplier'
-       AND document_id = $1
-       AND is_debit = 1
-       AND status != 'cleared'
-     ORDER BY created_at ASC
-     LIMIT 1`,
-    [invoiceDocumentId]
-  );
+  const documentIds = await resolveSupplierPayableDocumentIds(client, invoiceDocumentId);
+  let remaining = reduction;
+  let lastResult = null;
 
-  if (!result.rows.length && entityId) {
-    result = await client.query(
+  for (const docId of documentIds) {
+    if (remaining <= 0.001) break;
+
+    let result = await client.query(
       `SELECT id, entity_id, remaining_amount, document_number
        FROM open_items
        WHERE entity_type = 'supplier'
-         AND entity_id = $1
-         AND document_id = $2
+         AND document_id = $1
          AND is_debit = 1
          AND status != 'cleared'
        ORDER BY created_at ASC
        LIMIT 1`,
-      [entityId, invoiceDocumentId]
+      [docId]
+    );
+
+    if (!result.rows.length && entityId) {
+      result = await client.query(
+        `SELECT id, entity_id, remaining_amount, document_number
+         FROM open_items
+         WHERE entity_type = 'supplier'
+           AND entity_id = $1
+           AND document_id = $2
+           AND is_debit = 1
+           AND status != 'cleared'
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [entityId, docId]
+      );
+    }
+
+    if (!result.rows.length) continue;
+
+    const row = result.rows[0];
+    const applied = Math.min(remaining, Number(row.remaining_amount || 0));
+    if (applied <= 0) continue;
+
+    await client.query(
+      `UPDATE open_items SET
+         remaining_amount = remaining_amount - $1,
+         status = CASE WHEN remaining_amount - $1 <= 0.01 THEN 'cleared' ELSE 'partial' END,
+         cleared_at = CASE WHEN remaining_amount - $1 <= 0.01 THEN CURRENT_TIMESTAMP ELSE cleared_at END
+       WHERE id = $2`,
+      [applied, row.id]
+    );
+
+    remaining -= applied;
+    lastResult = {
+      id: row.id,
+      entityId: row.entity_id,
+      applied: reduction - remaining,
+      documentNumber: row.document_number,
+    };
+
+    console.log(
+      `[TX ENGINE] Supplier return applied to open item ${row.document_number}: -${applied} (remaining was ${row.remaining_amount})`
     );
   }
 
-  if (!result.rows.length) return null;
-
-  const row = result.rows[0];
-  const applied = Math.min(reduction, Number(row.remaining_amount || 0));
-  if (applied <= 0) return null;
-
-  await client.query(
-    `UPDATE open_items SET
-       remaining_amount = remaining_amount - $1,
-       status = CASE WHEN remaining_amount - $1 <= 0.01 THEN 'cleared' ELSE 'partial' END,
-       cleared_at = CASE WHEN remaining_amount - $1 <= 0.01 THEN CURRENT_TIMESTAMP ELSE cleared_at END
-     WHERE id = $2`,
-    [applied, row.id]
-  );
-
-  console.log(
-    `[TX ENGINE] Supplier return applied to invoice open item ${row.document_number}: -${applied} (remaining was ${row.remaining_amount})`
-  );
-
-  return {
-    id: row.id,
-    entityId: row.entity_id,
-    applied,
-    documentNumber: row.document_number,
-  };
+  return lastResult;
 }
 
 // ==================== DOCUMENT LINKS ====================
@@ -1181,7 +1311,8 @@ async function processTransferReceive(client, transferId, receivedQuantities, re
       const destProductId = await resolveOrCloneProductForBranch(
         client,
         src,
-        transfer.to_branch_id
+        transfer.to_branch_id,
+        { reuseExistingBySku: true }
       );
 
       totalTransferValue += unitCost * receivedQty;
@@ -1359,6 +1490,7 @@ module.exports = {
   createOpenItem,
   clearOpenItems,
   reduceSupplierInvoiceOpenItem,
+  adoptPurchaseOrderOpenItemForInvoice,
   syncSupplierBalanceFromOpenItems,
   isOpenItemDebitFlag,
   // Documents

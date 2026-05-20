@@ -113,10 +113,12 @@ export default function Branches() {
 
     setIsLoading(true);
     try {
-      // Try API delete
-      toast.error(t.branchesUi.apiDeleteNotImplemented);
+      const response = await api.branches.delete(branchToDelete.id);
+      if (response.error) throw new Error(response.error);
+      toast.success(t.branchesUi.deleteSuccess || 'Filial removida.');
       setDeleteDialogOpen(false);
       setBranchToDelete(null);
+      await refreshBranches();
     } catch (error: any) {
       console.error('Error deleting branch:', error);
       toast.error(error.message || t.branchesUi.deleteError);

@@ -254,7 +254,7 @@ function mapSupplierPayloadForElectron(data: any) {
   return {
     id: data.id || generateId(),
     name: data.name || '',
-    nif: data.nif || '',
+    nif: (data.nif && String(data.nif).trim()) || null,
     email: data.email || '',
     phone: data.phone || '',
     address: data.address || '',
@@ -467,6 +467,9 @@ export const api = {
         });
       }
       return apiFetch<any>(`/branches/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) });
+    },
+    delete: (id: string) => {
+      return apiFetch<{ success?: boolean }>(`/branches/${encodeURIComponent(id)}`, { method: 'DELETE' });
     },
   },
 
@@ -820,6 +823,15 @@ export const api = {
       return apiFetch<any[]>(`/purchase-invoices${qs ? `?${qs}` : ''}`);
     },
     get: (id: string) => apiFetch<any>(`/purchase-invoices/${encodeURIComponent(id)}`),
+    checkDuplicate: (params: { supplierId: string; supplierInvoiceNo: string; excludeId?: string }) => {
+      const sp = new URLSearchParams();
+      sp.append('supplierId', params.supplierId);
+      sp.append('supplierInvoiceNo', params.supplierInvoiceNo);
+      if (params.excludeId) sp.append('excludeId', params.excludeId);
+      return apiFetch<{ duplicate: boolean; existingId?: string; existingInvoiceNumber?: string }>(
+        `/purchase-invoices/check-duplicate?${sp.toString()}`
+      );
+    },
     save: (invoice: any) =>
       apiFetch<any>('/purchase-invoices', { method: 'POST', body: JSON.stringify(invoice) }),
     delete: (id: string) =>
@@ -866,6 +878,13 @@ export const api = {
       if (startDate) params.append('start_date', startDate);
       if (endDate) params.append('end_date', endDate);
       return apiFetch<any>(`/chart-of-accounts/${id}/balance?${params}`);
+    },
+    getBalanceSheet: (asOf: string, previousAsOf?: string) => {
+      const params = new URLSearchParams({ as_of: asOf });
+      if (previousAsOf) params.append('previous_as_of', previousAsOf);
+      return apiFetch<{ as_of: string; previous_as_of: string | null; rows: any[] }>(
+        `/chart-of-accounts/reports/balance-sheet?${params}`,
+      );
     },
     getTrialBalance: async (startDate?: string, endDate?: string) => {
       const params = new URLSearchParams();

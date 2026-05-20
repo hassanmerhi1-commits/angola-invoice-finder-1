@@ -6,6 +6,7 @@ import { useBranchContext } from '@/contexts/BranchContext';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
+import { normalizeTaxRate } from '@/lib/taxUtils';
 import { saveProduct, getProducts as storageGetProducts, getStockMovements as localGetStockMovements } from '@/lib/storage';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -65,6 +66,9 @@ import { toast } from 'sonner';
 import { logTransaction } from '@/lib/transactionHistory';
 import { saveStockMovement } from '@/lib/storage';
 import { useTranslation } from '@/i18n';
+import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
+
+type StockListFilter = 'all' | 'qtyGt0' | 'qtyLt0';
 
 export default function Inventory() {
   const navigate = useNavigate();
@@ -97,7 +101,7 @@ export default function Inventory() {
     avgCost: Number(p.weighted_avg_cost || p.avg_cost || p.avgCost || 0),
     stock: Number(p.stock || 0),
     unit: p.unit || 'UN',
-    taxRate: Number(p.tax_rate || p.taxRate || 14),
+    taxRate: normalizeTaxRate(p.tax_rate ?? p.taxRate),
     branchId: p.branch_id || p.branchId || null,
     supplierId: p.supplier_id || p.supplierId || null,
     supplierName: p.supplier_name || p.supplierName || '',
@@ -190,33 +194,41 @@ export default function Inventory() {
     }
 
     const branchRows = currentBranch?.id ? allBranchProducts[currentBranch.id] : undefined;
-    if (!branchRows?.length) {
-      return products.map((p) => ({
-        ...p,
-        stock: p.branchId === currentBranch?.id ? (p.stock || 0) : 0,
-      }));
-    }
 
     const stockBySku = new Map<string, number>();
-    for (const row of branchRows) {
-      const key = (row.sku || '').trim() || row.id;
-      const prev = stockBySku.get(key);
-      const rowStock = row.stock ?? 0;
-      if (prev === undefined || row.branchId === currentBranch?.id) {
-        stockBySku.set(key, rowStock);
+    if (branchRows?.length) {
+      for (const row of branchRows) {
+        const key = (row.sku || '').trim().toLowerCase() || row.id;
+        const prev = stockBySku.get(key);
+        const rowStock = row.stock ?? 0;
+        if (prev === undefined || row.branchId === currentBranch?.id) {
+          stockBySku.set(key, rowStock);
+        }
       }
     }
 
-    return products.map((p) => {
-      const key = (p.sku || '').trim() || p.id;
-      if (stockBySku.has(key)) {
-        return { ...p, stock: stockBySku.get(key) ?? 0 };
+    const bySku = new Map<string, Product>();
+    for (const p of products) {
+      const key = (p.sku || '').trim().toLowerCase() || p.id;
+      const stock = stockBySku.has(key)
+        ? (stockBySku.get(key) ?? 0)
+        : p.branchId === currentBranch?.id
+          ? (p.stock || 0)
+          : 0;
+      const candidate = { ...p, stock };
+      const prev = bySku.get(key);
+      if (!prev) {
+        bySku.set(key, candidate);
+        continue;
       }
-      if (p.branchId === currentBranch?.id) {
-        return { ...p, stock: p.stock || 0 };
-      }
-      return { ...p, stock: 0 };
-    });
+      const prefer =
+        (candidate.branchId === currentBranch?.id && prev.branchId !== currentBranch?.id) ||
+        (candidate.stock || 0) > (prev.stock || 0)
+          ? candidate
+          : prev;
+      bySku.set(key, prefer);
+    }
+    return Array.from(bySku.values());
   }, [products, isHeadOffice, allBranchProducts, currentBranch?.id]);
   
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -229,12 +241,86 @@ export default function Inventory() {
   const [stockExitDialogOpen, setStockExitDialogOpen] = useState(false);
   const [labelPrintDialogOpen, setLabelPrintDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('lista');
+  const [stockListFilter, setStockListFilter] = useState<StockListFilter>('all');
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+
+  const gridProducts = useMemo(() => {
+    if (stockListFilter === 'qtyGt0') return displayProducts.filter((p) => (p.stock || 0) > 0);
+    if (stockListFilter === 'qtyLt0') return displayProducts.filter((p) => (p.stock || 0) <= 0);
+    return displayProducts;
+  }, [displayProducts, stockListFilter]);
+
+  const navigateProduct = useCallback((direction: -1 | 1) => {
+    if (!gridProducts.length) return;
+    const currentIndex = selectedProduct
+      ? gridProducts.findIndex((p) => p.id === selectedProduct.id)
+      : -1;
+    const nextIndex = (currentIndex + direction + gridProducts.length) % gridProducts.length;
+    setSelectedProduct(gridProducts[nextIndex]);
+  }, [gridProducts, selectedProduct]);
 
   const handleOpenDialog = (product?: Product) => {
     setSelectedProduct(product || null);
     setDialogOpen(true);
   };
+
+  const handleDoubleClickProduct = (product: Product) => {
+    setSelectedProduct(product);
+    setDialogOpen(true);
+  };
+
+  // TopNav toolbar actions
+  useEffect(() => {
+    const onDelete = () => {
+      if (selectedProduct && confirm(t.inventoryUi.deleteConfirm)) {
+        deleteProduct(selectedProduct.id);
+        setSelectedProduct(null);
+      }
+    };
+    const onEdit = () => {
+      if (selectedProduct) handleOpenDialog(selectedProduct);
+    };
+    const onAll = () => {
+      setStockListFilter('all');
+      setSelectedProduct(null);
+    };
+    const onAdjustExit = () => setStockExitDialogOpen(true);
+    const onEntry = () => setStockEntryDialogOpen(true);
+    const onMinQty = () => {
+      setStockListFilter('qtyGt0');
+      toast.info(t.inventoryPageUi.qtyGt0);
+    };
+    const onFilter = () => {
+      setStockListFilter((prev) => {
+        const next: StockListFilter = prev === 'all' ? 'qtyGt0' : prev === 'qtyGt0' ? 'qtyLt0' : 'all';
+        return next;
+      });
+    };
+    const onExcel = () => {
+      exportProductsToExcel(gridProducts);
+      toast.success(t.inventoryPageUi.exportedToExcel);
+    };
+
+    const map: Record<string, () => void> = {
+      [NEXOR_TOOLBAR.DELETE]: onDelete,
+      [NEXOR_TOOLBAR.EDIT]: onEdit,
+      [NEXOR_TOOLBAR.ALL]: onAll,
+      [NEXOR_TOOLBAR.INVENTORY_ADJUST_EXIT]: onAdjustExit,
+      [NEXOR_TOOLBAR.INVENTORY_ENTRY]: onEntry,
+      [NEXOR_TOOLBAR.INVENTORY_MIN_QTY]: onMinQty,
+      [NEXOR_TOOLBAR.FILTER]: onFilter,
+      [NEXOR_TOOLBAR.EXCEL]: onExcel,
+    };
+
+    for (const [event, handler] of Object.entries(map)) {
+      window.addEventListener(event, handler);
+    }
+    return () => {
+      for (const [event, handler] of Object.entries(map)) {
+        window.removeEventListener(event, handler);
+      }
+    };
+  }, [selectedProduct, deleteProduct, gridProducts, t]);
 
   // TopNav toolbar "Novo"
   useEffect(() => {
@@ -264,11 +350,6 @@ export default function Inventory() {
 
   const handleSelectProduct = (product: Product) => {
     setSelectedProduct(product);
-  };
-
-  const handleDoubleClickProduct = (product: Product) => {
-    setSelectedProduct(product);
-    setDialogOpen(true);
   };
 
   const handleImportProducts = async (data: ExcelProduct[], options?: { updateDuplicates?: boolean }) => {
@@ -498,7 +579,9 @@ export default function Inventory() {
           {t.common.delete}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => {
+          setStockListFilter((prev) => prev === 'all' ? 'qtyGt0' : prev === 'qtyGt0' ? 'qtyLt0' : 'all');
+        }}>
           <Filter className="w-3 h-3" />
           {t.common.filters}
         </Button>
@@ -591,10 +674,10 @@ export default function Inventory() {
           />
           <span className="text-xs text-muted-foreground">{selectedProduct?.name || ''}</span>
           <div className="flex gap-0.5 ml-2">
-            <Button variant="ghost" size="icon" className="h-5 w-5">
+            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => navigateProduct(-1)}>
               <ChevronLeft className="w-3 h-3" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-5 w-5">
+            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => navigateProduct(1)}>
               <ChevronRight className="w-3 h-3" />
             </Button>
           </div>
@@ -651,27 +734,27 @@ export default function Inventory() {
         {/* Action buttons row */}
         <div className="flex items-center gap-1 px-2 py-1 bg-muted/30 border-b">
           <div className="flex-1" />
-          <Button variant="outline" size="sm" className="h-6 text-xs gap-1">
+          <Button variant="outline" size="sm" className="h-6 text-xs gap-1" onClick={() => setActiveTab('info-produto')}>
             <FileText className="w-3 h-3" />
             {t.inventoryPageUi.note}
           </Button>
-          <Button variant="secondary" size="sm" className="h-6 text-xs">
+          <Button variant="secondary" size="sm" className="h-6 text-xs" onClick={() => setStockListFilter('all')}>
             {t.common.all}
           </Button>
-          <Button variant="outline" size="sm" className="h-6 text-xs text-green-600">
+          <Button variant="outline" size="sm" className="h-6 text-xs text-green-600" onClick={() => setStockListFilter('qtyGt0')}>
             {t.inventoryPageUi.qtyGt0}
           </Button>
-          <Button variant="outline" size="sm" className="h-6 text-xs text-red-600">
+          <Button variant="outline" size="sm" className="h-6 text-xs text-red-600" onClick={() => setStockListFilter('qtyLt0')}>
             {t.inventoryPageUi.qtyLt0}
           </Button>
-          <Button variant="outline" size="sm" className="h-6 text-xs">
+          <Button variant="outline" size="sm" className="h-6 text-xs" onClick={() => setActiveTab('preco-compra')}>
             {t.inventoryPageUi.costLt}
           </Button>
-          <Button variant="outline" size="sm" className="h-6 text-xs gap-1">
+          <Button variant="outline" size="sm" className="h-6 text-xs gap-1" onClick={() => setActiveTab('grafico')}>
             <BarChart3 className="w-3 h-3" />
             {t.inventoryPageUi.chart}
           </Button>
-          <Button variant="outline" size="sm" className="h-6 text-xs gap-1">
+          <Button variant="outline" size="sm" className="h-6 text-xs gap-1" onClick={() => selectedProduct && handleOpenDialog(selectedProduct)} disabled={!selectedProduct}>
             <Eye className="w-3 h-3" />
             {t.inventoryPageUi.view}
           </Button>
@@ -679,7 +762,7 @@ export default function Inventory() {
 
         <TabsContent value="lista" forceMount className="flex-1 min-h-0 m-0 p-2 data-[state=inactive]:hidden overflow-auto">
           <AdvancedDataGrid 
-            products={displayProducts}
+            products={gridProducts}
             onSelectProduct={handleSelectProduct}
             onDoubleClickProduct={handleDoubleClickProduct}
             selectedProductId={selectedProduct?.id}

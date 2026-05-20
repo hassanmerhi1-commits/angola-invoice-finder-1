@@ -4,6 +4,48 @@
  */
 const db = require('./db');
 
+async function resolveSupplierPayableDocumentIds(invoiceId) {
+  const ids = [];
+  if (invoiceId) ids.push(String(invoiceId));
+
+  try {
+    const inv = await db.query(
+      'SELECT order_no FROM purchase_invoices WHERE id = $1 LIMIT 1',
+      [invoiceId]
+    );
+    const orderNo = String(inv.rows[0]?.order_no || '').trim();
+    if (orderNo) {
+      const po = await db.query(
+        'SELECT id FROM purchase_orders WHERE order_number = $1 LIMIT 1',
+        [orderNo]
+      );
+      if (po.rows[0]?.id) ids.push(String(po.rows[0].id));
+    }
+  } catch {
+    /* optional tables */
+  }
+
+  return [...new Set(ids.filter(Boolean))];
+}
+
+async function findSupplierInvoiceOpenItem(invoiceId) {
+  const documentIds = await resolveSupplierPayableDocumentIds(invoiceId);
+  for (const docId of documentIds) {
+    const invoiceOi = await db.query(
+      `SELECT id, remaining_amount, entity_id FROM open_items
+       WHERE entity_type = 'supplier'
+         AND document_id = $1
+         AND is_debit = 1
+         AND status != 'cleared'
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [docId]
+    );
+    if (invoiceOi.rows[0]) return invoiceOi.rows[0];
+  }
+  return null;
+}
+
 async function repairSupplierReturnOpenItems() {
   if (!await tableExists('open_items')) return { repaired: 0 };
 
@@ -19,16 +61,7 @@ async function repairSupplierReturnOpenItems() {
     const returnId = link.return_id;
     if (!invoiceId || !returnId) continue;
 
-    const invoiceOi = await db.query(
-      `SELECT id, remaining_amount FROM open_items
-       WHERE entity_type = 'supplier'
-         AND document_id = $1
-         AND is_debit = 1
-         AND status != 'cleared'
-       ORDER BY created_at ASC
-       LIMIT 1`,
-      [invoiceId]
-    );
+    const invoiceRow = await findSupplierInvoiceOpenItem(invoiceId);
     const creditOi = await db.query(
       `SELECT id, remaining_amount FROM open_items
        WHERE document_id = $1
@@ -39,7 +72,6 @@ async function repairSupplierReturnOpenItems() {
       [returnId]
     );
 
-    const invoiceRow = invoiceOi.rows[0];
     const creditRow = creditOi.rows[0];
     if (!invoiceRow || !creditRow) continue;
 
@@ -68,17 +100,7 @@ async function repairSupplierReturnOpenItems() {
     );
 
     for (const ret of returnsResult.rows || []) {
-      const invoiceOi = await db.query(
-        `SELECT id, remaining_amount, entity_id FROM open_items
-         WHERE entity_type = 'supplier'
-           AND document_id = $1
-           AND is_debit = 1
-           AND status != 'cleared'
-         ORDER BY created_at ASC
-         LIMIT 1`,
-        [ret.invoice_id]
-      );
-      const invoiceRow = invoiceOi.rows[0];
+      const invoiceRow = await findSupplierInvoiceOpenItem(ret.invoice_id);
       if (!invoiceRow) continue;
 
       const returnAmount = Number(ret.total || 0);

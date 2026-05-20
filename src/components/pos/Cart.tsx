@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button';
 import { NumericInput } from '@/components/ui/numeric-input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { formatTaxLabel } from '@/lib/taxUtils';
+import { useTranslation } from '@/i18n';
 import { Minus, Plus, Trash2, ShoppingCart } from 'lucide-react';
 
 interface CartProps {
@@ -24,6 +26,9 @@ export function Cart({
   onRemoveItem,
   onCheckout,
 }: CartProps) {
+  const { t } = useTranslation();
+  const taxLabel = formatTaxLabel(items.map((item) => item.product.taxRate), t.pos.tax);
+
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground py-12">
@@ -103,7 +108,7 @@ export function Cart({
           <span>{subtotal.toLocaleString('pt-AO')} Kz</span>
         </div>
         <div className="flex justify-between text-sm">
-          <span className="text-muted-foreground">IVA (14%)</span>
+          <span className="text-muted-foreground">{taxLabel}</span>
           <span>{taxAmount.toLocaleString('pt-AO')} Kz</span>
         </div>
         <Separator />

@@ -679,7 +679,7 @@ export default function AdvancedInventory() {
                                     <Edit className="w-4 h-4 mr-2" />
                                     {t.common.edit}
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => setEditingProduct(product)}>
                                     <Eye className="w-4 h-4 mr-2" />
                                     {t.common.view}
                                   </DropdownMenuItem>

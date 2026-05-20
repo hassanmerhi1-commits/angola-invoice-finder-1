@@ -50,6 +50,18 @@ export interface TrialBalanceRow {
   closing_balance: number;
 }
 
+export interface BalanceSheetAccountRow {
+  id: string;
+  code: string;
+  name: string;
+  account_type: AccountType;
+  account_nature: AccountNature;
+  level: number;
+  is_header: boolean;
+  current_balance: number;
+  previous_balance: number;
+}
+
 export interface JournalEntry {
   id: string;
   entry_number: string;

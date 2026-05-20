@@ -57,6 +57,9 @@ export default function BudgetControl() {
   ), [t]);
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [centerDialogOpen, setCenterDialogOpen] = useState(false);
+  const [editingCenter, setEditingCenter] = useState<(typeof costCenters)[0] | null>(null);
+  const [centerForm, setCenterForm] = useState({ code: '', name: '', description: '' });
 
   const totalBudget = budgets.reduce((s, b) => s + b.budget_amount, 0);
   const totalActual = budgets.reduce((s, b) => s + b.actual_amount, 0);
@@ -186,7 +189,11 @@ export default function BudgetControl() {
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">{t.budgetControlUi.costCentersTitle}</CardTitle>
-                <Button size="sm" className="gap-1.5">
+                <Button size="sm" className="gap-1.5" onClick={() => {
+                  setEditingCenter(null);
+                  setCenterForm({ code: '', name: '', description: '' });
+                  setCenterDialogOpen(true);
+                }}>
                   <Plus className="w-3.5 h-3.5" /> {t.budgetControlUi.newCenter}
                 </Button>
               </div>
@@ -214,7 +221,11 @@ export default function BudgetControl() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Button variant="ghost" size="icon" className="h-7 w-7">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                          setEditingCenter(cc);
+                          setCenterForm({ code: cc.code, name: cc.name, description: cc.description });
+                          setCenterDialogOpen(true);
+                        }}>
                           <Edit className="w-3.5 h-3.5" />
                         </Button>
                       </TableCell>
@@ -264,6 +275,35 @@ export default function BudgetControl() {
             >
               {t.common.save}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={centerDialogOpen} onOpenChange={setCenterDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingCenter ? t.common.edit : t.budgetControlUi.newCenter}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>{t.budgetControlUi.colCode}</Label>
+              <Input value={centerForm.code} onChange={(e) => setCenterForm((f) => ({ ...f, code: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>{t.budgetControlUi.colName}</Label>
+              <Input value={centerForm.name} onChange={(e) => setCenterForm((f) => ({ ...f, name: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>{t.budgetControlUi.colDescription}</Label>
+              <Textarea value={centerForm.description} onChange={(e) => setCenterForm((f) => ({ ...f, description: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCenterDialogOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={() => {
+              setCenterDialogOpen(false);
+              toast.success(editingCenter ? t.common.saveChanges : t.budgetControlUi.newCenter);
+            }}>{t.common.save}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

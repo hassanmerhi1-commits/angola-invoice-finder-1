@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSales, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
@@ -25,6 +25,7 @@ import { getCompanySettings } from '@/lib/companySettings';
 import { AGTQRCode } from '@/components/invoice/AGTQRCode';
 import { toast } from 'sonner';
 import { NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
+import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 
 const paymentLabels: Record<string, { labelKey: 'cash' | 'card' | 'transfer' | 'mixed'; icon: any; color: string }> = {
   cash: { labelKey: 'cash', icon: Banknote, color: 'text-success' },
@@ -42,7 +43,8 @@ const statusConfig: Record<string, { labelKey: 'completed' | 'voided' | 'pending
 export default function Vendas() {
   const navigate = useNavigate();
   const { currentBranch } = useBranchContext();
-  const { sales, refreshSales } = useSales(currentBranch?.id);
+  const salesBranchId = currentBranch?.isMain ? undefined : currentBranch?.id;
+  const { sales, refreshSales } = useSales(salesBranchId);
   const company = getCompanySettings();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
@@ -74,6 +76,17 @@ export default function Vendas() {
     setSelectedSale(sale);
     setDetailOpen(true);
   }, []);
+
+  useEffect(() => {
+    const goPos = () => navigate('/pos');
+    const goPosNew = () => navigate('/pos', { state: NEXOR_POS_NEW_SALE_NAV_STATE });
+    window.addEventListener(NEXOR_TOOLBAR.POS_CHECKOUT, goPos);
+    window.addEventListener(NEXOR_TOOLBAR.POS_VOID, goPosNew);
+    return () => {
+      window.removeEventListener(NEXOR_TOOLBAR.POS_CHECKOUT, goPos);
+      window.removeEventListener(NEXOR_TOOLBAR.POS_VOID, goPosNew);
+    };
+  }, [navigate]);
 
   const handleReprintThermal = async (sale: Sale) => {
     if (!currentBranch) return;

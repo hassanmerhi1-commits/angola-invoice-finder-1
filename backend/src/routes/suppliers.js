@@ -123,19 +123,29 @@ module.exports = function(broadcastTable) {
         [normalizedName, normalizedNif, cleanText(email), cleanText(phone), cleanText(address), cleanText(city), cleanText(country) || 'Angola', cleanText(contactPerson), paymentTerms || '30_days', cleanText(notes)]
       );
 
-      // Auto-create 3.2.XXX sub-account
-      const accountCode = await ensureSupplierSubAccount(client, normalizedName, normalizedNif);
+      const supplier = result.rows[0];
+
+      // Auto-create 3.2.XXX sub-account (non-fatal — supplier row must still commit)
+      let accountCode = null;
+      try {
+        accountCode = await ensureSupplierSubAccount(client, normalizedName, normalizedNif);
+      } catch (subErr) {
+        console.warn('[SUPPLIERS] Sub-account creation skipped:', subErr.message);
+      }
 
       await client.query('COMMIT');
       await broadcastTable('suppliers');
       await broadcastTable('chart_of_accounts');
 
-      const supplier = result.rows[0];
-      supplier._accountCode = accountCode; // Return so frontend knows the code
+      supplier._accountCode = accountCode;
       res.status(201).json(supplier);
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[SUPPLIERS ERROR]', error);
+      const msg = String(error.message || '');
+      if (error.code === 'SQLITE_CONSTRAINT' || error.code === '23505' || /unique|duplicate/i.test(msg)) {
+        return res.status(409).json({ error: 'Já existe um fornecedor com este NIF.' });
+      }
       res.status(500).json({ error: error.message || 'Failed to create supplier' });
     } finally {
       client.release();

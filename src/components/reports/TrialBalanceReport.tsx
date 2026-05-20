@@ -1,9 +1,8 @@
 /**
- * Balancete (Trial Balance) Report
- * Shows debit/credit balances for all accounts
+ * Balancete (Trial Balance) Report — live data from chart of accounts + journal entries.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,14 +22,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Download, Printer, Calendar, FileSpreadsheet } from 'lucide-react';
-import { useBranches, useSales, useClients, useSuppliers } from '@/hooks/useERP';
+import { Printer, FileSpreadsheet, RefreshCw, Loader2 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { useTrialBalance } from '@/hooks/useChartOfAccounts';
+import type { TrialBalanceRow } from '@/types/accounting';
 
 interface AccountBalance {
   accountCode: string;
   accountName: string;
   accountType: string;
+  filterKey: string;
   openingDebit: number;
   openingCredit: number;
   periodDebit: number;
@@ -39,14 +40,54 @@ interface AccountBalance {
   closingCredit: number;
 }
 
+const API_TYPE_TO_FILTER: Record<string, string> = {
+  asset: 'Activo',
+  liability: 'Passivo',
+  equity: 'Capital',
+  revenue: 'Rendimento',
+  expense: 'Gasto',
+};
+
+function balanceToDebitCredit(amount: number, nature: string): { debit: number; credit: number } {
+  const n = Number(amount) || 0;
+  if (Math.abs(n) < 0.005) return { debit: 0, credit: 0 };
+  if (nature === 'credit') {
+    return { debit: n < 0 ? Math.abs(n) : 0, credit: n > 0 ? n : 0 };
+  }
+  return { debit: n > 0 ? n : 0, credit: n < 0 ? Math.abs(n) : 0 };
+}
+
+function mapRowToAccountBalance(row: TrialBalanceRow, typeLabel: string, filterKey: string): AccountBalance {
+  const opening = balanceToDebitCredit(Number(row.opening_balance), row.account_nature);
+  const closing = balanceToDebitCredit(Number(row.closing_balance), row.account_nature);
+  return {
+    accountCode: row.code,
+    accountName: row.name,
+    accountType: typeLabel,
+    filterKey,
+    openingDebit: opening.debit,
+    openingCredit: opening.credit,
+    periodDebit: Number(row.total_debits) || 0,
+    periodCredit: Number(row.total_credits) || 0,
+    closingDebit: closing.debit,
+    closingCredit: closing.credit,
+  };
+}
+
+function rowHasActivity(row: TrialBalanceRow): boolean {
+  return (
+    !row.is_header &&
+    (Math.abs(Number(row.opening_balance)) > 0.005 ||
+      Number(row.total_debits) > 0 ||
+      Number(row.total_credits) > 0 ||
+      Math.abs(Number(row.closing_balance)) > 0.005)
+  );
+}
+
 export default function TrialBalanceReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { currentBranch } = useBranches();
-  const { sales } = useSales(currentBranch?.id);
-  const { clients } = useClients();
-  const { suppliers } = useSuppliers();
-  
+
   const [startDate, setStartDate] = useState(() => {
     const date = new Date();
     date.setDate(1);
@@ -55,160 +96,30 @@ export default function TrialBalanceReport() {
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [accountType, setAccountType] = useState('all');
 
-  // Generate mock trial balance data based on real transactions
-  const generateTrialBalance = (): AccountBalance[] => {
-    const salesTotal = sales.reduce((sum, s) => sum + s.total, 0);
-    const taxTotal = sales.reduce((sum, s) => sum + s.taxAmount, 0);
-    const subtotal = sales.reduce((sum, s) => sum + s.subtotal, 0);
-    
-    const accounts: AccountBalance[] = [
-      // Assets
-      {
-        accountCode: '11',
-        accountName: 'Caixa',
-        accountType: 'Activo',
-        openingDebit: 0,
-        openingCredit: 0,
-        periodDebit: salesTotal * 0.6,
-        periodCredit: 0,
-        closingDebit: salesTotal * 0.6,
-        closingCredit: 0,
-      },
-      {
-        accountCode: '12',
-        accountName: t.trialBalanceUi.depositsOnDemand,
-        accountType: 'Activo',
-        openingDebit: 500000,
-        openingCredit: 0,
-        periodDebit: salesTotal * 0.4,
-        periodCredit: 0,
-        closingDebit: 500000 + salesTotal * 0.4,
-        closingCredit: 0,
-      },
-      {
-        accountCode: '21',
-        accountName: 'Clientes',
-        accountType: 'Activo',
-        openingDebit: 0,
-        openingCredit: 0,
-        periodDebit: salesTotal * 0.2,
-        periodCredit: salesTotal * 0.1,
-        closingDebit: salesTotal * 0.1,
-        closingCredit: 0,
-      },
-      {
-        accountCode: '31',
-        accountName: 'Mercadorias',
-        accountType: 'Activo',
-        openingDebit: 1000000,
-        openingCredit: 0,
-        periodDebit: subtotal * 0.7,
-        periodCredit: subtotal * 0.5,
-        closingDebit: 1000000 + subtotal * 0.2,
-        closingCredit: 0,
-      },
-      // Liabilities
-      {
-        accountCode: '22',
-        accountName: 'Fornecedores',
-        accountType: 'Passivo',
-        openingDebit: 0,
-        openingCredit: 200000,
-        periodDebit: 150000,
-        periodCredit: subtotal * 0.7,
-        closingDebit: 0,
-        closingCredit: 200000 - 150000 + subtotal * 0.7,
-      },
-      {
-        accountCode: '24',
-        accountName: 'Estado - IVA',
-        accountType: 'Passivo',
-        openingDebit: 0,
-        openingCredit: 50000,
-        periodDebit: taxTotal * 0.5,
-        periodCredit: taxTotal,
-        closingDebit: 0,
-        closingCredit: 50000 + taxTotal * 0.5,
-      },
-      // Equity
-      {
-        accountCode: '51',
-        accountName: 'Capital Social',
-        accountType: 'Capital',
-        openingDebit: 0,
-        openingCredit: 1000000,
-        periodDebit: 0,
-        periodCredit: 0,
-        closingDebit: 0,
-        closingCredit: 1000000,
-      },
-      {
-        accountCode: '59',
-        accountName: 'Resultados Transitados',
-        accountType: 'Capital',
-        openingDebit: 0,
-        openingCredit: 250000,
-        periodDebit: 0,
-        periodCredit: 0,
-        closingDebit: 0,
-        closingCredit: 250000,
-      },
-      // Revenue
-      {
-        accountCode: '71',
-        accountName: t.incomeStatementUi.salesOfGoods,
-        accountType: 'Rendimento',
-        openingDebit: 0,
-        openingCredit: 0,
-        periodDebit: 0,
-        periodCredit: subtotal,
-        closingDebit: 0,
-        closingCredit: subtotal,
-      },
-      // Expenses
-      {
-        accountCode: '61',
-        accountName: 'Custo das Mercadorias Vendidas',
-        accountType: 'Gasto',
-        openingDebit: 0,
-        openingCredit: 0,
-        periodDebit: subtotal * 0.6,
-        periodCredit: 0,
-        closingDebit: subtotal * 0.6,
-        closingCredit: 0,
-      },
-      {
-        accountCode: '62',
-        accountName: t.trialBalanceUi.suppliesAndServices,
-        accountType: 'Gasto',
-        openingDebit: 0,
-        openingCredit: 0,
-        periodDebit: 75000,
-        periodCredit: 0,
-        closingDebit: 75000,
-        closingCredit: 0,
-      },
-      {
-        accountCode: '63',
-        accountName: 'Gastos com Pessoal',
-        accountType: 'Gasto',
-        openingDebit: 0,
-        openingCredit: 0,
-        periodDebit: 150000,
-        periodCredit: 0,
-        closingDebit: 150000,
-        closingCredit: 0,
-      },
-    ];
+  const { data, isLoading, error, refetch } = useTrialBalance(startDate, endDate);
 
-    if (accountType !== 'all') {
-      return accounts.filter(a => a.accountType === accountType);
-    }
-    return accounts;
-  };
+  const typeLabels = useMemo(
+    () => ({
+      Activo: t.trialBalanceUi.typeAssets,
+      Passivo: t.trialBalanceUi.typeLiabilities,
+      Capital: t.trialBalanceUi.typeEquity,
+      Rendimento: t.trialBalanceUi.typeIncome,
+      Gasto: t.trialBalanceUi.typeExpense,
+    }),
+    [t],
+  );
 
-  const accounts = generateTrialBalance();
-  
+  const accounts = useMemo(() => {
+    const rows = data.filter(rowHasActivity).map((row) => {
+      const filterKey = API_TYPE_TO_FILTER[row.account_type] || row.account_type;
+      const typeLabel = typeLabels[filterKey as keyof typeof typeLabels] || row.account_type;
+      return mapRowToAccountBalance(row, typeLabel, filterKey);
+    });
+
+    if (accountType === 'all') return rows;
+    return rows.filter((a) => a.filterKey === accountType);
+  }, [data, accountType, typeLabels]);
+
   const totals = accounts.reduce(
     (acc, account) => ({
       openingDebit: acc.openingDebit + account.openingDebit,
@@ -218,17 +129,17 @@ export default function TrialBalanceReport() {
       closingDebit: acc.closingDebit + account.closingDebit,
       closingCredit: acc.closingCredit + account.closingCredit,
     }),
-    { openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: 0, closingDebit: 0, closingCredit: 0 }
+    { openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: 0, closingDebit: 0, closingCredit: 0 },
   );
 
   const formatMoney = (value: number) => value.toLocaleString(locale, { minimumFractionDigits: 2 });
+  const dash = t.common.dash;
 
   const handlePrint = () => {
     window.print();
   };
 
   const handleExportExcel = () => {
-    // Simplified CSV export
     const headers = [
       t.trialBalanceUi.colCode,
       t.trialBalanceUi.colAccount,
@@ -240,7 +151,7 @@ export default function TrialBalanceReport() {
       t.trialBalanceUi.closingDebit,
       t.trialBalanceUi.closingCredit,
     ];
-    const rows = accounts.map(a => [
+    const rows = accounts.map((a) => [
       a.accountCode,
       a.accountName,
       a.accountType,
@@ -251,26 +162,26 @@ export default function TrialBalanceReport() {
       a.closingDebit,
       a.closingCredit,
     ]);
-    
-    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+
+    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `balancete_${startDate}_${endDate}.csv`;
     a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
     <div className="space-y-4">
-      {/* Filters */}
       <Card>
         <CardHeader className="py-3">
           <CardTitle className="text-lg">{t.trialBalanceUi.title}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-4 items-end">
-            <div className="space-y-1">
+              <div className="space-y-1">
               <Label className="text-xs">{t.reportsUi.dateFrom}</Label>
               <Input
                 type="date"
@@ -305,92 +216,113 @@ export default function TrialBalanceReport() {
               </Select>
             </div>
             <div className="flex gap-2 ml-auto">
+              <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isLoading}>
+                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                {t.common.refresh}
+              </Button>
               <Button variant="outline" size="sm" onClick={handlePrint}>
                 <Printer className="w-4 h-4 mr-2" />
                 {t.reportsUi.print}
               </Button>
-              <Button variant="outline" size="sm" onClick={handleExportExcel}>
+              <Button variant="outline" size="sm" onClick={handleExportExcel} disabled={accounts.length === 0}>
                 <FileSpreadsheet className="w-4 h-4 mr-2" />
                 Excel
               </Button>
             </div>
           </div>
+          {error && <p className="text-sm text-destructive mt-3">{error}</p>}
         </CardContent>
       </Card>
 
-      {/* Trial Balance Table */}
       <Card>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/50">
-                  <TableHead className="font-bold" rowSpan={2}>{t.trialBalanceUi.colCode}</TableHead>
-                  <TableHead className="font-bold" rowSpan={2}>{t.trialBalanceUi.colAccount}</TableHead>
-                  <TableHead className="font-bold" rowSpan={2}>{t.trialBalanceUi.colType}</TableHead>
-                  <TableHead className="text-center font-bold" colSpan={2}>{t.trialBalanceUi.openingBalance}</TableHead>
-                  <TableHead className="text-center font-bold" colSpan={2}>{t.trialBalanceUi.periodMovement}</TableHead>
-                  <TableHead className="text-center font-bold" colSpan={2}>{t.trialBalanceUi.closingBalance}</TableHead>
-                </TableRow>
-                <TableRow className="bg-muted/30">
-                  <TableHead className="text-right text-xs">{t.trialBalanceUi.debit}</TableHead>
-                  <TableHead className="text-right text-xs">{t.trialBalanceUi.credit}</TableHead>
-                  <TableHead className="text-right text-xs">{t.trialBalanceUi.debit}</TableHead>
-                  <TableHead className="text-right text-xs">{t.trialBalanceUi.credit}</TableHead>
-                  <TableHead className="text-right text-xs">{t.trialBalanceUi.debit}</TableHead>
-                  <TableHead className="text-right text-xs">{t.trialBalanceUi.credit}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {accounts.map((account) => (
-                  <TableRow key={account.accountCode}>
-                    <TableCell className="font-mono text-sm">{account.accountCode}</TableCell>
-                    <TableCell>{account.accountName}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{account.accountType}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      {account.openingDebit > 0 ? formatMoney(account.openingDebit) : t.common.dash}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      {account.openingCredit > 0 ? formatMoney(account.openingCredit) : t.common.dash}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      {account.periodDebit > 0 ? formatMoney(account.periodDebit) : t.common.dash}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      {account.periodCredit > 0 ? formatMoney(account.periodCredit) : t.common.dash}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm font-medium">
-                      {account.closingDebit > 0 ? formatMoney(account.closingDebit) : t.common.dash}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm font-medium">
-                      {account.closingCredit > 0 ? formatMoney(account.closingCredit) : t.common.dash}
-                    </TableCell>
+          {isLoading ? (
+            <div className="flex justify-center py-16">
+              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : accounts.length === 0 ? (
+            <p className="text-center py-16 text-muted-foreground text-sm">{t.journalsUi.noEntriesFound}</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead className="font-bold" rowSpan={2}>{t.trialBalanceUi.colCode}</TableHead>
+                    <TableHead className="font-bold" rowSpan={2}>{t.trialBalanceUi.colAccount}</TableHead>
+                    <TableHead className="font-bold" rowSpan={2}>{t.trialBalanceUi.colType}</TableHead>
+                    <TableHead className="text-center font-bold" colSpan={2}>{t.trialBalanceUi.openingBalance}</TableHead>
+                    <TableHead className="text-center font-bold" colSpan={2}>{t.trialBalanceUi.periodMovement}</TableHead>
+                    <TableHead className="text-center font-bold" colSpan={2}>{t.trialBalanceUi.closingBalance}</TableHead>
                   </TableRow>
-                ))}
-                {/* Totals Row */}
-                <TableRow className="bg-primary/10 font-bold">
-                  <TableCell colSpan={3} className="text-right">{t.stockValuationUi.totals}</TableCell>
-                  <TableCell className="text-right font-mono">{formatMoney(totals.openingDebit)}</TableCell>
-                  <TableCell className="text-right font-mono">{formatMoney(totals.openingCredit)}</TableCell>
-                  <TableCell className="text-right font-mono">{formatMoney(totals.periodDebit)}</TableCell>
-                  <TableCell className="text-right font-mono">{formatMoney(totals.periodCredit)}</TableCell>
-                  <TableCell className="text-right font-mono">{formatMoney(totals.closingDebit)}</TableCell>
-                  <TableCell className="text-right font-mono">{formatMoney(totals.closingCredit)}</TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
+                  <TableRow className="bg-muted/30">
+                    <TableHead className="text-right text-xs">{t.trialBalanceUi.debit}</TableHead>
+                    <TableHead className="text-right text-xs">{t.trialBalanceUi.credit}</TableHead>
+                    <TableHead className="text-right text-xs">{t.trialBalanceUi.debit}</TableHead>
+                    <TableHead className="text-right text-xs">{t.trialBalanceUi.credit}</TableHead>
+                    <TableHead className="text-right text-xs">{t.trialBalanceUi.debit}</TableHead>
+                    <TableHead className="text-right text-xs">{t.trialBalanceUi.credit}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {accounts.map((account) => (
+                    <TableRow key={account.accountCode}>
+                      <TableCell className="font-mono text-sm">{account.accountCode}</TableCell>
+                      <TableCell>{account.accountName}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{account.accountType}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {account.openingDebit > 0 ? formatMoney(account.openingDebit) : dash}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {account.openingCredit > 0 ? formatMoney(account.openingCredit) : dash}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {account.periodDebit > 0 ? formatMoney(account.periodDebit) : dash}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {account.periodCredit > 0 ? formatMoney(account.periodCredit) : dash}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm font-medium">
+                        {account.closingDebit > 0 ? formatMoney(account.closingDebit) : dash}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm font-medium">
+                        {account.closingCredit > 0 ? formatMoney(account.closingCredit) : dash}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  <TableRow className="bg-primary/10 font-bold">
+                    <TableCell colSpan={3} className="text-right">{t.stockValuationUi.totals}</TableCell>
+                    <TableCell className="text-right font-mono">{formatMoney(totals.openingDebit)}</TableCell>
+                    <TableCell className="text-right font-mono">{formatMoney(totals.openingCredit)}</TableCell>
+                    <TableCell className="text-right font-mono">{formatMoney(totals.periodDebit)}</TableCell>
+                    <TableCell className="text-right font-mono">{formatMoney(totals.periodCredit)}</TableCell>
+                    <TableCell className="text-right font-mono">{formatMoney(totals.closingDebit)}</TableCell>
+                    <TableCell className="text-right font-mono">{formatMoney(totals.closingCredit)}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Balance Check */}
-      <div className="flex gap-4 text-sm">
-        <div className={`px-4 py-2 rounded ${Math.abs(totals.closingDebit - totals.closingCredit) < 0.01 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-          {Math.abs(totals.closingDebit - totals.closingCredit) < 0.01 
-            ? t.trialBalanceUi.balanceOk
-            : t.trialBalanceUi.balanceDiff.replace('{amount}', formatMoney(Math.abs(totals.closingDebit - totals.closingCredit)))}
+      {!isLoading && accounts.length > 0 && (
+        <div className="flex gap-4 text-sm">
+          <div
+            className={`px-4 py-2 rounded ${
+              Math.abs(totals.closingDebit - totals.closingCredit) < 0.01
+                ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200'
+                : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200'
+            }`}
+          >
+            {Math.abs(totals.closingDebit - totals.closingCredit) < 0.01
+              ? t.trialBalanceUi.balanceOk
+              : t.trialBalanceUi.balanceDiff.replace(
+                  '{amount}',
+                  formatMoney(Math.abs(totals.closingDebit - totals.closingCredit)),
+                )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

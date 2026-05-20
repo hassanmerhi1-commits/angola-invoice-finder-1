@@ -26,6 +26,141 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  async function accountBalancesAsOf(asOf) {
+    let dateFilter = '';
+    const params = [];
+    if (asOf) {
+      dateFilter = 'AND je.entry_date <= $1';
+      params.push(asOf);
+    }
+    const result = await db.query(
+      `
+        SELECT 
+          coa.id,
+          coa.code,
+          coa.name,
+          coa.account_type,
+          coa.account_nature,
+          coa.level,
+          coa.is_header,
+          coa.opening_balance,
+          COALESCE(SUM(jel.debit_amount), 0) as total_debits,
+          COALESCE(SUM(jel.credit_amount), 0) as total_credits,
+          coa.opening_balance + 
+            CASE 
+              WHEN coa.account_nature = 'debit' THEN COALESCE(SUM(jel.debit_amount), 0) - COALESCE(SUM(jel.credit_amount), 0)
+              ELSE COALESCE(SUM(jel.credit_amount), 0) - COALESCE(SUM(jel.debit_amount), 0)
+            END as closing_balance
+        FROM chart_of_accounts coa
+        LEFT JOIN journal_entry_lines jel ON jel.account_id = coa.id
+        LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true ${dateFilter}
+        WHERE coa.is_active = true
+        GROUP BY coa.id
+        ORDER BY coa.code
+      `,
+      params,
+    );
+    return result.rows;
+  }
+
+  // Report routes must be registered before /:id
+  router.get('/reports/balance-sheet', async (req, res) => {
+    try {
+      const asOf = String(req.query.as_of || '').trim();
+      if (!asOf) {
+        return res.status(400).json({ error: 'as_of query parameter is required' });
+      }
+      const previousAsOf = String(req.query.previous_as_of || '').trim() || null;
+
+      const currentRows = await accountBalancesAsOf(asOf);
+      const previousRows = previousAsOf ? await accountBalancesAsOf(previousAsOf) : [];
+      const previousById = new Map(
+        previousRows.map((row) => [row.id, Number(row.closing_balance) || 0]),
+      );
+
+      const rows = currentRows.map((row) => ({
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        account_type: row.account_type,
+        account_nature: row.account_nature,
+        level: row.level,
+        is_header: !!row.is_header,
+        current_balance: Number(row.closing_balance) || 0,
+        previous_balance: previousById.get(row.id) ?? 0,
+      }));
+
+      res.json({
+        as_of: asOf,
+        previous_as_of: previousAsOf,
+        rows,
+      });
+    } catch (error) {
+      console.error('[CHART OF ACCOUNTS ERROR]', error);
+      res.status(500).json({ error: 'Failed to generate balance sheet' });
+    }
+  });
+
+  router.get('/reports/trial-balance', async (req, res) => {
+    try {
+      const { start_date, end_date } = req.query;
+
+      let dateFilter = '';
+      const params = [];
+
+      if (start_date && end_date) {
+        dateFilter = 'AND je.entry_date BETWEEN $1 AND $2';
+        params.push(start_date, end_date);
+      }
+
+      const result = await db.query(`
+        SELECT 
+          coa.id,
+          coa.code,
+          coa.name,
+          coa.account_type,
+          coa.account_nature,
+          coa.level,
+          coa.is_header,
+          coa.opening_balance,
+          COALESCE(SUM(jel.debit_amount), 0) as total_debits,
+          COALESCE(SUM(jel.credit_amount), 0) as total_credits,
+          coa.opening_balance + 
+            CASE 
+              WHEN coa.account_nature = 'debit' THEN COALESCE(SUM(jel.debit_amount), 0) - COALESCE(SUM(jel.credit_amount), 0)
+              ELSE COALESCE(SUM(jel.credit_amount), 0) - COALESCE(SUM(jel.debit_amount), 0)
+            END as closing_balance
+        FROM chart_of_accounts coa
+        LEFT JOIN journal_entry_lines jel ON jel.account_id = coa.id
+        LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true ${dateFilter}
+        WHERE coa.is_active = true
+        GROUP BY coa.id
+        ORDER BY coa.code
+      `, params);
+
+      res.json(result.rows);
+    } catch (error) {
+      console.error('[CHART OF ACCOUNTS ERROR]', error);
+      res.status(500).json({ error: 'Failed to generate trial balance' });
+    }
+  });
+
+  // Get accounts by type
+  router.get('/type/:type', async (req, res) => {
+    try {
+      const { type } = req.params;
+      const result = await db.query(`
+        SELECT * FROM chart_of_accounts 
+        WHERE account_type = $1 AND is_active = true
+        ORDER BY code
+      `, [type]);
+      res.json(result.rows);
+    } catch (error) {
+      console.error('[CHART OF ACCOUNTS ERROR]', error);
+      res.status(500).json({ error: 'Failed to fetch accounts by type' });
+    }
+  });
+
   // Get account by ID
   router.get('/:id', async (req, res) => {
     try {
@@ -47,22 +182,6 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch account' });
-    }
-  });
-
-  // Get accounts by type
-  router.get('/type/:type', async (req, res) => {
-    try {
-      const { type } = req.params;
-      const result = await db.query(`
-        SELECT * FROM chart_of_accounts 
-        WHERE account_type = $1 AND is_active = true
-        ORDER BY code
-      `, [type]);
-      res.json(result.rows);
-    } catch (error) {
-      console.error('[CHART OF ACCOUNTS ERROR]', error);
-      res.status(500).json({ error: 'Failed to fetch accounts by type' });
     }
   });
 
@@ -273,51 +392,6 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
       res.status(500).json({ error: 'Failed to get account balance' });
-    }
-  });
-
-  // Get trial balance
-  router.get('/reports/trial-balance', async (req, res) => {
-    try {
-      const { start_date, end_date } = req.query;
-
-      let dateFilter = '';
-      const params = [];
-
-      if (start_date && end_date) {
-        dateFilter = 'AND je.entry_date BETWEEN $1 AND $2';
-        params.push(start_date, end_date);
-      }
-
-      const result = await db.query(`
-        SELECT 
-          coa.id,
-          coa.code,
-          coa.name,
-          coa.account_type,
-          coa.account_nature,
-          coa.level,
-          coa.is_header,
-          coa.opening_balance,
-          COALESCE(SUM(jel.debit_amount), 0) as total_debits,
-          COALESCE(SUM(jel.credit_amount), 0) as total_credits,
-          coa.opening_balance + 
-            CASE 
-              WHEN coa.account_nature = 'debit' THEN COALESCE(SUM(jel.debit_amount), 0) - COALESCE(SUM(jel.credit_amount), 0)
-              ELSE COALESCE(SUM(jel.credit_amount), 0) - COALESCE(SUM(jel.debit_amount), 0)
-            END as closing_balance
-        FROM chart_of_accounts coa
-        LEFT JOIN journal_entry_lines jel ON jel.account_id = coa.id
-        LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true ${dateFilter}
-        WHERE coa.is_active = true
-        GROUP BY coa.id
-        ORDER BY coa.code
-      `, params);
-
-      res.json(result.rows);
-    } catch (error) {
-      console.error('[CHART OF ACCOUNTS ERROR]', error);
-      res.status(500).json({ error: 'Failed to generate trial balance' });
     }
   });
 

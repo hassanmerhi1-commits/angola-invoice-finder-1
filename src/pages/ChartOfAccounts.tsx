@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
 import { Account, AccountType, AccountFormData, accountTypeLabels, getDefaultNature } from '@/types/accounting';
@@ -60,6 +61,7 @@ const buildSuggestedChildCode = (parentCode: string, siblingCodes: string[]) => 
 };
 
 export default function ChartOfAccounts() {
+  const navigate = useNavigate();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { accounts, isLoading, refetch, createAccount, updateAccount, deleteAccount } = useChartOfAccounts();
@@ -257,16 +259,20 @@ export default function ChartOfAccounts() {
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
         {/* Action buttons */}
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:hover:bg-blue-950/30" disabled={!selectedAccount}>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:hover:bg-blue-950/30" disabled={!selectedAccount}
+          onClick={() => { navigate('/invoices'); window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new')), 150); }}>
           <FileText className="w-3 h-3" /> {t.chartOfAccountsUi.salesInvoice}
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-green-600 border-green-200 hover:bg-green-50 dark:border-green-800 dark:hover:bg-green-950/30" disabled={!selectedAccount}>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-green-600 border-green-200 hover:bg-green-50 dark:border-green-800 dark:hover:bg-green-950/30" disabled={!selectedAccount}
+          onClick={() => { navigate('/invoices'); window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new-receipt')), 150); }}>
           <Receipt className="w-3 h-3" /> {t.chartOfAccountsUi.receipt}
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-orange-600 border-orange-200 hover:bg-orange-50 dark:border-orange-800 dark:hover:bg-orange-950/30" disabled={!selectedAccount}>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-orange-600 border-orange-200 hover:bg-orange-50 dark:border-orange-800 dark:hover:bg-orange-950/30" disabled={!selectedAccount}
+          onClick={() => navigate('/payments')}>
           <Banknote className="w-3 h-3" /> {t.chartOfAccountsUi.payment}
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-purple-600 border-purple-200 hover:bg-purple-50 dark:border-purple-800 dark:hover:bg-purple-950/30" disabled={!selectedAccount}>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-purple-600 border-purple-200 hover:bg-purple-50 dark:border-purple-800 dark:hover:bg-purple-950/30" disabled={!selectedAccount}
+          onClick={() => navigate('/fiscal-documents')}>
           <CreditCard className="w-3 h-3" /> {t.chartOfAccountsUi.creditNote}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1 bg-primary/10 text-primary border-primary/30 hover:bg-primary/20" disabled={!selectedAccount}

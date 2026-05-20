@@ -4,6 +4,7 @@ import { useTranslation } from '@/i18n';
 import { useSuppliers } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
+import { NEXOR_TOOLBAR, NEXOR_SUPPLIERS_NEW } from '@/lib/nexorToolbarEvents';
 import { Supplier } from '@/types/erp';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -114,15 +115,49 @@ export default function Suppliers() {
     setDialogOpen(true);
   };
 
-  // TopNav toolbar "Novo" (router state — avoids stray window events)
+  // TopNav toolbar "Novo" (router state + event for same-page clicks)
   useEffect(() => {
+    const openNew = () => {
+      setSelectedSupplier(null);
+      setFormData(initialFormData);
+      setDialogOpen(true);
+    };
+
     const st = location.state as { nexorToolbarNewSupplier?: boolean } | null;
-    if (!st?.nexorToolbarNewSupplier) return;
-    setSelectedSupplier(null);
-    setFormData(initialFormData);
-    setDialogOpen(true);
-    navigate('.', { replace: true, state: {} });
+    if (st?.nexorToolbarNewSupplier) {
+      openNew();
+      navigate('.', { replace: true, state: {} });
+    }
+
+    window.addEventListener(NEXOR_SUPPLIERS_NEW, openNew);
+    return () => window.removeEventListener(NEXOR_SUPPLIERS_NEW, openNew);
   }, [location.state, navigate]);
+
+  useEffect(() => {
+    const onEdit = () => {
+      if (selectedSupplier) handleOpenDialog(selectedSupplier);
+    };
+    const onDelete = () => {
+      if (selectedSupplier && confirm(t.suppliersUi.deleteConfirm || 'Eliminar fornecedor?')) {
+        deleteSupplier(selectedSupplier.id);
+        setSelectedSupplier(null);
+      }
+    };
+    const onAll = () => setSelectedSupplier(null);
+    const handlers: Record<string, () => void> = {
+      [NEXOR_TOOLBAR.EDIT]: onEdit,
+      [NEXOR_TOOLBAR.DELETE]: onDelete,
+      [NEXOR_TOOLBAR.ALL]: onAll,
+    };
+    for (const [event, handler] of Object.entries(handlers)) {
+      window.addEventListener(event, handler);
+    }
+    return () => {
+      for (const [event, handler] of Object.entries(handlers)) {
+        window.removeEventListener(event, handler);
+      }
+    };
+  }, [selectedSupplier, deleteSupplier, t]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -155,7 +190,10 @@ export default function Suppliers() {
         });
       }
 
+      await refreshSuppliers();
       setDialogOpen(false);
+      setSelectedSupplier(null);
+      setFormData(initialFormData);
     } catch (error: any) {
       toast({
         title: t.common.error,

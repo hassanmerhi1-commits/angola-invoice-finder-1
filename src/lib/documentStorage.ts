@@ -1,8 +1,96 @@
 // Document storage — DUAL-MODE: Electron → SQLite | Web → localStorage
 import { ERPDocument, DocumentType, DocumentStatus, DocumentLine, generateDocumentNumber, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
 import { isElectronMode, dbGetAll, dbInsert, lsGet, lsSet } from '@/lib/dbHelper';
+import { api } from '@/lib/api/client';
+import { isDemoMode } from '@/lib/api/config';
+import * as storage from '@/lib/storage';
 
 const STORAGE_KEY = 'kwanzaerp_documents';
+
+function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
+  const createdAt = sale.createdAt || sale.created_at || new Date().toISOString();
+  const issueDate = String(createdAt).split('T')[0] || createdAt;
+  const items = Array.isArray(sale.items) ? sale.items : [];
+  const lines: DocumentLine[] = items.map((item: any, idx: number) => ({
+    id: `line_${sale.id}_${idx}`,
+    productId: item.productId || item.product_id,
+    productSku: item.sku || '',
+    description: item.productName || item.product_name || '',
+    quantity: Number(item.quantity || 0),
+    unitPrice: Number(item.unitPrice || item.unit_price || 0),
+    discount: Number(item.discount || 0),
+    discountAmount: 0,
+    taxRate: Number(item.taxRate || item.tax_rate || 0),
+    taxAmount: Number(item.taxAmount || item.tax_amount || 0),
+    lineTotal: Number(item.subtotal || item.total || 0),
+  }));
+
+  const total = Number(sale.total || 0);
+  const amountPaid = Number(sale.amountPaid || sale.amount_paid || 0);
+  let status: DocumentStatus = 'confirmed';
+  if (sale.status === 'voided') status = 'cancelled';
+  else if (amountPaid >= total - 0.01) status = 'paid';
+  else if (amountPaid > 0) status = 'partial';
+
+  return {
+    id: sale.id,
+    documentType: 'fatura_venda',
+    documentNumber: sale.invoiceNumber || sale.invoice_number || '',
+    branchId: sale.branchId || sale.branch_id || '',
+    branchName,
+    entityType: 'customer',
+    entityName: sale.customerName || sale.customer_name || 'Consumidor Final',
+    entityNif: sale.customerNif || sale.customer_nif,
+    lines,
+    subtotal: Number(sale.subtotal || 0),
+    totalDiscount: Number(sale.discount || 0),
+    totalTax: Number(sale.taxAmount || sale.tax_amount || 0),
+    total,
+    currency: 'AOA',
+    paymentMethod: sale.paymentMethod || sale.payment_method || 'cash',
+    amountPaid,
+    amountDue: Math.max(0, total - amountPaid),
+    status,
+    issueDate,
+    issueTime: String(createdAt).includes('T')
+      ? String(createdAt).split('T')[1]?.substring(0, 8) || ''
+      : '',
+    createdBy: sale.cashierId || sale.cashier_id || '',
+    createdByName: sale.cashierName || sale.cashier_name || '',
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+/** Sales invoices from POS / transaction engine (`sales` table) — canonical in production. */
+export async function getSalesInvoicesAsDocuments(
+  branchId?: string,
+  branchNames: Record<string, string> = {},
+  includeAllBranches = false,
+): Promise<ERPDocument[]> {
+  let rows: any[] = [];
+
+  if (isDemoMode()) {
+    rows = await storage.getSales(includeAllBranches ? undefined : branchId);
+  } else {
+    const res = await api.sales.list(includeAllBranches ? undefined : branchId);
+    if (res.error || !Array.isArray(res.data)) {
+      console.warn('[Documents] sales API list failed:', res.error);
+      return [];
+    }
+    rows = res.data;
+    if (branchId && !includeAllBranches) {
+      rows = rows.filter((s) => String(s.branch_id || s.branchId) === String(branchId));
+    }
+  }
+
+  return rows
+    .map((sale) => {
+      const bid = sale.branchId || sale.branch_id || '';
+      return mapSaleRowToDocument(sale, branchNames[bid] || '');
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
 
 export async function getDocuments(type?: DocumentType, branchId?: string): Promise<ERPDocument[]> {
   if (isElectronMode()) {

@@ -7,6 +7,7 @@
 import { Sale, Branch } from '@/types/erp';
 import { buildAGTQRCodeString, saleToAGTQRData, getInvoiceHash } from './agtQRCode';
 import { getCompanySettings } from './companySettings';
+import { formatTaxLabel, taxRatesFromSaleItems } from './taxUtils';
 
 // Printer configuration
 export interface PrinterConfig {
@@ -119,7 +120,7 @@ export function generateReceiptText(
   
   // Totals
   lines.push(leftRight('Subtotal:', formatMoney(sale.subtotal)));
-  lines.push(leftRight('IVA 14%:', formatMoney(sale.taxAmount)));
+  lines.push(leftRight(`${formatTaxLabel(taxRatesFromSaleItems(sale.items))}:`, formatMoney(sale.taxAmount)));
   lines.push(doubleDivider);
   lines.push(leftRight('TOTAL:', formatMoney(sale.total)));
   lines.push(doubleDivider);
@@ -237,7 +238,7 @@ export function generateESCPOSReceipt(
   };
   
   addText(formatLine('Subtotal:', sale.subtotal.toLocaleString('pt-AO') + ' Kz'));
-  addText(formatLine('IVA 14%:', sale.taxAmount.toLocaleString('pt-AO') + ' Kz'));
+  addText(formatLine(`${formatTaxLabel(taxRatesFromSaleItems(sale.items))}:`, sale.taxAmount.toLocaleString('pt-AO') + ' Kz'));
   
   addCommand(ESC_POS.BOLD_ON);
   addCommand(ESC_POS.DOUBLE_HEIGHT_ON);
@@ -418,7 +419,7 @@ export async function printViaBrowser(
     <span>${sale.subtotal.toLocaleString('pt-AO')} Kz</span>
   </div>
   <div class="row">
-    <span>IVA 14%:</span>
+    <span>${formatTaxLabel(taxRatesFromSaleItems(sale.items))}:</span>
     <span>${sale.taxAmount.toLocaleString('pt-AO')} Kz</span>
   </div>
   

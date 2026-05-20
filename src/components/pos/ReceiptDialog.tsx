@@ -20,6 +20,7 @@ import { getInvoiceHash } from '@/lib/agtQRCode';
 import { printA4Invoice } from '@/lib/a4Invoice';
 import { getCompanySettings } from '@/lib/companySettings';
 import { toast } from 'sonner';
+import { formatTaxLabel, taxRatesFromSaleItems } from '@/lib/taxUtils';
 import { useTranslation } from '@/i18n';
 
 interface ReceiptDialogProps {
@@ -42,6 +43,9 @@ export function ReceiptDialog({
   const company = getCompanySettings();
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const taxLabel = sale
+    ? formatTaxLabel(taxRatesFromSaleItems(sale.items), t.pos.tax)
+    : t.pos.tax;
 
   if (!sale || !branch) return null;
 
@@ -157,7 +161,7 @@ export function ReceiptDialog({
               <span>{sale.subtotal.toLocaleString(locale)} Kz</span>
             </div>
             <div className="flex justify-between">
-              <span>{t.pos.tax} 14%</span>
+              <span>{taxLabel}</span>
               <span>{sale.taxAmount.toLocaleString(locale)} Kz</span>
             </div>
             <div className="flex justify-between font-bold text-sm">

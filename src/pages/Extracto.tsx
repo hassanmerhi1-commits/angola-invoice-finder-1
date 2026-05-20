@@ -15,8 +15,10 @@ import {
   TrendingUp, TrendingDown, ArrowRight, User, Building2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getDocuments } from '@/lib/documentStorage';
+import { getDocuments, getSalesInvoicesAsDocuments } from '@/lib/documentStorage';
 import { DOCUMENT_TYPE_CONFIG, ERPDocument } from '@/types/documents';
+import { exportToExcel } from '@/lib/excel';
+import { toast } from 'sonner';
 
 interface EntitySummary {
   name: string;
@@ -39,8 +41,21 @@ export default function Extracto() {
   const [allDocs, setAllDocs] = useState<ERPDocument[]>([]);
 
   useEffect(() => {
-    getDocuments(undefined, currentBranch?.id).then(setAllDocs);
-  }, [currentBranch?.id, refreshKey]);
+    const branchNames = Object.fromEntries(
+      (currentBranch ? [{ id: currentBranch.id, name: currentBranch.name }] : []).map((b) => [b.id, b.name])
+    );
+    Promise.all([
+      getDocuments(undefined, currentBranch?.id),
+      getSalesInvoicesAsDocuments(currentBranch?.id, branchNames, !!currentBranch?.isMain),
+    ]).then(([docs, salesDocs]) => {
+      const seen = new Set(docs.map((d) => d.documentNumber));
+      const merged = [...docs];
+      for (const doc of salesDocs) {
+        if (doc.documentNumber && !seen.has(doc.documentNumber)) merged.push(doc);
+      }
+      setAllDocs(merged);
+    });
+  }, [currentBranch?.id, currentBranch?.isMain, currentBranch?.name, refreshKey]);
 
   // Group documents by entity
   const entitySummaries = useMemo(() => {
@@ -109,14 +124,51 @@ export default function Extracto() {
 
   const selectedSummary = entitySummaries.find(s => (s.nif || s.name) === selectedEntity);
 
+  const handlePrintStatement = () => {
+    if (!selectedSummary || !statementLines.length) return;
+    const html = `<html><head><title>Extracto — ${selectedSummary.name}</title>
+      <style>body{font-family:Arial,sans-serif;font-size:12px;padding:24px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px;text-align:left}th{background:#f5f5f5}.right{text-align:right}</style>
+      </head><body><h2>Extracto — ${selectedSummary.name}</h2><p>NIF: ${selectedSummary.nif || '-'}</p>
+      <table><thead><tr><th>Data</th><th>Documento</th><th class="right">Débito</th><th class="right">Crédito</th><th class="right">Saldo</th></tr></thead><tbody>
+      ${statementLines.map(({ doc, debit, credit, running }) =>
+        `<tr><td>${doc.issueDate}</td><td>${doc.documentNumber}</td><td class="right">${debit ? debit.toLocaleString('pt-AO') : ''}</td><td class="right">${credit ? credit.toLocaleString('pt-AO') : ''}</td><td class="right">${running.toLocaleString('pt-AO')}</td></tr>`
+      ).join('')}
+      </tbody></table></body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) {
+      toast.error('Popup bloqueado — permita popups para imprimir.');
+      return;
+    }
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
+  };
+
+  const handleExportExcel = () => {
+    if (!selectedSummary || !statementLines.length) return;
+    exportToExcel(
+      statementLines.map(({ doc, debit, credit, running }) => ({
+        Data: doc.issueDate,
+        Documento: doc.documentNumber,
+        Tipo: doc.documentType,
+        Debito: debit,
+        Credito: credit,
+        Saldo: running,
+      })),
+      `Extracto_${selectedSummary.name.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}`,
+    );
+    toast.success('Extracto exportado para Excel.');
+  };
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b">
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedEntity}>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedEntity} onClick={handlePrintStatement}>
           <Printer className="w-3 h-3" /> Imprimir Extracto
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedEntity}>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedEntity} onClick={handleExportExcel}>
           <Download className="w-3 h-3" /> Excel
         </Button>
         <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setRefreshKey(k => k + 1)}>

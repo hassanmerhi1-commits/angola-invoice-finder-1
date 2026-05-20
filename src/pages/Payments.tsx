@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { useClients, useSuppliers } from '@/hooks/useERP';
 import type { OpenItem, Payment } from '@/types/erp';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
+import { signedOpenItemBalance } from '@/lib/openItems';
 
 // Demo data for localStorage mode
 function mapPaymentRow(p: any): Payment {
@@ -151,8 +152,14 @@ export default function Payments() {
   const selectedTotal = useMemo(() => {
     return entityOpenItems
       .filter(oi => selectedOpenItems.has(oi.id))
-      .reduce((sum, oi) => sum + oi.remainingAmount, 0);
+      .reduce((sum, oi) => sum + signedOpenItemBalance(oi), 0);
   }, [entityOpenItems, selectedOpenItems]);
+
+  const formatSignedAmount = (oi: OpenItem) => {
+    const signed = signedOpenItemBalance(oi);
+    const formatted = Math.abs(signed).toLocaleString(locale);
+    return signed < 0 ? `-${formatted}` : formatted;
+  };
 
   const filteredPayments = useMemo(() => {
     const typeFilter = activeTab === 'receipts' ? 'receipt' : 'payment';
@@ -222,8 +229,12 @@ export default function Payments() {
 
   const totalReceipts = payments.filter(p => p.paymentType === 'receipt').reduce((s, p) => s + p.amount, 0);
   const totalPayments = payments.filter(p => p.paymentType === 'payment').reduce((s, p) => s + p.amount, 0);
-  const totalOpenReceivable = openItems.filter(oi => oi.entityType === 'customer' && oi.status !== 'cleared').reduce((s, oi) => s + oi.remainingAmount, 0);
-  const totalOpenPayable = openItems.filter(oi => oi.entityType === 'supplier' && oi.status !== 'cleared').reduce((s, oi) => s + oi.remainingAmount, 0);
+  const totalOpenReceivable = openItems
+    .filter(oi => oi.entityType === 'customer' && oi.status !== 'cleared')
+    .reduce((s, oi) => s + signedOpenItemBalance(oi), 0);
+  const totalOpenPayable = openItems
+    .filter(oi => oi.entityType === 'supplier' && oi.status !== 'cleared')
+    .reduce((s, oi) => s + signedOpenItemBalance(oi), 0);
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -381,7 +392,7 @@ export default function Payments() {
                   <td className="px-3 py-2 text-muted-foreground">{new Date(oi.documentDate).toLocaleDateString(locale)}</td>
                   <td className="px-3 py-2 text-muted-foreground">{oi.dueDate ? new Date(oi.dueDate).toLocaleDateString(locale) : '—'}</td>
                   <td className="px-3 py-2 text-right font-mono">{oi.originalAmount.toLocaleString(locale)} Kz</td>
-                  <td className="px-3 py-2 text-right font-mono font-medium">{oi.remainingAmount.toLocaleString(locale)} Kz</td>
+                  <td className="px-3 py-2 text-right font-mono font-medium">{formatSignedAmount(oi)} Kz</td>
                   <td className="px-3 py-2 text-center">
                     <Badge variant={oi.status === 'open' ? 'destructive' : 'outline'} className="text-xs">
                       {oi.status === 'open' ? t.paymentsUi.open : t.documentStatus.partial}
@@ -453,7 +464,7 @@ export default function Payments() {
                           </td>
                           <td className="px-2 py-1.5 font-mono">{oi.documentNumber}</td>
                           <td className="px-2 py-1.5 text-muted-foreground">{new Date(oi.documentDate).toLocaleDateString(locale)}</td>
-                          <td className="px-2 py-1.5 text-right font-mono">{oi.remainingAmount.toLocaleString(locale)} Kz</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{formatSignedAmount(oi)} Kz</td>
                         </tr>
                       ))}
                     </tbody>

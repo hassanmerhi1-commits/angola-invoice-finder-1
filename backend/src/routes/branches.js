@@ -65,7 +65,9 @@ module.exports = function(broadcastTable) {
   // Get all branches
   router.get('/', async (req, res) => {
     try {
-      const result = await db.query('SELECT * FROM branches ORDER BY is_main DESC, name');
+      const result = await db.query(
+        'SELECT * FROM branches WHERE COALESCE(is_active, 1) != 0 ORDER BY is_main DESC, name'
+      );
       res.json(result.rows);
     } catch (error) {
       console.error('[BRANCHES ERROR]', error);
@@ -167,6 +169,26 @@ module.exports = function(broadcastTable) {
         return res.status(409).json({ error: 'Branch code already exists' });
       }
       res.status(500).json({ error: 'Failed to update branch' });
+    }
+  });
+
+  // Soft-delete branch (deactivate)
+  router.delete('/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existing = await db.query('SELECT id, is_main FROM branches WHERE id = $1', [id]);
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Branch not found' });
+      }
+      if (existing.rows[0].is_main) {
+        return res.status(400).json({ error: 'Cannot delete the main branch' });
+      }
+      await db.query('UPDATE branches SET is_active = 0 WHERE id = $1', [id]);
+      await broadcastTable('branches');
+      res.json({ success: true });
+    } catch (error) {
+      console.error('[BRANCHES ERROR]', error);
+      res.status(500).json({ error: 'Failed to delete branch' });
     }
   });
 

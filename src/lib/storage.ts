@@ -11,6 +11,7 @@
 import { Branch, Product, Sale, User, DailySummary, Client, StockTransfer, Supplier, PurchaseOrder, Category, StockMovement } from '@/types/erp';
 import { auditLog } from '@/lib/auditService';
 import { isDemoMode } from '@/lib/api/config';
+import { normalizeTaxRate } from './taxUtils';
 
 // ============= MODE DETECTION =============
 export function isElectronMode(): boolean {
@@ -1332,7 +1333,7 @@ function mapProductFromDb(row: any): Product {
     avgCost: Number(row.weighted_avg_cost ?? row.avg_cost ?? row.avgCost ?? cost),
     stock: Number(row.stock || 0),
     unit: row.unit || 'un',
-    taxRate: Number(row.tax_rate ?? row.taxRate ?? 14),
+    taxRate: normalizeTaxRate(row.tax_rate ?? row.taxRate),
     branchId: row.branch_id ?? row.branchId ?? '',
     supplierId: row.supplier_id ?? row.supplierId,
     supplierName: row.supplier_name ?? row.supplierName,

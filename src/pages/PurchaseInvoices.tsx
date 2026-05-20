@@ -1622,6 +1622,9 @@ export default function PurchaseInvoices() {
   }, []);
 
   const saveNewSupplier = useCallback(async () => {
+    if (!newSupplierForm.name.trim()) {
+      throw new Error(t.purchaseInvoicesUi.supplierNamePlaceholder || 'Nome obrigatório');
+    }
     const created = await createSupplier({
       name: newSupplierForm.name.trim(),
       nif: newSupplierForm.nif.trim() || '',
@@ -1931,20 +1934,24 @@ export default function PurchaseInvoices() {
       return;
     }
 
-    // ERP validation: avoid duplicate supplier invoice number (same supplier + same supplier invoice no)
+    // ERP validation: block duplicate supplier invoice number (same supplier + same supplier invoice no)
     const supplierInvoiceNo = String(formWithSupplier.supplierInvoiceNo || '').trim();
     if (supplierInvoiceNo) {
-      const dup = invoices.find((inv) => {
-        if (!inv.supplierInvoiceNo) return false;
-        const sameNo = inv.supplierInvoiceNo.trim().toLowerCase() === supplierInvoiceNo.toLowerCase();
-        const sameSupplier =
-          (inv.supplierAccountCode && inv.supplierAccountCode === (form.supplierAccountCode || '')) ||
+      const noLower = supplierInvoiceNo.toLowerCase();
+      const localDup = invoices.find((inv) => {
+        if (!inv.supplierInvoiceNo?.trim()) return false;
+        if (inv.supplierInvoiceNo.trim().toLowerCase() !== noLower) return false;
+        if (inv.supplierId && resolvedSupplierId) {
+          return inv.supplierId === resolvedSupplierId;
+        }
+        return (
           (inv.supplierNif && form.supplierNif && inv.supplierNif === form.supplierNif) ||
-          (inv.supplierName && form.supplierName && inv.supplierName.trim().toLowerCase() === form.supplierName.trim().toLowerCase());
-        return sameNo && sameSupplier;
+          (inv.supplierName && form.supplierName &&
+            inv.supplierName.trim().toLowerCase() === form.supplierName.trim().toLowerCase())
+        );
       });
 
-      if (dup) {
+      if (localDup) {
         setSaveError(t.purchaseInvoicesUi.duplicateSupplierInvoiceNo);
         toast({
           title: t.common.error,
@@ -1952,6 +1959,24 @@ export default function PurchaseInvoices() {
           variant: 'destructive',
         });
         return;
+      }
+
+      try {
+        const dupRes = await api.purchaseInvoices.checkDuplicate({
+          supplierId: resolvedSupplierId,
+          supplierInvoiceNo,
+        });
+        if (dupRes.data?.duplicate) {
+          setSaveError(t.purchaseInvoicesUi.duplicateSupplierInvoiceNo);
+          toast({
+            title: t.common.error,
+            description: t.purchaseInvoicesUi.duplicateSupplierInvoiceNo,
+            variant: 'destructive',
+          });
+          return;
+        }
+      } catch {
+        // Non-blocking if API unavailable; local list check above still applies.
       }
     }
 

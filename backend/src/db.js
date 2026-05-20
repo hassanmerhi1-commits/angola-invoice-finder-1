@@ -747,6 +747,7 @@ function ensureUniqueIntegrityIndexesSqlite() {
     ['idx_products_sku_branch', 'products', 'sku, branch_id', "sku IS NOT NULL AND TRIM(sku) != ''"],
     ['idx_open_items_document_id', 'open_items', 'document_id', "document_id IS NOT NULL AND document_id != ''"],
     ['idx_purchase_invoices_number_branch', 'purchase_invoices', 'invoice_number, branch_id', "invoice_number IS NOT NULL AND invoice_number != ''"],
+    ['idx_purchase_invoices_supplier_invoice_no', 'purchase_invoices', 'supplier_id, supplier_invoice_no', "supplier_invoice_no IS NOT NULL AND TRIM(supplier_invoice_no) != '' AND supplier_id IS NOT NULL AND TRIM(supplier_id) != ''"],
   ];
   for (const [name, table, cols, where] of indexes) {
     if (!tableExists(table)) continue;

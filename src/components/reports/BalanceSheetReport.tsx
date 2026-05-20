@@ -1,17 +1,36 @@
 /**
- * Balanço Patrimonial (Balance Sheet)
- * Shows assets, liabilities, and equity
+ * Balan�o Patrimonial (Balance Sheet) � live balances from chart of accounts + journals.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { Download, Printer, FileSpreadsheet, Scale } from 'lucide-react';
-import { useBranches, useSales } from '@/hooks/useERP';
+import { Printer, Scale, RefreshCw, Loader2 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { useBalanceSheet } from '@/hooks/useChartOfAccounts';
+import type { AccountType, BalanceSheetAccountRow } from '@/types/accounting';
+
+function previousYearDate(isoDate: string): string {
+  const d = new Date(isoDate + 'T12:00:00');
+  d.setFullYear(d.getFullYear() - 1);
+  return d.toISOString().split('T')[0];
+}
+
+function hasBalance(row: BalanceSheetAccountRow): boolean {
+  return (
+    !row.is_header &&
+    (Math.abs(row.current_balance) > 0.005 || Math.abs(row.previous_balance) > 0.005)
+  );
+}
+
+function sumType(rows: BalanceSheetAccountRow[], type: AccountType, field: 'current_balance' | 'previous_balance') {
+  return rows
+    .filter((r) => !r.is_header && r.account_type === type)
+    .reduce((acc, r) => acc + (Number(r[field]) || 0), 0);
+}
 
 interface BalanceItem {
   code: string;
@@ -24,83 +43,128 @@ interface BalanceItem {
   indent?: number;
 }
 
+function appendAccounts(
+  items: BalanceItem[],
+  accounts: BalanceSheetAccountRow[],
+  filter: (r: BalanceSheetAccountRow) => boolean,
+) {
+  for (const row of accounts.filter((r) => hasBalance(r) && filter(r))) {
+    items.push({
+      code: row.code,
+      description: row.name,
+      currentPeriod: row.current_balance,
+      previousPeriod: row.previous_balance,
+      indent: Math.min(3, Math.max(1, row.level || 1)),
+    });
+  }
+}
+
 export default function BalanceSheetReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { currentBranch } = useBranches();
-  const { sales } = useSales(currentBranch?.id);
-  
   const [reportDate, setReportDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const previousAsOf = useMemo(() => previousYearDate(reportDate), [reportDate]);
+  const { rows, isLoading, error, refetch } = useBalanceSheet(reportDate, previousAsOf);
 
-  // Calculate from real data
-  const salesTotal = sales.reduce((sum, s) => sum + s.total, 0);
-  const netProfit = salesTotal * 0.15; // Simplified
+  const { assets, liabilitiesAndEquity, metrics, hasData } = useMemo(() => {
+    const netResultCurrent = sumType(rows, 'revenue', 'current_balance') - sumType(rows, 'expense', 'current_balance');
+    const netResultPrevious = sumType(rows, 'revenue', 'previous_balance') - sumType(rows, 'expense', 'previous_balance');
+
+    const assetItems: BalanceItem[] = [
+      { code: '', description: t.balanceSheetUi.assetsHeader, currentPeriod: 0, previousPeriod: 0, isHeader: true },
+    ];
+    appendAccounts(assetItems, rows, (r) => r.account_type === 'asset');
+    const totalAssetsCurrent = sumType(rows, 'asset', 'current_balance');
+    const totalAssetsPrevious = sumType(rows, 'asset', 'previous_balance');
+    assetItems.push({
+      code: '',
+      description: t.balanceSheetUi.totalAssets,
+      currentPeriod: totalAssetsCurrent,
+      previousPeriod: totalAssetsPrevious,
+      isTotal: true,
+    });
+
+    const leItems: BalanceItem[] = [
+      {
+        code: '',
+        description: t.balanceSheetUi.equityAndLiabilitiesHeader,
+        currentPeriod: 0,
+        previousPeriod: 0,
+        isHeader: true,
+      },
+      { code: '', description: t.balanceSheetUi.equity, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
+    ];
+    appendAccounts(leItems, rows, (r) => r.account_type === 'equity');
+    if (Math.abs(netResultCurrent) > 0.005 || Math.abs(netResultPrevious) > 0.005) {
+      leItems.push({
+        code: '88',
+        description: t.balanceSheetUi.netResult,
+        currentPeriod: netResultCurrent,
+        previousPeriod: netResultPrevious,
+        indent: 1,
+      });
+    }
+    const totalEquityCurrent = sumType(rows, 'equity', 'current_balance') + netResultCurrent;
+    const totalEquityPrevious = sumType(rows, 'equity', 'previous_balance') + netResultPrevious;
+    leItems.push({
+      code: '',
+      description: t.balanceSheetUi.totalEquity,
+      currentPeriod: totalEquityCurrent,
+      previousPeriod: totalEquityPrevious,
+      isSubtotal: true,
+    });
+    leItems.push({
+      code: '',
+      description: t.balanceSheetUi.currentLiabilities,
+      currentPeriod: 0,
+      previousPeriod: 0,
+      isSubtotal: true,
+    });
+    appendAccounts(leItems, rows, (r) => r.account_type === 'liability');
+    const totalLiabilitiesCurrent = sumType(rows, 'liability', 'current_balance');
+    const totalLiabilitiesPrevious = sumType(rows, 'liability', 'previous_balance');
+    leItems.push({
+      code: '',
+      description: t.balanceSheetUi.totalLiabilities,
+      currentPeriod: totalLiabilitiesCurrent,
+      previousPeriod: totalLiabilitiesPrevious,
+      isSubtotal: true,
+    });
+    leItems.push({
+      code: '',
+      description: t.balanceSheetUi.totalEquityAndLiabilities,
+      currentPeriod: totalEquityCurrent + totalLiabilitiesCurrent,
+      previousPeriod: totalEquityPrevious + totalLiabilitiesPrevious,
+      isTotal: true,
+    });
+
+    const currentAssetRows = rows.filter(
+      (r) => !r.is_header && r.account_type === 'asset' && /^[234](\.|$)/.test(r.code),
+    );
+    const totalCurrentAssets = currentAssetRows.reduce((s, r) => s + r.current_balance, 0);
+    const totalPreviousCurrentAssets = currentAssetRows.reduce((s, r) => s + r.previous_balance, 0);
+
+    return {
+      hasData:
+        rows.some(hasBalance) || Math.abs(netResultCurrent) > 0.005 || Math.abs(netResultPrevious) > 0.005,
+      assets: assetItems,
+      liabilitiesAndEquity: leItems,
+      metrics: {
+        totalAssetsCurrent,
+        totalEquityCurrent,
+        totalLiabilitiesCurrent,
+        totalCurrentAssets,
+        totalPreviousCurrentAssets,
+        totalCurrentLiabilities: totalLiabilitiesCurrent,
+        totalPreviousLiabilities: totalLiabilitiesPrevious,
+      },
+    };
+  }, [rows, t]);
 
   const formatMoney = (value: number) => {
-    if (value === 0) return '-';
+    if (Math.abs(value) < 0.005) return '-';
     return value.toLocaleString(locale, { minimumFractionDigits: 2 });
   };
-
-  // Balance Sheet Structure
-  const assets: BalanceItem[] = [
-    { code: '', description: t.balanceSheetUi.assetsHeader, currentPeriod: 0, previousPeriod: 0, isHeader: true },
-    { code: '', description: t.balanceSheetUi.nonCurrentAssets, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
-    { code: '43', description: t.balanceSheetUi.tangibleFixedAssets, currentPeriod: 500000, previousPeriod: 550000, indent: 1 },
-    { code: '44', description: t.balanceSheetUi.intangibleAssets, currentPeriod: 50000, previousPeriod: 60000, indent: 1 },
-    { code: '', description: t.balanceSheetUi.totalNonCurrentAssets, currentPeriod: 550000, previousPeriod: 610000, isSubtotal: true },
-    
-    { code: '', description: t.balanceSheetUi.currentAssets, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
-    { code: '31', description: t.balanceSheetUi.inventories, currentPeriod: 1000000 + salesTotal * 0.2, previousPeriod: 1000000, indent: 1 },
-    { code: '21', description: t.balanceSheetUi.customers, currentPeriod: salesTotal * 0.1, previousPeriod: 150000, indent: 1 },
-    { code: '12', description: t.balanceSheetUi.bankDeposits, currentPeriod: 500000 + salesTotal * 0.4, previousPeriod: 500000, indent: 1 },
-    { code: '11', description: t.balanceSheetUi.cash, currentPeriod: salesTotal * 0.6, previousPeriod: 100000, indent: 1 },
-  ];
-
-  const totalCurrentAssets = 1000000 + salesTotal * 0.2 + salesTotal * 0.1 + 500000 + salesTotal * 0.4 + salesTotal * 0.6;
-  const totalAssets = 550000 + totalCurrentAssets;
-  const prevCurrentAssets = 1000000 + 150000 + 500000 + 100000;
-  const prevTotalAssets = 610000 + prevCurrentAssets;
-
-  assets.push(
-    { code: '', description: t.balanceSheetUi.totalCurrentAssets, currentPeriod: totalCurrentAssets, previousPeriod: prevCurrentAssets, isSubtotal: true },
-    { code: '', description: t.balanceSheetUi.totalAssets, currentPeriod: totalAssets, previousPeriod: prevTotalAssets, isTotal: true }
-  );
-
-  const liabilitiesAndEquity: BalanceItem[] = [
-    { code: '', description: t.balanceSheetUi.equityAndLiabilitiesHeader, currentPeriod: 0, previousPeriod: 0, isHeader: true },
-    
-    { code: '', description: t.balanceSheetUi.equity, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
-    { code: '51', description: t.balanceSheetUi.shareCapital, currentPeriod: 1000000, previousPeriod: 1000000, indent: 1 },
-    { code: '55', description: t.balanceSheetUi.legalReserves, currentPeriod: 100000, previousPeriod: 80000, indent: 1 },
-    { code: '59', description: t.balanceSheetUi.retainedEarnings, currentPeriod: 250000, previousPeriod: 200000, indent: 1 },
-    { code: '88', description: t.balanceSheetUi.netResult, currentPeriod: netProfit, previousPeriod: 150000, indent: 1 },
-  ];
-
-  const totalEquity = 1000000 + 100000 + 250000 + netProfit;
-  const prevTotalEquity = 1000000 + 80000 + 200000 + 150000;
-
-  liabilitiesAndEquity.push(
-    { code: '', description: t.balanceSheetUi.totalEquity, currentPeriod: totalEquity, previousPeriod: prevTotalEquity, isSubtotal: true },
-    
-    { code: '', description: t.balanceSheetUi.nonCurrentLiabilities, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
-    { code: '25', description: t.balanceSheetUi.borrowings, currentPeriod: 200000, previousPeriod: 250000, indent: 1 },
-    { code: '', description: t.balanceSheetUi.totalNonCurrentLiabilities, currentPeriod: 200000, previousPeriod: 250000, isSubtotal: true },
-    
-    { code: '', description: t.balanceSheetUi.currentLiabilities, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
-    { code: '22', description: t.balanceSheetUi.suppliers, currentPeriod: totalAssets - totalEquity - 200000 - 50000, previousPeriod: 300000, indent: 1 },
-    { code: '24', description: t.balanceSheetUi.stateAndPublicEntities, currentPeriod: 50000, previousPeriod: 40000, indent: 1 }
-  );
-
-  const totalCurrentLiabilities = totalAssets - totalEquity - 200000;
-  const prevCurrentLiabilities = prevTotalAssets - prevTotalEquity - 250000;
-  const totalLiabilities = 200000 + totalCurrentLiabilities;
-  const prevTotalLiabilities = 250000 + prevCurrentLiabilities;
-
-  liabilitiesAndEquity.push(
-    { code: '', description: t.balanceSheetUi.totalCurrentLiabilities, currentPeriod: totalCurrentLiabilities, previousPeriod: prevCurrentLiabilities, isSubtotal: true },
-    { code: '', description: t.balanceSheetUi.totalLiabilities, currentPeriod: totalLiabilities, previousPeriod: prevTotalLiabilities, isSubtotal: true },
-    { code: '', description: t.balanceSheetUi.totalEquityAndLiabilities, currentPeriod: totalAssets, previousPeriod: prevTotalAssets, isTotal: true }
-  );
 
   const handlePrint = () => {
     window.print();
@@ -163,20 +227,20 @@ export default function BalanceSheetReport() {
               />
             </div>
             <div className="flex gap-2 ml-auto">
+              <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isLoading}>
+                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                {t.common.refresh}
+              </Button>
               <Button variant="outline" size="sm" onClick={handlePrint}>
                 <Printer className="w-4 h-4 mr-2" />
                 {t.reportsUi.print}
               </Button>
-              <Button variant="outline" size="sm">
-                <FileSpreadsheet className="w-4 h-4 mr-2" />
-                Excel
-              </Button>
             </div>
           </div>
+          {error && <p className="text-sm text-destructive mt-3">{error}</p>}
         </CardContent>
       </Card>
 
-      {/* Balance Sheet */}
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
@@ -188,23 +252,31 @@ export default function BalanceSheetReport() {
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Assets */}
-          {renderSection(assets)}
-          
-          <Separator />
-          
-          {/* Liabilities and Equity */}
-          {renderSection(liabilitiesAndEquity)}
+          {isLoading ? (
+            <div className="flex justify-center py-16">
+              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : !hasData ? (
+            <p className="text-center py-16 text-muted-foreground text-sm">{t.journalsUi.noEntriesFound}</p>
+          ) : (
+            <>
+              {renderSection(assets)}
+              <Separator />
+              {renderSection(liabilitiesAndEquity)}
+            </>
+          )}
         </CardContent>
       </Card>
 
-      {/* Key Ratios */}
+      {!isLoading && hasData && (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-4">
             <p className="text-sm text-muted-foreground">{t.balanceSheetUi.currentRatio}</p>
             <p className="text-2xl font-bold text-blue-600">
-              {totalCurrentLiabilities > 0 ? (totalCurrentAssets / totalCurrentLiabilities).toFixed(2) : '-'}
+              {metrics.totalCurrentLiabilities > 0
+                ? (metrics.totalCurrentAssets / metrics.totalCurrentLiabilities).toFixed(2)
+                : '-'}
             </p>
           </CardContent>
         </Card>
@@ -212,7 +284,10 @@ export default function BalanceSheetReport() {
           <CardContent className="pt-4">
             <p className="text-sm text-muted-foreground">{t.balanceSheetUi.financialAutonomy}</p>
             <p className="text-2xl font-bold text-green-600">
-              {totalAssets > 0 ? ((totalEquity / totalAssets) * 100).toFixed(1) : 0}%
+              {metrics.totalAssetsCurrent > 0
+                ? ((metrics.totalEquityCurrent / metrics.totalAssetsCurrent) * 100).toFixed(1)
+                : 0}
+              %
             </p>
           </CardContent>
         </Card>
@@ -220,19 +295,29 @@ export default function BalanceSheetReport() {
           <CardContent className="pt-4">
             <p className="text-sm text-muted-foreground">{t.balanceSheetUi.debtRatio}</p>
             <p className="text-2xl font-bold text-orange-600">
-              {totalAssets > 0 ? ((totalLiabilities / totalAssets) * 100).toFixed(1) : 0}%
+              {metrics.totalAssetsCurrent > 0
+                ? ((metrics.totalLiabilitiesCurrent / metrics.totalAssetsCurrent) * 100).toFixed(1)
+                : 0}
+              %
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <p className="text-sm text-muted-foreground">{t.balanceSheetUi.workingCapital}</p>
-            <p className={`text-2xl font-bold ${totalCurrentAssets - totalCurrentLiabilities >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {formatMoney(totalCurrentAssets - totalCurrentLiabilities)} Kz
+            <p
+              className={`text-2xl font-bold ${
+                metrics.totalCurrentAssets - metrics.totalCurrentLiabilities >= 0
+                  ? 'text-green-600'
+                  : 'text-red-600'
+              }`}
+            >
+              {formatMoney(metrics.totalCurrentAssets - metrics.totalCurrentLiabilities)} Kz
             </p>
           </CardContent>
         </Card>
       </div>
+      )}
     </div>
   );
 }

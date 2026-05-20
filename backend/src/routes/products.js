@@ -11,6 +11,30 @@ function sanitizeUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed) ? trimmed : null;
 }
 
+function normalizeSkuKey(sku) {
+  return String(sku || '').trim().toLowerCase();
+}
+
+/** One row per SKU when duplicate branch/catalog rows exist (e.g. after repeated transfers). */
+function dedupeProductsBySku(rows, branchId) {
+  const bySku = new Map();
+  for (const row of rows) {
+    const key = normalizeSkuKey(row.sku) || row.id;
+    const prev = bySku.get(key);
+    if (!prev) {
+      bySku.set(key, row);
+      continue;
+    }
+    const score = (r) => {
+      let s = Number(r.stock || 0);
+      if (branchId && String(r.branch_id || '') === String(branchId)) s += 1_000_000;
+      return s;
+    };
+    bySku.set(key, score(row) >= score(prev) ? row : prev);
+  }
+  return Array.from(bySku.values());
+}
+
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
@@ -70,10 +94,16 @@ module.exports = function(broadcastTable) {
             COALESCE(bp.created_at, p.created_at) AS created_at,
             COALESCE(bp.updated_at, p.updated_at) AS updated_at
           FROM products p
-          LEFT JOIN products bp ON COALESCE(bp.is_active, 1) != 0
-            AND bp.branch_id = $1
-            AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
-            AND bp.sku = p.sku
+          LEFT JOIN products bp ON bp.id = (
+            SELECT bx.id
+            FROM products bx
+            WHERE COALESCE(bx.is_active, 1) != 0
+              AND bx.branch_id = $1
+              AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+              AND LOWER(TRIM(COALESCE(bx.sku, ''))) = LOWER(TRIM(p.sku))
+            ORDER BY bx.updated_at DESC, bx.created_at DESC
+            LIMIT 1
+          )
           WHERE COALESCE(p.is_active, 1) != 0
             AND (
               p.branch_id = $1
@@ -82,7 +112,8 @@ module.exports = function(broadcastTable) {
                 AND NOT EXISTS (
                   SELECT 1 FROM products bx
                   WHERE COALESCE(bx.is_active, 1) != 0 AND bx.branch_id = $1
-                    AND bx.sku = p.sku AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+                    AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+                    AND LOWER(TRIM(COALESCE(bx.sku, ''))) = LOWER(TRIM(p.sku))
                 )
               )
             )
@@ -101,11 +132,14 @@ module.exports = function(broadcastTable) {
       }
 
       const result = await db.query(query, params);
-      console.log(`[PRODUCTS GET] branchId=${branchId || 'ALL'} rows=${result.rows.length}`);
-      if (result.rows.length > 0) {
-        console.log('[PRODUCTS GET] first_rows=', JSON.stringify(result.rows.slice(0, 5)));
+      const rows = branchId
+        ? dedupeProductsBySku(result.rows, String(branchId).trim())
+        : result.rows;
+      console.log(`[PRODUCTS GET] branchId=${branchId || 'ALL'} rows=${rows.length}`);
+      if (rows.length > 0) {
+        console.log('[PRODUCTS GET] first_rows=', JSON.stringify(rows.slice(0, 5)));
       }
-      res.json(result.rows);
+      res.json(rows);
     } catch (error) {
       console.error('[PRODUCTS ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch products' });
@@ -196,8 +230,20 @@ module.exports = function(broadcastTable) {
         }
       }
       
+      const updated = result.rows[0];
+      const skuKey = String(updated?.sku || '').trim();
+      if (skuKey && taxRate != null && taxRate !== '') {
+        await db.query(
+          `UPDATE products
+           SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP
+           WHERE COALESCE(is_active, 1) != 0
+             AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)`,
+          [Number(taxRate), skuKey]
+        );
+      }
+
       await broadcastTable('products');
-      res.json(result.rows[0]);
+      res.json(updated);
     } catch (error) {
       console.error('[PRODUCTS ERROR]', error);
       res.status(500).json({ error: 'Failed to update product' });

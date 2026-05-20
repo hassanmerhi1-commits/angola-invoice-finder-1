@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from '@/i18n';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,8 +9,13 @@ import { Separator } from '@/components/ui/separator';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from '@/components/ui/table';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { Receipt, Calculator, FileText, Edit, Plus, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { api } from '@/lib/api/client';
 
 function titleCase(s: string) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
@@ -31,7 +36,6 @@ const DEMO_IVA_REPORT = {
 export default function TaxManagement() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const [activeTab, setActiveTab] = useState('codes');
   const defaultTaxCodes = useMemo(() => ([
     { id: '1', code: 'IVA14', name: t.taxManagementUi.defaults.ivaNormal, rate: 14, tax_type: 'IVA', is_active: true, description: t.taxManagementUi.defaults.ivaNormalDesc },
     { id: '2', code: 'IVA0', name: t.taxManagementUi.defaults.ivaZero, rate: 0, tax_type: 'IVA', is_active: true, description: t.taxManagementUi.defaults.ivaZeroDesc },
@@ -42,7 +46,27 @@ export default function TaxManagement() {
     { id: '7', code: 'RET6.5', name: t.taxManagementUi.defaults.withholding65, rate: 6.5, tax_type: 'RETENCAO', is_active: true, description: t.taxManagementUi.defaults.withholdingServicesDesc },
     { id: '8', code: 'IS', name: t.taxManagementUi.defaults.stampTax, rate: 0.1, tax_type: 'IS', is_active: true, description: t.taxManagementUi.defaults.stampTaxDesc },
   ]), [t]);
-  const taxCodes = defaultTaxCodes;
+  const [activeTab, setActiveTab] = useState('codes');
+  const [taxCodes, setTaxCodes] = useState(defaultTaxCodes);
+  const [codeDialogOpen, setCodeDialogOpen] = useState(false);
+  const [editingCode, setEditingCode] = useState<(typeof defaultTaxCodes)[0] | null>(null);
+  const [codeForm, setCodeForm] = useState({ code: '', name: '', rate: 14, tax_type: 'IVA', description: '' });
+
+  useEffect(() => {
+    api.tax.codes().then((res) => {
+      if (res.data?.length) {
+        setTaxCodes(res.data.map((row: any) => ({
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          rate: Number(row.rate || 0),
+          tax_type: row.tax_type || 'IVA',
+          is_active: row.is_active !== false,
+          description: row.description || '',
+        })));
+      }
+    }).catch(() => { /* keep defaults */ });
+  }, []);
   const [ivaReport] = useState(DEMO_IVA_REPORT);
   const [selectedYear] = useState(new Date().getFullYear());
   const [selectedMonth] = useState(new Date().getMonth() + 1);
@@ -95,7 +119,11 @@ export default function TaxManagement() {
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">Códigos de Imposto</CardTitle>
-                <Button size="sm" className="gap-1.5">
+                <Button size="sm" className="gap-1.5" onClick={() => {
+                  setEditingCode(null);
+                  setCodeForm({ code: '', name: '', rate: 14, tax_type: 'IVA', description: '' });
+                  setCodeDialogOpen(true);
+                }}>
                   <Plus className="w-3.5 h-3.5" /> {t.taxManagementUi.newCode}
                 </Button>
               </div>
@@ -133,7 +161,17 @@ export default function TaxManagement() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Button variant="ghost" size="icon" className="h-7 w-7">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                          setEditingCode(code);
+                          setCodeForm({
+                            code: code.code,
+                            name: code.name,
+                            rate: code.rate,
+                            tax_type: code.tax_type,
+                            description: code.description,
+                          });
+                          setCodeDialogOpen(true);
+                        }}>
                           <Edit className="w-3.5 h-3.5" />
                         </Button>
                       </TableCell>
@@ -257,6 +295,52 @@ export default function TaxManagement() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={codeDialogOpen} onOpenChange={setCodeDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingCode ? t.common.edit : t.taxManagementUi.newCode}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label>{t.taxManagementUi.colCode}</Label>
+              <Input value={codeForm.code} onChange={(e) => setCodeForm((f) => ({ ...f, code: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <Label>{t.common.name}</Label>
+              <Input value={codeForm.name} onChange={(e) => setCodeForm((f) => ({ ...f, name: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <Label>{t.taxManagementUi.colRate}</Label>
+              <Input type="number" value={codeForm.rate} onChange={(e) => setCodeForm((f) => ({ ...f, rate: Number(e.target.value) }))} />
+            </div>
+            <div className="space-y-1">
+              <Label>{t.common.description}</Label>
+              <Input value={codeForm.description} onChange={(e) => setCodeForm((f) => ({ ...f, description: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCodeDialogOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={async () => {
+              try {
+                if (editingCode) {
+                  await api.tax.updateCode(editingCode.id, codeForm);
+                  setTaxCodes((prev) => prev.map((c) => c.id === editingCode.id ? { ...c, ...codeForm } : c));
+                } else {
+                  const res = await api.tax.createCode({ ...codeForm, is_active: true });
+                  if (res.data) {
+                    setTaxCodes((prev) => [...prev, { id: res.data.id, ...codeForm, is_active: true }]);
+                  }
+                }
+                setCodeDialogOpen(false);
+                toast.success(t.common.saveChanges);
+              } catch {
+                toast.error(t.common.error);
+              }
+            }}>{t.common.save}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

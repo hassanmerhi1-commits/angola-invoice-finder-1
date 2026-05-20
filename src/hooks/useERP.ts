@@ -11,6 +11,7 @@ import { api, ensureBackendAuthToken, setAuthToken } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
+import { normalizeTaxRate } from '@/lib/taxUtils';
 import { useTranslation } from '@/i18n';
 
 // Helper: only use local demo storage in explicit demo mode.
@@ -85,9 +86,6 @@ export function useBranches() {
   return { branches, currentBranch, setCurrentBranch, refreshBranches };
 }
 
-// ============================================
-// PRODUCTS
-// ============================================
 // Map API snake_case to frontend camelCase for products
 function mapProduct(p: any): Product {
   const rawActive = p.isActive ?? p.is_active;
@@ -118,7 +116,7 @@ function mapProduct(p: any): Product {
     minStock: p.minStock ?? p.min_stock,
     maxStock: p.maxStock ?? p.max_stock,
     unit: p.unit || 'UN',
-    taxRate: Number(p.taxRate ?? p.tax_rate) || 14,
+    taxRate: normalizeTaxRate(p.taxRate ?? p.tax_rate),
     branchId: p.branchId ?? p.branch_id ?? '',
     supplierId: p.supplierId ?? p.supplier_id,
     supplierName: p.supplierName ?? p.supplier_name,
@@ -198,9 +196,30 @@ function normalizeProductSku(sku?: string): string {
 }
 
 function productBelongsToBranchList(product: Product, branchId: string, apiSkus: Set<string>): boolean {
+  const skuKey = normalizeProductSku(product.sku);
+  if (skuKey && apiSkus.has(skuKey)) return false;
   if (product.branchId === branchId) return true;
   const isShared = !product.branchId || product.branchId === 'all';
-  return isShared && !apiSkus.has(normalizeProductSku(product.sku));
+  return isShared && !apiSkus.has(skuKey);
+}
+
+function dedupeProductsBySku(products: Product[], branchId?: string): Product[] {
+  const bySku = new Map<string, Product>();
+  for (const p of products) {
+    const key = normalizeProductSku(p.sku) || p.id;
+    const prev = bySku.get(key);
+    if (!prev) {
+      bySku.set(key, p);
+      continue;
+    }
+    const score = (row: Product) => {
+      let s = row.stock || 0;
+      if (branchId && row.branchId === branchId) s += 1_000_000;
+      return s;
+    };
+    bySku.set(key, score(p) >= score(prev) ? p : prev);
+  }
+  return Array.from(bySku.values());
 }
 
 export function useProducts(branchId?: string) {
@@ -236,7 +255,7 @@ export function useProducts(branchId?: string) {
         if (!branchId) return true;
         return productBelongsToBranchList(p, branchId, apiSkus);
       });
-      return [...apiProducts, ...localOnly];
+      return dedupeProductsBySku([...apiProducts, ...localOnly], branchId);
     }
 
     return localProducts;
@@ -420,10 +439,16 @@ export function useSales(branchId?: string) {
   const [sales, setSales] = useState<Sale[]>([]);
 
   const refreshSales = useCallback(async () => {
-    const data = await apiFallback<any[]>(
-      () => api.sales.list(branchId),
-      () => storage.getSales(branchId)
-    );
+    let data: any[] = [];
+    try {
+      data = await apiFallback<any[]>(
+        () => api.sales.list(branchId),
+        () => storage.getSales(branchId)
+      );
+    } catch (e) {
+      console.error('[useSales] refresh failed:', e);
+      data = [];
+    }
     setSales(data.map((s: any) => ({
       id: s.id,
       invoiceNumber: s.invoiceNumber || s.invoice_number || '',
@@ -1115,9 +1140,17 @@ export function useSuppliers() {
   const createSupplier = useCallback(async (data: Omit<Supplier, 'id' | 'createdAt' | 'updatedAt'>): Promise<Supplier> => {
     const result = await api.suppliers.create(data);
     if (result.data) {
-      await ensureSupplierAccount(result.data.id, data.name, data.nif);
+      const mapped = mapSupplier(result.data);
+      try {
+        const accountCode = (result.data as { _accountCode?: string })._accountCode;
+        if (!accountCode) {
+          await ensureSupplierAccount(mapped.id, mapped.name, mapped.nif);
+        }
+      } catch (e) {
+        console.warn('[ERP] ensureSupplierAccount after create skipped:', e);
+      }
       await refreshSuppliers();
-      return result.data;
+      return mapped;
     }
     const errMsg = (result.error || '').toLowerCase();
     const likelyValidation =

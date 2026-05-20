@@ -23,7 +23,8 @@ import {
 import { cn } from '@/lib/utils';
 import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
-import { getDocuments, convertDocument } from '@/lib/documentStorage';
+import { getDocuments, convertDocument, getSalesInvoicesAsDocuments } from '@/lib/documentStorage';
+import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import { DocumentFormDialog } from '@/components/documents/DocumentFormDialog';
 import { DocumentFlowViewer } from '@/components/documents/DocumentFlowViewer';
 
@@ -99,7 +100,7 @@ export default function Invoices() {
     converted: { label: t.documentStatus.converted, variant: 'secondary' },
   }), [t]);
   const { user } = useAuth();
-  const { currentBranch } = useBranchContext();
+  const { currentBranch, branches } = useBranchContext();
   const navigate = useNavigate();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
@@ -121,8 +122,32 @@ export default function Invoices() {
 
   useEffect(() => {
     const type = activeTab === 'all' ? undefined : activeTab;
-    getDocuments(type, currentBranch?.id).then(setDocuments);
-  }, [activeTab, currentBranch?.id, refreshKey]);
+    const includeAllBranches = !!currentBranch?.isMain;
+    const branchFilter = includeAllBranches ? undefined : currentBranch?.id;
+    const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
+
+    const load = async () => {
+      const [storedDocs, salesDocs] = await Promise.all([
+        getDocuments(type, branchFilter),
+        !type || type === 'fatura_venda'
+          ? getSalesInvoicesAsDocuments(currentBranch?.id, branchNames, includeAllBranches)
+          : Promise.resolve([]),
+      ]);
+
+      const seenNumbers = new Set(storedDocs.map((d) => d.documentNumber));
+      const merged = [...storedDocs];
+      for (const doc of salesDocs) {
+        if (!doc.documentNumber || seenNumbers.has(doc.documentNumber)) continue;
+        seenNumbers.add(doc.documentNumber);
+        merged.push(doc);
+      }
+
+      merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setDocuments(type ? merged.filter((d) => d.documentType === type) : merged);
+    };
+
+    load();
+  }, [activeTab, currentBranch?.id, currentBranch?.isMain, branches, refreshKey]);
 
   // TopNav toolbar "Novo" / shortcuts (document workspace — HashRouter)
   useEffect(() => {
@@ -179,6 +204,58 @@ export default function Invoices() {
     setPrefillDoc(null);
     setFormOpen(true);
   };
+
+  useEffect(() => {
+    const selected = documents.find((d) => d.id === selectedDocId) || null;
+
+    const onEdit = () => {
+      if (selected) openEditDocument(selected);
+    };
+    const onDelete = () => {
+      if (!selected) return;
+      toast.error(t.invoicesUi.conversionNotAllowed);
+    };
+    const onAll = () => {
+      setSelectedDocId(null);
+      setSearchTerm('');
+    };
+    const onPrint = () => {
+      if (selected) printDocument(selected);
+    };
+    const onExcel = () => {
+      const rows = filteredDocs.map((d) => ({
+        Tipo: d.documentType,
+        Numero: d.documentNumber,
+        Data: d.issueDate,
+        Entidade: d.entityName,
+        Total: d.total,
+        Pago: d.amountPaid,
+        Pendente: d.amountDue,
+        Estado: d.status,
+      }));
+      if (!rows.length) return;
+      import('@/lib/excel').then(({ exportToExcel }) => {
+        exportToExcel(rows, `documentos_${new Date().toISOString().slice(0, 10)}`);
+      });
+    };
+
+    const handlers: Record<string, () => void> = {
+      [NEXOR_TOOLBAR.EDIT]: onEdit,
+      [NEXOR_TOOLBAR.DELETE]: onDelete,
+      [NEXOR_TOOLBAR.ALL]: onAll,
+      [NEXOR_TOOLBAR.DOCUMENTS_PRINT]: onPrint,
+      [NEXOR_TOOLBAR.EXCEL]: onExcel,
+    };
+
+    for (const [event, handler] of Object.entries(handlers)) {
+      window.addEventListener(event, handler);
+    }
+    return () => {
+      for (const [event, handler] of Object.entries(handlers)) {
+        window.removeEventListener(event, handler);
+      }
+    };
+  }, [documents, selectedDocId, filteredDocs, t]);
 
   const handleConvert = async (doc: ERPDocument, targetType: DocumentType) => {
     const result = await convertDocument(

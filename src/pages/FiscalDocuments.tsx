@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useBranches, useSales, useAuth, useProducts, usePurchaseOrders } from '@/hooks/useERP';
 import { 
   useCreditNotes, 
@@ -62,6 +62,7 @@ export default function FiscalDocuments() {
   const { generateSAFT } = useSAFTExport();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Dialog states
   const [creditNoteDialog, setCreditNoteDialog] = useState(false);
@@ -111,6 +112,13 @@ export default function FiscalDocuments() {
 
   const [editCompanyInfo, setEditCompanyInfo] = useState(companyInfo);
   const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    const st = location.state as { openSaft?: boolean } | null;
+    if (!st?.openSaft) return;
+    setSaftDialog(true);
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [location.state, location.pathname, navigate]);
 
   // Received POs for supplier returns
   const receivedOrders = orders.filter(o => o.status === 'received' || o.status === 'partial');

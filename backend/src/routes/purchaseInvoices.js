@@ -65,6 +65,27 @@ const UPSERT_SQL = `
     updated_at = excluded.updated_at
 `;
 
+async function findDuplicateSupplierInvoice(supplierId, supplierInvoiceNo, excludeId) {
+  const no = String(supplierInvoiceNo || '').trim();
+  const sid = String(supplierId || '').trim();
+  if (!no || !sid) return null;
+
+  const params = [sid, no.toLowerCase()];
+  let sql = `
+    SELECT id, invoice_number, supplier_invoice_no
+    FROM purchase_invoices
+    WHERE TRIM(COALESCE(supplier_id, '')) = TRIM($1)
+      AND LOWER(TRIM(COALESCE(supplier_invoice_no, ''))) = $2`;
+  if (excludeId) {
+    sql += ' AND id != $3';
+    params.push(String(excludeId));
+  }
+  sql += ' LIMIT 1';
+
+  const result = await db.query(sql, params);
+  return result.rows[0] || null;
+}
+
 function rowParams(r) {
   return [
     r.id, r.invoice_number, r.supplier_account_code, r.supplier_name, r.supplier_id,
@@ -106,6 +127,21 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
     }
   });
 
+  router.get('/check-duplicate', async (req, res) => {
+    try {
+      const { supplierId, supplierInvoiceNo, excludeId } = req.query;
+      const dup = await findDuplicateSupplierInvoice(supplierId, supplierInvoiceNo, excludeId);
+      res.json({
+        duplicate: !!dup,
+        existingId: dup?.id || null,
+        existingInvoiceNumber: dup?.invoice_number || null,
+      });
+    } catch (error) {
+      console.error('[PURCHASE INVOICES]', error);
+      res.status(500).json({ error: error.message || 'Failed to check duplicate' });
+    }
+  });
+
   router.get('/:id', async (req, res) => {
     try {
       const result = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [req.params.id]);
@@ -122,6 +158,15 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       const row = toRow(req.body);
       if (!row.id) return res.status(400).json({ error: 'id is required' });
       if (!row.invoice_number) return res.status(400).json({ error: 'invoiceNumber is required' });
+      const dup = await findDuplicateSupplierInvoice(row.supplier_id, row.supplier_invoice_no, row.id);
+      if (dup) {
+        return res.status(409).json({
+          error: 'Já existe uma fatura de compra com este número de fatura do fornecedor para o mesmo fornecedor.',
+          code: 'DUPLICATE_SUPPLIER_INVOICE_NO',
+          existingId: dup.id,
+          existingInvoiceNumber: dup.invoice_number,
+        });
+      }
       await db.query(UPSERT_SQL, rowParams(row));
       await broadcastTable?.('purchase_invoices');
       const saved = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [row.id]);
@@ -130,7 +175,11 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       console.error('[PURCHASE INVOICES]', error);
       const msg = String(error?.message || '');
       if (/unique|duplicate/i.test(msg)) {
-        return res.status(409).json({ error: 'Já existe uma fatura de compra com este número nesta filial.' });
+        return res.status(409).json({
+          error: /supplier_invoice/i.test(msg)
+            ? 'Já existe uma fatura de compra com este número de fatura do fornecedor para o mesmo fornecedor.'
+            : 'Já existe uma fatura de compra com este número nesta filial.',
+        });
       }
       res.status(500).json({ error: msg || 'Failed to save purchase invoice' });
     }
@@ -139,6 +188,15 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   router.put('/:id', async (req, res) => {
     try {
       const row = toRow({ ...req.body, id: req.params.id });
+      const dup = await findDuplicateSupplierInvoice(row.supplier_id, row.supplier_invoice_no, row.id);
+      if (dup) {
+        return res.status(409).json({
+          error: 'Já existe uma fatura de compra com este número de fatura do fornecedor para o mesmo fornecedor.',
+          code: 'DUPLICATE_SUPPLIER_INVOICE_NO',
+          existingId: dup.id,
+          existingInvoiceNumber: dup.invoice_number,
+        });
+      }
       await db.query(UPSERT_SQL, rowParams(row));
       await broadcastTable?.('purchase_invoices');
       const saved = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [row.id]);

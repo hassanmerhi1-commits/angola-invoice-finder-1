@@ -252,26 +252,58 @@ async function processTransactionLocal(request: TransactionRequest): Promise<Tra
     if (request.openItem) {
       const OI_KEY = 'kwanzaerp_open_items';
       const items = JSON.parse(localStorage.getItem(OI_KEY) || '[]');
-      const oiId = `oi_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      items.push({
-        id: oiId,
-        entityType: request.openItem.entityType,
-        entityId: request.openItem.entityId,
-        documentType: request.openItem.documentType,
-        documentId: request.documentId,
-        documentNumber: request.documentNumber,
-        documentDate: request.date,
-        dueDate: request.openItem.dueDate,
-        currency: request.openItem.currency || request.currency || 'AOA',
-        originalAmount: request.openItem.originalAmount,
-        remainingAmount: request.openItem.originalAmount,
-        isDebit: request.openItem.isDebit,
-        status: 'open',
-        branchId: request.branchId,
-        createdAt: new Date().toISOString(),
-      });
+
+      const invoiceLink = (request.documentLinks || []).find((dl) =>
+        ['fatura_compra', 'purchase_invoice'].includes(String(dl.targetType || ''))
+      );
+      const isLinkedSupplierReturn =
+        request.transactionType === 'credit_note' &&
+        request.openItem.entityType === 'supplier' &&
+        request.openItem.isDebit === false &&
+        !!invoiceLink;
+
+      let appliedToInvoice = false;
+      if (isLinkedSupplierReturn && invoiceLink?.targetId) {
+        const reduction = Number(request.openItem.originalAmount || 0);
+        const idx = items.findIndex((oi: any) =>
+          oi.entityType === 'supplier' &&
+          oi.documentId === invoiceLink.targetId &&
+          oi.isDebit !== false &&
+          oi.status !== 'cleared'
+        );
+        if (idx >= 0 && reduction > 0) {
+          const remaining = Number(items[idx].remainingAmount || 0);
+          const applied = Math.min(reduction, remaining);
+          items[idx].remainingAmount = Math.max(0, remaining - applied);
+          items[idx].status = items[idx].remainingAmount <= 0.01 ? 'cleared' : 'partial';
+          result.openItemId = items[idx].id;
+          appliedToInvoice = applied > 0;
+        }
+      }
+
+      if (!appliedToInvoice) {
+        const oiId = `oi_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        items.push({
+          id: oiId,
+          entityType: request.openItem.entityType,
+          entityId: request.openItem.entityId,
+          documentType: request.openItem.documentType,
+          documentId: request.documentId,
+          documentNumber: request.documentNumber,
+          documentDate: request.date,
+          dueDate: request.openItem.dueDate,
+          currency: request.openItem.currency || request.currency || 'AOA',
+          originalAmount: request.openItem.originalAmount,
+          remainingAmount: request.openItem.originalAmount,
+          isDebit: request.openItem.isDebit,
+          status: 'open',
+          branchId: request.branchId,
+          createdAt: new Date().toISOString(),
+        });
+        result.openItemId = oiId;
+      }
+
       localStorage.setItem(OI_KEY, JSON.stringify(items));
-      result.openItemId = oiId;
     }
 
     // Phase 4: Document Links (localStorage)
@@ -300,10 +332,18 @@ async function processTransactionLocal(request: TransactionRequest): Promise<Tra
       const ebu = request.entityBalanceUpdate;
       if (ebu.entityType === 'supplier') {
         const SUPPLIERS_KEY = 'kwanzaerp_suppliers';
+        const OI_KEY = 'kwanzaerp_open_items';
         const suppliers = JSON.parse(localStorage.getItem(SUPPLIERS_KEY) || '[]');
+        const openItems = JSON.parse(localStorage.getItem(OI_KEY) || '[]');
         const sIdx = suppliers.findIndex((s: any) => s.id === ebu.entityId || s.name === ebu.entityName);
         if (sIdx >= 0) {
-          suppliers[sIdx].balance = (suppliers[sIdx].balance || 0) + ebu.amount;
+          const balance = openItems
+            .filter((oi: any) => oi.entityType === 'supplier' && oi.entityId === suppliers[sIdx].id && oi.status !== 'cleared')
+            .reduce((sum: number, oi: any) => {
+              const remaining = Number(oi.remainingAmount ?? oi.originalAmount ?? 0);
+              return sum + (oi.isDebit !== false ? remaining : -remaining);
+            }, 0);
+          suppliers[sIdx].balance = balance;
           localStorage.setItem(SUPPLIERS_KEY, JSON.stringify(suppliers));
         }
       } else if (ebu.entityType === 'customer') {

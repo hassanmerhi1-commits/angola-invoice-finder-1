@@ -18,6 +18,7 @@ import { Search, ScanBarcode, Keyboard, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 import { readNexorPosNewSaleFlag, NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
+import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 
 export default function POS() {
   const location = useLocation();
@@ -105,9 +106,17 @@ export default function POS() {
 
   useEffect(() => {
     const onToolbarNewSale = () => beginNewSaleSession();
+    const onCheckout = () => handleCheckout();
+    const onVoid = () => handleClearCart();
     window.addEventListener('nexor:pos-new-sale', onToolbarNewSale);
-    return () => window.removeEventListener('nexor:pos-new-sale', onToolbarNewSale);
-  }, [beginNewSaleSession]);
+    window.addEventListener(NEXOR_TOOLBAR.POS_CHECKOUT, onCheckout);
+    window.addEventListener(NEXOR_TOOLBAR.POS_VOID, onVoid);
+    return () => {
+      window.removeEventListener('nexor:pos-new-sale', onToolbarNewSale);
+      window.removeEventListener(NEXOR_TOOLBAR.POS_CHECKOUT, onCheckout);
+      window.removeEventListener(NEXOR_TOOLBAR.POS_VOID, onVoid);
+    };
+  }, [beginNewSaleSession, handleCheckout, handleClearCart]);
 
   const focusSearch = useCallback(() => {
     searchInputRef.current?.focus();

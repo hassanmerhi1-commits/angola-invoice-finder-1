@@ -6,6 +6,7 @@
 import { Sale, Branch } from '@/types/erp';
 import { getCompanySettings, CompanySettings } from './companySettings';
 import { buildAGTQRCodeString, saleToAGTQRData, getInvoiceHash } from './agtQRCode';
+import { normalizeTaxRate } from './taxUtils';
 
 export interface A4InvoiceOptions {
   showBankDetails?: boolean;
@@ -424,7 +425,7 @@ export async function generateA4InvoiceHTML(
       </thead>
       <tbody>
         ${sale.items.map(item => {
-          const itemTaxRate = (item as any).taxRate || 14;
+          const itemTaxRate = normalizeTaxRate((item as any).taxRate);
           const basePrice = item.unitPrice;
           const baseTributavel = item.subtotal / (1 + itemTaxRate / 100);
           const taxAmount = item.subtotal - baseTributavel;
@@ -460,7 +461,7 @@ export async function generateA4InvoiceHTML(
         ${(() => {
           const taxMap = new Map<number, { base: number; iva: number; total: number }>();
           sale.items.forEach(item => {
-            const rate = (item as any).taxRate || 14;
+            const rate = normalizeTaxRate((item as any).taxRate);
             const total = item.subtotal;
             const base = total / (1 + rate / 100);
             const iva = total - base;

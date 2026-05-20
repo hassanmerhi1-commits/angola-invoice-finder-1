@@ -21,6 +21,7 @@ import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { CompanyLogo } from '@/components/layout/CompanyLogo';
 import { NotificationBell } from '@/components/layout/NotificationBell';
 import { useTranslation } from '@/i18n';
+import { useNavigate } from 'react-router-dom';
 import { ServerConnectionIndicator } from '@/components/layout/ServerConnectionIndicator';
 
 interface HeaderProps {
@@ -41,6 +42,7 @@ export function Header({
   onMenuClick,
 }: HeaderProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   
   return (
     <header className="h-16 border-b bg-card px-4 flex items-center justify-between">
@@ -107,7 +109,7 @@ export function Header({
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate('/settings')}>
               <Settings className="w-4 h-4 mr-2" />
               {t.nav.settings}
             </DropdownMenuItem>

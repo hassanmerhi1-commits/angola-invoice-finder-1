@@ -1,7 +1,7 @@
 import { generateId } from '@/lib/utils';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/client';
-import { Account, AccountFormData, TrialBalanceRow, AccountType } from '@/types/accounting';
+import { Account, AccountFormData, TrialBalanceRow, BalanceSheetAccountRow, AccountType } from '@/types/accounting';
 import { ensureBranchCaixaAccounts } from '@/lib/chartOfAccountsEngine';
 import { useTranslation } from '@/i18n';
 
@@ -332,6 +332,39 @@ export function useChartOfAccounts() {
     getRootAccounts,
     getAccountTree
   };
+}
+
+export function useBalanceSheet(asOf: string, previousAsOf?: string) {
+  const [rows, setRows] = useState<BalanceSheetAccountRow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchBalanceSheet = useCallback(async () => {
+    if (!asOf) {
+      setRows([]);
+      setIsLoading(false);
+      return;
+    }
+    try {
+      setIsLoading(true);
+      const response = await api.chartOfAccounts.getBalanceSheet(asOf, previousAsOf);
+      if (response.error) throw new Error(response.error);
+      setRows((response.data?.rows || []) as BalanceSheetAccountRow[]);
+      setError(null);
+    } catch (err: any) {
+      setError(err.message || 'Failed to fetch balance sheet');
+      setRows([]);
+      console.error('[useBalanceSheet] Error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [asOf, previousAsOf]);
+
+  useEffect(() => {
+    fetchBalanceSheet();
+  }, [fetchBalanceSheet]);
+
+  return { rows, isLoading, error, refetch: fetchBalanceSheet };
 }
 
 export function useTrialBalance(startDate?: string, endDate?: string) {

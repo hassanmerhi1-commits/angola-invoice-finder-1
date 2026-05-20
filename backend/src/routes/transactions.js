@@ -9,6 +9,7 @@ const {
   normalizeStandaloneMovementType,
   createOpenItem,
   reduceSupplierInvoiceOpenItem,
+  adoptPurchaseOrderOpenItemForInvoice,
   syncSupplierBalanceFromOpenItems,
   isOpenItemDebitFlag,
   linkDocuments,
@@ -564,20 +565,42 @@ module.exports = function(broadcastTable) {
             );
           }
         } else {
-          const oi = await createOpenItem(client, {
-            entityType: openItem.entityType,
-            entityId: openItem.entityId,
-            documentType: openItem.documentType,
-            documentId,
-            documentNumber,
-            documentDate: date || new Date().toISOString().split('T')[0],
-            dueDate: openItem.dueDate || null,
-            originalAmount: openItem.originalAmount,
-            isDebit: openItem.isDebit,
-            branchId,
-            currency: openItem.currency || currency || 'AOA',
-          });
-          result.openItemId = oi.id;
+          let oi = null;
+          if (transactionType === 'purchase_invoice') {
+            const adopted = await adoptPurchaseOrderOpenItemForInvoice(client, {
+              entityId: openItem.entityId,
+              invoiceDocumentId: documentId,
+              invoiceDocumentNumber: documentNumber,
+              invoiceDocumentDate: date || new Date().toISOString().split('T')[0],
+              originalAmount: openItem.originalAmount,
+              dueDate: openItem.dueDate || null,
+              currency: openItem.currency || currency || 'AOA',
+              branchId,
+            });
+            if (adopted) {
+              result.openItemId = adopted.id;
+              openItem.entityId = adopted.entityId || openItem.entityId;
+              if (entityBalanceUpdate && entityBalanceUpdate.entityType === 'supplier') {
+                entityBalanceUpdate.entityId = adopted.entityId || entityBalanceUpdate.entityId;
+              }
+            }
+          }
+          if (!result.openItemId) {
+            oi = await createOpenItem(client, {
+              entityType: openItem.entityType,
+              entityId: openItem.entityId,
+              documentType: openItem.documentType,
+              documentId,
+              documentNumber,
+              documentDate: date || new Date().toISOString().split('T')[0],
+              dueDate: openItem.dueDate || null,
+              originalAmount: openItem.originalAmount,
+              isDebit: openItem.isDebit,
+              branchId,
+              currency: openItem.currency || currency || 'AOA',
+            });
+            result.openItemId = oi.id;
+          }
         }
       }
 

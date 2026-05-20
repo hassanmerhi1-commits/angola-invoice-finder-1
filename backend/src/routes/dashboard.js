@@ -43,12 +43,14 @@ module.exports = function () {
       try {
         const arResult = await db.query(
           branchId
-            ? `SELECT COUNT(*) AS count, COALESCE(SUM(remaining_amount), 0) AS total
+            ? `SELECT COUNT(*) AS count,
+                      COALESCE(SUM(CASE WHEN is_debit = 1 OR is_debit = TRUE THEN remaining_amount ELSE -remaining_amount END), 0) AS total
                FROM open_items
-               WHERE entity_type = 'client' AND status = 'open' AND remaining_amount > 0 AND branch_id = $1`
-            : `SELECT COUNT(*) AS count, COALESCE(SUM(remaining_amount), 0) AS total
+               WHERE entity_type = 'client' AND status != 'cleared' AND remaining_amount > 0.01 AND branch_id = $1`
+            : `SELECT COUNT(*) AS count,
+                      COALESCE(SUM(CASE WHEN is_debit = 1 OR is_debit = TRUE THEN remaining_amount ELSE -remaining_amount END), 0) AS total
                FROM open_items
-               WHERE entity_type = 'client' AND status = 'open' AND remaining_amount > 0`,
+               WHERE entity_type = 'client' AND status != 'cleared' AND remaining_amount > 0.01`,
           branchId ? [branchId] : []
         );
         openAR = {
@@ -58,12 +60,14 @@ module.exports = function () {
 
         const apResult = await db.query(
           branchId
-            ? `SELECT COUNT(*) AS count, COALESCE(SUM(remaining_amount), 0) AS total
+            ? `SELECT COUNT(*) AS count,
+                      COALESCE(SUM(CASE WHEN is_debit = 1 OR is_debit = TRUE THEN remaining_amount ELSE -remaining_amount END), 0) AS total
                FROM open_items
-               WHERE entity_type = 'supplier' AND status = 'open' AND remaining_amount > 0 AND branch_id = $1`
-            : `SELECT COUNT(*) AS count, COALESCE(SUM(remaining_amount), 0) AS total
+               WHERE entity_type = 'supplier' AND status != 'cleared' AND remaining_amount > 0.01 AND branch_id = $1`
+            : `SELECT COUNT(*) AS count,
+                      COALESCE(SUM(CASE WHEN is_debit = 1 OR is_debit = TRUE THEN remaining_amount ELSE -remaining_amount END), 0) AS total
                FROM open_items
-               WHERE entity_type = 'supplier' AND status = 'open' AND remaining_amount > 0`,
+               WHERE entity_type = 'supplier' AND status != 'cleared' AND remaining_amount > 0.01`,
           branchId ? [branchId] : []
         );
         openAP = {

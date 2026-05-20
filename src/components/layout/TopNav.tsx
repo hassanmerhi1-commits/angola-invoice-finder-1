@@ -20,6 +20,7 @@ import {
 import { cn } from '@/lib/utils';
 import { navigateThenStartPurchaseCreate, resolvePurchasePathname } from '@/lib/nexorPurchaseCreate';
 import { NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
+import { dispatchToolbarEvent, NEXOR_TOOLBAR, NEXOR_SUPPLIERS_NEW } from '@/lib/nexorToolbarEvents';
 import { 
   Building2, User as UserIcon, LogOut, Settings, Menu,
   LayoutDashboard, ShoppingCart, FileText, Package, Users,
@@ -38,6 +39,7 @@ import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { ServerConnectionIndicator } from '@/components/layout/ServerConnectionIndicator';
 import { CalculatorDialog } from '@/components/utilities/CalculatorDialog';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
+import { toast } from 'sonner';
 import defaultLogo from '/favicon.png?url';
 
 interface TopNavProps {
@@ -89,12 +91,12 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     {
       label: t.topNav.menus.file,
       items: [
-        { label: t.topNav.file.open, icon: FolderOpen },
-        { label: t.topNav.file.save, icon: Save },
-        { label: t.topNav.file.print, icon: Printer },
+        { label: t.topNav.file.open, icon: FolderOpen, path: '/invoices' },
+        { label: t.topNav.file.save, icon: Save, action: () => dispatchToolbarEvent(NEXOR_TOOLBAR.EDIT) },
+        { label: t.topNav.file.print, icon: Printer, action: () => dispatchToolbarEvent(NEXOR_TOOLBAR.DOCUMENTS_PRINT) },
         { label: 'separator' },
         { label: t.topNav.file.backup, icon: Database, path: '/settings' },
-        { label: t.topNav.file.import, icon: Download },
+        { label: t.topNav.file.import, icon: Download, path: '/import' },
         { label: 'separator' },
         { label: t.topNav.file.exit, icon: LogOut, action: onLogout },
       ],
@@ -123,14 +125,14 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       label: t.topNav.menus.accounting,
       items: [
         { label: t.topNav.accounting.receipt, icon: Receipt, path: '/invoices' },
-        { label: t.topNav.accounting.receiveMethod, icon: Wallet },
-        { label: t.topNav.accounting.creditAmount, icon: CreditCard },
+        { label: t.topNav.accounting.receiveMethod, icon: Wallet, path: '/payments' },
+        { label: t.topNav.accounting.creditAmount, icon: CreditCard, path: '/payments' },
         { label: 'separator' },
         { label: t.topNav.accounting.payment, icon: DollarSign, path: '/expenses' },
-        { label: t.topNav.accounting.chequePayment, icon: FileText },
+        { label: t.topNav.accounting.chequePayment, icon: FileText, path: '/payments' },
         { label: 'separator' },
-        { label: t.topNav.accounting.multiCredit, icon: Plus },
-        { label: t.topNav.accounting.multiDebit, icon: Plus },
+        { label: t.topNav.accounting.multiCredit, icon: Plus, path: '/journals' },
+        { label: t.topNav.accounting.multiDebit, icon: Plus, path: '/journals' },
         { label: t.topNav.accounting.journalEntry, icon: BookOpen, path: '/chart-of-accounts' },
       ],
     },
@@ -139,7 +141,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       items: [
         { label: t.topNav.transactions.stockTransfer, icon: ArrowRightLeft, path: '/stock-transfer' },
         { label: t.topNav.transactions.inventoryAdjustment, icon: RefreshCw, path: '/inventory' },
-        { label: t.topNav.transactions.purchaseReturn, icon: Truck },
+        { label: t.topNav.transactions.purchaseReturn, icon: Truck, path: '/purchase-invoices', state: { openReturns: true } },
       ],
     },
     {
@@ -160,8 +162,8 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     {
       label: t.topNav.menus.utilities,
       items: [
-        { label: t.topNav.utilities.changePassword, icon: Shield },
-        { label: t.topNav.utilities.maintenance, icon: Settings },
+        { label: t.topNav.utilities.changePassword, icon: Shield, path: '/settings' },
+        { label: t.topNav.utilities.maintenance, icon: Settings, path: '/settings' },
         { label: t.topNav.utilities.calculator, icon: Calculator, action: () => setCalculatorOpen(true) },
         { label: 'separator' },
         { label: t.topNav.utilities.sync, icon: Upload, path: '/data-sync' },
@@ -170,8 +172,8 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     {
       label: t.topNav.menus.help,
       items: [
-        { label: t.topNav.help.about, icon: Info },
-        { label: t.topNav.help.help, icon: HelpCircle },
+        { label: t.topNav.help.about, icon: Info, action: () => toast.info(`${companyName} — NEXOR ERP`) },
+        { label: t.topNav.help.help, icon: HelpCircle, path: '/settings' },
       ],
     },
   ];
@@ -203,6 +205,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       return;
     }
     if (p === '/suppliers' || p.startsWith('/suppliers/')) {
+      window.dispatchEvent(new CustomEvent(NEXOR_SUPPLIERS_NEW));
       navigate('/suppliers', { state: { nexorToolbarNewSupplier: true } });
       return;
     }
@@ -253,6 +256,39 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           } else {
             navigate('/pos', { state: NEXOR_POS_NEW_SALE_NAV_STATE });
           }
+          return;
+        case 'all':
+          dispatchToolbarEvent(NEXOR_TOOLBAR.ALL);
+          return;
+        case 'delete':
+          dispatchToolbarEvent(NEXOR_TOOLBAR.DELETE);
+          return;
+        case 'edit':
+          dispatchToolbarEvent(NEXOR_TOOLBAR.EDIT);
+          return;
+        case 'transfer':
+          navigate('/stock-transfer');
+          return;
+        case 'adjustExit':
+          dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_ADJUST_EXIT);
+          return;
+        case 'inventoryEntry':
+          dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_ENTRY);
+          return;
+        case 'minQty':
+          dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_MIN_QTY);
+          return;
+        case 'print':
+          dispatchToolbarEvent(NEXOR_TOOLBAR.DOCUMENTS_PRINT);
+          return;
+        case 'agtSend':
+          navigate('/fiscal-documents', { state: { openSaft: true } });
+          return;
+        case 'save':
+          dispatchToolbarEvent(NEXOR_TOOLBAR.POS_CHECKOUT);
+          return;
+        case 'void':
+          dispatchToolbarEvent(NEXOR_TOOLBAR.POS_VOID);
           return;
         default:
           return;
@@ -356,7 +392,10 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
                       key={item.label}
                       onClick={() => {
                         if ('action' in item && typeof item.action === 'function') item.action();
-                        else if ('path' in item && typeof item.path === 'string') navigate(item.path);
+                        else if ('path' in item && typeof item.path === 'string') {
+                          const navState = 'state' in item ? (item as { state?: object }).state : undefined;
+                          navigate(item.path, navState ? { state: navState } : undefined);
+                        }
                       }}
                       className="text-xs gap-2"
                     >
@@ -408,7 +447,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
                 <p className="font-semibold text-sm">{user?.name}</p>
                 <p className="text-xs text-muted-foreground">{user?.email}</p>
               </div>
-              <DropdownMenuItem className="text-xs gap-2 mt-1">
+              <DropdownMenuItem className="text-xs gap-2 mt-1" onClick={() => navigate('/settings')}>
                 <Shield className="w-3.5 h-3.5" />
                 {t.topNav.userMenu.profile}
               </DropdownMenuItem>
@@ -463,11 +502,21 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
             </Button>
           ))}
           <div className="flex-1" />
-          <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 px-3 rounded-lg">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1.5 px-3 rounded-lg"
+            onClick={() => dispatchToolbarEvent(NEXOR_TOOLBAR.FILTER)}
+          >
             <Filter className="w-3.5 h-3.5" />
             {t.topNav.toolbar.filter}
           </Button>
-          <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 px-3 rounded-lg">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1.5 px-3 rounded-lg"
+            onClick={() => dispatchToolbarEvent(NEXOR_TOOLBAR.EXCEL)}
+          >
             <FileSpreadsheet className="w-3.5 h-3.5" />
             {t.topNav.toolbar.excel}
           </Button>
