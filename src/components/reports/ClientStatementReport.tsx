@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useClients, useSales } from '@/hooks/useERP';
 import { Download, Printer, FileText, Search, TrendingUp, TrendingDown } from 'lucide-react';
 import { format, parseISO, isWithinInterval, startOfMonth, endOfMonth } from 'date-fns';
@@ -27,8 +28,9 @@ interface StatementEntry {
 export default function ClientStatementReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const { apiBranchId } = useBranchScope();
   const { clients } = useClients();
-  const { sales } = useSales();
+  const { sales } = useSales(apiBranchId);
   
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));

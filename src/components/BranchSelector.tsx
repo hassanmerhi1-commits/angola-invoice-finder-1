@@ -1,4 +1,4 @@
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import {
   Select,
   SelectContent,
@@ -17,31 +17,39 @@ interface BranchSelectorProps {
 }
 
 export function BranchSelector({ compact = false, className = '' }: BranchSelectorProps) {
-  const { branches, currentBranch, setCurrentBranch } = useBranchContext();
+  const { branches, currentBranch, canSwitchBranch, setOperatingBranch } = useBranchScope();
   const { t } = useTranslation();
 
-  const handleBranchChange = (branchId: string) => {
-    const branch = branches.find(b => b.id === branchId);
-    if (branch) {
-      setCurrentBranch(branch);
-    }
-  };
-
-  if (branches.length === 0) {
+  if (!currentBranch || branches.length === 0) {
     return null;
   }
 
+  if (!canSwitchBranch) {
+    return (
+      <div
+        className={`flex items-center gap-2 truncate rounded-md border bg-muted/40 px-2 ${
+          compact ? 'h-8 text-xs w-[180px]' : 'h-9 w-[220px] text-sm'
+        } ${className}`}
+      >
+        <Building2 className={compact ? 'h-3 w-3 shrink-0' : 'h-4 w-4 shrink-0'} />
+        <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
+      </div>
+    );
+  }
+
   return (
-    <Select value={currentBranch?.id || ''} onValueChange={handleBranchChange}>
+    <Select
+      value={currentBranch.id}
+      onValueChange={(branchId) => {
+        const branch = branches.find((b) => b.id === branchId);
+        if (branch) setOperatingBranch(branch);
+      }}
+    >
       <SelectTrigger className={`${compact ? 'h-8 text-xs w-[180px]' : 'w-[220px]'} ${className}`}>
         <div className="flex items-center gap-2 truncate">
           <Building2 className={compact ? 'h-3 w-3' : 'h-4 w-4'} />
           <SelectValue placeholder={t.branchUi.selectBranch}>
-            {currentBranch ? (
-              <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
-            ) : (
-              t.branchUi.selectBranch
-            )}
+            <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
           </SelectValue>
         </div>
       </SelectTrigger>

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -21,9 +22,44 @@ import StockValuationReport from '@/components/reports/StockValuationReport';
 import StockMovementReport from '@/components/reports/StockMovementReport';
 import { TransactionHistoryReport } from '@/components/reports/TransactionHistoryReport';
 
+const REPORT_TABS = new Set([
+  'overview',
+  'sales',
+  'trial-balance',
+  'income-statement',
+  'balance-sheet',
+  'stock-valuation',
+  'stock-movements',
+  'client-statement',
+  'supplier-statement',
+  'profitability',
+  'transaction-history',
+]);
+
+const CATEGORY_TAB_MAP: Record<string, string> = {
+  sales: 'sales',
+  clients: 'client-statement',
+  suppliers: 'supplier-statement',
+  inventory: 'stock-valuation',
+  financial: 'trial-balance',
+};
+
+function resolveReportsTab(value: string | undefined): string | null {
+  if (!value) return null;
+  return REPORT_TABS.has(value) ? value : CATEGORY_TAB_MAP[value] ?? null;
+}
+
 export default function Reports() {
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState('overview');
   const { t } = useTranslation();
+
+  useEffect(() => {
+    const stateTab = (location.state as { reportsTab?: string } | null)?.reportsTab;
+    const queryTab = new URLSearchParams(location.search).get('tab') ?? undefined;
+    const tab = resolveReportsTab(stateTab || queryTab || undefined);
+    if (tab) setActiveTab(tab);
+  }, [location.state, location.search]);
 
   const reportCategories = [
     {
@@ -136,9 +172,7 @@ export default function Reports() {
                 <Card 
                   key={category.id} 
                   className="cursor-pointer hover:shadow-md transition-shadow"
-                  onClick={() => setActiveTab(category.id === 'clients' ? 'client-statement' : 
-                                              category.id === 'suppliers' ? 'supplier-statement' :
-                                              category.id === 'financial' ? 'profitability' : category.id)}
+                  onClick={() => setActiveTab(CATEGORY_TAB_MAP[category.id] ?? category.id)}
                 >
                   <CardContent className="pt-6">
                     <div className="flex items-start gap-4">

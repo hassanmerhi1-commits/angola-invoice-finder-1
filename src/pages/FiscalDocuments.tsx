@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useBranches, useSales, useAuth, useProducts, usePurchaseOrders } from '@/hooks/useERP';
+import { useBranchScope } from '@/hooks/useBranchScope';
+import { useSales, useAuth, useProducts, usePurchaseOrders } from '@/hooks/useERP';
 import { 
   useCreditNotes, 
   useDebitNotes, 
@@ -50,14 +51,14 @@ export default function FiscalDocuments() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
   const { user } = useAuth();
-  const { currentBranch } = useBranches();
-  const { sales } = useSales(currentBranch?.id);
-  const { products } = useProducts(currentBranch?.id);
-  const { orders } = usePurchaseOrders();
-  const { creditNotes, createCreditNote } = useCreditNotes(currentBranch?.id);
-  const { debitNotes, createDebitNote } = useDebitNotes(currentBranch?.id);
-  const { transportDocs, createTransportDocument, updateTransportStatus } = useTransportDocuments(currentBranch?.id);
-  const { supplierReturns, createSupplierReturn, approveReturn, markAsShipped, completeReturn, cancelReturn } = useSupplierReturns(currentBranch?.id);
+  const { currentBranch, apiBranchId } = useBranchScope();
+  const { sales } = useSales(apiBranchId);
+  const { products } = useProducts(apiBranchId);
+  const { orders } = usePurchaseOrders(apiBranchId);
+  const { creditNotes, createCreditNote } = useCreditNotes(apiBranchId);
+  const { debitNotes, createDebitNote } = useDebitNotes(apiBranchId);
+  const { transportDocs, createTransportDocument, updateTransportStatus } = useTransportDocuments(apiBranchId);
+  const { supplierReturns, createSupplierReturn, approveReturn, markAsShipped, completeReturn, cancelReturn } = useSupplierReturns(apiBranchId);
   const { companyInfo, saveCompanyInfo } = useCompanyInfo();
   const { generateSAFT } = useSAFTExport();
   const { toast } = useToast();

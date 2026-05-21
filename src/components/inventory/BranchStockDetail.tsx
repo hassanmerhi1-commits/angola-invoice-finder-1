@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { Product } from '@/types/erp';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,7 +22,7 @@ interface BranchStock {
 }
 
 export function BranchStockDetail({ selectedProduct }: BranchStockDetailProps) {
-  const { branches } = useBranchContext();
+  const { branches, isHeadOffice, currentBranch } = useBranchScope();
   const [branchStocks, setBranchStocks] = useState<BranchStock[]>([]);
 
   useEffect(() => {
@@ -32,8 +32,9 @@ export function BranchStockDetail({ selectedProduct }: BranchStockDetailProps) {
     }
 
     async function loadStocks() {
+      const targets = isHeadOffice ? branches : (currentBranch ? [currentBranch] : branches);
       const stocks: BranchStock[] = [];
-      for (const branch of branches) {
+      for (const branch of targets) {
         let branchProducts: any[] = [];
         try {
           const response = await api.products.list(branch.id);
@@ -62,7 +63,7 @@ export function BranchStockDetail({ selectedProduct }: BranchStockDetailProps) {
       setBranchStocks(stocks);
     }
     loadStocks();
-  }, [selectedProduct, branches]);
+  }, [selectedProduct, branches, isHeadOffice, currentBranch?.id]);
 
   const totalStock = branchStocks.reduce((sum, b) => sum + b.stock, 0);
   const totalValue = branchStocks.reduce((sum, b) => sum + (b.stock * b.cost), 0);

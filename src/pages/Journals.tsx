@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useTranslation } from '@/i18n';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -119,8 +119,7 @@ function useJournalEntries(
       const journalEntries = branchId
         ? rows.filter(
             (je: Record<string, unknown>) =>
-              !je.branch_id && !je.branchId
-              || String(je.branch_id ?? je.branchId) === branchId,
+              String(je.branch_id ?? je.branchId) === branchId,
           )
         : rows;
       for (const je of journalEntries) {
@@ -424,8 +423,8 @@ export default function Journals() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
-  const { currentBranch } = useBranchContext();
-  const { entries, refetch } = useJournalEntries(currentBranch?.id, {
+  const { currentBranch, apiBranchId } = useBranchScope();
+  const { entries, refetch } = useJournalEntries(apiBranchId, {
     systemUser: t.journalsUi.systemUser,
     salesOfMerchandise: t.journalsUi.salesOfMerchandise,
   });

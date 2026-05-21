@@ -103,29 +103,27 @@ module.exports = function(broadcastTable) {
         [invoiceId, invoice.invoice_number, JSON.stringify(payload)]
       );
 
-      // Simulate AGT response (replace with real API call)
-      const agtCode = `AGT-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-      const validatedAt = new Date().toISOString();
+      const { transmitInvoice } = require('../agt/connector');
+      const agtResult = await transmitInvoice(payload);
 
-      // Update transmission with response
       await db.query(
         `UPDATE agt_transmissions 
-         SET response_payload = $1, agt_code = $2, agt_status = 'validated', validated_at = $3
-         WHERE id = $4`,
+         SET response_payload = $1, agt_code = $2, agt_status = $3, validated_at = $4
+         WHERE id = $5`,
         [
-          JSON.stringify({ status: 'validated', agtCode }),
-          agtCode,
-          validatedAt,
+          JSON.stringify(agtResult.responsePayload),
+          agtResult.agtCode,
+          agtResult.agtStatus,
+          agtResult.validatedAt,
           transmissionResult.rows[0].id
         ]
       );
 
-      // Update sale
       await db.query(
         `UPDATE sales 
-         SET agt_status = 'validated', agt_code = $1, agt_validated_at = $2
-         WHERE id = $3`,
-        [agtCode, validatedAt, invoiceId]
+         SET agt_status = $1, agt_code = $2, agt_validated_at = $3
+         WHERE id = $4`,
+        [agtResult.agtStatus, agtResult.agtCode, agtResult.validatedAt, invoiceId]
       );
 
       // Log audit
@@ -141,9 +139,9 @@ module.exports = function(broadcastTable) {
 
       res.json({
         success: true,
-        agtCode,
-        agtStatus: 'validated',
-        validatedAt
+        agtCode: agtResult.agtCode,
+        agtStatus: agtResult.agtStatus,
+        validatedAt: agtResult.validatedAt
       });
     } catch (error) {
       console.error('[AGT] Transmit error:', error);

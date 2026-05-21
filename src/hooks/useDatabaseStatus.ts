@@ -48,8 +48,12 @@ export function useDatabaseStatus() {
             const parsedPort = Number(dbStatus.serverPort || dbStatus.port || 3000);
 
             setStatus({
-              isConnected: !!dbStatus.connected,
-              isServer: mode === 'server',
+              isConnected: !!(
+                dbStatus.connected
+                || dbStatus.expressBackend
+                || dbStatus.expressPort
+              ),
+              isServer: mode === 'server' || mode === 'standalone',
               databasePath: parsedPath,
               serverIp: parsedServerAddress,
               serverPort: Number.isFinite(parsedPort) ? parsedPort : 3000,

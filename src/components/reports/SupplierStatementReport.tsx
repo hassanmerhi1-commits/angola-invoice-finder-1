@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useSuppliers } from '@/hooks/useERP';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { Download, Printer, Truck, Search, Loader2 } from 'lucide-react';
 import { format, parseISO, subMonths } from 'date-fns';
 import { pt } from 'date-fns/locale';
@@ -67,6 +68,7 @@ interface StatementEntry {
 export default function SupplierStatementReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const { apiBranchId } = useBranchScope();
   const { suppliers } = useSuppliers();
   
   const [selectedSupplier, setSelectedSupplier] = useState<string>('');
@@ -203,7 +205,7 @@ export default function SupplierStatementReport() {
         }
 
         if (supplier) {
-          const purchaseInvoices = await getPurchaseInvoices();
+          const purchaseInvoices = await getPurchaseInvoices(apiBranchId);
           if (generation !== fetchGenerationRef.current) return;
 
           for (const inv of purchaseInvoices) {
@@ -250,7 +252,7 @@ export default function SupplierStatementReport() {
     };
 
     fetchStatement();
-  }, [selectedSupplier, dateFrom, dateTo, language, suppliers, t]);
+  }, [selectedSupplier, dateFrom, dateTo, language, suppliers, t, apiBranchId]);
 
   const totals = useMemo(() => {
     return statementEntries.reduce((acc, entry) => ({

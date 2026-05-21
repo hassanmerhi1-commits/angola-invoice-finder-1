@@ -25,14 +25,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Download, Printer, Package, FileSpreadsheet, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react';
-import { useBranches, useProducts } from '@/hooks/useERP';
+import { useProducts } from '@/hooks/useERP';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 
 export default function StockValuationReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { currentBranch } = useBranches();
-  const { products } = useProducts(currentBranch?.id);
+  const { apiBranchId } = useBranchScope();
+  const { products } = useProducts(apiBranchId);
   
   const [sortBy, setSortBy] = useState('value');
   const [filterCategory, setFilterCategory] = useState('all');

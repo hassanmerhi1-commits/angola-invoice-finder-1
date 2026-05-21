@@ -7,11 +7,14 @@
 
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
 import { Branch, Product, Sale, User, CartItem, SaleItem, DailySummary, Client, StockTransfer, Supplier, PurchaseOrder, PurchaseOrderItem, Category } from '@/types/erp';
-import { api, ensureBackendAuthToken, setAuthToken } from '@/lib/api/client';
+import { api, clearAuthSessionCache, ensureBackendAuthToken, setAuthToken } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
 import { normalizeTaxRate } from '@/lib/taxUtils';
+import { applyUserBranchLockOnLogin } from '@/lib/branchAccess';
+import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 
 // Helper: only use local demo storage in explicit demo mode.
@@ -38,52 +41,15 @@ async function apiFallback<T>(apiFn: () => Promise<{ data?: T; error?: string }>
 // BRANCHES
 // ============================================
 export function useBranches() {
-  const { t } = useTranslation();
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [currentBranch, setCurrentBranchState] = useState<Branch | null>(null);
-
-  const refreshBranches = useCallback(async () => {
-    const data = await apiFallback<any[]>(
-      () => api.branches.list(),
-      () => storage.getBranches()
-    );
-    // Map API response to Branch type
-    const mapped = data.map((b: any) => ({
-      id: b.id,
-      name: b.name,
-      code: b.code || b.branch_code || '',
-      address: b.address || '',
-      phone: b.phone || '',
-      isMain: b.isMain ?? b.is_main ?? false,
-      isActive: b.isActive ?? b.is_active ?? true,
-      priceLevel: b.priceLevel ?? b.price_level ?? 1,
-      createdAt: b.createdAt || b.created_at || '',
-    })) as Branch[];
-    setBranches(mapped);
-    return mapped;
-  }, []);
-
-  useEffect(() => {
-    refreshBranches().then(data => {
-      const current = storage.getCurrentBranch();
-      if (current) {
-        setCurrentBranchState(current);
-      } else {
-        const mainBranch = data.find((b: Branch) => b.isMain);
-        if (mainBranch) {
-          storage.setCurrentBranch(mainBranch);
-          setCurrentBranchState(mainBranch);
-        }
-      }
-    });
-  }, [refreshBranches]);
-
-  const setCurrentBranch = useCallback((branch: Branch) => {
-    storage.setCurrentBranch(branch);
-    setCurrentBranchState(branch);
-  }, []);
-
-  return { branches, currentBranch, setCurrentBranch, refreshBranches };
+  const scope = useBranchScope();
+  const ctx = useBranchContext();
+  return {
+    branches: scope.allBranches,
+    currentBranch: scope.currentBranch,
+    setCurrentBranch: scope.setOperatingBranch,
+    refreshBranches: ctx.refreshBranches,
+    isLoading: ctx.isLoading,
+  };
 }
 
 // Map API snake_case to frontend camelCase for products
@@ -203,6 +169,18 @@ function productBelongsToBranchList(product: Product, branchId: string, apiSkus:
   return isShared && !apiSkus.has(skuKey);
 }
 
+/** Drop rows from other branches; hide shared-catalog lines with zero stock at this branch. */
+function filterProductsForApiScope(products: Product[], branchId?: string): Product[] {
+  if (!branchId) return products;
+  const key = String(branchId).trim();
+  return products.filter((p) => {
+    const owner = String(p.branchId || '').trim();
+    if (owner && owner !== key) return false;
+    if (!owner && (p.stock || 0) <= 0) return false;
+    return true;
+  });
+}
+
 function dedupeProductsBySku(products: Product[], branchId?: string): Product[] {
   const bySku = new Map<string, Product>();
   for (const p of products) {
@@ -232,7 +210,7 @@ export function useProducts(branchId?: string) {
     try {
       const response = await api.products.list(branchId);
       if (!response.error && Array.isArray(response.data)) {
-        apiProducts = response.data.map(mapProduct);
+        apiProducts = filterProductsForApiScope(response.data.map(mapProduct), branchId);
       }
     } catch (e) {
       console.warn('[useProducts] API list failed:', e);
@@ -255,10 +233,13 @@ export function useProducts(branchId?: string) {
         if (!branchId) return true;
         return productBelongsToBranchList(p, branchId, apiSkus);
       });
-      return dedupeProductsBySku([...apiProducts, ...localOnly], branchId);
+      return filterProductsForApiScope(
+        dedupeProductsBySku([...apiProducts, ...localOnly], branchId),
+        branchId,
+      );
     }
 
-    return localProducts;
+    return filterProductsForApiScope(localProducts, branchId);
   }, [branchId]);
 
   const refreshProducts = useCallback(async () => {
@@ -638,8 +619,8 @@ function hydrateElectronAuthBeforeFirstPaint() {
   }
   const currentUser = storage.getCurrentUser();
   if (sessionOk && currentUser?.id && currentUser?.email) {
+    applyUserBranchLockOnLogin(currentUser);
     authState = { user: currentUser, isLoading: false };
-    void api.auth.me().catch(() => {});
     return;
   }
   authState = { user: null, isLoading: false };
@@ -661,8 +642,31 @@ async function initAuthStateOnce() {
       sessionOk = false;
     }
     if (sessionOk && currentUser?.id && currentUser?.email) {
+      applyUserBranchLockOnLogin(currentUser);
+      try {
+        await ensureBackendAuthToken();
+        const meResult = await api.auth.me();
+        if (meResult.data?.id) {
+          const me = meResult.data;
+          const fresh: User = {
+            id: String(me.id),
+            email: String(me.email || currentUser.email),
+            name: String(me.name || currentUser.name),
+            username: currentUser.username || String(me.email || '').split('@')[0] || '',
+            role: (me.role as User['role']) || currentUser.role,
+            branchId: String(me.branchId ?? me.branch_id ?? currentUser.branchId ?? ''),
+            isActive: true,
+            createdAt: String(me.createdAt ?? me.created_at ?? currentUser.createdAt ?? ''),
+          };
+          storage.setCurrentUser(fresh);
+          applyUserBranchLockOnLogin(fresh);
+          setAuthState({ user: fresh, isLoading: false });
+          return;
+        }
+      } catch {
+        /* API not available */
+      }
       setAuthState({ user: currentUser, isLoading: false });
-      void api.auth.me().catch(() => {});
       return;
     }
     setAuthState({ user: null, isLoading: false });
@@ -671,13 +675,43 @@ async function initAuthStateOnce() {
 
   if (currentUser && currentUser.id && currentUser.email) {
     try {
+      await ensureBackendAuthToken();
       const meResult = await api.auth.me();
-      if (meResult.data) {
+      if (meResult.data?.id) {
+        const me = meResult.data;
+        const fresh: User = {
+          id: String(me.id),
+          email: String(me.email || currentUser.email),
+          name: String(me.name || currentUser.name),
+          username: currentUser.username || String(me.email || '').split('@')[0] || '',
+          role: (me.role as User['role']) || currentUser.role,
+          branchId: String(me.branchId ?? me.branch_id ?? currentUser.branchId ?? ''),
+          isActive: me.isActive !== false && me.is_active !== false,
+          createdAt: String(me.createdAt ?? me.created_at ?? currentUser.createdAt ?? ''),
+        };
+        storage.setCurrentUser(fresh);
+        applyUserBranchLockOnLogin(fresh);
+        window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
+        setAuthState({ user: fresh, isLoading: false });
+        return;
+      }
+      const err = String(meResult.error || '').toLowerCase();
+      const backendDown =
+        !err
+        || err.includes('failed to fetch')
+        || err.includes('network')
+        || err.includes('timeout')
+        || err.includes('abort')
+        || err.includes('econnrefused');
+      if (backendDown) {
+        applyUserBranchLockOnLogin(currentUser);
         setAuthState({ user: currentUser, isLoading: false });
         return;
       }
     } catch {
-      /* API not available */
+      applyUserBranchLockOnLogin(currentUser);
+      setAuthState({ user: currentUser, isLoading: false });
+      return;
     }
 
     if (isDemoMode()) {
@@ -701,16 +735,24 @@ export function useAuth() {
 
   const login = useCallback(async (identifier: string, password: string): Promise<boolean> => {
     const normalized = identifier.trim();
-    const maybeEmail = normalized.includes('@') ? normalized : `${normalized}@kwanzaerp.ao`;
+    if (!normalized || !password) return false;
+
     const normalizedLower = normalized.toLowerCase();
     const normalizedUsername = normalizedLower.includes('@')
       ? normalizedLower.split('@')[0]
       : normalizedLower;
 
-    // Try backend API first
+    setAuthToken(null);
+    clearAuthSessionCache();
+
     try {
-      const response = await api.auth.login(maybeEmail, password || 'demo');
-      if (response.data) {
+      // Send identifier as entered — backend matches email, username, or email local part
+      const response = await api.auth.login(normalized, password);
+      if (response.error) {
+        console.warn('[Auth] Login failed:', response.error);
+        return false;
+      }
+      if (response.data?.token && response.data?.user) {
         setAuthToken(response.data.token);
         const apiUser = response.data.user;
         const user: User = {
@@ -724,110 +766,16 @@ export function useAuth() {
           createdAt: apiUser.createdAt || apiUser.created_at || new Date().toISOString(),
         };
         storage.setCurrentUser(user);
+        applyUserBranchLockOnLogin(user);
+        window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
         setAuthState({ user });
         markElectronSessionAuthenticated();
-        console.log('[Auth] Logged in via backend API');
         return true;
       }
     } catch (e) {
-      console.log('[Auth] Backend API not available, falling back to local auth');
+      console.warn('[Auth] Login API error:', e);
     }
 
-    // Electron mode fallback
-    if (storage.isElectronMode()) {
-      let dbReachable = true;
-      try {
-        const tryQuery = async (sql: string, params: unknown[]) => {
-          try {
-            const result = await window.electronAPI!.db.query(sql, params);
-            if (result?.success === false) throw new Error(result.error || 'Query failed');
-            return Array.isArray(result?.data) ? result.data : [];
-          } catch {
-            dbReachable = false;
-            return [];
-          }
-        };
-
-        const userColumns = await tryQuery("SELECT name FROM pragma_table_info('users')", []);
-        const availableColumns = new Set(
-          userColumns.map((column: { name?: string }) => String(column.name || '').toLowerCase()).filter(Boolean)
-        );
-
-        const identifierClauses: string[] = [];
-        const identifierParams: unknown[] = [];
-
-        if (availableColumns.has('username')) { identifierClauses.push('LOWER(username) = LOWER(?)'); identifierParams.push(normalized); }
-        if (availableColumns.has('email')) { identifierClauses.push('LOWER(email) = LOWER(?)'); identifierParams.push(maybeEmail); }
-        if (availableColumns.has('id')) { identifierClauses.push('id = ?'); identifierParams.push(normalized); }
-
-        if (identifierClauses.length > 0) {
-          const activeClause = availableColumns.has('is_active')
-            ? '(is_active = 1 OR is_active = true OR is_active = "1" OR is_active = "true" OR is_active IS NULL)'
-            : '1 = 1';
-
-          const matchedUsers = await tryQuery(
-            `SELECT * FROM users WHERE ${activeClause} AND (${identifierClauses.join(' OR ')}) LIMIT 1`,
-            identifierParams
-          );
-
-          if (matchedUsers.length > 0) {
-            const dbUser = matchedUsers[0];
-            const username = String(dbUser.username || dbUser.email?.split('@')?.[0] || dbUser.id || normalizedUsername).toLowerCase();
-            const role = ['admin', 'manager', 'cashier', 'viewer'].includes(String(dbUser.role)) ? dbUser.role : 'cashier';
-            const isDemoAccount = username === 'admin' || username === 'caixa1';
-            const storedPassword = dbUser.password ?? dbUser.password_hash;
-            const validPassword = isDemoAccount || password === '' || !storedPassword || storedPassword === password;
-
-            if (validPassword) {
-              const user: User = {
-                id: dbUser.id,
-                email: dbUser.email || `${dbUser.username || normalized}@kwanzaerp.ao`,
-                name: dbUser.name || dbUser.username || normalized,
-                username: dbUser.username || normalizedUsername,
-                role,
-                branchId: dbUser.branch_id || '',
-                isActive: true,
-                createdAt: dbUser.created_at || '',
-              };
-              storage.setCurrentUser(user);
-              setAuthState({ user });
-              markElectronSessionAuthenticated();
-              void ensureBackendAuthToken(user.email);
-              return true;
-            }
-          }
-        }
-      } catch (e) {
-        console.error('[Auth] DB login error:', e);
-      }
-
-      if (normalizedUsername === 'admin' || normalizedUsername === 'caixa1') {
-        const branches = await storage.getBranches();
-        const mainBranchId = branches.find(b => b.isMain)?.id || branches[0]?.id || 'branch-main';
-        const user: User = {
-          id: normalizedUsername === 'admin' ? 'user-admin' : 'user-caixa1',
-          email: `${normalizedUsername}@kwanzaerp.ao`,
-          name: normalizedUsername === 'admin' ? 'Admin' : 'Cashier 1',
-          username: normalizedUsername,
-          role: normalizedUsername === 'admin' ? 'admin' : 'cashier',
-          branchId: mainBranchId,
-          isActive: true,
-          createdAt: new Date().toISOString(),
-        };
-        storage.setCurrentUser(user);
-        setAuthState({ user });
-        markElectronSessionAuthenticated();
-        void ensureBackendAuthToken(user.email);
-        return true;
-      }
-
-      if (!dbReachable) {
-        console.error('[Auth] Database not reachable in Electron mode');
-      }
-      return false;
-    }
-
-    // Demo mode fallback
     if (isDemoMode()) {
       const users = await storage.getUsers();
       const foundUser = users.find(u =>
@@ -836,6 +784,8 @@ export function useAuth() {
 
       if (foundUser) {
         storage.setCurrentUser(foundUser);
+        applyUserBranchLockOnLogin(foundUser);
+        window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
         setAuthState({ user: foundUser });
         markElectronSessionAuthenticated();
         return true;

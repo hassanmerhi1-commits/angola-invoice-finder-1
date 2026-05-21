@@ -23,9 +23,9 @@ const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] },
 });
 
-function broadcastTable(table) {
+function broadcastTable(table, entityId = null) {
   try {
-    io.emit('table-update', { table, ts: Date.now() });
+    io.emit('table-update', { table, ts: Date.now(), entityId });
   } catch (_) {}
 }
 
@@ -96,6 +96,13 @@ app.use('/api/consistency', require('./routes/consistency')(broadcastTable));
 app.use('/api/budgets', require('./routes/budgets')(broadcastTable));
 app.use('/api/daily-reports', require('./routes/dailyReports')(broadcastTable));
 app.use('/api/agt', require('./routes/agt')(broadcastTable));
+app.use('/api/sync', require('./routes/syncIngest')(broadcastTable));
+app.use('/api/installations', require('./routes/installations')());
+
+const { startReplicatorWorker } = require('./jobs/replicator');
+const { startAgtWorker } = require('./jobs/agtWorker');
+const { ensureDefaultInstallation } = require('./sync/installation');
+const { upgradeLegacyPasswordHashesOnStartup } = require('./lib/upgradeLegacyPasswords');
 
 const saftRouter = require('./routes/saft')(broadcastTable);
 app.use('/api/saft', saftRouter);
@@ -127,6 +134,11 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('╚═══════════════════════════════════════════════════════════════╝');
   console.log('[SERVER] SQLite unified backend — all /api routes active');
   discoveryBroadcaster.start().catch((e) => console.warn('[Discovery]', e.message));
+
+  ensureDefaultInstallation().catch((e) => console.warn('[INSTALL]', e.message));
+  upgradeLegacyPasswordHashesOnStartup().catch((e) => console.warn('[AUTH]', e.message));
+  startReplicatorWorker(4000);
+  startAgtWorker(5000);
 });
 
 io.on('connection', (socket) => {

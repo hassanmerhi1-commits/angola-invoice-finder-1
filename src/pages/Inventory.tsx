@@ -2,7 +2,7 @@ import { generateId } from '@/lib/utils';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useProducts } from '@/hooks/useERP';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
@@ -73,17 +73,14 @@ type StockListFilter = 'all' | 'qtyGt0' | 'qtyLt0';
 export default function Inventory() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { currentBranch, branches } = useBranchContext();
+  const { currentBranch, branches, isHeadOffice, apiBranchId, canSwitchBranch, userBranch } = useBranchScope();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   
-  // Head office (Sede) sees ALL inventory; filials see only their own
-  const isHeadOffice = currentBranch?.isMain === true;
-  const isFilial = currentBranch && !currentBranch.isMain;
+  const isFilial = !isHeadOffice;
   
-  // For head office: load all products (no branch filter)
-  // For filial: load only that branch's products
-  const { products, refreshProducts, updateProduct, addProduct, deleteProduct } = useProducts(isHeadOffice ? undefined : currentBranch?.id);
+  const listBranchId = apiBranchId ?? userBranch?.id;
+  const { products, refreshProducts, updateProduct, addProduct, deleteProduct } = useProducts(listBranchId);
   
   // For head office: load all products per branch for qty breakdown
   const [allBranchProducts, setAllBranchProducts] = useState<Record<string, Product[]>>({});
@@ -193,43 +190,16 @@ export default function Inventory() {
       return Array.from(bySku.values());
     }
 
-    const branchRows = currentBranch?.id ? allBranchProducts[currentBranch.id] : undefined;
-
-    const stockBySku = new Map<string, number>();
-    if (branchRows?.length) {
-      for (const row of branchRows) {
-        const key = (row.sku || '').trim().toLowerCase() || row.id;
-        const prev = stockBySku.get(key);
-        const rowStock = row.stock ?? 0;
-        if (prev === undefined || row.branchId === currentBranch?.id) {
-          stockBySku.set(key, rowStock);
-        }
-      }
-    }
-
     const bySku = new Map<string, Product>();
     for (const p of products) {
       const key = (p.sku || '').trim().toLowerCase() || p.id;
-      const stock = stockBySku.has(key)
-        ? (stockBySku.get(key) ?? 0)
-        : p.branchId === currentBranch?.id
-          ? (p.stock || 0)
-          : 0;
-      const candidate = { ...p, stock };
       const prev = bySku.get(key);
-      if (!prev) {
-        bySku.set(key, candidate);
-        continue;
+      if (!prev || (p.stock || 0) > (prev.stock || 0)) {
+        bySku.set(key, p);
       }
-      const prefer =
-        (candidate.branchId === currentBranch?.id && prev.branchId !== currentBranch?.id) ||
-        (candidate.stock || 0) > (prev.stock || 0)
-          ? candidate
-          : prev;
-      bySku.set(key, prefer);
     }
     return Array.from(bySku.values());
-  }, [products, isHeadOffice, allBranchProducts, currentBranch?.id]);
+  }, [products, isHeadOffice]);
   
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -241,6 +211,12 @@ export default function Inventory() {
   const [stockExitDialogOpen, setStockExitDialogOpen] = useState(false);
   const [labelPrintDialogOpen, setLabelPrintDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('lista');
+
+  useEffect(() => {
+    if (!isHeadOffice && activeTab === 'qtd-detalhada') {
+      setActiveTab('lista');
+    }
+  }, [isHeadOffice, activeTab]);
   const [stockListFilter, setStockListFilter] = useState<StockListFilter>('all');
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
 
@@ -500,20 +476,26 @@ export default function Inventory() {
     }
   };
 
+  const scopedBranchIds = useMemo(
+    () => branches.map((b) => b.id),
+    [branches],
+  );
+
   const selectedProductMovements = useMemo(() => {
-    return filterMovementsForProduct(stockMovements, selectedProduct, allBranchProducts)
+    return filterMovementsForProduct(stockMovements, selectedProduct, allBranchProducts, scopedBranchIds)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [selectedProduct, stockMovements, allBranchProducts]);
+  }, [selectedProduct, stockMovements, allBranchProducts, scopedBranchIds]);
 
   const panelProps = useMemo(
     () => ({
       product: selectedProduct,
       movements: stockMovements,
       allBranchProducts,
+      scopedBranchIds,
       uiLocale,
       getReasonLabel: getMovementReasonLabel,
     }),
-    [selectedProduct, stockMovements, allBranchProducts, uiLocale, getMovementReasonLabel]
+    [selectedProduct, stockMovements, allBranchProducts, scopedBranchIds, uiLocale, getMovementReasonLabel]
   );
 
   const tabPanelClass = 'flex-1 min-h-0 m-0 p-4 overflow-auto data-[state=inactive]:hidden';
@@ -547,8 +529,8 @@ export default function Inventory() {
       
       {/* Toolbar */}
       <div className="flex items-center gap-1.5 px-3 py-2 bg-card/50 border-b backdrop-blur-sm">
-        <BranchSelector compact />
-        <div className="w-px h-5 bg-border mx-1" />
+        {canSwitchBranch && <BranchSelector compact />}
+        {canSwitchBranch && <div className="w-px h-5 bg-border mx-1" />}
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => handleOpenDialog()}>
           <Plus className="w-3 h-3" />
           {t.common.new}
@@ -696,9 +678,11 @@ export default function Inventory() {
           <TabsTrigger value="mes" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             {t.inventoryPageUi.tabs.month}
           </TabsTrigger>
-          <TabsTrigger value="qtd-detalhada" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
-            {t.inventoryPageUi.tabs.detailedQty}
-          </TabsTrigger>
+          {isHeadOffice && (
+            <TabsTrigger value="qtd-detalhada" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
+              {t.inventoryPageUi.tabs.detailedQty}
+            </TabsTrigger>
+          )}
           <TabsTrigger value="transferencia" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             {t.inventoryPageUi.tabs.pendingTransfer}
           </TabsTrigger>
@@ -842,9 +826,11 @@ export default function Inventory() {
           />
         </TabsContent>
 
-        <TabsContent value="qtd-detalhada" className={tabPanelClass}>
-          <BranchStockDetail selectedProduct={selectedProduct} />
-        </TabsContent>
+        {isHeadOffice && (
+          <TabsContent value="qtd-detalhada" className={tabPanelClass}>
+            <BranchStockDetail selectedProduct={selectedProduct} />
+          </TabsContent>
+        )}
 
         <TabsContent value="transferencia" className={tabPanelClass}>
           <InventoryPendingTransfersPanel product={selectedProduct} />

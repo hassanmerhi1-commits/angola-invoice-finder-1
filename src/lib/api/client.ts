@@ -20,12 +20,21 @@ function getAuthToken(): string | null {
   return localStorage.getItem('kwanza_auth_token');
 }
 
+let lastJwtCheck: { at: number; result: 'valid' | 'invalid' | 'unreachable' } | null = null;
+let ensureTokenInFlight: Promise<string | null> | null = null;
+
+export function clearAuthSessionCache(): void {
+  lastJwtCheck = null;
+  ensureTokenInFlight = null;
+}
+
 export function setAuthToken(token: string | null): void {
   if (token) {
     localStorage.setItem('kwanza_auth_token', token);
   } else {
     localStorage.removeItem('kwanza_auth_token');
   }
+  lastJwtCheck = null;
 }
 
 /** True for JWT from POST /api/auth/login (not Electron IPC `local-…` placeholders). */
@@ -34,54 +43,91 @@ export function isJwtAuthToken(token: string | null | undefined): boolean {
   return token.split('.').length === 3;
 }
 
-function collectLoginEmails(preferredEmail?: string): string[] {
-  const emails: string[] = [];
-  if (preferredEmail?.trim()) emails.push(preferredEmail.trim());
-
+function readStoredUserId(): string | null {
   try {
     const raw = localStorage.getItem('kwanzaerp_current_user');
-    if (raw) {
-      const u = JSON.parse(raw) as { email?: string; username?: string; role?: string };
-      if (u.email) emails.push(u.email);
-      const uname = (u.username || u.email?.split('@')?.[0] || '').trim().toLowerCase();
-      if (uname) {
-        emails.push(`${uname}@nexor.local`);
-        emails.push(`${uname}@kwanzaerp.ao`);
-      }
-    }
+    if (!raw) return null;
+    const u = JSON.parse(raw) as { id?: string };
+    return u.id ? String(u.id) : null;
   } catch {
-    /* ignore */
+    return null;
   }
-
-  emails.push('admin@nexor.local');
-  return [...new Set(emails.map((e) => e.toLowerCase()))];
 }
 
-/**
- * Obtain a real JWT from the embedded Express server (required for admin API routes).
- */
-export async function ensureBackendAuthToken(preferredEmail?: string): Promise<string | null> {
-  const existing = getAuthToken();
-  if (isJwtAuthToken(existing)) return existing;
+type JwtCheckResult = 'valid' | 'invalid' | 'unreachable';
 
+const JWT_CHECK_TTL_MS = 45_000;
+
+/** Validate JWT vs local user; unreachable = backend down (do not clear token). */
+async function checkJwtAgainstStoredUser(): Promise<JwtCheckResult> {
+  if (lastJwtCheck && Date.now() - lastJwtCheck.at < JWT_CHECK_TTL_MS) {
+    return lastJwtCheck.result;
+  }
+
+  const token = getAuthToken();
+  const storedId = readStoredUserId();
+  if (!isJwtAuthToken(token) || !storedId) {
+    lastJwtCheck = { at: Date.now(), result: 'invalid' };
+    return 'invalid';
+  }
+
+  const me = await apiFetch<{ id?: string }>('/auth/me');
+  let result: JwtCheckResult;
+  if (me.data?.id) {
+    result = String(me.data.id) === storedId ? 'valid' : 'invalid';
+  } else {
+    const err = String(me.error || '').toLowerCase();
+    if (
+      err.includes('401')
+      || err.includes('invalid token')
+      || err.includes('not authenticated')
+      || err.includes('user not found')
+    ) {
+      result = 'invalid';
+    } else {
+      result = 'unreachable';
+    }
+  }
+
+  lastJwtCheck = { at: Date.now(), result };
+  return result;
+}
+
+async function ensureBackendAuthTokenInner(): Promise<string | null> {
+  const existing = getAuthToken();
   if (existing && !isJwtAuthToken(existing)) {
     setAuthToken(null);
+    clearAuthSessionCache();
   }
 
   if (isDemoMode()) return null;
 
-  const candidates = collectLoginEmails(preferredEmail);
-  for (const email of candidates) {
-    const result = await apiFetch<{ token: string; user: { role?: string } }>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password: 'demo' }),
-    });
-    if (result.data?.token && isJwtAuthToken(result.data.token)) {
-      setAuthToken(result.data.token);
-      return result.data.token;
-    }
+  const check = await checkJwtAgainstStoredUser();
+
+  if (check === 'valid') {
+    return getAuthToken();
   }
+
+  if (check === 'unreachable' && isJwtAuthToken(getAuthToken())) {
+    return getAuthToken();
+  }
+
+  if (check === 'invalid') {
+    setAuthToken(null);
+    clearAuthSessionCache();
+  }
+
   return null;
+}
+
+/** Returns the current JWT if still valid for the logged-in user (never re-logs in without a password). */
+export async function ensureBackendAuthToken(): Promise<string | null> {
+  if (!ensureTokenInFlight) {
+    ensureTokenInFlight = ensureBackendAuthTokenInner().finally(() => {
+      ensureTokenInFlight = null;
+    });
+  }
+  return ensureTokenInFlight;
 }
 
 // ==================== IPC DATABASE HELPERS ====================
@@ -141,14 +187,21 @@ async function ipcDelete(table: string, id: string): Promise<ApiResponse<any>> {
 }
 
 /** If HTTP reached the API but returned 4xx/5xx, do not fall back to IPC (masks real errors and often hits “Express unreachable”). */
-function shouldTrySupplierIpcAfterApiFailure(apiResult: ApiResponse<any>): boolean {
+function shouldTryIpcAfterApiFailure(apiResult: ApiResponse<any>): boolean {
   if (apiResult.data != null) return false;
   const err = (apiResult.error || '').trim();
   if (!err) return true;
   if (/^HTTP \d{3}/.test(err)) return false;
   if (err.toLowerCase().includes('demo mode')) return false;
+  if (err.toLowerCase().includes('authentication')) return false;
+  if (err.toLowerCase().includes('administrator')) return false;
+  if (err.toLowerCase().includes('invalid token')) return false;
+  if (err.toLowerCase().includes('password')) return false;
   return true;
 }
+
+/** @deprecated alias */
+const shouldTrySupplierIpcAfterApiFailure = shouldTryIpcAfterApiFailure;
 
 // ==================== HTTP FALLBACK (web preview/demo) ====================
 async function apiFetch<T>(
@@ -196,6 +249,7 @@ async function apiFetch<T>(
     // Electron: drop stale cached base, re-resolve via IPC + port scan, retry once.
     const isElectron = typeof window !== 'undefined' && !!window.electronAPI?.isElectron;
     if (isElectron) {
+      lastJwtCheck = null;
       try {
         invalidateElectronApiBaseCache();
         const resolved = await getApiUrlAsync({ waitForPortMs: 8000 });
@@ -375,30 +429,27 @@ export const api = {
 
   // Auth
   auth: {
-    login: async (email: string, password: string) => {
-      if (isElectronMode()) {
-        const tryEmails = collectLoginEmails(email);
-        for (const candidate of tryEmails) {
-          const httpResult = await apiFetch<{ token: string; user: any }>('/auth/login', {
-            method: 'POST',
-            body: JSON.stringify({ email: candidate, password: password || 'demo' }),
-          });
-          if (httpResult.data?.token && isJwtAuthToken(httpResult.data.token)) {
-            setAuthToken(httpResult.data.token);
-            return httpResult;
-          }
-        }
-        return { error: 'Credenciais inválidas' };
+    login: async (identifier: string, password: string) => {
+      setAuthToken(null);
+      clearAuthSessionCache();
+      const loginId = identifier.trim();
+      if (!loginId || !password) {
+        return { error: 'Email or username and password are required' };
       }
-      return apiFetch<{ token: string; user: any }>('/auth/login', {
-        method: 'POST', body: JSON.stringify({ email, password }),
+      const httpResult = await apiFetch<{ token: string; user: any }>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: loginId, username: loginId, password }),
       });
+      if (httpResult.data?.token && isJwtAuthToken(httpResult.data.token)) {
+        setAuthToken(httpResult.data.token);
+        return httpResult;
+      }
+      return { error: httpResult.error || 'Credenciais inválidas' };
     },
     me: () => {
-      if (isElectronMode()) {
-        const token = getAuthToken();
-        if (!token) return Promise.resolve({ error: 'Not authenticated' }) as Promise<ApiResponse<any>>;
-        return Promise.resolve({ data: JSON.parse(localStorage.getItem('kwanza_current_user') || '{}') }) as Promise<ApiResponse<any>>;
+      const token = getAuthToken();
+      if (!isJwtAuthToken(token)) {
+        return Promise.resolve({ error: 'Not authenticated' }) as Promise<ApiResponse<any>>;
       }
       return apiFetch<any>('/auth/me');
     },
@@ -526,8 +577,32 @@ export const api = {
       }
       return apiFetch<any[]>(endpoint);
     },
-    create: (data: any) => {
-      return apiFetch<any>('/sales', { method: 'POST', body: JSON.stringify(data) });
+    create: async (data: any) => {
+      const { newClientRequestId, enqueueOfflineSale } = await import('@/lib/sync/offlineSales');
+      const body = {
+        ...data,
+        clientRequestId: data.clientRequestId || newClientRequestId(),
+      };
+      const result = await apiFetch<any>('/sales', { method: 'POST', body: JSON.stringify(body) });
+      if (result.error && typeof window !== 'undefined' && (window as any).electronAPI?.syncOutbox) {
+        const isNetwork =
+          /failed to fetch|network|abort|econnrefused|timeout/i.test(String(result.error));
+        if (isNetwork) {
+          const queued = await enqueueOfflineSale(body);
+          if (queued) {
+            return {
+              data: {
+                id: body.clientRequestId,
+                invoice_number: body.invoiceNumber || `OFF-${body.clientRequestId.slice(0, 8)}`,
+                pendingSync: true,
+                client_request_id: body.clientRequestId,
+              },
+              error: null,
+            };
+          }
+        }
+      }
+      return result;
     },
     generateInvoiceNumber: (branchCode: string) => {
       return apiFetch<{ invoiceNumber: string }>(`/sales/generate-invoice-number/${branchCode}`);
@@ -1453,43 +1528,28 @@ export const api = {
     },
   },
 
-  // Users — Electron uses embedded Express SQLite (same as branches)
+  // Users — always via Express /api/auth/users (admin JWT required; no IPC fallback)
   users: {
     list: async () => {
-      if (isElectronMode()) {
-        const apiResult = await apiFetch<any[]>('/auth/users');
-        if (Array.isArray(apiResult.data)) return apiResult;
+      await ensureBackendAuthToken();
+      const apiResult = await apiFetch<any[]>('/auth/users');
+      if (isElectronMode() && shouldTryIpcAfterApiFailure(apiResult)) {
         return ipcQuery<any>(
           'SELECT id, name, email, role, branch_id, is_active, created_at, updated_at FROM users ORDER BY name',
         );
       }
-      return apiFetch<any[]>('/auth/users');
+      return apiResult;
     },
     create: async (data: any) => {
       const body = {
         name: data.name,
         email: data.email,
+        username: data.username,
         role: data.role || 'cashier',
         branchId: data.branchId,
         password: data.password,
       };
-      if (isElectronMode()) {
-        const apiResult = await apiFetch<any>('/auth/users', {
-          method: 'POST',
-          body: JSON.stringify(body),
-        });
-        if (apiResult.data != null && !apiResult.error) return apiResult;
-        return ipcInsert('users', {
-          id: generateId(),
-          name: body.name,
-          email: body.email,
-          role: body.role,
-          branch_id: body.branchId,
-          password_hash: body.password || '',
-          is_active: 1,
-          created_at: new Date().toISOString(),
-        });
-      }
+      await ensureBackendAuthToken();
       return apiFetch<any>('/auth/users', { method: 'POST', body: JSON.stringify(body) });
     },
     update: async (id: string, data: any) => {
@@ -1501,26 +1561,11 @@ export const api = {
         isActive: data.isActive ?? data.is_active,
         password: data.password,
       };
-      if (isElectronMode()) {
-        const apiResult = await apiFetch<any>(`/auth/users/${id}`, {
-          method: 'PUT',
-          body: JSON.stringify(body),
-        });
-        if (apiResult.data != null && !apiResult.error) return apiResult;
-        return ipcUpdate('users', id, {
-          ...data,
-          branch_id: body.branchId,
-          is_active: body.isActive,
-        });
-      }
+      await ensureBackendAuthToken();
       return apiFetch<any>(`/auth/users/${id}`, { method: 'PUT', body: JSON.stringify(body) });
     },
     delete: async (id: string) => {
-      if (isElectronMode()) {
-        const apiResult = await apiFetch<any>(`/auth/users/${id}`, { method: 'DELETE' });
-        if (!apiResult.error) return apiResult;
-        return ipcUpdate('users', id, { is_active: false, isActive: false });
-      }
+      await ensureBackendAuthToken();
       return apiFetch<any>(`/auth/users/${id}`, { method: 'DELETE' });
     },
   },

@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { processPayment } = require('../transactionEngine');
+const { enqueuePaymentCreated } = require('../sync/outbox');
 const { ENTITY_BALANCE_SELECT } = require('../entityBalanceSql');
 
 module.exports = function(broadcastTable) {
@@ -32,6 +33,7 @@ module.exports = function(broadcastTable) {
     try {
       await client.query('BEGIN');
       const payment = await processPayment(client, req.body);
+      await enqueuePaymentCreated(client, payment.id, req.body.branchId);
       await client.query('COMMIT');
       await broadcastTable('payments');
       res.status(201).json(payment);

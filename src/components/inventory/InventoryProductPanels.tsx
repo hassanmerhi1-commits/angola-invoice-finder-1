@@ -18,20 +18,25 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { api } from '@/lib/api/client';
 import { getStockTransfers } from '@/lib/storage';
 import { getTransactionHistory } from '@/lib/transactionHistory';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { useTranslation } from '@/i18n';
 
 export function filterMovementsForProduct(
   movements: StockMovement[],
   product: Product | null,
-  allBranchProducts?: Record<string, Product[]>
+  allBranchProducts?: Record<string, Product[]>,
+  scopedBranchIds?: string[]
 ): StockMovement[] {
   if (!product) return [];
   const skuKey = (product.sku || '').trim().toLowerCase();
   const productIds = new Set<string>([product.id]);
   if (allBranchProducts) {
-    for (const rows of Object.values(allBranchProducts)) {
+    const branchKeys = scopedBranchIds?.length
+      ? scopedBranchIds
+      : Object.keys(allBranchProducts);
+    for (const branchId of branchKeys) {
+      const rows = allBranchProducts[branchId] || [];
       for (const row of rows) {
         const rowSku = (row.sku || '').trim().toLowerCase();
         if (row.id === product.id || (skuKey && rowSku === skuKey)) {
@@ -72,6 +77,7 @@ type PanelProps = {
   product: Product | null;
   movements: StockMovement[];
   allBranchProducts?: Record<string, Product[]>;
+  scopedBranchIds?: string[];
   uiLocale: string;
   getReasonLabel: (reason: StockMovement['reason']) => string;
 };
@@ -80,10 +86,11 @@ export function InventoryMonthlyMovementsPanel({
   product,
   movements,
   allBranchProducts,
-}: Pick<PanelProps, 'product' | 'movements' | 'allBranchProducts'>) {
+  scopedBranchIds,
+}: Pick<PanelProps, 'product' | 'movements' | 'allBranchProducts' | 'scopedBranchIds'>) {
   const { t } = useTranslation();
   const rows = useMemo(() => {
-    const filtered = filterMovementsForProduct(movements, product, allBranchProducts);
+    const filtered = filterMovementsForProduct(movements, product, allBranchProducts, scopedBranchIds);
     const byMonth = new Map<string, { entries: number; exits: number }>();
     for (const m of filtered) {
       const d = new Date(m.createdAt);
@@ -102,7 +109,7 @@ export function InventoryMonthlyMovementsPanel({
         exits: data.exits,
         balance: data.entries - data.exits,
       }));
-  }, [movements, product, allBranchProducts]);
+  }, [movements, product, allBranchProducts, scopedBranchIds]);
 
   if (!product) {
     return <SelectProductHint message={t.inventoryPageUi.selectProductToViewStatement} />;
@@ -147,10 +154,11 @@ export function InventoryMovementChartPanel({
   product,
   movements,
   allBranchProducts,
-}: Pick<PanelProps, 'product' | 'movements' | 'allBranchProducts'>) {
+  scopedBranchIds,
+}: Pick<PanelProps, 'product' | 'movements' | 'allBranchProducts' | 'scopedBranchIds'>) {
   const { t } = useTranslation();
   const chartData = useMemo(() => {
-    const filtered = filterMovementsForProduct(movements, product, allBranchProducts);
+    const filtered = filterMovementsForProduct(movements, product, allBranchProducts, scopedBranchIds);
     const byMonth = new Map<string, { entries: number; exits: number }>();
     for (const m of filtered) {
       const d = new Date(m.createdAt);
@@ -169,7 +177,7 @@ export function InventoryMovementChartPanel({
         entries: data.entries,
         exits: data.exits,
       }));
-  }, [movements, product, allBranchProducts]);
+  }, [movements, product, allBranchProducts, scopedBranchIds]);
 
   if (!product) {
     return <SelectProductHint message={t.inventoryPageUi.selectProductToViewStatement} />;
@@ -212,6 +220,7 @@ function MovementCostTable({
   product,
   movements,
   allBranchProducts,
+  scopedBranchIds,
   uiLocale,
   getReasonLabel,
   filter,
@@ -224,10 +233,10 @@ function MovementCostTable({
 }) {
   const { t } = useTranslation();
   const rows = useMemo(() => {
-    return filterMovementsForProduct(movements, product, allBranchProducts)
+    return filterMovementsForProduct(movements, product, allBranchProducts, scopedBranchIds)
       .filter(filter)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [movements, product, allBranchProducts, filter]);
+  }, [movements, product, allBranchProducts, scopedBranchIds, filter]);
 
   if (!product) {
     return <SelectProductHint message={t.inventoryPageUi.selectProductToViewStatement} />;
@@ -307,11 +316,12 @@ export function InventoryMonthlySalesPanel({
   product,
   movements,
   allBranchProducts,
+  scopedBranchIds,
   uiLocale,
-}: Pick<PanelProps, 'product' | 'movements' | 'allBranchProducts' | 'uiLocale'>) {
+}: Pick<PanelProps, 'product' | 'movements' | 'allBranchProducts' | 'scopedBranchIds' | 'uiLocale'>) {
   const { t } = useTranslation();
   const rows = useMemo(() => {
-    const filtered = filterMovementsForProduct(movements, product, allBranchProducts).filter((m) => {
+    const filtered = filterMovementsForProduct(movements, product, allBranchProducts, scopedBranchIds).filter((m) => {
       if (m.type !== 'OUT') return false;
       const reason = String(m.reason || '').toLowerCase();
       return reason.includes('sale') || reason === 'sale';
@@ -329,7 +339,7 @@ export function InventoryMonthlySalesPanel({
     return Array.from(byMonth.entries())
       .sort((a, b) => b[0].localeCompare(a[0]))
       .map(([month, data]) => ({ month, qty: data.qty, value: data.value }));
-  }, [movements, product, allBranchProducts]);
+  }, [movements, product, allBranchProducts, scopedBranchIds]);
 
   if (!product) {
     return <SelectProductHint message={t.inventoryPageUi.selectProductToViewStatement} />;
@@ -479,7 +489,7 @@ export function InventoryBarcodeQtyPanel({
   allBranchProducts?: Record<string, Product[]>;
 }) {
   const { t } = useTranslation();
-  const { branches } = useBranchContext();
+  const { branches } = useBranchScope();
 
   const rows = useMemo(() => {
     if (!product) return [];

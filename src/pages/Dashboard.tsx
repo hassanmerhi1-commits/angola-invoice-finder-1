@@ -2,6 +2,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { useProducts } from '@/hooks/useERP';
@@ -35,10 +36,11 @@ interface DashboardKPIs {
 export default function Dashboard() {
   const navigate = useNavigate();
   const { currentBranch } = useBranchContext();
+  const { apiBranchId } = useBranchScope();
   const { language, t } = useTranslation();
   const d = t.dashboardUi;
   const { companyName, logo } = useCompanyLogo();
-  const { products } = useProducts(currentBranch?.id);
+  const { products } = useProducts(apiBranchId);
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
 
   // Fetch real KPIs
@@ -46,13 +48,13 @@ export default function Dashboard() {
     (async () => {
       try {
         const { api } = await import('@/lib/api/client');
-        const result = await api.dashboard.kpis(currentBranch?.id);
+        const result = await api.dashboard.kpis(apiBranchId);
         if (result.data) setKpis(result.data);
       } catch {
         // API not available — use zeros
       }
     })();
-  }, [currentBranch?.id]);
+  }, [apiBranchId]);
 
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const fmt = (n: number) => (n || 0).toLocaleString(locale);

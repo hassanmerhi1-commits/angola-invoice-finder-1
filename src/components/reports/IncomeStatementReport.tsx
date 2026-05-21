@@ -10,7 +10,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Download, Printer, FileSpreadsheet, TrendingUp, TrendingDown } from 'lucide-react';
-import { useBranches, useSales } from '@/hooks/useERP';
+import { useBranchScope } from '@/hooks/useBranchScope';
+import { useSales } from '@/hooks/useERP';
 import { useTranslation } from '@/i18n';
 
 interface LineItem {
@@ -25,8 +26,8 @@ interface LineItem {
 export default function IncomeStatementReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { currentBranch } = useBranches();
-  const { sales } = useSales(currentBranch?.id);
+  const { apiBranchId } = useBranchScope();
+  const { sales } = useSales(apiBranchId);
   
   const [startDate, setStartDate] = useState(() => {
     const date = new Date();

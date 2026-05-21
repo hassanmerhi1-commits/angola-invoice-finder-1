@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useProducts, useSuppliers, usePurchaseOrders, useAuth } from '@/hooks/useERP';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
 import { PurchaseOrder, PurchaseOrderItem, Product } from '@/types/erp';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -59,15 +59,13 @@ export default function PurchaseOrders() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
-  const { branches, currentBranch } = useBranchContext();
-  const { products, refreshProducts } = useProducts(undefined);
-  const { suppliers } = useSuppliers();
+  const { branches, currentBranch, apiBranchId } = useBranchScope();
   const { 
     orders, 
     createOrder, 
     receiveOrder, 
     cancelOrder 
-  } = usePurchaseOrders();
+  } = usePurchaseOrders(apiBranchId);
   const { toast } = useToast();
 
   const [searchTerm, setSearchTerm] = useState('');

@@ -17,7 +17,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Download, Printer, ArrowDownCircle, ArrowUpCircle, FileSpreadsheet, Package, Search } from 'lucide-react';
-import { useBranches, useProducts } from '@/hooks/useERP';
+import { useProducts } from '@/hooks/useERP';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { api } from '@/lib/api/client';
 import { getStockMovements as getLocalStockMovements } from '@/lib/storage';
 import { StockMovement } from '@/types/erp';
@@ -26,8 +27,9 @@ import { useTranslation } from '@/i18n';
 export default function StockMovementReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { currentBranch } = useBranches();
-  const { products } = useProducts(currentBranch?.id);
+  const { apiBranchId } = useBranchScope();
+  const branchFilter = apiBranchId;
+  const { products } = useProducts(branchFilter);
   
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [startDate, setStartDate] = useState(() => {
@@ -44,7 +46,7 @@ export default function StockMovementReport() {
   useEffect(() => {
     const loadMovements = async () => {
       try {
-        const result = await api.transactions.stockMovements({ warehouseId: currentBranch?.id });
+        const result = await api.transactions.stockMovements({ warehouseId: branchFilter });
         if (result.data) {
           setMovements(result.data.map((m: any) => ({
             id: m.id, productId: m.product_id, productName: m.product_name,
@@ -57,11 +59,11 @@ export default function StockMovementReport() {
           return;
         }
       } catch { /* fall through */ }
-      const data = await getLocalStockMovements(currentBranch?.id);
+      const data = await getLocalStockMovements(branchFilter);
       setMovements(data);
     };
     loadMovements();
-  }, [currentBranch?.id]);
+  }, [branchFilter]);
 
   const getReasonLabel = (reason: string) => {
     switch (reason) {

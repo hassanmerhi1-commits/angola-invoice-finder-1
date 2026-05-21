@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { 
@@ -75,7 +75,7 @@ interface AccountFormData {
 
 export default function BankAccounts() {
   const { t, language } = useTranslation();
-  const { currentBranch } = useBranchContext();
+  const { currentBranch, apiBranchId } = useBranchScope();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -130,13 +130,13 @@ export default function BankAccounts() {
   const [customBankName, setCustomBankName] = useState('');
 
   const loadData = async () => {
-    setAccounts(await getBankAccounts(currentBranch?.id));
+    setAccounts(await getBankAccounts(apiBranchId));
     setTransactions(await getBankTransactions());
   };
 
   useEffect(() => {
     loadData();
-  }, [currentBranch?.id]);
+  }, [apiBranchId]);
 
   const accountTransactions = useMemo(() => {
     if (!selectedAccount) return [];

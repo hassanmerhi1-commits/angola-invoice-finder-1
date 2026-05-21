@@ -12,6 +12,11 @@ import { Branch, Product, Sale, User, DailySummary, Client, StockTransfer, Suppl
 import { auditLog } from '@/lib/auditService';
 import { isDemoMode } from '@/lib/api/config';
 import { normalizeTaxRate } from './taxUtils';
+import {
+  canUserSwitchBranch,
+  mapBranchRow,
+  resolveUserBranch,
+} from '@/lib/branchAccess';
 
 // ============= MODE DETECTION =============
 export function isElectronMode(): boolean {
@@ -149,17 +154,36 @@ export async function deleteBranch(branchId: string): Promise<void> {
   auditLog('delete', 'branches', `Filial ${branchId} eliminada`, 'Sistema');
 }
 
+function readStoredUserBranch(): Branch | null {
+  try {
+    const userRaw = localStorage.getItem('kwanzaerp_current_user');
+    const branchesRaw = localStorage.getItem('kwanzaerp_branches');
+    if (!userRaw || !branchesRaw) return null;
+    const user = JSON.parse(userRaw) as { branchId?: string; role?: string };
+    const branches = JSON.parse(branchesRaw) as Branch[];
+    const assigned = resolveUserBranch(branches.map((b) => mapBranchRow(b as unknown as Record<string, unknown>)), user?.branchId);
+    if (assigned && !canUserSwitchBranch(user, assigned)) return assigned;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 export function getCurrentBranch(): Branch | null {
   return lsGet<Branch | null>(STORAGE_KEYS.currentBranch, null);
 }
 
 export function setCurrentBranch(branch: Branch): void {
-  lsSet(STORAGE_KEYS.currentBranch, branch);
+  const locked = readStoredUserBranch();
+  const next = locked && String(locked.id) !== String(branch.id) ? locked : branch;
+  lsSet(STORAGE_KEYS.currentBranch, next);
+  localStorage.setItem('kwanza_current_branch_id', String(next.id));
 }
 
 // ============= PRODUCT FUNCTIONS =============
 export async function getProducts(branchId?: string): Promise<Product[]> {
-  const includeSharedProducts = await shouldIncludeSharedProducts(branchId);
+  // When scoped to a branch, only return rows owned by that branch (not the global catalog).
+  const includeSharedProducts = !branchId && (await shouldIncludeSharedProducts(undefined));
 
   if (isElectronMode()) {
     const rows = await dbGetAll<any>('products');

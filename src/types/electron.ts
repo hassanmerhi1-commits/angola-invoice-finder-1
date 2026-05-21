@@ -82,6 +82,7 @@ export interface ElectronAPI {
   // Database operations
   db: {
     getStatus: () => Promise<DBStatus>;
+    ensureBackend: () => Promise<{ success: boolean; port?: number | null; error?: string }>;
     create: () => Promise<{ success: boolean; error?: string }>;
     init: () => Promise<{ success: boolean; mode?: string; error?: string }>;
     getAll: (table: string, companyId?: string) => Promise<{ success: boolean; data: any[] }>;
@@ -230,11 +231,15 @@ export interface IPFileConfig {
 
 export interface DBStatus {
   success: boolean;
-  mode: 'server' | 'client' | 'unconfigured';
+  mode: 'server' | 'client' | 'standalone' | 'unconfigured';
   path: string | null;
   serverAddress: string | null;
   wsPort: number;
   connected: boolean;
+  expressBackend?: boolean;
+  expressPort?: number | null;
+  backendRunning?: boolean;
+  backendNativeError?: string | null;
 }
 
 export interface CompanyInfo {

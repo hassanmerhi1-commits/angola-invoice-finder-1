@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo } from 'react';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useSales, useProducts, useCategories } from '@/hooks/useERP';
 import { Sale, SaleItem, Product } from '@/types/erp';
@@ -63,9 +64,10 @@ export function DailySalesDetailReport({
 }: DailySalesDetailReportProps) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { currentBranch } = useBranchContext();
-  const { sales } = useSales(branchId || currentBranch?.id);
-  const { products } = useProducts(branchId || currentBranch?.id);
+  const { apiBranchId } = useBranchScope();
+  const effectiveBranchId = branchId ?? apiBranchId;
+  const { sales } = useSales(effectiveBranchId);
+  const { products } = useProducts(effectiveBranchId);
   const { categories } = useCategories();
   const printRef = useRef<HTMLDivElement>(null);
   

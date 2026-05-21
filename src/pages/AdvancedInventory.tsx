@@ -1,6 +1,7 @@
 // Advanced Inventory Page with Excel Import/Export
 import { useState, useMemo } from 'react';
-import { useBranches, useProducts, useCategories } from '@/hooks/useERP';
+import { useBranchScope } from '@/hooks/useBranchScope';
+import { useProducts, useCategories } from '@/hooks/useERP';
 import { useTranslation } from '@/i18n';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/hooks/useERP';
@@ -86,8 +87,8 @@ export default function AdvancedInventory() {
   const locale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { hasPermission } = usePermissions(user?.id);
-  const { currentBranch } = useBranches();
-  const { products, addProduct, updateProduct, deleteProduct } = useProducts(currentBranch?.id);
+  const { currentBranch, apiBranchId, userBranch } = useBranchScope();
+  const { products, addProduct, updateProduct, deleteProduct } = useProducts(apiBranchId ?? userBranch?.id);
   const { categories } = useCategories();
 
   // State

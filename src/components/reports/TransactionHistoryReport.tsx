@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useTranslation } from '@/i18n';
@@ -49,7 +49,7 @@ import {
   CATEGORY_LABELS,
   CATEGORY_COLORS,
 } from '@/lib/transactionHistory';
-import { useBranches } from '@/hooks/useERP';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useUsers } from '@/hooks/useUsers';
 
 const ITEMS_PER_PAGE = 50;
@@ -76,7 +76,7 @@ const CATEGORY_ICONS: Record<TransactionCategory, React.ReactNode> = {
 export function TransactionHistoryReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { branches } = useBranches();
+  const { branches, currentBranch, apiBranchId, canPickBranch } = useBranchScope();
   const { users } = useUsers();
   
   // Filters
@@ -90,15 +90,21 @@ export function TransactionHistoryReport() {
   const [selectedRecord, setSelectedRecord] = useState<TransactionRecord | null>(null);
   const [showFilters, setShowFilters] = useState(false);
 
+  useEffect(() => {
+    if (!canPickBranch && currentBranch?.id) {
+      setSelectedBranch(currentBranch.id);
+    }
+  }, [canPickBranch, currentBranch?.id]);
+
   // Build filter object
   const filter: TransactionFilter = useMemo(() => ({
     dateFrom: dateFrom ? format(dateFrom, 'yyyy-MM-dd') : undefined,
     dateTo: dateTo ? format(dateTo, 'yyyy-MM-dd') : undefined,
     userId: selectedUser || undefined,
-    branchId: selectedBranch || undefined,
+    branchId: selectedBranch || apiBranchId || undefined,
     category: selectedCategory as TransactionCategory || undefined,
     searchTerm: searchTerm || undefined,
-  }), [dateFrom, dateTo, selectedUser, selectedBranch, selectedCategory, searchTerm]);
+  }), [dateFrom, dateTo, selectedUser, selectedBranch, selectedCategory, searchTerm, apiBranchId]);
 
   // Get filtered records
   const filteredRecords = useMemo(() => {
@@ -285,13 +291,14 @@ export function TransactionHistoryReport() {
                 <Select
                   value={selectedBranch}
                   onValueChange={(v) => setSelectedBranch(v === ALL_SELECT_VALUE ? '' : v)}
+                  disabled={!canPickBranch}
                 >
                   <SelectTrigger>
                   <SelectValue placeholder={t.salesAnalysisUi.allBranches} />
                   </SelectTrigger>
                   <SelectContent className="bg-background border shadow-lg z-50">
-                    <SelectItem value={ALL_SELECT_VALUE}>{t.common.all}</SelectItem>
-                    {branches.map(branch => (
+                    {canPickBranch && <SelectItem value={ALL_SELECT_VALUE}>{t.common.all}</SelectItem>}
+                    {(canPickBranch ? branches : currentBranch ? [currentBranch] : []).map(branch => (
                       <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>
                     ))}
                   </SelectContent>

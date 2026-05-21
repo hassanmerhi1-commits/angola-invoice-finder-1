@@ -5,6 +5,7 @@ import { useTranslation } from '@/i18n';
 import QRCode from 'qrcode';
 import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { api } from '@/lib/api/client';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -1237,6 +1238,7 @@ export default function PurchaseInvoices() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { currentBranch, branches } = useBranchContext();
+  const { apiBranchId } = useBranchScope();
   // Purchase pickers need the full product master (all warehouses); branch is chosen on the order/line, not here.
   const { products, addProduct: addProductToStock, refreshProducts } = useProducts(undefined);
   const { suppliers, refreshSuppliers, createSupplier } = useSuppliers();
@@ -1310,7 +1312,7 @@ export default function PurchaseInvoices() {
   const [poProductDropdownOpen, setPoProductDropdownOpen] = useState(false);
 
   // Purchase orders
-  const { orders, createOrder, receiveOrder, cancelOrder, refreshOrders } = usePurchaseOrders();
+  const { orders, createOrder, receiveOrder, cancelOrder, refreshOrders } = usePurchaseOrders(apiBranchId);
 
   useEffect(() => {
     if (mode === 'create') void refreshProducts();
@@ -1382,14 +1384,14 @@ export default function PurchaseInvoices() {
   }, [fillFromPoId, supplierPurchaseOrders]);
 
   const loadInvoiceList = useCallback(async () => {
-    const piInvoices = await getPurchaseInvoices(currentBranch?.id, branches);
+    const piInvoices = await getPurchaseInvoices(apiBranchId, branches);
     setInvoices(piInvoices);
-  }, [currentBranch?.id, branches]);
+  }, [apiBranchId, branches]);
 
   const refreshReturnMetrics = useCallback(async () => {
     try {
-      await syncAllPurchaseInvoiceReturnStatuses(currentBranch?.id);
-      const returns = await getSupplierReturns(currentBranch?.id);
+      await syncAllPurchaseInvoiceReturnStatuses(apiBranchId);
+      const returns = await getSupplierReturns(apiBranchId);
       setReturnCount(returns.length);
       await loadInvoiceList();
       await refreshProducts();
@@ -1397,7 +1399,7 @@ export default function PurchaseInvoices() {
     } catch {
       setReturnCount(0);
     }
-  }, [currentBranch?.id, loadInvoiceList, refreshProducts, refreshSuppliers]);
+  }, [apiBranchId, loadInvoiceList, refreshProducts, refreshSuppliers]);
 
   const openReturnFromInvoice = useCallback((invoiceId?: string) => {
     setReturnPreselectInvoiceId(invoiceId ?? null);
@@ -1407,17 +1409,17 @@ export default function PurchaseInvoices() {
 
   useEffect(() => {
     const init = async () => {
-      await syncAllPurchaseInvoiceReturnStatuses(currentBranch?.id);
+      await syncAllPurchaseInvoiceReturnStatuses(apiBranchId);
       await loadInvoiceList();
       try {
-        const returns = await getSupplierReturns(currentBranch?.id);
+        const returns = await getSupplierReturns(apiBranchId);
         setReturnCount(returns.length);
       } catch {
         setReturnCount(0);
       }
     };
     init();
-  }, [currentBranch?.id, loadInvoiceList]);
+  }, [apiBranchId, loadInvoiceList]);
 
   useEffect(() => subscribeSupplierReturnsChanged(refreshReturnMetrics), [refreshReturnMetrics]);
 
@@ -2306,7 +2308,7 @@ export default function PurchaseInvoices() {
         description: `${invoice.invoiceNumber} — ${invoice.supplierName} — ${invoice.total.toLocaleString(uiLocale)} ${invoice.currency}`,
       });
 
-      getPurchaseInvoices(resolvedBranchId).then(setInvoices);
+      await loadInvoiceList();
       // Show the saved invoice immediately for printing
       setViewInvoice(invoice);
       setMode('list');

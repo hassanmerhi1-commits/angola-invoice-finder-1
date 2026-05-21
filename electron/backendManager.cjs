@@ -398,7 +398,13 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
   const nodePathExtra = buildBackendNodePath();
   const cwdNodeModules = path.join(cwd, 'node_modules');
   const nodePath = [cwdNodeModules, nodePathExtra].filter(Boolean).join(path.delimiter);
-  const sqlitePath = sqlitePathOverride || path.join(app.getPath('userData'), 'erp.db');
+  let sqlitePath = sqlitePathOverride || path.join(app.getPath('userData'), 'erp.db');
+  try {
+    const sqliteDir = path.dirname(sqlitePath);
+    if (!fs.existsSync(sqliteDir)) fs.mkdirSync(sqliteDir, { recursive: true });
+  } catch (e) {
+    console.warn('[BackendManager] SQLite directory:', e?.message || e);
+  }
 
   const { runner: runnerExe, electronRunAsNode, source: runnerSource } = resolveEmbeddedBackendRunner();
 
@@ -566,7 +572,8 @@ async function start(opts = {}) {
   boundPort = port;
 
   // Don't return until /api/health responds (or we time out).
-  const ready = await waitForBackendReady(port, 15000);
+  const readyTimeout = app.isPackaged ? 30000 : 15000;
+  const ready = await waitForBackendReady(port, readyTimeout);
   if (!ready) {
     console.error('[BackendManager] backend did not become ready within 15s');
     const detail = lastSpawnNativeError || 'backend-not-ready-in-time';

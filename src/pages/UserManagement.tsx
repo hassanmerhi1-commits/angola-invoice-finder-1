@@ -128,6 +128,10 @@ export default function UserManagement() {
       toast.error('Please fill in all required fields');
       return;
     }
+    if (!formData.password || formData.password.length < 8) {
+      toast.error('Password is required (minimum 8 characters)');
+      return;
+    }
     
     try {
       const newUser = await createUser({
@@ -546,14 +550,18 @@ export default function UserManagement() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">Password *</Label>
               <Input
                 id="password"
                 type="password"
                 value={formData.password}
                 onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
                 placeholder="••••••••"
+                minLength={8}
               />
+              <p className="text-xs text-muted-foreground">
+                Login: use the username, the part before @ in the email, or the full email — with this exact password.
+              </p>
             </div>
 
             <div className="space-y-2">

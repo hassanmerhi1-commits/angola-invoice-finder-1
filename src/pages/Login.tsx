@@ -13,8 +13,8 @@ import defaultLogo from '/icon.png?url';
 import { useTranslation } from '@/i18n';
 
 const loginSchema = z.object({
-  username: z.string().min(3, 'Username must be at least 3 characters').max(50, 'Username too long'),
-  password: z.string().min(1, 'Password is required'),
+  username: z.string().min(3, 'Username must be at least 3 characters').max(80, 'Username too long'),
+  password: z.string().min(1, 'Password is required').max(128, 'Password too long'),
 });
 
 export default function Login() {
@@ -50,7 +50,11 @@ export default function Login() {
         toast({ title: t.auth.welcomeToastTitle, description: t.auth.welcomeToastDesc });
         navigate('/');
       } else {
-        toast({ title: t.auth.authErrorTitle, description: t.auth.authErrorDesc, variant: 'destructive' });
+        toast({
+          title: t.auth.authErrorTitle,
+          description: t.auth.authErrorHint,
+          variant: 'destructive',
+        });
       }
     } catch {
       toast({ title: t.auth.connectionErrorTitle, description: t.auth.connectionErrorDesc, variant: 'destructive' });
@@ -143,11 +147,11 @@ export default function Login() {
 
           <Card className="shadow-card">
             <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground mb-2 font-semibold">{t.auth.demoCredentials}</p>
+              <p className="text-xs text-muted-foreground mb-2 font-semibold">{t.auth.defaultAccountsTitle}</p>
               <div className="space-y-1 text-xs">
-                <p><span className="font-bold text-foreground">Admin:</span> <span className="font-mono text-primary">admin</span></p>
-                <p><span className="font-bold text-foreground">Caixa:</span> <span className="font-mono text-primary">caixa1</span></p>
-                <p className="text-muted-foreground">{t.auth.anyPassword}</p>
+                <p>{t.auth.defaultAdminHint}</p>
+                <p>{t.auth.defaultCashierHint}</p>
+                <p className="text-muted-foreground mt-2">{t.auth.changePasswordHint}</p>
               </div>
             </CardContent>
           </Card>

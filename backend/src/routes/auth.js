@@ -1,15 +1,32 @@
 // Authentication routes
 const express = require('express');
-const router = express.Router();
-const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { JWT_SECRET } = require('../jwtSecret');
+const { requireAdmin } = require('../middleware/requireAdmin');
+const { requireAuth } = require('../middleware/requireAuth');
+const { loginRateLimiter } = require('../middleware/loginRateLimit');
+const {
+  hashPassword,
+  upgradePasswordHashIfLegacy,
+  verifyPasswordWithDummyFallback,
+} = require('../lib/passwordAuth');
+const { findUserForLogin } = require('../lib/loginUserLookup');
+
+const router = express.Router();
+
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
 
 function mapUserRow(user) {
+  const email = String(user.email || '').toLowerCase();
+  const username =
+    user.username
+    || (email.includes('@') ? email.split('@')[0] : email);
   return {
     id: user.id,
     email: user.email,
+    username,
     name: user.name,
     role: user.role,
     branchId: user.branch_id,
@@ -19,47 +36,56 @@ function mapUserRow(user) {
   };
 }
 
-// Login
-router.post('/login', async (req, res) => {
+function normalizeUserIdentity(emailRaw, usernameRaw) {
+  const emailIn = String(emailRaw || '').trim().toLowerCase();
+  const userIn = String(usernameRaw || '').trim().toLowerCase();
+  const username = userIn || (emailIn.includes('@') ? emailIn.split('@')[0] : emailIn);
+  const email = emailIn.includes('@') ? emailIn : `${username}@kwanzaerp.ao`;
+  return { email, username };
+}
+
+function normalizeLoginEmail(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return '';
+  if (value.includes('@')) return value;
+  return `${value}@kwanzaerp.ao`;
+}
+
+function issueToken(user) {
+  return jwt.sign(
+    { userId: user.id, email: user.email, role: user.role },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN },
+  );
+}
+
+// Login — public, rate-limited
+router.post('/login', loginRateLimiter(), async (req, res) => {
   try {
-    const { email, password } = req.body;
-    
-    const result = await db.query(
-      'SELECT * FROM users WHERE email = $1 AND is_active = true',
-      [email]
-    );
-    
-    if (result.rows.length === 0) {
+    const rawIdentifier = req.body?.email ?? req.body?.username ?? '';
+    const password = req.body?.password;
+
+    if (!String(rawIdentifier).trim()) {
+      return res.status(400).json({ error: 'Email or username is required' });
+    }
+    if (password == null || String(password).length === 0) {
+      return res.status(400).json({ error: 'Password is required' });
+    }
+
+    const user = await findUserForLogin(db, rawIdentifier);
+    const validPassword = await verifyPasswordWithDummyFallback(password, user?.password_hash);
+
+    if (!user || !validPassword) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    
-    const user = result.rows[0];
-    
-    // For demo: accept any password, or check hash
-    // const validPassword = await bcrypt.compare(password, user.password_hash);
-    const validPassword = true; // Demo mode
-    
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-    
-    const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
-      JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-    
+
+    await upgradePasswordHashIfLegacy(db, user.id, password, user.password_hash);
+
+    const token = issueToken(user);
+
     res.json({
       token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        branchId: user.branch_id,
-        isActive: user.is_active,
-        createdAt: user.created_at
-      }
+      user: mapUserRow(user),
     });
   } catch (error) {
     console.error('[AUTH ERROR]', error);
@@ -67,43 +93,30 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Get current user
-router.get('/me', async (req, res) => {
+// Current session — requires JWT
+router.get('/me', requireAuth, async (req, res) => {
   try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ error: 'No token provided' });
-    }
-    
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const result = await db.query('SELECT * FROM users WHERE id = $1', [decoded.userId]);
-    
+    const result = await db.query(
+      'SELECT id, email, name, role, branch_id, is_active, created_at FROM users WHERE id = $1',
+      [req.user.id],
+    );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(401).json({ error: 'User not found' });
     }
-    
-    const user = result.rows[0];
-    res.json({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      branchId: user.branch_id,
-      isActive: user.is_active,
-      createdAt: user.created_at
-    });
+    res.json(mapUserRow(result.rows[0]));
   } catch (error) {
-    res.status(401).json({ error: 'Invalid token' });
+    console.error('[AUTH ERROR] me:', error);
+    res.status(500).json({ error: 'Failed to load user' });
   }
 });
 
-// List users (user management)
-router.get('/users', async (req, res) => {
+// User management — admin only
+router.get('/users', requireAdmin, async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT id, email, name, role, branch_id, is_active, created_at, updated_at
+      `SELECT id, email, username, name, role, branch_id, is_active, created_at, updated_at
        FROM users
-       ORDER BY name`
+       ORDER BY name`,
     );
     res.json(result.rows.map(mapUserRow));
   } catch (error) {
@@ -112,33 +125,45 @@ router.get('/users', async (req, res) => {
   }
 });
 
-// Create user
-router.post('/users', async (req, res) => {
+router.post('/users', requireAdmin, async (req, res) => {
   try {
-    const { email, name, role, branchId, password } = req.body;
+    const { email, name, role, branchId, password, username } = req.body;
     if (!email || !name || !role) {
       return res.status(400).json({ error: 'Email, name and role are required' });
     }
 
-    const existing = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+    const { email: normalizedEmail, username: normalizedUsername } = normalizeUserIdentity(email, username);
+    const plainPassword = password != null && String(password).length > 0 ? String(password) : null;
+    if (!plainPassword || plainPassword.length < 8) {
+      return res.status(400).json({ error: 'Password is required (minimum 8 characters)' });
+    }
+
+    const existing = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
     if (existing.rows.length > 0) {
       return res.status(409).json({ error: 'Email already in use' });
     }
 
+    try {
+      const dupUser = await db.query('SELECT id FROM users WHERE LOWER(username) = $1', [normalizedUsername]);
+      if (dupUser.rows.length > 0) {
+        return res.status(409).json({ error: 'Username already in use' });
+      }
+    } catch (_) {
+      /* username column may be missing on very old DBs */
+    }
+
     const id = crypto.randomUUID();
-    const passwordHash = password
-      ? await bcrypt.hash(String(password), 10)
-      : await bcrypt.hash('changeme', 10);
+    const passwordHash = await hashPassword(plainPassword);
 
     await db.query(
-      `INSERT INTO users (id, email, name, role, branch_id, password_hash, is_active, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [id, email, name, role, branchId || null, passwordHash]
+      `INSERT INTO users (id, email, username, name, role, branch_id, password_hash, is_active, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [id, normalizedEmail, normalizedUsername, name, role, branchId || null, passwordHash],
     );
 
     const created = await db.query(
-      'SELECT id, email, name, role, branch_id, is_active, created_at, updated_at FROM users WHERE id = $1',
-      [id]
+      'SELECT id, email, username, name, role, branch_id, is_active, created_at, updated_at FROM users WHERE id = $1',
+      [id],
     );
     res.status(201).json(mapUserRow(created.rows[0]));
   } catch (error) {
@@ -147,53 +172,83 @@ router.post('/users', async (req, res) => {
   }
 });
 
-// Update user
-router.put('/users/:id', async (req, res) => {
+router.put('/users/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { email, name, role, branchId, isActive, password } = req.body;
+    const { email, name, role, branchId, isActive, password, username } = req.body;
 
     const existing = await db.query('SELECT id FROM users WHERE id = $1', [id]);
     if (existing.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    if (email) {
-      const dup = await db.query('SELECT id FROM users WHERE email = $1 AND id != $2', [email, id]);
+    let normalizedEmail = null;
+    let normalizedUsername = null;
+    if (email != null || username != null) {
+      const identity = normalizeUserIdentity(
+        email != null ? email : '',
+        username != null ? username : '',
+      );
+      normalizedEmail = email != null ? identity.email : null;
+      normalizedUsername = username != null || email != null ? identity.username : null;
+    }
+
+    if (normalizedEmail) {
+      const dup = await db.query('SELECT id FROM users WHERE LOWER(email) = $1 AND id != $2', [
+        normalizedEmail,
+        id,
+      ]);
       if (dup.rows.length > 0) {
         return res.status(409).json({ error: 'Email already in use' });
       }
     }
 
+    if (normalizedUsername) {
+      try {
+        const dupUser = await db.query('SELECT id FROM users WHERE LOWER(username) = $1 AND id != $2', [
+          normalizedUsername,
+          id,
+        ]);
+        if (dupUser.rows.length > 0) {
+          return res.status(409).json({ error: 'Username already in use' });
+        }
+      } catch (_) {}
+    }
+
     let passwordHash;
-    if (password) {
-      passwordHash = await bcrypt.hash(String(password), 10);
+    if (password != null && String(password).length > 0) {
+      if (String(password).length < 8) {
+        return res.status(400).json({ error: 'Password must be at least 8 characters' });
+      }
+      passwordHash = await hashPassword(String(password));
     }
 
     await db.query(
       `UPDATE users SET
          email = COALESCE($2, email),
-         name = COALESCE($3, name),
-         role = COALESCE($4, role),
-         branch_id = COALESCE($5, branch_id),
-         is_active = COALESCE($6, is_active),
-         password_hash = COALESCE($7, password_hash),
+         username = COALESCE($3, username),
+         name = COALESCE($4, name),
+         role = COALESCE($5, role),
+         branch_id = COALESCE($6, branch_id),
+         is_active = COALESCE($7, is_active),
+         password_hash = COALESCE($8, password_hash),
          updated_at = CURRENT_TIMESTAMP
        WHERE id = $1`,
       [
         id,
-        email || null,
+        normalizedEmail,
+        normalizedUsername,
         name || null,
         role || null,
         branchId !== undefined ? branchId : null,
         isActive !== undefined ? isActive : null,
         passwordHash || null,
-      ]
+      ],
     );
 
     const updated = await db.query(
-      'SELECT id, email, name, role, branch_id, is_active, created_at, updated_at FROM users WHERE id = $1',
-      [id]
+      'SELECT id, email, username, name, role, branch_id, is_active, created_at, updated_at FROM users WHERE id = $1',
+      [id],
     );
     res.json(mapUserRow(updated.rows[0]));
   } catch (error) {
@@ -202,13 +257,12 @@ router.put('/users/:id', async (req, res) => {
   }
 });
 
-// Soft-delete user
-router.delete('/users/:id', async (req, res) => {
+router.delete('/users/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const result = await db.query(
       `UPDATE users SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-      [id]
+      [id],
     );
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });

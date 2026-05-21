@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { 
@@ -105,7 +105,7 @@ export default function Expenses() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
-  const { currentBranch } = useBranchContext();
+  const { currentBranch, apiBranchId } = useBranchScope();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -126,14 +126,14 @@ export default function Expenses() {
     if (currentBranch?.id) {
       await ensureBranchCaixa(currentBranch.id, currentBranch.name || t.branchUi.headOffice);
     }
-    setExpenses(await getExpenses(currentBranch?.id));
-    setCaixas(await getCaixas(currentBranch?.id));
-    setBankAccounts(await getBankAccounts(currentBranch?.id));
+    setExpenses(await getExpenses(apiBranchId));
+    setCaixas(await getCaixas(apiBranchId));
+    setBankAccounts(await getBankAccounts(apiBranchId));
   };
 
   useEffect(() => {
     loadData();
-  }, [currentBranch?.id]);
+  }, [apiBranchId]);
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter(exp => {

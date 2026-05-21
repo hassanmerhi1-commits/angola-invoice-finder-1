@@ -68,7 +68,15 @@ module.exports = function(broadcastTable) {
       const result = await db.query(
         'SELECT * FROM branches WHERE COALESCE(is_active, 1) != 0 ORDER BY is_main DESC, name'
       );
-      res.json(result.rows);
+      res.json(
+        result.rows.map((row) => ({
+          ...row,
+          isMain: row.is_main === 1 || row.is_main === true || row.is_main === '1',
+          cityId: row.city_id,
+          parentBranchId: row.parent_branch_id,
+          nodeRole: row.node_role || (row.is_main ? 'main' : 'shop'),
+        }))
+      );
     } catch (error) {
       console.error('[BRANCHES ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch branches' });

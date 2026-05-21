@@ -4,7 +4,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -32,7 +32,7 @@ interface EntitySummary {
 
 export default function Extracto() {
   const { t } = useTranslation();
-  const { currentBranch } = useBranchContext();
+  const { listBranchId, isHeadOffice, branches } = useBranchScope();
   const [activeTab, setActiveTab] = useState('clientes');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedEntity, setSelectedEntity] = useState<string | null>(null);
@@ -41,12 +41,10 @@ export default function Extracto() {
   const [allDocs, setAllDocs] = useState<ERPDocument[]>([]);
 
   useEffect(() => {
-    const branchNames = Object.fromEntries(
-      (currentBranch ? [{ id: currentBranch.id, name: currentBranch.name }] : []).map((b) => [b.id, b.name])
-    );
+    const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
     Promise.all([
-      getDocuments(undefined, currentBranch?.id),
-      getSalesInvoicesAsDocuments(currentBranch?.id, branchNames, !!currentBranch?.isMain),
+      getDocuments(undefined, listBranchId),
+      getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice),
     ]).then(([docs, salesDocs]) => {
       const seen = new Set(docs.map((d) => d.documentNumber));
       const merged = [...docs];
@@ -55,7 +53,7 @@ export default function Extracto() {
       }
       setAllDocs(merged);
     });
-  }, [currentBranch?.id, currentBranch?.isMain, currentBranch?.name, refreshKey]);
+  }, [listBranchId, isHeadOffice, branches, refreshKey]);
 
   // Group documents by entity
   const entitySummaries = useMemo(() => {

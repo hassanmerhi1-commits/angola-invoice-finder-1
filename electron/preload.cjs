@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Database operations (transparently routed to server if client mode)
   db: {
     getStatus: () => ipcRenderer.invoke('db:getStatus'),
+    ensureBackend: () => ipcRenderer.invoke('db:ensureBackend'),
     create: () => ipcRenderer.invoke('db:create'),
     init: () => ipcRenderer.invoke('db:init'),
     getAll: (table, companyId) => ipcRenderer.invoke('db:getAll', table, companyId),
@@ -164,6 +165,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     recordStockMovement: (data) => ipcRenderer.invoke('tx:recordStockMovement', data),
     generateInvoiceNumber: (branchCode) => ipcRenderer.invoke('tx:generateInvoiceNumber', branchCode),
   },
+
+  // Offline sync outbox (shop client → city server)
+  syncOutbox: {
+    enqueue: (event) => ipcRenderer.invoke('syncOutbox:enqueue', event),
+    getPendingCount: () => ipcRenderer.invoke('syncOutbox:pendingCount'),
+    flush: (apiBaseUrl) => ipcRenderer.invoke('syncOutbox:flush', apiBaseUrl),
+  },
+
+  getApiUrl: () => ipcRenderer.invoke('sync:getApiUrl'),
 
   // Platform info
   platform: process.platform,

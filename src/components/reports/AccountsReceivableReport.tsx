@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useClients, useSales } from '@/hooks/useERP';
 import { Download, Clock, AlertTriangle, AlertCircle, CheckCircle } from 'lucide-react';
 import { format, differenceInDays, parseISO } from 'date-fns';
@@ -33,8 +34,9 @@ interface AgingEntry {
 export default function AccountsReceivableReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const { apiBranchId } = useBranchScope();
   const { clients } = useClients();
-  const { sales } = useSales();
+  const { sales } = useSales(apiBranchId);
   const [expandedClient, setExpandedClient] = useState<string | null>(null);
 
   const agingReport = useMemo((): AgingEntry[] => {

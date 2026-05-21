@@ -20,9 +20,12 @@ import { Building2, User as UserIcon, LogOut, Settings, Menu } from 'lucide-reac
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { CompanyLogo } from '@/components/layout/CompanyLogo';
 import { NotificationBell } from '@/components/layout/NotificationBell';
-import { useTranslation } from '@/i18n';
 import { useNavigate } from 'react-router-dom';
 import { ServerConnectionIndicator } from '@/components/layout/ServerConnectionIndicator';
+import { SyncPendingBadge } from '@/components/layout/SyncPendingBadge';
+import { useTranslation } from '@/i18n';
+import { useBranchScope } from '@/hooks/useBranchScope';
+import { formatBranchDisplayName } from '@/lib/branchDisplay';
 
 interface HeaderProps {
   user: User | null;
@@ -43,6 +46,7 @@ export function Header({
 }: HeaderProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { canSwitchBranch } = useBranchScope();
   
   return (
     <header className="h-16 border-b bg-card px-4 flex items-center justify-between">
@@ -59,6 +63,7 @@ export function Header({
       <div className="flex items-center gap-3">
         {/* Server Connection Indicator */}
         <ServerConnectionIndicator />
+        <SyncPendingBadge />
 
         {/* Notifications */}
         <NotificationBell />
@@ -66,30 +71,37 @@ export function Header({
         {/* Language Switcher */}
         <LanguageSwitcher />
         {/* Branch Selector */}
-        <Select
-          value={currentBranch?.id}
-          onValueChange={(id) => {
-            const branch = branches.find(b => b.id === id);
-            if (branch) onBranchChange(branch);
-          }}
-        >
-          <SelectTrigger className="w-[180px] hidden sm:flex">
-            <Building2 className="w-4 h-4 mr-2" />
-            <SelectValue placeholder={t.nav.dashboard} />
-          </SelectTrigger>
-          <SelectContent>
-            {branches.map(branch => (
-              <SelectItem key={branch.id} value={branch.id}>
-                <div className="flex items-center gap-2">
-                  <span>{branch.name}</span>
-                  {branch.isMain && (
-                    <Badge variant="secondary" className="text-[10px]">Sede</Badge>
-                  )}
-                </div>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {canSwitchBranch ? (
+          <Select
+            value={currentBranch?.id}
+            onValueChange={(id) => {
+              const branch = branches.find(b => b.id === id);
+              if (branch) onBranchChange(branch);
+            }}
+          >
+            <SelectTrigger className="w-[180px] hidden sm:flex">
+              <Building2 className="w-4 h-4 mr-2" />
+              <SelectValue placeholder={t.nav.dashboard} />
+            </SelectTrigger>
+            <SelectContent>
+              {branches.map(branch => (
+                <SelectItem key={branch.id} value={branch.id}>
+                  <div className="flex items-center gap-2">
+                    <span>{branch.name}</span>
+                    {branch.isMain && (
+                      <Badge variant="secondary" className="text-[10px]">Sede</Badge>
+                    )}
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : currentBranch ? (
+          <div className="hidden sm:flex h-9 w-[180px] items-center gap-2 truncate rounded-md border bg-muted/40 px-3 text-sm">
+            <Building2 className="w-4 h-4 shrink-0" />
+            <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
+          </div>
+        ) : null}
 
         {/* User Menu */}
         <DropdownMenu>

@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSales, useAuth } from '@/hooks/useERP';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { Sale } from '@/types/erp';
 import { useTranslation } from '@/i18n';
 import { Card, CardContent } from '@/components/ui/card';
@@ -42,9 +42,8 @@ const statusConfig: Record<string, { labelKey: 'completed' | 'voided' | 'pending
 
 export default function Vendas() {
   const navigate = useNavigate();
-  const { currentBranch } = useBranchContext();
-  const salesBranchId = currentBranch?.isMain ? undefined : currentBranch?.id;
-  const { sales, refreshSales } = useSales(salesBranchId);
+  const { currentBranch, apiBranchId } = useBranchScope();
+  const { sales, refreshSales } = useSales(apiBranchId);
   const company = getCompanySettings();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';

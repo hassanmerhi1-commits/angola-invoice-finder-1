@@ -51,6 +51,7 @@ export default function Setup() {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedProvince, setSelectedProvince] = useState('');
   const [selectedMunicipio, setSelectedMunicipio] = useState('');
+  const [mainApiUrl, setMainApiUrl] = useState('');
   const isElectron = !!window.electronAPI?.isElectron;
 
   // Read current IP file on mount
@@ -76,7 +77,7 @@ export default function Setup() {
   useEffect(() => {
     if (mode !== 'server-setup') return;
     if (!selectedMunicipio) return;
-    const fileName = `${slugMunicipioName(selectedMunicipio)}.nexor`;
+    const fileName = `${slugMunicipioName(selectedMunicipio)}.db`;
     setIpFileContent(`C:\\NEXOR ERP\\data\\${fileName}`);
   }, [mode, selectedMunicipio]);
 
@@ -100,9 +101,28 @@ export default function Setup() {
 
         localStorage.setItem('kwanza_is_server', 'true');
         localStorage.removeItem('kwanza_client_config');
+        localStorage.setItem('nexor_installation_role', 'city_server');
+        localStorage.setItem(
+          'nexor_city_location',
+          JSON.stringify({ province: selectedProvince, municipio: selectedMunicipio }),
+        );
         try {
-          const { invalidateElectronApiBaseCache } = await import('@/lib/api/config');
+          const { invalidateElectronApiBaseCache, getApiUrl } = await import('@/lib/api/config');
           invalidateElectronApiBaseCache();
+          const apiBase = await getApiUrl();
+          if (mainApiUrl.trim()) {
+            localStorage.setItem('nexor_main_api_url', mainApiUrl.trim());
+          }
+          const savedMain = localStorage.getItem('nexor_main_api_url') || '';
+          await fetch(`${apiBase}/api/installations/register-city`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              province: selectedProvince,
+              municipio: selectedMunicipio,
+              mainApiUrl: savedMain || null,
+            }),
+          }).catch(() => null);
         } catch { /* ignore */ }
 
         toast.success(t.setupUi.serverConfigured, {
@@ -140,12 +160,13 @@ export default function Setup() {
 
         const serverIp = ipFileContent.trim();
         localStorage.setItem('kwanza_is_server', 'false');
+        localStorage.setItem('nexor_installation_role', 'shop_client');
         localStorage.setItem(
           'kwanza_client_config',
           JSON.stringify({
             serverIp,
             httpPort: 3000,
-            serverPort: 4546,
+            useSocketIo: true,
           }),
         );
         try {
@@ -339,6 +360,18 @@ export default function Setup() {
                     ))}
                   </select>
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>URL do servidor sede (opcional)</Label>
+                <Input
+                  value={mainApiUrl}
+                  onChange={(e) => setMainApiUrl(e.target.value)}
+                  placeholder="http://192.168.1.10:3000"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Sede nacional para replicação de vendas em tempo quase real
+                </p>
               </div>
 
               <div className="space-y-2">

@@ -39,6 +39,8 @@ import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { ServerConnectionIndicator } from '@/components/layout/ServerConnectionIndicator';
 import { CalculatorDialog } from '@/components/utilities/CalculatorDialog';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
+import { useBranchScope } from '@/hooks/useBranchScope';
+import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { toast } from 'sonner';
 import defaultLogo from '/favicon.png?url';
 
@@ -79,6 +81,7 @@ type ToolbarButtonConfig = {
 };
 
 export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout }: TopNavProps) {
+  const { canSwitchBranch } = useBranchScope();
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
@@ -147,16 +150,16 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     {
       label: t.topNav.menus.reports,
       items: [
-        { label: t.topNav.reports.trialBalance, icon: PieChart, path: '/reports' },
-        { label: t.topNav.reports.incomeStatement, icon: TrendingUp, path: '/reports' },
-        { label: t.topNav.reports.balanceSheet, icon: BarChart3, path: '/reports' },
+        { label: t.topNav.reports.trialBalance, icon: PieChart, path: '/reports', state: { reportsTab: 'trial-balance' } },
+        { label: t.topNav.reports.incomeStatement, icon: TrendingUp, path: '/reports', state: { reportsTab: 'income-statement' } },
+        { label: t.topNav.reports.balanceSheet, icon: BarChart3, path: '/reports', state: { reportsTab: 'balance-sheet' } },
         { label: 'separator' },
         { label: t.topNav.reports.dailyReports, icon: Calendar, path: '/daily-reports' },
-        { label: t.topNav.reports.accountStatement, icon: FileText, path: '/reports' },
+        { label: t.topNav.reports.accountStatement, icon: FileText, path: '/reports', state: { reportsTab: 'client-statement' } },
         { label: 'separator' },
-        { label: t.topNav.reports.stockMovement, icon: ArrowRightLeft, path: '/reports' },
-        { label: t.topNav.reports.stockValuation, icon: DollarSign, path: '/reports' },
-        { label: t.topNav.reports.stockByBranch, icon: Building2, path: '/reports' },
+        { label: t.topNav.reports.stockMovement, icon: ArrowRightLeft, path: '/reports', state: { reportsTab: 'stock-movements' } },
+        { label: t.topNav.reports.stockValuation, icon: DollarSign, path: '/reports', state: { reportsTab: 'stock-valuation' } },
+        { label: t.topNav.reports.stockByBranch, icon: Building2, path: '/reports', state: { reportsTab: 'stock-valuation' } },
       ],
     },
     {
@@ -413,25 +416,32 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <ServerConnectionIndicator />
           <LanguageSwitcher />
 
-          <Select
-            value={currentBranch?.id}
-            onValueChange={(id) => {
-              const branch = branches.find(b => b.id === id);
-              if (branch) onBranchChange(branch);
-            }}
-          >
-            <SelectTrigger className="h-7 w-[140px] text-xs bg-sidebar-accent border-sidebar-border text-sidebar-foreground">
-              <Building2 className="w-3.5 h-3.5 mr-1.5 text-sidebar-primary" />
-              <SelectValue placeholder={t.topNav.toolbar.branchPlaceholder} />
-            </SelectTrigger>
-            <SelectContent>
-              {branches.map(branch => (
-                <SelectItem key={branch.id} value={branch.id} className="text-xs">
-                  {branch.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {canSwitchBranch ? (
+            <Select
+              value={currentBranch?.id}
+              onValueChange={(id) => {
+                const branch = branches.find(b => b.id === id);
+                if (branch) onBranchChange(branch);
+              }}
+            >
+              <SelectTrigger className="h-7 w-[140px] text-xs bg-sidebar-accent border-sidebar-border text-sidebar-foreground">
+                <Building2 className="w-3.5 h-3.5 mr-1.5 text-sidebar-primary" />
+                <SelectValue placeholder={t.topNav.toolbar.branchPlaceholder} />
+              </SelectTrigger>
+              <SelectContent>
+                {branches.map(branch => (
+                  <SelectItem key={branch.id} value={branch.id} className="text-xs">
+                    {branch.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : currentBranch ? (
+            <div className="hidden sm:flex h-7 max-w-[140px] items-center gap-1.5 truncate rounded-md border border-sidebar-border bg-sidebar-accent px-2 text-xs text-sidebar-foreground">
+              <Building2 className="w-3.5 h-3.5 shrink-0 text-sidebar-primary" />
+              <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
+            </div>
+          ) : null}
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -532,25 +542,32 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <span className="font-bold text-sm tracking-tight">{companyName}</span>
         </div>
         <div className="flex items-center gap-2">
-          <Select
-            value={currentBranch?.id}
-            onValueChange={(id) => {
-              const branch = branches.find(b => b.id === id);
-              if (branch) onBranchChange(branch);
-            }}
-          >
-            <SelectTrigger className="h-8 w-[110px] text-xs bg-sidebar-accent border-sidebar-border text-sidebar-foreground">
-              <Building2 className="w-3 h-3 mr-1" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {branches.map(branch => (
-                <SelectItem key={branch.id} value={branch.id} className="text-xs">
-                  {branch.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {canSwitchBranch ? (
+            <Select
+              value={currentBranch?.id}
+              onValueChange={(id) => {
+                const branch = branches.find(b => b.id === id);
+                if (branch) onBranchChange(branch);
+              }}
+            >
+              <SelectTrigger className="h-8 w-[110px] text-xs bg-sidebar-accent border-sidebar-border text-sidebar-foreground">
+                <Building2 className="w-3 h-3 mr-1" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {branches.map(branch => (
+                  <SelectItem key={branch.id} value={branch.id} className="text-xs">
+                    {branch.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : currentBranch ? (
+            <div className="flex h-8 max-w-[110px] items-center gap-1 truncate rounded-md border border-sidebar-border bg-sidebar-accent px-2 text-xs text-sidebar-foreground">
+              <Building2 className="w-3 h-3 shrink-0" />
+              <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
+            </div>
+          ) : null}
           <Button variant="ghost" size="icon" className="h-8 w-8 text-sidebar-foreground" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
             <Menu className="w-5 h-5" />
           </Button>

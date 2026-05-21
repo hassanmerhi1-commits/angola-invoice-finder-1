@@ -2,21 +2,25 @@
 import { Outlet } from 'react-router-dom';
 import { TopNav } from './TopNav';
 import { StatusBar } from './StatusBar';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { BranchAccessGuard } from '@/components/BranchAccessGuard';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
+import { useBackendHealth } from '@/hooks/useBackendHealth';
 
 export function AppLayout() {
-  const { branches, currentBranch, setCurrentBranch } = useBranchContext();
+  useBackendHealth();
+  const { branches, currentBranch, setOperatingBranch } = useBranchScope();
   const { user, logout } = useAuth();
 
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
+      <BranchAccessGuard />
       <div data-topnav>
         <TopNav
           user={user}
           branches={branches}
           currentBranch={currentBranch}
-          onBranchChange={setCurrentBranch}
+          onBranchChange={setOperatingBranch}
           onLogout={logout}
         />
       </div>

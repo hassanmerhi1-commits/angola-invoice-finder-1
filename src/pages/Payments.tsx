@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
 import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -66,7 +67,7 @@ function mapOpenItemRow(oi: any): OpenItem {
   };
 }
 
-function usePaymentsData() {
+function usePaymentsData(branchId?: string) {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [openItems, setOpenItems] = useState<OpenItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -75,8 +76,8 @@ function usePaymentsData() {
     setLoading(true);
     try {
       const [paymentsRes, openRes] = await Promise.all([
-        api.payments.list(),
-        api.transactions.openItems(),
+        api.payments.list(branchId ? { branchId } : undefined),
+        api.transactions.openItems(branchId ? { branchId } : undefined),
       ]);
       if (paymentsRes.error) {
         console.error('[PAYMENTS] List error:', paymentsRes.error);
@@ -91,7 +92,7 @@ function usePaymentsData() {
       console.error('[PAYMENTS] Failed to load:', e);
     }
     setLoading(false);
-  }, []);
+  }, [branchId]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -122,9 +123,10 @@ export default function Payments() {
   const { t, language } = useTranslation();
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
+  const { apiBranchId } = useBranchScope();
   const { clients } = useClients();
   const { suppliers } = useSuppliers();
-  const { payments, openItems, loading, refresh, createPayment, loadOpenItems } = usePaymentsData();
+  const { payments, openItems, loading, refresh, createPayment, loadOpenItems } = usePaymentsData(apiBranchId);
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
   const [activeTab, setActiveTab] = useState<'receipts' | 'payments' | 'open-items'>('receipts');

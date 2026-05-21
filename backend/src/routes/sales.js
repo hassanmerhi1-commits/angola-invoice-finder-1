@@ -3,6 +3,8 @@ const express = require('express');
 const db = require('../db');
 const { processSale } = require('../transactionEngine');
 const { peekSequenceNumber } = require('../accounting');
+const { enqueueSaleCreated } = require('../sync/outbox');
+const { signSaleInvoice } = require('../agt/signSale');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -34,7 +36,16 @@ module.exports = function(broadcastTable) {
     try {
       await client.query('BEGIN');
       const sale = await processSale(client, req.body);
+      const idemKey = req.body.clientRequestId || req.body.idempotencyKey || `sale:${sale.id}`;
+      if (req.body.clientRequestId || req.body.idempotencyKey) {
+        await client.query(
+          `UPDATE sales SET client_request_id = $1 WHERE id = $2`,
+          [idemKey, sale.id]
+        );
+      }
+      await enqueueSaleCreated(client, sale.id, req.body.branchId, idemKey);
       await client.query('COMMIT');
+      signSaleInvoice(sale.id).catch((e) => console.warn('[AGT SIGN]', e.message));
       await broadcastTable('sales');
       await broadcastTable('products');
       res.status(201).json({ ...sale, items: req.body.items });

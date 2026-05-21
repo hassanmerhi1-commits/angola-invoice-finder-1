@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,7 +6,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useBranches, useSales, useProducts, useCategories } from '@/hooks/useERP';
+import { useBranchScope } from '@/hooks/useBranchScope';
+import { useSales, useProducts, useCategories } from '@/hooks/useERP';
 import { Download, TrendingUp, Calendar, Package, Tags, Building2 } from 'lucide-react';
 import { format, parseISO, startOfMonth, endOfMonth, startOfWeek, endOfWeek, 
          eachDayOfInterval, eachWeekOfInterval, eachMonthOfInterval, isSameDay, 
@@ -23,15 +24,21 @@ export default function SalesAnalysisReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const dfLocale = language === 'pt' ? pt : enUS;
-  const { branches, currentBranch } = useBranches();
-  const { sales } = useSales();
-  const { products } = useProducts();
+  const { branches, currentBranch, apiBranchId, canPickBranch } = useBranchScope();
+  const { sales } = useSales(apiBranchId);
+  const { products } = useProducts(apiBranchId);
   const { categories } = useCategories();
   
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [selectedBranch, setSelectedBranch] = useState<string>('all');
   const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month'>('day');
+
+  useEffect(() => {
+    if (!canPickBranch && currentBranch?.id) {
+      setSelectedBranch(currentBranch.id);
+    }
+  }, [canPickBranch, currentBranch?.id]);
   const [viewTab, setViewTab] = useState('summary');
 
   const filteredSales = useMemo(() => {
@@ -237,13 +244,13 @@ export default function SalesAnalysisReport() {
             </div>
             <div>
               <Label>{t.salesAnalysisUi.branch}</Label>
-              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+              <Select value={selectedBranch} onValueChange={setSelectedBranch} disabled={!canPickBranch}>
                 <SelectTrigger>
                   <SelectValue placeholder={t.common.all} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">{t.salesAnalysisUi.allBranches}</SelectItem>
-                  {branches.map(branch => (
+                  {canPickBranch && <SelectItem value="all">{t.salesAnalysisUi.allBranches}</SelectItem>}
+                  {(canPickBranch ? branches : currentBranch ? [currentBranch] : []).map(branch => (
                     <SelectItem key={branch.id} value={branch.id}>
                       {branch.name}
                     </SelectItem>

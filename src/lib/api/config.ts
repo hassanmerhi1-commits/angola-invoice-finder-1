@@ -96,6 +96,14 @@ export function getApiUrl(): string {
   if (typeof window !== 'undefined') {
     const isElectron = !!(window as any).electronAPI?.isElectron;
     if (isElectron) {
+      if (ipFileSaysServerMachine()) {
+        const p = (window as any).__KWANZA_BACKEND_PORT__;
+        if (typeof p === 'number' && p > 0 && p < 65536) {
+          return `http://127.0.0.1:${p}`;
+        }
+        return DEFAULT_API_URL;
+      }
+
       const origin = (window as any).electronAPI?.backendHttpOrigin;
       if (typeof origin === 'string' && /^https?:\/\//i.test(origin)) {
         return origin.replace(/\/$/, '');
@@ -126,9 +134,31 @@ export function getApiUrl(): string {
 
 /** Cached base URL for embedded Express (avoid polling on every API call). */
 let electronResolvedBase: string | null = null;
+let electronCacheVerifiedAt = 0;
+const ELECTRON_CACHE_VERIFY_MS = 12_000;
+
+function parseLoopbackPort(base: string): number | null {
+  try {
+    const u = new URL(base);
+    if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') return null;
+    const p = Number(u.port || 3000);
+    return p > 0 && p < 65536 ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+async function verifyElectronCachedBase(): Promise<boolean> {
+  if (!electronResolvedBase) return false;
+  const port = parseLoopbackPort(electronResolvedBase);
+  if (!port) return true;
+  const ok = await tryHealthOnPort(port);
+  return ok != null;
+}
 
 export function invalidateElectronApiBaseCache(): void {
   electronResolvedBase = null;
+  electronCacheVerifiedAt = 0;
   invalidateIpFileRoleCache();
 }
 
@@ -254,30 +284,52 @@ export async function getApiUrlAsync(options?: { waitForPortMs?: number }): Prom
     /* ignore */
   }
 
-  if (electronResolvedBase) return electronResolvedBase;
+  if (electronResolvedBase) {
+    if (Date.now() - electronCacheVerifiedAt > ELECTRON_CACHE_VERIFY_MS) {
+      const ok = await verifyElectronCachedBase();
+      electronCacheVerifiedAt = Date.now();
+      if (!ok) {
+        invalidateElectronApiBaseCache();
+      }
+    }
+    if (electronResolvedBase) return electronResolvedBase;
+  }
 
-  const waitMs = options?.waitForPortMs ?? 6000;
+  const waitMs = options?.waitForPortMs ?? 12000;
   const api = typeof window !== 'undefined' ? (window as any).electronAPI : null;
 
   if (!api?.isElectron) {
     return getApiUrl();
   }
 
+  if (ipFileSaysServerMachine()) {
+    const embeddedLocal = await waitForEmbeddedExpressBase(api, waitMs);
+    if (embeddedLocal) {
+      electronResolvedBase = embeddedLocal;
+      electronCacheVerifiedAt = Date.now();
+      return embeddedLocal;
+    }
+    return DEFAULT_API_URL;
+  }
+
   const manualRemote = parseSavedRemoteApiUrl();
   if (manualRemote) {
     electronResolvedBase = manualRemote;
+    electronCacheVerifiedAt = Date.now();
     return manualRemote;
   }
 
   const embedded = await waitForEmbeddedExpressBase(api, waitMs);
   if (embedded) {
     electronResolvedBase = embedded;
+    electronCacheVerifiedAt = Date.now();
     return embedded;
   }
 
   const lanEarly = getLanClientApiBaseFromStorage();
   if (lanEarly) {
     electronResolvedBase = lanEarly;
+    electronCacheVerifiedAt = Date.now();
     return lanEarly;
   }
 

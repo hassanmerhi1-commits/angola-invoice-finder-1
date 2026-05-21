@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useTranslation } from '@/i18n';
 import { isDemoMode } from '@/lib/api/config';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales, useProducts } from '@/hooks/useERP';
 import type { Sale, Product } from '@/types/erp';
 import {
@@ -33,14 +33,14 @@ function isCompletedSale(sale: Sale | Record<string, unknown>): boolean {
 }
 
 function useChartSales(): Sale[] {
-  const { currentBranch } = useBranchContext();
-  const { sales } = useSales(currentBranch?.id);
+  const { apiBranchId } = useBranchScope();
+  const { sales } = useSales(apiBranchId);
   return sales;
 }
 
 function useChartProducts(): Product[] {
-  const { currentBranch } = useBranchContext();
-  const { products } = useProducts(currentBranch?.id);
+  const { apiBranchId } = useBranchScope();
+  const { products } = useProducts(apiBranchId);
   return products;
 }
 

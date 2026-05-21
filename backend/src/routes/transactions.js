@@ -16,6 +16,7 @@ const {
   validatePeriod,
   auditLog,
 } = require('../transactionEngine');
+const { attachUserBranchScope, resolveWarehouseId } = require('../middleware/branchScope');
 const {
   createJournalEntry,
   generateSequenceNumber,
@@ -164,11 +165,16 @@ async function ensureSupplierJournalAccounts(client, journalLines = [], entityBa
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   // ==================== STOCK MOVEMENTS ====================
   router.get('/stock-movements', async (req, res) => {
     try {
-      const { productId, warehouseId, referenceType, limit } = req.query;
+      const { productId, referenceType, limit } = req.query;
+      const warehouseId = resolveWarehouseId(req, req.query.warehouseId);
+      if (warehouseId === undefined) {
+        return res.json([]);
+      }
       let query = 'SELECT sm.*, p.name as product_name, p.sku FROM stock_movements sm LEFT JOIN products p ON p.id = sm.product_id WHERE 1=1';
       const params = [];
       let idx = 1;
@@ -208,12 +214,13 @@ module.exports = function(broadcastTable) {
   // ==================== OPEN ITEMS ====================
   router.get('/open-items', async (req, res) => {
     try {
-      const { entityType, entityId, status } = req.query;
+      const { entityType, entityId, status, branchId } = req.query;
       let query = 'SELECT * FROM open_items WHERE 1=1';
       const params = [];
       let idx = 1;
       if (entityType) { query += ` AND entity_type = $${idx++}`; params.push(entityType); }
       if (entityId) { query += ` AND entity_id = $${idx++}`; params.push(entityId); }
+      if (branchId) { query += ` AND branch_id = $${idx++}`; params.push(branchId); }
       if (status) { query += ` AND status = $${idx++}`; params.push(status); }
       else { query += ` AND status != 'cleared'`; }
       query += ' ORDER BY document_date ASC';

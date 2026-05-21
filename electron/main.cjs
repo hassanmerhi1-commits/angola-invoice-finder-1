@@ -230,15 +230,17 @@ async function requestExpressJson(method, pathname, bodyObj) {
 }
 
 ipcMain.on('backend:getPortSync', (event) => {
-  const st = backendManager.getStatus();
   const p = backendManager.getPort();
-  event.returnValue = st.running && typeof p === 'number' && p > 0 && p < 65536 ? p : 0;
+  if (typeof p === 'number' && p > 0 && p < 65536) {
+    event.returnValue = p;
+    return;
+  }
+  event.returnValue = 0;
 });
 
 ipcMain.on('backend:getHttpOriginSync', (event) => {
-  const st = backendManager.getStatus();
   const p = backendManager.getPort();
-  event.returnValue = st.running && p ? `http://127.0.0.1:${p}` : '';
+  event.returnValue = p ? `http://127.0.0.1:${p}` : '';
 });
 
 // ============= SINGLE-INSTANCE LOCK (Phase 2) =============
@@ -331,7 +333,12 @@ const INSTALL_DIR = 'C:\\NEXOR ERP';
 const IP_FILE_PATH = path.join(INSTALL_DIR, 'IP');
 const COMPANIES_FILE_PATH = path.join(INSTALL_DIR, 'companies.json');
 const WS_PORT = 4546;
-const DEFAULT_NEXOR_PATH = 'C:\\nexor\\erp.db';
+const DATA_DIR = path.join(INSTALL_DIR, 'data');
+/** Writable default for installed app (avoid C:\\nexor which often needs admin). */
+const DEFAULT_NEXOR_PATH = path.join(DATA_DIR, 'erp.db');
+const USE_LEGACY_WS = process.env.NEXOR_LEGACY_WS === 'true';
+const syncOutbox = require('./syncOutbox.cjs');
+let syncOutboxTimer = null;
 
 // Ensure install directory exists
 if (!fs.existsSync(INSTALL_DIR)) {
@@ -340,6 +347,122 @@ if (!fs.existsSync(INSTALL_DIR)) {
   } catch (err) {
     console.error('Failed to create install directory:', err);
   }
+}
+if (!fs.existsSync(DATA_DIR)) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  } catch (err) {
+    console.error('Failed to create data directory:', err);
+  }
+}
+
+function ensureSqliteFileReady(dbFilePath) {
+  const p = String(dbFilePath || '').trim();
+  if (!p || !/\.db$/i.test(p)) return p;
+  try {
+    const dir = path.dirname(p);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    console.warn('[DB] Could not create SQLite directory:', e?.message || e);
+  }
+  return p;
+}
+
+/** Copy an existing SQLite file (and -wal/-shm) when the app moves to a new default path. */
+function tryCopySqliteDatabase(fromPath, toPath) {
+  const from = path.normalize(String(fromPath || '').trim());
+  const to = path.normalize(String(toPath || '').trim());
+  if (!from || !to || from.toLowerCase() === to.toLowerCase()) return false;
+  if (!/\.db$/i.test(from) || !/\.db$/i.test(to)) return false;
+  if (!fs.existsSync(from)) return false;
+
+  let fromSize = 0;
+  try {
+    const st = fs.statSync(from);
+    if (!st.isFile() || st.size < 512) return false;
+    fromSize = st.size;
+  } catch {
+    return false;
+  }
+
+  let shouldCopy = !fs.existsSync(to);
+  if (!shouldCopy) {
+    try {
+      const destSt = fs.statSync(to);
+      // New empty DB after reinstall is usually tiny; keep real data from the old path.
+      shouldCopy = destSt.size < Math.min(fromSize * 0.5, 200 * 1024) && fromSize > 50 * 1024;
+    } catch {
+      shouldCopy = true;
+    }
+  }
+  if (!shouldCopy) return false;
+
+  try {
+    ensureSqliteFileReady(to);
+    if (fs.existsSync(to)) {
+      const bak = `${to}.pre-migrate-${Date.now()}.bak`;
+      fs.copyFileSync(to, bak);
+      console.log('[DB] Backed up small/empty target DB →', bak);
+    }
+    fs.copyFileSync(from, to);
+    for (const sidecar of ['-wal', '-shm']) {
+      const srcSide = from + sidecar;
+      if (fs.existsSync(srcSide)) fs.copyFileSync(srcSide, to + sidecar);
+    }
+    console.log('[DB] Copied SQLite data:', from, '→', to, `(${(fromSize / 1024).toFixed(1)} KB)`);
+    return true;
+  } catch (e) {
+    console.warn('[DB] Could not copy SQLite database:', e?.message || e);
+    return false;
+  }
+}
+
+/** Common locations where data lived before path defaults changed. */
+function findLegacySqliteCandidates() {
+  const candidates = [path.join('C:\\nexor', 'erp.db')];
+  try {
+    candidates.push(path.join(app.getPath('userData'), 'erp.db'));
+  } catch (_) {}
+  try {
+    if (fs.existsSync(DATA_DIR)) {
+      for (const name of fs.readdirSync(DATA_DIR)) {
+        if (/\.db$/i.test(name)) candidates.push(path.join(DATA_DIR, name));
+      }
+    }
+  } catch (_) {}
+  const seen = new Set();
+  return candidates.filter((p) => {
+    const key = p.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function copyBestLegacySqliteInto(targetPath) {
+  const target = path.normalize(String(targetPath || '').trim());
+  if (!target) return false;
+  let best = null;
+  let bestSize = 0;
+  for (const candidate of findLegacySqliteCandidates()) {
+    if (candidate.toLowerCase() === target.toLowerCase()) continue;
+    try {
+      if (!fs.existsSync(candidate)) continue;
+      const st = fs.statSync(candidate);
+      if (!st.isFile() || st.size <= bestSize) continue;
+      best = candidate;
+      bestSize = st.size;
+    } catch (_) {}
+  }
+  if (!best || bestSize < 50 * 1024) return false;
+  return tryCopySqliteDatabase(best, target);
+}
+
+/** Map legacy .nexor setup paths to a real .db under C:\\NEXOR ERP\\data. */
+function migrateNexorPathToDb(nexorPath) {
+  const base = path.basename(String(nexorPath || 'erp.nexor'), '.nexor');
+  const safe = base.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'erp';
+  return path.join(DATA_DIR, `${safe}.db`);
 }
 
 // Create IP file with default .nexor path if it doesn't exist
@@ -422,11 +545,20 @@ function parseIPFile() {
     // Server mode - file path (.db preferred; legacy .nexor auto-migrates)
     if (/^[A-Za-z]:\\.+\.(nexor|db)$/i.test(content)) {
       if (/\.nexor$/i.test(content)) {
-        console.log('[IP] Legacy .nexor path detected, migrating to SQLite .db default');
-        try { fs.writeFileSync(IP_FILE_PATH, DEFAULT_NEXOR_PATH, 'utf-8'); } catch (e) {}
-        return { valid: true, path: DEFAULT_NEXOR_PATH, isServer: true };
+        const dbPath = ensureSqliteFileReady(migrateNexorPathToDb(content));
+        console.log('[IP] Legacy .nexor path → SQLite:', dbPath);
+        try { fs.writeFileSync(IP_FILE_PATH, dbPath, 'utf-8'); } catch (e) {}
+        return { valid: true, path: dbPath, isServer: true };
       }
-      return { valid: true, path: content, isServer: true };
+      let dbPath = ensureSqliteFileReady(content);
+      if (/^C:\\nexor\\/i.test(dbPath)) {
+        const legacyPath = dbPath;
+        dbPath = ensureSqliteFileReady(DEFAULT_NEXOR_PATH);
+        tryCopySqliteDatabase(legacyPath, dbPath);
+        console.log('[IP] Migrating legacy C:\\nexor path →', dbPath);
+        try { fs.writeFileSync(IP_FILE_PATH, dbPath, 'utf-8'); } catch (e) {}
+      }
+      return { valid: true, path: dbPath, isServer: true };
     }
     // Legacy server mode - postgresql URL -> migrate to file DB default
     if (content.startsWith('postgresql://') || content.startsWith('postgres://')) {
@@ -434,10 +566,18 @@ function parseIPFile() {
       try { fs.writeFileSync(IP_FILE_PATH, DEFAULT_NEXOR_PATH, 'utf-8'); } catch (e) {}
       return { valid: true, path: DEFAULT_NEXOR_PATH, isServer: true };
     }
-    // Client mode - hostname or IP
+    // Hostname/IP — client unless it is this machine (common misconfig on server PCs)
     const serverMatch = content.match(/^([A-Za-z0-9_\-\.]+)$/);
     if (serverMatch) {
-      return { valid: true, path: null, isServer: false, serverAddress: serverMatch[1] };
+      const host = serverMatch[1];
+      if (isLoopbackOrLocalHost(host)) {
+        const dbPath = ensureSqliteFileReady(DEFAULT_NEXOR_PATH);
+        copyBestLegacySqliteInto(dbPath);
+        console.log('[IP] Local hostname/IP in IP file → server SQLite:', dbPath);
+        try { fs.writeFileSync(IP_FILE_PATH, dbPath, 'utf-8'); } catch (_) {}
+        return { valid: true, path: dbPath, isServer: true };
+      }
+      return { valid: true, path: null, isServer: false, serverAddress: host };
     }
     return { valid: false, error: 'Invalid IP file format', path: null, isServer: false };
   } catch (error) {
@@ -996,6 +1136,10 @@ async function handleDBRequest(request) {
 
 // ============= WEBSOCKET SERVER (SERVER MODE) =============
 function startWebSocketServer() {
+  if (!USE_LEGACY_WS) {
+    console.log('[WS] Legacy port 4546 disabled — use Express Socket.io on HTTP port');
+    return { success: true, port: null, legacy: false };
+  }
   if (wss) return { success: true, port: WS_PORT };
 
   try {
@@ -1165,6 +1309,64 @@ async function sendToServer(request) {
   });
 }
 
+// ============= OFFLINE SYNC OUTBOX =============
+function getCityApiBaseForClient() {
+  try {
+    const cfgPath = path.join(INSTALL_DIR, 'setup-config.json');
+    if (fs.existsSync(cfgPath)) {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+      const ip = cfg?.clientConfig?.serverIp;
+      const port = cfg?.clientConfig?.httpPort || cfg?.clientConfig?.apiPort || 3000;
+      if (ip) return `http://${ip}:${port}`;
+    }
+  } catch (_) {}
+  if (serverAddress) return `http://${serverAddress}:3000`;
+  return 'http://127.0.0.1:3000';
+}
+
+function startSyncOutboxWorker() {
+  if (syncOutboxTimer) return;
+  const tick = async () => {
+    if (isServerMode) return;
+    try {
+      const apiBase = getCityApiBaseForClient();
+      const r = await syncOutbox.flushToServer(apiBase);
+      if (r.flushed > 0) {
+        console.log(`[SYNC OUTBOX] Flushed ${r.flushed} event(s)`);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('sync:outbox-flushed', r);
+        }
+      }
+    } catch (e) {
+      console.warn('[SYNC OUTBOX]', e.message);
+    }
+  };
+  syncOutboxTimer = setInterval(tick, 8000);
+  tick();
+}
+
+ipcMain.handle('syncOutbox:enqueue', (_, event) => {
+  try {
+    return { success: true, ...syncOutbox.enqueueEvent(event) };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('syncOutbox:pendingCount', () => ({
+  count: syncOutbox.getPendingCount(),
+}));
+
+ipcMain.handle('syncOutbox:flush', async (_, apiBaseUrl) => {
+  try {
+    return { success: true, ...(await syncOutbox.flushToServer(apiBaseUrl || getCityApiBaseForClient())) };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('sync:getApiUrl', async () => getCityApiBaseForClient());
+
 // ============= SETUP WIZARD SUPPORT =============
 ipcMain.handle('setup:getConfig', async () => {
   try {
@@ -1178,20 +1380,33 @@ ipcMain.handle('setup:getConfig', async () => {
       }
     }
 
-    // IP file is the source of truth for runtime mode/path.
+    repairIPFileForServerRole();
     const ipConfig = parseIPFile();
-    if (ipConfig.valid) {
+    const savedRole = savedConfig?.role;
+    const role =
+      ipConfig.valid && ipConfig.isServer
+        ? 'server'
+        : savedRole === 'server'
+          ? 'server'
+          : ipConfig.valid
+            ? 'client'
+            : savedRole || null;
+
+    if (ipConfig.valid || savedConfig?.setupComplete) {
       const liveConfig = {
         setupComplete: true,
-        role: ipConfig.isServer ? 'server' : 'client',
-        serverConfig: ipConfig.isServer
+        role,
+        serverConfig: role === 'server'
           ? {
-              databasePath: ipConfig.path || null,
+              databasePath: ipConfig.path || savedConfig?.serverConfig?.databasePath || DEFAULT_NEXOR_PATH,
               serverIp: getLocalIP(),
-              serverPort: WS_PORT
+              httpPort: 3000,
+              serverPort: WS_PORT,
             }
           : null,
-        clientConfig: !ipConfig.isServer ? { serverIp: ipConfig.serverAddress, serverPort: WS_PORT } : null,
+        clientConfig: role === 'client'
+          ? { serverIp: ipConfig.serverAddress || savedConfig?.clientConfig?.serverIp, httpPort: 3000, serverPort: WS_PORT }
+          : null,
       };
 
       // Preserve extra saved keys but always overwrite role + DB/server runtime fields.
@@ -1252,17 +1467,98 @@ ipcMain.handle('setup:reset', async () => {
 });
 
 function getLocalIP() {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+  const ips = getLocalIPv4Addresses();
+  return ips.find((ip) => !ip.startsWith('127.')) || '127.0.0.1';
+}
+
+function getLocalIPv4Addresses() {
+  const set = new Set(['127.0.0.1', 'localhost']);
+  try {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name] || []) {
+        if (iface.family === 'IPv4') set.add(iface.address);
+      }
     }
+  } catch (_) {}
+  return [...set];
+}
+
+function isLoopbackOrLocalHost(host) {
+  const h = String(host || '').trim().toLowerCase();
+  if (!h || h === 'localhost') return true;
+  if (h === '127.0.0.1' || h.startsWith('127.')) return true;
+  return getLocalIPv4Addresses().some((ip) => ip.toLowerCase() === h);
+}
+
+function readSetupConfigFromDisk() {
+  try {
+    const configPath = path.join(INSTALL_DIR, 'setup-config.json');
+    if (!fs.existsSync(configPath)) return null;
+    return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  } catch {
+    return null;
   }
-  return '127.0.0.1';
+}
+
+/**
+ * Installed apps often have hostname/IP in the IP file (client format) on the server PC.
+ * If setup-config says server, rewrite IP file to the .db path so we spawn embedded Express.
+ */
+function repairIPFileForServerRole() {
+  const saved = readSetupConfigFromDisk();
+  if (saved?.role !== 'server') return null;
+
+  const ip = parseIPFile();
+  if (ip.valid && ip.isServer && ip.path) return ip.path;
+
+  let dbPath = saved?.serverConfig?.databasePath || DEFAULT_NEXOR_PATH;
+  if (!/\.db$/i.test(dbPath)) dbPath = DEFAULT_NEXOR_PATH;
+  dbPath = ensureSqliteFileReady(dbPath);
+  copyBestLegacySqliteInto(dbPath);
+
+  try {
+    fs.writeFileSync(IP_FILE_PATH, dbPath, 'utf-8');
+    console.log('[IP] Repaired server IP file →', dbPath);
+  } catch (e) {
+    console.warn('[IP] Could not repair IP file:', e.message);
+  }
+  return dbPath;
+}
+
+function resolveStartupBackendPlan(dbResult) {
+  repairIPFileForServerRole();
+  const ip = parseIPFile();
+  const saved = readSetupConfigFromDisk();
+
+  if (ip.valid && ip.isServer && ip.path) {
+    return { mode: 'server', sqlitePath: ensureSqliteFileReady(ip.path) };
+  }
+  if (saved?.role === 'server') {
+    const dbPath = ensureSqliteFileReady(
+      saved?.serverConfig?.databasePath || DEFAULT_NEXOR_PATH
+    );
+    try { fs.writeFileSync(IP_FILE_PATH, dbPath, 'utf-8'); } catch (_) {}
+    return { mode: 'server', sqlitePath: dbPath };
+  }
+  if (dbResult?.mode === 'server' && dbResult?.path) {
+    return { mode: 'server', sqlitePath: ensureSqliteFileReady(dbResult.path) };
+  }
+  if (ip.valid && !ip.isServer && ip.serverAddress) {
+    return { mode: 'client', sqlitePath: null };
+  }
+  if (dbResult?.mode === 'client') {
+    return { mode: 'client', sqlitePath: null };
+  }
+  if (dbResult?.needsConfig || !ip.valid) {
+    return { mode: 'standalone', sqlitePath: null };
+  }
+  return { mode: 'unknown', sqlitePath: null };
 }
 
 // ============= DATABASE INITIALIZATION =============
 async function initDatabase() {
+  repairIPFileForServerRole();
   const ipConfig = parseIPFile();
   if (!ipConfig.valid) {
     console.log('IP file not configured:', ipConfig.error);
@@ -1274,7 +1570,8 @@ async function initDatabase() {
     serverAddress = ipConfig.serverAddress;
     pgConnectionString = null;
     console.log('CLIENT MODE: Will connect to', serverAddress);
-    connectToServer();
+    if (USE_LEGACY_WS) connectToServer();
+    startSyncOutboxWorker();
     return { success: true, mode: 'client', serverAddress };
   }
 
@@ -1640,28 +1937,16 @@ app.whenReady().then(async () => {
     console.error('[Init] Could not set log dir:', e?.message || e);
   }
 
+  repairIPFileForServerRole();
+
   // Initialize database based on IP file
   const dbResult = await initDatabase();
   console.log('[Init] Database result:', dbResult);
 
-  // ===== Phases 1–4: Auto-spawn Express backend =====
-  // Mode mapping:
-  //   - PG connection string in IP file → this PC IS the server → spawn Express here
-  //   - hostname/IP in IP file          → this PC is a CLIENT  → DO NOT spawn
-  //   - IP file missing/invalid         → treat as standalone (spawn, let user fix later)
-  let backendMode = 'unknown';
-  let backendSqlitePath = null;
-  if (dbResult?.mode === 'server') backendMode = 'server';
-  else if (dbResult?.mode === 'client') backendMode = 'client';
-  else if (dbResult?.needsConfig) backendMode = 'standalone';
-  else {
-    const ipConfig = parseIPFile();
-    if (ipConfig.valid) {
-      backendMode = ipConfig.isServer ? 'server' : 'client';
-      if (ipConfig.isServer && ipConfig.path) backendSqlitePath = ipConfig.path;
-    }
-  }
-  if (dbResult?.mode === 'server' && dbResult?.path) backendSqlitePath = dbResult.path;
+  const startupPlan = resolveStartupBackendPlan(dbResult);
+  const backendMode = startupPlan.mode;
+  const backendSqlitePath = startupPlan.sqlitePath;
+  console.log('[Init] Backend plan:', startupPlan);
 
   // File-first mode: no PostgreSQL env wiring.
   delete process.env.DATABASE_URL;
@@ -1676,7 +1961,10 @@ app.whenReady().then(async () => {
     const p = backendManager.getPort();
     if (mainWindow && !mainWindow.isDestroyed() && typeof p === 'number' && p > 0 && p < 65536) {
       mainWindow.webContents
-        .executeJavaScript(`window.__KWANZA_BACKEND_PORT__ = ${p};`, true)
+        .executeJavaScript(
+          `window.__KWANZA_BACKEND_PORT__ = ${p}; try { window.dispatchEvent(new Event('nexor:backend-port')); } catch (_) {}`,
+          true
+        )
         .catch(() => {});
     }
   });
@@ -1687,6 +1975,13 @@ app.whenReady().then(async () => {
     if (spawnResult.started) {
       backendPort = spawnResult.port;
       console.log(`[Init] Backend up on port ${backendPort} (mode=${backendMode})`);
+      if (spawnResult.warning) {
+        console.warn(`[Init] Backend warning: ${spawnResult.warning}`);
+      }
+      // Give SQLite a moment after /api/health before renderer polls db:getStatus.
+      if (backendMode === 'server' || backendMode === 'standalone') {
+        await delay(500);
+      }
     } else if (spawnResult.skipped) {
       console.log(`[Init] Backend spawn skipped (${spawnResult.reason}) — using remote server`);
     } else if (spawnResult.error) {
@@ -1818,22 +2113,88 @@ ipcMain.handle('company:setActive', async (_, companyId) => {
 });
 
 // Database operations (transparently routed)
-ipcMain.handle('db:getStatus', async () => {
-  const expressPort = await resolveExpressTargetPort(false);
-  const expressUp = !!expressPort;
-  /** LAN client: talk to server over WebSocket only. */
-  const clientWsOk =
-    !isServerMode && !!serverAddress && wsClient?.readyState === WebSocket.OPEN;
-  /** Server PC: SQLite is in Express when `pool` is null (normal for .db files). */
-  const serverOk = isServerMode && (!!pool || expressUp);
-  /**
-   * First-run / incomplete setup: IP file empty or invalid, but backendManager still spawns
-   * embedded Express → SQLite at userData. Previously `connected` stayed false (only WS counted).
-   */
-  const standaloneEmbeddedOk =
-    !isServerMode && !serverAddress && expressUp;
+async function probeRemoteExpressHealth(host, port = 3000, timeoutMs = 2500) {
+  const hostname = String(host || '').trim();
+  if (!hostname) return false;
+  return new Promise((resolve) => {
+    const req = http.get(
+      { host: hostname, port, path: '/api/health', timeout: timeoutMs },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          let payload = null;
+          try {
+            payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          } catch {
+            payload = null;
+          }
+          resolve(
+            res.statusCode === 200
+            && payload?.ok === true
+            && payload?.unified === true
+          );
+        });
+      }
+    );
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
 
-  const connected = serverOk || clientWsOk || standaloneEmbeddedOk;
+ipcMain.handle('db:ensureBackend', async () => {
+  try {
+    await ensureEmbeddedBackendRunningIfNeeded();
+    const ip = parseIPFile();
+    if ((isServerMode || ip.isServer) && !getEmbeddedExpressPort()) {
+      const plan = resolveStartupBackendPlan({ mode: 'server', path: ip.path });
+      await backendManager.start({ mode: 'server', sqlitePath: plan.sqlitePath });
+      await delay(600);
+    }
+    const port = await resolveExpressTargetPort(false);
+    return { success: !!port, port };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('db:getStatus', async () => {
+  if (isServerMode && !getEmbeddedExpressPort()) {
+    await ensureEmbeddedBackendRunningIfNeeded();
+  }
+
+  let expressPort = await resolveExpressTargetPort(false);
+  let expressUp = !!expressPort;
+
+  // Packaged cold start: backend may still be binding — retry health before reporting offline.
+  if (!expressUp && (isServerMode || !serverAddress)) {
+    for (let i = 0; i < 15 && !expressUp; i++) {
+      await delay(500);
+      if (i === 3 || i === 8) await ensureEmbeddedBackendRunningIfNeeded();
+      expressPort = await resolveExpressTargetPort(false);
+      expressUp = !!expressPort;
+    }
+  }
+
+  const clientHttpOk =
+    !isServerMode && !!serverAddress && (await probeRemoteExpressHealth(serverAddress));
+
+  const legacyWsOk =
+    USE_LEGACY_WS
+    && !isServerMode
+    && !!serverAddress
+    && wsClient?.readyState === WebSocket.OPEN;
+
+  const bm = backendManager.getStatus();
+  /** Server: SQLite is in embedded Express (pool is null for .db files). */
+  const serverOk = isServerMode && (!!pool || expressUp || (!!bm.running && !!expressPort));
+
+  const standaloneEmbeddedOk = !isServerMode && !serverAddress && expressUp;
+
+  const connected = serverOk || clientHttpOk || legacyWsOk || standaloneEmbeddedOk;
 
   const mode = isServerMode
     ? 'server'
@@ -1852,6 +2213,8 @@ ipcMain.handle('db:getStatus', async () => {
     connected,
     expressBackend: expressUp,
     expressPort: expressPort || null,
+    backendRunning: !!bm.running,
+    backendNativeError: bm.nativeError || null,
   };
 });
 

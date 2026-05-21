@@ -15,7 +15,11 @@ function normalizeUser(row: Record<string, unknown>): User {
     id: String(row.id),
     email: String(row.email || ''),
     name: String(row.name || ''),
-    username: row.username ? String(row.username) : undefined,
+    username: row.username
+      ? String(row.username)
+      : String(row.email || '').includes('@')
+        ? String(row.email).split('@')[0]
+        : undefined,
     role: (row.role as User['role']) || 'viewer',
     branchId: String(row.branch_id ?? row.branchId ?? ''),
     isActive,

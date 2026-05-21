@@ -50,13 +50,21 @@ export function ServerConnectionIndicator() {
     setIsChecking(true);
     try {
       if (isElectron) {
+        const api = (window as any).electronAPI;
+        if (api?.db?.ensureBackend) {
+          await api.db.ensureBackend().catch(() => null);
+        }
         // Desktop mode: use Electron IPC directly
-        const status = await (window as any).electronAPI.db.getStatus();
+        const status = await api.db.getStatus();
+        let latestStatus = status;
         if (status?.success !== false) {
           setElectronStatus(status);
+          const expressOk = !!(status.expressBackend || status.expressPort);
           setBackendReachable(
             status.connected
+            || expressOk
             || status.mode === 'server'
+            || status.mode === 'client'
             || status.mode === 'standalone'
           );
         } else {
@@ -65,12 +73,17 @@ export function ServerConnectionIndicator() {
         }
         // Also try the Express backend for extra info
         try {
-          const apiUrl = await getApiUrlAsync({ waitForPortMs: 4000 });
+          const apiUrl = await getApiUrlAsync({ waitForPortMs: 10000 });
           const response = await fetch(`${new URL(apiUrl).origin}/api/health`, {
-            signal: AbortSignal.timeout(3000),
+            signal: AbortSignal.timeout(5000),
           });
           if (response.ok) {
             setHealth(await response.json());
+            setBackendReachable(true);
+            if (latestStatus?.success !== false) {
+              latestStatus = { ...latestStatus, connected: true, expressBackend: true };
+              setElectronStatus(latestStatus);
+            }
           }
         } catch {
           // Express backend not running - that's fine in desktop mode
@@ -108,16 +121,30 @@ export function ServerConnectionIndicator() {
   useEffect(() => {
     // Skip polling in web preview mode (no backend available)
     if (!isElectron && isWebPreview()) return;
-    
+
     checkHealth();
     const interval = setInterval(checkHealth, 15000);
+
+    const api = (window as any).electronAPI;
+    if (api?.backend?.onStatus) {
+      api.backend.onStatus((data: { state?: string }) => {
+        if (data?.state === 'healthy' || data?.state === 'restarted') {
+          checkHealth();
+        }
+      });
+    }
+
     return () => clearInterval(interval);
   }, [checkHealth]);
 
   // Determine overall status
   const dbConnected = isElectron
-    ? (electronStatus?.connected ?? false)
-    : (health?.database?.connected ?? false);
+    ? !!(
+        electronStatus?.connected
+        || electronStatus?.expressBackend
+        || (health?.ok && health?.unified)
+      )
+    : (health?.database?.connected ?? health?.ok ?? false);
   
   const systemReachable = isElectron
     ? (

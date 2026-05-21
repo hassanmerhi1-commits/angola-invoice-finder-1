@@ -207,15 +207,19 @@ async function validatePeriod(client, date) {
 async function resolveStockProductId(client, productIdOrCode, warehouseId) {
   if (isUuid(productIdOrCode)) return productIdOrCode;
 
+  const code = String(productIdOrCode).trim();
   const lookup = await client.query(
     `SELECT id
      FROM products
-     WHERE is_active = true
-       AND (sku = $1 OR barcode = $1)
-       AND (branch_id = $2 OR branch_id IS NULL)
-     ORDER BY CASE WHEN branch_id = $2 THEN 0 WHEN branch_id IS NULL THEN 1 ELSE 2 END, created_at ASC
+     WHERE COALESCE(is_active, 1) != 0
+       AND (
+         LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
+         OR TRIM(COALESCE(barcode, '')) = $2
+       )
+       AND (branch_id = $3 OR branch_id IS NULL)
+     ORDER BY CASE WHEN branch_id = $3 THEN 0 WHEN branch_id IS NULL THEN 1 ELSE 2 END, created_at ASC
      LIMIT 1`,
-    [productIdOrCode, warehouseId]
+    [code, code, warehouseId]
   );
 
   if (lookup.rows.length > 0) {
@@ -380,11 +384,8 @@ async function resolveProductForWarehouse(client, productId, warehouseId) {
     return resolvedId;
   }
 
-  if (!src.branch_id) {
-    return resolveOrCloneProductForBranch(client, src, branchKey);
-  }
-
-  return resolvedId;
+  // Shared catalog or product from another branch → post stock on this warehouse's SKU row
+  return resolveOrCloneProductForBranch(client, src, branchKey, { reuseExistingBySku: true });
 }
 
 // ==================== STOCK MOVEMENTS ====================
@@ -797,8 +798,10 @@ async function processSale(client, saleData) {
     branchId, cashierId, cashierName, items,
     subtotal, taxAmount, discount, total,
     paymentMethod, amountPaid, change,
-    customerNif, customerName, clientId
+    customerNif, customerName, clientId,
+    clientRequestId, idempotencyKey,
   } = saleData;
+  const clientReqId = clientRequestId || idempotencyKey || null;
 
   // ── Validation ──
   requireParam(branchId, 'branchId');
@@ -860,16 +863,33 @@ async function processSale(client, saleData) {
     }
   }
 
+  if (clientReqId) {
+    const dupClient = await client.query(
+      `SELECT id FROM sales WHERE client_request_id = $1 LIMIT 1`,
+      [clientReqId]
+    );
+    if (dupClient.rows.length > 0) {
+      const existing = await client.query(`SELECT * FROM sales WHERE id = $1`, [dupClient.rows[0].id]);
+      return {
+        id: existing.rows[0].id,
+        invoice_number: existing.rows[0].invoice_number,
+        total: parseFloat(existing.rows[0].total),
+        status: existing.rows[0].status,
+        duplicate: true,
+      };
+    }
+  }
+
   // ── Step 3a: Insert sale header ──
   const saleId = randomUUID();
   await client.query(
     `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
       subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
-      customer_nif, customer_name, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed')`,
+      customer_nif, customer_name, status, client_request_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed',$15)`,
     [saleId, invoiceNumber, branchId, cashierId, cashierName,
      subtotal, taxAmount, discount || 0, totalAmount,
-     paymentMethod, amountPaid, change, customerNif, customerName]
+     paymentMethod, amountPaid, change, customerNif, customerName, clientReqId]
   );
 
   // ── Step 3b: Insert sale_items + stock ──

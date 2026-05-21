@@ -244,6 +244,14 @@ async function createJournalEntry(client, params) {
   }
 
   console.log(`[ACCOUNTING] Created ${entryNumber} (${referenceType}): D=${totalDebit.toFixed(2)} C=${totalCredit.toFixed(2)}`);
+
+  try {
+    const { enqueueJournalPosted } = require('./sync/outbox');
+    await enqueueJournalPosted(client, entryId, branchId);
+  } catch (_) {
+    /* outbox optional during bootstrap */
+  }
+
   return { id: entryId, entry_number: entryNumber, total_debit: totalDebit, total_credit: totalCredit };
 }
 

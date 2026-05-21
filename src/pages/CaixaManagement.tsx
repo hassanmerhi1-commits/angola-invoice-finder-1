@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { 
@@ -121,7 +121,7 @@ export default function CaixaManagement() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
-  const { currentBranch } = useBranchContext();
+  const { currentBranch, apiBranchId } = useBranchScope();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -153,14 +153,14 @@ export default function CaixaManagement() {
     if (currentBranch?.id) {
       await ensureBranchCaixa(currentBranch.id, currentBranch.name || t.branchUi.headOffice);
     }
-    setCaixas(await getCaixas(currentBranch?.id));
+    setCaixas(await getCaixas(apiBranchId));
     setSessions(await getCaixaSessions());
     setTransactions(await getCashTransactions());
   };
 
   useEffect(() => {
     loadData();
-  }, [currentBranch?.id]);
+  }, [apiBranchId]);
 
   // Get transactions for selected caixa
   const caixaTransactions = useMemo(() => {

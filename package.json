@@ -84,6 +84,7 @@
     "react-router-dom": "^6.30.1",
     "recharts": "^2.15.4",
     "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
     "sonner": "^1.7.4",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
@@ -95,6 +96,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
     "@eslint/js": "^9.32.0",
     "@tailwindcss/typography": "^0.5.16",
     "@types/node": "^22.16.5",
@@ -102,7 +104,6 @@
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react-swc": "^3.11.0",
     "autoprefixer": "^10.4.21",
-    "@electron/rebuild": "^3.7.1",
     "electron": "^41.2.1",
     "electron-builder": "^26.8.1",
     "electron-squirrel-startup": "^1.0.1",

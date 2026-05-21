@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSuppliers, usePurchaseOrders } from '@/hooks/useERP';
 import { Download, FileText, Clock, AlertTriangle, AlertCircle, CheckCircle } from 'lucide-react';
 import { format, differenceInDays, parseISO, addDays } from 'date-fns';
@@ -33,8 +34,9 @@ interface PayableEntry {
 export default function AccountsPayableReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const { apiBranchId } = useBranchScope();
   const { suppliers } = useSuppliers();
-  const { orders } = usePurchaseOrders();
+  const { orders } = usePurchaseOrders(apiBranchId);
   const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null);
 
   const getPaymentTermDays = (terms: string): number => {

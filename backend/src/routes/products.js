@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const express = require('express');
 const db = require('../db');
 const { checkOptimisticLock } = require('../middleware/security');
+const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
 
 function sanitizeUuid(value) {
   if (typeof value !== 'string') return value ?? null;
@@ -37,11 +38,15 @@ function dedupeProductsBySku(rows, branchId) {
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   // Get all products
   router.get('/', async (req, res) => {
     try {
-      const { branchId } = req.query;
+      const branchId = resolveListBranchId(req, req.query.branchId);
+      if (branchId === undefined) {
+        return res.json([]);
+      }
       const params = [];
       let query;
 
@@ -83,7 +88,7 @@ module.exports = function(broadcastTable) {
                 WHERE sm.warehouse_id = $1
                   AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
               ), 0))
-              ELSE COALESCE(bp.stock, p.stock, 0)
+              ELSE COALESCE(bp.stock, 0)
             END AS stock,
             COALESCE(bp.unit, p.unit) AS unit,
             COALESCE(bp.tax_rate, p.tax_rate) AS tax_rate,
@@ -107,6 +112,7 @@ module.exports = function(broadcastTable) {
           WHERE COALESCE(p.is_active, 1) != 0
             AND (
               p.branch_id = $1
+              OR bp.id IS NOT NULL
               OR (
                 p.branch_id IS NULL
                 AND NOT EXISTS (
@@ -114,6 +120,17 @@ module.exports = function(broadcastTable) {
                   WHERE COALESCE(bx.is_active, 1) != 0 AND bx.branch_id = $1
                     AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
                     AND LOWER(TRIM(COALESCE(bx.sku, ''))) = LOWER(TRIM(p.sku))
+                )
+                AND (
+                  COALESCE(bp.stock, 0) > 0
+                  OR EXISTS (
+                    SELECT 1
+                    FROM stock_movements sm
+                    INNER JOIN products pm ON pm.id = sm.product_id
+                    WHERE sm.warehouse_id = $1
+                      AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+                      AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
+                  )
                 )
               )
             )
@@ -154,7 +171,10 @@ module.exports = function(broadcastTable) {
       const activeInt = isActive !== false ? 1 : 0;
 
       const c = Number(cost) || 0;
-      const resolvedBranchId = sanitizeUuid(branchId);
+      const scopedBranch = resolveListBranchId(req, branchId);
+      const resolvedBranchId = sanitizeUuid(
+        scopedBranch === undefined ? null : (scopedBranch || branchId),
+      );
       // SQLite expands $10 four times from ONE param — do not pass c,c,c,c in the array.
       const result = await db.query(
         `INSERT INTO products (id, name, sku, barcode, category, price, price2, price3, price4, cost, first_cost, last_cost, avg_cost, stock, unit, tax_rate, branch_id, is_active, supplier_id, supplier_name)

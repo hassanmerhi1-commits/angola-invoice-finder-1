@@ -77,6 +77,68 @@ function tryAlterAdd(table, columnSql) {
   } catch (_) {}
 }
 
+/** Cities, installations, sync outbox, branch hierarchy (multi-city sync). */
+function ensureOrgHierarchyTables() {
+  if (!sqlite) return;
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS cities (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      name TEXT NOT NULL,
+      province TEXT,
+      municipio TEXT,
+      code TEXT NOT NULL UNIQUE,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS installations (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      name TEXT NOT NULL DEFAULT 'Default',
+      role TEXT NOT NULL CHECK (role IN ('main_server', 'city_server', 'shop_client')),
+      city_id TEXT REFERENCES cities(id),
+      branch_id TEXT REFERENCES branches(id),
+      main_api_url TEXT,
+      api_key TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS sync_events (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      event_type TEXT NOT NULL,
+      entity_id TEXT,
+      branch_id TEXT,
+      city_id TEXT,
+      payload TEXT NOT NULL DEFAULT '{}',
+      idempotency_key TEXT NOT NULL UNIQUE,
+      destinations TEXT NOT NULL DEFAULT '[]',
+      destinations_done TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_retry_at TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      sent_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sync_events_status ON sync_events(status, next_retry_at);
+  `);
+
+  tryAlterAdd('branches', 'city_id TEXT');
+  tryAlterAdd('branches', 'parent_branch_id TEXT');
+  tryAlterAdd('branches', "node_role TEXT DEFAULT 'shop'");
+  tryAlterAdd('sales', 'client_request_id TEXT');
+  tryAlterAdd('sales', 'saft_hash TEXT');
+  tryAlterAdd('sales', 'agt_status TEXT');
+  tryAlterAdd('sales', 'agt_code TEXT');
+  tryAlterAdd('sales', 'agt_validated_at TEXT');
+
+  try {
+    sqlite.prepare(`UPDATE branches SET node_role = 'main' WHERE is_main = 1 AND (node_role IS NULL OR node_role = 'shop')`).run();
+  } catch (_) {}
+}
+
 function seedAccountingPeriods() {
   const y = new Date().getFullYear();
   if (!tableExists('accounting_periods')) return;
@@ -441,6 +503,9 @@ function ensureAppTablesAndColumns() {
   seedDocumentSequencesSqlite();
   tryAlterAdd('products', 'version INTEGER NOT NULL DEFAULT 0');
   tryAlterAdd('products', "tax_code TEXT DEFAULT 'IVA14'");
+  tryAlterAdd('users', 'username TEXT');
+
+  ensureOrgHierarchyTables();
 
   const taxCodeCount = sqlite.prepare('SELECT COUNT(*) AS count FROM tax_codes').get();
   if (Number(taxCodeCount?.count || 0) === 0) {
@@ -950,6 +1015,7 @@ function bootstrapSchemaAndSeed() {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
       email TEXT NOT NULL UNIQUE,
+      username TEXT,
       name TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'admin',
       branch_id TEXT,
@@ -1163,10 +1229,18 @@ function bootstrapSchemaAndSeed() {
 
   const hasUser = sqlite.prepare('SELECT 1 AS ok FROM users LIMIT 1').get();
   if (!hasUser) {
+    const bcrypt = require('bcryptjs');
+    const adminHash = bcrypt.hashSync('changeme', 12);
     sqlite.prepare(
       `INSERT INTO users (id, email, name, role, branch_id, password_hash, is_active)
        VALUES (?, ?, ?, 'admin', ?, ?, 1)`
-    ).run('user-admin', 'admin@nexor.local', 'System Administrator', 'branch-main', 'admin');
+    ).run(
+      'user-admin',
+      'admin@kwanzaerp.ao',
+      'System Administrator',
+      'branch-main',
+      adminHash,
+    );
   }
 
   const hasProducts = sqlite.prepare('SELECT 1 AS ok FROM products LIMIT 1').get();

@@ -1,5 +1,5 @@
 -- Seed Data: Default admin user, branch, categories, and sample products
--- Passwords are plain text for demo (auth.js accepts any password in demo mode)
+-- Default passwords (change after first login): admin = changeme, caixa1 = caixa1
 
 -- Default branch
 INSERT INTO branches (id, name, code, address, phone, is_main)
@@ -17,7 +17,7 @@ INSERT INTO users (id, email, password_hash, name, role, branch_id, is_active)
 VALUES (
   'a0000000-0000-0000-0000-000000000001',
   'admin@kwanzaerp.ao',
-  'admin',
+  '$2a$12$eMqfxQm/5MvHdBkKV4vSj.aX3PxAyFYn08TQ25LGXFtQHL2vxBQwa',
   'Administrador',
   'admin',
   'b0000000-0000-0000-0000-000000000001',
@@ -29,7 +29,7 @@ INSERT INTO users (id, email, password_hash, name, role, branch_id, is_active)
 VALUES (
   'a0000000-0000-0000-0000-000000000002',
   'caixa1@kwanzaerp.ao',
-  'caixa1',
+  '$2a$12$6EUte9gkI6Rhiiq6d8C.qe.xOHVQKwz6y/PfVs/yZuft4CshAlAhi',
   'Caixa 1',
   'cashier',
   'b0000000-0000-0000-0000-000000000001',

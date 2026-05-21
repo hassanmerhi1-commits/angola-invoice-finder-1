@@ -23,6 +23,8 @@ const MIGRATIONS = [
   '015_products_supplier.sql',
   '016_freight_expense_account.sql',
   '017_multi_price_levels.sql',
+  '018_purchase_invoices_table.sql',
+  '019_org_hierarchy.sql',
 ];
 
 /**

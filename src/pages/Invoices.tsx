@@ -5,7 +5,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -100,7 +100,7 @@ export default function Invoices() {
     converted: { label: t.documentStatus.converted, variant: 'secondary' },
   }), [t]);
   const { user } = useAuth();
-  const { currentBranch, branches } = useBranchContext();
+  const { currentBranch, branches, isHeadOffice, listBranchId } = useBranchScope();
   const navigate = useNavigate();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
@@ -122,15 +122,14 @@ export default function Invoices() {
 
   useEffect(() => {
     const type = activeTab === 'all' ? undefined : activeTab;
-    const includeAllBranches = !!currentBranch?.isMain;
-    const branchFilter = includeAllBranches ? undefined : currentBranch?.id;
+    const branchFilter = listBranchId;
     const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
 
     const load = async () => {
       const [storedDocs, salesDocs] = await Promise.all([
         getDocuments(type, branchFilter),
         !type || type === 'fatura_venda'
-          ? getSalesInvoicesAsDocuments(currentBranch?.id, branchNames, includeAllBranches)
+          ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice)
           : Promise.resolve([]),
       ]);
 
@@ -147,7 +146,7 @@ export default function Invoices() {
     };
 
     load();
-  }, [activeTab, currentBranch?.id, currentBranch?.isMain, branches, refreshKey]);
+  }, [activeTab, listBranchId, isHeadOffice, branches, refreshKey]);
 
   // TopNav toolbar "Novo" / shortcuts (document workspace — HashRouter)
   useEffect(() => {
