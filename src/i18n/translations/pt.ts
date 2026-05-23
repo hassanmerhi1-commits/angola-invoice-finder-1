@@ -562,6 +562,7 @@ export const pt: TranslationKeys = {
     chart: "Gráfico",
     view: "Visualização",
 
+    searchListPlaceholder: "Pesquisar código, nome, código de barras...",
     statementSubtitle: "Movimentos de stock ligados ao produto selecionado",
     selectProductToViewStatement: "Selecione um produto na lista para ver o extracto",
     entriesLabel: "Entradas:",
@@ -572,6 +573,8 @@ export const pt: TranslationKeys = {
       type: "Tipo",
       reason: "Motivo",
       document: "Documento",
+      product: "Produto",
+      code: "Código",
       cost: "Custo",
       notes: "Notas",
     },
@@ -613,6 +616,8 @@ export const pt: TranslationKeys = {
       noPurchaseOrders: "Sem encomendas de compra com este produto",
       noAuditEntries: "Sem registos de auditoria para este produto",
       noPendingTransfers: "Sem transferências pendentes para este produto",
+      noPendingTransfersAny: "Sem transferências pendentes ou em trânsito neste âmbito de filial",
+      allPendingTransfers: "Todas as transferências pendentes e em trânsito",
       serialNotTracked: "Números de série não são controlados para este produto",
     },
 
@@ -877,6 +882,8 @@ export const pt: TranslationKeys = {
     unit: "Unidade",
     category: "Categoria",
     supplierName: "Fornecedor",
+    searchCodePlaceholder: "Código...",
+    searchColumnPlaceholder: "Filtrar...",
   },
 
   invoiceViewUi: {

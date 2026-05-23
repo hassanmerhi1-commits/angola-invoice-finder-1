@@ -560,6 +560,7 @@ export const en = {
     chart: "Chart",
     view: "View",
 
+    searchListPlaceholder: "Search code, name, barcode...",
     statementSubtitle: "Stock movements linked to the selected product",
     selectProductToViewStatement: "Select a product in the list to view the statement",
     entriesLabel: "Entries:",
@@ -570,6 +571,8 @@ export const en = {
       type: "Type",
       reason: "Reason",
       document: "Document",
+      product: "Product",
+      code: "Code",
       cost: "Cost",
       notes: "Notes",
     },
@@ -611,6 +614,8 @@ export const en = {
       noPurchaseOrders: "No purchase orders with this product",
       noAuditEntries: "No audit entries for this product",
       noPendingTransfers: "No pending transfers for this product",
+      noPendingTransfersAny: "No pending or in-transit transfers for this branch scope",
+      allPendingTransfers: "All pending and in-transit transfers",
       serialNotTracked: "Serial numbers are not tracked for this product",
     },
 
@@ -875,6 +880,8 @@ export const en = {
     unit: "Unit",
     category: "Category",
     supplierName: "Supplier",
+    searchCodePlaceholder: "Code...",
+    searchColumnPlaceholder: "Filter...",
   },
 
   invoiceViewUi: {

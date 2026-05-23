@@ -5,14 +5,16 @@
  * falling back to localStorage for web preview / demo mode.
  */
 
-import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore, useMemo } from 'react';
 import { Branch, Product, Sale, User, CartItem, SaleItem, DailySummary, Client, StockTransfer, Supplier, PurchaseOrder, PurchaseOrderItem, Category } from '@/types/erp';
 import { api, clearAuthSessionCache, ensureBackendAuthToken, setAuthToken } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
 import { normalizeTaxRate } from '@/lib/taxUtils';
-import { applyUserBranchLockOnLogin } from '@/lib/branchAccess';
+import { applyUserBranchLockOnLogin, normalizeIsMain } from '@/lib/branchAccess';
+import { mapStockTransferRow } from '@/lib/stockTransferUtils';
+import { dedupeProductsForDisplay } from '@/lib/productDedupe';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
@@ -119,37 +121,8 @@ function mapSupplier(s: any): Supplier {
   };
 }
 
-function mapStockTransferItem(item: any) {
-  return {
-    id: item.id,
-    productId: item.productId ?? item.product_id ?? '',
-    productName: item.productName ?? item.product_name ?? '',
-    sku: item.sku || '',
-    quantity: Number(item.quantity || 0),
-    receivedQuantity: item.receivedQuantity ?? item.received_quantity != null
-      ? Number(item.receivedQuantity ?? item.received_quantity)
-      : undefined,
-  };
-}
-
 function mapStockTransfer(transfer: any): StockTransfer {
-  return {
-    id: transfer.id,
-    transferNumber: transfer.transferNumber ?? transfer.transfer_number ?? '',
-    fromBranchId: transfer.fromBranchId ?? transfer.from_branch_id ?? '',
-    fromBranchName: transfer.fromBranchName ?? transfer.from_branch_name ?? '',
-    toBranchId: transfer.toBranchId ?? transfer.to_branch_id ?? '',
-    toBranchName: transfer.toBranchName ?? transfer.to_branch_name ?? '',
-    items: Array.isArray(transfer.items) ? transfer.items.map(mapStockTransferItem) : [],
-    status: transfer.status || 'pending',
-    requestedBy: transfer.requestedBy ?? transfer.requested_by ?? '',
-    requestedAt: transfer.requestedAt ?? transfer.requested_at ?? transfer.created_at ?? '',
-    approvedBy: transfer.approvedBy ?? transfer.approved_by,
-    approvedAt: transfer.approvedAt ?? transfer.approved_at,
-    receivedBy: transfer.receivedBy ?? transfer.received_by,
-    receivedAt: transfer.receivedAt ?? transfer.received_at,
-    notes: transfer.notes || '',
-  };
+  return mapStockTransferRow(transfer as Record<string, unknown>);
 }
 
 function normalizeProductBranchIdForApi(branchId?: string | null): string | null | undefined {
@@ -180,26 +153,16 @@ function filterProductsForApiScope(products: Product[], branchId?: string): Prod
   });
 }
 
-function dedupeProductsBySku(products: Product[], branchId?: string): Product[] {
-  const bySku = new Map<string, Product>();
-  for (const p of products) {
-    const key = normalizeProductSku(p.sku) || p.id;
-    const prev = bySku.get(key);
-    if (!prev) {
-      bySku.set(key, p);
-      continue;
-    }
-    const score = (row: Product) => {
-      let s = row.stock || 0;
-      if (branchId && row.branchId === branchId) s += 1_000_000;
-      return s;
-    };
-    bySku.set(key, score(p) >= score(prev) ? p : prev);
-  }
-  return Array.from(bySku.values());
+function dedupeProductsBySku(products: Product[], branchId?: string, catalogBranchIds: string[] = []): Product[] {
+  return dedupeProductsForDisplay(products, branchId, catalogBranchIds);
 }
 
 export function useProducts(branchId?: string) {
+  const { branches } = useBranchContext();
+  const catalogBranchIds = useMemo(
+    () => branches.filter((b) => normalizeIsMain(b.isMain)).map((b) => b.id),
+    [branches],
+  );
   const [products, setProducts] = useState<Product[]>([]);
   /** Ignores stale list fetches that finish after a newer write (e.g. add product). */
   const listGenerationRef = useRef(0);
@@ -223,7 +186,7 @@ export function useProducts(branchId?: string) {
     }
 
     if (apiProducts !== null) {
-      const dedupedApi = dedupeProductsBySku(apiProducts, branchId);
+      const dedupedApi = dedupeProductsBySku(apiProducts, branchId, catalogBranchIds);
       // API is source of truth — merging Electron DB / localStorage re-shows duplicate SKUs after login.
       if (!isDemoMode()) {
         return filterProductsForApiScope(dedupedApi, branchId);
@@ -240,13 +203,16 @@ export function useProducts(branchId?: string) {
         return productBelongsToBranchList(p, branchId, apiSkus);
       });
       return filterProductsForApiScope(
-        dedupeProductsBySku([...dedupedApi, ...localOnly], branchId),
+        dedupeProductsBySku([...dedupedApi, ...localOnly], branchId, catalogBranchIds),
         branchId,
       );
     }
 
-    return filterProductsForApiScope(localProducts, branchId);
-  }, [branchId]);
+    return filterProductsForApiScope(
+      dedupeProductsBySku(localProducts, branchId, catalogBranchIds),
+      branchId,
+    );
+  }, [branchId, catalogBranchIds]);
 
   const refreshProducts = useCallback(async () => {
     const generation = ++listGenerationRef.current;
@@ -1008,12 +974,21 @@ export function useStockTransfers(branchId?: string) {
   const [transfers, setTransfers] = useState<StockTransfer[]>([]);
 
   const refreshTransfers = useCallback(async () => {
-    const data = await apiFallback<any[]>(
-      () => api.stockTransfers.list(branchId),
-      () => storage.getStockTransfers(branchId)
-    );
-    setTransfers(Array.isArray(data) ? data.map(mapStockTransfer) : []);
+    try {
+      const data = await apiFallback<any[]>(
+        () => api.stockTransfers.list(branchId),
+        () => storage.getStockTransfers(branchId)
+      );
+      setTransfers(Array.isArray(data) ? data.map(mapStockTransfer) : []);
+    } catch (error) {
+      console.error('[STOCK TRANSFERS] Failed to load:', error);
+      setTransfers([]);
+    }
   }, [branchId]);
+
+  const notifyTransfersChanged = useCallback(() => {
+    window.dispatchEvent(new CustomEvent(storage.STOCK_TRANSFERS_CHANGED_EVENT, { detail: {} }));
+  }, []);
 
   useEffect(() => { refreshTransfers(); }, [refreshTransfers]);
 
@@ -1029,34 +1004,41 @@ export function useStockTransfers(branchId?: string) {
       throw new Error(result.error || t.erpUi.createTransferFailed);
     }
     await refreshTransfers();
+    notifyTransfersChanged();
     return mapStockTransfer(result.data);
-  }, [refreshTransfers]);
+  }, [refreshTransfers, notifyTransfersChanged, t.erpUi.createTransferFailed]);
 
   const approveTransfer = useCallback(async (transferId: string, userId: string) => {
     const result = await api.stockTransfers.approve(transferId, userId);
     if (!result.data) throw new Error(result.error || t.erpUi.approveTransferFailed);
     await refreshTransfers();
-    // Notify product listeners to refresh (source branch stock changed)
-    window.dispatchEvent(new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, { detail: {} }));
-  }, [refreshTransfers]);
+    notifyTransfersChanged();
+    const fromBranchId = (result.data as { from_branch_id?: string; fromBranchId?: string })?.from_branch_id
+      || (result.data as { fromBranchId?: string })?.fromBranchId;
+    window.dispatchEvent(new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
+      detail: { branchId: fromBranchId || 'all' },
+    }));
+  }, [refreshTransfers, notifyTransfersChanged, t.erpUi.approveTransferFailed]);
 
   const receiveTransfer = useCallback(async (transferId: string, userId: string, receivedQuantities?: Record<string, number>) => {
     const result = await api.stockTransfers.receive(transferId, userId, receivedQuantities);
     if (!result.data) throw new Error(result.error || t.erpUi.receiveTransferFailed);
     await refreshTransfers();
-    // Notify product listeners to refresh (destination branch now has new/updated products)
-    window.dispatchEvent(new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, { detail: {} }));
-  }, [refreshTransfers]);
+    notifyTransfersChanged();
+    const payload = result.data as { to_branch_id?: string; toBranchId?: string; from_branch_id?: string; fromBranchId?: string };
+    const toBranchId = payload?.to_branch_id || payload?.toBranchId;
+    const fromBranchId = payload?.from_branch_id || payload?.fromBranchId;
+    window.dispatchEvent(new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
+      detail: { branchId: toBranchId || fromBranchId || 'all' },
+    }));
+  }, [refreshTransfers, notifyTransfersChanged, t.erpUi.receiveTransferFailed]);
 
-  const cancelTransfer = useCallback(async (transferId: string, _userId: string) => {
-    const allTransfers = await storage.getStockTransfers();
-    const transfer = allTransfers.find(t => t.id === transferId);
-    if (transfer) {
-      transfer.status = 'cancelled';
-      await storage.saveStockTransfer(transfer);
-      await refreshTransfers();
-    }
-  }, [refreshTransfers]);
+  const cancelTransfer = useCallback(async (transferId: string, userId: string) => {
+    const result = await api.stockTransfers.cancel(transferId, userId);
+    if (result.error) throw new Error(result.error);
+    await refreshTransfers();
+    notifyTransfersChanged();
+  }, [refreshTransfers, notifyTransfersChanged]);
 
   return { transfers, createTransfer, approveTransfer, receiveTransfer, cancelTransfer, refreshTransfers };
 }

@@ -50,11 +50,15 @@ module.exports = function(broadcastTable) {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
-      await processTransferApprove(client, req.params.id, req.body.approvedBy);
+      const transfer = await processTransferApprove(client, req.params.id, req.body.approvedBy);
       await client.query('COMMIT');
       await broadcastTable('stock_transfers');
       await broadcastTable('products');
-      res.json({ success: true });
+      res.json({
+        success: true,
+        from_branch_id: transfer.from_branch_id,
+        to_branch_id: transfer.to_branch_id,
+      });
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[STOCK TRANSFERS ERROR]', error);
@@ -69,15 +73,49 @@ module.exports = function(broadcastTable) {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
-      await processTransferReceive(client, req.params.id, req.body.receivedQuantities, req.body.receivedBy);
+      const transfer = await processTransferReceive(client, req.params.id, req.body.receivedQuantities, req.body.receivedBy);
       await client.query('COMMIT');
       await broadcastTable('stock_transfers');
       await broadcastTable('products');
-      res.json({ success: true });
+      res.json({
+        success: true,
+        to_branch_id: transfer.to_branch_id,
+        from_branch_id: transfer.from_branch_id,
+      });
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[STOCK TRANSFERS ERROR]', error);
       res.status(500).json({ error: error.message || 'Failed to receive transfer' });
+    } finally {
+      client.release();
+    }
+  });
+
+  // CANCEL: pending transfers only
+  router.post('/:id/cancel', async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        'SELECT id, status FROM stock_transfers WHERE id = $1 FOR UPDATE',
+        [req.params.id],
+      );
+      const row = result.rows[0];
+      if (!row) throw new Error('Transferência não encontrada');
+      if (String(row.status || '').toLowerCase() !== 'pending') {
+        throw new Error('Só transferências pendentes podem ser canceladas');
+      }
+      await client.query(
+        `UPDATE stock_transfers SET status = 'cancelled' WHERE id = $1`,
+        [req.params.id],
+      );
+      await client.query('COMMIT');
+      await broadcastTable('stock_transfers');
+      res.json({ success: true });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('[STOCK TRANSFERS ERROR]', error);
+      res.status(500).json({ error: error.message || 'Failed to cancel transfer' });
     } finally {
       client.release();
     }

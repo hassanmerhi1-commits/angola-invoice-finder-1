@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   BarChart,
@@ -11,15 +11,20 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { Package, ArrowRightLeft } from 'lucide-react';
-import { Product, StockMovement } from '@/types/erp';
+import { Product, StockMovement, StockTransfer } from '@/types/erp';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api/client';
 import { getTransactionHistory } from '@/lib/transactionHistory';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useStockTransfers } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
+import { STOCK_TRANSFERS_CHANGED_EVENT } from '@/lib/storage';
+import { onTableSync } from '@/lib/realtime/socket';
+import {
+  buildPendingTransferRows,
+  mapStockTransferRow,
+} from '@/lib/stockTransferUtils';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { useTranslation } from '@/i18n';
 
@@ -614,54 +619,77 @@ export function InventorySerialNumbersPanel({ product }: { product: Product | nu
   );
 }
 
-function transferItemMatchesProduct(
-  item: { productId?: string; sku?: string },
-  product: Product,
-): boolean {
-  if (item.productId && item.productId === product.id) return true;
-  const itemSku = (item.sku || '').trim().toLowerCase();
-  const productSku = (product.sku || '').trim().toLowerCase();
-  if (itemSku && productSku && itemSku === productSku) return true;
-  const productBarcode = (product.barcode || '').trim().toLowerCase();
-  if (itemSku && productBarcode && itemSku === productBarcode) return true;
-  return false;
-}
+type PendingTransfersPanelProps = {
+  product: Product | null;
+  allBranchProducts?: Record<string, Product[]>;
+  scopedBranchIds?: string[];
+  isInventoryConsolidated: boolean;
+  inventoryListBranchId?: string;
+  isActive?: boolean;
+};
 
-export function InventoryPendingTransfersPanel({ product }: { product: Product | null }) {
+export function InventoryPendingTransfersPanel({
+  product,
+  allBranchProducts,
+  scopedBranchIds,
+  isInventoryConsolidated,
+  inventoryListBranchId,
+  isActive = true,
+}: PendingTransfersPanelProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { apiBranchId } = useBranchScope();
-  const { transfers: allTransfers, refreshTransfers } = useStockTransfers(apiBranchId);
+  const [transfers, setTransfers] = useState<StockTransfer[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const transfers = useMemo(
-    () => allTransfers.filter((tr) => tr.status === 'pending' || tr.status === 'in_transit'),
-    [allTransfers],
-  );
+  const loadTransfers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.stockTransfers.list();
+      if (res.error) throw new Error(res.error);
+      setTransfers((res.data || []).map((row) => mapStockTransferRow(row as Record<string, unknown>)));
+    } catch (error) {
+      console.error('[InventoryPendingTransfers] load failed:', error);
+      setTransfers([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    void refreshTransfers();
-  }, [product?.id, refreshTransfers]);
+    if (!isActive) return;
+    void loadTransfers();
+  }, [isActive, loadTransfers, product?.id, inventoryListBranchId, isInventoryConsolidated]);
 
-  const rows = useMemo(() => {
-    if (!product) return [];
-    return transfers.flatMap((tr) =>
-      (tr.items || [])
-        .filter((item) => transferItemMatchesProduct(item, product))
-        .map((item) => ({
-          transferNumber: tr.transferNumber,
-          status: tr.status,
-          from: tr.fromBranchName,
-          to: tr.toBranchName,
-          quantity: item.quantity,
-        }))
-    );
-  }, [transfers, product]);
+  useEffect(() => {
+    if (!isActive) return;
+    const onChanged = () => { void loadTransfers(); };
+    window.addEventListener(STOCK_TRANSFERS_CHANGED_EVENT, onChanged);
+    const unsubSocket = onTableSync('stock_transfers', onChanged);
+    return () => {
+      window.removeEventListener(STOCK_TRANSFERS_CHANGED_EVENT, onChanged);
+      unsubSocket();
+    };
+  }, [isActive, loadTransfers]);
 
-  if (!product) {
+  const rows = useMemo(
+    () =>
+      buildPendingTransferRows(transfers, {
+        isConsolidated: isInventoryConsolidated,
+        branchId: inventoryListBranchId,
+        product,
+        allBranchProducts,
+        scopedBranchIds,
+      }),
+    [transfers, isInventoryConsolidated, inventoryListBranchId, product, allBranchProducts, scopedBranchIds],
+  );
+
+  const showProductColumn = !product;
+
+  if (loading && rows.length === 0) {
     return (
       <Card>
-        <CardContent className="pt-6">
-          <TransferEmptyHint navigate={navigate} t={t} />
+        <CardContent className="pt-6 text-center text-muted-foreground">
+          {t.common.loading}
         </CardContent>
       </Card>
     );
@@ -671,7 +699,11 @@ export function InventoryPendingTransfersPanel({ product }: { product: Product |
     return (
       <Card>
         <CardContent className="pt-6 space-y-4 text-center">
-          <p className="text-muted-foreground">{t.inventoryPageUi.panel.noPendingTransfers}</p>
+          <p className="text-muted-foreground">
+            {product
+              ? t.inventoryPageUi.panel.noPendingTransfers
+              : t.inventoryPageUi.panel.noPendingTransfersAny}
+          </p>
           <Button onClick={() => navigate('/stock-transfer')}>
             <ArrowRightLeft className="w-4 h-4 mr-2" />
             {t.inventoryPageUi.goToTransfers}
@@ -685,13 +717,17 @@ export function InventoryPendingTransfersPanel({ product }: { product: Product |
     <Card>
       <CardHeader>
         <CardTitle className="text-base">{t.inventoryPageUi.tabs.pendingTransfer}</CardTitle>
-        <CardDescription>{product.sku}</CardDescription>
+        <CardDescription>
+          {product ? product.sku : t.inventoryPageUi.panel.allPendingTransfers}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>{t.inventoryPageUi.table.document}</TableHead>
+              {showProductColumn && <TableHead>{t.inventoryPageUi.table.product}</TableHead>}
+              {showProductColumn && <TableHead>{t.inventoryPageUi.table.code}</TableHead>}
               <TableHead>{t.inventoryPageUi.panel.status}</TableHead>
               <TableHead>{t.inventoryPageUi.panel.from}</TableHead>
               <TableHead>{t.inventoryPageUi.panel.to}</TableHead>
@@ -700,8 +736,10 @@ export function InventoryPendingTransfersPanel({ product }: { product: Product |
           </TableHeader>
           <TableBody>
             {rows.map((row, idx) => (
-              <TableRow key={`${row.transferNumber}-${idx}`}>
+              <TableRow key={`${row.transferNumber}-${row.sku}-${idx}`}>
                 <TableCell className="font-mono text-xs">{row.transferNumber}</TableCell>
+                {showProductColumn && <TableCell>{row.productName}</TableCell>}
+                {showProductColumn && <TableCell className="font-mono text-xs">{row.sku || '—'}</TableCell>}
                 <TableCell>{row.status}</TableCell>
                 <TableCell>{row.from}</TableCell>
                 <TableCell>{row.to}</TableCell>
@@ -717,28 +755,5 @@ export function InventoryPendingTransfersPanel({ product }: { product: Product |
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function TransferEmptyHint({
-  navigate,
-  t,
-}: {
-  navigate: ReturnType<typeof useNavigate>;
-  t: ReturnType<typeof useTranslation>['t'];
-}) {
-  return (
-    <div className="text-center space-y-4">
-      <ArrowRightLeft className="w-12 h-12 mx-auto text-muted-foreground" />
-      <div>
-        <h3 className="font-semibold text-lg">{t.inventoryPageUi.transferTitle}</h3>
-        <p className="text-muted-foreground mb-4">{t.inventoryPageUi.transferDesc}</p>
-      </div>
-      <p className="text-sm text-muted-foreground">{t.inventoryPageUi.selectProductToViewInfo}</p>
-      <Button onClick={() => navigate('/stock-transfer')}>
-        <ArrowRightLeft className="w-4 h-4 mr-2" />
-        {t.inventoryPageUi.goToTransfers}
-      </Button>
-    </div>
   );
 }

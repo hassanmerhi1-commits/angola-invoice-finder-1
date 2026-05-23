@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react';
 import { Product } from '@/types/erp';
-import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -16,7 +15,6 @@ import {
   CustomFilterDialog,
   CustomFilterState,
   FilterCondition,
-  FilterOperator,
 } from './CustomFilterDialog';
 
 interface ColumnDef {
@@ -93,7 +91,6 @@ export function AdvancedDataGrid({
     { key: 'category', label: t.inventoryGridUi.category, minWidth: 120 },
     { key: 'supplierName', label: t.inventoryGridUi.supplierName, minWidth: 120 },
   ]), [t, isHeadOffice]);
-  const [columnSearches, setColumnSearches] = useState<Record<string, string>>({});
   const [sortColumn, setSortColumn] = useState<string>('sku');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [simpleFilters, setSimpleFilters] = useState<Record<string, { type: 'all' | 'blanks' | 'nonblanks' | 'value'; value?: string }>>({});
@@ -170,15 +167,6 @@ export function AdvancedDataGrid({
       });
     });
 
-    // Column searches
-    Object.entries(columnSearches).forEach(([key, search]) => {
-      if (!search) return;
-      result = result.filter(p => {
-        const { str } = getCellRawValue(p, key);
-        return str.toLowerCase().includes(search.toLowerCase());
-      });
-    });
-
     result.sort((a, b) => {
       const aVal = getCellRawValue(a, sortColumn);
       const bVal = getCellRawValue(b, sortColumn);
@@ -190,7 +178,7 @@ export function AdvancedDataGrid({
     });
 
     return result;
-  }, [products, simpleFilters, customFilters, columnSearches, sortColumn, sortDirection, reservedQty, isHeadOffice, allBranchProducts]);
+  }, [products, simpleFilters, customFilters, sortColumn, sortDirection, reservedQty, isHeadOffice, allBranchProducts]);
 
   const handleSort = (column: string) => {
     if (sortColumn === column) {
@@ -202,13 +190,11 @@ export function AdvancedDataGrid({
   };
 
   const hasActiveFilters = Object.keys(simpleFilters).some(k => simpleFilters[k]?.type !== 'all') ||
-    Object.keys(customFilters).length > 0 ||
-    Object.values(columnSearches).some(v => v);
+    Object.keys(customFilters).length > 0;
 
   const clearAllFilters = () => {
     setSimpleFilters({});
     setCustomFilters({});
-    setColumnSearches({});
   };
 
   const formatValue = (product: Product, key: string) => {
@@ -330,19 +316,6 @@ export function AdvancedDataGrid({
                   </th>
                 );
               })}
-            </tr>
-            {/* Per-column search */}
-            <tr>
-              {visibleColumns.map(col => (
-                <th key={col.key} style={{ minWidth: col.minWidth }} className="border-r border-b border-border p-0">
-                  <Input
-                    placeholder=""
-                    value={columnSearches[col.key] || ''}
-                    onChange={e => setColumnSearches(prev => ({ ...prev, [col.key]: e.target.value }))}
-                    className="h-7 rounded-none border-0 text-xs bg-background focus-visible:ring-0 focus-visible:ring-offset-0"
-                  />
-                </th>
-              ))}
             </tr>
           </thead>
           <tbody>

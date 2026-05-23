@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useTranslation } from '@/i18n';
 import { useProducts, useStockTransfers, useAuth } from '@/hooks/useERP';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
+import { canApproveStockTransfer, canReceiveStockTransfer } from '@/lib/branchAccess';
 import { Product, StockTransfer as StockTransferType } from '@/types/erp';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -50,7 +51,7 @@ export default function StockTransfer() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
-  const { branches, currentBranch } = useBranchContext();
+  const { branches, currentBranch, scopeId, canSwitchBranch, userBranch } = useBranchScope();
   // Load ALL transfers (not branch-filtered) so we can see transfers between any branches
   const { transfers, createTransfer, approveTransfer, receiveTransfer, cancelTransfer } = useStockTransfers();
   const { toast } = useToast();
@@ -272,6 +273,12 @@ export default function StockTransfer() {
 
   const destinationBranches = branches.filter(b => b.id !== fromBranchId);
 
+  const branchTransferActions = {
+    scopeId,
+    canSwitchBranch,
+    userBranchId: userBranch?.id || user?.branchId,
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -355,7 +362,7 @@ export default function StockTransfer() {
                 getStatusBadge={getStatusBadge}
                 onApprove={handleApprove}
                 onCancel={handleCancel}
-                currentBranchId={currentBranch?.id}
+                branchTransferActions={branchTransferActions}
               />
             </CardContent>
           </Card>
@@ -372,7 +379,7 @@ export default function StockTransfer() {
                 transfers={inTransitTransfers}
                 getStatusBadge={getStatusBadge}
                 onReceive={handleOpenReceiveDialog}
-                currentBranchId={currentBranch?.id}
+                branchTransferActions={branchTransferActions}
               />
             </CardContent>
           </Card>
@@ -388,7 +395,7 @@ export default function StockTransfer() {
               <TransferTable
                 transfers={completedTransfers}
                 getStatusBadge={getStatusBadge}
-                currentBranchId={currentBranch?.id}
+                branchTransferActions={branchTransferActions}
               />
             </CardContent>
           </Card>
@@ -622,14 +629,18 @@ function TransferTable({
   onApprove,
   onReceive,
   onCancel,
-  currentBranchId,
+  branchTransferActions,
 }: {
   transfers: StockTransferType[];
   getStatusBadge: (status: StockTransferType['status']) => React.ReactNode;
   onApprove?: (transfer: StockTransferType) => void;
   onReceive?: (transfer: StockTransferType) => void;
   onCancel?: (transfer: StockTransferType) => void;
-  currentBranchId?: string;
+  branchTransferActions: {
+    scopeId?: string;
+    canSwitchBranch?: boolean;
+    userBranchId?: string;
+  };
 }) {
   if (transfers.length === 0) {
     return (
@@ -665,13 +676,13 @@ function TransferTable({
             <TableCell>{getStatusBadge(transfer.status)}</TableCell>
             <TableCell>
               <div className="flex gap-2">
-                {transfer.status === 'pending' && transfer.fromBranchId === currentBranchId && onApprove && (
+                {canApproveStockTransfer(transfer, branchTransferActions) && onApprove && (
                   <Button size="sm" variant="outline" onClick={() => onApprove(transfer)}>
                     <Check className="w-4 h-4 mr-1" />
                     Aprovar
                   </Button>
                 )}
-                {transfer.status === 'in_transit' && onReceive && (
+                {canReceiveStockTransfer(transfer, branchTransferActions) && onReceive && (
                   <Button size="sm" variant="outline" onClick={() => onReceive(transfer)}>
                     <Package className="w-4 h-4 mr-1" />
                     Confirmar Recepção

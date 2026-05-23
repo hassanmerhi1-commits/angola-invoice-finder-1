@@ -30,10 +30,22 @@ import {
   defaultProductCategoryName,
 } from '@/lib/inventoryFoodCategories';
 
+import {
+  enrichProductSupplier,
+  resolveSupplierIdForProduct,
+  mapApiProductRow,
+  legacySupplierSelectValue,
+  isLegacySupplierSelectValue,
+  legacySupplierNameFromSelectValue,
+  supplierIdsMatch,
+} from '@/lib/productSupplierResolve';
+
 interface ProductDetailDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   product?: Product | null;
+  /** Full catalog for resolving supplier from sibling branch rows (same SKU). */
+  catalogProducts?: Product[];
   onSave: (product: Product) => void | Promise<void>;
   /** Pre-select supplier when creating from purchase invoice flow. */
   defaultSupplierName?: string;
@@ -72,10 +84,32 @@ function ReadOnlyRow({ label, value }: { label: string; value: string | number }
   );
 }
 
+function resolveProductSupplierId(
+  product: Product | null | undefined,
+  suppliers: { id: string; name: string }[],
+  defaultSupplierName = '',
+): string {
+  const resolved = resolveSupplierIdForProduct(product, suppliers, defaultSupplierName);
+  if (resolved) {
+    const matched = suppliers.find((s) => supplierIdsMatch(s.id, resolved));
+    if (matched) return matched.id;
+  }
+  const name = String(product?.supplierName ?? defaultSupplierName ?? '').trim();
+  if (name) {
+    const byName = suppliers.find(
+      (s) => s.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (byName) return byName.id;
+    return legacySupplierSelectValue(name);
+  }
+  return '';
+}
+
 export function ProductDetailDialog({
   open,
   onOpenChange,
   product,
+  catalogProducts = [],
   onSave,
   defaultSupplierName = '',
 }: ProductDetailDialogProps) {
@@ -85,17 +119,71 @@ export function ProductDetailDialog({
   const { currentBranch } = useBranchContext();
   const { t } = useTranslation();
 
+  const [loadedProduct, setLoadedProduct] = useState<Product | null>(null);
+
+  const effectiveProduct = useMemo(() => {
+    const base = loadedProduct ?? product;
+    if (!base) return null;
+    return enrichProductSupplier(base, catalogProducts.length > 0 ? catalogProducts : [base]);
+  }, [loadedProduct, product, catalogProducts]);
+
   const activeCategories = useMemo(() => categories.filter(c => c.isActive), [categories]);
-  const activeSuppliers = useMemo(() => suppliers.filter(s => s.isActive), [suppliers]);
+  const supplierSelectOptions = useMemo(() => {
+    const base = suppliers.filter((s) => s.isActive);
+    const linkedId = String(effectiveProduct?.supplierId ?? '').trim();
+    if (linkedId && !base.some((s) => supplierIdsMatch(s.id, linkedId))) {
+      const linked = suppliers.find((s) => supplierIdsMatch(s.id, linkedId));
+      if (linked) base.push(linked);
+    }
+    const resolvedId = resolveSupplierIdForProduct(effectiveProduct, base);
+    if (resolvedId && !base.some((s) => s.id === resolvedId)) {
+      const linked = suppliers.find((s) => s.id === resolvedId);
+      if (linked) base.push(linked);
+    }
+    const legacyName = String(effectiveProduct?.supplierName ?? '').trim();
+    if (
+      legacyName
+      && !base.some((s) => s.name.trim().toLowerCase() === legacyName.toLowerCase())
+      && !resolvedId
+    ) {
+      base.push({
+        id: legacySupplierSelectValue(legacyName),
+        name: legacyName,
+        isActive: true,
+      } as (typeof base)[number]);
+    }
+    return base;
+  }, [suppliers, effectiveProduct]);
   const categorySelectOptions = useMemo(
     () => mergeInventoryFoodCategorySelectOptions(activeCategories),
     [activeCategories]
   );
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setLoadedProduct(null);
+      return;
+    }
     void refreshSuppliers();
-  }, [open, refreshSuppliers]);
+    if (!product?.id) {
+      setLoadedProduct(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.products.get(product.id);
+        if (!cancelled && res.data) {
+          setLoadedProduct(mapApiProductRow(res.data as Record<string, unknown>));
+        }
+      } catch {
+        if (!cancelled) setLoadedProduct(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, product?.id, refreshSuppliers]);
 
   // Fetch latest USD→AOA exchange rate for dual-currency cost display
   const [usdRate, setUsdRate] = useState<number>(0);
@@ -119,6 +207,7 @@ export function ProductDetailDialog({
     iva: DEFAULT_VAT_RATE,
     tipo: 'INVENTARIO',
     fornecedorName: '',
+    supplierId: '',
     embalagem: 1,
     qtdMinima: 0,
     qtdMaxima: 0,
@@ -144,36 +233,39 @@ export function ProductDetailDialog({
   });
 
   useEffect(() => {
-    if (product) {
+    if (effectiveProduct) {
+      const supplierId = resolveProductSupplierId(effectiveProduct, supplierSelectOptions);
       setFormData({
-        id: product.id,
-        sku: product.sku,
-        name: product.name,
-        category: resolveProductCategoryName(product.category, activeCategories),
-        unit: product.unit,
-        iva: product.taxRate,
+        id: effectiveProduct.id,
+        sku: effectiveProduct.sku,
+        name: effectiveProduct.name,
+        category: resolveProductCategoryName(effectiveProduct.category, activeCategories),
+        unit: effectiveProduct.unit,
+        iva: effectiveProduct.taxRate,
         tipo: 'INVENTARIO',
-        fornecedorName: product.supplierName || '',
+        fornecedorName: effectiveProduct.supplierName || supplierSelectOptions.find((s) => s.id === supplierId)?.name || '',
+        supplierId,
         embalagem: 1,
         qtdMinima: 0,
         qtdMaxima: 0,
-        price: product.price,
-        price2: product.price2 || 0,
-        price3: product.price3 || 0,
-        price4: product.price4 || 0,
-        priceIVA: +(product.price * (1 + product.taxRate / 100)).toFixed(2),
-        cost: product.cost,
-        avgCost: product.avgCost || product.cost,
-        lastCost: product.lastCost || product.cost,
-        stock: product.stock,
-        branchId: product.branchId,
-        isActive: product.isActive,
-        barcode: product.barcode || '',
-        barcodes: product.barcode
-          ? [{ barPrice: product.barcode, embalagem: 1, priceLC: product.price, plu: '', ultimoCusto: product.lastCost || product.cost }]
+        price: effectiveProduct.price,
+        price2: effectiveProduct.price2 || 0,
+        price3: effectiveProduct.price3 || 0,
+        price4: effectiveProduct.price4 || 0,
+        priceIVA: +(effectiveProduct.price * (1 + effectiveProduct.taxRate / 100)).toFixed(2),
+        cost: effectiveProduct.cost,
+        avgCost: effectiveProduct.avgCost || effectiveProduct.cost,
+        lastCost: effectiveProduct.lastCost || effectiveProduct.cost,
+        stock: effectiveProduct.stock,
+        branchId: effectiveProduct.branchId,
+        isActive: effectiveProduct.isActive,
+        barcode: effectiveProduct.barcode || '',
+        barcodes: effectiveProduct.barcode
+          ? [{ barPrice: effectiveProduct.barcode, embalagem: 1, priceLC: effectiveProduct.price, plu: '', ultimoCusto: effectiveProduct.lastCost || effectiveProduct.cost }]
           : [{ barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }],
       });
     } else {
+      const supplierId = resolveProductSupplierId(null, supplierSelectOptions, defaultSupplierName);
       setFormData({
         id: '',
         sku: '',
@@ -182,7 +274,8 @@ export function ProductDetailDialog({
         unit: 'un',
         iva: DEFAULT_VAT_RATE,
         tipo: 'INVENTARIO',
-        fornecedorName: defaultSupplierName.trim(),
+        fornecedorName: defaultSupplierName.trim() || supplierSelectOptions.find((s) => s.id === supplierId)?.name || '',
+        supplierId,
         embalagem: 1,
         qtdMinima: 0,
         qtdMaxima: 0,
@@ -201,7 +294,7 @@ export function ProductDetailDialog({
         barcodes: [{ barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }],
       });
     }
-  }, [product, open, activeCategories, currentBranch?.id, currentBranch?.isMain, defaultSupplierName]);
+  }, [effectiveProduct, open, activeCategories, supplierSelectOptions, currentBranch?.id, currentBranch?.isMain, defaultSupplierName]);
 
   const set = (field: string, value: any) => setFormData(prev => ({ ...prev, [field]: value }));
 
@@ -226,6 +319,11 @@ export function ProductDetailDialog({
     : '0.00';
 
   const handleSave = async () => {
+    const skuTrim = String(formData.sku || '').trim();
+    if (!skuTrim) {
+      return;
+    }
+
     const resolvedBranchId =
       currentBranch && !currentBranch.isMain
         ? currentBranch.id
@@ -233,10 +331,21 @@ export function ProductDetailDialog({
           ? ''
           : formData.branchId;
 
+    const rawSupplierId = formData.supplierId;
+    const selectedSupplier = isLegacySupplierSelectValue(rawSupplierId)
+      ? undefined
+      : supplierSelectOptions.find((s) => s.id === rawSupplierId);
+    const resolvedSupplierName = isLegacySupplierSelectValue(rawSupplierId)
+      ? legacySupplierNameFromSelectValue(rawSupplierId)
+      : selectedSupplier?.name || formData.fornecedorName || undefined;
+    const resolvedSupplierId = isLegacySupplierSelectValue(rawSupplierId)
+      ? undefined
+      : rawSupplierId || undefined;
+
     const savedProduct: Product = {
       id: formData.id || `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       name: formData.name,
-      sku: formData.sku || `SKU-${Date.now()}`,
+      sku: skuTrim,
       barcode: formData.barcode || formData.barcodes[0]?.barPrice || undefined,
       category: resolveProductCategoryName(formData.category, activeCategories),
       price: formData.price,
@@ -244,16 +353,17 @@ export function ProductDetailDialog({
       price3: formData.price3 || undefined,
       price4: formData.price4 || undefined,
       cost: formData.cost,
-      firstCost: product?.firstCost || formData.cost,
-      lastCost: formData.lastCost || formData.cost,
+      firstCost: effectiveProduct?.firstCost || product?.firstCost || formData.cost,
+      lastCost: effectiveProduct?.lastCost || formData.lastCost || formData.cost,
       avgCost: formData.avgCost || formData.cost,
       stock: formData.stock,
       unit: formData.unit,
       taxRate: formData.iva,
       branchId: resolvedBranchId,
-      supplierName: formData.fornecedorName || undefined,
+      supplierId: resolvedSupplierId,
+      supplierName: resolvedSupplierName,
       isActive: formData.isActive,
-      createdAt: product?.createdAt || new Date().toISOString(),
+      createdAt: effectiveProduct?.createdAt || product?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     await onSave(savedProduct);
@@ -294,11 +404,24 @@ export function ProductDetailDialog({
                   </Select>
                 </Row>
                 <Row label={t.productFormUi.supplierLabel}>
-                  <Select value={formData.fornecedorName || '__none__'} onValueChange={v => set('fornecedorName', v === '__none__' ? '' : v)}>
+                  <Select
+                    value={formData.supplierId || '__none__'}
+                    onValueChange={(v) => {
+                      const id = v === '__none__' ? '' : v;
+                      const supplier = supplierSelectOptions.find((s) => s.id === id);
+                      setFormData((prev) => ({
+                        ...prev,
+                        supplierId: id,
+                        fornecedorName: supplier?.name || (isLegacySupplierSelectValue(id) ? legacySupplierNameFromSelectValue(id) : ''),
+                      }));
+                    }}
+                  >
                     <SelectTrigger className="h-7 text-xs"><SelectValue placeholder={t.productDetailUi.select} /></SelectTrigger>
                     <SelectContent className="bg-popover border shadow-lg z-50">
                       <SelectItem value="__none__">—</SelectItem>
-                      {activeSuppliers.map(s => <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>)}
+                      {supplierSelectOptions.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </Row>

@@ -531,6 +531,9 @@ export const api = {
       const endpoint = `/products${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`;
       return apiFetch<any[]>(endpoint);
     },
+    get: async (id: string) => {
+      return apiFetch<any>(`/products/${encodeURIComponent(id)}`);
+    },
     create: async (data: any) => {
       return apiFetch<any>('/products', { method: 'POST', body: JSON.stringify(data) });
     },
@@ -848,6 +851,9 @@ export const api = {
     },
     receive: (id: string, receivedBy: string, receivedQuantities?: Record<string, number>) => {
       return apiFetch<any>(`/stock-transfers/${id}/receive`, { method: 'POST', body: JSON.stringify({ receivedBy, receivedQuantities }) });
+    },
+    cancel: (id: string, cancelledBy: string) => {
+      return apiFetch<any>(`/stock-transfers/${id}/cancel`, { method: 'POST', body: JSON.stringify({ cancelledBy }) });
     },
   },
 

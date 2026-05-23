@@ -99,6 +99,7 @@ const STORAGE_KEYS = {
 
 export const PRODUCTS_CHANGED_EVENT = 'kwanzaerp:products-changed';
 export const SUPPLIERS_CHANGED_EVENT = 'kwanzaerp:suppliers-changed';
+export const STOCK_TRANSFERS_CHANGED_EVENT = 'kwanzaerp:stock-transfers-changed';
 
 /** Remove browser product cache so the next session loads only from the API. */
 export function clearLocalProductsCache(): void {

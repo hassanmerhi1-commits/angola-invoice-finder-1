@@ -29,9 +29,12 @@ export function useInventoryBranchScope() {
   const global = useBranchScope();
   const { branches, canSwitchBranch, userBranch } = global;
 
-  const [inventoryScopeId, setInventoryScopeIdState] = useState<string>(() =>
-    resolveStoredInventoryScopeId(branches, canSwitchBranch),
-  );
+  const [inventoryScopeId, setInventoryScopeIdState] = useState<string>(() => {
+    if (!canSwitchBranch) {
+      return userBranch?.id || global.apiBranchId || String(branches[0]?.id || '');
+    }
+    return resolveStoredInventoryScopeId(branches, canSwitchBranch);
+  });
 
   useEffect(() => {
     if (!canSwitchBranch) {

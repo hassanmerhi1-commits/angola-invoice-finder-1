@@ -151,6 +151,46 @@ export function resolveOperatingBranch(
   return null;
 }
 
+export function branchIdsEqual(a?: string | null, b?: string | null): boolean {
+  const left = String(a ?? '').trim();
+  const right = String(b ?? '').trim();
+  return left.length > 0 && left === right;
+}
+
+/** Approve (ship) from source branch — HQ admins with all-branches scope may approve any pending transfer. */
+export function canApproveStockTransfer(
+  transfer: { fromBranchId?: string; status?: string },
+  opts: {
+    scopeId?: string | null;
+    canSwitchBranch?: boolean;
+    userBranchId?: string | null;
+  },
+): boolean {
+  if (String(transfer.status || '').toLowerCase() !== 'pending') return false;
+  const fromId = transfer.fromBranchId;
+  if (branchIdsEqual(fromId, opts.scopeId)) return true;
+  if (branchIdsEqual(fromId, opts.userBranchId)) return true;
+  if (opts.canSwitchBranch && String(opts.scopeId || '') === ALL_BRANCHES_SCOPE_ID) return true;
+  return false;
+}
+
+/** Receive at destination branch — HQ admins with all-branches scope may confirm any in-transit transfer. */
+export function canReceiveStockTransfer(
+  transfer: { toBranchId?: string; status?: string },
+  opts: {
+    scopeId?: string | null;
+    canSwitchBranch?: boolean;
+    userBranchId?: string | null;
+  },
+): boolean {
+  if (String(transfer.status || '').toLowerCase() !== 'in_transit') return false;
+  const toId = transfer.toBranchId;
+  if (branchIdsEqual(toId, opts.scopeId)) return true;
+  if (branchIdsEqual(toId, opts.userBranchId)) return true;
+  if (opts.canSwitchBranch && String(opts.scopeId || '') === ALL_BRANCHES_SCOPE_ID) return true;
+  return false;
+}
+
 /** After login, pin filial users to their branch in localStorage. */
 export function applyUserBranchLockOnLogin(user: BranchAccessUser): void {
   try {

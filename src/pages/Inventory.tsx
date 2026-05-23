@@ -1,4 +1,6 @@
 import { generateId } from '@/lib/utils';
+import { enrichProductSupplier } from '@/lib/productSupplierResolve';
+import { dedupeProductsForDisplay } from '@/lib/productDedupe';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useProducts } from '@/hooks/useERP';
@@ -8,7 +10,7 @@ import { normalizeIsMain } from '@/lib/branchAccess';
 import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { DEFAULT_VAT_RATE, normalizeTaxRate } from '@/lib/taxUtils';
-import { saveProduct, getProducts as storageGetProducts, getStockMovements as localGetStockMovements } from '@/lib/storage';
+import { saveProduct, getProducts as storageGetProducts, getStockMovements as localGetStockMovements, PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -36,7 +38,8 @@ import {
   Calculator,
   PackagePlus,
   PackageMinus,
-  Building2
+  Building2,
+  Search,
 } from 'lucide-react';
 import { AdvancedDataGrid } from '@/components/inventory/AdvancedDataGrid';
 import { ShelfLabelPrintDialog } from '@/components/inventory/ShelfLabelPrintDialog';
@@ -120,6 +123,18 @@ export default function Inventory() {
     createdAt: p.created_at || p.createdAt || '',
   }), []);
 
+  const mainBranch = useMemo(
+    () => branches.find((b) => normalizeIsMain(b.isMain)) ?? branches[0] ?? null,
+    [branches],
+  );
+
+  const catalogBranchIds = useMemo(
+    () => (allBranches.length > 0 ? allBranches : branches)
+      .filter((b) => normalizeIsMain(b.isMain))
+      .map((b) => b.id),
+    [allBranches, branches],
+  );
+
   const loadBranchProducts = useCallback(async () => {
     const branchProducts: Record<string, Product[]> = {};
     const branchList = allBranches.length > 0 ? allBranches : branches;
@@ -129,7 +144,11 @@ export default function Inventory() {
       try {
         const result = await api.products.list(branch.id);
         if (result.data && Array.isArray(result.data)) {
-          branchProducts[branch.id] = result.data.map(mapApiRowToProduct);
+          branchProducts[branch.id] = dedupeProductsForDisplay(
+            result.data.map(mapApiRowToProduct),
+            branch.id,
+            catalogBranchIds,
+          );
           continue;
         }
       } catch (e) {
@@ -139,11 +158,20 @@ export default function Inventory() {
       branchProducts[branch.id] = prods;
     }
     setAllBranchProducts(branchProducts);
-  }, [isHeadOffice, branches, allBranches, currentBranch, mapApiRowToProduct]);
+  }, [isHeadOffice, branches, allBranches, currentBranch, mapApiRowToProduct, catalogBranchIds]);
   
   useEffect(() => {
     loadBranchProducts();
   }, [loadBranchProducts, products]);
+
+  useEffect(() => {
+    const onProductsChanged = () => {
+      void loadBranchProducts();
+      void refreshProducts();
+    };
+    window.addEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
+    return () => window.removeEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
+  }, [loadBranchProducts, refreshProducts]);
 
   const loadStockMovements = useCallback(async () => {
     // Try API first (live DB), fall back to localStorage
@@ -182,11 +210,6 @@ export default function Inventory() {
   useEffect(() => {
     loadStockMovements();
   }, [loadStockMovements, products]);
-  
-  const mainBranch = useMemo(
-    () => branches.find((b) => normalizeIsMain(b.isMain)) ?? branches[0] ?? null,
-    [branches],
-  );
 
   /** Sede: one row per SKU, stock = sum of each filial's stock (from per-branch API). */
   const displayProducts = useMemo(() => {
@@ -204,8 +227,11 @@ export default function Inventory() {
           return;
         }
         const primary = rowStamp(p) >= rowStamp(prev) ? p : prev;
+        const secondary = primary === p ? prev : p;
         bySku.set(key, {
           ...primary,
+          supplierId: primary.supplierId || secondary.supplierId,
+          supplierName: primary.supplierName || secondary.supplierName,
           stock: (Number(prev.stock) || 0) + qty,
         });
       };
@@ -223,26 +249,54 @@ export default function Inventory() {
         for (const p of products) {
           const key = skuKey(p);
           const prev = bySku.get(key);
-          if (!prev || (p.stock || 0) > (prev.stock || 0)) {
+          if (!prev) {
             bySku.set(key, p);
+            continue;
           }
+          const pick = (p.stock || 0) > (prev.stock || 0) ? p : prev;
+          const other = pick === p ? prev : p;
+          bySku.set(key, {
+            ...pick,
+            supplierId: pick.supplierId || other.supplierId,
+            supplierName: pick.supplierName || other.supplierName,
+          });
         }
       }
-      return Array.from(bySku.values());
+      return dedupeProductsForDisplay(Array.from(bySku.values()), mainBranch?.id, catalogBranchIds);
     }
 
     const bySku = new Map<string, Product>();
     for (const p of products) {
       const key = skuKey(p);
       const prev = bySku.get(key);
-      if (!prev || (p.stock || 0) > (prev.stock || 0)) {
+      if (!prev) {
         bySku.set(key, p);
+        continue;
       }
+      const pick = (p.stock || 0) > (prev.stock || 0) ? p : prev;
+      const other = pick === p ? prev : p;
+      bySku.set(key, {
+        ...pick,
+        supplierId: pick.supplierId || other.supplierId,
+        supplierName: pick.supplierName || other.supplierName,
+      });
     }
-    return Array.from(bySku.values());
-  }, [products, isHeadOffice, branches, allBranches, allBranchProducts]);
-  
+    return dedupeProductsForDisplay(Array.from(bySku.values()), listBranchId, catalogBranchIds);
+  }, [products, isHeadOffice, branches, allBranches, allBranchProducts, mainBranch?.id, listBranchId, catalogBranchIds]);
+
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const flatCatalog = useMemo(() => {
+    const rows = [...products];
+    for (const branchRows of Object.values(allBranchProducts)) {
+      rows.push(...branchRows);
+    }
+    return rows;
+  }, [products, allBranchProducts]);
+
+  const dialogProduct = useMemo(() => {
+    if (!selectedProduct) return null;
+    return enrichProductSupplier(selectedProduct, flatCatalog);
+  }, [selectedProduct, flatCatalog]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [countSheetDialogOpen, setCountSheetDialogOpen] = useState(false);
@@ -259,13 +313,33 @@ export default function Inventory() {
     }
   }, [isHeadOffice, activeTab]);
   const [stockListFilter, setStockListFilter] = useState<StockListFilter>('all');
+  const [listSearch, setListSearch] = useState('');
+  const listSearchRef = useRef<HTMLInputElement>(null);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
 
   const gridProducts = useMemo(() => {
-    if (stockListFilter === 'qtyGt0') return displayProducts.filter((p) => (p.stock || 0) > 0);
-    if (stockListFilter === 'qtyLt0') return displayProducts.filter((p) => (p.stock || 0) <= 0);
-    return displayProducts;
-  }, [displayProducts, stockListFilter]);
+    let rows = displayProducts;
+    if (stockListFilter === 'qtyGt0') rows = rows.filter((p) => (p.stock || 0) > 0);
+    else if (stockListFilter === 'qtyLt0') rows = rows.filter((p) => (p.stock || 0) <= 0);
+
+    const q = listSearch.trim().toLowerCase();
+    if (!q) return rows;
+
+    return rows.filter((p) => {
+      const sku = (p.sku || '').toLowerCase();
+      const name = (p.name || '').toLowerCase();
+      const barcode = (p.barcode || '').toLowerCase();
+      const category = (p.category || '').toLowerCase();
+      const supplier = (p.supplierName || '').toLowerCase();
+      return (
+        sku.includes(q)
+        || name.includes(q)
+        || barcode.includes(q)
+        || category.includes(q)
+        || supplier.includes(q)
+      );
+    });
+  }, [displayProducts, stockListFilter, listSearch]);
 
   const navigateProduct = useCallback((direction: -1 | 1) => {
     if (!gridProducts.length) return;
@@ -510,8 +584,8 @@ export default function Inventory() {
   };
 
   const scopedBranchIds = useMemo(
-    () => branches.map((b) => b.id),
-    [branches],
+    () => (allBranches.length > 0 ? allBranches : branches).map((b) => b.id),
+    [allBranches, branches],
   );
 
   const selectedProductMovements = useMemo(() => {
@@ -571,6 +645,30 @@ export default function Inventory() {
           />
         )}
         {canSwitchBranch && <div className="w-px h-5 bg-border mx-1" />}
+        <div className="relative shrink-0 w-[min(100%,16rem)]">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none z-10" />
+          <Input
+            ref={listSearchRef}
+            type="search"
+            value={listSearch}
+            onChange={(e) => setListSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && gridProducts.length > 0) {
+                setSelectedProduct(gridProducts[0]);
+                setActiveTab('lista');
+              }
+              if (e.key === 'Escape') {
+                setListSearch('');
+                listSearchRef.current?.blur();
+              }
+            }}
+            placeholder={t.inventoryPageUi.searchListPlaceholder}
+            className="h-7 pl-7 text-xs bg-background"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <div className="w-px h-5 bg-border mx-1 shrink-0" />
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => handleOpenDialog()}>
           <Plus className="w-3 h-3" />
           {t.common.new}
@@ -686,15 +784,12 @@ export default function Inventory() {
 
         <div className="flex-1" />
 
-        {/* Quick navigation */}
-        <div className="flex items-center gap-1 border rounded px-2 py-1 bg-background">
-          <Input 
-            value={selectedProduct?.sku || ''} 
-            readOnly
-            className="h-5 w-24 text-xs border-0 p-0 focus-visible:ring-0"
-            placeholder={t.inventoryUi.codePlaceholder}
-          />
-          <span className="text-xs text-muted-foreground">{selectedProduct?.name || ''}</span>
+        {/* Selected product quick navigation (display only — use search box above to filter) */}
+        <div className="flex items-center gap-1 border rounded px-2 py-1 bg-background shrink-0 max-w-[min(100%,20rem)]">
+          <span className="text-xs font-mono font-medium min-w-[4rem] truncate">
+            {selectedProduct?.sku || t.inventoryUi.codePlaceholder}
+          </span>
+          <span className="text-xs text-muted-foreground truncate">{selectedProduct?.name || ''}</span>
           <div className="flex gap-0.5 ml-2">
             <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => navigateProduct(-1)}>
               <ChevronLeft className="w-3 h-3" />
@@ -872,8 +967,15 @@ export default function Inventory() {
           </TabsContent>
         )}
 
-        <TabsContent value="transferencia" className={tabPanelClass}>
-          <InventoryPendingTransfersPanel product={selectedProduct} />
+        <TabsContent value="transferencia" forceMount className={tabPanelClass}>
+          <InventoryPendingTransfersPanel
+            product={selectedProduct}
+            allBranchProducts={allBranchProducts}
+            scopedBranchIds={scopedBranchIds}
+            isInventoryConsolidated={isInventoryConsolidated}
+            inventoryListBranchId={inventoryListBranchId}
+            isActive={activeTab === 'transferencia'}
+          />
         </TabsContent>
 
         <TabsContent value="grafico" className={tabPanelClass}>
@@ -951,7 +1053,8 @@ export default function Inventory() {
       <ProductDetailDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        product={selectedProduct}
+        product={dialogProduct}
+        catalogProducts={flatCatalog}
         onSave={handleSaveProduct}
       />
 

@@ -49,7 +49,7 @@ async function resolveWarehouseId(client, value) {
   if (db.engine !== 'sqlite') return null;
 
   const branchResult = await client.query(
-    'SELECT id FROM branches WHERE id = $1 AND is_active = true LIMIT 1',
+    'SELECT id FROM branches WHERE id = $1 AND COALESCE(is_active, 1) != 0 LIMIT 1',
     [trimmed]
   );
   return branchResult.rows[0]?.id || null;
@@ -246,7 +246,7 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
   if (sku) {
     const destCheck = await client.query(
       `SELECT id, name FROM products
-       WHERE is_active = true AND branch_id = $1 AND LOWER(TRIM(sku)) = LOWER($2)
+       WHERE COALESCE(is_active, 1) != 0 AND branch_id = $1 AND LOWER(TRIM(sku)) = LOWER($2)
        ORDER BY updated_at DESC, created_at DESC
        LIMIT 1`,
       [toBranch, sku]
@@ -1266,7 +1266,22 @@ async function createStockTransfer(client, data) {
   });
 
   console.log(`[TX ENGINE] Transfer ${transferNumber} created ✓`);
-  return { id: transferId, transfer_number: transferNumber, status: 'pending', items };
+
+  const itemsResult = await client.query(
+    'SELECT * FROM stock_transfer_items WHERE transfer_id = $1 ORDER BY created_at ASC',
+    [transferId],
+  );
+
+  return {
+    id: transferId,
+    transfer_number: transferNumber,
+    status: 'pending',
+    from_branch_id: fromBranchId,
+    from_branch_name: fromBranch.rows[0].name,
+    to_branch_id: toBranchId,
+    to_branch_name: toBranch.rows[0].name,
+    items: itemsResult.rows,
+  };
 }
 
 // ==================== PROCESS TRANSFER APPROVE (Stock OUT) ====================
@@ -1278,6 +1293,9 @@ async function processTransferApprove(client, transferId, approvedBy) {
   const transferResult = await client.query('SELECT * FROM stock_transfers WHERE id = $1 FOR UPDATE', [transferId]);
   const transfer = transferResult.rows[0];
   if (!transfer) throw new Error('Transferência não encontrada');
+  if (String(transfer.status || '').toLowerCase() !== 'pending') {
+    throw new Error(`Transferência não pode ser aprovada no estado "${transfer.status || 'desconhecido'}".`);
+  }
 
   const itemsResult = await client.query('SELECT * FROM stock_transfer_items WHERE transfer_id = $1', [transferId]);
 
@@ -1318,6 +1336,10 @@ async function processTransferReceive(client, transferId, receivedQuantities, re
   const transferResult = await client.query('SELECT * FROM stock_transfers WHERE id = $1 FOR UPDATE', [transferId]);
   const transfer = transferResult.rows[0];
   if (!transfer) throw new Error('Transferência não encontrada');
+  const transferStatus = String(transfer.status || '').toLowerCase();
+  if (transferStatus !== 'in_transit' && transferStatus !== 'approved') {
+    throw new Error(`Transferência não pode ser recebida no estado "${transfer.status || 'desconhecido'}".`);
+  }
 
   const itemsResult = await client.query('SELECT * FROM stock_transfer_items WHERE transfer_id = $1', [transferId]);
 
