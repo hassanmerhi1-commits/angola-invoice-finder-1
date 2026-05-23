@@ -1086,6 +1086,7 @@ export const api = {
         return { data: rows };
       });
     },
+    payablesAging: () => apiFetch<any[]>('/payments/payables-aging'),
     create: (data: any) => {
       return apiFetch<any>('/payments', { method: 'POST', body: JSON.stringify(data) }).then((res) => {
         if (res.data !== undefined || !isDemoMode()) return res;

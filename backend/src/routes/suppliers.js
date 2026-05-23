@@ -91,9 +91,12 @@ module.exports = function(broadcastTable) {
       const result = await db.query(
         `SELECT s.*,
                 COALESCE((
-                  SELECT SUM(CASE WHEN oi.is_debit = 1 OR oi.is_debit = TRUE THEN oi.remaining_amount ELSE -oi.remaining_amount END)
+                  SELECT SUM(
+                    CASE WHEN oi.is_debit = 1 OR oi.is_debit = TRUE THEN oi.remaining_amount ELSE -oi.remaining_amount END
+                  )
                   FROM open_items oi
                   WHERE oi.entity_type = 'supplier' AND oi.entity_id = s.id
+                    AND oi.status != 'cleared'
                 ), 0) AS balance
          FROM suppliers s
          WHERE s.is_active = true

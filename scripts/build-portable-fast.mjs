@@ -123,18 +123,30 @@ execFileSync('node', [
   stdio: 'inherit'
 });
 
+const copiedExes = [];
 for (const name of readdirSync(uniqueOutDir)) {
   if (name.toLowerCase().endsWith('.exe')) {
     const src = path.join(uniqueOutDir, name);
     const dest = path.join(releaseDir, name);
     try {
       cpSync(src, dest, { force: true });
+      copiedExes.push(dest);
     } catch {
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
       const fallbackName = name.replace(/\.exe$/i, `-${ts}.exe`);
-      cpSync(src, path.join(releaseDir, fallbackName), { force: true });
+      const fallbackDest = path.join(releaseDir, fallbackName);
+      cpSync(src, fallbackDest, { force: true });
+      copiedExes.push(fallbackDest);
+      console.warn(`[build-portable-fast] Could not overwrite ${name} (app may be running). Wrote: ${fallbackDest}`);
     }
   }
+}
+
+if (copiedExes.length) {
+  console.log('\n[build-portable-fast] Portable app ready:');
+  for (const p of copiedExes) console.log(`  ${p}`);
+} else {
+  console.warn(`[build-portable-fast] No .exe copied to ${releaseDir} — check ${uniqueOutDir}`);
 }
 
 const stagedUnpack = path.join(uniqueOutDir, 'win-unpacked');

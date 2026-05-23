@@ -13,6 +13,16 @@ function sanitizeUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed) ? trimmed : null;
 }
 
+/** Preserve text branch ids (e.g. branch-main) on SQLite; UUID on Postgres when valid. */
+function resolveProductBranchId(req, requestedBranchId) {
+  const scoped = resolveListBranchId(req, requestedBranchId);
+  if (scoped === undefined) return undefined;
+  if (!scoped) return null;
+  const key = String(scoped).trim();
+  if (db.engine === 'sqlite') return key;
+  return sanitizeUuid(key) || key;
+}
+
 function normalizeSkuKey(sku) {
   return String(sku || '').trim().toLowerCase();
 }
@@ -89,7 +99,9 @@ module.exports = function(broadcastTable) {
                 WHERE sm.warehouse_id = $1
                   AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
               ), 0))
-              ELSE COALESCE(bp.stock, p.stock, 0)
+              WHEN bp.id IS NOT NULL THEN COALESCE(bp.stock, 0)
+              WHEN p.branch_id = $1 THEN COALESCE(p.stock, 0)
+              ELSE 0
             END AS stock,
             COALESCE(bp.unit, p.unit) AS unit,
             COALESCE(bp.tax_rate, p.tax_rate) AS tax_rate,
@@ -115,23 +127,24 @@ module.exports = function(broadcastTable) {
               p.branch_id = $1
               OR bp.id IS NOT NULL
               OR (
-                p.branch_id IS NULL
+                (p.branch_id IS NULL OR TRIM(COALESCE(p.branch_id, '')) = '')
                 AND NOT EXISTS (
                   SELECT 1 FROM products bx
                   WHERE COALESCE(bx.is_active, 1) != 0 AND bx.branch_id = $1
                     AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
                     AND LOWER(TRIM(COALESCE(bx.sku, ''))) = LOWER(TRIM(p.sku))
                 )
-                AND (
-                  COALESCE(bp.stock, p.stock, 0) > 0
-                  OR EXISTS (
-                    SELECT 1
-                    FROM stock_movements sm
-                    INNER JOIN products pm ON pm.id = sm.product_id
-                    WHERE sm.warehouse_id = $1
-                      AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
-                      AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
-                  )
+              )
+              OR (
+                p.branch_id IN (
+                  SELECT id FROM branches
+                  WHERE COALESCE(is_main, 0) != 0 AND COALESCE(is_active, 1) != 0
+                )
+                AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+                AND NOT EXISTS (
+                  SELECT 1 FROM products bx
+                  WHERE COALESCE(bx.is_active, 1) != 0 AND bx.branch_id = $1
+                    AND LOWER(TRIM(COALESCE(bx.sku, ''))) = LOWER(TRIM(p.sku))
                 )
               )
             )
@@ -173,10 +186,10 @@ module.exports = function(broadcastTable) {
       const activeInt = isActive !== false ? 1 : 0;
 
       const c = Number(cost) || 0;
-      const scopedBranch = resolveListBranchId(req, branchId);
-      const resolvedBranchId = sanitizeUuid(
-        scopedBranch === undefined ? null : (scopedBranch || branchId),
-      );
+      const resolvedBranchId = resolveProductBranchId(req, branchId);
+      if (resolvedBranchId === undefined) {
+        return res.status(403).json({ error: 'Sem filial atribuída para criar produtos.' });
+      }
       // SQLite expands $10 four times from ONE param — do not pass c,c,c,c in the array.
       const result = await db.query(
         `INSERT INTO products (id, name, sku, barcode, category, price, price2, price3, price4, cost, first_cost, last_cost, avg_cost, stock, unit, tax_rate, branch_id, is_active, supplier_id, supplier_name)
@@ -223,7 +236,8 @@ module.exports = function(broadcastTable) {
            WHERE id=$19 AND version=$20
            RETURNING *`,
           [name, sku, barcode, category, price, cost, stock, unit, taxRate,
-           sanitizeUuid(branchId), isActive !== false ? 1 : 0,
+           resolveProductBranchId(req, branchId) ?? sanitizeUuid(branchId),
+           isActive !== false ? 1 : 0,
            price2 || 0, price3 || 0, price4 || 0,
            sanitizeUuid(supplierId), supplierName || null,
            lastCost ?? null, avgCost ?? null,
@@ -241,7 +255,8 @@ module.exports = function(broadcastTable) {
            WHERE id=$19
            RETURNING *`,
           [name, sku, barcode, category, price, cost, stock, unit, taxRate,
-           sanitizeUuid(branchId), isActive !== false ? 1 : 0,
+           resolveProductBranchId(req, branchId) ?? sanitizeUuid(branchId),
+           isActive !== false ? 1 : 0,
            price2 || 0, price3 || 0, price4 || 0,
            sanitizeUuid(supplierId), supplierName || null,
            lastCost ?? null, avgCost ?? null,
@@ -309,8 +324,12 @@ module.exports = function(broadcastTable) {
         const rawName = String(p?.name ?? p?.descricao ?? p?.description ?? p?.designacao ?? '').trim();
         const sku = rawSku || `AUTO-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const name = rawName || sku;
-        const scopedBranch = resolveListBranchId(req, sanitizeUuid(p.branchId));
-        const branchId = scopedBranch === undefined ? null : (scopedBranch || sanitizeUuid(p.branchId));
+        const branchId = resolveProductBranchId(req, p.branchId);
+        if (branchId === undefined) {
+          failed += 1;
+          errors.push({ sku, error: 'Sem filial atribuída' });
+          continue;
+        }
         const cost = Number(p.cost) || 0;
         const stock = Number(p.stock ?? p.quantidade) || 0;
         const activeInt = p.isActive !== false ? 1 : 0;

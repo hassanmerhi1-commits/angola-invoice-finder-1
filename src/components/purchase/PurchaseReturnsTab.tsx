@@ -361,10 +361,10 @@ export function PurchaseReturnsTab({
         notes,
       };
 
-      // Create linked Nota de Débito document
+      // Credit note to supplier (reduces payable / refund after payment) — not a debit note
       const debitNoteDoc: ERPDocument = {
         id: generateId(),
-        documentType: 'nota_debito',
+        documentType: 'nota_credito',
         documentNumber: returnNumber,
         branchId: invoiceBranchId,
         branchName: invoiceBranchName,
@@ -392,7 +392,7 @@ export function PurchaseReturnsTab({
         total,
         currency: selectedInvoice.currency === 'KZ' ? 'AOA' : selectedInvoice.currency,
         amountPaid: 0,
-        amountDue: total,
+        amountDue: 0,
         parentDocumentId: selectedInvoice.id,
         parentDocumentNumber: selectedInvoice.invoiceNumber,
         parentDocumentType: 'fatura_compra',
@@ -461,7 +461,7 @@ export function PurchaseReturnsTab({
             }] : []),
           ],
           documentLinks: [{
-            sourceType: 'nota_debito',
+            sourceType: 'nota_credito',
             sourceId: returnDoc.id,
             sourceNumber: returnNumber,
             targetType: 'fatura_compra',

@@ -98,13 +98,15 @@ export async function getDocuments(type?: DocumentType, branchId?: string): Prom
     const dbDocs = rows.map(mapDocFromDb);
     const localDocs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
     const byId = new Map<string, ERPDocument>();
-    for (const doc of [...localDocs, ...dbDocs]) byId.set(doc.id, doc);
+    for (const doc of [...localDocs, ...dbDocs]) {
+      byId.set(doc.id, normalizeSupplierPurchaseReturnDocument(doc));
+    }
     let docs = Array.from(byId.values());
     if (type) docs = docs.filter(d => d.documentType === type);
     if (branchId) docs = docs.filter(d => d.branchId === branchId);
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
-  let docs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
+  let docs = lsGet<ERPDocument[]>(STORAGE_KEY, []).map(normalizeSupplierPurchaseReturnDocument);
   if (type) docs = docs.filter(d => d.documentType === type);
   if (branchId) docs = docs.filter(d => d.branchId === branchId);
   return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -296,9 +298,23 @@ export function calculateDocumentTotals(lines: DocumentLine[]) {
   };
 }
 
+/** Purchase returns were briefly stored as supplier nota_debito with amountDue — fix on read. */
+function normalizeSupplierPurchaseReturnDocument(doc: ERPDocument): ERPDocument {
+  const isLegacyReturn =
+    doc.documentType === 'nota_debito' &&
+    (doc.entityType === 'supplier' || doc.parentDocumentType === 'fatura_compra');
+  if (!isLegacyReturn) return doc;
+  return {
+    ...doc,
+    documentType: 'nota_credito',
+    entityType: 'supplier',
+    amountDue: 0,
+  };
+}
+
 // DB mappers
 function mapDocFromDb(row: any): ERPDocument {
-  return {
+  return normalizeSupplierPurchaseReturnDocument({
     id: row.id,
     documentType: row.document_type || 'FT',
     documentNumber: row.document_number || '',
@@ -336,7 +352,7 @@ function mapDocFromDb(row: any): ERPDocument {
     createdAt: row.created_at || '',
     updatedAt: row.updated_at || '',
     childDocuments: row.child_documents_json ? JSON.parse(row.child_documents_json) : undefined,
-  };
+  });
 }
 
 function mapDocToDb(doc: ERPDocument): any {

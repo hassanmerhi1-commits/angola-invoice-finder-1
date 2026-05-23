@@ -2165,6 +2165,7 @@ export default function PurchaseInvoices() {
         currency: invoice.currency,
         description: `Fatura de Compra ${invoice.invoiceNumber} — ${invoice.supplierName}`,
         amount: invoice.total,
+        linkedPurchaseOrderNumber: String(invoice.orderNo || form.orderNo || form.ref || '').trim() || undefined,
 
         // Angola Tax Engine: persist IVA (input) lines for IVA return + audit
         taxLines: [

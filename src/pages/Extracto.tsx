@@ -30,6 +30,36 @@ interface EntitySummary {
   lastActivity: string;
 }
 
+function entitySide(doc: ERPDocument): 'customer' | 'supplier' {
+  if (doc.entityType === 'customer' || doc.entityType === 'supplier') return doc.entityType;
+  return DOCUMENT_TYPE_CONFIG[doc.documentType]?.entityType === 'supplier' ? 'supplier' : 'customer';
+}
+
+/** Running balance: debits increase what they owe us / we owe them; credits decrease it. */
+/** Legacy purchase returns were saved as supplier nota_debito — treat as credit on statements. */
+function isLegacySupplierPurchaseReturn(doc: ERPDocument): boolean {
+  return (
+    doc.documentType === 'nota_debito' &&
+    (doc.entityType === 'supplier' || doc.parentDocumentType === 'fatura_compra')
+  );
+}
+
+function isStatementDebit(doc: ERPDocument, isCustomer: boolean): boolean {
+  if (isLegacySupplierPurchaseReturn(doc)) return false;
+  if (isCustomer) {
+    return ['fatura_venda', 'nota_debito'].includes(doc.documentType);
+  }
+  return doc.documentType === 'fatura_compra';
+}
+
+function isStatementCredit(doc: ERPDocument, isCustomer: boolean): boolean {
+  if (isLegacySupplierPurchaseReturn(doc)) return true;
+  if (isCustomer) {
+    return ['recibo', 'nota_credito'].includes(doc.documentType);
+  }
+  return ['pagamento', 'nota_credito'].includes(doc.documentType);
+}
+
 export default function Extracto() {
   const { t } = useTranslation();
   const { listBranchId, isHeadOffice, branches } = useBranchScope();
@@ -58,10 +88,7 @@ export default function Extracto() {
   // Group documents by entity
   const entitySummaries = useMemo(() => {
     const isCustomer = activeTab === 'clientes';
-    const relevantDocs = allDocs.filter(d => {
-      const cfg = DOCUMENT_TYPE_CONFIG[d.documentType];
-      return isCustomer ? cfg.entityType === 'customer' : cfg.entityType === 'supplier';
-    });
+    const relevantDocs = allDocs.filter(d => entitySide(d) === (isCustomer ? 'customer' : 'supplier'));
 
     const grouped = new Map<string, EntitySummary>();
     relevantDocs.forEach(doc => {
@@ -81,10 +108,10 @@ export default function Extracto() {
       s.documentCount++;
       if (doc.issueDate > s.lastActivity) s.lastActivity = doc.issueDate;
 
-      if (['fatura_venda', 'fatura_compra', 'nota_debito'].includes(doc.documentType)) {
+      if (isStatementDebit(doc, isCustomer)) {
         s.totalInvoiced += doc.total;
       }
-      if (['recibo', 'pagamento', 'nota_credito'].includes(doc.documentType)) {
+      if (isStatementCredit(doc, isCustomer)) {
         s.totalPaid += doc.total;
       }
       s.balance = s.totalInvoiced - s.totalPaid;
@@ -107,7 +134,7 @@ export default function Extracto() {
   const statementLines = useMemo(() => {
     let running = 0;
     return entityDocuments.map(doc => {
-      const isDebit = ['fatura_venda', 'fatura_compra', 'nota_debito'].includes(doc.documentType);
+      const isDebit = isStatementDebit(doc, activeTab === 'clientes');
       const amount = doc.total;
       running += isDebit ? amount : -amount;
       return { doc, debit: isDebit ? amount : 0, credit: isDebit ? 0 : amount, running };

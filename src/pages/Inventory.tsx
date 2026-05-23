@@ -76,6 +76,7 @@ export default function Inventory() {
   const location = useLocation();
   const {
     branches,
+    allBranches,
     canSwitchBranch,
     userBranch,
     inventoryScopeId,
@@ -121,7 +122,8 @@ export default function Inventory() {
 
   const loadBranchProducts = useCallback(async () => {
     const branchProducts: Record<string, Product[]> = {};
-    const targets = isHeadOffice ? branches : (currentBranch ? [currentBranch] : []);
+    const branchList = allBranches.length > 0 ? allBranches : branches;
+    const targets = isHeadOffice ? branchList : (currentBranch ? [currentBranch] : []);
     for (const branch of targets) {
       // Use API first (source of truth), fallback to localStorage
       try {
@@ -137,7 +139,7 @@ export default function Inventory() {
       branchProducts[branch.id] = prods;
     }
     setAllBranchProducts(branchProducts);
-  }, [isHeadOffice, branches, currentBranch, mapApiRowToProduct]);
+  }, [isHeadOffice, branches, allBranches, currentBranch, mapApiRowToProduct]);
   
   useEffect(() => {
     loadBranchProducts();
@@ -207,12 +209,23 @@ export default function Inventory() {
           stock: (Number(prev.stock) || 0) + qty,
         });
       };
-      for (const p of products) {
-        mergeRow(p, Number(p.stock) || 0);
-      }
-      for (const branch of branches) {
-        for (const p of allBranchProducts[branch.id] || []) {
+      const branchList = allBranches.length > 0 ? allBranches : branches;
+      let summedFromBranches = false;
+      for (const branch of branchList) {
+        const rows = allBranchProducts[branch.id] || [];
+        if (rows.length > 0) summedFromBranches = true;
+        for (const p of rows) {
           mergeRow(p, Number(p.stock) || 0);
+        }
+      }
+      // Do not also merge the global "all products" list — it duplicates sede stock (e.g. 7000 + 7000 = 14000).
+      if (!summedFromBranches) {
+        for (const p of products) {
+          const key = skuKey(p);
+          const prev = bySku.get(key);
+          if (!prev || (p.stock || 0) > (prev.stock || 0)) {
+            bySku.set(key, p);
+          }
         }
       }
       return Array.from(bySku.values());
@@ -227,7 +240,7 @@ export default function Inventory() {
       }
     }
     return Array.from(bySku.values());
-  }, [products, isHeadOffice, branches, allBranchProducts]);
+  }, [products, isHeadOffice, branches, allBranches, allBranchProducts]);
   
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);

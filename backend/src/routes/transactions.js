@@ -342,7 +342,7 @@ module.exports = function(broadcastTable) {
         userId, date, description, amount, currency,
         stockEntries, journalLines, openItem, documentLinks,
         priceUpdates, entityBalanceUpdate,
-        taxLines
+        taxLines, linkedPurchaseOrderNumber,
       } = req.body;
 
       const effectivePriceUpdates = new Map(
@@ -596,6 +596,7 @@ module.exports = function(broadcastTable) {
               dueDate: openItem.dueDate || null,
               currency: openItem.currency || currency || 'AOA',
               branchId,
+              purchaseOrderNumber: linkedPurchaseOrderNumber,
             });
             if (adopted) {
               result.openItemId = adopted.id;

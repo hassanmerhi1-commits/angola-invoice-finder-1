@@ -1,15 +1,14 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { useBranchScope } from '@/hooks/useBranchScope';
-import { useSuppliers, usePurchaseOrders } from '@/hooks/useERP';
-import { Download, FileText, Clock, AlertTriangle, AlertCircle, CheckCircle } from 'lucide-react';
-import { format, differenceInDays, parseISO, addDays } from 'date-fns';
+import { Download, FileText, Clock, AlertTriangle, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { format, differenceInDays, parseISO } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { exportToExcel } from '@/lib/excel';
 import { useTranslation } from '@/i18n';
+import { api } from '@/lib/api/client';
 
 interface PayableEntry {
   supplierId: string;
@@ -21,131 +20,141 @@ interface PayableEntry {
   days60: number;
   days90: number;
   total: number;
-  orders: {
+  lines: {
     id: string;
-    number: string;
-    date: string;
+    documentNumber: string;
+    documentDate: string;
     dueDate: string;
     amount: number;
     daysUntilDue: number;
   }[];
 }
 
+function getPaymentTermDays(terms: string): number {
+  switch (terms) {
+    case 'immediate': return 0;
+    case '15_days': return 15;
+    case '30_days': return 30;
+    case '60_days': return 60;
+    case '90_days': return 90;
+    default: return 30;
+  }
+}
+
 export default function AccountsPayableReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId } = useBranchScope();
-  const { suppliers } = useSuppliers();
-  const { orders } = usePurchaseOrders(apiBranchId);
   const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [payableLines, setPayableLines] = useState<any[]>([]);
 
-  const getPaymentTermDays = (terms: string): number => {
-    switch (terms) {
-      case 'immediate': return 0;
-      case '15_days': return 15;
-      case '30_days': return 30;
-      case '60_days': return 60;
-      case '90_days': return 90;
-      default: return 30;
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const res = await api.payments.payablesAging();
+      if (!cancelled) {
+        setPayableLines(Array.isArray(res.data) ? res.data : []);
+        setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const payableReport = useMemo((): PayableEntry[] => {
     const today = new Date();
-    const supplierPayables: Record<string, PayableEntry> = {};
-    
-    // Get received purchase orders (we owe money for these)
-    orders
-      .filter(order => order.status === 'received' || order.status === 'partial')
-      .forEach(order => {
-        const supplier = suppliers.find(s => s.id === order.supplierId);
-        if (!supplier) return;
-        
-        const supplierId = supplier.id;
-        if (!supplierPayables[supplierId]) {
-          supplierPayables[supplierId] = {
-            supplierId,
-            supplierName: supplier.name,
-            supplierNif: supplier.nif,
-            paymentTerms: supplier.paymentTerms,
-            current: 0,
-            days30: 0,
-            days60: 0,
-            days90: 0,
-            total: 0,
-            orders: [],
-          };
-        }
-        
-        const orderDate = parseISO(order.createdAt);
-        const paymentTermDays = getPaymentTermDays(supplier.paymentTerms);
-        const dueDate = addDays(orderDate, paymentTermDays);
-        const daysUntilDue = differenceInDays(dueDate, today);
-        const amount = order.total;
-        
-        // Add to appropriate bucket based on due date
-        if (daysUntilDue >= 0) {
-          // Not yet due
-          supplierPayables[supplierId].current += amount;
-        } else if (daysUntilDue >= -30) {
-          // 1-30 days overdue
-          supplierPayables[supplierId].days30 += amount;
-        } else if (daysUntilDue >= -60) {
-          // 31-60 days overdue
-          supplierPayables[supplierId].days60 += amount;
-        } else {
-          // 60+ days overdue
-          supplierPayables[supplierId].days90 += amount;
-        }
-        
-        supplierPayables[supplierId].total += amount;
-        supplierPayables[supplierId].orders.push({
-          id: order.id,
-          number: order.orderNumber,
-          date: order.createdAt,
-          dueDate: dueDate.toISOString(),
-          amount,
-          daysUntilDue,
-        });
+    const bySupplier: Record<string, PayableEntry> = {};
+
+    for (const row of payableLines) {
+      const supplierId = String(row.entity_id || '');
+      if (!supplierId) continue;
+
+      const amount = Number(row.remaining_amount || 0);
+      if (amount <= 0.001) continue;
+
+      if (!bySupplier[supplierId]) {
+        bySupplier[supplierId] = {
+          supplierId,
+          supplierName: String(row.supplier_name || ''),
+          supplierNif: String(row.supplier_nif || ''),
+          paymentTerms: String(row.payment_terms || '30_days'),
+          current: 0,
+          days30: 0,
+          days60: 0,
+          days90: 0,
+          total: 0,
+          lines: [],
+        };
+      }
+
+      const entry = bySupplier[supplierId];
+      const docDate = String(row.document_date || '').slice(0, 10) || format(today, 'yyyy-MM-dd');
+      const dueRaw = row.due_date || row.dueDate;
+      const dueDate = dueRaw
+        ? String(dueRaw).slice(0, 10)
+        : format(
+            new Date(docDate).getTime() + getPaymentTermDays(entry.paymentTerms) * 86400000,
+            'yyyy-MM-dd',
+          );
+      const daysUntilDue = differenceInDays(parseISO(dueDate), today);
+
+      if (daysUntilDue >= 0) entry.current += amount;
+      else if (daysUntilDue >= -30) entry.days30 += amount;
+      else if (daysUntilDue >= -60) entry.days60 += amount;
+      else entry.days90 += amount;
+
+      entry.total += amount;
+      entry.lines.push({
+        id: String(row.id || row.document_id),
+        documentNumber: String(row.document_number || ''),
+        documentDate: docDate,
+        dueDate,
+        amount,
+        daysUntilDue,
       });
-    
-    return Object.values(supplierPayables)
-      .filter(entry => entry.total > 0)
+    }
+
+    return Object.values(bySupplier)
+      .filter((e) => e.total > 0.001)
       .sort((a, b) => b.total - a.total);
-  }, [suppliers, orders]);
+  }, [payableLines]);
 
   const summaryStats = useMemo(() => {
-    return payableReport.reduce((acc, entry) => ({
-      current: acc.current + entry.current,
-      days30: acc.days30 + entry.days30,
-      days60: acc.days60 + entry.days60,
-      days90: acc.days90 + entry.days90,
-      total: acc.total + entry.total,
-    }), { current: 0, days30: 0, days60: 0, days90: 0, total: 0 });
+    return payableReport.reduce(
+      (acc, entry) => ({
+        current: acc.current + entry.current,
+        days30: acc.days30 + entry.days30,
+        days60: acc.days60 + entry.days60,
+        days90: acc.days90 + entry.days90,
+        total: acc.total + entry.total,
+      }),
+      { current: 0, days30: 0, days60: 0, days90: 0, total: 0 },
+    );
   }, [payableReport]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat(locale, {
-      style: 'currency', 
+      style: 'currency',
       currency: 'AOA',
-      minimumFractionDigits: 0 
+      minimumFractionDigits: 0,
     }).format(value);
   };
 
   const getDueBadge = (daysUntilDue: number) => {
     if (daysUntilDue >= 7) {
       return <Badge variant="secondary" className="bg-green-500/10 text-green-500">{t.reportsUi.dueSoon}</Badge>;
-    } else if (daysUntilDue >= 0) {
-      return <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-500">{t.reportsUi.dueShort}</Badge>;
-    } else if (daysUntilDue >= -30) {
-      return <Badge variant="secondary" className="bg-orange-500/10 text-orange-500">{t.reportsUi.overdue}</Badge>;
-    } else {
-      return <Badge variant="destructive">{t.reportsUi.veryLate}</Badge>;
     }
+    if (daysUntilDue >= 0) {
+      return <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-500">{t.reportsUi.dueShort}</Badge>;
+    }
+    if (daysUntilDue >= -30) {
+      return <Badge variant="secondary" className="bg-orange-500/10 text-orange-500">{t.reportsUi.overdue}</Badge>;
+    }
+    return <Badge variant="destructive">{t.reportsUi.veryLate}</Badge>;
   };
 
   const handleExport = () => {
-    const data = payableReport.map(entry => ({
+    const data = payableReport.map((entry) => ({
       [t.reportsUi.supplier]: entry.supplierName,
       [t.reportsUi.nif]: entry.supplierNif,
       [t.reportsUi.paymentTerm]: entry.paymentTerms.replace('_', ' '),
@@ -155,13 +164,20 @@ export default function AccountsPayableReport() {
       [t.reportsUi.overdue60plus]: entry.days90,
       [t.reportsUi.total]: entry.total,
     }));
-    
     exportToExcel(data, `ContasPagar_${format(new Date(), 'yyyyMMdd')}`);
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>{t.common.loading}</span>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card>
           <CardContent className="pt-6">
@@ -207,7 +223,6 @@ export default function AccountsPayableReport() {
         </Card>
       </div>
 
-      {/* Payables Table */}
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
@@ -216,9 +231,7 @@ export default function AccountsPayableReport() {
                 <FileText className="w-5 h-5" />
                 {t.reportsUi.payablesTitle}
               </CardTitle>
-              <CardDescription>
-                {t.reportsUi.payablesDesc}
-              </CardDescription>
+              <CardDescription>{t.reportsUi.payablesDesc}</CardDescription>
             </div>
             <Button variant="outline" onClick={handleExport}>
               <Download className="w-4 h-4 mr-2" />
@@ -230,83 +243,72 @@ export default function AccountsPayableReport() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Fornecedor</TableHead>
-                <TableHead>NIF</TableHead>
-                <TableHead>Prazo</TableHead>
-                <TableHead className="text-right text-green-500">A Vencer</TableHead>
-                <TableHead className="text-right text-yellow-500">1-30 dias</TableHead>
-                <TableHead className="text-right text-orange-500">31-60 dias</TableHead>
-                <TableHead className="text-right text-red-500">+60 dias</TableHead>
-                <TableHead className="text-right">Total</TableHead>
+                <TableHead>{t.reportsUi.supplier}</TableHead>
+                <TableHead>{t.reportsUi.nif}</TableHead>
+                <TableHead>{t.reportsUi.paymentTerm}</TableHead>
+                <TableHead className="text-right text-green-500">{t.reportsUi.currentDue}</TableHead>
+                <TableHead className="text-right text-yellow-500">{t.reportsUi.overdue1to30}</TableHead>
+                <TableHead className="text-right text-orange-500">{t.reportsUi.overdue31to60}</TableHead>
+                <TableHead className="text-right text-red-500">{t.reportsUi.overdue60plus}</TableHead>
+                <TableHead className="text-right">{t.reportsUi.total}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {payableReport.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                    Nenhuma dívida a fornecedor encontrada
+                    {language === 'pt' ? 'Nenhuma dívida em aberto a fornecedores' : 'No open supplier payables'}
                   </TableCell>
                 </TableRow>
               ) : (
                 payableReport.map((entry) => (
-                  <>
-                    <TableRow 
-                      key={entry.supplierId}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => setExpandedSupplier(
-                        expandedSupplier === entry.supplierId ? null : entry.supplierId
-                      )}
-                    >
-                      <TableCell className="font-medium">{entry.supplierName}</TableCell>
-                      <TableCell>{entry.supplierNif}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{entry.paymentTerms.replace('_', ' ')}</Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {entry.current > 0 ? formatCurrency(entry.current) : '-'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {entry.days30 > 0 ? formatCurrency(entry.days30) : '-'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {entry.days60 > 0 ? formatCurrency(entry.days60) : '-'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {entry.days90 > 0 ? formatCurrency(entry.days90) : '-'}
-                      </TableCell>
-                      <TableCell className="text-right font-bold">{formatCurrency(entry.total)}</TableCell>
-                    </TableRow>
-                    {expandedSupplier === entry.supplierId && entry.orders.length > 0 && (
-                      <TableRow>
-                        <TableCell colSpan={8} className="bg-muted/30 p-4">
-                          <p className="text-sm font-medium mb-2">Ordens de Compra:</p>
-                          <div className="space-y-2">
-                            {entry.orders.map(order => (
-                              <div key={order.id} className="flex items-center justify-between p-2 bg-background rounded">
-                                <div className="flex items-center gap-4">
-                                  <span className="font-mono text-sm">{order.number}</span>
-                                  <span className="text-sm text-muted-foreground">
-                                    Data: {format(parseISO(order.date), 'dd/MM/yyyy', { locale: pt })}
-                                  </span>
-                                  <span className="text-sm text-muted-foreground">
-                                    Vence: {format(parseISO(order.dueDate), 'dd/MM/yyyy', { locale: pt })}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-4">
-                                  {getDueBadge(order.daysUntilDue)}
-                                  <span className="font-medium">{formatCurrency(order.amount)}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </>
+                  <TableRow
+                    key={entry.supplierId}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() =>
+                      setExpandedSupplier(expandedSupplier === entry.supplierId ? null : entry.supplierId)
+                    }
+                  >
+                    <TableCell className="font-medium">{entry.supplierName}</TableCell>
+                    <TableCell>{entry.supplierNif}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{entry.paymentTerms.replace('_', ' ')}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {entry.current > 0 ? formatCurrency(entry.current) : '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {entry.days30 > 0 ? formatCurrency(entry.days30) : '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {entry.days60 > 0 ? formatCurrency(entry.days60) : '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {entry.days90 > 0 ? formatCurrency(entry.days90) : '—'}
+                    </TableCell>
+                    <TableCell className="text-right font-bold">{formatCurrency(entry.total)}</TableCell>
+                  </TableRow>
                 ))
               )}
             </TableBody>
           </Table>
+          {expandedSupplier && payableReport.find((e) => e.supplierId === expandedSupplier)?.lines.length ? (
+            <div className="mt-4 p-4 bg-muted/30 rounded-lg space-y-2">
+              <p className="text-sm font-medium">{t.paymentsUi.openDocsToOffset}</p>
+              {payableReport
+                .find((e) => e.supplierId === expandedSupplier)!
+                .lines.map((line) => (
+                  <div key={line.id} className="flex items-center justify-between p-2 bg-background rounded text-sm">
+                    <span className="font-mono">{line.documentNumber}</span>
+                    <span className="text-muted-foreground">
+                      {format(parseISO(line.dueDate), 'dd/MM/yyyy', { locale: pt })}
+                    </span>
+                    {getDueBadge(line.daysUntilDue)}
+                    <span className="font-medium">{formatCurrency(line.amount)}</span>
+                  </div>
+                ))}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </div>

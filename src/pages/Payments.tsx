@@ -24,7 +24,8 @@ import { cn } from '@/lib/utils';
 import { useClients, useSuppliers } from '@/hooks/useERP';
 import type { OpenItem, Payment } from '@/types/erp';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
-import { signedOpenItemBalance } from '@/lib/openItems';
+import * as storage from '@/lib/storage';
+import { isOpenItemDebit, signedOpenItemBalance } from '@/lib/openItems';
 
 // Demo data for localStorage mode
 function mapPaymentRow(p: any): Payment {
@@ -151,11 +152,20 @@ export default function Payments() {
     return openItems.filter(oi => oi.entityType === entType && oi.entityId === entityId && oi.status !== 'cleared');
   }, [entityId, paymentType, openItems]);
 
+  /** Invoices / payables to settle (exclude payment lines and supplier credits). */
+  const entityPayableItems = useMemo(() => {
+    return entityOpenItems.filter((oi) => isOpenItemDebit(oi.isDebit));
+  }, [entityOpenItems]);
+
+  const payableTotal = useMemo(() => {
+    return entityPayableItems.reduce((sum, oi) => sum + signedOpenItemBalance(oi), 0);
+  }, [entityPayableItems]);
+
   const selectedTotal = useMemo(() => {
-    return entityOpenItems
+    return entityPayableItems
       .filter(oi => selectedOpenItems.has(oi.id))
       .reduce((sum, oi) => sum + signedOpenItemBalance(oi), 0);
-  }, [entityOpenItems, selectedOpenItems]);
+  }, [entityPayableItems, selectedOpenItems]);
 
   const formatSignedAmount = (oi: OpenItem) => {
     const signed = signedOpenItemBalance(oi);
@@ -182,11 +192,22 @@ export default function Payments() {
   const handleEntityChange = useCallback((id: string) => {
     setEntityId(id);
     setSelectedOpenItems(new Set());
+    setAmount('');
     if (id) {
       const entType = paymentType === 'receipt' ? 'customer' : 'supplier';
       loadOpenItems(entType, id);
     }
   }, [paymentType, loadOpenItems]);
+
+  const payableItemsKey = entityPayableItems.map((oi) => oi.id).join('|');
+  useEffect(() => {
+    if (!entityId || !payableItemsKey) return;
+    setSelectedOpenItems(new Set(entityPayableItems.map((oi) => oi.id)));
+    setAmount((prev) => {
+      if (prev && Number(prev) > 0) return prev;
+      return String(Math.round(payableTotal * 100) / 100);
+    });
+  }, [entityId, payableItemsKey, entityPayableItems, payableTotal]);
 
   const handleCreate = async () => {
     if (!entityId || !amount || Number(amount) <= 0) {
@@ -195,7 +216,7 @@ export default function Payments() {
     }
 
     const entity = entities.find(e => e.id === entityId);
-    const selected = entityOpenItems.filter(oi => selectedOpenItems.has(oi.id));
+    const selected = entityPayableItems.filter(oi => selectedOpenItems.has(oi.id));
 
     const branchId = currentBranch?.id || user?.branchId || 'branch-main';
     const createdBy = user?.id || user?.email || 'user-admin';
@@ -214,6 +235,14 @@ export default function Payments() {
         notes,
         invoiceIds: selected.map(oi => oi.documentId),
       });
+      if (paymentType === 'payment') {
+        try {
+          await api.suppliers.reconcileBalances();
+        } catch (e) {
+          console.warn('[PAYMENTS] Supplier balance reconcile skipped:', e);
+        }
+        window.dispatchEvent(new CustomEvent(storage.SUPPLIERS_CHANGED_EVENT, { detail: {} }));
+      }
       toast.success(paymentType === 'receipt' ? t.paymentsUi.receiptRecorded : t.paymentsUi.paymentRecorded);
       setShowNewDialog(false);
       resetForm();
@@ -438,7 +467,7 @@ export default function Payments() {
             </div>
 
             {/* Open Items for this entity */}
-            {entityId && entityOpenItems.length > 0 && (
+            {entityId && entityPayableItems.length > 0 && (
               <div>
                 <Label className="mb-2 block">{t.paymentsUi.openDocsToOffset}</Label>
                 <div className="border rounded-md max-h-48 overflow-y-auto">
@@ -452,7 +481,7 @@ export default function Payments() {
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {entityOpenItems.map(oi => (
+                      {entityPayableItems.map(oi => (
                         <tr key={oi.id} className={cn("cursor-pointer hover:bg-accent/50", selectedOpenItems.has(oi.id) && "bg-primary/10")}>
                           <td className="px-2 py-1.5">
                             <Checkbox

@@ -169,14 +169,13 @@ function productBelongsToBranchList(product: Product, branchId: string, apiSkus:
   return isShared && !apiSkus.has(skuKey);
 }
 
-/** Drop rows from other branches; hide shared-catalog lines with zero stock at this branch. */
+/** Drop rows owned by another branch; keep shared catalog and sede catalog rows (stock may be 0 at filial). */
 function filterProductsForApiScope(products: Product[], branchId?: string): Product[] {
   if (!branchId) return products;
   const key = String(branchId).trim();
   return products.filter((p) => {
     const owner = String(p.branchId || '').trim();
     if (owner && owner !== key) return false;
-    if (!owner && (p.stock || 0) <= 0) return false;
     return true;
   });
 }

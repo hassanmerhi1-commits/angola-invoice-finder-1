@@ -36,6 +36,9 @@ module.exports = function(broadcastTable) {
       await enqueuePaymentCreated(client, payment.id, req.body.branchId);
       await client.query('COMMIT');
       await broadcastTable('payments');
+      if (req.body.entityType === 'supplier') {
+        await broadcastTable('suppliers');
+      }
       res.status(201).json(payment);
     } catch (error) {
       await client.query('ROLLBACK');
@@ -43,6 +46,28 @@ module.exports = function(broadcastTable) {
       res.status(500).json({ error: error.message || 'Failed to create payment' });
     } finally {
       client.release();
+    }
+  });
+
+  // READ: Supplier payables from open items (real balance after payments/returns)
+  router.get('/payables-aging', async (req, res) => {
+    try {
+      const result = await db.query(
+        `SELECT oi.id, oi.entity_id, oi.document_id, oi.document_number, oi.document_date, oi.due_date,
+                oi.remaining_amount, oi.original_amount, oi.document_type,
+                s.name AS supplier_name, s.nif AS supplier_nif, s.payment_terms
+         FROM open_items oi
+         INNER JOIN suppliers s ON s.id = oi.entity_id
+         WHERE oi.entity_type = 'supplier'
+           AND (oi.is_debit = 1 OR oi.is_debit = TRUE)
+           AND oi.status != 'cleared'
+           AND oi.remaining_amount > 0.01
+         ORDER BY s.name, oi.document_date ASC`,
+      );
+      res.json(result.rows);
+    } catch (error) {
+      console.error('[PAYMENTS PAYABLES ERROR]', error);
+      res.status(500).json({ error: 'Failed to fetch payables' });
     }
   });
 

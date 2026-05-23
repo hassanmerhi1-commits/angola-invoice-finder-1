@@ -131,12 +131,11 @@ async function runDataConsistencyRepair() {
     productStockReconciled: 0,
   };
 
-  const { runSupplierBalanceRepair, backfillSupplierBalancesFromOpenItems, repairSupplierReturnOpenItems } =
-    require('./supplierBalanceRepair');
+  const { runSupplierBalanceRepair } = require('./supplierBalanceRepair');
 
   try {
-    report.supplierReturns = await repairSupplierReturnOpenItems();
-    report.supplierBalances = await backfillSupplierBalancesFromOpenItems();
+    report.supplierRepair = await runSupplierBalanceRepair();
+    report.supplierBalances = { updated: report.supplierRepair?.updated ?? 0 };
   } catch (e) {
     report.supplierError = e.message;
   }

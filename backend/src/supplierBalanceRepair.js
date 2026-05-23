@@ -4,6 +4,13 @@
  */
 const db = require('./db');
 
+const UPDATE_OPEN_ITEM_REMAINING = `
+  UPDATE open_items SET
+    remaining_amount = remaining_amount - $1,
+    status = CASE WHEN remaining_amount - $1 <= 0.01 THEN 'cleared' ELSE 'partial' END,
+    cleared_at = CASE WHEN remaining_amount - $1 <= 0.01 THEN CURRENT_TIMESTAMP ELSE cleared_at END
+  WHERE id = $2`;
+
 async function resolveSupplierPayableDocumentIds(invoiceId) {
   const ids = [];
   if (invoiceId) ids.push(String(invoiceId));
@@ -80,14 +87,8 @@ async function repairSupplierReturnOpenItems() {
     if (invRem <= 0 || credRem <= 0) continue;
 
     const applied = Math.min(invRem, credRem);
-    const updateOi = `
-      UPDATE open_items SET
-        remaining_amount = remaining_amount - $1,
-        status = CASE WHEN remaining_amount - $1 <= 0.01 THEN 'cleared' ELSE 'partial' END,
-        cleared_at = CASE WHEN remaining_amount - $1 <= 0.01 THEN CURRENT_TIMESTAMP ELSE cleared_at END
-      WHERE id = $2`;
-    await db.query(updateOi, [applied, invoiceRow.id]);
-    await db.query(updateOi, [applied, creditRow.id]);
+    await db.query(UPDATE_OPEN_ITEM_REMAINING, [applied, invoiceRow.id]);
+    await db.query(UPDATE_OPEN_ITEM_REMAINING, [applied, creditRow.id]);
     repaired += 1;
   }
 
@@ -111,14 +112,7 @@ async function repairSupplierReturnOpenItems() {
 
       const applied = Math.min(invRem, returnAmount);
 
-      await db.query(
-        `UPDATE open_items SET
-           remaining_amount = remaining_amount - $1,
-           status = CASE WHEN remaining_amount - $1 <= 0.01 THEN 'cleared' ELSE 'partial' END,
-           cleared_at = CASE WHEN remaining_amount - $1 <= 0.01 THEN CURRENT_TIMESTAMP ELSE cleared_at END
-         WHERE id = $2`,
-        [applied, invoiceRow.id]
-      );
+      await db.query(UPDATE_OPEN_ITEM_REMAINING, [applied, invoiceRow.id]);
 
       // Clear orphan credit open item for this return document if present
       const creditOi = await db.query(
@@ -131,14 +125,7 @@ async function repairSupplierReturnOpenItems() {
         const credRem = Number(creditOi.rows[0].remaining_amount || 0);
         const credApplied = Math.min(credRem, applied);
         if (credApplied > 0) {
-          await db.query(
-            `UPDATE open_items SET
-               remaining_amount = remaining_amount - $1,
-               status = CASE WHEN remaining_amount - $1 <= 0.01 THEN 'cleared' ELSE 'partial' END,
-               cleared_at = CASE WHEN remaining_amount - $1 <= 0.01 THEN CURRENT_TIMESTAMP ELSE cleared_at END
-             WHERE id = $2`,
-            [credApplied, creditOi.rows[0].id]
-          );
+          await db.query(UPDATE_OPEN_ITEM_REMAINING, [credApplied, creditOi.rows[0].id]);
         }
       }
 
@@ -154,9 +141,12 @@ async function backfillSupplierBalancesFromOpenItems() {
 
   const result = await db.query(
     `UPDATE suppliers SET balance = COALESCE((
-       SELECT SUM(CASE WHEN oi.is_debit = 1 OR oi.is_debit = TRUE THEN oi.remaining_amount ELSE -oi.remaining_amount END)
+       SELECT SUM(
+         CASE WHEN oi.is_debit = 1 OR oi.is_debit = TRUE THEN oi.remaining_amount ELSE -oi.remaining_amount END
+       )
        FROM open_items oi
        WHERE oi.entity_type = 'supplier' AND oi.entity_id = suppliers.id
+         AND oi.status != 'cleared'
      ), 0)`
   );
 
@@ -178,16 +168,272 @@ async function tableExists(name) {
   return r.rows.length > 0;
 }
 
+async function fixMisclassifiedSupplierReturnOpenItems() {
+  if (!await tableExists('open_items')) return { fixed: 0 };
+
+  const result = await db.query(
+    `UPDATE open_items SET is_debit = 0
+     WHERE entity_type = 'supplier'
+       AND (is_debit = 1 OR is_debit = TRUE)
+       AND (
+         document_type IN ('credit_note', 'supplier_return', 'purchase_return')
+         OR document_id IN (
+           SELECT source_id FROM document_links
+           WHERE target_type IN ('fatura_compra', 'purchase_invoice')
+         )
+       )`
+  );
+  return { fixed: result.rowCount || 0 };
+}
+
+/**
+ * Payments recorded without selecting invoices leave matching debit/credit open items uncleared.
+ * Apply unallocated payment credits to open supplier invoices (FIFO).
+ */
+async function zeroClearedOpenItemRemainders() {
+  if (!await tableExists('open_items')) return { fixed: 0 };
+  const result = await db.query(
+    `UPDATE open_items SET remaining_amount = 0
+     WHERE status = 'cleared' AND remaining_amount > 0.01`,
+  );
+  return { fixed: result.rowCount || 0 };
+}
+
+/** Net supplier credits (payments, returns) against open payables until balanced. */
+async function netSupplierOpenItems() {
+  if (!await tableExists('open_items')) return { repaired: 0 };
+
+  const entities = await db.query(
+    `SELECT DISTINCT entity_id FROM open_items
+     WHERE entity_type = 'supplier' AND status != 'cleared' AND remaining_amount > 0.01`,
+  );
+
+  let repaired = 0;
+  for (const row of entities.rows || []) {
+    const entityId = row.entity_id;
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      const debit = await db.query(
+        `SELECT id, remaining_amount FROM open_items
+         WHERE entity_type = 'supplier' AND entity_id = $1
+           AND (is_debit = 1 OR is_debit = TRUE)
+           AND status != 'cleared' AND remaining_amount > 0.01
+         ORDER BY document_date ASC LIMIT 1`,
+        [entityId],
+      );
+      const credit = await db.query(
+        `SELECT id, remaining_amount FROM open_items
+         WHERE entity_type = 'supplier' AND entity_id = $1
+           AND (is_debit = 0 OR is_debit = FALSE)
+           AND status != 'cleared' AND remaining_amount > 0.01
+         ORDER BY document_date ASC LIMIT 1`,
+        [entityId],
+      );
+      if (!debit.rows[0] || !credit.rows[0]) break;
+
+      const applied = Math.min(
+        Number(debit.rows[0].remaining_amount || 0),
+        Number(credit.rows[0].remaining_amount || 0),
+      );
+      if (applied <= 0.001) break;
+
+      await db.query(UPDATE_OPEN_ITEM_REMAINING, [applied, debit.rows[0].id]);
+      await db.query(UPDATE_OPEN_ITEM_REMAINING, [applied, credit.rows[0].id]);
+      repaired += 1;
+      progressed = true;
+    }
+  }
+
+  return { repaired };
+}
+
+/**
+ * PO receipt and purchase invoice can both create payables.
+ * When an FC exists for the same order number, clear the duplicate PO open item.
+ */
+async function deduplicateSupplierPoInvoiceOpenItems() {
+  if (!await tableExists('open_items') || !await tableExists('purchase_orders')) {
+    return { cleared: 0 };
+  }
+
+  let cleared = 0;
+  const poItems = await db.query(
+    `SELECT oi.id AS po_oi_id, oi.entity_id, oi.remaining_amount, po.order_number
+     FROM open_items oi
+     INNER JOIN purchase_orders po ON po.id = oi.document_id
+     WHERE oi.entity_type = 'supplier'
+       AND (oi.is_debit = 1 OR oi.is_debit = TRUE)
+       AND oi.status != 'cleared'
+       AND oi.remaining_amount > 0.01`,
+  );
+
+  for (const row of poItems.rows || []) {
+    const orderNo = String(row.order_number || '').trim();
+    if (!orderNo) continue;
+
+    let invId = null;
+    try {
+      const inv = await db.query(
+        'SELECT id FROM purchase_invoices WHERE order_no = $1 LIMIT 1',
+        [orderNo],
+      );
+      invId = inv.rows[0]?.id;
+    } catch {
+      continue;
+    }
+    if (!invId) continue;
+
+    const invOi = await db.query(
+      `SELECT id FROM open_items
+       WHERE entity_type = 'supplier' AND entity_id = $1 AND document_id = $2
+         AND (is_debit = 1 OR is_debit = TRUE)
+       LIMIT 1`,
+      [row.entity_id, invId],
+    );
+    if (!invOi.rows[0]) continue;
+
+    await db.query(
+      `UPDATE open_items SET remaining_amount = 0, status = 'cleared', cleared_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [row.po_oi_id],
+    );
+    cleared += 1;
+  }
+
+  return { cleared };
+}
+
+/** PO receipt and purchase invoice can both create payables; clear PO when invoice is already settled. */
+async function clearOrphanPurchaseOrderOpenItems() {
+  if (!await tableExists('open_items') || !await tableExists('purchase_orders')) {
+    return { cleared: 0 };
+  }
+
+  let cleared = 0;
+  const poItems = await db.query(
+    `SELECT oi.id AS po_oi_id, oi.entity_id, oi.remaining_amount, po.id AS po_id, po.order_number
+     FROM open_items oi
+     INNER JOIN purchase_orders po ON po.id = oi.document_id
+     WHERE oi.entity_type = 'supplier'
+       AND (oi.is_debit = 1 OR oi.is_debit = TRUE)
+       AND oi.status != 'cleared'
+       AND oi.remaining_amount > 0.01`,
+  );
+
+  for (const row of poItems.rows || []) {
+    const orderNo = String(row.order_number || '').trim();
+    if (!orderNo) continue;
+
+    let invId = null;
+    try {
+      const inv = await db.query(
+        'SELECT id FROM purchase_invoices WHERE order_no = $1 LIMIT 1',
+        [orderNo],
+      );
+      invId = inv.rows[0]?.id;
+    } catch {
+      continue;
+    }
+    if (!invId) continue;
+
+    const invOi = await db.query(
+      `SELECT id, status, remaining_amount FROM open_items
+       WHERE entity_type = 'supplier' AND entity_id = $1 AND document_id = $2
+         AND (is_debit = 1 OR is_debit = TRUE)
+       ORDER BY created_at DESC LIMIT 1`,
+      [row.entity_id, invId],
+    );
+    const invRow = invOi.rows[0];
+    if (!invRow) continue;
+
+    const invRem = Number(invRow.remaining_amount || 0);
+    const invCleared = invRow.status === 'cleared' || invRem <= 0.01;
+    if (!invCleared) continue;
+
+    const poRem = Number(row.remaining_amount || 0);
+    if (poRem <= 0.01) continue;
+
+    await db.query(
+      `UPDATE open_items SET remaining_amount = 0, status = 'cleared', cleared_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [row.po_oi_id],
+    );
+    cleared += 1;
+  }
+
+  return { cleared };
+}
+
+async function repairUnallocatedSupplierPayments() {
+  if (!await tableExists('open_items')) return { repaired: 0 };
+
+  const payments = await db.query(
+    `SELECT id, entity_id, remaining_amount, document_number
+     FROM open_items
+     WHERE entity_type = 'supplier'
+       AND document_type = 'payment'
+       AND (is_debit = 0 OR is_debit = FALSE)
+       AND status != 'cleared'
+       AND remaining_amount > 0.01
+     ORDER BY document_date ASC`
+  );
+
+  let repaired = 0;
+
+  for (const pay of payments.rows || []) {
+    let remaining = Number(pay.remaining_amount || 0);
+    if (remaining <= 0.01) continue;
+
+    const debits = await db.query(
+      `SELECT id, remaining_amount FROM open_items
+       WHERE entity_type = 'supplier' AND entity_id = $1
+         AND (is_debit = 1 OR is_debit = TRUE)
+         AND status != 'cleared'
+         AND remaining_amount > 0.01
+       ORDER BY document_date ASC`,
+      [pay.entity_id],
+    );
+
+    for (const inv of debits.rows || []) {
+      if (remaining <= 0.001) break;
+      const invRem = Number(inv.remaining_amount || 0);
+      if (invRem <= 0.001) continue;
+      const applied = Math.min(remaining, invRem);
+      await db.query(UPDATE_OPEN_ITEM_REMAINING, [applied, inv.id]);
+      await db.query(UPDATE_OPEN_ITEM_REMAINING, [applied, pay.id]);
+      remaining -= applied;
+      repaired += 1;
+    }
+  }
+
+  return { repaired };
+}
+
 async function runSupplierBalanceRepair() {
   try {
+    const zeroed = await zeroClearedOpenItemRemainders();
+    const misclassified = await fixMisclassifiedSupplierReturnOpenItems();
+    const poDeduped = await deduplicateSupplierPoInvoiceOpenItems();
+    const poCleared = await clearOrphanPurchaseOrderOpenItems();
     const linkRepair = await repairSupplierReturnOpenItems();
+    const paymentRepair = await repairUnallocatedSupplierPayments();
+    const netted = await netSupplierOpenItems();
     const balanceSync = await backfillSupplierBalancesFromOpenItems();
-    if (linkRepair.repaired > 0 || balanceSync.updated > 0) {
+    if (
+      zeroed.fixed > 0 ||
+      misclassified.fixed > 0 ||
+      poCleared.cleared > 0 ||
+      linkRepair.repaired > 0 ||
+      paymentRepair.repaired > 0 ||
+      netted.repaired > 0 ||
+      balanceSync.updated > 0
+    ) {
       console.log(
-        `[DB] Supplier balance repair: ${linkRepair.repaired} return(s) applied to invoice open items, ${balanceSync.updated} supplier balance(s) synced`
+        `[DB] Supplier balance repair: ${zeroed.fixed} cleared-row fix(es), ${misclassified.fixed} return reclass, ${poDeduped.cleared} PO/FC dedup(s), ${poCleared.cleared} orphan PO clear(s), ${linkRepair.repaired} return link(s), ${paymentRepair.repaired} payment alloc(s), ${netted.repaired} credit/debit net(s), ${balanceSync.updated} balance sync(s)`
       );
     }
-    return { ...linkRepair, ...balanceSync };
+    return { ...zeroed, ...misclassified, ...poCleared, ...linkRepair, ...paymentRepair, ...netted, ...balanceSync };
   } catch (error) {
     console.warn('[DB] Supplier balance repair skipped:', error.message);
     return { repaired: 0, updated: 0, error: error.message };
@@ -197,5 +443,6 @@ async function runSupplierBalanceRepair() {
 module.exports = {
   runSupplierBalanceRepair,
   repairSupplierReturnOpenItems,
+  repairUnallocatedSupplierPayments,
   backfillSupplierBalancesFromOpenItems,
 };

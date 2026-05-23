@@ -11,14 +11,15 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { Package, ArrowRightLeft } from 'lucide-react';
-import { Product, StockMovement, StockTransfer } from '@/types/erp';
+import { Product, StockMovement } from '@/types/erp';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api/client';
-import { getStockTransfers } from '@/lib/storage';
 import { getTransactionHistory } from '@/lib/transactionHistory';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { useStockTransfers } from '@/hooks/useERP';
+import { useBranchContext } from '@/contexts/BranchContext';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { useTranslation } from '@/i18n';
 
@@ -613,33 +614,39 @@ export function InventorySerialNumbersPanel({ product }: { product: Product | nu
   );
 }
 
+function transferItemMatchesProduct(
+  item: { productId?: string; sku?: string },
+  product: Product,
+): boolean {
+  if (item.productId && item.productId === product.id) return true;
+  const itemSku = (item.sku || '').trim().toLowerCase();
+  const productSku = (product.sku || '').trim().toLowerCase();
+  if (itemSku && productSku && itemSku === productSku) return true;
+  const productBarcode = (product.barcode || '').trim().toLowerCase();
+  if (itemSku && productBarcode && itemSku === productBarcode) return true;
+  return false;
+}
+
 export function InventoryPendingTransfersPanel({ product }: { product: Product | null }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { currentBranch } = useBranchContext();
-  const [transfers, setTransfers] = useState<StockTransfer[]>([]);
+  const { apiBranchId } = useBranchScope();
+  const { transfers: allTransfers, refreshTransfers } = useStockTransfers(apiBranchId);
+
+  const transfers = useMemo(
+    () => allTransfers.filter((tr) => tr.status === 'pending' || tr.status === 'in_transit'),
+    [allTransfers],
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await getStockTransfers(currentBranch?.id);
-        if (!cancelled) setTransfers(list.filter((tr) => tr.status === 'pending' || tr.status === 'in_transit'));
-      } catch {
-        if (!cancelled) setTransfers([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentBranch?.id]);
+    void refreshTransfers();
+  }, [product?.id, refreshTransfers]);
 
   const rows = useMemo(() => {
     if (!product) return [];
-    const skuKey = (product.sku || '').trim().toLowerCase();
     return transfers.flatMap((tr) =>
       (tr.items || [])
-        .filter((item) => item.productId === product.id || (item.sku || '').trim().toLowerCase() === skuKey)
+        .filter((item) => transferItemMatchesProduct(item, product))
         .map((item) => ({
           transferNumber: tr.transferNumber,
           status: tr.status,

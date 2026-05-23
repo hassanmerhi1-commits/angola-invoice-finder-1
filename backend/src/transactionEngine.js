@@ -590,9 +590,13 @@ function isOpenItemDebitFlag(value) {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
-async function resolveSupplierPayableDocumentIds(client, invoiceDocumentId) {
+async function resolveSupplierPayableDocumentIds(client, invoiceDocumentId, purchaseOrderNumber) {
   const ids = [];
   if (invoiceDocumentId) ids.push(String(invoiceDocumentId));
+
+  const orderNumbers = new Set();
+  const linkedNo = String(purchaseOrderNumber || '').trim();
+  if (linkedNo) orderNumbers.add(linkedNo);
 
   try {
     const inv = await client.query(
@@ -600,15 +604,21 @@ async function resolveSupplierPayableDocumentIds(client, invoiceDocumentId) {
       [invoiceDocumentId]
     );
     const orderNo = String(inv.rows[0]?.order_no || '').trim();
-    if (orderNo) {
+    if (orderNo) orderNumbers.add(orderNo);
+  } catch {
+    /* purchase_invoices optional during bootstrap */
+  }
+
+  for (const orderNo of orderNumbers) {
+    try {
       const po = await client.query(
         'SELECT id FROM purchase_orders WHERE order_number = $1 LIMIT 1',
         [orderNo]
       );
       if (po.rows[0]?.id) ids.push(String(po.rows[0].id));
+    } catch {
+      /* purchase_orders optional */
     }
-  } catch {
-    /* purchase_invoices optional during bootstrap */
   }
 
   return [...new Set(ids.filter(Boolean))];
@@ -627,10 +637,15 @@ async function adoptPurchaseOrderOpenItemForInvoice(client, {
   dueDate,
   currency,
   branchId,
+  purchaseOrderNumber,
 }) {
   if (!invoiceDocumentId) return null;
 
-  const documentIds = await resolveSupplierPayableDocumentIds(client, invoiceDocumentId);
+  const documentIds = await resolveSupplierPayableDocumentIds(
+    client,
+    invoiceDocumentId,
+    purchaseOrderNumber,
+  );
   const poIds = documentIds.filter((id) => id !== String(invoiceDocumentId));
   if (!poIds.length) return null;
 
@@ -1197,14 +1212,7 @@ async function processPurchaseReceive(client, orderId, receivedQuantities, recei
     branchId: order.branch_id, createdBy: receivedBy, lines: journalLines,
   });
 
-  // Open item
-  if (order.supplier_id) {
-    await createOpenItem(client, {
-      entityType: 'supplier', entityId: order.supplier_id, documentType: 'invoice',
-      documentId: orderId, documentNumber: order.order_number, documentDate: today,
-      originalAmount: subtotal + totalLandingCosts + taxAmount, isDebit: true, branchId: order.branch_id,
-    });
-  }
+  // Payable open item is created on purchase invoice (FC), not on PO receipt — avoids duplicate AP with FC.
 
   // Audit
   await auditLog(client, {
@@ -1415,48 +1423,83 @@ async function processPayment(client, paymentData) {
     documentDate: today, originalAmount: paymentAmount, isDebit: false, branchId,
   });
 
-  // Auto-clear against invoices
-  if (invoiceIds && invoiceIds.length > 0) {
-    const ph = invoiceIds.map((_, i) => `$${i + 1}`).join(', ');
-    const openInvoices = await client.query(
-      `SELECT * FROM open_items WHERE document_id IN (${ph}) AND status != 'cleared' ORDER BY document_date ASC`,
-      invoiceIds
+  // Auto-clear against open invoices / payables (debit open items)
+  const requestedIds = Array.isArray(invoiceIds)
+    ? invoiceIds.map((id) => String(id || '').trim()).filter(Boolean)
+    : [];
+
+  let openInvoices;
+  if (requestedIds.length > 0) {
+    const ph = requestedIds.map((_, i) => `$${i + 3}`).join(', ');
+    openInvoices = await client.query(
+      `SELECT * FROM open_items
+       WHERE entity_type = $1 AND entity_id = $2
+         AND status != 'cleared'
+         AND (is_debit = 1 OR is_debit = TRUE)
+         AND (document_id IN (${ph}) OR id IN (${ph}))
+       ORDER BY document_date ASC`,
+      [entityType, entityId, ...requestedIds, ...requestedIds],
     );
+  } else {
+    openInvoices = await client.query(
+      `SELECT * FROM open_items
+       WHERE entity_type = $1 AND entity_id = $2
+         AND status != 'cleared'
+         AND (is_debit = 1 OR is_debit = TRUE)
+       ORDER BY document_date ASC`,
+      [entityType, entityId],
+    );
+  }
 
-    let remaining = paymentAmount;
-    const clearIds = [], clearAmounts = [];
-    for (const inv of openInvoices.rows) {
-      if (remaining <= 0) break;
-      const clearAmt = Math.min(remaining, parseFloat(inv.remaining_amount));
-      clearIds.push(inv.id);
-      clearAmounts.push(clearAmt);
-      remaining -= clearAmt;
-    }
+  let remaining = paymentAmount;
+  const clearIds = [];
+  const clearAmounts = [];
+  const clearedRows = [];
+  for (const inv of openInvoices.rows) {
+    if (remaining <= 0.001) break;
+    const invRem = parseFloat(inv.remaining_amount || 0);
+    if (invRem <= 0.001) continue;
+    const clearAmt = Math.min(remaining, invRem);
+    clearIds.push(inv.id);
+    clearAmounts.push(clearAmt);
+    clearedRows.push(inv);
+    remaining -= clearAmt;
+  }
 
-    if (clearIds.length > 0) {
-      await clearOpenItems(client, {
-        paymentItemId: paymentOpenItem.id, invoiceItemIds: clearIds,
-        amounts: clearAmounts, clearedBy: createdBy,
-      });
-    }
+  if (clearIds.length > 0) {
+    await clearOpenItems(client, {
+      paymentItemId: paymentOpenItem.id,
+      invoiceItemIds: clearIds,
+      amounts: clearAmounts,
+      clearedBy: createdBy,
+    });
+    console.log(
+      `[TX ENGINE] Payment ${paymentNumber}: cleared ${clearIds.length} open item(s), ${roundMoney(paymentAmount - remaining)} AOA applied`,
+    );
+  } else if (requestedIds.length > 0) {
+    console.warn(
+      `[TX ENGINE] Payment ${paymentNumber}: no matching open debit items for requested document ids`,
+    );
+  }
 
-    // Traceability chain (ERP): link payment to each cleared document
-    for (const inv of openInvoices.rows) {
-      try {
-        await linkDocuments(
-          client,
-          paymentType,               // source_type
-          paymentId,                 // source_id
-          paymentNumber,             // source_number
-          inv.document_type,         // target_type
-          inv.document_id,           // target_id
-          inv.document_number        // target_number
-        );
-      } catch (e) {
-        // non-blocking: avoid failing payment if link insert fails
-        console.warn('[TX ENGINE] document link skipped:', e.message);
-      }
+  for (const inv of clearedRows) {
+    try {
+      await linkDocuments(
+        client,
+        paymentType,
+        paymentId,
+        paymentNumber,
+        inv.document_type,
+        inv.document_id,
+        inv.document_number,
+      );
+    } catch (e) {
+      console.warn('[TX ENGINE] document link skipped:', e.message);
     }
+  }
+
+  if (entityType === 'supplier' && entityId) {
+    await syncSupplierBalanceFromOpenItems(client, entityId);
   }
 
   // Journal entry — prefer bank account for non-cash; fall back to caixa if bank not in COA

@@ -97,6 +97,8 @@ export interface TransactionRequest {
   };
   description: string;
   amount?: number;
+  /** PO order number on purchase invoice — links payable to PO receipt before invoice is saved */
+  linkedPurchaseOrderNumber?: string;
 }
 
 export interface TransactionResult {

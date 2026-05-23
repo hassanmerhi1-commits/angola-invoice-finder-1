@@ -343,14 +343,7 @@ async function processPurchaseReceive(client, pool, orderId, receivedQuantities,
     branchId: order.branch_id, createdBy: receivedBy, lines: journalLines,
   });
 
-  // Open item
-  if (order.supplier_id) {
-    await createOpenItem(client, {
-      entityType: 'supplier', entityId: order.supplier_id, documentType: 'invoice',
-      documentId: orderId, documentNumber: order.order_number, documentDate: today,
-      originalAmount: subtotal + totalLandingCosts + taxAmount, isDebit: true, branchId: order.branch_id,
-    });
-  }
+  // Payable open item is created on purchase invoice (FC), not on PO receipt.
 
   // Audit
   await auditLog(client, {

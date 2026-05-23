@@ -35,8 +35,15 @@ export function useInventoryBranchScope() {
 
   useEffect(() => {
     if (!canSwitchBranch) {
-      const locked = global.currentBranch?.id || userBranch?.id || '';
-      setInventoryScopeIdState(locked);
+      const locked =
+        userBranch?.id ||
+        global.currentBranch?.id ||
+        global.apiBranchId ||
+        '';
+      if (locked) {
+        setInventoryScopeIdState(locked);
+        localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, locked);
+      }
       return;
     }
     setInventoryScopeIdState((prev) => {
@@ -44,7 +51,7 @@ export function useInventoryBranchScope() {
       if (prev && branches.some((b) => b.id === prev)) return prev;
       return resolveStoredInventoryScopeId(branches, true);
     });
-  }, [branches, canSwitchBranch, global.currentBranch?.id, userBranch?.id]);
+  }, [branches, canSwitchBranch, global.currentBranch?.id, global.apiBranchId, userBranch?.id]);
 
   const setInventoryScope = useCallback((scopeId: string) => {
     setInventoryScopeIdState(scopeId);
