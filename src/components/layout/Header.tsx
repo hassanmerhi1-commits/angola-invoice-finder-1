@@ -46,8 +46,8 @@ export function Header({
 }: HeaderProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { canSwitchBranch } = useBranchScope();
-  
+  const { canSwitchBranch, scopeId, setOperatingScope } = useBranchScope();
+
   return (
     <header className="h-16 border-b bg-card px-4 flex items-center justify-between">
       <div className="flex items-center gap-4">
@@ -72,19 +72,13 @@ export function Header({
         <LanguageSwitcher />
         {/* Branch Selector */}
         {canSwitchBranch ? (
-          <Select
-            value={currentBranch?.id}
-            onValueChange={(id) => {
-              const branch = branches.find(b => b.id === id);
-              if (branch) onBranchChange(branch);
-            }}
-          >
+          <Select value={scopeId} onValueChange={setOperatingScope}>
             <SelectTrigger className="w-[180px] hidden sm:flex">
               <Building2 className="w-4 h-4 mr-2" />
               <SelectValue placeholder={t.nav.dashboard} />
             </SelectTrigger>
             <SelectContent>
-              {branches.map(branch => (
+              {branches.map((branch) => (
                 <SelectItem key={branch.id} value={branch.id}>
                   <div className="flex items-center gap-2">
                     <span>{branch.name}</span>

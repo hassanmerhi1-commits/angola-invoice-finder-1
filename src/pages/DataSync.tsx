@@ -75,8 +75,12 @@ export default function DataSync() {
   const handleSendEmail = () => {
     if (syncPackage && email) {
       // Create mailto link with package info
-      const subject = encodeURIComponent(`Sincronização: ${syncPackage.branchName}`);
-      const body = encodeURIComponent(`Pacote de sincronização com ${syncPackage.totalRecords} registos.`);
+      const subject = encodeURIComponent(
+        t.dataSyncUi.emailSubject.replace('{branch}', syncPackage.branchName),
+      );
+      const body = encodeURIComponent(
+        t.dataSyncUi.emailBody.replace('{count}', String(syncPackage.totalRecords)),
+      );
       window.open(`mailto:${email}?subject=${subject}&body=${body}`);
       toast({
         title: t.dataSyncUi.emailPreparedTitle,
@@ -148,23 +152,20 @@ export default function DataSync() {
       {/* Architecture Info */}
       <Alert>
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Sistema Offline-First</AlertTitle>
-        <AlertDescription>
-          Cada filial trabalha com dados locais. No final do dia/semana, exporte os dados e envie para a sede 
-          via pen drive ou email. A sede importa os dados de todas as filiais para consolidação.
-        </AlertDescription>
+        <AlertTitle>{t.dataSyncUi.offlineFirstTitle}</AlertTitle>
+        <AlertDescription>{t.dataSyncUi.offlineFirstDesc}</AlertDescription>
       </Alert>
 
       <Tabs defaultValue={isMainOffice ? 'import' : 'export'} className="space-y-4">
         <TabsList>
           <TabsTrigger value="export">
             <Download className="w-4 h-4 mr-2" />
-            Exportar Dados
+            {t.dataSyncUi.tabExport}
           </TabsTrigger>
           {isMainOffice && (
             <TabsTrigger value="import">
               <Upload className="w-4 h-4 mr-2" />
-              Importar Dados
+              {t.dataSyncUi.tabImport}
             </TabsTrigger>
           )}
         </TabsList>
@@ -172,16 +173,14 @@ export default function DataSync() {
         <TabsContent value="export" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Exportar Pacote Completo</CardTitle>
-              <CardDescription>
-                Gera um ficheiro JSON com todos os dados da filial para enviar à sede
-              </CardDescription>
+              <CardTitle>{t.dataSyncUi.exportPackageTitle}</CardTitle>
+              <CardDescription>{t.dataSyncUi.exportPackageDesc}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {isMainOffice && (
                   <div className="space-y-2">
-                    <Label>Filial</Label>
+                    <Label>{t.dataSyncUi.branchLabel}</Label>
                     <Select value={selectedBranch} onValueChange={setSelectedBranch}>
                       <SelectTrigger>
                         <SelectValue placeholder={t.dataSyncUi.selectBranchPlaceholder} />
@@ -197,7 +196,7 @@ export default function DataSync() {
                   </div>
                 )}
                 <div className="space-y-2">
-                  <Label>Data Inicial</Label>
+                  <Label>{t.dataSyncUi.dateFromLabel}</Label>
                   <Input
                     type="date"
                     value={dateFrom}
@@ -205,7 +204,7 @@ export default function DataSync() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Data Final</Label>
+                  <Label>{t.dataSyncUi.dateToLabel}</Label>
                   <Input
                     type="date"
                     value={dateTo}
@@ -216,7 +215,7 @@ export default function DataSync() {
 
               <Button onClick={handleExport}>
                 <FileJson className="w-4 h-4 mr-2" />
-                Preparar Pacote
+                {t.dataSyncUi.preparePackage}
               </Button>
             </CardContent>
           </Card>
@@ -226,11 +225,9 @@ export default function DataSync() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <CheckCircle className="w-5 h-5 text-green-500" />
-                  Pacote Preparado
+                  {t.dataSyncUi.packageReadyTitle}
                 </CardTitle>
-                <CardDescription>
-                  Pronto para download ou envio por email
-                </CardDescription>
+                <CardDescription>{t.dataSyncUi.packageReadyDesc}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {/* Package Summary */}
@@ -238,15 +235,17 @@ export default function DataSync() {
                   <div className="bg-muted p-4 rounded-lg">
                     <div className="flex items-center gap-2 mb-1">
                       <Building className="w-4 h-4 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">Filial</p>
+                      <p className="text-sm text-muted-foreground">{t.dataSyncUi.branchLabel}</p>
                     </div>
                     <p className="font-medium">{syncPackage.branchName}</p>
-                    <p className="text-xs text-muted-foreground">Código: {syncPackage.branchCode}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {t.dataSyncUi.branchCodeLabel.replace('{code}', syncPackage.branchCode)}
+                    </p>
                   </div>
                   <div className="bg-muted p-4 rounded-lg">
                     <div className="flex items-center gap-2 mb-1">
                       <FileText className="w-4 h-4 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">Período</p>
+                      <p className="text-sm text-muted-foreground">{t.dataSyncUi.periodLabel}</p>
                     </div>
                     <p className="font-medium">
                   {format(new Date(syncPackage.dateRange.from), 'dd/MM/yyyy', { locale: dfLocale })}
@@ -258,14 +257,14 @@ export default function DataSync() {
                   <div className="bg-muted p-4 rounded-lg">
                     <div className="flex items-center gap-2 mb-1">
                       <Package className="w-4 h-4 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">Total Registos</p>
+                      <p className="text-sm text-muted-foreground">{t.dataSyncUi.totalRecordsLabel}</p>
                     </div>
                     <p className="font-bold text-xl">{syncPackage.totalRecords}</p>
                   </div>
                   <div className="bg-muted p-4 rounded-lg">
                     <div className="flex items-center gap-2 mb-1">
                       <FileJson className="w-4 h-4 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">Versão</p>
+                      <p className="text-sm text-muted-foreground">{t.dataSyncUi.versionLabel}</p>
                     </div>
                     <p className="font-medium">{syncPackage.version}</p>
                   </div>
@@ -276,53 +275,53 @@ export default function DataSync() {
                   <div className="bg-blue-50 dark:bg-blue-950/30 p-3 rounded-lg text-center">
                     <Package className="w-5 h-5 mx-auto mb-1 text-blue-600" />
                     <p className="text-lg font-bold">{syncPackage.products.length}</p>
-                    <p className="text-xs text-muted-foreground">Produtos</p>
+                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statProducts}</p>
                   </div>
                   <div className="bg-purple-50 dark:bg-purple-950/30 p-3 rounded-lg text-center">
                     <Truck className="w-5 h-5 mx-auto mb-1 text-purple-600" />
                     <p className="text-lg font-bold">{syncPackage.suppliers.length}</p>
-                    <p className="text-xs text-muted-foreground">Fornecedores</p>
+                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statSuppliers}</p>
                   </div>
                   <div className="bg-green-50 dark:bg-green-950/30 p-3 rounded-lg text-center">
                     <Users className="w-5 h-5 mx-auto mb-1 text-green-600" />
                     <p className="text-lg font-bold">{syncPackage.clients.length}</p>
-                    <p className="text-xs text-muted-foreground">Clientes</p>
+                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statClients}</p>
                   </div>
                   <div className="bg-orange-50 dark:bg-orange-950/30 p-3 rounded-lg text-center">
                     <ShoppingCart className="w-5 h-5 mx-auto mb-1 text-orange-600" />
                     <p className="text-lg font-bold">{syncPackage.purchases.length}</p>
-                    <p className="text-xs text-muted-foreground">Compras</p>
+                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statPurchases}</p>
                   </div>
                   <div className="bg-emerald-50 dark:bg-emerald-950/30 p-3 rounded-lg text-center">
                     <FileText className="w-5 h-5 mx-auto mb-1 text-emerald-600" />
                     <p className="text-lg font-bold">{syncPackage.sales.length}</p>
-                    <p className="text-xs text-muted-foreground">Vendas</p>
+                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statSales}</p>
                   </div>
                   <div className="bg-cyan-50 dark:bg-cyan-950/30 p-3 rounded-lg text-center">
                     <ArrowRightLeft className="w-5 h-5 mx-auto mb-1 text-cyan-600" />
                     <p className="text-lg font-bold">{syncPackage.stockMovements.length}</p>
-                    <p className="text-xs text-muted-foreground">Movimentos</p>
+                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statMovements}</p>
                   </div>
                   <div className="bg-amber-50 dark:bg-amber-950/30 p-3 rounded-lg text-center">
                     <Truck className="w-5 h-5 mx-auto mb-1 text-amber-600" />
                     <p className="text-lg font-bold">{syncPackage.stockTransfers.length}</p>
-                    <p className="text-xs text-muted-foreground">Transferências</p>
+                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statTransfers}</p>
                   </div>
                   <div className="bg-indigo-50 dark:bg-indigo-950/30 p-3 rounded-lg text-center">
                     <BarChart3 className="w-5 h-5 mx-auto mb-1 text-indigo-600" />
                     <p className="text-lg font-bold">{syncPackage.dailyReports.length}</p>
-                    <p className="text-xs text-muted-foreground">Relatórios</p>
+                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statReports}</p>
                   </div>
                 </div>
 
                 <div className="flex gap-4">
                   <Button onClick={handleDownload}>
                     <HardDrive className="w-4 h-4 mr-2" />
-                    Descarregar (Pen Drive)
+                    {t.dataSyncUi.downloadUsb}
                   </Button>
                   <Button variant="outline" onClick={() => setEmailDialogOpen(true)}>
                     <Mail className="w-4 h-4 mr-2" />
-                    Enviar por Email
+                    {t.dataSyncUi.sendByEmail}
                   </Button>
                 </div>
               </CardContent>
@@ -336,19 +335,15 @@ export default function DataSync() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Building className="w-5 h-5" />
-                  Importar Dados das Filiais
+                  {t.dataSyncUi.importBranchDataTitle}
                 </CardTitle>
-                <CardDescription>
-                  Carregue os ficheiros JSON recebidos das filiais
-                </CardDescription>
+                <CardDescription>{t.dataSyncUi.importBranchDataDesc}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="border-2 border-dashed rounded-lg p-8 text-center">
                   <Upload className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                  <p className="text-lg font-medium mb-2">Carregar Ficheiro de Sincronização</p>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Arraste e solte ou clique para selecionar o ficheiro JSON
-                  </p>
+                  <p className="text-lg font-medium mb-2">{t.dataSyncUi.uploadSyncFileTitle}</p>
+                  <p className="text-sm text-muted-foreground mb-4">{t.dataSyncUi.uploadSyncFileDesc}</p>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -366,45 +361,45 @@ export default function DataSync() {
                 {importResult && (
                   <Alert className="bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800">
                     <CheckCircle className="h-4 w-4 text-green-600" />
-                    <AlertTitle className="text-green-800 dark:text-green-200">Importação Concluída</AlertTitle>
+                    <AlertTitle className="text-green-800 dark:text-green-200">{t.dataSyncUi.importDoneAlertTitle}</AlertTitle>
                     <AlertDescription className="text-green-700 dark:text-green-300">
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
                         <div className="text-center">
                           <p className="font-bold text-lg">{importResult.productsImported}</p>
-                          <p className="text-xs">Produtos</p>
+                          <p className="text-xs">{t.dataSyncUi.statProducts}</p>
                         </div>
                         <div className="text-center">
                           <p className="font-bold text-lg">{importResult.suppliersImported}</p>
-                          <p className="text-xs">Fornecedores</p>
+                          <p className="text-xs">{t.dataSyncUi.statSuppliers}</p>
                         </div>
                         <div className="text-center">
                           <p className="font-bold text-lg">{importResult.clientsImported}</p>
-                          <p className="text-xs">Clientes</p>
+                          <p className="text-xs">{t.dataSyncUi.statClients}</p>
                         </div>
                         <div className="text-center">
                           <p className="font-bold text-lg">{importResult.purchasesImported}</p>
-                          <p className="text-xs">Compras</p>
+                          <p className="text-xs">{t.dataSyncUi.statPurchases}</p>
                         </div>
                         <div className="text-center">
                           <p className="font-bold text-lg">{importResult.salesImported}</p>
-                          <p className="text-xs">Vendas</p>
+                          <p className="text-xs">{t.dataSyncUi.statSales}</p>
                         </div>
                         <div className="text-center">
                           <p className="font-bold text-lg">{importResult.stockMovementsImported}</p>
-                          <p className="text-xs">Movimentos</p>
+                          <p className="text-xs">{t.dataSyncUi.statMovements}</p>
                         </div>
                         <div className="text-center">
                           <p className="font-bold text-lg">{importResult.stockTransfersImported}</p>
-                          <p className="text-xs">Transferências</p>
+                          <p className="text-xs">{t.dataSyncUi.statTransfers}</p>
                         </div>
                         <div className="text-center">
                           <p className="font-bold text-lg">{importResult.reportsImported}</p>
-                          <p className="text-xs">Relatórios</p>
+                          <p className="text-xs">{t.dataSyncUi.statReports}</p>
                         </div>
                       </div>
                       <div className="text-center mt-4 pt-3 border-t border-green-300 dark:border-green-700">
                         <p className="font-bold text-xl">{importResult.totalImported}</p>
-                        <p className="text-sm">Total de Registos Importados</p>
+                        <p className="text-sm">{t.dataSyncUi.totalImportedLabel}</p>
                       </div>
                     </AlertDescription>
                   </Alert>
@@ -415,43 +410,43 @@ export default function DataSync() {
             {/* Import Instructions */}
             <Card>
               <CardHeader>
-                <CardTitle>Instruções de Importação</CardTitle>
+                <CardTitle>{t.dataSyncUi.importInstructionsTitle}</CardTitle>
               </CardHeader>
               <CardContent>
                 <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
-                  <li>Receba o ficheiro JSON da filial (via pen drive ou email)</li>
+                  <li>{t.dataSyncUi.importStepReceiveFile}</li>
                   <li>{t.dataSyncUi.importStepSelectFile}</li>
-                  <li>O sistema irá validar e importar os dados automaticamente</li>
-                  <li>Registos duplicados serão ignorados (baseado no ID ou NIF)</li>
-                  <li>Os dados serão consolidados no sistema central</li>
+                  <li>{t.dataSyncUi.importStepAutoImport}</li>
+                  <li>{t.dataSyncUi.importStepDuplicates}</li>
+                  <li>{t.dataSyncUi.importStepConsolidate}</li>
                 </ol>
                 
                 <div className="mt-4 p-4 bg-muted rounded-lg">
-                  <h4 className="font-medium mb-2">Dados Incluídos no Pacote:</h4>
+                  <h4 className="font-medium mb-2">{t.dataSyncUi.packageContentsTitle}</h4>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
                     <div className="flex items-center gap-2">
-                      <Package className="w-4 h-4" /> Produtos
+                      <Package className="w-4 h-4" /> {t.dataSyncUi.packageItemProducts}
                     </div>
                     <div className="flex items-center gap-2">
-                      <Truck className="w-4 h-4" /> Fornecedores
+                      <Truck className="w-4 h-4" /> {t.dataSyncUi.packageItemSuppliers}
                     </div>
                     <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4" /> Clientes
+                      <Users className="w-4 h-4" /> {t.dataSyncUi.packageItemClients}
                     </div>
                     <div className="flex items-center gap-2">
-                      <ShoppingCart className="w-4 h-4" /> Compras (POs)
+                      <ShoppingCart className="w-4 h-4" /> {t.dataSyncUi.packageItemPurchases}
                     </div>
                     <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4" /> Vendas (Facturas)
+                      <FileText className="w-4 h-4" /> {t.dataSyncUi.packageItemSales}
                     </div>
                     <div className="flex items-center gap-2">
-                      <ArrowRightLeft className="w-4 h-4" /> Movimentos Stock
+                      <ArrowRightLeft className="w-4 h-4" /> {t.dataSyncUi.packageItemStockMovements}
                     </div>
                     <div className="flex items-center gap-2">
-                      <Truck className="w-4 h-4" /> Transferências
+                      <Truck className="w-4 h-4" /> {t.dataSyncUi.packageItemStockTransfers}
                     </div>
                     <div className="flex items-center gap-2">
-                      <BarChart3 className="w-4 h-4" /> Relatórios Diários
+                      <BarChart3 className="w-4 h-4" /> {t.dataSyncUi.packageItemDailyReports}
                     </div>
                   </div>
                 </div>
@@ -465,14 +460,12 @@ export default function DataSync() {
       <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Enviar por Email</DialogTitle>
-            <DialogDescription>
-              O ficheiro será descarregado e o seu cliente de email será aberto
-            </DialogDescription>
+            <DialogTitle>{t.dataSyncUi.emailDialogTitle}</DialogTitle>
+            <DialogDescription>{t.dataSyncUi.emailDialogDesc}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email da Sede</Label>
+              <Label htmlFor="email">{t.dataSyncUi.headOfficeEmailLabel}</Label>
               <Input
                 id="email"
                 type="email"

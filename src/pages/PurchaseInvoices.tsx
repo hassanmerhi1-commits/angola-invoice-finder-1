@@ -7,6 +7,7 @@ import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { api } from '@/lib/api/client';
+import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
@@ -1482,7 +1483,7 @@ export default function PurchaseInvoices() {
       ivaAccountCode: '3.3.1',
       transactionType: 'ALL',
       currencyRate: 1,
-      taxRate2: 1000,
+      taxRate2: 0,
       surchargePercent: 0,
       changePrice: true,
       isPending: false,
@@ -1663,7 +1664,7 @@ export default function PurchaseInvoices() {
       unitPrice: p.lastCost || p.cost || 0,
       discountPct: 0,
       discountPct2: 0,
-      ivaRate: p.taxRate || 14,
+      ivaRate: p.taxRate ?? DEFAULT_VAT_RATE,
       warehouseId: form.warehouseId || currentBranch?.id || '',
       warehouseName: form.warehouseName || currentBranch?.name || '',
       currentStock: p.stock,
@@ -2811,7 +2812,7 @@ export default function PurchaseInvoices() {
                     sku: prod?.sku || '',
                     quantity: item.quantity,
                     unitCost: item.unitCost,
-                    taxRate: prod?.taxRate || 14,
+                    taxRate: prod?.taxRate ?? DEFAULT_VAT_RATE,
                     subtotal,
                   };
                 });
@@ -3187,8 +3188,6 @@ export default function PurchaseInvoices() {
         <Input value={form.transactionType || ''} onChange={e => setForm(p => ({ ...p, transactionType: e.target.value }))} className="h-6 w-14 text-[10px] font-mono px-1" />
         <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelFx}</span>
         <Input type="number" value={form.currencyRate || 1} onChange={e => setForm(p => ({ ...p, currencyRate: parseFloat(e.target.value) || 1 }))} className="h-6 w-16 text-[10px] font-mono px-1" />
-        <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelWhPct}</span>
-        <Input type="number" value={form.taxRate2 || 0} onChange={e => setForm(p => ({ ...p, taxRate2: parseFloat(e.target.value) || 0 }))} className="h-6 w-16 text-[10px] font-mono px-1" />
         <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelStampPct}</span>
         <Input type="number" value={form.surchargePercent || 0} onChange={e => setForm(p => ({ ...p, surchargePercent: parseFloat(e.target.value) || 0 }))} className="h-6 w-16 text-[10px] font-mono px-1" />
         <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelOrderNo}</span>
@@ -3473,6 +3472,7 @@ export default function PurchaseInvoices() {
         open={showCreateProduct}
         onOpenChange={setShowCreateProduct}
         product={null}
+        defaultSupplierName={String((form as { supplierName?: string }).supplierName || '')}
         onSave={async (newProduct) => {
           const savedProduct = await addProductToStock(newProduct);
           handleAddProduct(savedProduct);

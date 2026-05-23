@@ -205,16 +205,16 @@ export function ExcelImportDialog<T>({
                   className="hidden"
                 />
                 <Upload className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                <p className="text-lg font-medium mb-2">Clique para selecionar ficheiro</p>
+                <p className="text-lg font-medium mb-2">{t.importUi.clickToSelectFile}</p>
                 <p className="text-sm text-muted-foreground">
-                  Suporta ficheiros Excel (.xlsx, .xls) e CSV
+                  {t.importUi.supportsExcelCsv}
                 </p>
               </div>
 
               <div className="flex justify-center">
                 <Button variant="outline" onClick={downloadTemplate}>
                   <Download className="w-4 h-4 mr-2" />
-                  Baixar Template de Exemplo
+                  {t.importUi.downloadSampleTemplate}
                 </Button>
               </div>
             </div>
@@ -229,7 +229,7 @@ export function ExcelImportDialog<T>({
                   {columnMappings.length > 0 && (
                     <Badge variant="secondary" className="text-xs">
                       <Settings2 className="w-3 h-3 mr-1" />
-                      Mapeamento personalizado
+                      {t.importUi.customMapping}
                     </Badge>
                   )}
                 </div>
@@ -237,12 +237,12 @@ export function ExcelImportDialog<T>({
                   {mappingType && (
                     <Button variant="outline" size="sm" onClick={() => setShowMappingDialog(true)}>
                       <Settings2 className="w-4 h-4 mr-1" />
-                      Mapear Colunas
+                      {t.importUi.mapColumns}
                     </Button>
                   )}
                   <Button variant="ghost" size="sm" onClick={() => setStep('upload')}>
                     <X className="w-4 h-4 mr-1" />
-                    Escolher outro ficheiro
+                    {t.importUi.chooseOtherFile}
                   </Button>
                 </div>
               </div>
@@ -250,24 +250,24 @@ export function ExcelImportDialog<T>({
               <div className="flex gap-4 flex-wrap">
                 <Badge variant="default" className="gap-1">
                   <CheckCircle2 className="w-3 h-3" />
-                  {validData.length} válidos
+                  {t.importUi.validCount.replace('{count}', String(validData.length))}
                 </Badge>
                 {errors.length > 0 && (
                   <Badge variant="destructive" className="gap-1">
                     <AlertCircle className="w-3 h-3" />
-                    {errors.length} com erros
+                    {t.importUi.withErrorsCount.replace('{count}', String(errors.length))}
                   </Badge>
                 )}
                 {duplicates.length > 0 && (
                   <Badge variant="outline" className="gap-1 text-amber-600 border-amber-600">
                     <AlertTriangle className="w-3 h-3" />
-                    {duplicates.length} duplicados
+                    {t.importUi.duplicatesCount.replace('{count}', String(duplicates.length))}
                   </Badge>
                 )}
                 {newItems.length > 0 && duplicates.length > 0 && (
                   <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
                     <CheckCircle2 className="w-3 h-3" />
-                    {newItems.length} novos
+                    {t.importUi.newCount.replace('{count}', String(newItems.length))}
                   </Badge>
                 )}
               </div>
@@ -282,26 +282,30 @@ export function ExcelImportDialog<T>({
                     </div>
                     <div className="space-y-2 text-sm">
                       <p className="text-amber-700 dark:text-amber-300">
-                        Os seguintes registos têm {resolvedDuplicateLabel} duplicados:
+                        {t.importUi.recordsHaveDuplicates.replace('{label}', resolvedDuplicateLabel)}
                       </p>
                       <div className="max-h-20 overflow-auto bg-amber-100 dark:bg-amber-900/30 p-2 rounded text-xs font-mono">
                         {duplicates.slice(0, 10).map((d, i) => (
                           <div key={i}>{d.existingKey.toUpperCase()}</div>
                         ))}
                         {duplicates.length > 10 && (
-                          <div className="text-amber-600">... e mais {duplicates.length - 10}</div>
+                          <div className="text-amber-600">
+                            {t.importUi.andMore.replace('{count}', String(duplicates.length - 10))}
+                          </div>
                         )}
                       </div>
                       
                       <div className="pt-2 space-y-2">
-                        <p className="font-medium text-amber-800 dark:text-amber-200">O que deseja fazer?</p>
+                        <p className="font-medium text-amber-800 dark:text-amber-200">{t.importUi.whatToDo}</p>
                         <div className="flex flex-col gap-2">
                           <label className="flex items-center gap-2 cursor-pointer">
                             <Checkbox 
                               checked={duplicateAction === 'skip'} 
                               onCheckedChange={() => setDuplicateAction('skip')}
                             />
-                            <span>Ignorar duplicados (importar apenas {newItems.length} novos)</span>
+                            <span>
+                              {t.importUi.skipDuplicates.replace('{count}', String(newItems.length))}
+                            </span>
                           </label>
                           <label className="flex items-center gap-2 cursor-pointer">
                             <Checkbox 
@@ -310,7 +314,7 @@ export function ExcelImportDialog<T>({
                             />
                             <span className="flex items-center gap-1">
                               <RefreshCw className="w-3 h-3" />
-                              Actualizar existentes com dados do ficheiro
+                              {t.importUi.updateExisting}
                             </span>
                           </label>
                         </div>
@@ -324,15 +328,17 @@ export function ExcelImportDialog<T>({
                 <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>
-                    <div className="font-medium mb-1">Erros encontrados:</div>
+                    <div className="font-medium mb-1">{t.importUi.errorsFoundTitle}</div>
                     <ul className="list-disc list-inside text-sm max-h-24 overflow-auto">
                       {errors.slice(0, 5).map((error, idx) => (
                         <li key={idx}>
-                          Linha {error.row}: {error.errors.join(', ')}
+                          {t.importUi.rowErrors
+                            .replace('{row}', String(error.row))
+                            .replace('{errors}', error.errors.join(', '))}
                         </li>
                       ))}
                       {errors.length > 5 && (
-                        <li>... e mais {errors.length - 5} erros</li>
+                        <li>{t.importUi.andMoreErrors.replace('{count}', String(errors.length - 5))}</li>
                       )}
                     </ul>
                   </AlertDescription>
@@ -345,7 +351,7 @@ export function ExcelImportDialog<T>({
                     <TableHeader>
                       <TableRow>
                         <TableHead className="w-12">#</TableHead>
-                        <TableHead className="w-20">Estado</TableHead>
+                        <TableHead className="w-20">{t.importUi.statusColumn}</TableHead>
                         {columns.map((col) => (
                           <TableHead key={String(col.key)}>{col.label}</TableHead>
                         ))}
@@ -360,11 +366,11 @@ export function ExcelImportDialog<T>({
                             <TableCell>
                               {isDupe ? (
                                 <Badge variant="outline" className="text-xs text-amber-600 border-amber-600">
-                                  Duplicado
+                                  {t.importUi.duplicateBadge}
                                 </Badge>
                               ) : (
                                 <Badge variant="outline" className="text-xs text-green-600 border-green-600">
-                                  Novo
+                                  {t.importUi.newBadge}
                                 </Badge>
                               )}
                             </TableCell>
@@ -380,7 +386,7 @@ export function ExcelImportDialog<T>({
                   </Table>
                   {validData.length > 100 && (
                     <div className="p-2 text-center text-sm text-muted-foreground border-t">
-                      Mostrando 100 de {validData.length} registos
+                      {t.importUi.showingRecords.replace('{total}', String(validData.length))}
                     </div>
                   )}
                 </ScrollArea>
@@ -391,20 +397,19 @@ export function ExcelImportDialog<T>({
 
         <DialogFooter>
           <Button variant="outline" onClick={handleClose}>
-            Cancelar
+            {t.common.cancel}
           </Button>
           {step === 'preview' && importCount > 0 && (
             <Button onClick={handleImport}>
               <Upload className="w-4 h-4 mr-2" />
-              {duplicateAction === 'update' 
-                ? `Importar e Actualizar ${validData.length} registos`
-                : `Importar ${importCount} registos`
-              }
+              {duplicateAction === 'update'
+                ? t.importUi.importAndUpdate.replace('{count}', String(validData.length))
+                : t.importUi.importRecords.replace('{count}', String(importCount))}
             </Button>
           )}
           {step === 'preview' && importCount === 0 && validData.length > 0 && (
             <Button disabled>
-              Todos são duplicados
+              {t.importUi.allDuplicates}
             </Button>
           )}
         </DialogFooter>

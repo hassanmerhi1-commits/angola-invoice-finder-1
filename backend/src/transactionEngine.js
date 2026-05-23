@@ -282,7 +282,7 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
       parseFloat(src.price) || 0,
       unitCost,
       src.unit || 'UN',
-      parseFloat(src.tax_rate) || 14,
+      parseFloat(src.tax_rate) || require('./taxDefaults').DEFAULT_VAT_RATE,
       toBranch,
     ]
   );
@@ -353,12 +353,13 @@ async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
   );
   const total = Math.max(0, parseFloat(sumResult.rows[0]?.total || 0));
 
+  // Only filial-owned rows — do not copy branch stock onto shared catalog (branch_id NULL) duplicates.
   await client.query(
     `UPDATE products
      SET stock = $1, updated_at = CURRENT_TIMESTAMP
      WHERE COALESCE(is_active, 1) != 0
        AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)
-       AND (branch_id = $3 OR branch_id IS NULL)`,
+       AND branch_id = $3`,
     [total, skuTrim, wh]
   );
 }

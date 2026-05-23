@@ -1,5 +1,10 @@
 import type { Branch, User } from '@/types/erp';
 
+/** Admin/manager scope: consolidated stock/data across every branch. */
+export const ALL_BRANCHES_SCOPE_ID = '__all_branches__';
+
+const SCOPE_STORAGE_KEY = 'kwanza_branch_scope_id';
+
 /** SQLite/API may return 1, 0, '1', true, etc. */
 export function normalizeIsMain(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 't' || value === 'true';
@@ -60,45 +65,89 @@ export function branchesVisibleToUser(
   return [];
 }
 
-/** Consolidated all-branch API scope (admin/manager at sede only). */
+export function isConsolidatedBranchScope(
+  canSwitch: boolean,
+  scopeId: string | null | undefined,
+): boolean {
+  return canSwitch && String(scopeId || '') === ALL_BRANCHES_SCOPE_ID;
+}
+
+/** Consolidated all-branch API scope (admin/manager with "All branches" selected). */
 export function isHeadOfficeScope(
   canSwitch: boolean,
-  operatingBranch: Branch | null,
+  scopeId: string | null | undefined,
 ): boolean {
-  return canSwitch && normalizeIsMain(operatingBranch?.isMain);
+  return isConsolidatedBranchScope(canSwitch, scopeId);
+}
+
+export function resolveBranchFromScope(branches: Branch[], scopeId: string): Branch | null {
+  if (scopeId === ALL_BRANCHES_SCOPE_ID) {
+    return branches.find((b) => normalizeIsMain(b.isMain)) || branches[0] || null;
+  }
+  return branches.find((b) => String(b.id) === String(scopeId)) || null;
+}
+
+/** Restore global scope (top nav / dashboard): physical branches only, default main. */
+export function resolveStoredBranchScopeId(
+  branches: Branch[],
+  canSwitch: boolean,
+): string {
+  if (!canSwitch || branches.length === 0) {
+    return String(branches[0]?.id || '');
+  }
+
+  const main = branches.find((b) => normalizeIsMain(b.isMain));
+  const savedScope = String(localStorage.getItem(SCOPE_STORAGE_KEY) || '').trim();
+  if (savedScope === ALL_BRANCHES_SCOPE_ID && main) return main.id;
+  if (savedScope && branches.some((b) => String(b.id) === savedScope)) return savedScope;
+
+  const savedBranchId = String(localStorage.getItem('kwanza_current_branch_id') || '').trim();
+  if (savedBranchId && branches.some((b) => String(b.id) === savedBranchId)) {
+    return savedBranchId;
+  }
+
+  return main?.id || branches[0]?.id || '';
+}
+
+export function persistBranchScope(scopeId: string, displayBranch: Branch): void {
+  localStorage.setItem(SCOPE_STORAGE_KEY, scopeId);
+  localStorage.setItem('kwanza_current_branch_id', String(displayBranch.id));
 }
 
 /** True when the user must always use a single-branch API filter. */
 export function isSingleBranchUser(
   canSwitch: boolean,
-  operatingBranch: Branch | null,
+  scopeId: string | null | undefined,
 ): boolean {
-  return !isHeadOfficeScope(canSwitch, operatingBranch);
+  return !isHeadOfficeScope(canSwitch, scopeId);
 }
 
 export function effectiveApiBranchId(
   canSwitch: boolean,
-  operatingBranch: Branch | null,
+  scopeId: string | null | undefined,
   user: BranchAccessUser,
 ): string | undefined {
-  if (isHeadOfficeScope(canSwitch, operatingBranch)) return undefined;
-  const fromBranch = String(operatingBranch?.id ?? '').trim();
-  if (fromBranch) return fromBranch;
+  if (isConsolidatedBranchScope(canSwitch, scopeId)) return undefined;
+  const fromScope = String(scopeId || '').trim();
+  if (fromScope && fromScope !== ALL_BRANCHES_SCOPE_ID) return fromScope;
   const fromUser = String(user?.branchId ?? '').trim();
   return fromUser || undefined;
 }
 
 export function resolveOperatingBranch(
   canSwitch: boolean,
-  currentBranch: Branch | null,
+  scopeId: string | null | undefined,
+  branches: Branch[],
   userBranch: Branch | null,
   user: BranchAccessUser,
 ): Branch | null {
-  if (canSwitch) return currentBranch;
+  if (canSwitch) {
+    return resolveBranchFromScope(branches, scopeId || ALL_BRANCHES_SCOPE_ID);
+  }
   if (userBranch) return userBranch;
   const rawId = String(user?.branchId ?? '').trim();
-  if (rawId && currentBranch && String(currentBranch.id) === rawId) return currentBranch;
-  if (rawId && currentBranch && !normalizeIsMain(currentBranch.isMain)) return currentBranch;
+  const fromScope = resolveBranchFromScope(branches, scopeId || rawId);
+  if (fromScope) return fromScope;
   return null;
 }
 

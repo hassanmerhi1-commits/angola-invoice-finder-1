@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { Product, Client, Supplier } from '@/types/erp';
 import { ColumnMapping } from '@/components/import/ColumnMappingDialog';
 
@@ -185,7 +186,7 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
                 'Quantidade': r[4] || 0,
                 'Unidade': r[5] || 'UN',
                 'Categoria': r[6] || '',
-                'IVA %': r[7] || 14,
+                'IVA %': r[7] || DEFAULT_VAT_RATE,
               };
             } else {
               // 2 columns: code + description only
@@ -215,7 +216,7 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
               quantidade: parseInt(getMappedValue('quantidade') || 0),
               unidade: String(getMappedValue('unidade') || 'UN'),
               categoria: String(getMappedValue('categoria') || ''),
-              iva: parseFloat(getMappedValue('iva') || 14),
+              iva: parseFloat(getMappedValue('iva') || String(DEFAULT_VAT_RATE)),
               codigoBarras: getMappedValue('codigoBarras') || '',
               fornecedor: getMappedValue('fornecedor') || '',
               qtdMinima: parseInt(getMappedValue('qtdMinima') || 0),
@@ -232,7 +233,7 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
             quantidade: parseInt(row['Quantidade'] || row['quantidade'] || row['Stock'] || row['Qty'] || row['QTD'] || 0),
             unidade: String(row['Unidade'] || row['unidade'] || row['Unit'] || row['UN'] || 'UN'),
             categoria: String(row['Categoria'] || row['categoria'] || row['Category'] || ''),
-            iva: parseFloat(row['IVA %'] || row['iva'] || row['IVA'] || row['Tax'] || 14),
+            iva: parseFloat(row['IVA %'] || row['iva'] || row['IVA'] || row['Tax'] || String(DEFAULT_VAT_RATE)),
             codigoBarras: row['Código de Barras'] || row['codigo_barras'] || row['Barcode'] || row['EAN'] || '',
             fornecedor: row['Fornecedor'] || row['fornecedor'] || row['Supplier'] || '',
             qtdMinima: parseInt(row['Qtd Mínima'] || row['qtd_minima'] || row['Min Qty'] || 0),
@@ -291,7 +292,7 @@ export function downloadImportTemplate() {
       'Preço Custo': 700,
       'Quantidade': 100,
       'Unidade': 'UN',
-      'IVA %': 14,
+      'IVA %': DEFAULT_VAT_RATE,
       'Fornecedor': 'Fornecedor Exemplo',
       'Qtd Mínima': 10,
       'Localização': 'A1',
@@ -554,21 +555,31 @@ export async function parseSuppliersFromExcel(file: File, columnMappings?: Colum
   });
 }
 
-export function validateImportedSuppliers(suppliers: ExcelSupplier[]): {
+export type SupplierImportValidationMessages = {
+  nameRequired: string;
+  nifRequired: string;
+};
+
+export function validateImportedSuppliers(
+  suppliers: ExcelSupplier[],
+  messages?: SupplierImportValidationMessages,
+): {
   valid: ExcelSupplier[];
   errors: { row: number; errors: string[] }[];
 } {
   const valid: ExcelSupplier[] = [];
   const errors: { row: number; errors: string[] }[] = [];
+  const nameRequired = messages?.nameRequired ?? 'Nome é obrigatório';
+  const nifRequired = messages?.nifRequired ?? 'NIF/Código é obrigatório';
 
   suppliers.forEach((supplier, index) => {
     const rowErrors: string[] = [];
     
     if (!supplier.nome) {
-      rowErrors.push('Nome é obrigatório');
+      rowErrors.push(nameRequired);
     }
     if (!supplier.nif) {
-      rowErrors.push('NIF/Código é obrigatório');
+      rowErrors.push(nifRequired);
     }
 
     if (rowErrors.length > 0) {
@@ -581,25 +592,63 @@ export function validateImportedSuppliers(suppliers: ExcelSupplier[]): {
   return { valid, errors };
 }
 
-export function downloadSupplierImportTemplate() {
+export type SupplierImportTemplateConfig = {
+  columns: {
+    name: string;
+    nif: string;
+    contactPerson: string;
+    phone: string;
+    email: string;
+    address: string;
+    city: string;
+    country: string;
+    paymentTerms: string;
+    notes: string;
+  };
+  name: string;
+  contact: string;
+  phone: string;
+  email: string;
+  address: string;
+  city: string;
+  country: string;
+  notes: string;
+  sheetName: string;
+  filename: string;
+};
+
+export function downloadSupplierImportTemplate(config?: SupplierImportTemplateConfig) {
+  const cols = config?.columns ?? {
+    name: 'Nome',
+    nif: 'NIF',
+    contactPerson: 'Pessoa Contacto',
+    phone: 'Telefone',
+    email: 'Email',
+    address: 'Morada',
+    city: 'Cidade',
+    country: 'País',
+    paymentTerms: 'Prazo Pagamento',
+    notes: 'Notas',
+  };
+
   const templateData = [
     {
-      'Nome': 'Fornecedor Exemplo Lda',
-      'NIF': '5000123456',
-      'Pessoa Contacto': 'João Silva',
-      'Telefone': '+244 923 456 789',
-      'Email': 'fornecedor@exemplo.ao',
-      'Morada': 'Rua Principal, 123',
-      'Cidade': 'Luanda',
-      'País': 'Angola',
-      'Prazo Pagamento': '30_days',
-      'Notas': 'Observações adicionais',
-    }
+      [cols.name]: config?.name ?? 'Fornecedor Exemplo Lda',
+      [cols.nif]: '5000123456',
+      [cols.contactPerson]: config?.contact ?? 'João Silva',
+      [cols.phone]: config?.phone ?? '+244 923 456 789',
+      [cols.email]: config?.email ?? 'fornecedor@exemplo.ao',
+      [cols.address]: config?.address ?? 'Rua Principal, 123',
+      [cols.city]: config?.city ?? 'Luanda',
+      [cols.country]: config?.country ?? 'Angola',
+      [cols.paymentTerms]: '30_days',
+      [cols.notes]: config?.notes ?? 'Observações adicionais',
+    },
   ];
 
   const ws = XLSX.utils.json_to_sheet(templateData);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Template');
+  XLSX.utils.book_append_sheet(wb, ws, config?.sheetName ?? 'Template');
   
-  XLSX.writeFile(wb, 'template_importacao_fornecedores.xlsx');
+  XLSX.writeFile(wb, config?.filename ?? 'template_importacao_fornecedores.xlsx');
 }

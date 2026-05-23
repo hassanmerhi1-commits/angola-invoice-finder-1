@@ -46,6 +46,7 @@ export const en = {
     currency: "Kz",
     unknown: "Unknown",
     dash: "—",
+    featureInDevelopment: "Feature in development",
   },
 
   // Navigation
@@ -540,9 +541,9 @@ export const en = {
 
   inventoryPageUi: {
     headOfficeTitle: "Head office (global view):",
-    headOfficeDesc: "Viewing inventory for all branches with quantities separated by branch.",
+    headOfficeDesc: "Stock column shows total quantity across all branches. Select a branch to see that branch only.",
     branchModeTitle: "Branch mode:",
-    branchModeDesc: "Stock quantities are for {branch} only (not Head Office). Switch to Head Office to see all branches.",
+    branchModeDesc: "Stock quantities are for {branch} only. Use the inventory branch dropdown and choose \"All branches (total stock)\" to see totals everywhere.",
 
     adjustEntry: "Adjust entry",
     adjustExit: "Adjust exit",
@@ -865,6 +866,7 @@ export const en = {
     priceWithTax: "Price inc VAT",
     reservedQty: "Reserved qty",
     totalQty: "Total qty",
+    branchQty: "Branch qty",
     firstCost: "Initial cost",
     lastCost: "Last cost",
     avgCost: "Average cost",
@@ -954,6 +956,60 @@ export const en = {
     clickToSelectFile: "Click to select file",
     supportsExcelCsv: "Supports Excel files (.xlsx, .xls) and CSV",
     downloadSampleTemplate: "Download sample template",
+
+    customMapping: "Custom mapping",
+    mapColumns: "Map columns",
+    chooseOtherFile: "Choose another file",
+    validCount: "{count} valid",
+    withErrorsCount: "{count} with errors",
+    duplicatesCount: "{count} duplicates",
+    newCount: "{count} new",
+    duplicatesExistTitle: "{count} {label}(s) already exist in the system",
+    recordsHaveDuplicates: "The following records have duplicate {label}:",
+    andMore: "... and {count} more",
+    whatToDo: "What would you like to do?",
+    skipDuplicates: "Skip duplicates (import only {count} new)",
+    updateExisting: "Update existing with file data",
+    errorsFoundTitle: "Errors found:",
+    rowErrors: "Row {row}: {errors}",
+    andMoreErrors: "... and {count} more errors",
+    statusColumn: "Status",
+    duplicateBadge: "Duplicate",
+    newBadge: "New",
+    showingRecords: "Showing 100 of {total} records",
+    allDuplicates: "All are duplicates",
+    importAndUpdate: "Import and update {count} records",
+    importRecords: "Import {count} records",
+
+    validation: {
+      nameRequired: "Name is required",
+      nifRequired: "Tax ID is required",
+    },
+
+    supplierTemplate: {
+      columns: {
+        name: "Name",
+        nif: "NIF",
+        contactPerson: "Contact person",
+        phone: "Phone",
+        email: "Email",
+        address: "Address",
+        city: "City",
+        country: "Country",
+        paymentTerms: "Payment terms",
+        notes: "Notes",
+      },
+      name: "Sample Supplier Ltd",
+      contact: "John Smith",
+      phone: "+244 923 456 789",
+      email: "supplier@example.com",
+      address: "Main Street, 123",
+      city: "Luanda",
+      country: "Angola",
+      notes: "Additional notes",
+      sheetName: "Template",
+      filename: "supplier_import_template.xlsx",
+    },
 
     fields: {
       productCodeSku: "Code/SKU",
@@ -1540,6 +1596,68 @@ export const en = {
     title: "Data sync",
     subtitle: "Export and import data between branches and head office",
 
+    offlineFirstTitle: "Offline-first system",
+    offlineFirstDesc:
+      "Each branch works with local data. At the end of the day or week, export the data and send it to head office via USB drive or email. Head office imports data from all branches for consolidation.",
+
+    tabExport: "Export data",
+    tabImport: "Import data",
+
+    exportPackageTitle: "Export full package",
+    exportPackageDesc: "Generates a JSON file with all branch data to send to head office",
+    branchLabel: "Branch",
+    dateFromLabel: "Start date",
+    dateToLabel: "End date",
+    preparePackage: "Prepare package",
+
+    packageReadyTitle: "Package ready",
+    packageReadyDesc: "Ready for download or email",
+    periodLabel: "Period",
+    totalRecordsLabel: "Total records",
+    versionLabel: "Version",
+    branchCodeLabel: "Code: {code}",
+
+    statProducts: "Products",
+    statSuppliers: "Suppliers",
+    statClients: "Clients",
+    statPurchases: "Purchases",
+    statSales: "Sales",
+    statMovements: "Movements",
+    statTransfers: "Transfers",
+    statReports: "Reports",
+
+    downloadUsb: "Download (USB drive)",
+    sendByEmail: "Send by email",
+
+    importBranchDataTitle: "Import branch data",
+    importBranchDataDesc: "Upload JSON files received from branches",
+    uploadSyncFileTitle: "Upload sync file",
+    uploadSyncFileDesc: "Drag and drop or click to select the JSON file",
+    importDoneAlertTitle: "Import completed",
+    totalImportedLabel: "Total records imported",
+
+    importInstructionsTitle: "Import instructions",
+    importStepReceiveFile: "Receive the JSON file from the branch (via USB drive or email)",
+    importStepSelectFile: 'Click "Select file" and choose the received file',
+    importStepAutoImport: "The system will validate and import the data automatically",
+    importStepDuplicates: "Duplicate records will be skipped (based on ID or tax ID)",
+    importStepConsolidate: "Data will be consolidated in the central system",
+    packageContentsTitle: "Data included in the package:",
+    packageItemProducts: "Products",
+    packageItemSuppliers: "Suppliers",
+    packageItemClients: "Clients",
+    packageItemPurchases: "Purchases (POs)",
+    packageItemSales: "Sales (invoices)",
+    packageItemStockMovements: "Stock movements",
+    packageItemStockTransfers: "Transfers",
+    packageItemDailyReports: "Daily reports",
+
+    emailDialogTitle: "Send by email",
+    emailDialogDesc: "The file will be downloaded and your email client will open",
+    headOfficeEmailLabel: "Head office email",
+    emailSubject: "Sync: {branch}",
+    emailBody: "Sync package with {count} records.",
+
     selectBranchError: "Select a branch",
     selectBranchPlaceholder: "Select branch",
 
@@ -1562,8 +1680,6 @@ export const en = {
     selectFile: "Select file",
     headOfficeEmailPlaceholder: "headoffice@company.ao",
     send: "Send",
-
-    importStepSelectFile: 'Click "Select file" and choose the received file',
   },
 
   exchangeRatesUi: {
@@ -1895,6 +2011,7 @@ export const en = {
   branchUi: {
     selectBranch: "Select branch",
     headOffice: "Head Office",
+    allBranches: "All branches (total stock)",
   },
 
   setupUi: {
@@ -2854,6 +2971,9 @@ export const en = {
   },
 
   importsUi: {
+    moduleTitle: "Imports",
+    moduleSubtitle: "International purchases, landed cost, customs and FX",
+
     supplierRequired: "Supplier is required",
     importCreated: "Import {number} created",
     statusUpdated: "Status updated",
@@ -3664,7 +3784,7 @@ export const en = {
     // Receipt preview
     dateTimePattern: "MM/dd/yyyy 'at' HH:mm:ss",
     subtotal: "Subtotal",
-    vatLabel: "VAT 14%",
+    vatLabel: "VAT 5%",
     received: "Received",
     processedBy: "Document processed by {name}",
     thanks: "Thank you for your preference!",

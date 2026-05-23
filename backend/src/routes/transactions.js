@@ -366,6 +366,8 @@ module.exports = function(broadcastTable) {
       await validatePeriod(client, date || new Date().toISOString());
 
       // Phase 1: Stock Movements (through engine)
+      /** Line productId → actual products.id used after branch clone (shared catalog → filial row). */
+      const stockProductIdByLine = new Map();
       if (stockEntries && stockEntries.length > 0) {
         for (const entry of stockEntries) {
           const effectiveUnitCost = effectivePriceUpdates.get(entry.productId) ?? entry.unitCost ?? 0;
@@ -395,15 +397,24 @@ module.exports = function(broadcastTable) {
             createdBy: userId,
           });
           result.stockMovementIds.push(movement.id);
+          const resolvedPid = movement.product_id || entry.productId;
+          stockProductIdByLine.set(entry.productId, resolvedPid);
+          if (resolvedPid !== entry.productId) {
+            console.log(
+              `[TX API] ${transactionType} ${documentNumber}: stock on filial product ${resolvedPid} ` +
+              `(line had ${entry.productId})`
+            );
+          }
         }
       }
 
-      // Phase 2: Price Updates (WAC)
+      // Phase 2: Price Updates (WAC) — same product row that received stock
       if (priceUpdates && priceUpdates.length > 0) {
         for (const pu of priceUpdates) {
+          const targetProductId = stockProductIdByLine.get(pu.productId) || pu.productId;
           const prodResult = await client.query(
             'SELECT stock, cost FROM products WHERE id = $1 FOR UPDATE',
-            [pu.productId]
+            [targetProductId]
           );
           if (prodResult.rows.length > 0) {
             const p = prodResult.rows[0];
@@ -421,13 +432,15 @@ module.exports = function(broadcastTable) {
             await client.query(
               `UPDATE products
                SET cost = $1,
+                   last_cost = $2,
+                   avg_cost = $1,
                    updated_at = CURRENT_TIMESTAMP
-               WHERE id = $2`,
-              [nextAvgCost, pu.productId]
+               WHERE id = $3`,
+              [nextAvgCost, nextLastCost, targetProductId]
             );
 
             console.log(
-              `[TX API] price update ${transactionType} ${documentNumber}: product=${pu.productId} ` +
+              `[TX API] price update ${transactionType} ${documentNumber}: product=${targetProductId} ` +
               `prevStock=${previousStock} received=${pu.quantityReceived} avgCost=${nextAvgCost} lastCost=${nextLastCost}`
             );
           }

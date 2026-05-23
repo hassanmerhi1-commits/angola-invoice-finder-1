@@ -2,6 +2,7 @@
 // DUAL-MODE: Electron → DB + localStorage mirror | Web → localStorage
 import { ProForma, ProFormaItem } from '@/types/proforma';
 import { isElectronMode, dbGetAll, dbInsert, dbDelete as dbDeleteRow, lsGet, lsSet } from '@/lib/dbHelper';
+import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 
 const STORAGE_KEY = 'kwanzaerp_proformas';
 
@@ -294,7 +295,7 @@ function mapProformaItemFromDb(row: any): ProFormaItem {
     quantity: Number(row.quantity || 0),
     unitPrice: Number(row.unit_price ?? row.unitPrice ?? 0),
     discount: Number(row.discount || 0),
-    taxRate: Number(row.tax_rate ?? row.taxRate ?? 14),
+    taxRate: Number(row.tax_rate ?? row.taxRate ?? DEFAULT_VAT_RATE),
     taxAmount: Number(row.tax_amount ?? row.taxAmount ?? 0),
     subtotal: Number(row.subtotal || 0),
     total: Number(row.total || 0),

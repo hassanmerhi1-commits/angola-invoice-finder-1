@@ -83,7 +83,7 @@ export function AdvancedDataGrid({
     { key: 'price', label: t.inventoryGridUi.priceNoTax, minWidth: 100, type: 'number' },
     { key: 'priceWithIVA', label: t.inventoryGridUi.priceWithTax, minWidth: 100, type: 'number', computed: true },
     { key: 'reservedQty', label: t.inventoryGridUi.reservedQty, minWidth: 100, type: 'number', computed: true },
-    { key: 'stock', label: t.inventoryGridUi.totalQty, minWidth: 80, type: 'number' },
+    { key: 'stock', label: isHeadOffice ? t.inventoryGridUi.totalQty : t.inventoryGridUi.branchQty, minWidth: 80, type: 'number' },
     { key: 'firstCost', label: t.inventoryGridUi.firstCost, minWidth: 100, type: 'number' },
     { key: 'lastCost', label: t.inventoryGridUi.lastCost, minWidth: 100, type: 'number' },
     { key: 'avgCost', label: t.inventoryGridUi.avgCost, minWidth: 100, type: 'number' },
@@ -92,7 +92,7 @@ export function AdvancedDataGrid({
     { key: 'unit', label: t.inventoryGridUi.unit, minWidth: 80 },
     { key: 'category', label: t.inventoryGridUi.category, minWidth: 120 },
     { key: 'supplierName', label: t.inventoryGridUi.supplierName, minWidth: 120 },
-  ]), [t]);
+  ]), [t, isHeadOffice]);
   const [columnSearches, setColumnSearches] = useState<Record<string, string>>({});
   const [sortColumn, setSortColumn] = useState<string>('sku');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');

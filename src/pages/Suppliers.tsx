@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useSuppliers } from '@/hooks/useERP';
@@ -264,12 +264,37 @@ export default function Suppliers() {
   const existingNifs = suppliers.map(s => s.nif);
 
   const supplierImportColumns: { key: keyof ExcelSupplier; label: string }[] = [
-    { key: 'nome', label: 'Nome' },
-    { key: 'nif', label: 'NIF' },
-    { key: 'pessoaContacto', label: 'Contacto' },
-    { key: 'telefone', label: 'Telefone' },
-    { key: 'cidade', label: 'Cidade' },
+    { key: 'nome', label: t.importUi.fields.name },
+    { key: 'nif', label: t.importUi.fields.nif },
+    { key: 'pessoaContacto', label: t.importUi.fields.contactPerson },
+    { key: 'telefone', label: t.importUi.fields.phone },
+    { key: 'cidade', label: t.importUi.fields.city },
   ];
+
+  const supplierImportValidation = useMemo(
+    () => ({
+      nameRequired: t.importUi.validation.nameRequired,
+      nifRequired: t.importUi.validation.nifRequired,
+    }),
+    [t],
+  );
+
+  const supplierImportTemplate = useMemo(
+    () => ({
+      columns: t.importUi.supplierTemplate.columns,
+      name: t.importUi.supplierTemplate.name,
+      contact: t.importUi.supplierTemplate.contact,
+      phone: t.importUi.supplierTemplate.phone,
+      email: t.importUi.supplierTemplate.email,
+      address: t.importUi.supplierTemplate.address,
+      city: t.importUi.supplierTemplate.city,
+      country: t.importUi.supplierTemplate.country,
+      notes: t.importUi.supplierTemplate.notes,
+      sheetName: t.importUi.supplierTemplate.sheetName,
+      filename: t.importUi.supplierTemplate.filename,
+    }),
+    [t],
+  );
 
   return (
     <div className="p-6 space-y-6">
@@ -627,13 +652,13 @@ export default function Suppliers() {
         title={t.suppliersUi.importTitle}
         description={t.suppliersUi.importDesc}
         parseFile={parseSuppliersFromExcel}
-        validateData={validateImportedSuppliers}
+        validateData={(data) => validateImportedSuppliers(data, supplierImportValidation)}
         onImport={handleImportSuppliers}
-        downloadTemplate={downloadSupplierImportTemplate}
+        downloadTemplate={() => downloadSupplierImportTemplate(supplierImportTemplate)}
         columns={supplierImportColumns}
         duplicateKey="nif"
         existingKeys={existingNifs}
-        duplicateLabel="NIF"
+        duplicateLabel={t.importUi.fields.nif}
         mappingType="suppliers"
       />
     </div>

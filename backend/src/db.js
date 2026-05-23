@@ -489,7 +489,7 @@ function ensureAppTablesAndColumns() {
   tryAlterAdd('products', 'avg_cost REAL NOT NULL DEFAULT 0');
   tryAlterAdd('products', 'stock REAL NOT NULL DEFAULT 0');
   tryAlterAdd('products', "unit TEXT DEFAULT 'UN'");
-  tryAlterAdd('products', 'tax_rate REAL NOT NULL DEFAULT 14');
+  tryAlterAdd('products', 'tax_rate REAL NOT NULL DEFAULT 5');
   tryAlterAdd('products', 'branch_id TEXT');
   tryAlterAdd('products', 'supplier_id TEXT');
   tryAlterAdd('products', 'supplier_name TEXT');
@@ -502,7 +502,7 @@ function ensureAppTablesAndColumns() {
   migrateDocumentSequencesBranchScopeSqlite();
   seedDocumentSequencesSqlite();
   tryAlterAdd('products', 'version INTEGER NOT NULL DEFAULT 0');
-  tryAlterAdd('products', "tax_code TEXT DEFAULT 'IVA14'");
+  tryAlterAdd('products', "tax_code TEXT DEFAULT 'IVA5'");
   tryAlterAdd('users', 'username TEXT');
 
   ensureOrgHierarchyTables();
@@ -1105,7 +1105,7 @@ function bootstrapSchemaAndSeed() {
       avg_cost REAL NOT NULL DEFAULT 0,
       stock REAL NOT NULL DEFAULT 0,
       unit TEXT DEFAULT 'UN',
-      tax_rate REAL NOT NULL DEFAULT 14,
+      tax_rate REAL NOT NULL DEFAULT 5,
       branch_id TEXT,
       supplier_id TEXT,
       supplier_name TEXT,

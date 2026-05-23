@@ -727,7 +727,7 @@ function mapElectronProductRowToApiBody(data) {
     cost: Number(data.cost) || 0,
     stock: Number(data.stock) || 0,
     unit: data.unit || 'un',
-    taxRate: Number(data.tax_rate ?? data.taxRate) || 14,
+    taxRate: Number(data.tax_rate ?? data.taxRate) || 5,
     branchId: branchRaw && branchRaw !== 'all' ? branchRaw : null,
     isActive: data.is_active !== 0 && data.is_active !== false && data.isActive !== false,
     supplierId: data.supplier_id ?? data.supplierId ?? null,

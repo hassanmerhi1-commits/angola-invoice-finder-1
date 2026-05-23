@@ -12,6 +12,7 @@ import {
 import { useSupplierReturns } from '@/hooks/useSupplierReturns';
 import { SupplierReturnItem } from '@/lib/supplierReturns';
 import { Sale, CreditNoteItem, DebitNoteItem, TransportDocumentItem, Product, PurchaseOrder } from '@/types/erp';
+import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -82,7 +83,7 @@ export default function FiscalDocuments() {
 
   const [debitReason, setDebitReason] = useState<'price_adjustment' | 'additional_charge' | 'interest' | 'other'>('price_adjustment');
   const [debitDescription, setDebitDescription] = useState('');
-  const [debitItems, setDebitItems] = useState<DebitNoteItem[]>([{ description: '', quantity: 1, unitPrice: 0, taxRate: 14, taxAmount: 0, subtotal: 0 }]);
+  const [debitItems, setDebitItems] = useState<DebitNoteItem[]>([{ description: '', quantity: 1, unitPrice: 0, taxRate: DEFAULT_VAT_RATE, taxAmount: 0, subtotal: 0 }]);
   const [debitCustomerNif, setDebitCustomerNif] = useState('');
   const [debitCustomerName, setDebitCustomerName] = useState('');
 
@@ -264,7 +265,7 @@ export default function FiscalDocuments() {
     setSelectedSale(null);
     setDebitReason('price_adjustment');
     setDebitDescription('');
-    setDebitItems([{ description: '', quantity: 1, unitPrice: 0, taxRate: 14, taxAmount: 0, subtotal: 0 }]);
+    setDebitItems([{ description: '', quantity: 1, unitPrice: 0, taxRate: DEFAULT_VAT_RATE, taxAmount: 0, subtotal: 0 }]);
     setDebitCustomerNif('');
     setDebitCustomerName('');
   };
@@ -393,7 +394,7 @@ export default function FiscalDocuments() {
   };
 
   const addDebitItem = () => {
-    setDebitItems([...debitItems, { description: '', quantity: 1, unitPrice: 0, taxRate: 14, taxAmount: 0, subtotal: 0 }]);
+    setDebitItems([...debitItems, { description: '', quantity: 1, unitPrice: 0, taxRate: DEFAULT_VAT_RATE, taxAmount: 0, subtotal: 0 }]);
   };
 
   const filteredSales = sales.filter(s => 

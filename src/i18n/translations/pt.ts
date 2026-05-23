@@ -48,6 +48,7 @@ export const pt: TranslationKeys = {
     currency: "Kz",
     unknown: "Desconhecido",
     dash: "—",
+    featureInDevelopment: "Funcionalidade em desenvolvimento",
   },
 
   // Navigation
@@ -542,9 +543,9 @@ export const pt: TranslationKeys = {
 
   inventoryPageUi: {
     headOfficeTitle: "Sede - Visão Global:",
-    headOfficeDesc: "A visualizar inventário de todas as filiais com quantidades separadas por filial.",
+    headOfficeDesc: "A coluna de stock mostra o total em todas as filiais. Escolha uma filial para ver apenas essa filial.",
     branchModeTitle: "Modo Filial:",
-    branchModeDesc: "Quantidades apenas desta filial ({branch}), não da Sede. Mude para a Sede para ver todas as filiais.",
+    branchModeDesc: "Quantidades apenas desta filial/armazém ({branch}). No inventário, use o selector de filial e escolha \"Todas as filiais (stock total)\" para o total global.",
 
     adjustEntry: "Ajustar Entrada",
     adjustExit: "Ajustar Saída",
@@ -867,6 +868,7 @@ export const pt: TranslationKeys = {
     priceWithTax: "Preço c/IVA",
     reservedQty: "Qty Reservada",
     totalQty: "Qty Total",
+    branchQty: "Qty Filial",
     firstCost: "Custo Inicial",
     lastCost: "Últ. Custo",
     avgCost: "Custo Médio",
@@ -956,6 +958,60 @@ export const pt: TranslationKeys = {
     clickToSelectFile: "Clique para selecionar ficheiro",
     supportsExcelCsv: "Suporta ficheiros Excel (.xlsx, .xls) e CSV",
     downloadSampleTemplate: "Baixar Template de Exemplo",
+
+    customMapping: "Mapeamento personalizado",
+    mapColumns: "Mapear Colunas",
+    chooseOtherFile: "Escolher outro ficheiro",
+    validCount: "{count} válidos",
+    withErrorsCount: "{count} com erros",
+    duplicatesCount: "{count} duplicados",
+    newCount: "{count} novos",
+    duplicatesExistTitle: "{count} {label}(s) já existem no sistema",
+    recordsHaveDuplicates: "Os seguintes registos têm {label} duplicados:",
+    andMore: "... e mais {count}",
+    whatToDo: "O que deseja fazer?",
+    skipDuplicates: "Ignorar duplicados (importar apenas {count} novos)",
+    updateExisting: "Actualizar existentes com dados do ficheiro",
+    errorsFoundTitle: "Erros encontrados:",
+    rowErrors: "Linha {row}: {errors}",
+    andMoreErrors: "... e mais {count} erros",
+    statusColumn: "Estado",
+    duplicateBadge: "Duplicado",
+    newBadge: "Novo",
+    showingRecords: "Mostrando 100 de {total} registos",
+    allDuplicates: "Todos são duplicados",
+    importAndUpdate: "Importar e Actualizar {count} registos",
+    importRecords: "Importar {count} registos",
+
+    validation: {
+      nameRequired: "Nome é obrigatório",
+      nifRequired: "NIF/Código é obrigatório",
+    },
+
+    supplierTemplate: {
+      columns: {
+        name: "Nome",
+        nif: "NIF",
+        contactPerson: "Pessoa Contacto",
+        phone: "Telefone",
+        email: "Email",
+        address: "Morada",
+        city: "Cidade",
+        country: "País",
+        paymentTerms: "Prazo Pagamento",
+        notes: "Notas",
+      },
+      name: "Fornecedor Exemplo Lda",
+      contact: "João Silva",
+      phone: "+244 923 456 789",
+      email: "fornecedor@exemplo.ao",
+      address: "Rua Principal, 123",
+      city: "Luanda",
+      country: "Angola",
+      notes: "Observações adicionais",
+      sheetName: "Template",
+      filename: "template_importacao_fornecedores.xlsx",
+    },
 
     fields: {
       productCodeSku: "Código/SKU",
@@ -1542,6 +1598,68 @@ export const pt: TranslationKeys = {
     title: "Sincronização de Dados",
     subtitle: "Exportar e importar dados entre filiais e sede",
 
+    offlineFirstTitle: "Sistema Offline-First",
+    offlineFirstDesc:
+      "Cada filial trabalha com dados locais. No final do dia/semana, exporte os dados e envie para a sede via pen drive ou email. A sede importa os dados de todas as filiais para consolidação.",
+
+    tabExport: "Exportar Dados",
+    tabImport: "Importar Dados",
+
+    exportPackageTitle: "Exportar Pacote Completo",
+    exportPackageDesc: "Gera um ficheiro JSON com todos os dados da filial para enviar à sede",
+    branchLabel: "Filial",
+    dateFromLabel: "Data Inicial",
+    dateToLabel: "Data Final",
+    preparePackage: "Preparar Pacote",
+
+    packageReadyTitle: "Pacote Preparado",
+    packageReadyDesc: "Pronto para download ou envio por email",
+    periodLabel: "Período",
+    totalRecordsLabel: "Total Registos",
+    versionLabel: "Versão",
+    branchCodeLabel: "Código: {code}",
+
+    statProducts: "Produtos",
+    statSuppliers: "Fornecedores",
+    statClients: "Clientes",
+    statPurchases: "Compras",
+    statSales: "Vendas",
+    statMovements: "Movimentos",
+    statTransfers: "Transferências",
+    statReports: "Relatórios",
+
+    downloadUsb: "Descarregar (Pen Drive)",
+    sendByEmail: "Enviar por Email",
+
+    importBranchDataTitle: "Importar Dados das Filiais",
+    importBranchDataDesc: "Carregue os ficheiros JSON recebidos das filiais",
+    uploadSyncFileTitle: "Carregar Ficheiro de Sincronização",
+    uploadSyncFileDesc: "Arraste e solte ou clique para selecionar o ficheiro JSON",
+    importDoneAlertTitle: "Importação Concluída",
+    totalImportedLabel: "Total de Registos Importados",
+
+    importInstructionsTitle: "Instruções de Importação",
+    importStepReceiveFile: "Receba o ficheiro JSON da filial (via pen drive ou email)",
+    importStepSelectFile: 'Clique em "Selecionar Ficheiro" e escolha o ficheiro recebido',
+    importStepAutoImport: "O sistema irá validar e importar os dados automaticamente",
+    importStepDuplicates: "Registos duplicados serão ignorados (baseado no ID ou NIF)",
+    importStepConsolidate: "Os dados serão consolidados no sistema central",
+    packageContentsTitle: "Dados Incluídos no Pacote:",
+    packageItemProducts: "Produtos",
+    packageItemSuppliers: "Fornecedores",
+    packageItemClients: "Clientes",
+    packageItemPurchases: "Compras (POs)",
+    packageItemSales: "Vendas (Facturas)",
+    packageItemStockMovements: "Movimentos Stock",
+    packageItemStockTransfers: "Transferências",
+    packageItemDailyReports: "Relatórios Diários",
+
+    emailDialogTitle: "Enviar por Email",
+    emailDialogDesc: "O ficheiro será descarregado e o seu cliente de email será aberto",
+    headOfficeEmailLabel: "Email da Sede",
+    emailSubject: "Sincronização: {branch}",
+    emailBody: "Pacote de sincronização com {count} registos.",
+
     selectBranchError: "Selecione uma filial",
     selectBranchPlaceholder: "Selecione a filial",
 
@@ -1564,8 +1682,6 @@ export const pt: TranslationKeys = {
     selectFile: "Selecionar Ficheiro",
     headOfficeEmailPlaceholder: "sede@empresa.ao",
     send: "Enviar",
-
-    importStepSelectFile: 'Clique em "Selecionar Ficheiro" e escolha o ficheiro recebido',
   },
 
   exchangeRatesUi: {
@@ -1898,6 +2014,7 @@ export const pt: TranslationKeys = {
   branchUi: {
     selectBranch: "Selecionar filial",
     headOffice: "Sede",
+    allBranches: "Todas as filiais (stock total)",
   },
 
   setupUi: {
@@ -2857,6 +2974,9 @@ export const pt: TranslationKeys = {
   },
 
   importsUi: {
+    moduleTitle: "Importações",
+    moduleSubtitle: "Compras internacionais, landed cost, alfândega e câmbio",
+
     supplierRequired: "Fornecedor é obrigatório",
     importCreated: "Importação {number} criada",
     statusUpdated: "Estado actualizado",
@@ -3667,7 +3787,7 @@ export const pt: TranslationKeys = {
     // Receipt preview
     dateTimePattern: "dd/MM/yyyy 'às' HH:mm:ss",
     subtotal: "Subtotal",
-    vatLabel: "IVA 14%",
+    vatLabel: "IVA 5%",
     received: "Recebido",
     processedBy: "Documento processado por {name}",
     thanks: "Obrigado pela preferência!",

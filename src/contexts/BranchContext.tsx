@@ -4,16 +4,22 @@ import { api } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
 import * as storage from '@/lib/storage';
 import {
+  ALL_BRANCHES_SCOPE_ID,
   applyUserBranchLockOnLogin,
   canUserSwitchBranch,
   mapBranchRow,
+  persistBranchScope,
+  resolveBranchFromScope,
+  resolveStoredBranchScopeId,
   resolveUserBranch,
 } from '@/lib/branchAccess';
 
 interface BranchContextType {
   branches: Branch[];
   currentBranch: Branch | null;
+  scopeId: string;
   setCurrentBranch: (branch: Branch) => void;
+  setOperatingScope: (scopeId: string) => void;
   refreshBranches: () => Promise<void>;
   isLoading: boolean;
 }
@@ -29,32 +35,15 @@ function readStoredUser(): { branchId?: string; role?: string } | null {
   }
 }
 
-function persistCurrentBranch(branch: Branch): void {
-  localStorage.setItem('kwanza_current_branch_id', String(branch.id));
+function persistCurrentBranch(scopeId: string, branch: Branch): void {
+  persistBranchScope(scopeId, branch);
   storage.setCurrentBranch(branch);
-}
-
-function pickInitialBranch(mapped: Branch[]): Branch | null {
-  if (mapped.length === 0) return null;
-
-  const storedUser = readStoredUser();
-  const assigned = resolveUserBranch(mapped, storedUser?.branchId);
-
-  if (assigned && !canUserSwitchBranch(storedUser, assigned)) {
-    return assigned;
-  }
-
-  const savedBranchId = localStorage.getItem('kwanza_current_branch_id');
-  const saved = savedBranchId
-    ? mapped.find((b) => String(b.id) === String(savedBranchId))
-    : null;
-
-  return saved || mapped.find((b) => b.isMain) || mapped[0];
 }
 
 export function BranchProvider({ children }: { children: ReactNode }) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [currentBranch, setCurrentBranchState] = useState<Branch | null>(null);
+  const [scopeId, setScopeIdState] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
 
   const applyBranchList = useCallback((mapped: Branch[]) => {
@@ -64,20 +53,25 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     const storedUser = readStoredUser();
     const assigned = resolveUserBranch(mapped, storedUser?.branchId);
     if (assigned && !canUserSwitchBranch(storedUser, assigned)) {
-      persistCurrentBranch(assigned);
+      persistCurrentBranch(assigned.id, assigned);
+      setScopeIdState(assigned.id);
       setCurrentBranchState(assigned);
       applyUserBranchLockOnLogin(storedUser);
       return;
     }
 
-    setCurrentBranchState((prev) => {
-      const savedBranchId = localStorage.getItem('kwanza_current_branch_id');
-      const saved = savedBranchId
-        ? mapped.find((b) => String(b.id) === String(savedBranchId))
-        : null;
-      const next = saved || (prev ? mapped.find((b) => b.id === prev.id) : null) || pickInitialBranch(mapped);
-      if (next) persistCurrentBranch(next);
-      return next;
+    setScopeIdState((prevScope) => {
+      const canSwitch = true;
+      const nextScope =
+        prevScope === ALL_BRANCHES_SCOPE_ID
+          ? resolveStoredBranchScopeId(mapped, canSwitch)
+          : prevScope && mapped.some((b) => b.id === prevScope)
+            ? prevScope
+            : resolveStoredBranchScopeId(mapped, canSwitch);
+      const nextBranch = resolveBranchFromScope(mapped, nextScope);
+      if (nextBranch) persistCurrentBranch(nextScope, nextBranch);
+      setCurrentBranchState(nextBranch);
+      return nextScope;
     });
   }, []);
 
@@ -118,7 +112,8 @@ export function BranchProvider({ children }: { children: ReactNode }) {
       const storedUser = readStoredUser();
       const assigned = resolveUserBranch(branches, storedUser?.branchId);
       if (assigned && !canUserSwitchBranch(storedUser, assigned)) {
-        persistCurrentBranch(assigned);
+        persistCurrentBranch(assigned.id, assigned);
+        setScopeIdState(assigned.id);
         setCurrentBranchState(assigned);
       }
     };
@@ -126,25 +121,42 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('nexor:branch-lock-changed', onLockChanged);
   }, [branches]);
 
-  const setCurrentBranch = useCallback((branch: Branch) => {
+  const setOperatingScope = useCallback((nextScopeId: string) => {
     const storedUser = readStoredUser();
     const allBranches: Branch[] = JSON.parse(localStorage.getItem('kwanzaerp_branches') || '[]');
-    const assigned = resolveUserBranch(allBranches.length ? allBranches : [branch], storedUser?.branchId);
+    const list = allBranches.length ? allBranches : branches;
+    const assigned = resolveUserBranch(list, storedUser?.branchId);
 
     if (assigned && !canUserSwitchBranch(storedUser, assigned)) {
-      if (String(branch.id) !== String(assigned.id)) return;
+      if (String(nextScopeId) !== String(assigned.id)) return;
     }
 
-    persistCurrentBranch(branch);
+    const branch = resolveBranchFromScope(list.length ? list : branches, nextScopeId);
+    if (!branch) return;
+
+    persistCurrentBranch(nextScopeId, branch);
+    setScopeIdState(nextScopeId);
     setCurrentBranchState(branch);
-  }, []);
+  }, [branches]);
+
+  const setCurrentBranch = useCallback((branch: Branch) => {
+    setOperatingScope(branch.id);
+  }, [setOperatingScope]);
 
   const refreshBranches = useCallback(async () => {
     await loadBranches();
   }, [loadBranches]);
 
   return (
-    <BranchContext.Provider value={{ branches, currentBranch, setCurrentBranch, refreshBranches, isLoading }}>
+    <BranchContext.Provider value={{
+      branches,
+      currentBranch,
+      scopeId,
+      setCurrentBranch,
+      setOperatingScope,
+      refreshBranches,
+      isLoading,
+    }}>
       {children}
     </BranchContext.Provider>
   );

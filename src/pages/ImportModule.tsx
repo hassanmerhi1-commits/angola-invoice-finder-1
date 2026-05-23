@@ -212,6 +212,10 @@ export default function ImportModule() {
 
   return (
     <div className="flex flex-col h-full bg-background">
+      <div className="px-3 py-2 border-b bg-card/40 shrink-0">
+        <h1 className="text-lg font-bold">{t.importsUi.moduleTitle}</h1>
+        <p className="text-xs text-muted-foreground">{t.importsUi.moduleSubtitle}</p>
+      </div>
       {/* Toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b flex-wrap">
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setFormOpen(true)}>
@@ -337,7 +341,7 @@ export default function ImportModule() {
             <Card><CardContent className="pt-6 text-center text-muted-foreground">
               <Calculator className="w-12 h-12 mx-auto mb-3 opacity-30" />
               <p>{tab === 'custos' ? t.importsUi.landedCostTitle : tab === 'cambio' ? t.importsUi.fxTitle : t.importsUi.customsDocsTitle}</p>
-              <p className="text-xs mt-1">{t.common.featureInDevelopment}</p>
+              <p className="text-xs mt-1">{t.placeholderUi.inDevelopmentDesc}</p>
             </CardContent></Card>
           </TabsContent>
         ))}

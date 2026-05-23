@@ -137,6 +137,8 @@ server.listen(PORT, '0.0.0.0', () => {
 
   ensureDefaultInstallation().catch((e) => console.warn('[INSTALL]', e.message));
   upgradeLegacyPasswordHashesOnStartup().catch((e) => console.warn('[AUTH]', e.message));
+  const { migrateInventoryVatTo5 } = require('./migrateInventoryVat5');
+  migrateInventoryVatTo5(db).catch((e) => console.warn('[DB] Inventory VAT 5% patch:', e.message));
   startReplicatorWorker(4000);
   startAgtWorker(5000);
 });

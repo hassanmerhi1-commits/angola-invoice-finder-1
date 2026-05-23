@@ -224,17 +224,24 @@ export function useProducts(branchId?: string) {
     }
 
     if (apiProducts !== null) {
-      const apiIds = new Set(apiProducts.map((p) => p.id));
+      const dedupedApi = dedupeProductsBySku(apiProducts, branchId);
+      // API is source of truth — merging Electron DB / localStorage re-shows duplicate SKUs after login.
+      if (!isDemoMode()) {
+        return filterProductsForApiScope(dedupedApi, branchId);
+      }
+      const apiIds = new Set(dedupedApi.map((p) => p.id));
       const apiSkus = new Set(
-        apiProducts.map((p) => normalizeProductSku(p.sku)).filter(Boolean)
+        dedupedApi.map((p) => normalizeProductSku(p.sku)).filter(Boolean),
       );
       const localOnly = localProducts.filter((p) => {
         if (apiIds.has(p.id)) return false;
-        if (!branchId) return true;
+        const skuKey = normalizeProductSku(p.sku);
+        if (skuKey && apiSkus.has(skuKey)) return false;
+        if (!branchId) return false;
         return productBelongsToBranchList(p, branchId, apiSkus);
       });
       return filterProductsForApiScope(
-        dedupeProductsBySku([...apiProducts, ...localOnly], branchId),
+        dedupeProductsBySku([...dedupedApi, ...localOnly], branchId),
         branchId,
       );
     }
@@ -765,6 +772,7 @@ export function useAuth() {
           isActive: true,
           createdAt: apiUser.createdAt || apiUser.created_at || new Date().toISOString(),
         };
+        storage.clearLocalProductsCache();
         storage.setCurrentUser(user);
         applyUserBranchLockOnLogin(user);
         window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
@@ -783,6 +791,7 @@ export function useAuth() {
       );
 
       if (foundUser) {
+        storage.clearLocalProductsCache();
         storage.setCurrentUser(foundUser);
         applyUserBranchLockOnLogin(foundUser);
         window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
@@ -796,6 +805,7 @@ export function useAuth() {
 
   const logout = useCallback(() => {
     clearElectronSessionAuthenticated();
+    storage.clearLocalProductsCache();
     storage.setCurrentUser(null);
     setAuthToken(null);
     setAuthState({ user: null });
@@ -1073,19 +1083,32 @@ export function useSuppliers() {
     setSuppliers(mapped);
   }, []);
 
+  const notifySuppliersChanged = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent(storage.SUPPLIERS_CHANGED_EVENT, { detail: {} }));
+  }, []);
+
   useEffect(() => { refreshSuppliers(); }, [refreshSuppliers]);
+
+  useEffect(() => {
+    const onSuppliersChanged = () => { void refreshSuppliers(); };
+    window.addEventListener(storage.SUPPLIERS_CHANGED_EVENT, onSuppliersChanged);
+    return () => window.removeEventListener(storage.SUPPLIERS_CHANGED_EVENT, onSuppliersChanged);
+  }, [refreshSuppliers]);
 
   const saveSupplier = useCallback(async (supplier: Supplier) => {
     const result = await api.suppliers.update(supplier.id, supplier);
     if (!result.data) await storage.saveSupplier(supplier);
     await refreshSuppliers();
-  }, [refreshSuppliers]);
+    notifySuppliersChanged();
+  }, [refreshSuppliers, notifySuppliersChanged]);
 
   const deleteSupplier = useCallback(async (supplierId: string) => {
     const result = await api.suppliers.delete(supplierId);
     if (!result.data) await storage.deleteSupplier(supplierId);
     await refreshSuppliers();
-  }, [refreshSuppliers]);
+    notifySuppliersChanged();
+  }, [refreshSuppliers, notifySuppliersChanged]);
 
   const createSupplier = useCallback(async (data: Omit<Supplier, 'id' | 'createdAt' | 'updatedAt'>): Promise<Supplier> => {
     const result = await api.suppliers.create(data);
@@ -1100,6 +1123,7 @@ export function useSuppliers() {
         console.warn('[ERP] ensureSupplierAccount after create skipped:', e);
       }
       await refreshSuppliers();
+      notifySuppliersChanged();
       return mapped;
     }
     const errMsg = (result.error || '').toLowerCase();
@@ -1134,8 +1158,9 @@ export function useSuppliers() {
     storage.saveSupplierLocalFallback(supplier);
     await ensureSupplierAccount(supplier.id, supplier.name, supplier.nif);
     await refreshSuppliers();
+    notifySuppliersChanged();
     return supplier;
-  }, [refreshSuppliers]);
+  }, [refreshSuppliers, notifySuppliersChanged]);
 
   return { suppliers, saveSupplier, deleteSupplier, createSupplier, refreshSuppliers };
 }

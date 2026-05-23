@@ -1,5 +1,9 @@
+/** Default IVA/VAT rate for new products and lines when none is specified. */
+export const DEFAULT_VAT_RATE = 5;
+export const DEFAULT_TAX_CODE = 'IVA5';
+
 /** Parse product / line IVA rate; supports 0%, 5%, 7%, 14%, etc. */
-export function normalizeTaxRate(value: unknown, defaultRate = 14): number {
+export function normalizeTaxRate(value: unknown, defaultRate = DEFAULT_VAT_RATE): number {
   if (value === null || value === undefined || value === '') return defaultRate;
   const n = Number(value);
   return Number.isFinite(n) ? n : defaultRate;
@@ -14,7 +18,7 @@ export function formatTaxLabel(rates: number[], taxWord = 'IVA'): string {
         .filter((r) => Number.isFinite(r)),
     ),
   ];
-  if (unique.length === 0) return `${taxWord} (14%)`;
+  if (unique.length === 0) return `${taxWord} (${DEFAULT_VAT_RATE}%)`;
   if (unique.length === 1) return `${taxWord} (${unique[0]}%)`;
   return taxWord;
 }

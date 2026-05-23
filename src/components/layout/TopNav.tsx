@@ -81,8 +81,8 @@ type ToolbarButtonConfig = {
 };
 
 export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout }: TopNavProps) {
-  const { canSwitchBranch } = useBranchScope();
   const { t } = useTranslation();
+  const { canSwitchBranch, scopeId, setOperatingScope } = useBranchScope();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -186,6 +186,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     { label: t.nav.dashboard, path: '/', icon: LayoutDashboard },
     { label: t.nav.chartOfAccounts, path: '/chart-of-accounts', icon: BookOpen },
     { label: t.nav.inventory, path: '/inventory', icon: Package },
+    { label: t.nav.suppliers, path: '/suppliers', icon: Truck },
     { label: t.nav.journals, path: '/journals', icon: Calendar },
     { label: t.nav.invoices, path: '/invoices', icon: FileText },
     { label: t.nav.production, path: '/production', icon: Factory },
@@ -318,6 +319,9 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     if (p === '/purchase-orders' || p.startsWith('/purchase-orders/')) {
       return base;
     }
+    if (p === '/suppliers' || p.startsWith('/suppliers/')) {
+      return base;
+    }
 
     if (p.includes('inventory') || p.includes('stock')) {
       return [
@@ -417,19 +421,13 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <LanguageSwitcher />
 
           {canSwitchBranch ? (
-            <Select
-              value={currentBranch?.id}
-              onValueChange={(id) => {
-                const branch = branches.find(b => b.id === id);
-                if (branch) onBranchChange(branch);
-              }}
-            >
+            <Select value={scopeId} onValueChange={setOperatingScope}>
               <SelectTrigger className="h-7 w-[140px] text-xs bg-sidebar-accent border-sidebar-border text-sidebar-foreground">
                 <Building2 className="w-3.5 h-3.5 mr-1.5 text-sidebar-primary" />
                 <SelectValue placeholder={t.topNav.toolbar.branchPlaceholder} />
               </SelectTrigger>
               <SelectContent>
-                {branches.map(branch => (
+                {branches.map((branch) => (
                   <SelectItem key={branch.id} value={branch.id} className="text-xs">
                     {branch.name}
                   </SelectItem>
@@ -543,19 +541,13 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         </div>
         <div className="flex items-center gap-2">
           {canSwitchBranch ? (
-            <Select
-              value={currentBranch?.id}
-              onValueChange={(id) => {
-                const branch = branches.find(b => b.id === id);
-                if (branch) onBranchChange(branch);
-              }}
-            >
+            <Select value={scopeId} onValueChange={setOperatingScope}>
               <SelectTrigger className="h-8 w-[110px] text-xs bg-sidebar-accent border-sidebar-border text-sidebar-foreground">
                 <Building2 className="w-3 h-3 mr-1" />
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {branches.map(branch => (
+                {branches.map((branch) => (
                   <SelectItem key={branch.id} value={branch.id} className="text-xs">
                     {branch.name}
                   </SelectItem>

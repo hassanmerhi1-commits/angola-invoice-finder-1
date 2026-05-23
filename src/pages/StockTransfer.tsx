@@ -26,6 +26,26 @@ interface TransferItem {
   availableStock: number;
 }
 
+function clampInt(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function parsePositiveQty(raw: string, fallback: number, max: number): number {
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return fallback;
+  const n = parseInt(digits, 10);
+  if (Number.isNaN(n)) return fallback;
+  return clampInt(n, 1, max);
+}
+
+function parseNonNegativeQty(raw: string, fallback: number, max: number): number {
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return fallback;
+  const n = parseInt(digits, 10);
+  if (Number.isNaN(n)) return fallback;
+  return clampInt(n, 0, max);
+}
+
 export default function StockTransfer() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
@@ -42,7 +62,9 @@ export default function StockTransfer() {
   const [toBranchId, setToBranchId] = useState('');
   const [notes, setNotes] = useState('');
   const [transferItems, setTransferItems] = useState<TransferItem[]>([]);
+  const [transferQtyDrafts, setTransferQtyDrafts] = useState<Record<string, string>>({});
   const [receivedQuantities, setReceivedQuantities] = useState<Record<string, number>>({});
+  const [receivedQtyDrafts, setReceivedQtyDrafts] = useState<Record<string, string>>({});
 
   // Load products from the selected SOURCE branch
   const { products: sourceProducts } = useProducts(fromBranchId || undefined);
@@ -56,7 +78,18 @@ export default function StockTransfer() {
     setToBranchId('');
     setNotes('');
     setTransferItems([]);
+    setTransferQtyDrafts({});
   };
+
+  const commitTransferItems = (items: TransferItem[], drafts: Record<string, string>): TransferItem[] =>
+    items.map((item) => {
+      const raw = drafts[item.productId];
+      if (raw === undefined) return item;
+      return {
+        ...item,
+        quantity: parsePositiveQty(raw, item.quantity, item.availableStock),
+      };
+    });
 
   const handleAddProduct = (product: Product) => {
     if (transferItems.find(item => item.productId === product.id)) {
@@ -84,6 +117,7 @@ export default function StockTransfer() {
   const handleFromBranchChange = (branchId: string) => {
     setFromBranchId(branchId);
     setTransferItems([]);
+    setTransferQtyDrafts({});
     // Reset destination if same as new source
     if (toBranchId === branchId) setToBranchId('');
   };
@@ -100,6 +134,11 @@ export default function StockTransfer() {
 
   const removeItem = (productId: string) => {
     setTransferItems(items => items.filter(item => item.productId !== productId));
+    setTransferQtyDrafts((prev) => {
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
   };
 
   const handleCreateTransfer = async () => {
@@ -113,10 +152,11 @@ export default function StockTransfer() {
     }
 
     try {
+      const itemsToSend = commitTransferItems(transferItems, transferQtyDrafts);
       await createTransfer(
         fromBranchId,
         toBranchId,
-        transferItems.map(item => ({
+        itemsToSend.map(item => ({
           productId: item.productId,
           productName: item.productName,
           sku: item.sku,
@@ -166,13 +206,25 @@ export default function StockTransfer() {
       quantities[item.productId] = item.quantity;
     });
     setReceivedQuantities(quantities);
+    setReceivedQtyDrafts({});
     setReceiveDialogOpen(true);
   };
 
   const handleReceive = async () => {
     if (!selectedTransfer || !user) return;
+    const committed: Record<string, number> = { ...receivedQuantities };
+    for (const item of selectedTransfer.items) {
+      const raw = receivedQtyDrafts[item.productId];
+      if (raw !== undefined) {
+        committed[item.productId] = parseNonNegativeQty(
+          raw,
+          receivedQuantities[item.productId] ?? item.quantity,
+          item.quantity,
+        );
+      }
+    }
     try {
-      await receiveTransfer(selectedTransfer.id, user.id, receivedQuantities);
+      await receiveTransfer(selectedTransfer.id, user.id, committed);
       toast({
         title: t.stockTransferUi.transferReceivedTitle,
         description: t.stockTransferUi.transferReceivedDesc,
@@ -425,12 +477,28 @@ export default function StockTransfer() {
                         <TableCell>{item.availableStock}</TableCell>
                         <TableCell>
                           <Input
-                            type="number"
-                            min={1}
-                            max={item.availableStock}
-                            value={item.quantity}
-                            onChange={(e) => updateItemQuantity(item.productId, parseInt(e.target.value) || 1)}
-                            className="w-20"
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            value={transferQtyDrafts[item.productId] ?? String(item.quantity)}
+                            onChange={(e) => {
+                              const raw = e.target.value.replace(/\D/g, '');
+                              setTransferQtyDrafts((prev) => ({ ...prev, [item.productId]: raw }));
+                            }}
+                            onBlur={() => {
+                              const raw = transferQtyDrafts[item.productId];
+                              if (raw === undefined) return;
+                              updateItemQuantity(
+                                item.productId,
+                                parsePositiveQty(raw, item.quantity, item.availableStock),
+                              );
+                              setTransferQtyDrafts((prev) => {
+                                const next = { ...prev };
+                                delete next[item.productId];
+                                return next;
+                              });
+                            }}
+                            className="w-24"
                           />
                         </TableCell>
                         <TableCell>
@@ -494,15 +562,35 @@ export default function StockTransfer() {
                         <TableCell>{item.quantity}</TableCell>
                         <TableCell>
                           <Input
-                            type="number"
-                            min={0}
-                            max={item.quantity}
-                            value={receivedQuantities[item.productId] || 0}
-                            onChange={(e) => setReceivedQuantities({
-                              ...receivedQuantities,
-                              [item.productId]: parseInt(e.target.value) || 0,
-                            })}
-                            className="w-20"
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            value={
+                              receivedQtyDrafts[item.productId]
+                              ?? String(receivedQuantities[item.productId] ?? item.quantity)
+                            }
+                            onChange={(e) => {
+                              const raw = e.target.value.replace(/\D/g, '');
+                              setReceivedQtyDrafts((prev) => ({ ...prev, [item.productId]: raw }));
+                            }}
+                            onBlur={() => {
+                              const raw = receivedQtyDrafts[item.productId];
+                              if (raw === undefined) return;
+                              setReceivedQuantities((prev) => ({
+                                ...prev,
+                                [item.productId]: parseNonNegativeQty(
+                                  raw,
+                                  prev[item.productId] ?? item.quantity,
+                                  item.quantity,
+                                ),
+                              }));
+                              setReceivedQtyDrafts((prev) => {
+                                const next = { ...prev };
+                                delete next[item.productId];
+                                return next;
+                              });
+                            }}
+                            className="w-24"
                           />
                         </TableCell>
                       </TableRow>

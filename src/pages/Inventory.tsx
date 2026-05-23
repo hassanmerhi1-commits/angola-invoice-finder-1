@@ -2,11 +2,12 @@ import { generateId } from '@/lib/utils';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useProducts } from '@/hooks/useERP';
-import { useBranchScope } from '@/hooks/useBranchScope';
+import { useInventoryBranchScope } from '@/hooks/useInventoryBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
+import { normalizeIsMain } from '@/lib/branchAccess';
 import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
-import { normalizeTaxRate } from '@/lib/taxUtils';
+import { DEFAULT_VAT_RATE, normalizeTaxRate } from '@/lib/taxUtils';
 import { saveProduct, getProducts as storageGetProducts, getStockMovements as localGetStockMovements } from '@/lib/storage';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -73,13 +74,25 @@ type StockListFilter = 'all' | 'qtyGt0' | 'qtyLt0';
 export default function Inventory() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { currentBranch, branches, isHeadOffice, apiBranchId, canSwitchBranch, userBranch } = useBranchScope();
+  const {
+    branches,
+    canSwitchBranch,
+    userBranch,
+    inventoryScopeId,
+    setInventoryScope,
+    isInventoryConsolidated,
+    inventoryBranch,
+    inventoryListBranchId,
+  } = useInventoryBranchScope();
+  const currentBranch = inventoryBranch;
+  const isHeadOffice = isInventoryConsolidated;
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   
   const isFilial = !isHeadOffice;
   
-  const listBranchId = apiBranchId ?? userBranch?.id;
+  /** Consolidated = sum all branches; otherwise stock for the selected branch (incl. main alone). */
+  const listBranchId = inventoryListBranchId;
   const { products, refreshProducts, updateProduct, addProduct, deleteProduct } = useProducts(listBranchId);
   
   // For head office: load all products per branch for qty breakdown
@@ -168,38 +181,53 @@ export default function Inventory() {
     loadStockMovements();
   }, [loadStockMovements, products]);
   
-  // For head office: deduplicate products by SKU (show unique items with aggregated total).
-  // Use trimmed SKU, falling back to product id so blank/duplicate SKU keys do not hide new rows.
+  const mainBranch = useMemo(
+    () => branches.find((b) => normalizeIsMain(b.isMain)) ?? branches[0] ?? null,
+    [branches],
+  );
+
+  /** Sede: one row per SKU, stock = sum of each filial's stock (from per-branch API). */
   const displayProducts = useMemo(() => {
+    const skuKey = (p: Product) => (p.sku || '').trim().toLowerCase() || p.id;
+    const rowStamp = (row: Product) => row.updatedAt || row.createdAt || '';
+
     if (isHeadOffice) {
       const bySku = new Map<string, Product>();
-      const rowStamp = (row: Product) => row.updatedAt || row.createdAt || '';
-      for (const p of products) {
-        const key = (p.sku || '').trim() || p.id;
+      const mergeRow = (p: Product, addStock: number) => {
+        const key = skuKey(p);
+        const qty = Number(addStock) || 0;
         const prev = bySku.get(key);
         if (!prev) {
-          bySku.set(key, { ...p });
-          continue;
+          bySku.set(key, { ...p, stock: qty });
+          return;
         }
         const primary = rowStamp(p) >= rowStamp(prev) ? p : prev;
         bySku.set(key, {
           ...primary,
-          stock: (prev.stock || 0) + (p.stock || 0),
+          stock: (Number(prev.stock) || 0) + qty,
         });
+      };
+      for (const p of products) {
+        mergeRow(p, Number(p.stock) || 0);
+      }
+      for (const branch of branches) {
+        for (const p of allBranchProducts[branch.id] || []) {
+          mergeRow(p, Number(p.stock) || 0);
+        }
       }
       return Array.from(bySku.values());
     }
 
     const bySku = new Map<string, Product>();
     for (const p of products) {
-      const key = (p.sku || '').trim().toLowerCase() || p.id;
+      const key = skuKey(p);
       const prev = bySku.get(key);
       if (!prev || (p.stock || 0) > (prev.stock || 0)) {
         bySku.set(key, p);
       }
     }
     return Array.from(bySku.values());
-  }, [products, isHeadOffice]);
+  }, [products, isHeadOffice, branches, allBranchProducts]);
   
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -329,16 +357,11 @@ export default function Inventory() {
   };
 
   const handleImportProducts = async (data: ExcelProduct[], options?: { updateDuplicates?: boolean }) => {
-    // Build product objects for batch import
-    // Head office imports as GLOBAL (null branch) so all branches see the products
-    const importBranchId = isHeadOffice ? null : (currentBranch?.id || null);
-    
-    const productsToImport = data
-      .filter((item) => {
-        const exists = products.find(p => p.sku.toLowerCase().trim() === item.codigo.toLowerCase().trim());
-        return !exists || options?.updateDuplicates;
-      })
-      .map((item) => ({
+    // Assign to the inventory scope branch so branch-filtered lists show imported rows (global null + zero stock are hidden).
+    const importBranchId =
+      listBranchId ?? mainBranch?.id ?? currentBranch?.id ?? userBranch?.id ?? null;
+
+    const productsToImport = data.map((item) => ({
         sku: item.codigo,
         name: item.descricao,
         barcode: item.codigoBarras || '',
@@ -347,7 +370,7 @@ export default function Inventory() {
         cost: item.custo,
         stock: item.quantidade,
         unit: item.unidade || 'UN',
-        taxRate: item.iva || 14,
+        taxRate: item.iva ?? DEFAULT_VAT_RATE,
         isActive: true,
         branchId: importBranchId,
       }));
@@ -358,38 +381,35 @@ export default function Inventory() {
     }
 
     try {
-      // Try batch API first
       const result = await api.products.batchImport(productsToImport);
+      if (result.error) {
+        throw new Error(result.error);
+      }
       if (result.data) {
-        const { imported, failed } = result.data;
+        const { imported = 0, updated = 0, failed = 0 } = result.data;
+        const saved = imported + updated;
         const messages: string[] = [];
         if (imported > 0) messages.push(t.inventoryUi.importedCount.replace('{count}', String(imported)));
+        if (updated > 0) messages.push(`${updated} ${language === 'pt' ? 'actualizados' : 'updated'}`);
         if (failed > 0) messages.push(t.inventoryUi.failedCount.replace('{count}', String(failed)));
-        toast.success(messages.join(', ') || t.inventoryUi.importCompleted);
-      } else {
-        // Fallback: save individually to localStorage
-        let count = 0;
-        for (const p of productsToImport) {
-          const product = {
-            id: generateId(),
-            ...p,
-            firstCost: p.cost,
-            lastCost: p.cost,
-            avgCost: p.cost,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          } as Product;
-          await addProduct(product);
-          count++;
+        if (saved > 0) {
+          toast.success(messages.join(', ') || t.inventoryUi.importCompleted);
+        } else if (failed > 0) {
+          toast.error(messages.join(', ') || t.inventoryUi.importError);
+        } else {
+          toast.info(t.inventoryUi.noNewProductsToImport);
         }
-        toast.success(t.inventoryUi.importedLocalMode.replace('{count}', String(count)));
+      } else {
+        throw new Error(t.inventoryUi.importError);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Import error:', error);
-      toast.error(error.message || t.inventoryUi.importError);
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || t.inventoryUi.importError);
     }
 
-    refreshProducts();
+    await refreshProducts();
+    await loadBranchProducts();
   };
 
   // Handle stock adjustments from physical count
@@ -529,7 +549,14 @@ export default function Inventory() {
       
       {/* Toolbar */}
       <div className="flex items-center gap-1.5 px-3 py-2 bg-card/50 border-b backdrop-blur-sm">
-        {canSwitchBranch && <BranchSelector compact />}
+        {canSwitchBranch && (
+          <BranchSelector
+            compact
+            includeAllBranches
+            inventoryScopeId={inventoryScopeId}
+            onInventoryScopeChange={setInventoryScope}
+          />
+        )}
         {canSwitchBranch && <div className="w-px h-5 bg-border mx-1" />}
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => handleOpenDialog()}>
           <Plus className="w-3 h-3" />

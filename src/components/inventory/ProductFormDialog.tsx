@@ -23,6 +23,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
+import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import {
   mergeInventoryFoodCategorySelectOptions,
   resolveProductCategoryName,
@@ -54,7 +55,7 @@ export function ProductFormDialog({
 }: ProductFormDialogProps) {
   const { branches } = useBranches();
   const { categories } = useCategories();
-  const { suppliers } = useSuppliers();
+  const { suppliers, refreshSuppliers } = useSuppliers();
   const { toast } = useToast();
   const { t } = useTranslation();
   
@@ -75,11 +76,15 @@ export function ProductFormDialog({
     minStock: 0,
     maxStock: 0,
     unit: 'un',
-    taxRate: 14,
+    taxRate: DEFAULT_VAT_RATE,
     branchId: 'all',
     supplierId: '',
     isActive: true,
   });
+
+  useEffect(() => {
+    if (open) void refreshSuppliers();
+  }, [open, refreshSuppliers]);
 
   useEffect(() => {
     if (product) {
@@ -111,7 +116,7 @@ export function ProductFormDialog({
         minStock: 0,
         maxStock: 0,
         unit: 'un',
-        taxRate: 14,
+        taxRate: DEFAULT_VAT_RATE,
         branchId: 'all',
         supplierId: '',
         isActive: true,

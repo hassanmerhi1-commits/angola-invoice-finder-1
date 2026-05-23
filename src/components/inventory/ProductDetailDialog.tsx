@@ -23,6 +23,7 @@ import { Switch } from '@/components/ui/switch';
 import { Check, X, Plus } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useBranchContext } from '@/contexts/BranchContext';
+import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import {
   mergeInventoryFoodCategorySelectOptions,
   resolveProductCategoryName,
@@ -34,6 +35,8 @@ interface ProductDetailDialogProps {
   onOpenChange: (open: boolean) => void;
   product?: Product | null;
   onSave: (product: Product) => void | Promise<void>;
+  /** Pre-select supplier when creating from purchase invoice flow. */
+  defaultSupplierName?: string;
 }
 
 const UNITS = [
@@ -74,10 +77,11 @@ export function ProductDetailDialog({
   onOpenChange,
   product,
   onSave,
+  defaultSupplierName = '',
 }: ProductDetailDialogProps) {
   const { branches } = useBranches();
   const { categories } = useCategories();
-  const { suppliers } = useSuppliers();
+  const { suppliers, refreshSuppliers } = useSuppliers();
   const { currentBranch } = useBranchContext();
   const { t } = useTranslation();
 
@@ -87,6 +91,11 @@ export function ProductDetailDialog({
     () => mergeInventoryFoodCategorySelectOptions(activeCategories),
     [activeCategories]
   );
+
+  useEffect(() => {
+    if (!open) return;
+    void refreshSuppliers();
+  }, [open, refreshSuppliers]);
 
   // Fetch latest USD→AOA exchange rate for dual-currency cost display
   const [usdRate, setUsdRate] = useState<number>(0);
@@ -107,7 +116,7 @@ export function ProductDetailDialog({
     name: '',
     category: '',
     unit: 'un',
-    iva: 14,
+    iva: DEFAULT_VAT_RATE,
     tipo: 'INVENTARIO',
     fornecedorName: '',
     embalagem: 1,
@@ -171,9 +180,9 @@ export function ProductDetailDialog({
         name: '',
         category: defaultProductCategoryName(activeCategories),
         unit: 'un',
-        iva: 14,
+        iva: DEFAULT_VAT_RATE,
         tipo: 'INVENTARIO',
-        fornecedorName: '',
+        fornecedorName: defaultSupplierName.trim(),
         embalagem: 1,
         qtdMinima: 0,
         qtdMaxima: 0,
@@ -192,7 +201,7 @@ export function ProductDetailDialog({
         barcodes: [{ barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }],
       });
     }
-  }, [product, open, activeCategories, currentBranch?.id, currentBranch?.isMain]);
+  }, [product, open, activeCategories, currentBranch?.id, currentBranch?.isMain, defaultSupplierName]);
 
   const set = (field: string, value: any) => setFormData(prev => ({ ...prev, [field]: value }));
 

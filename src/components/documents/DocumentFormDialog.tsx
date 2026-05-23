@@ -18,6 +18,7 @@ import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocum
 import { useProducts, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { api } from '@/lib/api/client';
+import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { useTranslation } from '@/i18n';
 
 interface DocumentFormDialogProps {
@@ -122,7 +123,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       quantity: 1,
       unitPrice: product?.price || 0,
       discount: 0,
-      taxRate: product?.taxRate || 14,
+      taxRate: product?.taxRate ?? DEFAULT_VAT_RATE,
     });
     setLines(prev => [...prev, newLine]);
     setProductSearch('');

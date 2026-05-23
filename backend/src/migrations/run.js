@@ -25,6 +25,7 @@ const MIGRATIONS = [
   '017_multi_price_levels.sql',
   '018_purchase_invoices_table.sql',
   '019_org_hierarchy.sql',
+  '020_inventory_vat_5_percent.sql',
 ];
 
 /**

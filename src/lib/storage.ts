@@ -11,7 +11,7 @@
 import { Branch, Product, Sale, User, DailySummary, Client, StockTransfer, Supplier, PurchaseOrder, Category, StockMovement } from '@/types/erp';
 import { auditLog } from '@/lib/auditService';
 import { isDemoMode } from '@/lib/api/config';
-import { normalizeTaxRate } from './taxUtils';
+import { DEFAULT_VAT_RATE, normalizeTaxRate } from './taxUtils';
 import {
   canUserSwitchBranch,
   mapBranchRow,
@@ -98,6 +98,18 @@ const STORAGE_KEYS = {
 };
 
 export const PRODUCTS_CHANGED_EVENT = 'kwanzaerp:products-changed';
+export const SUPPLIERS_CHANGED_EVENT = 'kwanzaerp:suppliers-changed';
+
+/** Remove browser product cache so the next session loads only from the API. */
+export function clearLocalProductsCache(): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.removeItem(STORAGE_KEYS.products);
+}
+
+function emitSuppliersChanged(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(SUPPLIERS_CHANGED_EVENT, { detail: {} }));
+}
 
 function lsGet<T>(key: string, defaultValue: T): T {
   try {
@@ -180,8 +192,34 @@ export function setCurrentBranch(branch: Branch): void {
   localStorage.setItem('kwanza_current_branch_id', String(next.id));
 }
 
+const INVENTORY_VAT_5_PATCH = 'kwanzaerp_patch_inventory_vat_5';
+
+/** One-time: align cached local products with 5% default VAT. */
+function migrateLocalInventoryVatTo5(): void {
+  if (typeof localStorage === 'undefined') return;
+  if (localStorage.getItem(INVENTORY_VAT_5_PATCH)) return;
+  if (isElectronMode()) {
+    localStorage.setItem(INVENTORY_VAT_5_PATCH, '1');
+    return;
+  }
+  const products = lsGet<Product[]>(STORAGE_KEYS.products, []);
+  if (!products.length) {
+    localStorage.setItem(INVENTORY_VAT_5_PATCH, '1');
+    return;
+  }
+  const updated = products.map((p) => ({
+    ...p,
+    taxRate: DEFAULT_VAT_RATE,
+    updatedAt: new Date().toISOString(),
+  }));
+  lsSet(STORAGE_KEYS.products, updated);
+  localStorage.setItem(INVENTORY_VAT_5_PATCH, '1');
+  emitProductsChanged('all');
+}
+
 // ============= PRODUCT FUNCTIONS =============
 export async function getProducts(branchId?: string): Promise<Product[]> {
+  migrateLocalInventoryVatTo5();
   // When scoped to a branch, only return rows owned by that branch (not the global catalog).
   const includeSharedProducts = !branchId && (await shouldIncludeSharedProducts(undefined));
 
@@ -213,7 +251,11 @@ export async function saveProduct(
     return;
   }
   const products = lsGet<Product[]>(STORAGE_KEYS.products, []);
-  const index = products.findIndex(p => p.id === product.id);
+  let index = products.findIndex(p => p.id === product.id);
+  const skuKey = normalizeSku(product.sku);
+  if (index < 0 && skuKey) {
+    index = products.findIndex(p => normalizeSku(p.sku) === skuKey);
+  }
   const isNew = index < 0;
   if (index >= 0) products[index] = product;
   else products.push(product);
@@ -633,6 +675,7 @@ export function saveSupplierLocalFallback(supplier: Supplier): void {
   if (index >= 0) suppliers[index] = next;
   else suppliers.push(next);
   lsSet(STORAGE_KEYS.suppliers, suppliers);
+  emitSuppliersChanged();
 }
 
 export async function saveSupplier(supplier: Supplier): Promise<void> {
@@ -652,12 +695,14 @@ export async function saveSupplier(supplier: Supplier): Promise<void> {
     lsSet(STORAGE_KEYS.suppliers, suppliers);
   }
   auditLog('create', 'suppliers', `Fornecedor "${supplier.name}" guardado`, 'Sistema');
+  emitSuppliersChanged();
 }
 
 export async function deleteSupplier(supplierId: string): Promise<void> {
   if (isElectronMode()) { await dbDelete('suppliers', supplierId); }
   else { lsSet(STORAGE_KEYS.suppliers, lsGet<Supplier[]>(STORAGE_KEYS.suppliers, []).filter(s => s.id !== supplierId)); }
   auditLog('delete', 'suppliers', `Fornecedor ${supplierId} eliminado`, 'Sistema');
+  emitSuppliersChanged();
 }
 
 // ============= CATEGORY FUNCTIONS =============
@@ -1411,7 +1456,7 @@ function mapSaleItemFromDb(row: any): any {
   return {
     productId: row.product_id, productName: row.product_name, sku: row.sku || '',
     quantity: Number(row.quantity || 0), unitPrice: Number(row.unit_price || 0),
-    discount: Number(row.discount || 0), taxRate: Number(row.tax_rate || 14),
+    discount: Number(row.discount || 0), taxRate: normalizeTaxRate(row.tax_rate ?? row.taxRate, DEFAULT_VAT_RATE),
     taxAmount: Number(row.tax_amount || 0), subtotal: Number(row.total || 0),
   };
 }
@@ -1531,7 +1576,7 @@ function mapPOItemFromDb(row: any): any {
     unitCost: Number(row.unit_cost || 0),
     freightAllocation: Number(row.freight_allocation || 0),
     effectiveCost: Number(row.effective_cost || row.unit_cost || 0),
-    taxRate: Number(row.tax_rate || 14),
+    taxRate: normalizeTaxRate(row.tax_rate ?? row.taxRate, DEFAULT_VAT_RATE),
     subtotal: Number(row.subtotal || row.total || 0),
   };
 }

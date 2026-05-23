@@ -11,6 +11,7 @@ import { Separator } from '@/components/ui/separator';
 import { Settings2, Save, Trash2, Download, Upload, ArrowRight, Check, AlertCircle, Plus } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useTranslation } from '@/i18n';
+import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { COLUMN_AUTO_MATCH_PATTERNS } from '@/lib/import/columnAutoMatchPatterns';
 
 // Types for column mapping
@@ -250,7 +251,7 @@ export function ColumnMappingDialog({
     const sampleData = [fields.reduce((acc, f) => {
       const mapping = mappings.find(m => m.systemField === f.key);
       acc[mapping?.excelColumn || f.label] = f.key === 'preco' || f.key === 'custo' ? 1000 :
-        f.key === 'quantidade' || f.key === 'iva' ? 14 :
+        f.key === 'quantidade' || f.key === 'iva' ? DEFAULT_VAT_RATE :
         f.key === 'limiteCredito' ? 500000 : `Exemplo ${f.label}`;
       return acc;
     }, {} as Record<string, any>)];

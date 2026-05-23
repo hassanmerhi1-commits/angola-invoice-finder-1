@@ -2,27 +2,62 @@ import { useBranchScope } from '@/hooks/useBranchScope';
 import {
   Select,
   SelectContent,
-  SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Building2, MapPin } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Building2 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { BranchScopeSelectItems } from '@/components/BranchScopeSelectItems';
+import { resolveBranchFromScope } from '@/lib/branchAccess';
+import { resolveBranchScopeDisplayLabel } from '@/lib/branchScopeDisplay';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 
 interface BranchSelectorProps {
   compact?: boolean;
   className?: string;
+  /** Inventory toolbar: include "All branches" + per-branch stock. */
+  includeAllBranches?: boolean;
+  inventoryScopeId?: string;
+  onInventoryScopeChange?: (scopeId: string) => void;
 }
 
-export function BranchSelector({ compact = false, className = '' }: BranchSelectorProps) {
-  const { branches, currentBranch, canSwitchBranch, setOperatingBranch } = useBranchScope();
+export function BranchSelector({
+  compact = false,
+  className = '',
+  includeAllBranches = false,
+  inventoryScopeId,
+  onInventoryScopeChange,
+}: BranchSelectorProps) {
+  const {
+    branches,
+    currentBranch,
+    scopeId: globalScopeId,
+    canSwitchBranch,
+    setOperatingScope,
+  } = useBranchScope();
   const { t } = useTranslation();
+
+  const scopeId = includeAllBranches ? (inventoryScopeId ?? globalScopeId) : globalScopeId;
+  const onScopeChange = includeAllBranches && onInventoryScopeChange
+    ? onInventoryScopeChange
+    : setOperatingScope;
 
   if (!currentBranch || branches.length === 0) {
     return null;
   }
+
+  const displayBranch = includeAllBranches
+    ? resolveBranchFromScope(branches, scopeId) || currentBranch
+    : currentBranch;
+
+  const displayLabel = includeAllBranches
+    ? resolveBranchScopeDisplayLabel(
+        canSwitchBranch,
+        scopeId,
+        displayBranch,
+        t.branchUi.allBranches,
+      )
+    : formatBranchDisplayName(currentBranch);
 
   if (!canSwitchBranch) {
     return (
@@ -32,41 +67,27 @@ export function BranchSelector({ compact = false, className = '' }: BranchSelect
         } ${className}`}
       >
         <Building2 className={compact ? 'h-3 w-3 shrink-0' : 'h-4 w-4 shrink-0'} />
-        <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
+        <span className="truncate">{displayLabel}</span>
       </div>
     );
   }
 
   return (
-    <Select
-      value={currentBranch.id}
-      onValueChange={(branchId) => {
-        const branch = branches.find((b) => b.id === branchId);
-        if (branch) setOperatingBranch(branch);
-      }}
-    >
-      <SelectTrigger className={`${compact ? 'h-8 text-xs w-[180px]' : 'w-[220px]'} ${className}`}>
+    <Select value={scopeId} onValueChange={onScopeChange}>
+      <SelectTrigger className={`${compact ? 'h-8 text-xs w-[200px]' : 'w-[240px]'} ${className}`}>
         <div className="flex items-center gap-2 truncate">
           <Building2 className={compact ? 'h-3 w-3' : 'h-4 w-4'} />
           <SelectValue placeholder={t.branchUi.selectBranch}>
-            <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
+            <span className="truncate">{displayLabel}</span>
           </SelectValue>
         </div>
       </SelectTrigger>
       <SelectContent className="bg-popover z-50">
-        {branches.map((branch) => (
-          <SelectItem key={branch.id} value={branch.id}>
-            <div className="flex items-center gap-2">
-              <MapPin className="h-3 w-3 text-muted-foreground" />
-              <span className="truncate">{formatBranchDisplayName(branch)}</span>
-              {branch.isMain && (
-                <Badge variant="secondary" className="ml-1 text-[10px] px-1 py-0">
-                  {t.branchUi.headOffice}
-                </Badge>
-              )}
-            </div>
-          </SelectItem>
-        ))}
+        <BranchScopeSelectItems
+          branches={branches}
+          compact={compact}
+          showAllBranchesOption={includeAllBranches}
+        />
       </SelectContent>
     </Select>
   );

@@ -2,6 +2,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const db = require('../db');
+const { DEFAULT_VAT_RATE } = require('../taxDefaults');
 const { checkOptimisticLock } = require('../middleware/security');
 const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
 
@@ -88,7 +89,7 @@ module.exports = function(broadcastTable) {
                 WHERE sm.warehouse_id = $1
                   AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER(TRIM(p.sku))
               ), 0))
-              ELSE COALESCE(bp.stock, 0)
+              ELSE COALESCE(bp.stock, p.stock, 0)
             END AS stock,
             COALESCE(bp.unit, p.unit) AS unit,
             COALESCE(bp.tax_rate, p.tax_rate) AS tax_rate,
@@ -122,7 +123,7 @@ module.exports = function(broadcastTable) {
                     AND LOWER(TRIM(COALESCE(bx.sku, ''))) = LOWER(TRIM(p.sku))
                 )
                 AND (
-                  COALESCE(bp.stock, 0) > 0
+                  COALESCE(bp.stock, p.stock, 0) > 0
                   OR EXISTS (
                     SELECT 1
                     FROM stock_movements sm
@@ -149,9 +150,10 @@ module.exports = function(broadcastTable) {
       }
 
       const result = await db.query(query, params);
-      const rows = branchId
-        ? dedupeProductsBySku(result.rows, String(branchId).trim())
-        : result.rows;
+      const rows = dedupeProductsBySku(
+        result.rows,
+        branchId ? String(branchId).trim() : undefined,
+      );
       console.log(`[PRODUCTS GET] branchId=${branchId || 'ALL'} rows=${rows.length}`);
       if (rows.length > 0) {
         console.log('[PRODUCTS GET] first_rows=', JSON.stringify(rows.slice(0, 5)));
@@ -183,7 +185,7 @@ module.exports = function(broadcastTable) {
         [
           id, name, sku, barcode, category, price, price2 || 0, price3 || 0, price4 || 0,
           c,
-          stock || 0, unit || 'un', taxRate || 14, resolvedBranchId, activeInt,
+          stock || 0, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, resolvedBranchId, activeInt,
           sanitizeUuid(supplierId), supplierName || null,
         ]
       );
@@ -289,49 +291,12 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // Batch import products
+  // Batch import products (SQLite + PostgreSQL)
   router.post('/batch', async (req, res) => {
     try {
-      if (!db.sqlite) {
-        return res.status(501).json({
-          error:
-            'Product batch import is implemented for SQLite only. Use POST /api/products for single items, or run the app in SQLite mode for bulk import.',
-        });
-      }
-      const { products } = req.body;
-      if (!Array.isArray(products) || products.length === 0) {
+      const { products: productList } = req.body;
+      if (!Array.isArray(productList) || productList.length === 0) {
         return res.status(400).json({ error: 'products array is required' });
-      }
-
-      const sqlite = db.sqlite;
-      console.log('IMPORT DB:', db.dbPath);
-
-      // 5) Check schema before importing.
-      const tableInfo = sqlite.prepare('PRAGMA table_info(products)').all();
-      const schemaColumns = tableInfo.map((c) => c.name);
-      console.log('[PRODUCTS IMPORT] schema columns:', schemaColumns.join(','));
-
-      const requiredWithoutDefault = tableInfo
-        .filter((c) => Number(c.notnull) === 1 && c.dflt_value == null)
-        .map((c) => c.name);
-      console.log('[PRODUCTS IMPORT] required columns (no default):', requiredWithoutDefault.join(',') || '(none)');
-
-      // 7) Force test insert/select (then cleanup).
-      try {
-        const force = sqlite.prepare('INSERT INTO products (name) VALUES (?)').run('TEST123');
-        const forcedRow = sqlite
-          .prepare('SELECT rowid, name FROM products WHERE name = ? ORDER BY rowid DESC LIMIT 1')
-          .get('TEST123');
-        console.log('[PRODUCTS IMPORT] FORCE TEST:', {
-          inserted: force.changes,
-          rowid: force.lastInsertRowid,
-          found: !!forcedRow,
-        });
-        if (force.changes > 0) {
-          sqlite.prepare('DELETE FROM products WHERE rowid = ?').run(force.lastInsertRowid);
-        }
-      } catch (e) {
-        console.error('[PRODUCTS IMPORT] FORCE TEST ERROR:', e.message);
       }
 
       let inserted = 0;
@@ -339,80 +304,75 @@ module.exports = function(broadcastTable) {
       let failed = 0;
       const errors = [];
 
-      const colSet = new Set(schemaColumns);
-      const updatableColumns = schemaColumns.filter((c) => !['id', 'created_at'].includes(c));
-
-      const updateSql = updatableColumns.length
-        ? `UPDATE products SET ${updatableColumns.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`
-        : null;
-      const updateStmt = updateSql ? sqlite.prepare(updateSql) : null;
-
-      for (const p of products) {
-        const rawSku = String(p?.sku ?? p?.codigo ?? p?.code ?? p?.id ?? '').trim();
+      for (const p of productList) {
+        const rawSku = String(p?.sku ?? p?.codigo ?? p?.code ?? '').trim();
         const rawName = String(p?.name ?? p?.descricao ?? p?.description ?? p?.designacao ?? '').trim();
         const sku = rawSku || `AUTO-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const name = rawName || sku;
-        const branchId = sanitizeUuid(p.branchId);
-
-        // 4) Ensure required fields are supplied.
-        const rowData = {
-          id: crypto.randomUUID(),
-          name,
-          sku,
-          barcode: p.barcode || '',
-          category: p.category || 'GERAL',
-          price: Number(p.price) || 0,
-          price2: Number(p.price2) || 0,
-          price3: Number(p.price3) || 0,
-          price4: Number(p.price4) || 0,
-          cost: Number(p.cost) || 0,
-          first_cost: Number(p.cost) || 0,
-          last_cost: Number(p.cost) || 0,
-          avg_cost: Number(p.cost) || 0,
-          stock: Number(p.stock ?? p.quantidade) || 0,
-          unit: String(p.unit || p.unidade || 'UN'),
-          tax_rate: Number(p.taxRate ?? p.iva) || 14,
-          branch_id: branchId,
-          supplier_id: sanitizeUuid(p.supplierId),
-          supplier_name: p.supplierName || null,
-          is_active: p.isActive !== false ? 1 : 0,
-          updated_at: new Date().toISOString(),
-        };
+        const scopedBranch = resolveListBranchId(req, sanitizeUuid(p.branchId));
+        const branchId = scopedBranch === undefined ? null : (scopedBranch || sanitizeUuid(p.branchId));
+        const cost = Number(p.cost) || 0;
+        const stock = Number(p.stock ?? p.quantidade) || 0;
+        const activeInt = p.isActive !== false ? 1 : 0;
 
         try {
-          let updatedExisting = false;
-          if (colSet.has('sku') && updateStmt) {
-            const existing = sqlite
-              .prepare('SELECT id FROM products WHERE sku = ? LIMIT 1')
-              .get(sku);
-            if (existing?.id) {
-              const updateValues = updatableColumns.map((c) => rowData[c]);
-              const updateRes = updateStmt.run(...updateValues, existing.id);
-              if (updateRes.changes > 0) {
-                updated++;
-                updatedExisting = true;
-              }
-            }
-          }
+          const existing = await db.query(
+            `SELECT id FROM products
+             WHERE COALESCE(is_active, 1) != 0
+               AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
+             LIMIT 1`,
+            [sku],
+          );
 
-          if (!updatedExisting) {
-            const insertCols = schemaColumns.filter((c) => Object.prototype.hasOwnProperty.call(rowData, c));
-            const missingRequired = requiredWithoutDefault.filter((c) => !insertCols.includes(c));
-            if (missingRequired.length > 0) {
-              throw new Error(`Missing required columns: ${missingRequired.join(', ')}`);
-            }
-
-            const placeholders = insertCols.map(() => '?').join(', ');
-            const insertSql = `INSERT INTO products (${insertCols.join(', ')}) VALUES (${placeholders})`;
-            const insertValues = insertCols.map((c) => rowData[c]);
-
-            // 2) Insert with run() and verify changes.
-            const insertRes = sqlite.prepare(insertSql).run(...insertValues);
-            if (insertRes.changes > 0) {
-              inserted++;
-            } else {
-              throw new Error('Insert returned changes=0');
-            }
+          if (existing.rows[0]?.id) {
+            const upd = await db.query(
+              `UPDATE products
+               SET name = $1, barcode = $2, category = $3, price = $4, cost = $5,
+                   stock = $6, unit = $7, tax_rate = $8, branch_id = $9,
+                   supplier_id = $10, supplier_name = $11, is_active = $12,
+                   last_cost = COALESCE($5, last_cost), avg_cost = COALESCE($5, avg_cost),
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = $13`,
+              [
+                name,
+                p.barcode || '',
+                p.category || 'GERAL',
+                Number(p.price) || 0,
+                cost,
+                stock,
+                String(p.unit || p.unidade || 'UN'),
+                Number(p.taxRate ?? p.iva) || DEFAULT_VAT_RATE,
+                branchId,
+                sanitizeUuid(p.supplierId),
+                p.supplierName || null,
+                activeInt,
+                existing.rows[0].id,
+              ],
+            );
+            if (upd.rowCount > 0) updated++;
+          } else {
+            const id = crypto.randomUUID();
+            const ins = await db.query(
+              `INSERT INTO products (id, name, sku, barcode, category, price, price2, price3, price4, cost, first_cost, last_cost, avg_cost, stock, unit, tax_rate, branch_id, is_active, supplier_id, supplier_name)
+               VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 0, $7, $7, $7, $7, $8, $9, $10, $11, $12, $13, $14)`,
+              [
+                id,
+                name,
+                sku,
+                p.barcode || '',
+                p.category || 'GERAL',
+                Number(p.price) || 0,
+                cost,
+                stock,
+                String(p.unit || p.unidade || 'UN'),
+                Number(p.taxRate ?? p.iva) || DEFAULT_VAT_RATE,
+                branchId,
+                activeInt,
+                sanitizeUuid(p.supplierId),
+                p.supplierName || null,
+              ],
+            );
+            if (ins.rowCount > 0) inserted++;
           }
         } catch (err) {
           failed++;
@@ -422,14 +382,8 @@ module.exports = function(broadcastTable) {
         }
       }
 
-      // 3) Count after import.
-      const totalRow = sqlite.prepare('SELECT COUNT(*) AS total FROM products').get();
-      console.log(
-        `[PRODUCTS IMPORT DEBUG] inserted=${inserted} updated=${updated} failed=${failed} products_total=${Number(totalRow?.total || 0)}`
-      );
-
+      console.log(`[PRODUCTS IMPORT] inserted=${inserted} updated=${updated} failed=${failed}`);
       await broadcastTable('products');
-      // 6) Report "imported" only from real INSERT operations.
       res.status(201).json({ imported: inserted, updated, failed, errors: errors.slice(0, 50) });
     } catch (error) {
       console.error('[PRODUCTS BATCH ERROR]', error);

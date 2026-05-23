@@ -1,4 +1,5 @@
 import { generateId } from '@/lib/utils';
+import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 // NEXOR ERP API Client — API-first transaction routing
 // Transactional writes always use the backend HTTP API so browser and desktop share the same execution path
 // Electron IPC stays available only for desktop-only utilities and non-transactional reads
@@ -344,7 +345,7 @@ function mapProductPayloadForElectron(data: any) {
     weighted_avg_cost: Number(data.avgCost ?? data.avg_cost ?? cost),
     stock: Number(data.stock ?? 0),
     unit: data.unit || 'UN',
-    tax_rate: Number(data.taxRate ?? data.tax_rate ?? 14),
+    tax_rate: Number(data.taxRate ?? data.tax_rate ?? DEFAULT_VAT_RATE),
     branch_id: data.branchId === '' ? null : (data.branchId ?? data.branch_id ?? null),
     supplier_id: data.supplierId === '' ? null : (data.supplierId ?? data.supplier_id ?? null),
     is_active: data.isActive ?? data.is_active ?? true,

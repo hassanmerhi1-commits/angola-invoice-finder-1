@@ -3,9 +3,11 @@ import { Branch } from '@/types/erp';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useAuth } from '@/hooks/useERP';
 import {
+  ALL_BRANCHES_SCOPE_ID,
   branchesVisibleToUser,
   canUserSwitchBranch,
   effectiveApiBranchId,
+  isConsolidatedBranchScope,
   isHeadOfficeScope,
   resolveOperatingBranch,
   resolveUserBranch,
@@ -17,7 +19,7 @@ import {
  * All other users: locked to their assigned branch only.
  */
 export function useBranchScope() {
-  const { currentBranch, branches, setCurrentBranch } = useBranchContext();
+  const { currentBranch, branches, scopeId, setCurrentBranch, setOperatingScope } = useBranchContext();
   const { user } = useAuth();
 
   const userBranch = useMemo(
@@ -28,12 +30,13 @@ export function useBranchScope() {
   const canSwitchBranch = canUserSwitchBranch(user, userBranch);
 
   const operatingBranch = useMemo(
-    () => resolveOperatingBranch(canSwitchBranch, currentBranch, userBranch, user),
-    [canSwitchBranch, currentBranch, userBranch, user],
+    () => resolveOperatingBranch(canSwitchBranch, scopeId, branches, userBranch, user),
+    [canSwitchBranch, scopeId, branches, userBranch, user],
   );
 
-  const isHeadOffice = isHeadOfficeScope(canSwitchBranch, operatingBranch);
-  const apiBranchId = effectiveApiBranchId(canSwitchBranch, operatingBranch, user);
+  const isHeadOffice = isHeadOfficeScope(canSwitchBranch, scopeId);
+  const isConsolidatedView = isConsolidatedBranchScope(canSwitchBranch, scopeId);
+  const apiBranchId = effectiveApiBranchId(canSwitchBranch, scopeId, user);
 
   const visibleBranches = useMemo(
     () => branchesVisibleToUser(branches, canSwitchBranch, userBranch, operatingBranch),
@@ -53,11 +56,15 @@ export function useBranchScope() {
     branches: visibleBranches,
     allBranches: branches,
     userBranch,
+    scopeId,
     isHeadOffice,
+    isConsolidatedView,
     canSwitchBranch,
     setOperatingBranch,
+    setOperatingScope,
     apiBranchId,
     listBranchId: apiBranchId,
-    canPickBranch: canSwitchBranch && isHeadOffice,
+    canPickBranch: canSwitchBranch,
+    allBranchesScopeId: ALL_BRANCHES_SCOPE_ID,
   };
 }
