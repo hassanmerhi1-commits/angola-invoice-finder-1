@@ -126,6 +126,21 @@ export interface ElectronAPI {
       headers?: Record<string, string>;
       timeoutMs?: number;
     }) => Promise<{ ok: boolean; status: number; json?: unknown; text?: string; error?: string }>;
+    httpBinary?: (opts: {
+      url: string;
+      method?: string;
+      body?: ArrayBuffer | Uint8Array;
+      headers?: Record<string, string>;
+      timeoutMs?: number;
+    }) => Promise<{
+      ok: boolean;
+      status: number;
+      contentType?: string;
+      body?: Uint8Array | ArrayBuffer;
+      text?: string;
+      json?: unknown;
+      error?: string;
+    }>;
   };
 
   // Purchase windows

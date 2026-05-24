@@ -22,6 +22,7 @@ const http = require('http');
 const backendManager = require('./backendManager.cjs');
 const { scanForServers } = require('./discoveryClient.cjs');
 const { httpJsonRequest } = require('./httpJson.cjs');
+const { httpBinaryRequest } = require('./httpBinary.cjs');
 
 /** Log line when localhost has no unified Express (often better-sqlite3 ABI mismatch). */
 function embeddedExpressUnreachableLogLine() {
@@ -2411,6 +2412,25 @@ ipcMain.handle('network:httpJson', async (_, opts) => {
   try {
     if (!opts?.url) return { ok: false, status: 0, error: 'url required' };
     return await httpJsonRequest(opts.url, opts);
+  } catch (e) {
+    return { ok: false, status: 0, error: e.message };
+  }
+});
+
+/** Binary download/upload (backup .db restore) on LAN clients. */
+ipcMain.handle('network:httpBinary', async (_, opts) => {
+  try {
+    if (!opts?.url) return { ok: false, status: 0, error: 'url required' };
+    const result = await httpBinaryRequest(opts.url, opts);
+    return {
+      ok: result.ok,
+      status: result.status,
+      contentType: result.contentType,
+      body: result.body,
+      text: result.text,
+      json: result.json,
+      error: result.error,
+    };
   } catch (e) {
     return { ok: false, status: 0, error: e.message };
   }

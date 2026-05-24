@@ -88,6 +88,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getIPFilePath: () => ipcRenderer.invoke('network:getIPFilePath'),
     getComputerName: () => ipcRenderer.invoke('network:getComputerName'),
     httpJson: (opts) => ipcRenderer.invoke('network:httpJson', opts),
+    httpBinary: (opts) => ipcRenderer.invoke('network:httpBinary', opts),
   },
 
   // Purchase windows

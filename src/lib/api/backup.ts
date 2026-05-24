@@ -4,7 +4,7 @@ import {
   invalidateElectronApiBaseCache,
   isDemoMode,
 } from '@/lib/api/config';
-import { electronAwareJsonRequest } from '@/lib/electronHttp';
+import { electronAwareBinaryRequest, electronAwareJsonRequest } from '@/lib/electronHttp';
 
 function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -68,12 +68,13 @@ async function resolveApiBase(forceRefresh = false): Promise<string> {
   return getApiUrl();
 }
 
-async function parseError(response: Response): Promise<string> {
+function parseErrorFromText(text: string, status: number): string {
+  if (!text) return `HTTP ${status}`;
   try {
-    const j = await response.json();
-    return j?.error || j?.message || `HTTP ${response.status}`;
+    const j = JSON.parse(text);
+    return j?.error || j?.message || text.slice(0, 200) || `HTTP ${status}`;
   } catch {
-    return `HTTP ${response.status}`;
+    return text.slice(0, 200) || `HTTP ${status}`;
   }
 }
 
@@ -213,20 +214,32 @@ export async function downloadDatabaseBackup(filename: string): Promise<void> {
   const origin = new URL(base).origin;
   await probeBackupApi(origin);
   const token = getAuthToken();
-  const res = await fetch(`${origin}/api/backup/${encodeURIComponent(filename)}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    signal: AbortSignal.timeout(300000),
+  const url = `${origin}/api/backup/${encodeURIComponent(filename)}`;
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+  const res = await electronAwareBinaryRequest(url, {
+    method: 'GET',
+    headers,
+    timeoutMs: 300000,
   });
-  if (!res.ok) throw new BackupApiError(await parseError(res), classifyFetchError(null, res.status), origin);
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
+  if (!res.ok) {
+    throw new BackupApiError(
+      parseErrorFromText(res.text, res.status),
+      classifyFetchError(null, res.status),
+      origin,
+    );
+  }
+  const blob = new Blob([res.body], {
+    type: res.contentType || 'application/octet-stream',
+  });
+  const objectUrl = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
+  a.href = objectUrl;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  URL.revokeObjectURL(objectUrl);
 }
 
 export async function restoreDatabaseBackupFile(file: File): Promise<{ requiresRestart?: boolean }> {
@@ -235,7 +248,7 @@ export async function restoreDatabaseBackupFile(file: File): Promise<{ requiresR
   await probeBackupApi(origin);
   const token = getAuthToken();
   const buffer = await file.arrayBuffer();
-  const res = await fetch(`${origin}/api/backup/restore/upload`, {
+  const res = await electronAwareBinaryRequest(`${origin}/api/backup/restore/upload`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/octet-stream',
@@ -243,10 +256,18 @@ export async function restoreDatabaseBackupFile(file: File): Promise<{ requiresR
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: buffer,
-    signal: AbortSignal.timeout(600000),
+    timeoutMs: 600000,
   });
-  if (!res.ok) throw new BackupApiError(await parseError(res), classifyFetchError(null, res.status), origin);
-  return res.json();
+  if (!res.ok) {
+    throw new BackupApiError(
+      parseErrorFromText(res.text, res.status),
+      classifyFetchError(null, res.status),
+      origin,
+    );
+  }
+  return (res.json && typeof res.json === 'object'
+    ? res.json
+    : {}) as { requiresRestart?: boolean };
 }
 
 export async function restoreDatabaseBackupByName(filename: string): Promise<{ requiresRestart?: boolean }> {
