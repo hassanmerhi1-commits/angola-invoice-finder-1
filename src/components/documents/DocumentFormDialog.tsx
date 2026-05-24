@@ -84,7 +84,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         setLines([]);
       }
     }
-  }, [open, editDocument, prefillFrom]);
+  }, [open, editDocument, prefillFrom, documentType]);
 
   // Filtered products for search
   const filteredProducts = useMemo(() => {

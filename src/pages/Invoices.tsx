@@ -2,7 +2,8 @@
 // Multi-tab document browser with linked conversion flow
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { navigateThenStartPurchaseCreate } from '@/lib/nexorPurchaseCreate';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
@@ -16,7 +17,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import {
-  Plus, Search, Eye, Printer, RefreshCw, FileText, Receipt,
+  Plus, Search, Printer, RefreshCw, FileText, Receipt,
   Banknote, CreditCard, ArrowRight, Download, XCircle, CheckCircle,
   Clock, ChevronDown, ArrowRightLeft
 } from 'lucide-react';
@@ -25,6 +26,14 @@ import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
 import { getDocuments, convertDocument, getSalesInvoicesAsDocuments } from '@/lib/documentStorage';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
+import {
+  documentTypeForNewFromTab,
+  getInvoicesWorkspaceTab,
+  NEXOR_INVOICES_NEW,
+  NEXOR_INVOICES_NEW_RECEIPT,
+  setInvoicesWorkspaceTab,
+  type InvoicesWorkspaceTab,
+} from '@/lib/invoicesWorkspace';
 import { DocumentFormDialog } from '@/components/documents/DocumentFormDialog';
 import { DocumentFlowViewer } from '@/components/documents/DocumentFlowViewer';
 
@@ -102,6 +111,7 @@ export default function Invoices() {
   const { user } = useAuth();
   const { currentBranch, branches, isHeadOffice, listBranchId } = useBranchScope();
   const navigate = useNavigate();
+  const location = useLocation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
   const [activeTab, setActiveTab] = useState<DocumentType | 'all'>('all');
@@ -126,35 +136,58 @@ export default function Invoices() {
     const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
 
     const load = async () => {
-      const [storedDocs, salesDocs] = await Promise.all([
-        getDocuments(type, branchFilter),
-        !type || type === 'fatura_venda'
-          ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice)
-          : Promise.resolve([]),
-      ]);
+      try {
+        const [storedDocs, salesDocs] = await Promise.all([
+          getDocuments(type, branchFilter),
+          !type || type === 'fatura_venda'
+            ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice)
+            : Promise.resolve([]),
+        ]);
 
-      const seenNumbers = new Set(storedDocs.map((d) => d.documentNumber));
-      const merged = [...storedDocs];
-      for (const doc of salesDocs) {
-        if (!doc.documentNumber || seenNumbers.has(doc.documentNumber)) continue;
-        seenNumbers.add(doc.documentNumber);
-        merged.push(doc);
+        const seenNumbers = new Set(storedDocs.map((d) => d.documentNumber));
+        const merged = [...storedDocs];
+        for (const doc of salesDocs) {
+          if (!doc.documentNumber || seenNumbers.has(doc.documentNumber)) continue;
+          seenNumbers.add(doc.documentNumber);
+          merged.push(doc);
+        }
+
+        merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setDocuments(type ? merged.filter((d) => d.documentType === type) : merged);
+      } catch (err) {
+        console.error('[Invoices] load failed:', err);
+        setDocuments([]);
+        toast.error(err instanceof Error ? err.message : t.invoicesUi.conversionNotAllowed);
       }
-
-      merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setDocuments(type ? merged.filter((d) => d.documentType === type) : merged);
     };
 
     load();
   }, [activeTab, listBranchId, isHeadOffice, branches, refreshKey]);
 
-  // TopNav toolbar "Novo" / shortcuts (document workspace — HashRouter)
   useEffect(() => {
-    const openSalesInvoice = () => {
-      setFormDocType('fatura_venda');
+    setInvoicesWorkspaceTab(activeTab);
+  }, [activeTab]);
+
+  const openNewDocumentForTab = useCallback(
+    (tab?: InvoicesWorkspaceTab) => {
+      const type = documentTypeForNewFromTab(tab);
+      if (type === 'fatura_compra') {
+        navigateThenStartPurchaseCreate(navigate, location.pathname);
+        return;
+      }
+      setFormDocType(type);
       setEditDoc(null);
       setPrefillDoc(null);
       setFormOpen(true);
+    },
+    [navigate, location.pathname],
+  );
+
+  // TopNav toolbar "Novo" — match active document tab (read tab at click time)
+  useEffect(() => {
+    const onToolbarNew = (e: Event) => {
+      const detail = (e as CustomEvent<{ tab?: InvoicesWorkspaceTab }>).detail;
+      openNewDocumentForTab(detail?.tab ?? getInvoicesWorkspaceTab());
     };
     const openReceipt = () => {
       setFormDocType('recibo');
@@ -162,13 +195,13 @@ export default function Invoices() {
       setPrefillDoc(null);
       setFormOpen(true);
     };
-    window.addEventListener('nexor:invoices-new', openSalesInvoice);
-    window.addEventListener('nexor:invoices-new-receipt', openReceipt);
+    window.addEventListener(NEXOR_INVOICES_NEW, onToolbarNew);
+    window.addEventListener(NEXOR_INVOICES_NEW_RECEIPT, openReceipt);
     return () => {
-      window.removeEventListener('nexor:invoices-new', openSalesInvoice);
-      window.removeEventListener('nexor:invoices-new-receipt', openReceipt);
+      window.removeEventListener(NEXOR_INVOICES_NEW, onToolbarNew);
+      window.removeEventListener(NEXOR_INVOICES_NEW_RECEIPT, openReceipt);
     };
-  }, []);
+  }, [openNewDocumentForTab]);
 
   const filteredDocs = useMemo(() => {
     if (!searchTerm) return documents;
@@ -191,10 +224,7 @@ export default function Invoices() {
   }), [filteredDocs]);
 
   const openNewDocument = (type: DocumentType) => {
-    setFormDocType(type);
-    setEditDoc(null);
-    setPrefillDoc(null);
-    setFormOpen(true);
+    openNewDocumentForTab(type);
   };
 
   const openEditDocument = (doc: ERPDocument) => {
@@ -207,13 +237,6 @@ export default function Invoices() {
   useEffect(() => {
     const selected = documents.find((d) => d.id === selectedDocId) || null;
 
-    const onEdit = () => {
-      if (selected) openEditDocument(selected);
-    };
-    const onDelete = () => {
-      if (!selected) return;
-      toast.error(t.invoicesUi.conversionNotAllowed);
-    };
     const onAll = () => {
       setSelectedDocId(null);
       setSearchTerm('');
@@ -239,8 +262,6 @@ export default function Invoices() {
     };
 
     const handlers: Record<string, () => void> = {
-      [NEXOR_TOOLBAR.EDIT]: onEdit,
-      [NEXOR_TOOLBAR.DELETE]: onDelete,
       [NEXOR_TOOLBAR.ALL]: onAll,
       [NEXOR_TOOLBAR.DOCUMENTS_PRINT]: onPrint,
       [NEXOR_TOOLBAR.EXCEL]: onExcel,
@@ -283,7 +304,6 @@ export default function Invoices() {
     <div className="flex flex-col h-full bg-background">
       {/* Toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b flex-wrap">
-        {/* New document dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
@@ -298,7 +318,7 @@ export default function Invoices() {
               return (
               <DropdownMenuItem key={key} onClick={() => {
                 if (key === 'fatura_compra') {
-                  navigate('/purchase-orders');
+                  navigateThenStartPurchaseCreate(navigate, location.pathname);
                 } else {
                   openNewDocument(key);
                 }
@@ -310,11 +330,6 @@ export default function Invoices() {
             })}
           </DropdownMenuContent>
         </DropdownMenu>
-
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedDoc}
-          onClick={() => selectedDoc && openEditDocument(selectedDoc)}>
-          <Eye className="w-3 h-3" /> {t.invoicesUi.viewEdit}
-        </Button>
 
         {/* Convert button */}
         {selectedDoc && DOCUMENT_TYPE_CONFIG[selectedDoc.documentType].canConvertTo.length > 0 && selectedDoc.status !== 'converted' && (
@@ -373,7 +388,16 @@ export default function Invoices() {
       </div>
 
       {/* Document type tabs */}
-      <Tabs value={activeTab} onValueChange={v => { setActiveTab(v as any); setSelectedDocId(null); }} className="flex-1 flex flex-col">
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => {
+          const tab = v as DocumentType | 'all';
+          setActiveTab(tab);
+          setInvoicesWorkspaceTab(tab);
+          setSelectedDocId(null);
+        }}
+        className="flex-1 flex flex-col"
+      >
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0 overflow-x-auto">
           {DOC_TABS.map(tab => {
             const config = tab.key !== 'all' ? DOCUMENT_TYPE_CONFIG[tab.key] : null;
@@ -409,7 +433,8 @@ export default function Invoices() {
             <tbody className="divide-y divide-border/50">
               {filteredDocs.map(doc => {
                 const config = DOCUMENT_TYPE_CONFIG[doc.documentType];
-                const statusBadge = STATUS_BADGES[doc.status];
+                const statusBadge = STATUS_BADGES[doc.status] ?? STATUS_BADGES.draft;
+                if (!config) return null;
                 return (
                   <tr key={doc.id}
                     className={cn("cursor-pointer hover:bg-accent/50 transition-colors",
@@ -459,7 +484,7 @@ export default function Invoices() {
       </Tabs>
 
       {/* Selected document info bar with Document Flow */}
-      {selectedDoc && (
+      {selectedDoc && DOCUMENT_TYPE_CONFIG[selectedDoc.documentType] && (
         <div className="border-t">
           <div className="h-7 bg-primary/10 flex items-center px-3 text-[10px] gap-4">
             <span className={cn("font-bold", DOCUMENT_TYPE_CONFIG[selectedDoc.documentType].color)}>
@@ -482,14 +507,17 @@ export default function Invoices() {
       )}
 
       {/* Document Form Dialog */}
-      <DocumentFormDialog
-        open={formOpen}
-        onOpenChange={setFormOpen}
-        documentType={formDocType}
-        editDocument={editDoc}
-        prefillFrom={prefillDoc}
-        onSaved={refresh}
-      />
+      {formOpen && (
+        <DocumentFormDialog
+          key={formDocType}
+          open={formOpen}
+          onOpenChange={setFormOpen}
+          documentType={formDocType}
+          editDocument={editDoc}
+          prefillFrom={prefillDoc}
+          onSaved={refresh}
+        />
+      )}
     </div>
   );
 }

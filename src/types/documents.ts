@@ -127,6 +127,42 @@ export interface ERPDocument {
   cancelReason?: string;
 }
 
+const LEGACY_DOCUMENT_TYPE_MAP: Record<string, DocumentType> = {
+  FT: 'fatura_venda',
+  FV: 'fatura_venda',
+  invoice: 'fatura_venda',
+  sales_invoice: 'fatura_venda',
+  FC: 'fatura_compra',
+  purchase_invoice: 'fatura_compra',
+  RC: 'recibo',
+  receipt: 'recibo',
+  PG: 'pagamento',
+  payment: 'pagamento',
+  OR: 'proforma',
+  NC: 'nota_credito',
+  credit_note: 'nota_credito',
+  ND: 'nota_debito',
+  debit_note: 'nota_debito',
+  GR: 'guia_remessa',
+  delivery: 'guia_remessa',
+};
+
+/** Map DB / legacy codes to a valid DocumentType (avoids render crashes on /invoices). */
+export function normalizeErpDocumentType(
+  raw: unknown,
+  fallback: DocumentType = 'fatura_venda',
+): DocumentType {
+  const trimmed = String(raw ?? '').trim();
+  if (!trimmed) return fallback;
+  if (trimmed in DOCUMENT_TYPE_CONFIG) return trimmed as DocumentType;
+  const lower = trimmed.toLowerCase();
+  if (lower in DOCUMENT_TYPE_CONFIG) return lower as DocumentType;
+  const upper = trimmed.toUpperCase();
+  if (LEGACY_DOCUMENT_TYPE_MAP[upper]) return LEGACY_DOCUMENT_TYPE_MAP[upper];
+  if (LEGACY_DOCUMENT_TYPE_MAP[lower]) return LEGACY_DOCUMENT_TYPE_MAP[lower];
+  return fallback;
+}
+
 // Document type configuration
 export const DOCUMENT_TYPE_CONFIG: Record<DocumentType, {
   label: string;

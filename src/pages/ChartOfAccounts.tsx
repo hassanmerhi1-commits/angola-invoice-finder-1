@@ -260,7 +260,7 @@ export default function ChartOfAccounts() {
         <div className="w-px h-5 bg-border mx-1" />
         {/* Action buttons */}
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:hover:bg-blue-950/30" disabled={!selectedAccount}
-          onClick={() => { navigate('/invoices'); window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new')), 150); }}>
+          onClick={() => { navigate('/invoices'); window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new', { detail: { tab: 'fatura_venda' } })), 150); }}>
           <FileText className="w-3 h-3" /> {t.chartOfAccountsUi.salesInvoice}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-green-600 border-green-200 hover:bg-green-50 dark:border-green-800 dark:hover:bg-green-950/30" disabled={!selectedAccount}

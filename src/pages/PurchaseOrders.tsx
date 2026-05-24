@@ -66,6 +66,8 @@ export default function PurchaseOrders() {
     receiveOrder, 
     cancelOrder 
   } = usePurchaseOrders(apiBranchId);
+  const { suppliers } = useSuppliers();
+  const { products, refreshProducts } = useProducts(apiBranchId);
   const { toast } = useToast();
 
   const [searchTerm, setSearchTerm] = useState('');

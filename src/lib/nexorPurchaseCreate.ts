@@ -10,7 +10,7 @@ export const PURCHASE_INVOICES_NEW_PATH = '/purchase-invoices/new';
 
 /** Prefer router pathname; fall back to hash (Electron / HashRouter sometimes report pathname out of sync). */
 
-export function resolvePurchasePathname(pathname: string): string {
+export function resolveAppPathname(pathname: string): string {
 
   let p = pathname.replace(/\/+$/, '') || '/';
 
@@ -20,13 +20,12 @@ export function resolvePurchasePathname(pathname: string): string {
 
     const raw = window.location.hash.replace(/^#/, '');
 
-    const seg = raw.split('?')[0] || '';
+    const seg = (raw.split('?')[0] || '').trim();
 
-    if (seg && (seg === '/purchase-invoices' || seg.startsWith('/purchase-invoices/'))) {
+    if (!seg.startsWith('/')) return p;
 
-      return seg.startsWith('/') ? seg : `/${seg}`;
-
-    }
+    // Only fall back to hash when the router pathname is empty (Electron HashRouter quirk).
+    if (p === '/' || p === '') return seg;
 
   } catch {
 
@@ -35,6 +34,16 @@ export function resolvePurchasePathname(pathname: string): string {
   }
 
   return p;
+
+}
+
+
+
+/** @deprecated Use resolveAppPathname */
+
+export function resolvePurchasePathname(pathname: string): string {
+
+  return resolveAppPathname(pathname);
 
 }
 

@@ -1,5 +1,13 @@
 // Document storage — DUAL-MODE: Electron → SQLite | Web → localStorage
-import { ERPDocument, DocumentType, DocumentStatus, DocumentLine, generateDocumentNumber, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
+import {
+  ERPDocument,
+  DocumentType,
+  DocumentStatus,
+  DocumentLine,
+  generateDocumentNumber,
+  DOCUMENT_TYPE_CONFIG,
+  normalizeErpDocumentType,
+} from '@/types/documents';
 import { isElectronMode, dbGetAll, dbInsert, lsGet, lsSet } from '@/lib/dbHelper';
 import { api } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
@@ -313,10 +321,25 @@ function normalizeSupplierPurchaseReturnDocument(doc: ERPDocument): ERPDocument 
 }
 
 // DB mappers
+function safeParseJsonArray(raw: unknown): unknown[] {
+  if (raw == null || raw === '') return [];
+  if (Array.isArray(raw)) return raw;
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function mapDocFromDb(row: any): ERPDocument {
+  const entityType = row.entity_type === 'supplier' ? 'supplier' : 'customer';
   return normalizeSupplierPurchaseReturnDocument({
     id: row.id,
-    documentType: row.document_type || 'FT',
+    documentType: normalizeErpDocumentType(
+      row.document_type,
+      entityType === 'supplier' ? 'fatura_compra' : 'fatura_venda',
+    ),
     documentNumber: row.document_number || '',
     branchId: row.branch_id || '',
     branchName: row.branch_name || '',
@@ -327,7 +350,7 @@ function mapDocFromDb(row: any): ERPDocument {
     entityPhone: row.entity_phone,
     entityEmail: row.entity_email,
     entityId: row.entity_id,
-    lines: row.lines_json ? JSON.parse(row.lines_json) : [],
+    lines: safeParseJsonArray(row.lines_json) as DocumentLine[],
     subtotal: Number(row.subtotal || 0),
     totalDiscount: Number(row.total_discount || 0),
     totalTax: Number(row.total_tax || 0),
@@ -351,7 +374,9 @@ function mapDocFromDb(row: any): ERPDocument {
     createdByName: row.created_by_name || '',
     createdAt: row.created_at || '',
     updatedAt: row.updated_at || '',
-    childDocuments: row.child_documents_json ? JSON.parse(row.child_documents_json) : undefined,
+    childDocuments: row.child_documents_json
+      ? (safeParseJsonArray(row.child_documents_json) as ERPDocument['childDocuments'])
+      : undefined,
   });
 }
 

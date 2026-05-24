@@ -18,7 +18,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { navigateThenStartPurchaseCreate, resolvePurchasePathname } from '@/lib/nexorPurchaseCreate';
+import { navigateThenStartPurchaseCreate, resolveAppPathname } from '@/lib/nexorPurchaseCreate';
+import { getInvoicesWorkspaceTab, NEXOR_INVOICES_NEW, NEXOR_INVOICES_NEW_RECEIPT } from '@/lib/invoicesWorkspace';
 import { NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 import { dispatchToolbarEvent, NEXOR_TOOLBAR, NEXOR_SUPPLIERS_NEW } from '@/lib/nexorToolbarEvents';
 import { 
@@ -198,7 +199,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
   const getButtonVariant = (variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link' | 'modern' | 'modern-outline') => variant ?? 'outline';
 
   const handleToolbarNew = useCallback(() => {
-    const p = resolvePurchasePathname(location.pathname);
+    const p = resolveAppPathname(location.pathname);
     // Exact segment matching — avoid `includes('stock')` matching /stock-transfer, etc.
     if (p === '/purchase-invoices' || p.startsWith('/purchase-invoices/')) {
       navigateThenStartPurchaseCreate(navigate, location.pathname);
@@ -217,8 +218,10 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       navigate('/inventory', { state: { nexorToolbarNewProduct: true } });
       return;
     }
-    if (p === '/invoices') {
-      window.dispatchEvent(new CustomEvent('nexor:invoices-new'));
+    if (p === '/invoices' || p.startsWith('/invoices/')) {
+      window.dispatchEvent(
+        new CustomEvent(NEXOR_INVOICES_NEW, { detail: { tab: getInvoicesWorkspaceTab() } }),
+      );
       return;
     }
     if (p === '/vendas' || p.startsWith('/vendas/')) {
@@ -229,7 +232,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
 
   const handleToolbarClick = useCallback(
     (actionKey: ToolbarActionKey) => {
-      const path = resolvePurchasePathname(location.pathname);
+      const path = resolveAppPathname(location.pathname);
       switch (actionKey) {
         case 'new':
           handleToolbarNew();
@@ -242,11 +245,16 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           return;
         case 'salesInvoice':
           navigate('/invoices');
-          window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new')), 150);
+          window.setTimeout(
+            () => window.dispatchEvent(
+              new CustomEvent(NEXOR_INVOICES_NEW, { detail: { tab: 'fatura_venda' } }),
+            ),
+            150,
+          );
           return;
         case 'receipt':
           navigate('/invoices');
-          window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new-receipt')), 150);
+          window.setTimeout(() => window.dispatchEvent(new CustomEvent(NEXOR_INVOICES_NEW_RECEIPT)), 150);
           return;
         case 'payment':
           navigate('/payments');
@@ -302,7 +310,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
   );
 
   const getActionButtons = (): ToolbarButtonConfig[] => {
-    const p = resolvePurchasePathname(location.pathname);
+    const p = resolveAppPathname(location.pathname);
     if (p === '/' || p === '') return [];
 
     const base: ToolbarButtonConfig[] = [
@@ -342,7 +350,15 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { actionKey: 'journalEntry', label: t.topNav.toolbar.journalEntry, icon: BookOpen, variant: 'outline' },
       ];
     }
-    if (p.includes('invoices') || p.includes('fiscal') || p.includes('proforma')) {
+    if (p === '/invoices' || p.startsWith('/invoices/')) {
+      return [
+        { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen, variant: 'outline' },
+        { actionKey: 'new', label: t.topNav.toolbar.new, icon: Plus, variant: 'default' },
+        { actionKey: 'print', label: t.topNav.file.print, icon: Printer, variant: 'outline' },
+        { actionKey: 'agtSend', label: t.topNav.toolbar.agtSend, icon: Upload, variant: 'outline' },
+      ];
+    }
+    if (p.includes('fiscal') || p.includes('proforma')) {
       return [
         ...base,
         { actionKey: 'print', label: t.topNav.file.print, icon: Printer, variant: 'outline' },
