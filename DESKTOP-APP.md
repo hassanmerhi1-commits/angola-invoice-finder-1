@@ -78,6 +78,10 @@ project/
 └── package.json
 ```
 
+## Deploy to server + clients
+
+See **[DEPLOY-CHECKLIST.md](./DEPLOY-CHECKLIST.md)** for step-by-step install and verification on the server PC and LAN clients.
+
 ## Distribution
 
 After building, share these files:

@@ -24,6 +24,10 @@ dist-ssr
 *.sw?
 .env
 .tmp-electron-package/
+# SQLite scratch files from local verify/backup scripts (not real app data)
+.tmp-*.db
+.tmp-*.db-shm
+.tmp-*.db-wal
 backend/webapp/assets/
 .vs/
 release/
