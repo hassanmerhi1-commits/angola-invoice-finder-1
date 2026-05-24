@@ -111,6 +111,7 @@ export const pt: TranslationKeys = {
     changePasswordHint: "Em Definições → Utilizadores defina senhas fortes para todas as contas.",
     welcomeToastTitle: "Bem-vindo!",
     welcomeToastDesc: "Login efectuado com sucesso.",
+    offlineLoginDesc: "Entrou offline com a última sessão neste PC. Os dados sincronizam quando o servidor voltar.",
     authErrorTitle: "Erro de Autenticação",
     authErrorDesc: "Utilizador ou senha inválidos.",
     authErrorHint: "Tente admin / changeme ou caixa1 / caixa1. Reinicie a aplicação após atualizar. Se continuar a falhar, confirme que o servidor da base de dados está online (DB Online no topo).",

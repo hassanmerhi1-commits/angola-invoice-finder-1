@@ -20,6 +20,8 @@ const os = require('os');
 const crypto = require('crypto');
 const http = require('http');
 const backendManager = require('./backendManager.cjs');
+const { scanForServers } = require('./discoveryClient.cjs');
+const { httpJsonRequest } = require('./httpJson.cjs');
 
 /** Log line when localhost has no unified Express (often better-sqlite3 ABI mismatch). */
 function embeddedExpressUnreachableLogLine() {
@@ -533,6 +535,25 @@ function ensureCompaniesRegistry() {
 }
 
 // ============= IP FILE PARSING =============
+/** Accept `192.168.1.5`, `http://192.168.1.5:3000`, etc. */
+function parseClientHostFromIpContent(content) {
+  let s = String(content || '').trim().replace(/^\uFEFF/, '');
+  if (!s) return null;
+  s = s.replace(/^https?:\/\//i, '');
+  s = s.split(/[/?#]/)[0].trim();
+  const withPort = s.match(/^([A-Za-z0-9_\-\.]+):(\d{1,5})$/);
+  if (withPort) {
+    const port = Number(withPort[2]);
+    if (port > 0 && port < 65536) {
+      return { host: withPort[1], httpPort: port };
+    }
+  }
+  if (/^[A-Za-z0-9_\-\.]+$/.test(s)) {
+    return { host: s, httpPort: null };
+  }
+  return null;
+}
+
 function parseIPFile() {
   try {
     if (!fs.existsSync(IP_FILE_PATH)) {
@@ -567,9 +588,9 @@ function parseIPFile() {
       return { valid: true, path: DEFAULT_NEXOR_PATH, isServer: true };
     }
     // Hostname/IP — client unless it is this machine (common misconfig on server PCs)
-    const serverMatch = content.match(/^([A-Za-z0-9_\-\.]+)$/);
-    if (serverMatch) {
-      const host = serverMatch[1];
+    const clientHost = parseClientHostFromIpContent(content);
+    if (clientHost?.host) {
+      const host = clientHost.host;
       if (isLoopbackOrLocalHost(host)) {
         const dbPath = ensureSqliteFileReady(DEFAULT_NEXOR_PATH);
         copyBestLegacySqliteInto(dbPath);
@@ -577,7 +598,13 @@ function parseIPFile() {
         try { fs.writeFileSync(IP_FILE_PATH, dbPath, 'utf-8'); } catch (_) {}
         return { valid: true, path: dbPath, isServer: true };
       }
-      return { valid: true, path: null, isServer: false, serverAddress: host };
+      return {
+        valid: true,
+        path: null,
+        isServer: false,
+        serverAddress: host,
+        httpPort: clientHost.httpPort || null,
+      };
     }
     return { valid: false, error: 'Invalid IP file format', path: null, isServer: false };
   } catch (error) {
@@ -1317,10 +1344,18 @@ function getCityApiBaseForClient() {
       const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
       const ip = cfg?.clientConfig?.serverIp;
       const port = cfg?.clientConfig?.httpPort || cfg?.clientConfig?.apiPort || 3000;
-      if (ip) return `http://${ip}:${port}`;
+      const parsed = parseClientHostFromIpContent(String(ip || ''));
+      if (parsed?.host) {
+        return `http://${parsed.host}:${parsed.httpPort ?? port}`;
+      }
     }
   } catch (_) {}
-  if (serverAddress) return `http://${serverAddress}:3000`;
+  if (serverAddress) {
+    const parsed = parseClientHostFromIpContent(serverAddress);
+    if (parsed?.host) {
+      return `http://${parsed.host}:${parsed.httpPort ?? 3000}`;
+    }
+  }
   return 'http://127.0.0.1:3000';
 }
 
@@ -1551,9 +1586,12 @@ function resolveStartupBackendPlan(dbResult) {
     return { mode: 'client', sqlitePath: null };
   }
   if (dbResult?.needsConfig || !ip.valid) {
-    return { mode: 'standalone', sqlitePath: null };
+    return { mode: 'standalone', sqlitePath: ensureSqliteFileReady(DEFAULT_NEXOR_PATH) };
   }
-  return { mode: 'unknown', sqlitePath: null };
+  const fallbackDb = ip.valid && ip.path
+    ? ensureSqliteFileReady(ip.path)
+    : ensureSqliteFileReady(DEFAULT_NEXOR_PATH);
+  return { mode: 'unknown', sqlitePath: fallbackDb };
 }
 
 // ============= DATABASE INITIALIZATION =============
@@ -2145,6 +2183,26 @@ async function probeRemoteExpressHealth(host, port = 3000, timeoutMs = 2500) {
   });
 }
 
+/** Scan 3000..3009 on the server PC (matches backendManager port range). */
+async function resolveRemoteExpressPort(hostOrEndpoint, preferredPort = 3000, timeoutMs = 2500) {
+  const parsed = parseClientHostFromIpContent(String(hostOrEndpoint || '').trim());
+  const hostname = parsed?.host || String(hostOrEndpoint || '').trim();
+  if (!hostname) return null;
+  const ports = [];
+  const preferred = Number(parsed?.httpPort ?? preferredPort);
+  if (Number.isFinite(preferred) && preferred >= 3000 && preferred < 3010) {
+    ports.push(preferred);
+  }
+  for (let p = 3000; p < 3010; p++) {
+    if (!ports.includes(p)) ports.push(p);
+  }
+  for (const p of ports) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await probeRemoteExpressHealth(hostname, p, timeoutMs)) return p;
+  }
+  return null;
+}
+
 ipcMain.handle('db:ensureBackend', async () => {
   try {
     await ensureEmbeddedBackendRunningIfNeeded();
@@ -2180,7 +2238,7 @@ ipcMain.handle('db:getStatus', async () => {
   }
 
   const clientHttpOk =
-    !isServerMode && !!serverAddress && (await probeRemoteExpressHealth(serverAddress));
+    !isServerMode && !!serverAddress && !!(await resolveRemoteExpressPort(serverAddress));
 
   const legacyWsOk =
     USE_LEGACY_WS
@@ -2301,10 +2359,26 @@ ipcMain.handle('db:testConnection', async () => {
       return { success: false, mode: 'server', error: e.message };
     }
   }
+  if (!serverAddress) {
+    return { success: false, mode: 'client', error: 'Server address not configured' };
+  }
   try {
-    const result = await sendToServer({ action: 'ping' });
-    return { success: result.success, mode: 'client' };
-  } catch (e) { return { success: false, mode: 'client', error: e.message }; }
+    const httpPort = await resolveRemoteExpressPort(serverAddress, 3000, 5000);
+    if (httpPort) {
+      return { success: true, mode: 'client', via: 'http', serverAddress, port: httpPort };
+    }
+    if (USE_LEGACY_WS) {
+      const result = await sendToServer({ action: 'ping' });
+      return { success: result.success, mode: 'client', via: 'ws' };
+    }
+    return {
+      success: false,
+      mode: 'client',
+      error: `Cannot reach http://${serverAddress}:3000-3009/api/health — check server IP, firewall, and that NEXOR ERP is running on the server PC`,
+    };
+  } catch (e) {
+    return { success: false, mode: 'client', error: e.message };
+  }
 });
 
 // Network info
@@ -2322,6 +2396,25 @@ ipcMain.handle('network:getLocalIPs', () => {
 ipcMain.handle('network:getInstallPath', () => INSTALL_DIR);
 ipcMain.handle('network:getIPFilePath', () => IP_FILE_PATH);
 ipcMain.handle('network:getComputerName', () => os.hostname());
+
+ipcMain.handle('discovery:scan', async (_, timeoutMs = 5000) => {
+  try {
+    const servers = await scanForServers(Number(timeoutMs) || 5000);
+    return { success: true, servers };
+  } catch (e) {
+    return { success: false, servers: [], error: e.message };
+  }
+});
+
+/** Renderer → LAN server via Node (avoids file:// fetch / CORS issues on client PCs). */
+ipcMain.handle('network:httpJson', async (_, opts) => {
+  try {
+    if (!opts?.url) return { ok: false, status: 0, error: 'url required' };
+    return await httpJsonRequest(opts.url, opts);
+  } catch (e) {
+    return { ok: false, status: 0, error: e.message };
+  }
+});
 
 // Purchase windows
 ipcMain.handle('purchase:openCreateWindow', () => {

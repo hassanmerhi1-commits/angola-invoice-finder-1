@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getApiUrl, getApiUrlAsync, isWebPreview } from '@/lib/api/config';
+import { electronAwareJsonRequest } from '@/lib/electronHttp';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Database, Server, RefreshCw, CheckCircle2, XCircle, Container, Monitor } from 'lucide-react';
@@ -74,11 +75,11 @@ export function ServerConnectionIndicator() {
         // Also try the Express backend for extra info
         try {
           const apiUrl = await getApiUrlAsync({ waitForPortMs: 10000 });
-          const response = await fetch(`${new URL(apiUrl).origin}/api/health`, {
-            signal: AbortSignal.timeout(5000),
+          const res = await electronAwareJsonRequest(`${new URL(apiUrl).origin}/api/health`, {
+            timeoutMs: 5000,
           });
-          if (response.ok) {
-            setHealth(await response.json());
+          if (res.ok && res.json) {
+            setHealth(res.json as HealthData);
             setBackendReachable(true);
             if (latestStatus?.success !== false) {
               latestStatus = { ...latestStatus, connected: true, expressBackend: true };
@@ -142,7 +143,8 @@ export function ServerConnectionIndicator() {
     ? !!(
         electronStatus?.connected
         || electronStatus?.expressBackend
-        || (health?.ok && health?.unified)
+        || (health?.ok === true && health?.unified === true)
+        || (electronStatus?.mode === 'client' && backendReachable && health?.ok === true)
       )
     : (health?.database?.connected ?? health?.ok ?? false);
   

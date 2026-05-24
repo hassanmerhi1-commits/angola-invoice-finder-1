@@ -4,6 +4,7 @@ import {
   invalidateElectronApiBaseCache,
   isDemoMode,
 } from '@/lib/api/config';
+import { electronAwareJsonRequest } from '@/lib/electronHttp';
 
 function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -98,18 +99,22 @@ export async function probeBackupApi(base?: string): Promise<{ ok: boolean; base
   const origin = new URL(apiBase).origin;
 
   const tryHealth = async (url: string) => {
-    const res = await fetch(`${url}/api/health`, {
-      signal: AbortSignal.timeout(8000),
+    const res = await electronAwareJsonRequest(`${url}/api/health`, {
+      timeoutMs: 8000,
       headers: { Accept: 'application/json' },
     });
     if (!res.ok) {
-      throw new BackupApiError(await parseError(res), classifyFetchError(null, res.status), url);
+      throw new BackupApiError(
+        res.text?.slice(0, 200) || `HTTP ${res.status}`,
+        classifyFetchError(null, res.status),
+        url,
+      );
     }
-    const health = await res.json().catch(() => ({}));
+    const health = (res.json && typeof res.json === 'object' ? res.json : {}) as Record<string, unknown>;
     if (health?.ok !== true) {
       throw new BackupApiError('ERP server health check failed', 'server_error', url);
     }
-    return health as Record<string, unknown>;
+    return health;
   };
 
   try {
@@ -154,21 +159,26 @@ async function backupFetch<T>(
   const attempt = async (base: string): Promise<T> => {
     const origin = new URL(base).origin;
     await probeBackupApi(origin);
-    const res = await fetch(`${origin}${path}`, {
-      ...options,
-      headers,
-      signal: options.signal ?? AbortSignal.timeout(120000),
+    const res = await electronAwareJsonRequest(`${origin}${path}`, {
+      method: options.method || 'GET',
+      body:
+        options.body != null
+          ? (typeof options.body === 'string'
+            ? (() => { try { return JSON.parse(options.body as string); } catch { return options.body; } })()
+            : options.body)
+          : undefined,
+      headers: headers as Record<string, string>,
+      timeoutMs: 120000,
     });
     if (!res.ok) {
-      const msg = await parseError(res);
+      const msg =
+        (res.json && typeof res.json === 'object' && (res.json as { error?: string }).error)
+        || res.text?.slice(0, 200)
+        || `HTTP ${res.status}`;
       throw new BackupApiError(msg, classifyFetchError(null, res.status), origin);
     }
     if (res.status === 204) return undefined as T;
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
-      return undefined as T;
-    }
-    return res.json() as Promise<T>;
+    return (res.json ?? undefined) as T;
   };
 
   try {

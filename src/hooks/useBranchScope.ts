@@ -10,7 +10,7 @@ import {
   isConsolidatedBranchScope,
   isHeadOfficeScope,
   resolveOperatingBranch,
-  resolveUserBranch,
+  resolveEffectiveUserBranch,
 } from '@/lib/branchAccess';
 
 /**
@@ -23,8 +23,8 @@ export function useBranchScope() {
   const { user } = useAuth();
 
   const userBranch = useMemo(
-    () => resolveUserBranch(branches, user?.branchId),
-    [user?.branchId, branches],
+    () => resolveEffectiveUserBranch(branches, user),
+    [user, branches],
   );
 
   const canSwitchBranch = canUserSwitchBranch(user, userBranch);

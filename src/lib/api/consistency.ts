@@ -6,6 +6,7 @@ import {
 } from '@/lib/api/config';
 import { BackupApiError, probeBackupApi, type BackupConnectionIssue } from '@/lib/api/backup';
 import { ensureBackendAuthToken } from '@/lib/api/client';
+import { electronAwareJsonRequest } from '@/lib/electronHttp';
 
 export type ConsistencyCheckStatus = 'ok' | 'fail' | 'warn' | 'skip' | 'error';
 
@@ -69,19 +70,24 @@ async function consistencyFetch<T>(path: string, options: RequestInit = {}): Pro
   const attempt = async (base: string): Promise<T> => {
     const origin = new URL(base).origin;
     await probeBackupApi(origin);
-    const res = await fetch(`${origin}${path}`, {
-      ...options,
-      headers,
-      signal: options.signal ?? AbortSignal.timeout(180000),
+    const res = await electronAwareJsonRequest(`${origin}${path}`, {
+      method: options.method || 'GET',
+      body:
+        options.body != null
+          ? (typeof options.body === 'string'
+            ? (() => { try { return JSON.parse(options.body as string); } catch { return options.body; } })()
+            : options.body)
+          : undefined,
+      headers: headers as Record<string, string>,
+      timeoutMs: 180000,
     });
     if (!res.ok) {
-      const text = await res.text();
       let msg = `HTTP ${res.status}`;
-      try {
-        const j = JSON.parse(text);
-        msg = j?.error || j?.message || msg;
-      } catch {
-        if (text) msg = text.slice(0, 200);
+      if (res.json && typeof res.json === 'object') {
+        const j = res.json as { error?: string; message?: string };
+        msg = j.error || j.message || msg;
+      } else if (res.text) {
+        msg = res.text.slice(0, 200);
       }
       const issue =
         res.status === 401
@@ -93,7 +99,7 @@ async function consistencyFetch<T>(path: string, options: RequestInit = {}): Pro
               : 'unknown';
       throw new BackupApiError(msg, issue as BackupConnectionIssue, origin);
     }
-    return res.json() as Promise<T>;
+    return res.json as T;
   };
 
   const isElectron = typeof window !== 'undefined' && !!(window as { electronAPI?: { isElectron?: boolean } }).electronAPI?.isElectron;

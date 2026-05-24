@@ -1264,6 +1264,32 @@ function bootstrapSchemaAndSeed() {
   }
 
   ensureAppTablesAndColumns();
+  normalizeAdminBranchAssignments();
+}
+
+/** Point admin/manager users at head office when branch_id is missing or stale. */
+function normalizeAdminBranchAssignments() {
+  if (!sqlite) return;
+  try {
+    const main = sqlite
+      .prepare(`SELECT id FROM branches WHERE is_main = 1 ORDER BY created_at LIMIT 1`)
+      .get();
+    if (!main?.id) return;
+    sqlite
+      .prepare(
+        `UPDATE users
+         SET branch_id = ?
+         WHERE LOWER(COALESCE(role, '')) IN ('admin', 'manager')
+           AND (
+             branch_id IS NULL
+             OR TRIM(COALESCE(branch_id, '')) = ''
+             OR branch_id NOT IN (SELECT id FROM branches)
+           )`,
+      )
+      .run(main.id);
+  } catch (err) {
+    console.warn('[DB] normalizeAdminBranchAssignments:', err.message);
+  }
 }
 
 function toSqliteSql(sqlText) {

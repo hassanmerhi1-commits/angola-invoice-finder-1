@@ -13,6 +13,7 @@ const {
   verifyPasswordWithDummyFallback,
 } = require('../lib/passwordAuth');
 const { findUserForLogin } = require('../lib/loginUserLookup');
+const { resolveAndPersistUserBranchId } = require('../middleware/branchScope');
 
 const router = express.Router();
 
@@ -81,11 +82,20 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
 
     await upgradePasswordHashIfLegacy(db, user.id, password, user.password_hash);
 
+    let effectiveBranchId = user.branch_id;
+    try {
+      effectiveBranchId = await resolveAndPersistUserBranchId(user);
+    } catch (branchErr) {
+      console.warn('[AUTH] branch assignment fix skipped:', branchErr?.message || branchErr);
+    }
     const token = issueToken(user);
 
     res.json({
       token,
-      user: mapUserRow(user),
+      user: {
+        ...mapUserRow(user),
+        branchId: effectiveBranchId ?? mapUserRow(user).branchId,
+      },
     });
   } catch (error) {
     console.error('[AUTH ERROR]', error);
@@ -103,7 +113,12 @@ router.get('/me', requireAuth, async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'User not found' });
     }
-    res.json(mapUserRow(result.rows[0]));
+    const row = result.rows[0];
+    const effectiveBranchId = await resolveAndPersistUserBranchId(row);
+    res.json({
+      ...mapUserRow(row),
+      branchId: effectiveBranchId ?? mapUserRow(row).branchId,
+    });
   } catch (error) {
     console.error('[AUTH ERROR] me:', error);
     res.status(500).json({ error: 'Failed to load user' });

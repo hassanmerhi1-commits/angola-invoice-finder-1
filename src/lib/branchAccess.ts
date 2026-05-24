@@ -5,6 +5,13 @@ export const ALL_BRANCHES_SCOPE_ID = '__all_branches__';
 
 const SCOPE_STORAGE_KEY = 'kwanza_branch_scope_id';
 
+type BranchAccessUser = Pick<User, 'branchId' | 'role'> | null | undefined;
+
+function isHeadOfficeRole(role: unknown): boolean {
+  const r = String(role || '').toLowerCase();
+  return r === 'admin' || r === 'manager';
+}
+
 /** SQLite/API may return 1, 0, '1', true, etc. */
 export function normalizeIsMain(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 't' || value === 'true';
@@ -40,17 +47,28 @@ export function resolveUserBranch(branches: Branch[], branchId?: string | null):
   );
 }
 
-type BranchAccessUser = Pick<User, 'branchId' | 'role'> | null | undefined;
+export function resolveHeadOfficeBranch(branches: Branch[]): Branch | null {
+  return branches.find((b) => normalizeIsMain(b.isMain)) || branches[0] || null;
+}
 
-function isHeadOfficeRole(role: unknown): boolean {
-  const r = String(role || '').toLowerCase();
-  return r === 'admin' || r === 'manager';
+/** Assigned branch; admin/manager without a valid assignment inherit head office. */
+export function resolveEffectiveUserBranch(
+  branches: Branch[],
+  user: BranchAccessUser,
+): Branch | null {
+  const direct = resolveUserBranch(branches, user?.branchId);
+  if (direct) return direct;
+  if (isHeadOfficeRole(user?.role)) {
+    return resolveHeadOfficeBranch(branches);
+  }
+  return null;
 }
 
 /** Only admin/manager at the head-office (main) branch may switch branches and see all filials. */
 export function canUserSwitchBranch(user: BranchAccessUser, userBranch: Branch | null): boolean {
-  if (!userBranch || !normalizeIsMain(userBranch.isMain)) return false;
-  return isHeadOfficeRole(user?.role);
+  if (!isHeadOfficeRole(user?.role)) return false;
+  if (!userBranch) return true;
+  return normalizeIsMain(userBranch.isMain);
 }
 
 export function branchesVisibleToUser(
@@ -196,7 +214,7 @@ export function applyUserBranchLockOnLogin(user: BranchAccessUser): void {
   try {
     const raw = localStorage.getItem('kwanzaerp_branches');
     const branches: Branch[] = raw ? JSON.parse(raw) : [];
-    const assigned = resolveUserBranch(branches, user?.branchId);
+    const assigned = resolveEffectiveUserBranch(branches, user);
     if (assigned && !canUserSwitchBranch(user, assigned)) {
       localStorage.setItem('kwanza_current_branch_id', String(assigned.id));
       localStorage.setItem('kwanzaerp_current_branch', JSON.stringify(assigned));

@@ -7,7 +7,7 @@
  */
 function lanCors(req, res, next) {
   const origin = req.headers.origin || '';
-  const allowed = isAllowedOrigin(origin);
+  const allowed = isAllowedOrigin(origin) || origin === 'null';
 
   if (allowed || !origin) {
     res.setHeader('Access-Control-Allow-Origin', origin || '*');

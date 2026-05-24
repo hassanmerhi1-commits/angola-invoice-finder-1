@@ -1,5 +1,5 @@
 import React from "react";
-import { invalidateElectronApiBaseCache } from "@/lib/api/config";
+import { invalidateElectronApiBaseCache, clearStaleClientConfigIfServerMachine } from "@/lib/api/config";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -106,6 +106,16 @@ function AppRoutes() {
   const isElectron = typeof window !== "undefined" && !!window.electronAPI?.isElectron;
 
   React.useEffect(() => {
+    clearStaleClientConfigIfServerMachine();
+    import('@/lib/api/config').then(({ syncLanClientConfigFromIpFile }) => {
+      syncLanClientConfigFromIpFile();
+    }).catch(() => {});
+    import('@/lib/lanServerAddress').then(({ repairLanClientConfigStorage }) => {
+      repairLanClientConfigStorage();
+    }).catch(() => {});
+  }, []);
+
+  React.useEffect(() => {
     let isMounted = true;
 
     const check = async () => {
@@ -127,17 +137,25 @@ function AppRoutes() {
           localStorage.setItem('kwanza_setup_complete', complete ? 'true' : 'false');
 
           if (complete) {
-            const isServer = cfg?.role === 'server';
+            let isServer = cfg?.role === 'server';
+            try {
+              const ip = window.electronAPI?.ipfile?.parseSync?.();
+              if (ip?.valid && ip.isServer) isServer = true;
+              else if (ip?.valid && !ip.isServer && ip.serverAddress) isServer = false;
+            } catch {
+              /* IP file wins over stale setup-config.json */
+            }
             localStorage.setItem('kwanza_is_server', isServer ? 'true' : 'false');
             if (isServer && cfg?.serverConfig?.databasePath) {
               localStorage.setItem('kwanza_server_config', JSON.stringify({ databasePath: cfg.serverConfig.databasePath }));
               localStorage.removeItem('kwanza_client_config');
             } else if (!isServer && cfg?.clientConfig?.serverIp) {
+              const parsed = (await import('@/lib/lanServerAddress')).parseLanServerEndpoint(cfg.clientConfig.serverIp);
               localStorage.setItem(
                 'kwanza_client_config',
                 JSON.stringify({
-                  serverIp: cfg.clientConfig.serverIp,
-                  httpPort: 3000,
+                  serverIp: parsed.host || cfg.clientConfig.serverIp,
+                  httpPort: cfg.clientConfig.httpPort ?? parsed.port ?? 3000,
                   serverPort: cfg.clientConfig.serverPort || 4546,
                 }),
               );
@@ -167,7 +185,29 @@ function AppRoutes() {
         }
 
         const flag = localStorage.getItem('kwanza_setup_complete');
-        if (isMounted) setSetupComplete(flag === 'true');
+        if (flag === 'true') {
+          if (isMounted) setSetupComplete(true);
+          return;
+        }
+        // IP file alone counts as configured (manual client/server install without setup wizard)
+        try {
+          const ip = window.electronAPI?.ipfile?.parseSync?.();
+          if (ip?.valid) {
+            localStorage.setItem('kwanza_setup_complete', 'true');
+            if (ip.isServer) {
+              localStorage.setItem('kwanza_is_server', 'true');
+            } else if (ip.serverAddress) {
+              localStorage.setItem('kwanza_is_server', 'false');
+              const { syncLanClientConfigFromIpFile } = await import('@/lib/api/config');
+              syncLanClientConfigFromIpFile();
+            }
+            if (isMounted) setSetupComplete(true);
+            return;
+          }
+        } catch {
+          /* ignore */
+        }
+        if (isMounted) setSetupComplete(false);
       } catch {
         const flag = localStorage.getItem('kwanza_setup_complete');
         if (isMounted) setSetupComplete(flag === 'true');

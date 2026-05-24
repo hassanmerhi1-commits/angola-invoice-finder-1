@@ -4,7 +4,45 @@ import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 // Transactional writes always use the backend HTTP API so browser and desktop share the same execution path
 // Electron IPC stays available only for desktop-only utilities and non-transactional reads
 
-import { getApiUrl, getApiUrlAsync, invalidateElectronApiBaseCache, isDemoMode } from './config';
+import {
+  getApiUrl,
+  getApiUrlAsync,
+  invalidateElectronApiBaseCache,
+  isDemoMode,
+  isThinClientMode,
+  waitForEmbeddedBackendHealth,
+  clearStaleClientConfigIfServerMachine,
+} from './config';
+import {
+  cacheOfflineLoginCredential,
+  tryOfflineLogin,
+  setOfflineModeActive,
+} from '@/lib/offlineAuth';
+import { electronHttpJson, isElectronLanClient } from '@/lib/electronHttp';
+
+export type LoginErrorKind = 'credentials' | 'connection';
+
+function classifyLoginError(message: string): LoginErrorKind {
+  const m = String(message || '').toLowerCase();
+  if (
+    m.includes('network error')
+    || m.includes('failed to fetch')
+    || m.includes('fetch failed')
+    || m.includes('econnrefused')
+    || m.includes('backend did not start')
+    || m.includes('backend unavailable')
+    || m.includes('database service')
+    || m.includes('database server')
+    || m.includes('native module')
+    || m.includes('better-sqlite3')
+    || m.includes('http 500')
+    || m.includes('login failed')
+    || m.includes('too many login attempts')
+  ) {
+    return 'connection';
+  }
+  return 'credentials';
+}
 
 export interface ApiResponse<T> {
   data?: T;
@@ -222,13 +260,37 @@ async function apiFetch<T>(
       : getApiUrl();
   let url = buildUrl(baseUrl);
   const token = getAuthToken();
-  
+
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers || {}),
   };
-  
+
+  const lanClient = el?.isElectron && await isElectronLanClient();
+  if (lanClient && el?.network?.httpJson) {
+    const body =
+      options.body != null && typeof options.body === 'string'
+        ? (() => { try { return JSON.parse(options.body as string); } catch { return options.body; } })()
+        : options.body;
+    const r = await electronHttpJson(url, {
+      method: options.method || 'GET',
+      body,
+      headers: headers as Record<string, string>,
+      timeoutMs: 25000,
+    });
+    if (r.ok) {
+      return { data: r.json as T };
+    }
+    const errPayload = r.json as Record<string, unknown> | null;
+    const errorMessage =
+      r.error
+      || (typeof errPayload?.error === 'string' ? errPayload.error : null)
+      || (typeof r.text === 'string' && r.text ? r.text.slice(0, 200) : null)
+      || (r.status ? `HTTP ${r.status}` : 'Network error');
+    return { error: errorMessage };
+  }
+
   try {
     const response = await fetch(url, { ...options, headers });
     const contentType = response.headers.get('content-type') || '';
@@ -272,25 +334,27 @@ async function apiFetch<T>(
         /* fall through */
       }
       try {
-        const freshPort = await window.electronAPI.backend.getPort();
-        if (typeof freshPort === 'number' && freshPort > 0) {
-          const freshBase = `http://127.0.0.1:${freshPort}`;
-          if (freshBase !== baseUrl) {
-            baseUrl = freshBase;
-            url = buildUrl(baseUrl);
-            const retryResponse = await fetch(url, { ...options, headers });
-            const retryContentType = retryResponse.headers.get('content-type') || '';
-            const retryIsJson = retryContentType.includes('application/json');
-            const retryPayload = retryIsJson
-              ? await retryResponse.json().catch(() => null)
-              : await retryResponse.text().catch(() => '');
-            if (!retryResponse.ok) {
-              const retryErrorMessage = typeof retryPayload === 'string'
-                ? retryPayload
-                : retryPayload?.error || (Array.isArray(retryPayload?.errors) ? retryPayload.errors.join('; ') : retryPayload?.message);
-              return { error: retryErrorMessage || `HTTP ${retryResponse.status}` };
+        if (!(await isElectronLanClient())) {
+          const freshPort = await window.electronAPI.backend.getPort();
+          if (typeof freshPort === 'number' && freshPort > 0) {
+            const freshBase = `http://127.0.0.1:${freshPort}`;
+            if (freshBase !== baseUrl) {
+              baseUrl = freshBase;
+              url = buildUrl(baseUrl);
+              const retryResponse = await fetch(url, { ...options, headers });
+              const retryContentType = retryResponse.headers.get('content-type') || '';
+              const retryIsJson = retryContentType.includes('application/json');
+              const retryPayload = retryIsJson
+                ? await retryResponse.json().catch(() => null)
+                : await retryResponse.text().catch(() => '');
+              if (!retryResponse.ok) {
+                const retryErrorMessage = typeof retryPayload === 'string'
+                  ? retryPayload
+                  : retryPayload?.error || (Array.isArray(retryPayload?.errors) ? retryPayload.errors.join('; ') : retryPayload?.message);
+                return { error: retryErrorMessage || `HTTP ${retryResponse.status}` };
+              }
+              return { data: retryPayload as T };
             }
-            return { data: retryPayload as T };
           }
         }
       } catch {
@@ -299,7 +363,8 @@ async function apiFetch<T>(
     }
 
     console.error(`[API ERROR] ${endpoint} url=${url}:`, error);
-    return { error: error instanceof Error ? error.message : 'Network error' };
+    const msg = error instanceof Error ? error.message : 'Network error';
+    return { error: msg };
   }
 }
 
@@ -435,17 +500,77 @@ export const api = {
       clearAuthSessionCache();
       const loginId = identifier.trim();
       if (!loginId || !password) {
-        return { error: 'Email or username and password are required' };
+        return { error: 'Email or username and password are required', errorKind: 'credentials' as LoginErrorKind };
       }
+
+      if (isElectronMode() && !isDemoMode()) {
+        clearStaleClientConfigIfServerMachine();
+        invalidateElectronApiBaseCache();
+        const lanClient = await isElectronLanClient();
+        if (lanClient && isThinClientMode()) {
+          const ready = await waitForEmbeddedBackendHealth({ timeoutMs: 15000 });
+          if (!ready.ok) {
+            const offlineUser = await tryOfflineLogin(loginId, password);
+            if (offlineUser) {
+              setAuthToken(null);
+              setOfflineModeActive(true);
+              return {
+                data: { token: '', user: offlineUser, offline: true },
+              };
+            }
+            return { error: ready.error, errorKind: 'connection' as LoginErrorKind };
+          }
+        } else {
+          const ready = await waitForEmbeddedBackendHealth();
+          if (!ready.ok) {
+            return { error: ready.error, errorKind: 'connection' as LoginErrorKind };
+          }
+        }
+      }
+
       const httpResult = await apiFetch<{ token: string; user: any }>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email: loginId, username: loginId, password }),
       });
       if (httpResult.data?.token && isJwtAuthToken(httpResult.data.token)) {
         setAuthToken(httpResult.data.token);
+        setOfflineModeActive(false);
+        if (httpResult.data.user && isThinClientMode()) {
+          try {
+            const u = httpResult.data.user;
+            await cacheOfflineLoginCredential(loginId, password, {
+              id: String(u.id),
+              email: String(u.email || ''),
+              name: String(u.name || ''),
+              username: loginId,
+              role: u.role || 'cashier',
+              branchId: String(u.branchId ?? u.branch_id ?? ''),
+              isActive: true,
+              createdAt: String(u.createdAt ?? u.created_at ?? ''),
+            });
+          } catch {
+            /* non-fatal */
+          }
+        }
         return httpResult;
       }
-      return { error: httpResult.error || 'Credenciais inválidas' };
+
+      if (isThinClientMode()) {
+        const offlineUser = await tryOfflineLogin(loginId, password);
+        if (offlineUser) {
+          setAuthToken(null);
+          setOfflineModeActive(true);
+          return {
+            data: {
+              token: '',
+              user: offlineUser,
+              offline: true,
+            },
+          };
+        }
+      }
+      const err = httpResult.error || 'Credenciais inválidas';
+      return { error: err, errorKind: classifyLoginError(err) };
     },
     me: () => {
       const token = getAuthToken();

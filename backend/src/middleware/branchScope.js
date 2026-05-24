@@ -7,6 +7,82 @@ function normalizeIsMain(value) {
   return value === true || value === 1 || value === '1' || value === 't' || value === 'true';
 }
 
+function isHeadOfficeRole(role) {
+  const r = String(role || '').toLowerCase();
+  return r === 'admin' || r === 'manager';
+}
+
+async function loadHeadOfficeBranch() {
+  const result = await db.query(
+    `SELECT id, is_main
+     FROM branches
+     WHERE COALESCE(is_main, 0) != 0 AND COALESCE(is_active, 1) != 0
+     ORDER BY created_at
+     LIMIT 1`,
+  );
+  return result.rows[0] || null;
+}
+
+async function branchExists(branchId) {
+  const id = String(branchId || '').trim();
+  if (!id) return null;
+  const result = await db.query(
+    `SELECT id, is_main
+     FROM branches
+     WHERE id = $1 AND COALESCE(is_active, 1) != 0`,
+    [id],
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Resolve branch scope for a user row. Admin/manager with missing or stale branch_id
+ * inherit head office so list APIs are not locked to a non-existent branch.
+ */
+async function buildBranchScopeFromUser(userRow, opts = {}) {
+  const { persistFix = false } = opts;
+  const role = String(userRow.role || '').toLowerCase();
+  const headOfficeRole = isHeadOfficeRole(role);
+  let branchId = userRow.branch_id ? String(userRow.branch_id).trim() : '';
+  let branchRow = branchId ? await branchExists(branchId) : null;
+
+  if (branchId && !branchRow && headOfficeRole) {
+    branchId = '';
+    branchRow = null;
+  }
+
+  if (headOfficeRole && !branchRow) {
+    const main = await loadHeadOfficeBranch();
+    if (main?.id) {
+      branchId = String(main.id);
+      branchRow = main;
+      if (persistFix && userRow.id) {
+        await db.query('UPDATE users SET branch_id = $1 WHERE id = $2', [branchId, userRow.id]);
+      }
+    }
+  }
+
+  const isMain = normalizeIsMain(branchRow?.is_main);
+  const isHeadOffice = !!(branchId && isMain && headOfficeRole);
+  const isGlobalAdmin = role === 'admin' && !branchId;
+
+  return {
+    userId: userRow.id,
+    role: userRow.role,
+    branchId: branchId || null,
+    isHeadOffice,
+    isGlobalAdmin,
+    /** Non–head-office users (incl. cashiers at sede): locked to their branch. */
+    forceBranchId: branchId && !isHeadOffice && !isGlobalAdmin ? branchId : null,
+  };
+}
+
+/** Normalize admin/manager branch_id on login and return the effective id for API responses. */
+async function resolveAndPersistUserBranchId(userRow) {
+  const scope = await buildBranchScopeFromUser(userRow, { persistFix: true });
+  return scope.branchId;
+}
+
 /**
  * Optional auth: attaches branch scope from JWT user when present.
  * Filial-assigned users always get forceBranchId set.
@@ -18,33 +94,15 @@ async function attachUserBranchScope(req, res, next) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     const result = await db.query(
-      `SELECT u.id, u.role, u.branch_id, b.is_main
+      `SELECT u.id, u.role, u.branch_id
        FROM users u
-       LEFT JOIN branches b ON b.id = u.branch_id
        WHERE u.id = $1 AND COALESCE(u.is_active, 1) != 0`,
       [decoded.userId],
     );
 
     if (result.rows.length === 0) return next();
 
-    const row = result.rows[0];
-    const branchId = row.branch_id ? String(row.branch_id).trim() : '';
-    const isMain = normalizeIsMain(row.is_main);
-
-    const role = String(row.role || '').toLowerCase();
-    const isHeadOfficeRole = role === 'admin' || role === 'manager';
-    const isHeadOffice = !!(branchId && isMain && isHeadOfficeRole);
-    const isGlobalAdmin = role === 'admin' && !branchId;
-
-    req.branchScope = {
-      userId: row.id,
-      role: row.role,
-      branchId: branchId || null,
-      isHeadOffice,
-      isGlobalAdmin,
-      /** Non–head-office users (incl. cashiers at sede): locked to their branch. */
-      forceBranchId: branchId && !isHeadOffice ? branchId : null,
-    };
+    req.branchScope = await buildBranchScopeFromUser(result.rows[0], { persistFix: true });
   } catch {
     /* ignore invalid token — route stays public */
   }
@@ -84,4 +142,6 @@ module.exports = {
   resolveListBranchId,
   resolveWarehouseId,
   normalizeIsMain,
+  buildBranchScopeFromUser,
+  resolveAndPersistUserBranchId,
 };

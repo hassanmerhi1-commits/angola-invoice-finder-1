@@ -1,6 +1,13 @@
 // API Configuration
 // Change this to your server's local IP address
 
+import {
+  buildLanServerApiBase,
+  parseLanServerEndpoint,
+  repairLanClientConfigStorage,
+} from '@/lib/lanServerAddress';
+import { electronHttpJson, isElectronLanClient } from '@/lib/electronHttp';
+
 // Prefer IPv4 loopback — on Windows, "localhost" can resolve to ::1 while Express listens on IPv4 only.
 const DEFAULT_API_URL = 'http://127.0.0.1:3000';
 
@@ -30,26 +37,118 @@ export function invalidateIpFileRoleCache(): void {
   _ipServerMemo = { until: 0, isServerDb: false };
 }
 
-/**
- * Thin-client mode: API runs on the server machine, not localhost. Uses `kwanza_client_config`
- * written by setup sync (`App.tsx`) or immediately after client setup (`Setup.tsx`).
- */
+type LanClientConfig = { serverIp?: string; httpPort?: number; apiPort?: number };
+
+function readLanClientConfig(): LanClientConfig | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('kwanza_client_config');
+    if (!raw) return null;
+    return JSON.parse(raw) as LanClientConfig;
+  } catch {
+    return null;
+  }
+}
+
+/** Server hostname/IP from the on-disk IP file (client installs only). */
+export function getClientServerHostFromIpFile(): { host: string; httpPort: number | null } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const ip = (window as any).electronAPI?.ipfile?.parseSync?.();
+    if (ip?.valid && !ip.isServer && typeof ip.serverAddress === 'string') {
+      const parsed = parseLanServerEndpoint(ip.serverAddress);
+      if (!parsed.host) return null;
+      const p = Number(ip.httpPort ?? parsed.port);
+      const httpPort = Number.isFinite(p) && p > 0 && p < 65536 ? p : parsed.port;
+      return { host: parsed.host, httpPort: httpPort ?? null };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/** Persist IP-file client address into localStorage when setup UI did not. */
+export function syncLanClientConfigFromIpFile(): void {
+  if (typeof window === 'undefined') return;
+  repairLanClientConfigStorage();
+  if (ipFileSaysServerMachine()) return;
+  if (localStorage.getItem('kwanza_is_server') === 'true') return;
+  const hostInfo = getClientServerHostFromIpFile();
+  const host = hostInfo?.host;
+  if (!host) return;
+  try {
+    const existing = readLanClientConfig();
+    if (existing?.serverIp?.trim() === host) return;
+    localStorage.setItem(
+      'kwanza_client_config',
+      JSON.stringify({
+        serverIp: host,
+        httpPort: Number(
+          hostInfo?.httpPort
+          ?? existing?.httpPort
+          ?? existing?.apiPort
+          ?? DEFAULT_ERP_HTTP_PORT,
+        ),
+        useSocketIo: true,
+      }),
+    );
+    localStorage.setItem('kwanza_is_server', 'false');
+    invalidateElectronApiBaseCache();
+  } catch {
+    /* ignore */
+  }
+}
+
+function buildLanClientApiBase(hostOrEndpoint: string, port: number): string {
+  return buildLanServerApiBase(hostOrEndpoint, port)!;
+}
+
 export function getLanClientApiBaseFromStorage(): string | null {
   if (typeof window === 'undefined') return null;
   try {
     if (ipFileSaysServerMachine()) return null;
     if (localStorage.getItem('kwanza_is_server') === 'true') return null;
-    const raw = localStorage.getItem('kwanza_client_config');
-    if (!raw) return null;
-    const cfg = JSON.parse(raw) as { serverIp?: string; httpPort?: number; apiPort?: number };
-    const ip = typeof cfg?.serverIp === 'string' ? cfg.serverIp.trim() : '';
-    if (!ip) return null;
-    const port = Number(cfg.httpPort ?? cfg.apiPort ?? DEFAULT_ERP_HTTP_PORT);
+
+    syncLanClientConfigFromIpFile();
+
+    const cfg = readLanClientConfig();
+    let endpoint = typeof cfg?.serverIp === 'string' ? cfg.serverIp.trim() : '';
+    const fromIpFile = getClientServerHostFromIpFile();
+    if (!endpoint) endpoint = fromIpFile?.host || '';
+    if (!endpoint) return null;
+
+    const parsed = parseLanServerEndpoint(endpoint);
+    const host = parsed.host || endpoint;
+    const port = Number(
+      fromIpFile?.httpPort
+      ?? parsed.port
+      ?? cfg?.httpPort
+      ?? cfg?.apiPort
+      ?? DEFAULT_ERP_HTTP_PORT,
+    );
     if (!Number.isFinite(port) || port <= 0 || port >= 65536) return null;
-    return `http://${ip}:${port}`;
+    return buildLanServerApiBase(host, port);
   } catch {
     return null;
   }
+}
+
+/** Thin-client: database lives on another PC; this install only has a server IP in config. */
+export function isThinClientMode(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (ipFileSaysServerMachine()) return false;
+  if (localStorage.getItem('kwanza_is_server') === 'true') return false;
+  try {
+    const ip = (window as any).electronAPI?.ipfile?.parseSync?.();
+    if (ip?.valid && ip.isServer) return false;
+    if (ip?.valid && !ip.isServer && ip.serverAddress) return true;
+  } catch {
+    /* ignore */
+  }
+  if (getLanClientApiBaseFromStorage()) return true;
+  if (localStorage.getItem('kwanza_is_server') === 'false') return true;
+  return false;
 }
 
 /** Non-loopback API URL from Settings (`kwanza_api_url`), if set. */
@@ -104,6 +203,12 @@ export function getApiUrl(): string {
         return DEFAULT_API_URL;
       }
 
+      const lanClient = getLanClientApiBaseFromStorage();
+      if (lanClient) return lanClient;
+
+      const manualRemote = parseSavedRemoteApiUrl();
+      if (manualRemote) return manualRemote;
+
       const origin = (window as any).electronAPI?.backendHttpOrigin;
       if (typeof origin === 'string' && /^https?:\/\//i.test(origin)) {
         return origin.replace(/\/$/, '');
@@ -112,10 +217,6 @@ export function getApiUrl(): string {
       if (typeof p === 'number' && p > 0 && p < 65536) {
         return `http://127.0.0.1:${p}`;
       }
-      const manualRemote = parseSavedRemoteApiUrl();
-      if (manualRemote) return manualRemote;
-      const lanClient = getLanClientApiBaseFromStorage();
-      if (lanClient) return lanClient;
       return DEFAULT_API_URL;
     }
 
@@ -160,6 +261,171 @@ export function invalidateElectronApiBaseCache(): void {
   electronResolvedBase = null;
   electronCacheVerifiedAt = 0;
   invalidateIpFileRoleCache();
+  import('@/lib/electronHttp').then(({ invalidateElectronLanClientCache }) => {
+    invalidateElectronLanClientCache();
+  }).catch(() => {});
+}
+
+/** Drop stale thin-client URL when this PC hosts the database (IP file = .db path). */
+export function clearStaleClientConfigIfServerMachine(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (ipFileSaysServerMachine()) {
+      localStorage.removeItem('kwanza_client_config');
+      localStorage.setItem('kwanza_is_server', 'true');
+      invalidateElectronApiBaseCache();
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export type EmbeddedBackendWaitResult =
+  | { ok: true; baseUrl: string }
+  | { ok: false; error: string };
+
+/**
+ * Packaged app: login must wait for embedded Express — preload often runs before the port is bound.
+ */
+export async function waitForEmbeddedBackendHealth(
+  opts?: { timeoutMs?: number },
+): Promise<EmbeddedBackendWaitResult> {
+  const timeoutMs = opts?.timeoutMs ?? 28000;
+  const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
+  if (!el?.isElectron) {
+    return { ok: true, baseUrl: getApiUrl() };
+  }
+
+  clearStaleClientConfigIfServerMachine();
+  invalidateElectronApiBaseCache();
+  repairLanClientConfigStorage();
+
+  const lanClient = await isElectronLanClient();
+  if (lanClient && isThinClientMode()) {
+    const baseUrl = await resolveLanClientApiBaseAsync();
+    if (baseUrl) {
+      const probe = async (): Promise<boolean> => {
+        const r = await electronHttpJson(`${baseUrl}/api/health`, { timeoutMs: 5000 });
+        return r.ok && isEmbeddedHealthPayload(r.json);
+      };
+      let ok = false;
+      try {
+        ok = await probe();
+      } catch {
+        ok = false;
+      }
+      if (!ok && typeof fetch !== 'undefined') {
+        try {
+          const res = await fetch(`${baseUrl}/api/health`);
+          const payload = await res.json().catch(() => null);
+          ok = res.ok && isEmbeddedHealthPayload(payload);
+        } catch {
+          ok = false;
+        }
+      }
+      if (ok) {
+        electronResolvedBase = baseUrl;
+        electronCacheVerifiedAt = Date.now();
+        return { ok: true, baseUrl };
+      }
+      return {
+        ok: false,
+        error: `Cannot reach the server at ${baseUrl}. Confirm NEXOR ERP is running on the server PC and C:\\NEXOR ERP\\IP contains the server IP only (e.g. 192.168.10.18).`,
+      };
+    }
+    try {
+      const status = await el.db?.getStatus?.();
+      if (status?.mode === 'client' && status?.serverAddress) {
+        const fallback = buildLanServerApiBase(String(status.serverAddress), 3000);
+        if (fallback) {
+          const r = await electronHttpJson(`${fallback}/api/health`, { timeoutMs: 5000 });
+          if (r.ok && isEmbeddedHealthPayload(r.json)) {
+            electronResolvedBase = fallback;
+            electronCacheVerifiedAt = Date.now();
+            return { ok: true, baseUrl: fallback };
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let lastNativeError = '';
+
+  while (Date.now() < deadline) {
+    try {
+      const status = await el.db?.getStatus?.();
+      if (status?.backendNativeError) {
+        lastNativeError = String(status.backendNativeError);
+        return { ok: false, error: lastNativeError };
+      }
+
+      const mode = String(status?.mode || '');
+      if (mode === 'client') {
+        const baseUrl = getLanClientApiBaseFromStorage()
+          || buildLanServerApiBase(String(status?.serverAddress || ''), 3000);
+        if (baseUrl) {
+          const r = await electronHttpJson(`${baseUrl}/api/health`, { timeoutMs: 4000 });
+          if (r.ok && isEmbeddedHealthPayload(r.json)) {
+            electronResolvedBase = baseUrl;
+            electronCacheVerifiedAt = Date.now();
+            return { ok: true, baseUrl };
+          }
+        }
+      }
+
+      const baseUrl = await getApiUrlAsync({ waitForPortMs: 2500 });
+      const healthOk = async (base: string): Promise<boolean> => {
+        try {
+          const r = await electronHttpJson(`${base}/api/health`, { timeoutMs: 4000 });
+          if (r.ok && isEmbeddedHealthPayload(r.json)) return true;
+        } catch {
+          /* try fetch */
+        }
+        if (typeof fetch === 'undefined') return false;
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), 4000) : null;
+        try {
+          const res = await fetch(`${base}/api/health`, ctrl ? { signal: ctrl.signal } : {});
+          const payload = await res.json().catch(() => null);
+          return res.ok && isEmbeddedHealthPayload(payload);
+        } catch {
+          return false;
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      };
+      if (await healthOk(baseUrl)) {
+        electronResolvedBase = baseUrl;
+        electronCacheVerifiedAt = Date.now();
+        return { ok: true, baseUrl };
+      }
+    } catch {
+      /* retry until timeout */
+    }
+    await new Promise((r) => setTimeout(r, 450));
+  }
+
+  if (lastNativeError) {
+    return { ok: false, error: lastNativeError };
+  }
+  try {
+    const st = await el.db?.getStatus?.();
+    if (st?.mode === 'server' && !st?.expressBackend) {
+      return {
+        ok: false,
+        error: 'Database service failed to start (backend crashed on startup). Rebuild and reinstall NEXOR ERP, then check %APPDATA%\\NEXOR ERP\\logs\\backend-*.log',
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return {
+    ok: false,
+    error: 'Database service did not start. Close the app completely, reopen it, wait 30 seconds, then try admin / changeme. If it still fails, rebuild the installer (npm run electron:build).',
+  };
 }
 
 /** Matches embedded `/api/health` from backendManager + SQLite unified server. */
@@ -188,6 +454,101 @@ async function tryHealthOnPort(p: number): Promise<number | null> {
   } finally {
     clearTimeout(t);
   }
+}
+
+const REMOTE_ERP_PORTS = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009];
+
+async function tryRemoteHealthOnPort(host: string, port: number): Promise<number | null> {
+  const url = `http://${host}:${port}/api/health`;
+  if (typeof window !== 'undefined' && (window as any).electronAPI?.network?.httpJson) {
+    try {
+      const r = await electronHttpJson(url, { timeoutMs: 1500 });
+      if (r.ok && isEmbeddedHealthPayload(r.json)) return port;
+    } catch {
+      /* fall through to fetch */
+    }
+  }
+  if (typeof fetch === 'undefined' || typeof AbortController === 'undefined') return null;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 1200);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    if (!r.ok) return null;
+    const j = await r.json().catch(() => null);
+    if (!isEmbeddedHealthPayload(j)) return null;
+    return port;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** Find which port the server PC bound (3000..3009) — same range as backendManager. */
+export async function discoverRemoteServerPort(
+  host: string,
+  preferredPort?: number,
+): Promise<number | null> {
+  const h = String(host || '').trim();
+  if (!h) return null;
+  const preferred = Number(preferredPort);
+  if (Number.isFinite(preferred) && preferred > 0 && preferred < 65536) {
+    const hit = await tryRemoteHealthOnPort(h, preferred);
+    if (hit) return hit;
+  }
+  const results = await Promise.all(REMOTE_ERP_PORTS.map((p) => tryRemoteHealthOnPort(h, p)));
+  return results.find((x) => typeof x === 'number') ?? null;
+}
+
+/** Resolve LAN client API base, probing the server for the correct port when needed. */
+export async function resolveLanClientApiBaseAsync(): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  if (ipFileSaysServerMachine()) return null;
+  if (localStorage.getItem('kwanza_is_server') === 'true') return null;
+
+  syncLanClientConfigFromIpFile();
+
+  const cfg = readLanClientConfig();
+  let endpoint = typeof cfg?.serverIp === 'string' ? cfg.serverIp.trim() : '';
+  const fromIpFile = getClientServerHostFromIpFile();
+  if (!endpoint) endpoint = fromIpFile?.host || '';
+  if (!endpoint) {
+    try {
+      const status = await (window as any).electronAPI?.db?.getStatus?.();
+      if (status?.serverAddress) endpoint = String(status.serverAddress).trim();
+    } catch {
+      /* ignore */
+    }
+  }
+  const parsed = parseLanServerEndpoint(endpoint);
+  const host = parsed.host || endpoint;
+  if (!host) return null;
+
+  const preferred = Number(
+    fromIpFile?.httpPort
+    ?? parsed.port
+    ?? cfg?.httpPort
+    ?? cfg?.apiPort
+    ?? DEFAULT_ERP_HTTP_PORT,
+  );
+  const port = await discoverRemoteServerPort(host, preferred) ?? preferred;
+  if (!Number.isFinite(port) || port <= 0) return null;
+
+  try {
+    localStorage.setItem(
+      'kwanza_client_config',
+      JSON.stringify({
+        serverIp: host,
+        httpPort: port,
+        useSocketIo: true,
+      }),
+    );
+    localStorage.setItem('kwanza_is_server', 'false');
+  } catch {
+    /* ignore */
+  }
+
+  return buildLanServerApiBase(host, port);
 }
 
 /**
@@ -319,18 +680,33 @@ export async function getApiUrlAsync(options?: { waitForPortMs?: number }): Prom
     return manualRemote;
   }
 
+  const lanEarly = getLanClientApiBaseFromStorage();
+  if (lanEarly && !isThinClientMode()) {
+    electronResolvedBase = lanEarly;
+    electronCacheVerifiedAt = Date.now();
+    return lanEarly;
+  }
+
+  if (isThinClientMode()) {
+    const lanRemote = await resolveLanClientApiBaseAsync();
+    if (lanRemote) {
+      electronResolvedBase = lanRemote;
+      electronCacheVerifiedAt = Date.now();
+      return lanRemote;
+    }
+  }
+
+  if (lanEarly) {
+    electronResolvedBase = lanEarly;
+    electronCacheVerifiedAt = Date.now();
+    return lanEarly;
+  }
+
   const embedded = await waitForEmbeddedExpressBase(api, waitMs);
   if (embedded) {
     electronResolvedBase = embedded;
     electronCacheVerifiedAt = Date.now();
     return embedded;
-  }
-
-  const lanEarly = getLanClientApiBaseFromStorage();
-  if (lanEarly) {
-    electronResolvedBase = lanEarly;
-    electronCacheVerifiedAt = Date.now();
-    return lanEarly;
   }
 
   return getApiUrl();

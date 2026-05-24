@@ -92,6 +92,64 @@ async function reconcileProductStockFromMovements() {
   return { updated: result.rowCount || 0 };
 }
 
+async function deactivateDuplicateProductNames() {
+  if (!(await tableExists('products'))) return { deactivated: 0 };
+
+  const main = await db.query(
+    `SELECT id FROM branches WHERE COALESCE(is_main, 0) != 0 AND COALESCE(is_active, 1) != 0`,
+  );
+  const mainBranchIds = (main.rows || []).map((r) => String(r.id).trim()).filter(Boolean);
+
+  const normalizeName = (name) =>
+    String(name || '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ');
+
+  const scopeKey = (branchId) => {
+    const value = String(branchId ?? '').trim();
+    if (!value) return 'catalog';
+    if (mainBranchIds.includes(value)) return 'catalog';
+    return value;
+  };
+
+  const rows = await db.query(
+    `SELECT p.id, p.name, p.sku, p.branch_id, p.stock, p.created_at,
+      (SELECT COUNT(*) FROM stock_movements sm WHERE sm.product_id = p.id) AS mov_count
+     FROM products p
+     WHERE COALESCE(p.is_active, 1) != 0`,
+  );
+
+  const groups = new Map();
+  for (const row of rows.rows || []) {
+    const key = `${scopeKey(row.branch_id)}|${normalizeName(row.name)}`;
+    if (!key.endsWith('|')) {
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    }
+  }
+
+  let deactivated = 0;
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    group.sort((a, b) => {
+      const movDiff = Number(b.mov_count || 0) - Number(a.mov_count || 0);
+      if (movDiff !== 0) return movDiff;
+      return Number(b.stock || 0) - Number(a.stock || 0);
+    });
+    for (let i = 1; i < group.length; i++) {
+      await db.query(
+        `UPDATE products SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        [group[i].id],
+      );
+      deactivated += 1;
+    }
+  }
+  return { deactivated };
+}
+
 async function assignBranchToOrphanProducts() {
   if (!(await tableExists('products')) || !(await tableExists('branches'))) {
     return { updated: 0 };
@@ -127,6 +185,7 @@ async function runDataConsistencyRepair() {
     supplierBalances: { updated: 0 },
     clientBalances: { updated: 0 },
     duplicateSkusRenamed: 0,
+    duplicateNamesDeactivated: 0,
     productsBranchAssigned: 0,
     productStockReconciled: 0,
   };
@@ -148,6 +207,7 @@ async function runDataConsistencyRepair() {
 
   try {
     report.duplicateSkusRenamed = (await repairDuplicateProductSkus()).renamed;
+    report.duplicateNamesDeactivated = (await deactivateDuplicateProductNames()).deactivated;
     report.productsBranchAssigned = (await assignBranchToOrphanProducts()).updated;
     report.productStockReconciled = (await reconcileProductStockFromMovements()).updated;
   } catch (e) {
@@ -161,6 +221,7 @@ module.exports = {
   runDataConsistencyRepair,
   backfillClientBalancesFromOpenItems,
   repairDuplicateProductSkus,
+  deactivateDuplicateProductNames,
   reconcileProductStockFromMovements,
   assignBranchToOrphanProducts,
 };

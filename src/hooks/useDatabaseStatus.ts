@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getApiUrl, isWebPreview } from '@/lib/api/config';
+import { electronAwareJsonRequest, isElectronLanClient } from '@/lib/electronHttp';
 
 export interface DatabaseStatus {
   isConnected: boolean;
@@ -131,10 +132,15 @@ export function useDatabaseStatus() {
 
       let connected = false;
       try {
-        const response = await fetch(`${parsedApiUrl.origin}/api/health`, {
-          signal: AbortSignal.timeout(3000),
-        });
-        connected = response.ok;
+        if (isElectron && await isElectronLanClient()) {
+          const res = await electronAwareJsonRequest(`${parsedApiUrl.origin}/api/health`, { timeoutMs: 5000 });
+          connected = res.ok;
+        } else {
+          const response = await fetch(`${parsedApiUrl.origin}/api/health`, {
+            signal: AbortSignal.timeout(3000),
+          });
+          connected = response.ok;
+        }
       } catch {
         connected = false;
       }

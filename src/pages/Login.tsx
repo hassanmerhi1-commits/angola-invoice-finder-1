@@ -45,10 +45,23 @@ export default function Login() {
 
     setIsLoading(true);
     try {
-      const success = await login(username, password);
-      if (success) {
-        toast({ title: t.auth.welcomeToastTitle, description: t.auth.welcomeToastDesc });
+      const result = await login(username, password);
+      if (result.ok) {
+        if (result.offline) {
+          toast({
+            title: t.auth.welcomeToastTitle,
+            description: t.auth.offlineLoginDesc,
+          });
+        } else {
+          toast({ title: t.auth.welcomeToastTitle, description: t.auth.welcomeToastDesc });
+        }
         navigate('/');
+      } else if (result.kind === 'connection') {
+        toast({
+          title: t.auth.connectionErrorTitle,
+          description: t.auth.connectionErrorDesc,
+          variant: 'destructive',
+        });
       } else {
         toast({
           title: t.auth.authErrorTitle,

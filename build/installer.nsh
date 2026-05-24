@@ -31,7 +31,7 @@
     nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="NEXOR-ERP-Backend-$0"'
     Pop $1
 
-    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="NEXOR-ERP-Backend-$0" dir=in action=allow protocol=TCP localport=$0 profile=private,domain description="NEXOR ERP Express backend (auto-spawned)"'
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="NEXOR-ERP-Backend-$0" dir=in action=allow protocol=TCP localport=$0 profile=private,domain,public description="NEXOR ERP Express backend (auto-spawned)"'
     Pop $1
     ${If} $1 == 0
       DetailPrint "  + Firewall rule added for TCP port $0"
@@ -47,7 +47,9 @@
 
   nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="NEXOR-ERP-WS-4546"'
   Pop $1
-  nsExec::ExecToLog 'netsh advfirewall firewall add rule name="NEXOR-ERP-WS-4546" dir=in action=allow protocol=UDP localport=4546 profile=private,domain description="NEXOR ERP LAN discovery / realtime sync"'
+  nsExec::ExecToLog 'netsh advfirewall firewall add rule name="NEXOR-ERP-Discovery-41234" dir=in action=allow protocol=UDP localport=41234 profile=private,domain,public description="NEXOR ERP UDP LAN discovery"'
+  Pop $1
+  nsExec::ExecToLog 'netsh advfirewall firewall add rule name="NEXOR-ERP-WS-4546" dir=in action=allow protocol=UDP localport=4546 profile=private,domain,public description="NEXOR ERP LAN discovery / realtime sync"'
   Pop $1
   ${If} $1 == 0
     DetailPrint "  + Firewall rule added for UDP port 4546 (LAN discovery)"
@@ -70,6 +72,8 @@
       Goto Loop_DelRule
     ${EndIf}
 
+  nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="NEXOR-ERP-Discovery-41234"'
+  Pop $1
   nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="NEXOR-ERP-WS-4546"'
   Pop $1
 

@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Server, Monitor, Wifi, CheckCircle, XCircle, Loader2, FolderOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
+import { parseLanServerEndpoint } from '@/lib/lanServerAddress';
 
 type SetupMode = 'select' | 'server-setup' | 'client-setup' | 'complete';
 
@@ -41,6 +42,25 @@ function slugMunicipioName(name: string): string {
     .toLowerCase();
 }
 
+function normalizeServerAddressInput(raw: string): string {
+  const parsed = parseLanServerEndpoint(raw);
+  if (!parsed.host) return '';
+  if (parsed.port) return `${parsed.host}:${parsed.port}`;
+  return parsed.host;
+}
+
+function splitServerHostAndPort(raw: string): { host: string; httpPort: number } {
+  const parsed = parseLanServerEndpoint(raw);
+  return {
+    host: parsed.host,
+    httpPort: parsed.port ?? 3000,
+  };
+}
+
+function isDatabasePathValue(raw: string): boolean {
+  return /^[A-Za-z]:\\.+\.(db|nexor)$/i.test(raw.trim());
+}
+
 export default function Setup() {
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -52,6 +72,9 @@ export default function Setup() {
   const [selectedProvince, setSelectedProvince] = useState('');
   const [selectedMunicipio, setSelectedMunicipio] = useState('');
   const [mainApiUrl, setMainApiUrl] = useState('');
+  const [discoveredServers, setDiscoveredServers] = useState<Array<{ address: string; port: number; name: string }>>([]);
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  const [connectionError, setConnectionError] = useState('');
   const isElectron = !!window.electronAPI?.isElectron;
 
   // Read current IP file on mount
@@ -128,6 +151,16 @@ export default function Setup() {
         toast.success(t.setupUi.serverConfigured, {
           description: `${t.setupUi.dbPathLabel}: ${dbPath}\n${t.setupUi.otherComputersConnect.replace('{ip}', detectedIp)}`
         });
+
+        await window.electronAPI!.setup?.saveConfig?.({
+          setupComplete: true,
+          role: 'server',
+          serverConfig: {
+            databasePath: dbPath,
+            serverIp: detectedIp || '',
+            httpPort: 3000,
+          },
+        });
       } else {
         // Web preview - use localStorage fallback
         localStorage.setItem('kwanza_mode', 'server');
@@ -145,27 +178,39 @@ export default function Setup() {
   };
 
   const handleClientSetup = async () => {
-    if (!ipFileContent.trim()) {
+    const normalized = normalizeServerAddressInput(ipFileContent);
+    if (!normalized) {
       toast.error(t.setupUi.enterServerAddress);
+      return;
+    }
+    if (isDatabasePathValue(normalized)) {
+      toast.error('Este PC é cliente — use o IP do servidor, não o caminho .db', {
+        description: 'Exemplo: 192.168.10.200 (copie do ecrã do servidor)',
+      });
+      return;
+    }
+    if (connectionStatus !== 'success') {
+      toast.error('Teste a ligação antes de continuar', {
+        description: 'Clique em "Testar Conexão" e confirme que aparece OK',
+      });
       return;
     }
 
     setIsLoading(true);
     try {
       if (isElectron) {
-        // Write server address to IP file → client mode
-        await window.electronAPI!.ipfile.write(ipFileContent.trim());
+        const { host: serverIp, httpPort } = splitServerHostAndPort(normalized);
+        await window.electronAPI!.ipfile.write(serverIp);
         const result = await window.electronAPI!.db.init();
         if (!result.success) throw new Error(result.error);
 
-        const serverIp = ipFileContent.trim();
         localStorage.setItem('kwanza_is_server', 'false');
         localStorage.setItem('nexor_installation_role', 'shop_client');
         localStorage.setItem(
           'kwanza_client_config',
           JSON.stringify({
             serverIp,
-            httpPort: 3000,
+            httpPort,
             useSocketIo: true,
           }),
         );
@@ -176,6 +221,15 @@ export default function Setup() {
 
         toast.success(t.setupUi.clientConfigured, {
           description: t.setupUi.connectedToServer.replace('{server}', ipFileContent.trim())
+        });
+
+        await window.electronAPI!.setup?.saveConfig?.({
+          setupComplete: true,
+          role: 'client',
+          clientConfig: {
+            serverIp,
+            httpPort,
+          },
         });
       } else {
         localStorage.setItem('kwanza_mode', 'client');
@@ -194,14 +248,32 @@ export default function Setup() {
 
   const testConnection = async () => {
     setConnectionStatus('testing');
+    setConnectionError('');
+    const normalized = normalizeServerAddressInput(ipFileContent);
+    if (!normalized) {
+      setConnectionStatus('error');
+      setConnectionError(t.setupUi.enterServerAddress);
+      return;
+    }
+    if (isDatabasePathValue(normalized)) {
+      setConnectionStatus('error');
+      setConnectionError('Caminho .db é para o servidor — neste PC use só o IP (ex: 192.168.10.200)');
+      toast.error('IP incorrecto para cliente');
+      return;
+    }
     try {
       if (isElectron) {
-        // Write temporarily to test
-        await window.electronAPI!.ipfile.write(ipFileContent.trim());
+        const { host } = splitServerHostAndPort(normalized);
+        await window.electronAPI!.ipfile.write(host);
         const result = await window.electronAPI!.db.testConnection();
         setConnectionStatus(result.success ? 'success' : 'error');
-        if (result.success) toast.success(t.setupUi.connectionOk);
-        else toast.error(t.setupUi.connectionFailed);
+        if (result.success) {
+          toast.success(t.setupUi.connectionOk);
+        } else {
+          const err = result.error || t.setupUi.connectionFailed;
+          setConnectionError(err);
+          toast.error(t.setupUi.connectionFailed, { description: err });
+        }
       } else {
         // Web preview - simulate
         await new Promise(r => setTimeout(r, 1000));
@@ -211,6 +283,34 @@ export default function Setup() {
     } catch {
       setConnectionStatus('error');
       toast.error(t.setupUi.connectionFailed);
+    }
+  };
+
+  const discoverServers = async () => {
+    if (!isElectron || !window.electronAPI?.discovery?.scan) {
+      toast.error('Descoberta automática só disponível na app desktop');
+      return;
+    }
+    setIsDiscovering(true);
+    setDiscoveredServers([]);
+    setConnectionStatus('idle');
+    setConnectionError('');
+    try {
+      const result = await window.electronAPI.discovery.scan(6000);
+      if (result.success && result.servers?.length) {
+        setDiscoveredServers(result.servers);
+        const first = result.servers[0];
+        setIpFileContent(first.address);
+        toast.success(`Servidor encontrado: ${first.name} (${first.address})`);
+      } else {
+        toast.error('Nenhum servidor na rede Wi-Fi', {
+          description: 'No servidor: abra NEXOR ERP, anote o IP Wi-Fi e use-o aqui. Se falhar, execute scripts\\allow-nexor-lan.ps1 como Administrador no servidor.',
+        });
+      }
+    } catch (error: any) {
+      toast.error('Descoberta falhou', { description: error.message });
+    } finally {
+      setIsDiscovering(false);
     }
   };
 
@@ -433,22 +533,60 @@ export default function Setup() {
                 <Label>Endereço do Servidor</Label>
                 <Input
                   value={ipFileContent}
-                  onChange={e => setIpFileContent(e.target.value)}
-                  placeholder="10.0.0.5 ou SERVIDOR"
+                  onChange={e => {
+                    setIpFileContent(e.target.value);
+                    setConnectionStatus('idle');
+                    setConnectionError('');
+                  }}
+                  placeholder="192.168.10.200"
                 />
                 <p className="text-xs text-muted-foreground">
-                  IP ou nome do computador onde o servidor está a correr
+                  IP Wi‑Fi do computador servidor (não use caminho .db nem localhost)
                 </p>
               </div>
 
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={discoverServers}
+                disabled={isDiscovering}
+              >
+                {isDiscovering ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Wifi className="h-4 w-4 mr-2" />}
+                Procurar servidor na rede
+              </Button>
+
+              {discoveredServers.length > 0 && (
+                <div className="space-y-2">
+                  {discoveredServers.map((server) => (
+                    <button
+                      key={`${server.address}:${server.port}`}
+                      type="button"
+                      className="w-full text-left border rounded-lg p-3 hover:border-primary hover:bg-primary/5"
+                      onClick={() => {
+                        setIpFileContent(server.address);
+                        setConnectionStatus('idle');
+                        setConnectionError('');
+                      }}
+                    >
+                      <div className="font-medium">{server.name}</div>
+                      <div className="text-xs font-mono text-muted-foreground">{server.address}:{server.port}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className="flex gap-2">
-                <Button variant="outline" className="flex-1" onClick={testConnection} disabled={!ipFileContent.trim()}>
+                <Button variant="outline" className="flex-1" onClick={testConnection} disabled={!ipFileContent.trim() || connectionStatus === 'testing'}>
                   {connectionStatus === 'testing' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Wifi className="h-4 w-4 mr-2" />}
                   Testar Conexão
                 </Button>
                 {connectionStatus === 'success' && <Badge className="bg-primary/10 text-primary border-primary/20"><CheckCircle className="h-3 w-3 mr-1" />OK</Badge>}
                 {connectionStatus === 'error' && <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Falhou</Badge>}
               </div>
+
+              {connectionError && (
+                <p className="text-sm text-destructive">{connectionError}</p>
+              )}
 
               <Button onClick={handleClientSetup} className="w-full" disabled={isLoading || !ipFileContent.trim()}>
                 {isLoading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Conectando...</>

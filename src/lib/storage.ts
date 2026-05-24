@@ -15,7 +15,7 @@ import { DEFAULT_VAT_RATE, normalizeTaxRate } from './taxUtils';
 import {
   canUserSwitchBranch,
   mapBranchRow,
-  resolveUserBranch,
+  resolveEffectiveUserBranch,
 } from '@/lib/branchAccess';
 
 // ============= MODE DETECTION =============
@@ -174,7 +174,10 @@ function readStoredUserBranch(): Branch | null {
     if (!userRaw || !branchesRaw) return null;
     const user = JSON.parse(userRaw) as { branchId?: string; role?: string };
     const branches = JSON.parse(branchesRaw) as Branch[];
-    const assigned = resolveUserBranch(branches.map((b) => mapBranchRow(b as unknown as Record<string, unknown>)), user?.branchId);
+    const assigned = resolveEffectiveUserBranch(
+      branches.map((b) => mapBranchRow(b as unknown as Record<string, unknown>)),
+      user,
+    );
     if (assigned && !canUserSwitchBranch(user, assigned)) return assigned;
   } catch {
     /* ignore */
@@ -241,9 +244,23 @@ export async function saveProduct(
   opts?: { skipProductsChangedEvent?: boolean }
 ): Promise<void> {
   if (isElectronMode()) {
-    const existing = await window.electronAPI!.db.getById('products', product.id);
-    const payload = mapProductToDb(product);
-    if (existing?.data) await dbUpdate('products', product.id, payload);
+    let targetId = product.id;
+    const skuKey = normalizeSku(product.sku);
+    if (skuKey) {
+      try {
+        const bySku = await window.electronAPI!.db.query(
+          'SELECT id FROM products WHERE LOWER(TRIM(COALESCE(sku, \'\'))) = LOWER(?) LIMIT 1',
+          [String(product.sku || '').trim()],
+        );
+        const row = bySku?.data?.[0];
+        if (row?.id) targetId = String(row.id);
+      } catch {
+        /* fall back to product.id */
+      }
+    }
+    const existing = await window.electronAPI!.db.getById('products', targetId);
+    const payload = mapProductToDb({ ...product, id: targetId });
+    if (existing?.data) await dbUpdate('products', targetId, payload);
     else await dbInsert('products', payload);
     if (!opts?.skipProductsChangedEvent) {
       emitProductsChanged(product.branchId);

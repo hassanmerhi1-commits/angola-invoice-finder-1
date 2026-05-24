@@ -109,6 +109,7 @@ export const en = {
     changePasswordHint: "Use Settings → Users to set strong passwords for all accounts.",
     welcomeToastTitle: "Welcome!",
     welcomeToastDesc: "Login successful.",
+    offlineLoginDesc: "Signed in offline using your last session on this PC. Data will sync when the server is back.",
     authErrorTitle: "Authentication error",
     authErrorDesc: "Invalid username or password.",
     authErrorHint: "Try admin / changeme or caixa1 / caixa1. Restart the app after an update. If it still fails, check that the database server is running (DB Online in the header).",

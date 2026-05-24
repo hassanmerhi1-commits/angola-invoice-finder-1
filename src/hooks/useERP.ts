@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore, useMemo } from 'react';
 import { Branch, Product, Sale, User, CartItem, SaleItem, DailySummary, Client, StockTransfer, Supplier, PurchaseOrder, PurchaseOrderItem, Category } from '@/types/erp';
-import { api, clearAuthSessionCache, ensureBackendAuthToken, setAuthToken } from '@/lib/api/client';
+import { api, clearAuthSessionCache, ensureBackendAuthToken, isJwtAuthToken, setAuthToken } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
@@ -271,10 +271,7 @@ export function useProducts(branchId?: string) {
     } catch (e) {
       console.warn('[useProducts] local cache mirror after API create failed:', e);
     }
-    let merged = await fetchMergedProductList();
-    if (!merged.some((p) => p.id === savedProduct.id)) {
-      merged = [...merged, savedProduct];
-    }
+    const merged = await fetchMergedProductList();
     if (writeGeneration === listGenerationRef.current) {
       setProducts(merged);
     }
@@ -311,9 +308,7 @@ export function useProducts(branchId?: string) {
     }
     let merged = await fetchMergedProductList();
     const idx = merged.findIndex((p) => p.id === resolved.id);
-    if (idx < 0) {
-      merged = [...merged, resolved];
-    } else {
+    if (idx >= 0) {
       merged = merged.slice();
       merged[idx] = resolved;
     }
@@ -700,14 +695,18 @@ async function initAuthStateOnce() {
   setAuthState({ user: null, isLoading: false });
 }
 
+export type LoginOutcome =
+  | { ok: true; offline?: boolean }
+  | { ok: false; kind: 'credentials' | 'connection' };
+
 export function useAuth() {
   const snapshot = useSyncExternalStore(subscribeAuth, getAuthSnapshot, getAuthSnapshot);
 
   useEffect(() => { initAuthStateOnce(); }, []);
 
-  const login = useCallback(async (identifier: string, password: string): Promise<boolean> => {
+  const login = useCallback(async (identifier: string, password: string): Promise<LoginOutcome> => {
     const normalized = identifier.trim();
-    if (!normalized || !password) return false;
+    if (!normalized || !password) return { ok: false, kind: 'credentials' };
 
     const normalizedLower = normalized.toLowerCase();
     const normalizedUsername = normalizedLower.includes('@')
@@ -722,20 +721,26 @@ export function useAuth() {
       const response = await api.auth.login(normalized, password);
       if (response.error) {
         console.warn('[Auth] Login failed:', response.error);
-        return false;
+        const kind = (response as { errorKind?: 'credentials' | 'connection' }).errorKind || 'credentials';
+        return { ok: false, kind };
       }
-      if (response.data?.token && response.data?.user) {
-        setAuthToken(response.data.token);
-        const apiUser = response.data.user;
+      const apiUser = response.data?.user;
+      const isOffline = !!(response.data as { offline?: boolean })?.offline;
+      if (apiUser && (isOffline || (response.data?.token && isJwtAuthToken(response.data.token)))) {
+        if (!isOffline && response.data?.token) {
+          setAuthToken(response.data.token);
+        } else {
+          setAuthToken(null);
+        }
         const user: User = {
-          id: apiUser.id,
-          email: apiUser.email,
-          name: apiUser.name,
+          id: String(apiUser.id),
+          email: String(apiUser.email || ''),
+          name: String(apiUser.name || ''),
           username: normalizedUsername,
-          role: apiUser.role || 'cashier',
-          branchId: apiUser.branchId || apiUser.branch_id || '',
+          role: (apiUser.role as User['role']) || 'cashier',
+          branchId: String(apiUser.branchId ?? apiUser.branch_id ?? ''),
           isActive: true,
-          createdAt: apiUser.createdAt || apiUser.created_at || new Date().toISOString(),
+          createdAt: String(apiUser.createdAt ?? apiUser.created_at ?? new Date().toISOString()),
         };
         storage.clearLocalProductsCache();
         storage.setCurrentUser(user);
@@ -743,16 +748,40 @@ export function useAuth() {
         window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
         setAuthState({ user });
         markElectronSessionAuthenticated();
-        return true;
+        return { ok: true, offline: isOffline };
       }
     } catch (e) {
       console.warn('[Auth] Login API error:', e);
+      if (!isDemoMode()) {
+        const { tryOfflineLogin, setOfflineModeActive } = await import('@/lib/offlineAuth');
+        const { isThinClientMode } = await import('@/lib/api/config');
+        if (isThinClientMode()) {
+          const offlineUser = await tryOfflineLogin(normalized, password);
+          if (offlineUser) {
+            setAuthToken(null);
+            setOfflineModeActive(true);
+            storage.clearLocalProductsCache();
+            storage.setCurrentUser(offlineUser);
+            applyUserBranchLockOnLogin(offlineUser);
+            window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
+            setAuthState({ user: offlineUser });
+            markElectronSessionAuthenticated();
+            return { ok: true, offline: true };
+          }
+        }
+        return { ok: false, kind: 'connection' };
+      }
     }
 
     if (isDemoMode()) {
       const users = await storage.getUsers();
       const foundUser = users.find(u =>
-        u.isActive && (u.username === normalized || u.email === normalized || u.email === maybeEmail)
+        u.isActive && (
+          u.username === normalized
+          || u.email === normalized
+          || u.email === normalizedLower
+          || u.email === `${normalizedUsername}@kwanzaerp.ao`
+        )
       );
 
       if (foundUser) {
@@ -762,10 +791,10 @@ export function useAuth() {
         window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
         setAuthState({ user: foundUser });
         markElectronSessionAuthenticated();
-        return true;
+        return { ok: true };
       }
     }
-    return false;
+    return { ok: false, kind: 'credentials' };
   }, []);
 
   const logout = useCallback(() => {

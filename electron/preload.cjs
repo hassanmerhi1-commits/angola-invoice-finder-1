@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getInstallPath: () => ipcRenderer.invoke('network:getInstallPath'),
     getIPFilePath: () => ipcRenderer.invoke('network:getIPFilePath'),
     getComputerName: () => ipcRenderer.invoke('network:getComputerName'),
+    httpJson: (opts) => ipcRenderer.invoke('network:httpJson', opts),
   },
 
   // Purchase windows
@@ -171,6 +172,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     enqueue: (event) => ipcRenderer.invoke('syncOutbox:enqueue', event),
     getPendingCount: () => ipcRenderer.invoke('syncOutbox:pendingCount'),
     flush: (apiBaseUrl) => ipcRenderer.invoke('syncOutbox:flush', apiBaseUrl),
+  },
+
+  // LAN server discovery (UDP broadcast)
+  discovery: {
+    scan: (timeoutMs) => ipcRenderer.invoke('discovery:scan', timeoutMs),
+  },
+
+  // First-run setup wizard (server vs client role)
+  setup: {
+    getConfig: () => ipcRenderer.invoke('setup:getConfig'),
+    saveConfig: (config) => ipcRenderer.invoke('setup:saveConfig', config),
+    reset: () => ipcRenderer.invoke('setup:reset'),
   },
 
   getApiUrl: () => ipcRenderer.invoke('sync:getApiUrl'),

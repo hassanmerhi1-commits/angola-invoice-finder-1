@@ -119,6 +119,13 @@ export interface ElectronAPI {
     getInstallPath: () => Promise<string>;
     getIPFilePath: () => Promise<string>;
     getComputerName: () => Promise<string>;
+    httpJson?: (opts: {
+      url: string;
+      method?: string;
+      body?: unknown;
+      headers?: Record<string, string>;
+      timeoutMs?: number;
+    }) => Promise<{ ok: boolean; status: number; json?: unknown; text?: string; error?: string }>;
   };
 
   // Purchase windows

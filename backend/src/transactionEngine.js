@@ -266,6 +266,20 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
     }
   }
 
+  const nameTrim = src.name != null ? String(src.name).trim() : '';
+  if (nameTrim) {
+    const byName = await client.query(
+      `SELECT id, sku FROM products
+       WHERE COALESCE(is_active, 1) != 0 AND branch_id = $1 AND LOWER(TRIM(name)) = LOWER($2)
+       ORDER BY updated_at DESC, created_at DESC
+       LIMIT 1`,
+      [toBranch, nameTrim]
+    );
+    if (byName.rows.length > 0) {
+      return byName.rows[0].id;
+    }
+  }
+
   const cloneId = randomUUID();
   const unitCost = parseFloat(src.cost) || 0;
   await client.query(

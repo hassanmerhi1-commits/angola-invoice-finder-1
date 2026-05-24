@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useAuth } from '@/hooks/useERP';
-import { canUserSwitchBranch, resolveUserBranch } from '@/lib/branchAccess';
+import { canUserSwitchBranch, resolveEffectiveUserBranch, resolveUserBranch } from '@/lib/branchAccess';
 
 /** Keeps filial users on their assigned branch (ignores stale localStorage / manual switches). */
 export function BranchAccessGuard() {
@@ -10,9 +10,11 @@ export function BranchAccessGuard() {
 
   useEffect(() => {
     if (!user || branches.length === 0) return;
-    if (canUserSwitchBranch(user, resolveUserBranch(branches, user.branchId))) return;
+    const userBranch = resolveEffectiveUserBranch(branches, user);
+    if (canUserSwitchBranch(user, userBranch)) return;
 
     const locked =
+      userBranch ??
       resolveUserBranch(branches, user.branchId) ??
       (String(user.branchId ?? '').trim() && currentBranch ? currentBranch : null);
 

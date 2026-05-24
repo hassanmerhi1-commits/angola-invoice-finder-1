@@ -11,7 +11,7 @@ import {
   persistBranchScope,
   resolveBranchFromScope,
   resolveStoredBranchScopeId,
-  resolveUserBranch,
+  resolveEffectiveUserBranch,
 } from '@/lib/branchAccess';
 
 interface BranchContextType {
@@ -51,7 +51,7 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('kwanzaerp_branches', JSON.stringify(mapped));
 
     const storedUser = readStoredUser();
-    const assigned = resolveUserBranch(mapped, storedUser?.branchId);
+    const assigned = resolveEffectiveUserBranch(mapped, storedUser);
     if (assigned && !canUserSwitchBranch(storedUser, assigned)) {
       persistCurrentBranch(assigned.id, assigned);
       setScopeIdState(assigned.id);
@@ -61,7 +61,8 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     }
 
     setScopeIdState((prevScope) => {
-      const canSwitch = true;
+      const userBranch = resolveEffectiveUserBranch(mapped, storedUser);
+      const canSwitch = canUserSwitchBranch(storedUser, userBranch);
       const nextScope =
         prevScope === ALL_BRANCHES_SCOPE_ID
           ? resolveStoredBranchScopeId(mapped, canSwitch)
@@ -76,6 +77,20 @@ export function BranchProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadBranches = useCallback(async () => {
+    const applyCachedBranches = (): boolean => {
+      try {
+        const raw = localStorage.getItem('kwanzaerp_branches');
+        const data: Branch[] = raw ? JSON.parse(raw) : [];
+        if (data.length > 0) {
+          applyBranchList(data.map((row) => mapBranchRow(row as unknown as Record<string, unknown>)));
+          return true;
+        }
+      } catch {
+        /* ignore */
+      }
+      return false;
+    };
+
     try {
       const response = await api.branches.list();
       if (response.data && Array.isArray(response.data) && response.data.length > 0) {
@@ -84,20 +99,12 @@ export function BranchProvider({ children }: { children: ReactNode }) {
         throw new Error('No branches from API');
       }
     } catch {
+      if (applyCachedBranches()) return;
+
       if (!isDemoMode()) {
         setBranches([]);
         setCurrentBranchState(null);
         return;
-      }
-
-      try {
-        const raw = localStorage.getItem('kwanzaerp_branches');
-        const data: Branch[] = raw ? JSON.parse(raw) : [];
-        if (data.length > 0) {
-          applyBranchList(data.map((row) => mapBranchRow(row as unknown as Record<string, unknown>)));
-        }
-      } catch {
-        /* ignore */
       }
     } finally {
       setIsLoading(false);
@@ -110,7 +117,7 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     const onLockChanged = () => {
       if (branches.length === 0) return;
       const storedUser = readStoredUser();
-      const assigned = resolveUserBranch(branches, storedUser?.branchId);
+      const assigned = resolveEffectiveUserBranch(branches, storedUser);
       if (assigned && !canUserSwitchBranch(storedUser, assigned)) {
         persistCurrentBranch(assigned.id, assigned);
         setScopeIdState(assigned.id);
@@ -125,7 +132,7 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     const storedUser = readStoredUser();
     const allBranches: Branch[] = JSON.parse(localStorage.getItem('kwanzaerp_branches') || '[]');
     const list = allBranches.length ? allBranches : branches;
-    const assigned = resolveUserBranch(list, storedUser?.branchId);
+    const assigned = resolveEffectiveUserBranch(list, storedUser);
 
     if (assigned && !canUserSwitchBranch(storedUser, assigned)) {
       if (String(nextScopeId) !== String(assigned.id)) return;
