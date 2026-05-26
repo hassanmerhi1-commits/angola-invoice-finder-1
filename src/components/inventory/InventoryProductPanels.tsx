@@ -28,13 +28,11 @@ import {
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { useTranslation } from '@/i18n';
 
-export function filterMovementsForProduct(
-  movements: StockMovement[],
-  product: Product | null,
+export function collectProductIdsForSku(
+  product: Product,
   allBranchProducts?: Record<string, Product[]>,
-  scopedBranchIds?: string[]
-): StockMovement[] {
-  if (!product) return [];
+  scopedBranchIds?: string[],
+): Set<string> {
   const skuKey = (product.sku || '').trim().toLowerCase();
   const productIds = new Set<string>([product.id]);
   if (allBranchProducts) {
@@ -51,12 +49,43 @@ export function filterMovementsForProduct(
       }
     }
   }
+  return productIds;
+}
+
+export function isPurchaseInboundMovement(m: StockMovement): boolean {
+  if (m.type !== 'IN') return false;
+  const reason = String(m.reason || '').toLowerCase();
+  if (reason === 'purchase' || reason.includes('purchase')) return true;
+  const notes = String(m.notes || '').toLowerCase();
+  return notes.includes('fatura de compra') || notes.includes('purchase invoice') || notes.includes('compra');
+}
+
+export function filterMovementsForProduct(
+  movements: StockMovement[],
+  product: Product | null,
+  allBranchProducts?: Record<string, Product[]>,
+  scopedBranchIds?: string[]
+): StockMovement[] {
+  if (!product) return [];
+  const skuKey = (product.sku || '').trim().toLowerCase();
+  const productIds = collectProductIdsForSku(product, allBranchProducts, scopedBranchIds);
   return movements.filter((m) => {
     if (productIds.has(m.productId)) return true;
     if (!skuKey) return false;
     return (m.sku || '').trim().toLowerCase() === skuKey;
   });
 }
+
+type PurchasePriceRow = {
+  id: string;
+  date: string;
+  document: string;
+  supplier: string;
+  branch: string;
+  quantity: number;
+  unitCost: number;
+  sourceLabel: string;
+};
 
 function SelectProductHint({ message }: { message: string }) {
   return (
@@ -301,20 +330,171 @@ export function InventoryCostHistoryPanel(props: PanelProps) {
   );
 }
 
-export function InventoryPurchasePricePanel(props: PanelProps) {
+export function InventoryPurchasePricePanel({
+  product,
+  movements,
+  allBranchProducts,
+  scopedBranchIds,
+  uiLocale,
+  getReasonLabel,
+}: PanelProps) {
   const { t } = useTranslation();
-  const purchaseFilter = (m: StockMovement) => {
-    if (m.type !== 'IN') return false;
-    const reason = String(m.reason || '').toLowerCase();
-    return reason.includes('purchase') || reason === 'purchase_invoice';
-  };
+  const [invoiceRows, setInvoiceRows] = useState<PurchasePriceRow[]>([]);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
+
+  const movementRows = useMemo((): PurchasePriceRow[] => {
+    if (!product) return [];
+    return filterMovementsForProduct(movements, product, allBranchProducts, scopedBranchIds)
+      .filter(isPurchaseInboundMovement)
+      .map((m) => ({
+        id: `sm-${m.id}`,
+        date: m.createdAt,
+        document: m.referenceNumber || '—',
+        supplier: '—',
+        branch: m.branchName || m.branchId || '—',
+        quantity: m.quantity,
+        unitCost: m.costAtTime || 0,
+        sourceLabel: getReasonLabel(m.reason),
+      }));
+  }, [movements, product, allBranchProducts, scopedBranchIds, getReasonLabel]);
+
+  useEffect(() => {
+    if (!product) {
+      setInvoiceRows([]);
+      return;
+    }
+    let cancelled = false;
+    const productIds = collectProductIdsForSku(product, allBranchProducts, scopedBranchIds);
+    const skuKey = (product.sku || '').trim().toLowerCase();
+
+    (async () => {
+      setLoadingInvoices(true);
+      try {
+        const branchIds = scopedBranchIds?.length ? [...scopedBranchIds] : [];
+        const allInvoices: any[] = [];
+        const seenInvoiceIds = new Set<string>();
+
+        const addInvoices = (list: any[]) => {
+          for (const inv of list) {
+            if (!inv?.id || seenInvoiceIds.has(inv.id)) continue;
+            seenInvoiceIds.add(inv.id);
+            allInvoices.push(inv);
+          }
+        };
+
+        if (branchIds.length > 0) {
+          for (const branchId of branchIds) {
+            const result = await api.purchaseInvoices.list({ branchId, status: 'confirmed' });
+            addInvoices(result.data || []);
+          }
+        } else {
+          const result = await api.purchaseInvoices.list({ status: 'confirmed' });
+          addInvoices(result.data || []);
+        }
+
+        const rows: PurchasePriceRow[] = [];
+        for (const inv of allInvoices) {
+          if (String(inv.status || '').toLowerCase() === 'cancelled') continue;
+          const lines = Array.isArray(inv.lines) ? inv.lines : [];
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const lineSku = String(line.sku || line.productSku || line.product_sku || '').trim().toLowerCase();
+            const linePid = line.productId || line.product_id;
+            if (!productIds.has(linePid) && !(skuKey && lineSku === skuKey)) continue;
+            const qty = Number(line.totalQty ?? line.total_qty ?? line.quantity ?? 0);
+            const unitCost = Number(line.unitPrice ?? line.unit_price ?? line.cost ?? 0);
+            if (qty <= 0) continue;
+            rows.push({
+              id: `pi-${inv.id}-${i}`,
+              date: inv.date || inv.createdAt || inv.created_at || '',
+              document: inv.invoiceNumber || inv.invoice_number || '—',
+              supplier: inv.supplierName || inv.supplier_name || '—',
+              branch: inv.warehouseName || inv.warehouse_name || inv.branchName || inv.branch_name || '—',
+              quantity: qty,
+              unitCost,
+              sourceLabel: t.inventoryPageUi.panel.purchaseInvoiceSource,
+            });
+          }
+        }
+
+        if (!cancelled) setInvoiceRows(rows);
+      } catch {
+        if (!cancelled) setInvoiceRows([]);
+      } finally {
+        if (!cancelled) setLoadingInvoices(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [product, allBranchProducts, scopedBranchIds, t]);
+
+  const rows = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: PurchasePriceRow[] = [];
+    const add = (row: PurchasePriceRow) => {
+      const day = row.date ? String(row.date).slice(0, 10) : '';
+      const key = `${day}|${row.document}|${row.quantity}|${row.unitCost}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      merged.push(row);
+    };
+    for (const row of movementRows) add(row);
+    for (const row of invoiceRows) add(row);
+    return merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [movementRows, invoiceRows]);
+
+  if (!product) {
+    return <SelectProductHint message={t.inventoryPageUi.selectProductToViewStatement} />;
+  }
+
   return (
-    <MovementCostTable
-      {...props}
-      title={t.inventoryPageUi.tabs.purchasePrice}
-      description={t.inventoryPageUi.purchasePriceHistory}
-      filter={purchaseFilter}
-    />
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">{t.inventoryPageUi.tabs.purchasePrice}</CardTitle>
+        <CardDescription>{t.inventoryPageUi.purchasePriceHistory} — {product.sku}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loadingInvoices && rows.length === 0 ? (
+          <p className="text-muted-foreground text-center py-6">{t.common.loading}</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t.inventoryPageUi.table.dateTime}</TableHead>
+                <TableHead>{t.inventoryPageUi.table.document}</TableHead>
+                <TableHead>{t.inventoryPageUi.panel.supplier}</TableHead>
+                <TableHead>{t.inventoryPageUi.table.branch}</TableHead>
+                <TableHead className="text-right">Qtd</TableHead>
+                <TableHead className="text-right">{t.inventoryPageUi.table.cost}</TableHead>
+                <TableHead>{t.inventoryPageUi.panel.source}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {row.date ? new Date(row.date).toLocaleString(uiLocale) : '—'}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{row.document}</TableCell>
+                  <TableCell className="text-xs">{row.supplier}</TableCell>
+                  <TableCell className="text-xs">{row.branch}</TableCell>
+                  <TableCell className="text-right font-mono">{row.quantity}</TableCell>
+                  <TableCell className="text-right font-mono">
+                    {row.unitCost.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
+                  </TableCell>
+                  <TableCell className="text-xs">{row.sourceLabel}</TableCell>
+                </TableRow>
+              ))}
+              {rows.length === 0 && !loadingInvoices && (
+                <EmptyTableRow colSpan={7} message={t.inventoryPageUi.panel.noPurchasePriceHistory} />
+              )}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -550,21 +730,167 @@ export function InventoryBarcodeQtyPanel({
   );
 }
 
-export function InventoryProductAuditPanel({ product }: { product: Product | null }) {
-  const { t, language } = useTranslation();
-  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const rows = useMemo(() => {
+type ProductAuditRow = {
+  id: string;
+  timestamp: string;
+  action: string;
+  userName: string;
+  branchLabel: string;
+  description: string;
+};
+
+function matchesProductAudit(
+  product: Product,
+  productIds: Set<string>,
+  skuKey: string,
+  fields: {
+    entityId?: string;
+    entityNumber?: string;
+    entityName?: string;
+    description?: string;
+  },
+): boolean {
+  if (fields.entityId && productIds.has(fields.entityId)) return true;
+  if (skuKey && fields.entityNumber?.trim().toLowerCase() === skuKey) return true;
+  if (skuKey && fields.description?.toLowerCase().includes(skuKey)) return true;
+  const name = (product.name || '').trim().toLowerCase();
+  if (name && fields.entityName?.trim().toLowerCase() === name) return true;
+  if (name && fields.description?.toLowerCase().includes(name)) return true;
+  return false;
+}
+
+export function InventoryProductAuditPanel({
+  product,
+  movements,
+  allBranchProducts,
+  scopedBranchIds,
+  uiLocale,
+  getReasonLabel,
+}: PanelProps) {
+  const { t } = useTranslation();
+  const [serverAuditRows, setServerAuditRows] = useState<ProductAuditRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!product) {
+      setServerAuditRows([]);
+      return;
+    }
+    let cancelled = false;
+    const productIds = collectProductIdsForSku(product, allBranchProducts, scopedBranchIds);
+
+    (async () => {
+      setLoading(true);
+      try {
+        const rows: ProductAuditRow[] = [];
+        const seen = new Set<string>();
+
+        const push = (row: ProductAuditRow) => {
+          const key = `${row.timestamp}|${row.action}|${row.description}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          rows.push(row);
+        };
+
+        for (const pid of productIds) {
+          const result = await api.audit.recordHistory('products', pid);
+          const list = result.data || [];
+          for (const entry of list) {
+            push({
+              id: `audit-${entry.id}`,
+              timestamp: entry.created_at || entry.createdAt || entry.timestamp || '',
+              action: entry.action || '—',
+              userName: entry.user_name || entry.userName || '—',
+              branchLabel: entry.branch_id || '—',
+              description:
+                entry.description ||
+                entry.new_values ||
+                entry.newValues ||
+                entry.old_values ||
+                entry.oldValues ||
+                '—',
+            });
+          }
+        }
+
+        const skuKey = (product.sku || '').trim().toLowerCase();
+        const broad = await api.audit.list({ limit: 500 });
+        for (const entry of broad.data || []) {
+          const desc = String(
+            entry.description || entry.new_values || entry.newValues || '',
+          ).toLowerCase();
+          const recordId = entry.record_id || entry.recordId || '';
+          const matchesId = recordId && productIds.has(recordId);
+          const matchesSkuInText = skuKey && desc.includes(skuKey);
+          if (!matchesId && !matchesSkuInText) continue;
+          push({
+            id: `audit-b-${entry.id}`,
+            timestamp: entry.created_at || entry.createdAt || '',
+            action: entry.action || '—',
+            userName: entry.user_name || entry.userName || '—',
+            branchLabel: entry.branch_name || entry.branch_id || '—',
+            description: entry.description || desc || '—',
+          });
+        }
+
+        if (!cancelled) setServerAuditRows(rows);
+      } catch {
+        if (!cancelled) setServerAuditRows([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [product, allBranchProducts, scopedBranchIds]);
+
+  const rows = useMemo((): ProductAuditRow[] => {
     if (!product) return [];
-    const sku = (product.sku || '').trim().toLowerCase();
-    return getTransactionHistory()
-      .filter((r) => {
-        if (r.entityId === product.id) return true;
-        if (r.entityNumber && r.entityNumber.toLowerCase() === sku) return true;
-        if (r.entityName && r.entityName.toLowerCase() === product.name.toLowerCase()) return true;
-        return false;
-      })
-      .slice(0, 100);
-  }, [product]);
+    const productIds = collectProductIdsForSku(product, allBranchProducts, scopedBranchIds);
+    const skuKey = (product.sku || '').trim().toLowerCase();
+    const seen = new Set<string>();
+    const merged: ProductAuditRow[] = [];
+
+    const push = (row: ProductAuditRow) => {
+      const key = `${row.timestamp}|${row.action}|${row.description}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      merged.push(row);
+    };
+
+    for (const m of filterMovementsForProduct(movements, product, allBranchProducts, scopedBranchIds)) {
+      const typeLabel = m.type === 'IN' ? t.inventoryUi.entry : t.inventoryUi.exit;
+      push({
+        id: `sm-${m.id}`,
+        timestamp: m.createdAt,
+        action: `${typeLabel} · ${getReasonLabel(m.reason)}`,
+        userName: m.createdByName || m.createdBy || t.inventoryPageUi.table.systemUser,
+        branchLabel: m.branchName || m.branchId || '—',
+        description: [m.referenceNumber, m.notes].filter(Boolean).join(' — ') || '—',
+      });
+    }
+
+    for (const r of getTransactionHistory()) {
+      if (!matchesProductAudit(product, productIds, skuKey, r)) continue;
+      push({
+        id: `txn-${r.id}`,
+        timestamp: r.timestamp,
+        action: r.action,
+        userName: r.userName || '—',
+        branchLabel: r.branchName || r.branchId || '—',
+        description: r.description,
+      });
+    }
+
+    for (const row of serverAuditRows) push(row);
+
+    return merged
+      .filter((r) => r.timestamp && !Number.isNaN(new Date(r.timestamp).getTime()))
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 200);
+  }, [product, movements, allBranchProducts, scopedBranchIds, serverAuditRows, getReasonLabel, t]);
 
   if (!product) {
     return <SelectProductHint message={t.inventoryPageUi.selectProductToViewInfo} />;
@@ -577,29 +903,37 @@ export function InventoryProductAuditPanel({ product }: { product: Product | nul
         <CardDescription>{product.sku}</CardDescription>
       </CardHeader>
       <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t.inventoryPageUi.table.dateTime}</TableHead>
-              <TableHead>{t.inventoryPageUi.panel.action}</TableHead>
-              <TableHead>{t.inventoryPageUi.table.notes}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((r) => (
-              <TableRow key={r.id}>
-                <TableCell className="text-xs text-muted-foreground">
-                  {new Date(r.timestamp).toLocaleString(uiLocale)}
-                </TableCell>
-                <TableCell className="text-xs">{r.action}</TableCell>
-                <TableCell className="text-xs">{r.description}</TableCell>
+        {loading && rows.length === 0 ? (
+          <p className="text-muted-foreground text-center py-6">{t.common.loading}</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t.inventoryPageUi.table.dateTime}</TableHead>
+                <TableHead>{t.inventoryPageUi.panel.action}</TableHead>
+                <TableHead>{t.inventoryPageUi.table.user}</TableHead>
+                <TableHead>{t.inventoryPageUi.table.branch}</TableHead>
+                <TableHead>{t.inventoryPageUi.table.notes}</TableHead>
               </TableRow>
-            ))}
-            {rows.length === 0 && (
-              <EmptyTableRow colSpan={3} message={t.inventoryPageUi.panel.noAuditEntries} />
-            )}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {new Date(r.timestamp).toLocaleString(uiLocale)}
+                  </TableCell>
+                  <TableCell className="text-xs">{r.action}</TableCell>
+                  <TableCell className="text-xs">{r.userName}</TableCell>
+                  <TableCell className="text-xs">{r.branchLabel}</TableCell>
+                  <TableCell className="text-xs">{r.description}</TableCell>
+                </TableRow>
+              ))}
+              {rows.length === 0 && !loading && (
+                <EmptyTableRow colSpan={5} message={t.inventoryPageUi.panel.noAuditEntries} />
+              )}
+            </TableBody>
+          </Table>
+        )}
       </CardContent>
     </Card>
   );

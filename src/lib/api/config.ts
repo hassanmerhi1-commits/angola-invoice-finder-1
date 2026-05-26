@@ -290,7 +290,7 @@ export type EmbeddedBackendWaitResult =
 export async function waitForEmbeddedBackendHealth(
   opts?: { timeoutMs?: number },
 ): Promise<EmbeddedBackendWaitResult> {
-  const timeoutMs = opts?.timeoutMs ?? 28000;
+  const timeoutMs = opts?.timeoutMs ?? (ipFileSaysServerMachine() ? 45000 : 28000);
   const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
   if (!el?.isElectron) {
     return { ok: true, baseUrl: getApiUrl() };
@@ -299,6 +299,14 @@ export async function waitForEmbeddedBackendHealth(
   clearStaleClientConfigIfServerMachine();
   invalidateElectronApiBaseCache();
   repairLanClientConfigStorage();
+
+  if (el?.db?.ensureBackend) {
+    try {
+      await el.db.ensureBackend();
+    } catch {
+      /* retry loop will poll */
+    }
+  }
 
   const lanClient = await isElectronLanClient();
   if (lanClient && isThinClientMode()) {
@@ -353,8 +361,17 @@ export async function waitForEmbeddedBackendHealth(
 
   const deadline = Date.now() + timeoutMs;
   let lastNativeError = '';
+  let pollAttempt = 0;
 
   while (Date.now() < deadline) {
+    if (pollAttempt > 0 && pollAttempt % 4 === 0 && el?.db?.ensureBackend) {
+      try {
+        await el.db.ensureBackend();
+      } catch {
+        /* ignore */
+      }
+    }
+    pollAttempt += 1;
     try {
       const status = await el.db?.getStatus?.();
       if (status?.backendNativeError) {

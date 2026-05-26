@@ -113,7 +113,10 @@ function AppRoutes() {
     import('@/lib/lanServerAddress').then(({ repairLanClientConfigStorage }) => {
       repairLanClientConfigStorage();
     }).catch(() => {});
-  }, []);
+    if (isElectron && window.electronAPI?.db?.ensureBackend) {
+      void window.electronAPI.db.ensureBackend().catch(() => null);
+    }
+  }, [isElectron]);
 
   React.useEffect(() => {
     let isMounted = true;

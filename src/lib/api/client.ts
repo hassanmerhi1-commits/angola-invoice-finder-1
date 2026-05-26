@@ -588,6 +588,9 @@ export const api = {
       if (isElectronMode()) {
         const apiResult = await apiFetch<any[]>('/branches');
         if (Array.isArray(apiResult.data)) return { data: apiResult.data };
+        if (await isElectronLanClient()) {
+          return { error: apiResult.error || 'Cannot reach server' };
+        }
         return ipcGetAll('branches');
       }
       return apiFetch<any[]>('/branches');
@@ -939,6 +942,9 @@ export const api = {
       if (isElectronMode()) {
         const apiResult = await apiFetch<any[]>(endpoint);
         if (apiResult.data !== undefined) return apiResult;
+        if (await isElectronLanClient()) {
+          return { error: apiResult.error || 'Cannot reach server' };
+        }
         return (async () => {
           const transfersResult = branchId
             ? await ipcQuery<any>(
@@ -1449,9 +1455,12 @@ export const api = {
       return apiResult;
     },
     recordHistory: (tableName: string, recordId: string) => {
-      if (isElectronMode()) return ipcQuery<any>(
-        'SELECT * FROM audit_logs WHERE entity_type = $1 AND entity_id = $2 ORDER BY timestamp DESC', [tableName, recordId]
-      );
+      if (isElectronMode()) {
+        return ipcQuery<any>(
+          'SELECT * FROM audit_log WHERE table_name = $1 AND record_id = $2 ORDER BY created_at DESC',
+          [tableName, recordId],
+        );
+      }
       return apiFetch<any[]>(`/audit/record/${tableName}/${recordId}`);
     },
     stats: (days?: number) => {
@@ -1752,7 +1761,14 @@ export const api = {
       if (isElectronMode()) {
         return apiFetch<any[]>(`/transactions/stock-movements?${sp}`).then(result => {
           if (result.data !== undefined) return result;
-          let sql = 'SELECT sm.*, p.name as product_name, p.sku FROM stock_movements sm LEFT JOIN products p ON p.id = sm.product_id WHERE 1=1';
+          let sql = `SELECT sm.*, p.name AS product_name, p.sku,
+            b.name AS branch_name, b.code AS branch_code,
+            u.name AS created_by_name, u.email AS created_by_email
+            FROM stock_movements sm
+            LEFT JOIN products p ON p.id = sm.product_id
+            LEFT JOIN branches b ON b.id = sm.warehouse_id
+            LEFT JOIN users u ON u.id = sm.created_by
+            WHERE 1=1`;
           const sqlParams: any[] = [];
           let idx = 1;
           if (params?.productId) { sql += ` AND sm.product_id = $${idx++}`; sqlParams.push(params.productId); }

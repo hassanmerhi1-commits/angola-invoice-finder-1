@@ -697,7 +697,7 @@ async function initAuthStateOnce() {
 
 export type LoginOutcome =
   | { ok: true; offline?: boolean }
-  | { ok: false; kind: 'credentials' | 'connection' };
+  | { ok: false; kind: 'credentials' | 'connection'; message?: string };
 
 export function useAuth() {
   const snapshot = useSyncExternalStore(subscribeAuth, getAuthSnapshot, getAuthSnapshot);
@@ -722,7 +722,7 @@ export function useAuth() {
       if (response.error) {
         console.warn('[Auth] Login failed:', response.error);
         const kind = (response as { errorKind?: 'credentials' | 'connection' }).errorKind || 'credentials';
-        return { ok: false, kind };
+        return { ok: false, kind, message: response.error };
       }
       const apiUser = response.data?.user;
       const isOffline = !!(response.data as { offline?: boolean })?.offline;

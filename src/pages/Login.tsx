@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useERP';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { LogIn, Shield } from 'lucide-react';
+import { LogIn, Shield, RefreshCw, AlertCircle } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { z } from 'zod';
 import defaultLogo from '/icon.png?url';
 import { useTranslation } from '@/i18n';
@@ -21,6 +22,8 @@ export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isRetryingServer, setIsRetryingServer] = useState(false);
+  const [lastConnectionError, setLastConnectionError] = useState<string | null>(null);
   const [errors, setErrors] = useState<{ username?: string; password?: string }>({});
   const { login } = useAuth();
   const { t } = useTranslation();
@@ -75,6 +78,29 @@ export default function Login() {
     setIsLoading(false);
   };
 
+  const retryServerConnection = useCallback(async () => {
+    if (!window.electronAPI?.db?.ensureBackend) {
+      toast({ title: t.auth.connectionErrorTitle, description: t.auth.connectionErrorDesc, variant: 'destructive' });
+      return;
+    }
+    setIsRetryingServer(true);
+    try {
+      const r = await window.electronAPI.db.ensureBackend();
+      if (r?.success) {
+        setLastConnectionError(null);
+        toast({ title: t.auth.serverStartedTitle, description: t.auth.serverStartedDesc });
+      } else {
+        const msg = r?.error || t.auth.connectionErrorDesc;
+        setLastConnectionError(msg);
+        toast({ title: t.auth.connectionErrorTitle, description: msg, variant: 'destructive' });
+      }
+    } catch {
+      toast({ title: t.auth.connectionErrorTitle, description: t.auth.connectionErrorDesc, variant: 'destructive' });
+    } finally {
+      setIsRetryingServer(false);
+    }
+  }, [t, toast]);
+
   const logoSrc = logo || defaultLogo;
 
   return (
@@ -116,6 +142,34 @@ export default function Login() {
             <h2 className="text-2xl font-extrabold tracking-tight">{t.auth.welcomeBack}</h2>
             <p className="text-muted-foreground text-sm mt-1">{t.auth.enterToContinue}</p>
           </div>
+
+          {lastConnectionError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="space-y-2">
+                <p className="text-sm">{lastConnectionError}</p>
+                {window.electronAPI?.db?.ensureBackend && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 border-destructive/40"
+                    disabled={isRetryingServer}
+                    onClick={() => void retryServerConnection()}
+                  >
+                    {isRetryingServer ? (
+                      <div className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                        {t.auth.retryServerConnection}
+                      </>
+                    )}
+                  </Button>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">

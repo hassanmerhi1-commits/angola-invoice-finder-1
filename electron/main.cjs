@@ -2214,7 +2214,15 @@ ipcMain.handle('db:ensureBackend', async () => {
       await delay(600);
     }
     const port = await resolveExpressTargetPort(false);
-    return { success: !!port, port };
+    if (port) return { success: true, port };
+    const bm = backendManager.getStatus();
+    if (bm.nativeError) {
+      return { success: false, error: bm.nativeError };
+    }
+    return {
+      success: false,
+      error: 'Database service did not start. Close all NEXOR ERP windows, run scripts/fix-nexor-server-start.ps1, then open the app once and wait 30 seconds.',
+    };
   } catch (e) {
     return { success: false, error: e.message };
   }

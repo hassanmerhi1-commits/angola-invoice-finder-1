@@ -191,6 +191,9 @@ export interface StockMovement {
   productName: string;
   sku: string;
   branchId: string;
+  branchName?: string;
+  branchCode?: string;
+  createdByName?: string;
   type: 'IN' | 'OUT';
   quantity: number;
   reason: 'purchase' | 'sale' | 'transfer_in' | 'transfer_out' | 'adjustment' | 'damage' | 'return' | 'initial';

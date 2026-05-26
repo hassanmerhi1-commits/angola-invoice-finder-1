@@ -28,6 +28,24 @@ const {
 
 const SEQUENCE_DOCUMENT_TYPES = new Set(Object.keys(DOCUMENT_SEQUENCE_CONFIG));
 
+function mapStockMovementRow(row) {
+  const createdBy = String(row.created_by || '').trim();
+  const createdByName = String(row.created_by_name || '').trim();
+  const createdByEmail = String(row.created_by_email || '').trim();
+  let userLabel = createdByName;
+  if (!userLabel && createdByEmail) userLabel = createdByEmail;
+  if (!userLabel && createdBy && !/^[0-9a-f-]{36}$/i.test(createdBy)) {
+    userLabel = createdBy;
+  }
+  return {
+    ...row,
+    branch_id: row.warehouse_id,
+    branch_name: row.branch_name || null,
+    branch_code: row.branch_code || null,
+    created_by_name: userLabel || null,
+  };
+}
+
 async function resolveSequenceScopeForRequest(client, documentType, branchId) {
   const cfg = resolveSequenceConfig(documentType);
   if (!cfg.perBranch) return {};
@@ -175,7 +193,14 @@ module.exports = function(broadcastTable) {
       if (warehouseId === undefined) {
         return res.json([]);
       }
-      let query = 'SELECT sm.*, p.name as product_name, p.sku FROM stock_movements sm LEFT JOIN products p ON p.id = sm.product_id WHERE 1=1';
+      let query = `SELECT sm.*, p.name AS product_name, p.sku,
+        b.name AS branch_name, b.code AS branch_code,
+        u.name AS created_by_name, u.email AS created_by_email
+        FROM stock_movements sm
+        LEFT JOIN products p ON p.id = sm.product_id
+        LEFT JOIN branches b ON b.id = sm.warehouse_id
+        LEFT JOIN users u ON u.id = sm.created_by
+        WHERE 1=1`;
       const params = [];
       let idx = 1;
       if (productId) { query += ` AND sm.product_id = $${idx++}`; params.push(productId); }
@@ -184,7 +209,7 @@ module.exports = function(broadcastTable) {
       query += ` ORDER BY sm.created_at DESC LIMIT $${idx++}`;
       params.push(parseInt(limit) || 500);
       const result = await db.query(query, params);
-      res.json(result.rows);
+      res.json(result.rows.map(mapStockMovementRow));
     } catch (error) {
       res.status(500).json({ error: 'Failed to fetch stock movements' });
     }

@@ -25,7 +25,7 @@ import { dispatchToolbarEvent, NEXOR_TOOLBAR, NEXOR_SUPPLIERS_NEW } from '@/lib/
 import { 
   Building2, User as UserIcon, LogOut, Settings, Menu,
   LayoutDashboard, ShoppingCart, FileText, Package, Users,
-  BarChart3, ArrowRightLeft, Calendar, Upload, Truck,
+  BarChart3, ArrowRightLeft, Calendar, Upload, Truck, PackagePlus, PackageMinus,
   ClipboardList, Tags, FileCheck, ChevronDown, Search,
   Plus, Pencil, Trash2, Filter, Download, FileSpreadsheet,
   RefreshCw, Save, Printer, X, Info, HelpCircle,
@@ -60,8 +60,8 @@ type ToolbarActionKey =
   | 'delete'
   | 'edit'
   | 'transfer'
+  | 'adjustEntry'
   | 'adjustExit'
-  | 'inventoryEntry'
   | 'minQty'
   | 'salesInvoice'
   | 'receipt'
@@ -281,11 +281,11 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         case 'transfer':
           navigate('/stock-transfer');
           return;
+        case 'adjustEntry':
+          dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_ENTRY);
+          return;
         case 'adjustExit':
           dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_ADJUST_EXIT);
-          return;
-        case 'inventoryEntry':
-          dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_ENTRY);
           return;
         case 'minQty':
           dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_MIN_QTY);
@@ -335,8 +335,8 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       return [
         ...base,
         { actionKey: 'transfer', label: t.topNav.toolbar.transfer, icon: ArrowRightLeft, variant: 'outline' },
-        { actionKey: 'adjustExit', label: t.topNav.toolbar.adjustExit, icon: RefreshCw, variant: 'outline' },
-        { actionKey: 'inventoryEntry', label: t.topNav.toolbar.inventoryEntry, icon: Download, variant: 'outline' },
+        { actionKey: 'adjustEntry', label: t.topNav.toolbar.adjustEntry, icon: PackagePlus, variant: 'outline' },
+        { actionKey: 'adjustExit', label: t.topNav.toolbar.adjustExit, icon: PackageMinus, variant: 'destructive' },
         { actionKey: 'minQty', label: t.topNav.toolbar.minQty, icon: Filter, variant: 'outline' },
       ];
     }

@@ -69,10 +69,31 @@ import { StockExitDialog } from '@/components/inventory/StockExitDialog';
 import { toast } from 'sonner';
 import { logTransaction } from '@/lib/transactionHistory';
 import { saveStockMovement } from '@/lib/storage';
+import { applyStockAdjustmentLines } from '@/lib/inventoryStockAdjust';
 import { useTranslation } from '@/i18n';
+import type { StockEntryReason } from '@/components/inventory/StockEntryDialog';
+import type { StockExitReasonCode } from '@/components/inventory/StockExitDialog';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 
 type StockListFilter = 'all' | 'qtyGt0' | 'qtyLt0';
+
+function mapMovementReason(referenceType: string, movementType: string): StockMovement['reason'] {
+  const ref = String(referenceType || '').trim().toLowerCase();
+  if (ref === 'transfer') {
+    return String(movementType || '').toUpperCase() === 'IN' ? 'transfer_in' : 'transfer_out';
+  }
+  if (ref.includes('purchase') || ref === 'fatura_compra' || ref === 'purchase_order') {
+    return 'purchase';
+  }
+  if (ref === 'sale' || ref.includes('sale')) return 'sale';
+  if (ref === 'supplier_return' || ref === 'purchase_return' || ref === 'customer_return' || ref === 'sale_return') {
+    return 'return';
+  }
+  const allowed: StockMovement['reason'][] = [
+    'purchase', 'sale', 'transfer_in', 'transfer_out', 'adjustment', 'damage', 'return', 'initial',
+  ];
+  return (allowed.includes(ref as StockMovement['reason']) ? ref : 'adjustment') as StockMovement['reason'];
+}
 
 export default function Inventory() {
   const navigate = useNavigate();
@@ -97,7 +118,13 @@ export default function Inventory() {
   
   /** Consolidated = sum all branches; otherwise stock for the selected branch (incl. main alone). */
   const listBranchId = inventoryListBranchId;
+  const warehouseId = listBranchId ?? currentBranch?.id ?? null;
   const { products, refreshProducts, updateProduct, addProduct, deleteProduct } = useProducts(listBranchId);
+
+  const productsById = useMemo(
+    () => new Map(products.map((p) => [p.id, p])),
+    [products],
+  );
   
   // For head office: load all products per branch for qty breakdown
   const [allBranchProducts, setAllBranchProducts] = useState<Record<string, Product[]>>({});
@@ -186,10 +213,16 @@ export default function Inventory() {
           productId: m.product_id || m.productId,
           productName: m.product_name || m.productName || '',
           sku: m.sku || '',
-          branchId: m.warehouse_id || m.warehouseId || m.branchId || '',
+          branchId: m.warehouse_id || m.warehouseId || m.branch_id || m.branchId || '',
+          branchName: m.branch_name || m.branchName || '',
+          branchCode: m.branch_code || m.branchCode || '',
+          createdByName: m.created_by_name || m.createdByName || '',
           type: (m.movement_type || m.type || 'IN') as 'IN' | 'OUT',
           quantity: Number(m.quantity) || 0,
-          reason: m.reference_type || m.reason || 'purchase',
+          reason: mapMovementReason(
+            m.reference_type || m.reason || 'purchase',
+            m.movement_type || m.type || 'IN',
+          ),
           referenceId: m.reference_id || m.referenceId || '',
           referenceNumber: m.reference_number || m.referenceNumber || '',
           costAtTime: Number(m.unit_cost || m.costAtTime || 0),
@@ -558,6 +591,180 @@ export default function Inventory() {
     refreshProducts();
   };
 
+  const entryReferenceType = (reason: StockEntryReason): string => {
+    if (reason === 'purchase') return 'purchase';
+    if (reason === 'transfer_in') return 'transfer';
+    if (reason === 'initial') return 'initial';
+    return 'adjustment';
+  };
+
+  const exitReferenceType = (code: StockExitReasonCode): string => {
+    if (code === 'expired' || code === 'damaged' || code === 'loss') return 'damage';
+    return 'adjustment';
+  };
+
+  const handleApplyStockEntry = useCallback(
+    async (
+      items: {
+        productId: string;
+        sku: string;
+        name: string;
+        quantity: number;
+        effectiveCost?: number;
+        cost: number;
+      }[],
+      meta: {
+        reason: StockEntryReason;
+        sourceBranchId: string;
+        sourceBranchName: string;
+        reference: string;
+        notes: string;
+      },
+    ) => {
+      if (!warehouseId) {
+        toast.error(t.stockEntryUi.branchRequiredDesc);
+        return;
+      }
+
+      const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
+      const noteParts = [
+        meta.reason === 'transfer_in' && meta.sourceBranchName
+          ? `${t.stockEntryUi.reasonTransferIn}: ${meta.sourceBranchName}`
+          : null,
+        meta.notes,
+      ].filter(Boolean);
+
+      const result = await applyStockAdjustmentLines({
+        lines: items.map((item) => ({
+          productId: item.productId,
+          sku: item.sku,
+          name: item.name,
+          quantity: item.quantity,
+          unitCost: item.effectiveCost ?? item.cost,
+        })),
+        warehouseId,
+        movementType: 'IN',
+        referenceType: entryReferenceType(meta.reason),
+        referenceNumber: meta.reference,
+        notes: noteParts.join(' — ') || meta.reference,
+        createdBy: currentUser?.id || currentUser?.name || 'system',
+        productsById,
+        updateProductCost: async (productId) => {
+          const product = productsById.get(productId);
+          const item = items.find((i) => i.productId === productId);
+          if (!product || !item) return;
+          const unit = item.effectiveCost ?? item.cost;
+          const prevStock = product.stock ?? 0;
+          const prevValue = prevStock * (product.cost || 0);
+          const addValue = item.quantity * unit;
+          const newStock = prevStock + item.quantity;
+          const newCost = newStock > 0 ? (prevValue + addValue) / newStock : unit;
+          await updateProduct({
+            ...product,
+            cost: newCost,
+            updatedAt: new Date().toISOString(),
+          });
+        },
+        fallbackUpdateProduct: updateProduct,
+      });
+
+      for (const item of items) {
+        const product = productsById.get(item.productId);
+        if (!product) continue;
+        logTransaction({
+          category: 'inventory',
+          action: 'stock_adjusted',
+          entityType: 'Produto',
+          entityId: item.productId,
+          entityNumber: item.sku,
+          entityName: item.name,
+          description: `+${item.quantity} ${item.name} — ${meta.reference}`,
+          details: { reason: meta.reason, reference: meta.reference, notes: meta.notes },
+          previousValue: product.stock,
+          newValue: (product.stock ?? 0) + item.quantity,
+        });
+      }
+
+      await refreshProducts();
+      if (result.errors.length > 0) {
+        toast.error(result.errors.slice(0, 3).join('; '));
+      } else if (result.applied > 0) {
+        toast.success(t.stockEntryUi.productsAddedDesc.replace('{count}', String(result.applied)));
+      }
+    },
+    [warehouseId, productsById, updateProduct, refreshProducts, t],
+  );
+
+  const handleApplyStockExit = useCallback(
+    async (
+      items: {
+        productId: string;
+        sku: string;
+        name: string;
+        quantity: number;
+        cost: number;
+      }[],
+      meta: { reasonCode: StockExitReasonCode; reasonLabel: string; notes: string; reference: string },
+    ) => {
+      if (!warehouseId) {
+        toast.error(t.stockExitUi.branchRequiredDesc);
+        return;
+      }
+
+      const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
+      const notes = [meta.reasonLabel, meta.notes].filter(Boolean).join(': ');
+
+      const result = await applyStockAdjustmentLines({
+        lines: items.map((item) => ({
+          productId: item.productId,
+          sku: item.sku,
+          name: item.name,
+          quantity: item.quantity,
+          unitCost: item.cost,
+        })),
+        warehouseId,
+        movementType: 'OUT',
+        referenceType: exitReferenceType(meta.reasonCode),
+        referenceNumber: meta.reference,
+        notes,
+        createdBy: currentUser?.id || currentUser?.name || 'system',
+        productsById,
+        fallbackUpdateProduct: updateProduct,
+      });
+
+      for (const item of items) {
+        const product = productsById.get(item.productId);
+        if (!product) continue;
+        const newStock = Math.max(0, (product.stock ?? 0) - item.quantity);
+        logTransaction({
+          category: 'inventory',
+          action: 'stock_adjusted',
+          entityType: 'Produto',
+          entityId: item.productId,
+          entityNumber: item.sku,
+          entityName: item.name,
+          description: `-${item.quantity} ${item.name} — ${meta.reasonLabel}`,
+          details: {
+            reason: meta.reasonCode,
+            reference: meta.reference,
+            notes: meta.notes,
+            lossValue: item.quantity * item.cost,
+          },
+          previousValue: product.stock,
+          newValue: newStock,
+        });
+      }
+
+      await refreshProducts();
+      if (result.errors.length > 0) {
+        toast.error(result.errors.slice(0, 3).join('; '));
+      } else if (result.applied > 0) {
+        toast.success(t.stockExitUi.productsRemovedDesc.replace('{count}', String(result.applied)));
+      }
+    },
+    [warehouseId, productsById, updateProduct, refreshProducts, t],
+  );
+
   // Get existing SKUs for duplicate detection
   const existingSkus = products.map(p => p.sku);
 
@@ -587,6 +794,28 @@ export default function Inventory() {
     () => (allBranches.length > 0 ? allBranches : branches).map((b) => b.id),
     [allBranches, branches],
   );
+
+  const branchById = useMemo(() => {
+    const map = new Map<string, (typeof branches)[number]>();
+    for (const b of [...allBranches, ...branches]) {
+      if (b.id) map.set(b.id, b);
+    }
+    return map;
+  }, [allBranches, branches]);
+
+  const formatMovementBranch = useCallback((movement: StockMovement) => {
+    if (movement.branchName?.trim()) return movement.branchName.trim();
+    const branch = branchById.get(movement.branchId);
+    if (branch) return formatBranchDisplayName(branch);
+    return movement.branchId || '—';
+  }, [branchById]);
+
+  const formatMovementUser = useCallback((movement: StockMovement) => {
+    if (movement.createdByName?.trim()) return movement.createdByName.trim();
+    const id = String(movement.createdBy || '').trim();
+    if (!id || id === 'system') return t.inventoryPageUi.table.systemUser;
+    return id;
+  }, [t]);
 
   const selectedProductMovements = useMemo(() => {
     return filterMovementsForProduct(stockMovements, selectedProduct, allBranchProducts, scopedBranchIds)
@@ -709,6 +938,8 @@ export default function Inventory() {
           variant="outline" 
           size="sm" 
           className="h-7 text-xs gap-1 text-success border-success/30 hover:bg-success/10"
+          disabled={!warehouseId}
+          title={!warehouseId ? t.stockEntryUi.branchRequiredDesc : undefined}
           onClick={() => setStockEntryDialogOpen(true)}
         >
           <PackagePlus className="w-3 h-3" />
@@ -718,6 +949,8 @@ export default function Inventory() {
           variant="outline" 
           size="sm" 
           className="h-7 text-xs gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
+          disabled={!warehouseId}
+          title={!warehouseId ? t.stockExitUi.branchRequiredDesc : undefined}
           onClick={() => setStockExitDialogOpen(true)}
         >
           <PackageMinus className="w-3 h-3" />
@@ -921,6 +1154,8 @@ export default function Inventory() {
                         <TableHead>{t.inventoryPageUi.table.type}</TableHead>
                         <TableHead>{t.inventoryPageUi.table.reason}</TableHead>
                         <TableHead>{t.inventoryPageUi.table.document}</TableHead>
+                        <TableHead>{t.inventoryPageUi.table.branch}</TableHead>
+                        <TableHead>{t.inventoryPageUi.table.user}</TableHead>
                         <TableHead className="text-right">Qtd</TableHead>
                         <TableHead className="text-right">{t.inventoryPageUi.table.cost}</TableHead>
                         <TableHead>{t.inventoryPageUi.table.notes}</TableHead>
@@ -935,6 +1170,8 @@ export default function Inventory() {
                           </TableCell>
                           <TableCell>{getMovementReasonLabel(movement.reason)}</TableCell>
                           <TableCell className="font-mono text-xs">{movement.referenceNumber || '—'}</TableCell>
+                          <TableCell className="text-xs">{formatMovementBranch(movement)}</TableCell>
+                          <TableCell className="text-xs">{formatMovementUser(movement)}</TableCell>
                           <TableCell className="text-right font-mono">{movement.quantity}</TableCell>
                           <TableCell className="text-right font-mono">{(movement.costAtTime || 0).toLocaleString(uiLocale, { minimumFractionDigits: 2 })}</TableCell>
                           <TableCell className="text-xs">{movement.notes || '—'}</TableCell>
@@ -942,7 +1179,7 @@ export default function Inventory() {
                       ))}
                       {selectedProductMovements.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">{t.inventoryUi.noMovementsForProduct}</TableCell>
+                          <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">{t.inventoryUi.noMovementsForProduct}</TableCell>
                         </TableRow>
                       )}
                     </TableBody>
@@ -963,7 +1200,11 @@ export default function Inventory() {
 
         {isHeadOffice && (
           <TabsContent value="qtd-detalhada" className={tabPanelClass}>
-            <BranchStockDetail selectedProduct={selectedProduct} />
+            <BranchStockDetail
+              selectedProduct={selectedProduct}
+              allBranchProducts={allBranchProducts}
+              branchList={allBranches.length > 0 ? allBranches : branches}
+            />
           </TabsContent>
         )}
 
@@ -1035,7 +1276,7 @@ export default function Inventory() {
         </TabsContent>
 
         <TabsContent value="auditoria" className={tabPanelClass}>
-          <InventoryProductAuditPanel product={selectedProduct} />
+          <InventoryProductAuditPanel {...panelProps} />
         </TabsContent>
       </Tabs>
 
@@ -1137,139 +1378,25 @@ export default function Inventory() {
 
       {/* Stock Entry Dialog (Ajustar Entrada) */}
       <StockEntryDialog
+        key={`stock-entry-${language}`}
         open={stockEntryDialogOpen}
         onOpenChange={setStockEntryDialogOpen}
         products={products}
         currentBranch={currentBranch}
-        onApplyEntry={(items, sourceBranch, reference, notes) => {
-          const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
-          
-          items.forEach(item => {
-            const product = products.find(p => p.id === item.productId);
-            if (product) {
-              // Calculate new weighted average cost if freight was added
-              const previousTotalValue = product.stock * (product.cost || 0);
-              const newItemsTotalValue = item.quantity * (item.effectiveCost || item.cost);
-              const newTotalStock = product.stock + item.quantity;
-              
-              // Weighted average cost = (previous value + new value) / total units
-              const newAverageCost = newTotalStock > 0 
-                ? (previousTotalValue + newItemsTotalValue) / newTotalStock
-                : item.effectiveCost || item.cost;
-
-              // Update product stock AND cost (with landed cost)
-              updateProduct({
-                ...product,
-                stock: newTotalStock,
-                cost: newAverageCost, // Update to weighted average landed cost
-                updatedAt: new Date().toISOString(),
-              });
-
-              saveStockMovement({
-                id: `sm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                productId: item.productId,
-                productName: item.name,
-                sku: item.sku,
-                branchId: currentBranch?.id || '',
-                type: 'IN',
-                quantity: item.quantity,
-                reason: 'transfer_in',
-                createdBy: currentUser?.id || 'system',
-                referenceNumber: reference,
-                notes: `Transferência de ${sourceBranch}${notes ? ': ' + notes : ''}`,
-                createdAt: new Date().toISOString(),
-              });
-
-              // Log transaction with cost update details
-              logTransaction({
-                category: 'inventory',
-                action: 'stock_adjusted',
-                entityType: 'Produto',
-                entityId: item.productId,
-                entityNumber: item.sku,
-                entityName: item.name,
-                description: `Entrada de ${item.quantity} un. - Ref: ${reference}${item.freightAllocation ? ' (c/ frete)' : ''}`,
-                details: {
-                  quantity: item.quantity,
-                  sourceBranch,
-                  reference,
-                  notes,
-                  unitCost: item.cost,
-                  freightPerUnit: item.freightAllocation || 0,
-                  effectiveCost: item.effectiveCost || item.cost,
-                  previousCost: product.cost,
-                  newAverageCost: newAverageCost,
-                },
-                previousValue: product.stock,
-                newValue: newTotalStock,
-              });
-            }
-          });
-
-          refreshProducts();
-        }}
+        warehouseId={warehouseId}
+        initialProduct={selectedProduct}
+        onApplyEntry={handleApplyStockEntry}
       />
 
-      {/* Stock Exit Dialog (Ajustar Saída) */}
       <StockExitDialog
+        key={`stock-exit-${language}`}
         open={stockExitDialogOpen}
         onOpenChange={setStockExitDialogOpen}
         products={products}
         currentBranch={currentBranch}
-        onApplyExit={(items, reason, notes, reference) => {
-          const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
-          
-          items.forEach(item => {
-            const product = products.find(p => p.id === item.productId);
-            if (product) {
-              // Update product stock
-              const newStock = product.stock - item.quantity;
-              updateProduct({
-                ...product,
-                stock: Math.max(0, newStock),
-                updatedAt: new Date().toISOString(),
-              });
-
-              // Create stock movement record
-              saveStockMovement({
-                id: `sm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                productId: item.productId,
-                productName: item.name,
-                sku: item.sku,
-                branchId: currentBranch?.id || '',
-                type: 'OUT',
-                quantity: item.quantity,
-                reason: 'adjustment',
-                createdBy: currentUser?.id || 'system',
-                referenceNumber: reference,
-                notes: `${reason}${notes ? ': ' + notes : ''}`,
-                createdAt: new Date().toISOString(),
-              });
-
-              // Log transaction
-              logTransaction({
-                category: 'inventory',
-                action: 'stock_adjusted',
-                entityType: 'Produto',
-                entityId: item.productId,
-                entityNumber: item.sku,
-                entityName: item.name,
-                description: `Saída de ${item.quantity} un. - ${reason}`,
-                details: {
-                  quantity: item.quantity,
-                  reason,
-                  reference,
-                  notes,
-                  lossValue: item.quantity * item.cost,
-                },
-                previousValue: product.stock,
-                newValue: Math.max(0, newStock),
-              });
-            }
-          });
-
-          refreshProducts();
-        }}
+        warehouseId={warehouseId}
+        initialProduct={selectedProduct}
+        onApplyExit={handleApplyStockExit}
       />
 
       {/* Shelf Label Print Dialog */}

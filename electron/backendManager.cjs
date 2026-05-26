@@ -51,6 +51,8 @@ const LOG_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // sweep every 6h while app 
 let childProc = null;
 let boundPort = null;
 let lastMode = 'unknown';
+/** Prevents overlapping start() calls (race → EADDRINUSE on port 3000). */
+let startPromise = null;
 let lastDockerOk = false;
 let lastSpawnNativeError = null;
 
@@ -525,7 +527,21 @@ function waitForBackendReady(port, timeoutMs = 15000) {
 // --------------------------------------------------------------------------
 // Public API
 // --------------------------------------------------------------------------
-async function start(opts = {}) {
+async function stopChildOnly() {
+  if (!childProc) {
+    boundPort = null;
+    return;
+  }
+  try {
+    await stop();
+  } catch (e) {
+    console.warn('[BackendManager] stopChildOnly:', e?.message || e);
+    childProc = null;
+    boundPort = null;
+  }
+}
+
+async function startOnce(opts = {}) {
   const mode = opts.mode || 'unknown';
   const sqlitePath = typeof opts.sqlitePath === 'string' && opts.sqlitePath.trim() ? opts.sqlitePath.trim() : null;
   lastMode = mode;
@@ -536,15 +552,18 @@ async function start(opts = {}) {
     return { skipped: true, reason: 'client-mode', mode };
   }
 
-  // Already running in this process?
+  // Already running and healthy?
   if (childProc && boundPort) {
-    return { started: true, port: boundPort, mode, alreadyRunning: true };
+    const stillOk = await probeHealthOnce(boundPort, HEALTH_TIMEOUT_MS);
+    if (stillOk) {
+      return { started: true, port: boundPort, mode, alreadyRunning: true };
+    }
+    console.warn(`[BackendManager] stale child on port ${boundPort} — respawning`);
+    await stopChildOnly();
   }
 
-  // SQLite mode: do not gate backend startup on Docker/PostgreSQL availability.
   lastDockerOk = true;
 
-  // Resolve backend entry
   const entry = resolveBackendEntry();
   if (!entry) {
     const err = 'backend/src/server.js not found in dev tree or packaged resources.';
@@ -552,43 +571,62 @@ async function start(opts = {}) {
     return { error: err, code: 'BACKEND_NOT_FOUND', mode };
   }
 
-  // Phase 2: pick a free port
-  const port = await findFreePort(DEFAULT_PORT, PORT_RANGE);
-  if (!port) {
-    const err = `No free port in range ${DEFAULT_PORT}..${DEFAULT_PORT + PORT_RANGE - 1}.`;
-    console.error(`[BackendManager] ${err}`);
-    return { error: err, code: 'NO_FREE_PORT', mode };
-  }
+  const readyTimeout = app.isPackaged ? 45000 : 20000;
+  let lastWarning = '';
 
-  console.log(`[BackendManager] spawning backend on port ${port} (mode=${mode}) entry=${entry}`);
-  let proc;
-  try {
-    proc = spawnBackend(entry, port, sqlitePath);
-  } catch (e) {
-    console.error('[BackendManager] spawn failed:', e?.message || e);
-    return { error: String(e?.message || e), code: 'SPAWN_FAILED', mode };
-  }
-  childProc = proc;
-  boundPort = port;
-
-  // Don't return until /api/health responds (or we time out).
-  const readyTimeout = app.isPackaged ? 30000 : 15000;
-  const ready = await waitForBackendReady(port, readyTimeout);
-  if (!ready) {
-    console.error('[BackendManager] backend did not become ready within 15s');
-    const detail = lastSpawnNativeError || 'backend-not-ready-in-time';
-    if (lastSpawnNativeError) {
-      emitStatus({ state: 'failed', detail, code: 'SQLITE_NATIVE_MISMATCH' });
+  for (let i = 0; i < PORT_RANGE; i++) {
+    const port = DEFAULT_PORT + i;
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await isPortFree(port))) {
+      console.warn(`[BackendManager] port ${port} busy — trying next`);
+      continue;
     }
-    return { started: true, port, mode, warning: detail };
+
+    console.log(`[BackendManager] spawning backend on port ${port} (mode=${mode}) entry=${entry}`);
+    let proc;
+    try {
+      proc = spawnBackend(entry, port, sqlitePath);
+    } catch (e) {
+      console.error('[BackendManager] spawn failed:', e?.message || e);
+      return { error: String(e?.message || e), code: 'SPAWN_FAILED', mode };
+    }
+    childProc = proc;
+    boundPort = port;
+
+    // eslint-disable-next-line no-await-in-loop
+    const ready = await waitForBackendReady(port, readyTimeout);
+    if (ready) {
+      console.log(`[BackendManager] backend ready on http://127.0.0.1:${port}`);
+      consecutiveFails = 0;
+      restartAttempts = 0;
+      startHealthMonitor();
+      emitStatus({ state: 'healthy', detail: 'Backend ready' });
+      return { started: true, port, mode };
+    }
+
+    lastWarning = lastSpawnNativeError || 'backend-not-ready-in-time';
+    console.error(`[BackendManager] port ${port} not ready (${lastWarning}) — retrying`);
+    // eslint-disable-next-line no-await-in-loop
+    await stopChildOnly();
+    await new Promise((r) => setTimeout(r, 400));
   }
 
-  console.log(`[BackendManager] backend ready on http://127.0.0.1:${port}`);
-  consecutiveFails = 0;
-  restartAttempts = 0;
-  startHealthMonitor();
-  emitStatus({ state: 'healthy', detail: 'Backend ready' });
-  return { started: true, port, mode };
+  const err = lastSpawnNativeError
+    || `Embedded backend did not start on ports ${DEFAULT_PORT}..${DEFAULT_PORT + PORT_RANGE - 1}. ${lastWarning}`;
+  if (lastSpawnNativeError) {
+    emitStatus({ state: 'failed', detail: lastSpawnNativeError, code: 'SQLITE_NATIVE_MISMATCH' });
+  } else {
+    emitStatus({ state: 'failed', detail: err });
+  }
+  return { error: err, code: lastSpawnNativeError ? 'SQLITE_NATIVE_MISMATCH' : 'BACKEND_NOT_READY', mode };
+}
+
+async function start(opts = {}) {
+  if (startPromise) return startPromise;
+  startPromise = startOnce(opts).finally(() => {
+    startPromise = null;
+  });
+  return startPromise;
 }
 
 async function stop() {
