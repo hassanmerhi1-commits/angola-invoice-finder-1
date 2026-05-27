@@ -1,7 +1,7 @@
 import React from "react";
 import { invalidateElectronApiBaseCache, clearStaleClientConfigIfServerMachine } from "@/lib/api/config";
 import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
+import { Toaster as Sonner, toast } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, HashRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
@@ -10,6 +10,7 @@ import { LanguageProvider, useLanguage } from "@/i18n";
 import { BranchProvider } from "@/contexts/BranchContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import type { UpdateStatus } from "@/types/electron";
 import Login from "./pages/Login";
 import Setup from "./pages/Setup";
 import Dashboard from "./pages/Dashboard";
@@ -327,6 +328,78 @@ const App = () => {
       invalidateElectronApiBaseCache();
     };
     api.backend.onStatus(onBackendEvent);
+  }, [isElectron]);
+
+  React.useEffect(() => {
+    if (!isElectron) return;
+    const updater = window.electronAPI?.updater;
+    if (!updater?.onStatus) return;
+
+    let unsubscribed = false;
+    const lastKeyRef = { current: "" };
+
+    const notify = (s: UpdateStatus) => {
+      if (unsubscribed) return;
+
+      // De-dupe repeated events, but allow progress updates to flow.
+      const key = `${s.status}:${(s as any).version ?? ""}`;
+      const isProgress = s.status === "downloading";
+      if (!isProgress && lastKeyRef.current === key) return;
+      if (!isProgress) lastKeyRef.current = key;
+
+      if (s.status === "available") {
+        toast("Update available", {
+          description: s.version ? `Version ${s.version} is ready to download.` : "A new version is ready to download.",
+          duration: Infinity,
+          action: {
+            label: "Download",
+            onClick: () => {
+              void updater.download?.();
+            },
+          },
+          cancel: {
+            label: "Later",
+            onClick: () => {},
+          },
+        });
+      } else if (s.status === "downloaded") {
+        toast("Update ready to install", {
+          description: s.version ? `Version ${s.version} downloaded.` : "Update downloaded.",
+          duration: Infinity,
+          action: {
+            label: "Install & restart",
+            onClick: () => {
+              void updater.install?.();
+            },
+          },
+          cancel: {
+            label: "Later",
+            onClick: () => {},
+          },
+        });
+      } else if (s.status === "error") {
+        // Keep errors short; the Settings screen shows full details.
+        toast("Update check failed", {
+          description: s.error || "Could not check for updates.",
+        });
+      }
+    };
+
+    updater.onStatus((data: any) => {
+      if (!data || typeof data !== "object") return;
+      notify(data as UpdateStatus);
+    });
+
+    // Extra safety: in case the main process doesn't check (or is delayed),
+    // kick a check once after first render. This is a no-op if a check is already running.
+    const t = setTimeout(() => {
+      void updater.check?.();
+    }, 6000);
+
+    return () => {
+      unsubscribed = true;
+      clearTimeout(t);
+    };
   }, [isElectron]);
 
   return (
