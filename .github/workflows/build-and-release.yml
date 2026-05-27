@@ -35,8 +35,11 @@ jobs:
       - name: Build web application
         run: npm run build
 
+      - name: Rebuild native modules for Electron
+        run: npm run rebuild:backend
+
       - name: Build Electron installer
-        run: npx electron-builder --win --publish never
+        run: npx electron-builder --win --publish never --config.win.signAndEditExecutable=false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
