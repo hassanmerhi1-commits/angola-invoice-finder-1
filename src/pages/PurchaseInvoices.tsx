@@ -1002,24 +1002,8 @@ function InvoiceViewDialog({
       </div>
     </body></html>`;
 
-    // Use iframe to avoid popup blocker
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.right = '0';
-    iframe.style.bottom = '0';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
-    iframe.style.border = 'none';
-    document.body.appendChild(iframe);
-    const doc = iframe.contentDocument || iframe.contentWindow?.document;
-    if (!doc) return;
-    doc.open();
-    doc.write(html);
-    doc.close();
-    setTimeout(() => {
-      iframe.contentWindow?.print();
-      setTimeout(() => document.body.removeChild(iframe), 1000);
-    }, 300);
+    const { printHtml } = await import('@/lib/printHtml');
+    await printHtml(html);
   };
 
   return (

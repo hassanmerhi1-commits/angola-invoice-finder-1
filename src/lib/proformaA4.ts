@@ -442,15 +442,6 @@ export async function printProFormaA4(
 ): Promise<void> {
   const html = await generateProFormaA4HTML(proforma, branch, language);
   
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) {
-    throw new Error('Could not open print window');
-  }
-  
-  printWindow.document.write(html);
-  printWindow.document.close();
-  
-  printWindow.onload = () => {
-    printWindow.print();
-  };
+  const { printHtml } = await import('./printHtml');
+  await printHtml(html);
 }

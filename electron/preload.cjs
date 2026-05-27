@@ -108,6 +108,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     html: (html, options) => ipcRenderer.invoke('print:html', html, options),
   },
 
+  // PDF export (Electron-only)
+  pdf: {
+    saveHtml: (html, options) => ipcRenderer.invoke('pdf:saveHtml', html, options),
+  },
+
   // Backend (auto-spawned Express child process — Option A)
   backend: {
     getPort: () => ipcRenderer.invoke('backend:getPort'),

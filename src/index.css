@@ -147,23 +147,6 @@
   }
 }
 
-/* Print styles for receipts */
-@media print {
-  body * {
-    visibility: hidden;
-  }
-  .print\:block,
-  .print\:block * {
-    visibility: visible;
-  }
-  .print\:block {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 80mm;
-  }
-}
-
 /* Modern scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
@@ -183,40 +166,79 @@
   background: hsl(var(--muted-foreground) / 0.35);
 }
 
-/* Print styles */
+/* Print styles — in-app reports (window.print on main window) */
 @media print {
-  body {
+  html,
+  body,
+  #root {
     overflow: visible !important;
     height: auto !important;
+    min-height: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
-  /* Hide non-printable elements */
+  /* Hide chrome */
   .no-print,
   nav,
   header,
   [data-topnav],
-  [data-statusbar] {
+  [data-statusbar],
+  button:not(.print-keep) {
     display: none !important;
   }
 
-  /* Reset layout constraints for printing */
-  .h-screen {
-    height: auto !important;
-    overflow: visible !important;
-  }
-
+  /* Unlock flex/scroll layouts so report content is not clipped */
+  .h-screen,
+  .min-h-screen,
+  .flex,
+  .flex-1,
   .overflow-hidden,
-  .overflow-auto {
+  .overflow-auto,
+  main,
+  main * {
     overflow: visible !important;
+    max-height: none !important;
     height: auto !important;
+    min-height: 0 !important;
   }
 
   main {
-    overflow: visible !important;
-    height: auto !important;
+    display: block !important;
+    width: 100% !important;
+    padding: 0 !important;
   }
 
-  /* Ensure printable area uses full width */
+  /* Readable text on paper (dark theme classes) */
+  .text-foreground,
+  .text-card-foreground,
+  h1, h2, h3, h4, p, span, td, th, div {
+    color: #000 !important;
+  }
+
+  .text-muted-foreground {
+    color: #444 !important;
+  }
+
+  .bg-background,
+  .bg-card,
+  .bg-muted,
+  .bg-muted\/30,
+  .bg-muted\/50 {
+    background: #fff !important;
+  }
+
+  .bg-primary {
+    background: #1e293b !important;
+    color: #fff !important;
+  }
+
+  .text-primary-foreground {
+    color: #fff !important;
+  }
+
   .print-area {
     width: 100% !important;
     padding: 0 !important;

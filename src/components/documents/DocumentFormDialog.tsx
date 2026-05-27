@@ -11,7 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Plus, Trash2, Search, Save } from 'lucide-react';
+import { Plus, Trash2, Search, Save, Printer } from 'lucide-react';
+import { printDocument } from '@/lib/documentPDF';
 import { cn } from '@/lib/utils';
 import { DocumentType, DocumentLine, ERPDocument, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
 import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocument } from '@/lib/documentStorage';
@@ -140,6 +141,69 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
   const removeLine = (index: number) => {
     setLines(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const buildDocumentForPrint = (): ERPDocument | null => {
+    if (lines.length === 0) return null;
+
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const time = now.toTimeString().slice(0, 8);
+    const base = editDocument ?? prefillFrom;
+    const prefix = DOCUMENT_TYPE_CONFIG[documentType].prefix;
+    const draftNumber = `${prefix}-${currentBranch?.code || 'SEDE'}-${today.replace(/-/g, '')}-DRAFT`;
+
+    return {
+      ...(base ?? {}),
+      id: base?.id ?? `print-draft-${Date.now()}`,
+      documentType,
+      documentNumber: base?.documentNumber ?? draftNumber,
+      branchId: base?.branchId ?? currentBranch?.id ?? '',
+      branchName: base?.branchName ?? currentBranch?.name ?? '',
+      entityType: config.entityType,
+      entityId: base?.entityId,
+      entityName: entityName || finalConsumerName,
+      entityNif: entityNif || base?.entityNif,
+      entityAddress: entityAddress || base?.entityAddress,
+      entityPhone: entityPhone || base?.entityPhone,
+      entityEmail: base?.entityEmail,
+      lines,
+      subtotal: totals.subtotal,
+      totalDiscount: totals.totalDiscount,
+      totalTax: totals.totalTax,
+      total: totals.total,
+      currency: base?.currency ?? 'AOA',
+      paymentMethod: (paymentMethod as ERPDocument['paymentMethod']) ?? base?.paymentMethod,
+      amountPaid: config.requiresPayment ? amountPaid : totals.total,
+      amountDue: config.requiresPayment ? totals.total - amountPaid : 0,
+      parentDocumentId: base?.parentDocumentId ?? prefillFrom?.id,
+      parentDocumentNumber: base?.parentDocumentNumber ?? prefillFrom?.documentNumber,
+      parentDocumentType: base?.parentDocumentType ?? prefillFrom?.documentType,
+      childDocuments: base?.childDocuments,
+      status: base?.status ?? 'draft',
+      issueDate: base?.issueDate ?? today,
+      issueTime: base?.issueTime ?? time,
+      dueDate: dueDate || base?.dueDate,
+      validUntil: validUntil || base?.validUntil,
+      notes: notes || base?.notes,
+      saftHash: base?.saftHash,
+      createdBy: base?.createdBy ?? user?.id ?? '',
+      createdByName: base?.createdByName ?? user?.name ?? '',
+      createdAt: base?.createdAt ?? now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+  };
+
+  const handlePrint = () => {
+    const doc = buildDocumentForPrint();
+    if (!doc) {
+      toast.error(t.documentFormUi.printNeedsLines);
+      return;
+    }
+    void printDocument(doc).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(message || t.documentFormUi.printError);
+    });
   };
 
   const handleSave = async (status: 'draft' | 'confirmed') => {
@@ -329,6 +393,15 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             )}
           </DialogTitle>
           <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs gap-1"
+              onClick={handlePrint}
+              disabled={lines.length === 0}
+            >
+              <Printer className="w-3 h-3" /> {t.documentFormUi.print}
+            </Button>
             <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleSave('draft')}>
               <Save className="w-3 h-3" /> {t.documentFormUi.saveDraft}
             </Button>

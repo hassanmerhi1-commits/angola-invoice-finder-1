@@ -478,31 +478,8 @@ export async function printViaBrowser(
 </html>
   `;
   
-  // Use hidden iframe to avoid popup blockers
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
-  iframe.style.border = 'none';
-  document.body.appendChild(iframe);
-  
-  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-  if (!iframeDoc) {
-    console.error('Could not access iframe document');
-    document.body.removeChild(iframe);
-    return;
-  }
-  
-  iframeDoc.open();
-  iframeDoc.write(html);
-  iframeDoc.close();
-  
-  setTimeout(() => {
-    iframe.contentWindow?.print();
-    setTimeout(() => document.body.removeChild(iframe), 2000);
-  }, 300);
+  const { printHtml } = await import('./printHtml');
+  await printHtml(html);
 }
 
 // Main print function - tries thermal first, falls back to browser

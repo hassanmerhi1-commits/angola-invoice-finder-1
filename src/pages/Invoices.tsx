@@ -242,7 +242,14 @@ export default function Invoices() {
       setSearchTerm('');
     };
     const onPrint = () => {
-      if (selected) printDocument(selected);
+      if (!selected) {
+        toast.info(t.topNav.file.printSelectDocument);
+        return;
+      }
+      void printDocument(selected).catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(message || t.invoiceViewUi.printError);
+      });
     };
     const onExcel = () => {
       const rows = filteredDocs.map((d) => ({
@@ -356,7 +363,13 @@ export default function Invoices() {
 
         <div className="w-px h-5 bg-border mx-1" />
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedDoc}
-          onClick={() => selectedDoc && printDocument(selectedDoc)}>
+          onClick={() => {
+            if (!selectedDoc) return;
+            void printDocument(selectedDoc).catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              toast.error(message || t.invoiceViewUi.printError);
+            });
+          }}>
           <Printer className="w-3 h-3" /> {t.invoicesUi.print}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedDoc}

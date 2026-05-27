@@ -246,6 +246,12 @@ export const en = {
     save: "Save",
   },
 
+  printPreviewUi: {
+    title: "Print preview",
+    description: "Review the document below. When you continue, the Windows print dialog opens (choose your printer or Save as PDF).",
+    confirmPrint: "Continue to print",
+  },
+
   errorBoundaryUi: {
     unexpected: "Unexpected error",
     defaultMessage: "An error occurred while loading this page.",
@@ -904,6 +910,9 @@ export const en = {
     fromDocument: "(from {number})",
     saveDraft: "Save draft",
     confirmSave: "Confirm",
+    print: "Print",
+    printNeedsLines: "Add at least one line before printing.",
+    printError: "Failed to print document",
     customer: "Customer",
     supplier: "Supplier",
     nif: "Tax ID",
@@ -2173,6 +2182,8 @@ export const en = {
       open: "Open",
       save: "Save",
       print: "Print",
+      printSelectDocument: "Select a document in the list, then print again.",
+      printUnavailablePage: "Open a document or report on this screen, then use its Print button.",
       backup: "Backup",
       import: "Import",
       exit: "Exit",

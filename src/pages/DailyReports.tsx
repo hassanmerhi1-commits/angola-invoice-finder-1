@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useDailyReports, useAuth } from '@/hooks/useERP';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { toast } from 'sonner';
-import { useBranchContext } from '@/contexts/BranchContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -27,13 +27,19 @@ export default function DailyReports() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
   const { user } = useAuth();
-  const { branches, currentBranch } = useBranchContext();
-  const isMainOffice = currentBranch?.isMain;
-  const [selectedBranch, setSelectedBranch] = useState<string>(currentBranch?.id || 'all');
-  const listBranchId = isMainOffice && selectedBranch === 'all'
-    ? undefined
-    : (isMainOffice ? selectedBranch : currentBranch?.id);
-  const { reports, generateReport, closeDay, refreshReports } = useDailyReports(listBranchId);
+  const {
+    branches,
+    currentBranch,
+    listBranchId,
+    canPickBranch,
+    allBranchesScopeId,
+  } = useBranchScope();
+  const [selectedBranch, setSelectedBranch] = useState<string>(
+    () => listBranchId || currentBranch?.id || allBranchesScopeId,
+  );
+  const apiListBranchId =
+    canPickBranch && selectedBranch === allBranchesScopeId ? undefined : (listBranchId ?? selectedBranch);
+  const { reports, generateReport, closeDay, refreshReports } = useDailyReports(apiListBranchId);
 
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: new Date(),
@@ -52,16 +58,6 @@ export default function DailyReports() {
   const [detailReportBranchName, setDetailReportBranchName] = useState<string | undefined>();
   const [generating, setGenerating] = useState(false);
 
-  // Filter reports by date range
-  const filteredReports = reports.filter(r => {
-    const reportDate = new Date(r.date);
-    const matchesBranch = !isMainOffice || selectedBranch === 'all' || r.branchId === selectedBranch;
-    const matchesDateRange = dateRange?.from && dateRange?.to 
-      ? reportDate >= dateRange.from && reportDate <= dateRange.to
-      : true;
-    return matchesBranch && matchesDateRange;
-  });
-
   const toLocalDateString = (d: Date) => {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -69,21 +65,58 @@ export default function DailyReports() {
     return `${y}-${m}-${day}`;
   };
 
-  const handleGenerateReport = async () => {
-    const branchId = isMainOffice && selectedBranch && selectedBranch !== 'all'
-      ? selectedBranch
-      : currentBranch?.id;
-    const selectedDate = dateRange?.from
+  const filteredReports = reports.filter(r => {
+    const reportDay = String(r.date).slice(0, 10);
+    const matchesBranch =
+      !canPickBranch ||
+      selectedBranch === allBranchesScopeId ||
+      r.branchId === selectedBranch;
+    const fromDay = dateRange?.from ? toLocalDateString(dateRange.from) : '';
+    const toDay = dateRange?.to ? toLocalDateString(dateRange.to) : fromDay;
+    const matchesDateRange =
+      dateRange?.from && dateRange?.to ? reportDay >= fromDay && reportDay <= toDay : true;
+    return matchesBranch && matchesDateRange;
+  });
+
+  const resolveGenerateBranchId = (): string | undefined => {
+    if (canPickBranch) {
+      if (selectedBranch === allBranchesScopeId) return undefined;
+      return selectedBranch;
+    }
+    return listBranchId || currentBranch?.id;
+  };
+
+  const resolveDetailReportParams = () => {
+    const startDate = dateRange?.from
       ? toLocalDateString(dateRange.from)
       : toLocalDateString(new Date());
-    if (!branchId) {
+    const endDate = dateRange?.to ? toLocalDateString(dateRange.to) : startDate;
+    const branchId = resolveGenerateBranchId();
+    if (!branchId) return null;
+    const branchName =
+      branches.find((b) => b.id === branchId)?.name ||
+      currentBranch?.name ||
+      '';
+    return { startDate, endDate, branchId, branchName };
+  };
+
+  const handleGenerateReport = async () => {
+    const detail = resolveDetailReportParams();
+    if (!detail) {
       toast.error(t.dailyReportsUi.selectBranchRequired);
       return;
     }
+    const { startDate, endDate, branchId, branchName } = detail;
     setGenerating(true);
     try {
-      await generateReport(branchId, selectedDate);
+      const report = await generateReport(branchId, startDate);
       toast.success(t.dailyReportsUi.generateSuccess);
+      openDetailReport(
+        startDate,
+        endDate,
+        branchId,
+        report.branchName || branchName,
+      );
     } catch (e) {
       console.error('[DAILY REPORTS] Generate failed:', e);
       const msg = e instanceof Error ? e.message : t.dailyReportsUi.generateError;
@@ -235,7 +268,7 @@ export default function DailyReports() {
                 </PopoverContent>
               </Popover>
             </div>
-            {isMainOffice && (
+            {canPickBranch && (
               <div className="flex-1">
                 <Label htmlFor="branch">{t.dailyReportsUi.branchLabel}</Label>
                 <Select value={selectedBranch} onValueChange={setSelectedBranch}>
@@ -243,7 +276,7 @@ export default function DailyReports() {
                     <SelectValue placeholder={t.dailyReportsUi.allBranches} />
                   </SelectTrigger>
                   <SelectContent className="bg-popover">
-                    <SelectItem value="all">{t.dailyReportsUi.allBranches}</SelectItem>
+                    <SelectItem value={allBranchesScopeId}>{t.dailyReportsUi.allBranches}</SelectItem>
                     {branches.map(branch => (
                       <SelectItem key={branch.id} value={branch.id}>
                         {branch.name} {branch.isMain && t.dailyReportsUi.headOfficeSuffix}
@@ -258,16 +291,19 @@ export default function DailyReports() {
                 <CalendarIcon className="w-4 h-4 mr-2" />
                 {generating ? t.common.loading : t.dailyReportsUi.generateButton}
               </Button>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => {
-                  const startDate = dateRange?.from?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0];
-                  const endDate = dateRange?.to?.toISOString().split('T')[0] || startDate;
+                  const detail = resolveDetailReportParams();
+                  if (!detail) {
+                    toast.error(t.dailyReportsUi.selectBranchRequired);
+                    return;
+                  }
                   openDetailReport(
-                    startDate,
-                    endDate,
-                    isMainOffice && selectedBranch && selectedBranch !== 'all' ? selectedBranch : currentBranch?.id || '',
-                    isMainOffice && selectedBranch && selectedBranch !== 'all' ? branches.find(b => b.id === selectedBranch)?.name || '' : currentBranch?.name || ''
+                    detail.startDate,
+                    detail.endDate,
+                    detail.branchId,
+                    detail.branchName,
                   );
                 }}
               >
@@ -284,7 +320,7 @@ export default function DailyReports() {
         <CardHeader>
           <CardTitle>{t.dailyReportsUi.reportsTitle}</CardTitle>
           <CardDescription>
-            {isMainOffice
+            {canPickBranch && selectedBranch === allBranchesScopeId
               ? t.dailyReportsUi.allBranchesReports
               : t.dailyReportsUi.reportsOfBranch.replace('{name}', String(currentBranch?.name || ''))}
           </CardDescription>

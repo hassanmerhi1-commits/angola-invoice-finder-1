@@ -248,6 +248,12 @@ export const pt: TranslationKeys = {
     save: "Salvar",
   },
 
+  printPreviewUi: {
+    title: "Pré-visualização de impressão",
+    description: "Revise o documento abaixo. Ao continuar, abre a caixa de impressão do Windows (escolha a impressora ou Guardar como PDF).",
+    confirmPrint: "Continuar para imprimir",
+  },
+
   errorBoundaryUi: {
     unexpected: "Erro inesperado",
     defaultMessage: "Ocorreu um erro ao carregar esta página.",
@@ -906,6 +912,9 @@ export const pt: TranslationKeys = {
     fromDocument: "(de {number})",
     saveDraft: "Guardar rascunho",
     confirmSave: "Confirmar",
+    print: "Imprimir",
+    printNeedsLines: "Adicione pelo menos uma linha antes de imprimir.",
+    printError: "Erro ao imprimir documento",
     customer: "Cliente",
     supplier: "Fornecedor",
     nif: "NIF",
@@ -2176,6 +2185,8 @@ export const pt: TranslationKeys = {
       open: "Abrir",
       save: "Guardar",
       print: "Imprimir",
+      printSelectDocument: "Seleccione um documento na lista e volte a imprimir.",
+      printUnavailablePage: "Abra um documento ou relatório neste ecrã e use o botão Imprimir.",
       backup: "Cópia de Segurança",
       import: "Importar",
       exit: "Sair",

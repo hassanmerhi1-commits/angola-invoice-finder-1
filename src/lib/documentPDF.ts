@@ -3,6 +3,7 @@
 
 import { ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentLine } from '@/types/documents';
 import { getCompanySettings } from '@/lib/companySettings';
+import { printHtml } from '@/lib/printHtml';
 
 interface PDFOptions {
   showQR?: boolean;
@@ -106,7 +107,10 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
 <style>
   @page { size: A4; margin: 12mm 15mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 9px; color: #333; line-height: 1.35; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 9px; color: #333; line-height: 1.35; background: #fff; }
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
   
   /* Page number */
   .page-info { text-align: right; font-size: 8px; color: #666; margin-bottom: 4px; }
@@ -394,33 +398,10 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
 </html>`;
 }
 
-// Open print preview in a new window
-export function printDocument(doc: ERPDocument, options: PDFOptions = {}) {
+// Open system print dialog for the document (Electron or browser)
+export async function printDocument(doc: ERPDocument, options: PDFOptions = {}) {
   const html = generateDocumentHTML(doc, { showQR: true, ...options });
-  
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
-  iframe.style.border = 'none';
-  document.body.appendChild(iframe);
-  
-  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-  if (!iframeDoc) {
-    document.body.removeChild(iframe);
-    return;
-  }
-  
-  iframeDoc.open();
-  iframeDoc.write(html);
-  iframeDoc.close();
-  
-  setTimeout(() => {
-    iframe.contentWindow?.print();
-    setTimeout(() => document.body.removeChild(iframe), 2000);
-  }, 500);
+  await printHtml(html);
 }
 
 // Download as HTML (can be opened and printed to PDF)

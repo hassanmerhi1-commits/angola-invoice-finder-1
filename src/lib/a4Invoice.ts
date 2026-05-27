@@ -604,30 +604,8 @@ export async function printA4Invoice(
   
   const html = await generateA4InvoiceHTML(sale, branch, { ...options, qrCodeDataURL });
   
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
-  iframe.style.border = 'none';
-  document.body.appendChild(iframe);
-  
-  const doc = iframe.contentDocument || iframe.contentWindow?.document;
-  if (!doc) {
-    console.error('Could not access iframe document');
-    document.body.removeChild(iframe);
-    return;
-  }
-  
-  doc.open();
-  doc.write(html);
-  doc.close();
-  
-  setTimeout(() => {
-    iframe.contentWindow?.print();
-    setTimeout(() => document.body.removeChild(iframe), 2000);
-  }, 500);
+  const { printHtml } = await import('./printHtml');
+  await printHtml(html);
 }
 
 export async function downloadA4InvoicePDF(

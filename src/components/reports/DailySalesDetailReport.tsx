@@ -1,6 +1,5 @@
 import { useState, useRef, useMemo } from 'react';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useBranchContext } from '@/contexts/BranchContext';
 import { useSales, useProducts, useCategories } from '@/hooks/useERP';
 import { Sale, SaleItem, Product } from '@/types/erp';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -35,6 +34,7 @@ import { Printer, FileDown, Eye, TrendingUp, DollarSign, Package, Filter, X } fr
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useTranslation } from '@/i18n';
+import { printHtml } from '@/lib/printHtml';
 
 interface SaleItemDetail extends SaleItem {
   cost: number;
@@ -64,7 +64,7 @@ export function DailySalesDetailReport({
 }: DailySalesDetailReportProps) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId } = useBranchScope();
+  const { apiBranchId, currentBranch } = useBranchScope();
   const effectiveBranchId = branchId ?? apiBranchId;
   const { sales } = useSales(effectiveBranchId);
   const { products } = useProducts(effectiveBranchId);
@@ -79,9 +79,16 @@ export function DailySalesDetailReport({
 
   const isDateRange = startDate !== endDate;
 
-  // Filter sales for the selected date range
-  const daySales = sales.filter(sale => {
-    const saleDate = new Date(sale.createdAt).toISOString().split('T')[0];
+  const saleLocalDate = (createdAt: string) => {
+    const d = new Date(createdAt);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const daySales = sales.filter((sale) => {
+    const saleDate = saleLocalDate(sale.createdAt);
     return saleDate >= startDate && saleDate <= endDate;
   });
 
@@ -231,26 +238,25 @@ export function DailySalesDetailReport({
     }).format(value);
   };
 
-  const handlePrint = () => {
+  const buildReportPrintHtml = () => {
     const printContent = printRef.current;
-    if (!printContent) return;
+    if (!printContent) {
+      console.warn('[DailySalesDetailReport] printRef is not ready');
+      return null;
+    }
 
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
-    const dateLabel = isDateRange 
+    const dateLabel = isDateRange
       ? `${format(new Date(startDate), 'dd/MM/yyyy')} - ${format(new Date(endDate), 'dd/MM/yyyy')}`
       : format(new Date(startDate), 'dd/MM/yyyy');
 
-    printWindow.document.write(`
-      <!DOCTYPE html>
+    return `<!DOCTYPE html>
       <html>
       <head>
         <title>Relatório de Vendas - ${dateLabel}</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { 
-            font-family: Arial, sans-serif; 
+          body {
+            font-family: Arial, sans-serif;
             font-size: 10pt;
             padding: 20px;
             color: #000;
@@ -258,56 +264,45 @@ export function DailySalesDetailReport({
           .header { text-align: center; margin-bottom: 20px; }
           .header h1 { font-size: 16pt; margin-bottom: 5px; }
           .header p { font-size: 10pt; color: #666; }
-          .summary-cards { 
-            display: flex; 
-            gap: 10px; 
+          .summary-cards {
+            display: flex;
+            gap: 10px;
             margin-bottom: 20px;
             flex-wrap: wrap;
           }
-          .summary-card { 
-            border: 1px solid #ddd; 
-            padding: 10px; 
-            flex: 1;
-            min-width: 120px;
-            text-align: center;
-          }
-          .summary-card .label { font-size: 8pt; color: #666; }
-          .summary-card .value { font-size: 12pt; font-weight: bold; }
-          table { 
-            width: 100%; 
-            border-collapse: collapse; 
+          table {
+            width: 100%;
+            border-collapse: collapse;
             margin-top: 10px;
             font-size: 9pt;
           }
-          th, td { 
-            border: 1px solid #ddd; 
-            padding: 6px 8px; 
+          th, td {
+            border: 1px solid #ddd;
+            padding: 6px 8px;
             text-align: left;
           }
-          th { 
-            background: #f5f5f5; 
+          th {
+            background: #f5f5f5;
             font-weight: bold;
             font-size: 8pt;
           }
           .text-right { text-align: right; }
           .text-center { text-align: center; }
-          tfoot td { 
-            font-weight: bold; 
+          tfoot td {
+            font-weight: bold;
             background: #f9f9f9;
           }
-          .profit-positive { color: #16a34a; }
-          .profit-negative { color: #dc2626; }
-          .section-title { 
-            font-size: 11pt; 
-            font-weight: bold; 
+          .section-title {
+            font-size: 11pt;
+            font-weight: bold;
             margin: 20px 0 10px 0;
             padding-bottom: 5px;
             border-bottom: 2px solid #000;
           }
-          .footer { 
-            margin-top: 30px; 
-            text-align: center; 
-            font-size: 8pt; 
+          .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 8pt;
             color: #666;
           }
           @media print {
@@ -323,18 +318,36 @@ export function DailySalesDetailReport({
           <p>${t.reportsUi.systemName}</p>
         </div>
       </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-      printWindow.print();
-    }, 250);
+      </html>`;
   };
 
-  const handleSavePDF = () => {
-    // Use print dialog with PDF option
-    handlePrint();
+  const handlePrint = async () => {
+    const html = buildReportPrintHtml();
+    if (!html) return;
+    try {
+      await printHtml(html);
+    } catch (e) {
+      console.error('[DailySalesDetailReport] print failed:', e);
+    }
+  };
+
+  const handleSavePDF = async () => {
+    const html = buildReportPrintHtml();
+    if (!html) return;
+    try {
+      const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
+      if (el?.isElectron && el?.pdf?.saveHtml) {
+        const dateLabel = isDateRange
+          ? `${format(new Date(startDate), 'dd-MM-yyyy')}_${format(new Date(endDate), 'dd-MM-yyyy')}`
+          : format(new Date(startDate), 'dd-MM-yyyy');
+        await el.pdf.saveHtml(html, { filename: `daily-sales-report_${dateLabel}.pdf` });
+        return;
+      }
+      // Web fallback: user chooses "Save as PDF" in OS print dialog
+      await printHtml(html, { direct: true });
+    } catch (e) {
+      console.error('[DailySalesDetailReport] save pdf failed:', e);
+    }
   };
 
   const hasActiveFilters = ivaFilter !== 'all' || categoryFilter !== 'all' || skuFilter !== '';
@@ -495,7 +508,7 @@ export function DailySalesDetailReport({
               )}
             </p>
             <p className="text-muted-foreground">
-              Filial: {branchName || currentBranch?.name || 'Todas'}
+              Filial: {branchName || currentBranch?.name || t.dailyReportsUi.allBranches}
             </p>
             {hasActiveFilters && (
               <p className="text-sm text-muted-foreground mt-1">

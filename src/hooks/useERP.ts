@@ -837,11 +837,32 @@ export function useDailyReports(branchId?: string) {
   const [reports, setReports] = useState<DailySummary[]>([]);
 
   const refreshReports = useCallback(async () => {
-    const data = await apiFallback<any[]>(
-      () => api.dailyReports.list(branchId),
-      () => storage.getDailyReports(branchId)
-    );
-    setReports(Array.isArray(data) ? data.map(mapDailyReportRow) : []);
+    try {
+      const response = await api.dailyReports.list(branchId);
+      if (!response.error && Array.isArray(response.data)) {
+        setReports(response.data.map(mapDailyReportRow));
+        return;
+      }
+      if (!isDemoMode()) {
+        console.warn('[useDailyReports] API list failed:', response.error);
+        setReports([]);
+        return;
+      }
+    } catch (e) {
+      if (!isDemoMode()) {
+        console.warn('[useDailyReports] API list failed:', e);
+        setReports([]);
+        return;
+      }
+    }
+
+    try {
+      const fromStorage = await storage.getDailyReports(branchId);
+      setReports(fromStorage.map(mapDailyReportRow));
+    } catch (e) {
+      console.warn('[useDailyReports] storage fallback failed:', e);
+      setReports([]);
+    }
   }, [branchId]);
 
   useEffect(() => { refreshReports(); }, [refreshReports]);
@@ -854,7 +875,9 @@ export function useDailyReports(branchId?: string) {
       await refreshReports();
       return mapped;
     }
-    // API unavailable or table missing — build from sales and mirror locally
+    if (!isDemoMode()) {
+      throw new Error(apiResult.error || 'Failed to generate daily report');
+    }
     const report = await storage.generateDailyReport(branchId, date);
     await storage.persistDailyReportLocal(report);
     try {
@@ -863,9 +886,6 @@ export function useDailyReports(branchId?: string) {
       /* optional IPC persist */
     }
     await refreshReports();
-    if (!isDemoMode() && apiResult.error) {
-      console.warn('[DAILY REPORTS] API generate failed, used local fallback:', apiResult.error);
-    }
     return report;
   }, [refreshReports]);
 

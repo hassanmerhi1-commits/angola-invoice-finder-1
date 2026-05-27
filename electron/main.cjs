@@ -13,7 +13,7 @@
  *   Client: SERVIDOR or 10.0.0.5  (hostname/IP = client mode)
  */
 
-const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -2476,16 +2476,102 @@ ipcMain.handle('window:closeCurrent', (event) => {
   return { success: true };
 });
 
-// Print support
+// Print support — load HTML via document.write (data: URLs break on large invoices)
 ipcMain.handle('print:html', async (_, html, options = {}) => {
+  let printWin;
   try {
-    const printWin = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false } });
-    await printWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-    await new Promise(resolve => setTimeout(resolve, 500));
-    await printWin.webContents.print({ silent: options.silent || false, printBackground: true });
-    printWin.close();
+    printWin = new BrowserWindow({
+      show: false,
+      width: 900,
+      height: 1100,
+      parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+      modal: !!(mainWindow && !mainWindow.isDestroyed()),
+      webPreferences: { nodeIntegration: false, contextIsolation: true },
+    });
+    await printWin.loadURL('about:blank');
+    await printWin.webContents.executeJavaScript(
+      `(function () {
+        document.open();
+        document.write(${JSON.stringify(html)});
+        document.close();
+      })()`
+    );
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    // Some Windows drivers only show the dialog when the print window exists (can stay behind main window)
+    printWin.showInactive();
+
+    await printWin.webContents.print({
+      silent: !!options.silent,
+      printBackground: true,
+    });
     return { success: true };
-  } catch (e) { return { success: false, error: e.message }; }
+  } catch (e) {
+    return { success: false, error: e?.message || String(e) };
+  } finally {
+    if (printWin && !printWin.isDestroyed()) {
+      printWin.close();
+    }
+  }
+});
+
+// Export PDF support — create PDF file without showing print dialog
+ipcMain.handle('pdf:saveHtml', async (_, html, options = {}) => {
+  let pdfWin;
+  try {
+    const {
+      defaultPath,
+      filename = 'report.pdf',
+      pageSize = 'A4',
+      landscape = false,
+    } = options || {};
+
+    const result = await dialog.showSaveDialog({
+      title: 'Save PDF',
+      defaultPath: defaultPath || filename,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+    if (result.canceled || !result.filePath) {
+      return { success: false, cancelled: true };
+    }
+
+    pdfWin = new BrowserWindow({
+      show: false,
+      width: 900,
+      height: 1100,
+      parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+      modal: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true },
+    });
+
+    await pdfWin.loadURL('about:blank');
+    await pdfWin.webContents.executeJavaScript(
+      `(function () {
+        document.open();
+        document.write(${JSON.stringify(html)});
+        document.close();
+      })()`
+    );
+
+    // Give layout/fonts a moment to settle
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const data = await pdfWin.webContents.printToPDF({
+      printBackground: true,
+      pageSize,
+      landscape: !!landscape,
+      margins: { marginType: 'printableArea' },
+    });
+
+    await fs.promises.writeFile(result.filePath, data);
+    return { success: true, filePath: result.filePath };
+  } catch (e) {
+    return { success: false, error: e?.message || String(e) };
+  } finally {
+    if (pdfWin && !pdfWin.isDestroyed()) {
+      try { pdfWin.close(); } catch (_) { /* ignore */ }
+    }
+  }
 });
 
 // App controls
