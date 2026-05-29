@@ -240,7 +240,7 @@ export function AdvancedDataGrid({
   const currentDialogCol = customDialogCol ? COLUMNS.find(c => c.key === customDialogCol) : null;
 
   return (
-    <div className="flex flex-col h-full border border-border rounded-lg bg-card overflow-hidden">
+    <div className="flex flex-col h-full border-2 border-black rounded-lg bg-card overflow-hidden">
       {/* Info Bar */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b text-xs">
         <span className="text-muted-foreground">
@@ -263,12 +263,12 @@ export function AdvancedDataGrid({
                 const hasFilter = (simpleFilters[col.key] && simpleFilters[col.key].type !== 'all') || customFilters[col.key];
                 const isSorted = sortColumn === col.key;
                 return (
-                  <th key={col.key} style={{ minWidth: col.minWidth }} className="border-r border-b border-border p-0">
+                  <th key={col.key} style={{ minWidth: col.minWidth }} className="p-0">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
                           className={cn(
-                            "w-full px-2 py-1.5 text-xs font-medium text-left flex items-center justify-between hover:bg-accent",
+                            "w-full px-2 py-1 text-xs font-bold text-left leading-tight flex items-center justify-between hover:bg-accent",
                             hasFilter && "bg-primary/10 text-primary"
                           )}
                         >
@@ -335,7 +335,7 @@ export function AdvancedDataGrid({
                     key={col.key}
                     style={{ minWidth: col.minWidth }}
                     className={cn(
-                      "px-2 py-1.5 text-xs border-r border-border truncate",
+                      "px-2 py-0.5 text-xs font-bold leading-tight truncate",
                       col.type === 'number' && "text-right font-mono"
                     )}
                   >

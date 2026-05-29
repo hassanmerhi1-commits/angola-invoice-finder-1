@@ -315,7 +315,12 @@ export function useProducts(branchId?: string) {
     if (writeGeneration === listGenerationRef.current) {
       setProducts(merged);
     }
-  }, [fetchMergedProductList]);
+    window.dispatchEvent(
+      new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
+        detail: { branchId: resolved.branchId || branchId || 'all' },
+      }),
+    );
+  }, [branchId, fetchMergedProductList]);
 
   const deleteProduct = useCallback(async (productId: string) => {
     ++listGenerationRef.current;

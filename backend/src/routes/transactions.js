@@ -15,6 +15,7 @@ const {
   linkDocuments,
   validatePeriod,
   auditLog,
+  processStockAdjustment,
 } = require('../transactionEngine');
 const { attachUserBranchScope, resolveWarehouseId } = require('../middleware/branchScope');
 const {
@@ -231,6 +232,41 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       await client.query('ROLLBACK');
       res.status(500).json({ error: error.message || 'Failed to record stock movement' });
+    } finally {
+      client.release();
+    }
+  });
+
+  /** Stock adjust entry/exit: movements + weighted cost (IN) + journal — single atomic transaction. */
+  router.post('/stock-adjustment', async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await processStockAdjustment(client, {
+        direction: req.body.direction,
+        warehouseId: req.body.warehouseId ?? req.body.warehouse_id,
+        referenceNumber: req.body.referenceNumber ?? req.body.reference_number,
+        referenceType: req.body.referenceType ?? req.body.reference_type,
+        entryDate: req.body.entryDate ?? req.body.entry_date,
+        notes: req.body.notes,
+        createdBy: req.body.createdBy ?? req.body.created_by ?? req.user?.id,
+        lines: req.body.lines,
+      });
+      await client.query('COMMIT');
+      await broadcastTable('products');
+      await broadcastTable('chart_of_accounts');
+      res.status(201).json(result);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      const msg = error.message || 'Failed to process stock adjustment';
+      const status =
+        msg.includes('insuficiente') ||
+        msg.includes('obrigatório') ||
+        msg.includes('inválido') ||
+        msg.includes('Período')
+          ? 400
+          : 500;
+      res.status(status).json({ error: msg });
     } finally {
       client.release();
     }

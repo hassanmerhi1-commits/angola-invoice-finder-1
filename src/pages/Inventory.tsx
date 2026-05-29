@@ -111,6 +111,8 @@ export default function Inventory() {
   } = useInventoryBranchScope();
   const currentBranch = inventoryBranch;
   const isHeadOffice = isInventoryConsolidated;
+  /** Per-branch qty breakdown — available whenever HQ can switch filials (not only "All branches" scope). */
+  const showDetailedQtyTab = canSwitchBranch;
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   
@@ -165,7 +167,7 @@ export default function Inventory() {
   const loadBranchProducts = useCallback(async () => {
     const branchProducts: Record<string, Product[]> = {};
     const branchList = allBranches.length > 0 ? allBranches : branches;
-    const targets = isHeadOffice ? branchList : (currentBranch ? [currentBranch] : []);
+    const targets = canSwitchBranch ? branchList : (currentBranch ? [currentBranch] : []);
     for (const branch of targets) {
       // Use API first (source of truth), fallback to localStorage
       try {
@@ -185,7 +187,7 @@ export default function Inventory() {
       branchProducts[branch.id] = prods;
     }
     setAllBranchProducts(branchProducts);
-  }, [isHeadOffice, branches, allBranches, currentBranch, mapApiRowToProduct, catalogBranchIds]);
+  }, [canSwitchBranch, branches, allBranches, currentBranch, mapApiRowToProduct, catalogBranchIds]);
   
   useEffect(() => {
     loadBranchProducts();
@@ -326,6 +328,25 @@ export default function Inventory() {
     return rows;
   }, [products, allBranchProducts]);
 
+  const stockEntrySearchProducts = useMemo(() => {
+    if (canSwitchBranch && Object.keys(allBranchProducts).length > 0) {
+      return Object.entries(allBranchProducts).flatMap(([branchId, prods]) =>
+        prods
+          .filter((p) => p.isActive !== false)
+          .map((p) => ({ ...p, branchId: p.branchId || branchId })),
+      );
+    }
+    const branchId = listBranchId || currentBranch?.id || '';
+    return products.map((p) => ({ ...p, branchId: p.branchId || branchId }));
+  }, [canSwitchBranch, allBranchProducts, products, listBranchId, currentBranch?.id]);
+
+  /** Full catalog for exit search (stock checked when selecting a line, not when searching). */
+  const stockExitSearchProducts = useMemo(() => {
+    if (stockEntrySearchProducts.length > 0) return stockEntrySearchProducts;
+    if (flatCatalog.length > 0) return flatCatalog;
+    return products;
+  }, [stockEntrySearchProducts, flatCatalog, products]);
+
   const dialogProduct = useMemo(() => {
     if (!selectedProduct) return null;
     return enrichProductSupplier(selectedProduct, flatCatalog);
@@ -341,10 +362,10 @@ export default function Inventory() {
   const [activeTab, setActiveTab] = useState('lista');
 
   useEffect(() => {
-    if (!isHeadOffice && activeTab === 'qtd-detalhada') {
+    if (!showDetailedQtyTab && activeTab === 'qtd-detalhada') {
       setActiveTab('lista');
     }
-  }, [isHeadOffice, activeTab]);
+  }, [showDetailedQtyTab, activeTab]);
   const [stockListFilter, setStockListFilter] = useState<StockListFilter>('all');
   const [listSearch, setListSearch] = useState('');
   const listSearchRef = useRef<HTMLInputElement>(null);
@@ -603,6 +624,18 @@ export default function Inventory() {
     return 'adjustment';
   };
 
+  const refreshInventoryAfterStockAdjust = useCallback(
+    async (targetWarehouseId: string) => {
+      window.dispatchEvent(
+        new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: targetWarehouseId } }),
+      );
+      await refreshProducts();
+      await loadBranchProducts();
+      await loadStockMovements();
+    },
+    [refreshProducts, loadBranchProducts, loadStockMovements],
+  );
+
   const handleApplyStockEntry = useCallback(
     async (
       items: {
@@ -618,16 +651,27 @@ export default function Inventory() {
         sourceBranchId: string;
         sourceBranchName: string;
         reference: string;
+        entryDate: string;
+        warehouseId: string;
+        branchName: string;
+        currency: string;
+        currencyRate: number;
         notes: string;
       },
     ) => {
-      if (!warehouseId) {
+      const targetWarehouseId = meta.warehouseId || warehouseId;
+      if (!targetWarehouseId) {
         toast.error(t.stockEntryUi.branchRequiredDesc);
         return;
       }
 
       const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
       const noteParts = [
+        meta.entryDate ? `${t.stockEntryUi.entryDate}: ${meta.entryDate}` : null,
+        meta.branchName ? `${t.stockEntryUi.branch}: ${meta.branchName}` : null,
+        meta.currency && meta.currency !== 'KZ'
+          ? `${t.stockEntryUi.currency}: ${meta.currency} · ${t.stockEntryUi.exchangeRate}: ${meta.currencyRate}`
+          : null,
         meta.reason === 'transfer_in' && meta.sourceBranchName
           ? `${t.stockEntryUi.reasonTransferIn}: ${meta.sourceBranchName}`
           : null,
@@ -642,29 +686,14 @@ export default function Inventory() {
           quantity: item.quantity,
           unitCost: item.effectiveCost ?? item.cost,
         })),
-        warehouseId,
+        warehouseId: targetWarehouseId,
         movementType: 'IN',
         referenceType: entryReferenceType(meta.reason),
         referenceNumber: meta.reference,
+        entryDate: meta.entryDate,
         notes: noteParts.join(' — ') || meta.reference,
         createdBy: currentUser?.id || currentUser?.name || 'system',
         productsById,
-        updateProductCost: async (productId) => {
-          const product = productsById.get(productId);
-          const item = items.find((i) => i.productId === productId);
-          if (!product || !item) return;
-          const unit = item.effectiveCost ?? item.cost;
-          const prevStock = product.stock ?? 0;
-          const prevValue = prevStock * (product.cost || 0);
-          const addValue = item.quantity * unit;
-          const newStock = prevStock + item.quantity;
-          const newCost = newStock > 0 ? (prevValue + addValue) / newStock : unit;
-          await updateProduct({
-            ...product,
-            cost: newCost,
-            updatedAt: new Date().toISOString(),
-          });
-        },
         fallbackUpdateProduct: updateProduct,
       });
 
@@ -685,14 +714,19 @@ export default function Inventory() {
         });
       }
 
-      await refreshProducts();
+      await refreshInventoryAfterStockAdjust(targetWarehouseId);
       if (result.errors.length > 0) {
         toast.error(result.errors.slice(0, 3).join('; '));
       } else if (result.applied > 0) {
-        toast.success(t.stockEntryUi.productsAddedDesc.replace('{count}', String(result.applied)));
+        const msg = t.stockEntryUi.productsAddedDesc.replace('{count}', String(result.applied));
+        toast.success(
+          result.journalEntryId ? `${msg} (${t.stockEntryUi.journalPosted})` : msg,
+        );
+      } else {
+        toast.error(t.stockEntryUi.saveFailed);
       }
     },
-    [warehouseId, productsById, updateProduct, refreshProducts, t],
+    [warehouseId, productsById, updateProduct, refreshInventoryAfterStockAdjust, t],
   );
 
   const handleApplyStockExit = useCallback(
@@ -704,15 +738,35 @@ export default function Inventory() {
         quantity: number;
         cost: number;
       }[],
-      meta: { reasonCode: StockExitReasonCode; reasonLabel: string; notes: string; reference: string },
+      meta: {
+        reasonCode: StockExitReasonCode;
+        reasonLabel: string;
+        notes: string;
+        reference: string;
+        exitDate: string;
+        warehouseId: string;
+        branchName: string;
+        currency: string;
+        currencyRate: number;
+      },
     ) => {
-      if (!warehouseId) {
+      const targetWarehouseId = meta.warehouseId || warehouseId;
+      if (!targetWarehouseId) {
         toast.error(t.stockExitUi.branchRequiredDesc);
         return;
       }
 
       const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
-      const notes = [meta.reasonLabel, meta.notes].filter(Boolean).join(': ');
+      const noteParts = [
+        meta.exitDate ? `${t.stockExitUi.exitDate}: ${meta.exitDate}` : null,
+        meta.branchName ? `${t.stockExitUi.branch}: ${meta.branchName}` : null,
+        meta.currency && meta.currency !== 'KZ'
+          ? `${t.stockExitUi.currency}: ${meta.currency} · ${t.stockExitUi.exchangeRate}: ${meta.currencyRate}`
+          : null,
+        meta.reasonLabel,
+        meta.notes,
+      ].filter(Boolean);
+      const notes = noteParts.join(' — ');
 
       const result = await applyStockAdjustmentLines({
         lines: items.map((item) => ({
@@ -722,10 +776,11 @@ export default function Inventory() {
           quantity: item.quantity,
           unitCost: item.cost,
         })),
-        warehouseId,
+        warehouseId: targetWarehouseId,
         movementType: 'OUT',
-        referenceType: exitReferenceType(meta.reasonCode),
+        referenceType: meta.reasonCode,
         referenceNumber: meta.reference,
+        entryDate: meta.exitDate,
         notes,
         createdBy: currentUser?.id || currentUser?.name || 'system',
         productsById,
@@ -755,14 +810,19 @@ export default function Inventory() {
         });
       }
 
-      await refreshProducts();
+      await refreshInventoryAfterStockAdjust(targetWarehouseId);
       if (result.errors.length > 0) {
         toast.error(result.errors.slice(0, 3).join('; '));
       } else if (result.applied > 0) {
-        toast.success(t.stockExitUi.productsRemovedDesc.replace('{count}', String(result.applied)));
+        const msg = t.stockExitUi.productsRemovedDesc.replace('{count}', String(result.applied));
+        toast.success(
+          result.journalEntryId ? `${msg} (${t.stockExitUi.journalPosted})` : msg,
+        );
+      } else {
+        toast.error(t.stockExitUi.saveFailed);
       }
     },
-    [warehouseId, productsById, updateProduct, refreshProducts, t],
+    [warehouseId, productsById, updateProduct, refreshInventoryAfterStockAdjust, t],
   );
 
   // Get existing SKUs for duplicate detection
@@ -1046,7 +1106,7 @@ export default function Inventory() {
           <TabsTrigger value="mes" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
             {t.inventoryPageUi.tabs.month}
           </TabsTrigger>
-          {isHeadOffice && (
+          {showDetailedQtyTab && (
             <TabsTrigger value="qtd-detalhada" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
               {t.inventoryPageUi.tabs.detailedQty}
             </TabsTrigger>
@@ -1198,7 +1258,7 @@ export default function Inventory() {
           />
         </TabsContent>
 
-        {isHeadOffice && (
+        {showDetailedQtyTab && (
           <TabsContent value="qtd-detalhada" className={tabPanelClass}>
             <BranchStockDetail
               selectedProduct={selectedProduct}
@@ -1382,6 +1442,7 @@ export default function Inventory() {
         open={stockEntryDialogOpen}
         onOpenChange={setStockEntryDialogOpen}
         products={products}
+        searchProducts={stockEntrySearchProducts}
         currentBranch={currentBranch}
         warehouseId={warehouseId}
         initialProduct={selectedProduct}
@@ -1393,6 +1454,7 @@ export default function Inventory() {
         open={stockExitDialogOpen}
         onOpenChange={setStockExitDialogOpen}
         products={products}
+        searchProducts={stockExitSearchProducts}
         currentBranch={currentBranch}
         warehouseId={warehouseId}
         initialProduct={selectedProduct}

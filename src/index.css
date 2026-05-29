@@ -116,6 +116,21 @@
   }
 }
 
+@layer components {
+  /* Thick grid borders for all in-app tables (shadcn Table + native <table>). */
+  #root table:not([data-plain-table="true"]) {
+    border-collapse: collapse;
+  }
+
+  #root table:not([data-plain-table="true"]) th,
+  #root table:not([data-plain-table="true"]) td {
+    border: 2px solid #000;
+    font-weight: 700;
+    padding: 0.25rem 0.5rem;
+    line-height: 1.2;
+  }
+}
+
 @layer utilities {
   .glass {
     @apply bg-card/80 backdrop-blur-xl border border-border/50;

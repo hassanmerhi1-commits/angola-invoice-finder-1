@@ -1,7 +1,25 @@
 import { api } from '@/lib/api/client';
-import { isDemoMode } from '@/lib/api/config';
-import { saveStockMovement } from '@/lib/storage';
+import { PRODUCTS_CHANGED_EVENT, saveStockMovement } from '@/lib/storage';
 import type { Product, StockMovement } from '@/types/erp';
+
+function notifyProductsChanged(warehouseId: string) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: warehouseId } }),
+  );
+}
+
+function isStockAdjustmentEndpointMissing(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes('404')
+    || m.includes('not found')
+    || m.includes('stock-adjustment')
+    || m.includes('cannot post')
+    || m.includes('failed to fetch')
+    || m.includes('network error')
+  );
+}
 
 export type StockAdjustMovementType = 'IN' | 'OUT';
 
@@ -19,11 +37,11 @@ export interface ApplyStockAdjustParams {
   movementType: StockAdjustMovementType;
   referenceType: string;
   referenceNumber: string;
+  entryDate?: string;
   notes: string;
   createdBy?: string;
-  /** After IN movement — update weighted average cost on the product row. */
+  /** @deprecated WAC is applied on the server for IN adjustments. */
   updateProductCost?: (productId: string) => Promise<void>;
-  /** Legacy fallback when API is unavailable. */
   fallbackUpdateProduct?: (product: Product) => Promise<void>;
   productsById?: Map<string, Product>;
 }
@@ -31,15 +49,9 @@ export interface ApplyStockAdjustParams {
 export interface ApplyStockAdjustResult {
   applied: number;
   errors: string[];
-}
-
-function mapReasonToReferenceType(reason: string): string {
-  const r = reason.toLowerCase();
-  if (r.includes('transfer') || r === 'transfer_in') return 'transfer';
-  if (r.includes('purchase') || r.includes('compra')) return 'purchase';
-  if (r.includes('damage') || r.includes('dano') || r.includes('avaria')) return 'damage';
-  if (r.includes('expir') || r.includes('validade')) return 'damage';
-  return 'adjustment';
+  documentId?: string;
+  journalEntryId?: string | null;
+  totalValue?: number;
 }
 
 export async function applyStockAdjustmentLines(
@@ -51,47 +63,98 @@ export async function applyStockAdjustmentLines(
     movementType,
     referenceType,
     referenceNumber,
+    entryDate,
     notes,
     createdBy,
-    updateProductCost,
     fallbackUpdateProduct,
     productsById,
   } = params;
 
-  const refType = referenceType || mapReasonToReferenceType(notes);
-  const errors: string[] = [];
-  let applied = 0;
+  const validLines = lines.filter((l) => l.productId && l.quantity > 0);
+  if (validLines.length === 0) {
+    return { applied: 0, errors: [] };
+  }
 
-  for (const line of lines) {
-    if (!line.productId || line.quantity <= 0) continue;
-    const product = productsById?.get(line.productId);
+  try {
+    const result = await api.transactions.stockAdjustment({
+      direction: movementType,
+      warehouseId,
+      referenceNumber,
+      referenceType,
+      entryDate,
+      notes,
+      createdBy: createdBy || 'system',
+      lines: validLines.map((l) => ({
+        productId: l.productId,
+        quantity: l.quantity,
+        unitCost: l.unitCost ?? productsById?.get(l.productId)?.cost ?? 0,
+      })),
+    });
 
-    try {
-      const result = await api.transactions.createStockMovement({
-        productId: line.productId,
-        warehouseId,
-        movementType,
-        quantity: line.quantity,
-        unitCost: line.unitCost ?? product?.cost ?? 0,
-        referenceType: refType,
-        referenceNumber,
-        notes,
-        createdBy: createdBy || 'system',
-      });
+    if (result.error) {
+      throw new Error(result.error);
+    }
 
-      if (result.error) {
-        throw new Error(result.error);
+    const data = result.data;
+    const movementCount = data?.movementIds?.length ?? 0;
+    if (movementCount === 0) {
+      throw new Error('Stock adjustment returned no movements');
+    }
+    notifyProductsChanged(warehouseId);
+    return {
+      applied: movementCount,
+      errors: [],
+      documentId: data?.documentId,
+      journalEntryId: data?.journalEntryId,
+      totalValue: data?.totalValue,
+    };
+  } catch (apiErr) {
+    const message = apiErr instanceof Error ? apiErr.message : String(apiErr);
+
+    if (isStockAdjustmentEndpointMissing(message)) {
+      const legacyIds: string[] = [];
+      const legacyErrors: string[] = [];
+      for (const line of validLines) {
+        const unitCost = line.unitCost ?? productsById?.get(line.productId)?.cost ?? 0;
+        const legacy = await api.transactions.createStockMovement({
+          productId: line.productId,
+          warehouseId,
+          movementType,
+          quantity: line.quantity,
+          unitCost,
+          referenceType,
+          referenceNumber,
+          notes,
+          createdBy: createdBy || 'system',
+        });
+        if (legacy.error) {
+          legacyErrors.push(`${line.sku}: ${legacy.error}`);
+        } else if (legacy.data?.id) {
+          legacyIds.push(legacy.data.id);
+        }
       }
-
-      if (movementType === 'IN' && updateProductCost) {
-        await updateProductCost(line.productId);
+      if (legacyIds.length > 0) {
+        notifyProductsChanged(warehouseId);
+        return {
+          applied: legacyIds.length,
+          errors: legacyErrors,
+          documentId: referenceNumber,
+          journalEntryId: null,
+        };
       }
+      if (legacyErrors.length > 0) {
+        return { applied: 0, errors: legacyErrors };
+      }
+    }
 
-      applied += 1;
-    } catch (apiErr) {
-      const message = apiErr instanceof Error ? apiErr.message : String(apiErr);
+    if (fallbackUpdateProduct && productsById) {
+      const errors: string[] = [];
+      let applied = 0;
+      const refType = referenceType || 'adjustment';
 
-      if (!isDemoMode() && fallbackUpdateProduct && product) {
+      for (const line of validLines) {
+        const product = productsById.get(line.productId);
+        if (!product) continue;
         try {
           const prevStock = product.stock ?? 0;
           const delta = movementType === 'IN' ? line.quantity : -line.quantity;
@@ -104,8 +167,7 @@ export async function applyStockAdjustmentLines(
           if (movementType === 'IN' && line.unitCost != null && line.unitCost > 0) {
             const prevValue = prevStock * (product.cost || 0);
             const addValue = line.quantity * line.unitCost;
-            const total = newStock > 0 ? (prevValue + addValue) / newStock : line.unitCost;
-            next.cost = total;
+            next.cost = newStock > 0 ? (prevValue + addValue) / newStock : line.unitCost;
           }
           await fallbackUpdateProduct(next);
 
@@ -117,7 +179,7 @@ export async function applyStockAdjustmentLines(
             branchId: warehouseId,
             type: movementType,
             quantity: line.quantity,
-            reason: refType,
+            reason: refType as StockMovement['reason'],
             createdBy: createdBy || 'system',
             referenceNumber,
             notes,
@@ -125,20 +187,27 @@ export async function applyStockAdjustmentLines(
           };
           await saveStockMovement(movement);
           applied += 1;
-          continue;
         } catch (fallbackErr) {
           errors.push(
             `${line.sku}: ${message}; fallback: ${
               fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
             }`,
           );
-          continue;
         }
       }
 
-      errors.push(`${line.sku}: ${message}`);
+      if (applied > 0) {
+        notifyProductsChanged(warehouseId);
+        return {
+          applied,
+          errors,
+        };
+      }
     }
-  }
 
-  return { applied, errors };
+    return {
+      applied: 0,
+      errors: validLines.map((l) => `${l.sku}: ${message}`),
+    };
+  }
 }

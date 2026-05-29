@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -8,11 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -20,31 +17,49 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   PackagePlus,
-  Search,
   Plus,
   Trash2,
   Save,
-  Building2,
-  Truck,
   AlertCircle,
   ClipboardList,
   ShoppingCart,
   ArrowRightLeft,
   Package,
   RotateCcw,
-  ChevronDown,
   Loader2,
   X,
   Hash,
+  StickyNote,
 } from 'lucide-react';
 import { Product, Branch } from '@/types/erp';
 import { useBranches } from '@/hooks/useERP';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
+import { api } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
+import {
+  DEFAULT_LINE_ROWS,
+  PRODUCT_LINE_SUGGESTION_LIMIT,
+  ROWS_APPEND_BATCH,
+  ROWS_NEAR_END_BUFFER,
+  ensureRowsForIndex,
+  filterProductsForSearch,
+  newLineRowId,
+  sortProductSearchResults,
+} from './productLineSearch';
+
+const ENTRY_CURRENCIES = ['KZ', 'USD', 'EUR'] as const;
 
 export type StockEntryReason =
   | 'adjustment'
@@ -61,14 +76,25 @@ export interface EntryItem {
   quantity: number;
   cost: number;
   currentStock: number;
+  branchId: string;
+  branchName: string;
   freightAllocation?: number;
   effectiveCost?: number;
+}
+
+interface EntryLineRow {
+  rowId: string;
+  productId: string | null;
+  search: string;
+  quantity: number;
+  cost: number;
 }
 
 interface StockEntryDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   products: Product[];
+  searchProducts?: Product[];
   currentBranch: Branch | null;
   warehouseId: string | null;
   initialProduct?: Product | null;
@@ -79,6 +105,11 @@ interface StockEntryDialogProps {
       sourceBranchId: string;
       sourceBranchName: string;
       reference: string;
+      entryDate: string;
+      warehouseId: string;
+      branchName: string;
+      currency: string;
+      currencyRate: number;
       notes: string;
     },
   ) => void | Promise<void>;
@@ -92,25 +123,39 @@ const REASON_ICONS: Record<StockEntryReason, typeof PackagePlus> = {
   correction: RotateCcw,
 };
 
+const todayIsoDate = () => format(new Date(), 'yyyy-MM-dd');
+
+const createEmptyLine = (): EntryLineRow => ({
+  rowId: newLineRowId(),
+  productId: null,
+  search: '',
+  quantity: 1,
+  cost: 0,
+});
+
+const createInitialLines = (count = DEFAULT_LINE_ROWS): EntryLineRow[] =>
+  Array.from({ length: count }, () => createEmptyLine());
+
 const emptyForm = () => ({
-  searchTerm: '',
-  searchFocused: false,
   entryReason: 'adjustment' as StockEntryReason,
+  entryDate: todayIsoDate(),
+  entryBranchId: '',
+  currency: 'KZ',
+  currencyRate: 1,
   sourceBranch: '',
   reference: '',
   notes: '',
-  items: [] as EntryItem[],
-  newItemQty: {} as Record<string, number>,
+  lines: createInitialLines(),
   freightCost: 0,
   otherCosts: 0,
   otherCostsDescription: '',
-  freightOpen: false,
 });
 
 export function StockEntryDialog({
   open,
   onOpenChange,
   products,
+  searchProducts,
   currentBranch,
   warehouseId,
   initialProduct,
@@ -121,15 +166,112 @@ export function StockEntryDialog({
   const { branches } = useBranches();
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [pickerRowId, setPickerRowId] = useState<string | null>(null);
+  const [pickerHighlightIndex, setPickerHighlightIndex] = useState(0);
+  const dialogContentRef = useRef<HTMLDivElement | null>(null);
+  const productInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const qtyRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const linesRef = useRef(form.lines);
+  linesRef.current = form.lines;
+  const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
+
+  const catalogProducts = useMemo(() => {
+    if (searchProducts && searchProducts.length > 0) return searchProducts;
+    return products;
+  }, [searchProducts, products]);
+
+  const searchableProducts = useMemo(
+    () => catalogProducts.filter((p) => p.isActive !== false),
+    [catalogProducts],
+  );
+
+  const productsById = useMemo(
+    () => new Map(catalogProducts.map((p) => [p.id, p])),
+    [catalogProducts],
+  );
+
+  const branchNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const b of branches) {
+      if (b.id) map.set(b.id, b.name);
+    }
+    return map;
+  }, [branches]);
 
   const resetForm = useCallback(() => {
     setForm(emptyForm());
     setSubmitting(false);
+    setNotesOpen(false);
+    setPickerRowId(null);
+    setPickerHighlightIndex(0);
+    setPickerAnchorRect(null);
+  }, []);
+
+  const focusProductRow = useCallback((rowIndex: number) => {
+    setForm((prev) => {
+      const nextLines = ensureRowsForIndex(prev.lines, rowIndex, createEmptyLine);
+      const row = nextLines[rowIndex];
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (row) productInputRefs.current[row.rowId]?.focus();
+        });
+      });
+      if (nextLines.length === prev.lines.length) return prev;
+      return { ...prev, lines: nextLines };
+    });
+  }, []);
+
+  const focusQtyLine = useCallback((rowId: string) => {
+    requestAnimationFrame(() => {
+      const el = qtyRefs.current[rowId];
+      el?.focus();
+      el?.select();
+    });
+  }, []);
+
+  const syncPickerAnchor = useCallback((rowId: string | null) => {
+    if (!rowId) {
+      setPickerAnchorRect(null);
+      return;
+    }
+    const el = productInputRefs.current[rowId];
+    setPickerAnchorRect(el ? el.getBoundingClientRect() : null);
   }, []);
 
   useEffect(() => {
-    if (!open) resetForm();
-  }, [open, resetForm]);
+    if (!open) {
+      resetForm();
+      return;
+    }
+    const lines = createInitialLines();
+    if (initialProduct) {
+      lines[0] = {
+        rowId: lines[0].rowId,
+        productId: initialProduct.id,
+        search: '',
+        quantity: 1,
+        cost: initialProduct.cost || 0,
+      };
+    }
+    setForm({
+      ...emptyForm(),
+      entryBranchId: warehouseId || currentBranch?.id || '',
+      lines,
+    });
+    setPickerRowId(null);
+    setPickerHighlightIndex(0);
+    setPickerAnchorRect(null);
+    const firstRowId = lines[0].rowId;
+    const timer = window.setTimeout(() => {
+      if (initialProduct?.id) {
+        focusQtyLine(firstRowId);
+      } else {
+        productInputRefs.current[firstRowId]?.focus();
+      }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [open, warehouseId, currentBranch?.id, initialProduct?.id, resetForm, focusQtyLine]);
 
   const sourceBranches = useMemo(
     () => branches.filter((b) => b.id !== currentBranch?.id),
@@ -150,90 +292,268 @@ export function StockEntryDialog({
     [language, t.stockEntryUi],
   );
 
-  const filteredProducts = useMemo(() => {
-    const active = products.filter((p) => p.isActive !== false);
-    const inList = new Set(form.items.map((i) => i.productId));
-    const pool = active.filter((p) => !inList.has(p.id));
-    if (!form.searchTerm.trim()) {
-      return pool.slice(0, 12);
-    }
-    const term = form.searchTerm.toLowerCase();
-    return pool
-      .filter(
-        (p) =>
-          p.sku.toLowerCase().includes(term) ||
-          p.name.toLowerCase().includes(term) ||
-          p.barcode?.toLowerCase().includes(term),
-      )
-      .slice(0, 12);
-  }, [products, form.searchTerm, form.items]);
+  const selectedBranch = useMemo(
+    () => branches.find((b) => b.id === form.entryBranchId) ?? currentBranch,
+    [branches, form.entryBranchId, currentBranch],
+  );
+
+  const resolveBranchName = useCallback(
+    (branchId?: string | null) => {
+      const id = branchId || form.entryBranchId || currentBranch?.id;
+      if (!id) return t.stockEntryUi.thisBranch;
+      return branchNameById.get(id) || id;
+    },
+    [branchNameById, form.entryBranchId, currentBranch?.id, t.stockEntryUi.thisBranch],
+  );
+
+  const effectiveWarehouseId = form.entryBranchId || warehouseId;
+  const entryBranchId = form.entryBranchId || warehouseId || currentBranch?.id || '';
 
   const entryNumber = useMemo(() => {
     const date = format(new Date(), 'yyyyMMdd');
     const seq = Math.floor(Math.random() * 1000)
       .toString()
       .padStart(3, '0');
-    return `ENT-${currentBranch?.code || 'XX'}-${date}-${seq}`;
-  }, [currentBranch, open]);
+    return `ENT-${selectedBranch?.code || 'XX'}-${date}-${seq}`;
+  }, [selectedBranch, open]);
 
-  const handleAddItem = (product: Product) => {
-    const qty = form.newItemQty[product.id] || 1;
-    const existing = form.items.find((i) => i.productId === product.id);
-
-    setForm((prev) => {
-      const nextItems = existing
-        ? prev.items.map((i) =>
-            i.productId === product.id ? { ...i, quantity: i.quantity + qty } : i,
-          )
-        : [
-            ...prev.items,
-            {
-              productId: product.id,
-              sku: product.sku,
-              name: product.name,
-              unit: product.unit,
-              quantity: qty,
-              cost: product.cost || 0,
-              currentStock: product.stock ?? 0,
-            },
-          ];
-      return {
-        ...prev,
-        items: nextItems,
-        newItemQty: { ...prev.newItemQty, [product.id]: 1 },
-        searchTerm: '',
-        searchFocused: false,
-      };
-    });
-  };
-
-  const handleRemoveItem = (productId: string) => {
-    setForm((prev) => ({ ...prev, items: prev.items.filter((i) => i.productId !== productId) }));
-  };
-
-  const handleUpdateQuantity = (productId: string, quantity: number) => {
-    if (quantity <= 0) {
-      handleRemoveItem(productId);
+  const loadExchangeRate = useCallback(async (currency: string) => {
+    if (currency === 'KZ') {
+      setForm((p) => ({ ...p, currencyRate: 1 }));
       return;
     }
+    try {
+      const res = await api.exchangeRates.latest();
+      const rates = (res.data as { from_currency?: string; fromCurrency?: string; to_currency?: string; toCurrency?: string; rate: number | string }[]) || [];
+      const match = rates.find(
+        (r) =>
+          (r.from_currency || r.fromCurrency) === currency &&
+          (r.to_currency || r.toCurrency) === 'AOA',
+      );
+      if (match) {
+        const rate = parseFloat(String(match.rate));
+        if (rate > 0) setForm((p) => ({ ...p, currencyRate: rate }));
+      }
+    } catch {
+      /* keep manual rate */
+    }
+  }, []);
+
+  const resolveProductForEntry = useCallback(
+    (product: Product): Product => {
+      const branchId = entryBranchId;
+      const skuNorm = (product.sku || '').trim().toLowerCase();
+      if (!branchId || !skuNorm) return product;
+      const forBranch = searchableProducts.find(
+        (p) =>
+          (p.sku || '').trim().toLowerCase() === skuNorm && (p.branchId || '') === branchId,
+      );
+      return forBranch ?? product;
+    },
+    [searchableProducts, entryBranchId],
+  );
+
+  const getSuggestionsForRow = useCallback(
+    (rowId: string, search: string) => {
+      if (!search.trim()) return [];
+      const usedElsewhere = new Set(
+        form.lines
+          .filter((l) => l.rowId !== rowId && l.productId)
+          .map((l) => l.productId as string),
+      );
+      return filterProductsForSearch(searchableProducts, search, usedElsewhere, entryBranchId)
+        .sort((a, b) => sortProductSearchResults(a, b, search, entryBranchId))
+        .slice(0, PRODUCT_LINE_SUGGESTION_LIMIT);
+    },
+    [searchableProducts, form.lines, entryBranchId],
+  );
+
+  const activePickerLine = useMemo(
+    () => (pickerRowId ? form.lines.find((l) => l.rowId === pickerRowId) : undefined),
+    [pickerRowId, form.lines],
+  );
+
+  const activePickerSuggestions = useMemo(() => {
+    if (!activePickerLine || activePickerLine.productId) return [];
+    return getSuggestionsForRow(activePickerLine.rowId, activePickerLine.search);
+  }, [activePickerLine, getSuggestionsForRow]);
+
+  const showPickerDropdown = Boolean(
+    pickerRowId &&
+      activePickerLine &&
+      !activePickerLine.productId &&
+      activePickerLine.search.trim().length > 0,
+  );
+
+  useLayoutEffect(() => {
+    if (!showPickerDropdown || !pickerRowId) {
+      setPickerAnchorRect(null);
+      return;
+    }
+    syncPickerAnchor(pickerRowId);
+  }, [showPickerDropdown, pickerRowId, activePickerLine?.search, syncPickerAnchor]);
+
+  useEffect(() => {
+    if (!showPickerDropdown || !pickerRowId) return;
+    const onReposition = () => syncPickerAnchor(pickerRowId);
+    window.addEventListener('scroll', onReposition, true);
+    window.addEventListener('resize', onReposition);
+    return () => {
+      window.removeEventListener('scroll', onReposition, true);
+      window.removeEventListener('resize', onReposition);
+    };
+  }, [showPickerDropdown, pickerRowId, syncPickerAnchor]);
+
+  const fulfilledItems = useMemo((): EntryItem[] => {
+    const items: EntryItem[] = [];
+    for (const line of form.lines) {
+      if (!line.productId) continue;
+      const product = productsById.get(line.productId);
+      if (!product) continue;
+      const branchId = product.branchId || form.entryBranchId || currentBranch?.id || '';
+      items.push({
+        productId: product.id,
+        sku: product.sku,
+        name: product.name,
+        unit: product.unit,
+        quantity: Math.max(1, line.quantity),
+        cost: Math.max(0, line.cost),
+        currentStock: product.stock ?? 0,
+        branchId,
+        branchName: resolveBranchName(branchId),
+      });
+    }
+    return items;
+  }, [form.lines, form.entryBranchId, productsById, currentBranch?.id, resolveBranchName]);
+
+  const selectProductOnRow = useCallback(
+    (rowId: string, product: Product) => {
+      const resolved = resolveProductForEntry(product);
+      setForm((prev) => {
+        const mapped = prev.lines.map((l) =>
+          l.rowId === rowId
+            ? {
+                ...l,
+                productId: resolved.id,
+                search: '',
+                quantity: Math.max(1, l.quantity),
+                cost: l.cost > 0 ? l.cost : resolved.cost || 0,
+              }
+            : l,
+        );
+        const rowIndex = mapped.findIndex((l) => l.rowId === rowId);
+        return {
+          ...prev,
+          lines: ensureRowsForIndex(mapped, rowIndex + 1, createEmptyLine),
+        };
+      });
+      setPickerRowId(null);
+      setPickerHighlightIndex(0);
+      setPickerAnchorRect(null);
+      focusQtyLine(rowId);
+    },
+    [focusQtyLine, resolveProductForEntry],
+  );
+
+  const updateLineSearch = (rowId: string, search: string) => {
     setForm((prev) => ({
       ...prev,
-      items: prev.items.map((i) => (i.productId === productId ? { ...i, quantity } : i)),
+      lines: prev.lines.map((l) => (l.rowId === rowId ? { ...l, search } : l)),
     }));
+    setPickerRowId(rowId);
+    setPickerHighlightIndex(0);
   };
 
-  const handleUpdateCost = (productId: string, cost: number) => {
+  const clearProductOnRow = (rowId: string) => {
     setForm((prev) => ({
       ...prev,
-      items: prev.items.map((i) =>
-        i.productId === productId ? { ...i, cost: Math.max(0, cost) } : i,
+      lines: prev.lines.map((l) =>
+        l.rowId === rowId ? { ...l, productId: null, search: '', cost: 0 } : l,
+      ),
+    }));
+    setPickerRowId(rowId);
+    requestAnimationFrame(() => productInputRefs.current[rowId]?.focus());
+  };
+
+  const updateLineQuantity = (rowId: string, quantity: number) => {
+    setForm((prev) => ({
+      ...prev,
+      lines: prev.lines.map((l) =>
+        l.rowId === rowId ? { ...l, quantity: Math.max(1, quantity) } : l,
       ),
     }));
   };
 
+  const updateLineCost = (rowId: string, cost: number) => {
+    setForm((prev) => ({
+      ...prev,
+      lines: prev.lines.map((l) =>
+        l.rowId === rowId ? { ...l, cost: Math.max(0, cost) } : l,
+      ),
+    }));
+  };
+
+  const addRows = () => {
+    setForm((prev) => ({
+      ...prev,
+      lines: [...prev.lines, ...createInitialLines(ROWS_APPEND_BATCH)],
+    }));
+  };
+
+  const handleProductKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    rowIndex: number,
+    line: EntryLineRow,
+  ) => {
+    const suggestions =
+      pickerRowId === line.rowId ? getSuggestionsForRow(line.rowId, line.search) : [];
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (rowIndex > 0) focusProductRow(rowIndex - 1);
+      } else {
+        focusProductRow(rowIndex + 1);
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown' && suggestions.length > 0) {
+      e.preventDefault();
+      setPickerHighlightIndex((i) => Math.min(i + 1, suggestions.length - 1));
+      return;
+    }
+    if (e.key === 'ArrowUp' && suggestions.length > 0) {
+      e.preventDefault();
+      setPickerHighlightIndex((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (suggestions.length > 0) {
+        const pick = suggestions[pickerHighlightIndex] ?? suggestions[0];
+        if (pick) selectProductOnRow(line.rowId, pick);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      setPickerRowId(null);
+    }
+  };
+
+  const handleQtyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, rowIndex: number) => {
+    if (e.key === 'Tab' && !e.shiftKey) {
+      e.preventDefault();
+      focusProductRow(rowIndex + 1);
+    } else if (e.key === 'Tab' && e.shiftKey && rowIndex > 0) {
+      e.preventDefault();
+      focusProductRow(rowIndex - 1);
+    }
+  };
+
   const itemsValue = useMemo(
-    () => form.items.reduce((sum, i) => sum + i.quantity * i.cost, 0),
-    [form.items],
+    () => fulfilledItems.reduce((sum, i) => sum + i.quantity * i.cost, 0),
+    [fulfilledItems],
   );
 
   const totalLandingCosts = form.freightCost + form.otherCosts;
@@ -241,25 +561,25 @@ export function StockEntryDialog({
   const freightAllocations = useMemo(() => {
     if (itemsValue === 0 || totalLandingCosts === 0) return {};
     const allocations: Record<string, number> = {};
-    form.items.forEach((item) => {
+    fulfilledItems.forEach((item) => {
       const itemValue = item.quantity * item.cost;
       const proportion = itemValue / itemsValue;
       allocations[item.productId] = (totalLandingCosts * proportion) / item.quantity;
     });
     return allocations;
-  }, [form.items, itemsValue, totalLandingCosts]);
+  }, [fulfilledItems, itemsValue, totalLandingCosts]);
 
   const totals = useMemo(
     () => ({
-      items: form.items.length,
-      units: form.items.reduce((sum, i) => sum + i.quantity, 0),
+      items: fulfilledItems.length,
+      units: fulfilledItems.reduce((sum, i) => sum + i.quantity, 0),
       value: itemsValue + totalLandingCosts,
     }),
-    [form.items, itemsValue, totalLandingCosts],
+    [fulfilledItems, itemsValue, totalLandingCosts],
   );
 
   const needsSourceBranch = form.entryReason === 'transfer_in';
-  const showPicker = form.searchFocused || form.searchTerm.trim().length > 0;
+  const hasNotes = form.notes.trim().length > 0;
 
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat(language === 'pt' ? 'pt-AO' : 'en-GB', {
@@ -268,8 +588,16 @@ export function StockEntryDialog({
       maximumFractionDigits: 0,
     }).format(value);
 
+  const buildNotes = () => {
+    const parts = [form.notes.trim()];
+    if (form.otherCostsDescription.trim() && form.otherCosts > 0) {
+      parts.push(form.otherCostsDescription.trim());
+    }
+    return parts.filter(Boolean).join(' — ');
+  };
+
   const handleApply = async () => {
-    if (!warehouseId) {
+    if (!effectiveWarehouseId) {
       toast({
         title: t.stockEntryUi.branchRequiredTitle,
         description: t.stockEntryUi.branchRequiredDesc,
@@ -278,7 +606,7 @@ export function StockEntryDialog({
       return;
     }
 
-    if (form.items.length === 0) {
+    if (fulfilledItems.length === 0) {
       toast({
         title: t.stockEntryUi.noItemsTitle,
         description: t.stockEntryUi.addAtLeastOne,
@@ -299,7 +627,7 @@ export function StockEntryDialog({
     const sourceBranchName =
       branches.find((b) => b.id === form.sourceBranch)?.name || t.stockEntryUi.notApplicable;
 
-    const itemsWithFreight = form.items.map((item) => ({
+    const itemsWithFreight = fulfilledItems.map((item) => ({
       ...item,
       freightAllocation: freightAllocations[item.productId] || 0,
       effectiveCost: item.cost + (freightAllocations[item.productId] || 0),
@@ -312,7 +640,12 @@ export function StockEntryDialog({
         sourceBranchId: form.sourceBranch,
         sourceBranchName,
         reference: form.reference || entryNumber,
-        notes: form.notes,
+        entryDate: form.entryDate,
+        warehouseId: effectiveWarehouseId,
+        branchName: selectedBranch?.name || t.stockEntryUi.thisBranch,
+        currency: form.currency,
+        currencyRate: form.currencyRate,
+        notes: buildNotes(),
       });
       resetForm();
       onOpenChange(false);
@@ -321,422 +654,399 @@ export function StockEntryDialog({
     }
   };
 
-  const branchLabel = currentBranch?.name || t.stockEntryUi.thisBranch;
+  const branchLabel = selectedBranch?.name || t.stockEntryUi.thisBranch;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl w-[95vw] h-[min(92vh,860px)] p-0 gap-0 overflow-hidden flex flex-col [&>button]:hidden">
-        {/* Header */}
-        <div className="shrink-0 border-b bg-gradient-to-r from-emerald-500/10 via-background to-background px-5 py-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-3 min-w-0">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">
-                <PackagePlus className="h-6 w-6" />
+      <DialogContent
+        ref={dialogContentRef}
+        className={cn(
+          'fixed inset-0 left-0 top-0 z-50 flex h-screen w-screen max-w-none translate-x-0 translate-y-0',
+          'flex-col gap-0 overflow-hidden rounded-none border-0 p-0',
+          'data-[state=open]:slide-in-from-left-0 data-[state=open]:slide-in-from-top-0',
+          'data-[state=closed]:slide-out-to-left-0 data-[state=closed]:slide-out-to-top-0',
+          '[&>button]:hidden',
+        )}
+      >
+        <div className="shrink-0 border-b bg-gradient-to-r from-emerald-500/10 via-background to-background px-4 py-3 sm:px-6">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">
+                <PackagePlus className="h-5 w-5" />
               </div>
               <div className="min-w-0">
                 <DialogTitle className="text-lg font-semibold leading-tight">
                   {t.stockEntryUi.title}
                 </DialogTitle>
-                <p className="text-sm text-muted-foreground mt-0.5 truncate">
+                <p className="text-sm text-muted-foreground truncate">
                   {t.stockEntryUi.description.replace('{branch}', branchLabel)}
                 </p>
-                <div className="flex flex-wrap items-center gap-2 mt-2">
-                  <Badge variant="secondary" className="font-normal gap-1">
-                    <Building2 className="h-3 w-3" />
-                    {branchLabel}
-                  </Badge>
-                  <Badge variant="outline" className="font-mono text-xs gap-1">
-                    <Hash className="h-3 w-3" />
-                    {entryNumber}
-                  </Badge>
-                </div>
               </div>
+              <Badge variant="outline" className="hidden sm:flex font-mono text-xs gap-1 shrink-0">
+                <Hash className="h-3 w-3" />
+                {entryNumber}
+              </Badge>
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="shrink-0 h-8 w-8"
-              onClick={() => onOpenChange(false)}
-              aria-label={t.common.cancel}
-            >
-              <X className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <Popover open={notesOpen} onOpenChange={setNotesOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant={hasNotes ? 'secondary' : 'outline'}
+                    size="sm"
+                    className="gap-1.5"
+                  >
+                    <StickyNote className="h-4 w-4" />
+                    {t.stockEntryUi.notesButton}
+                    {hasNotes && (
+                      <span className="h-2 w-2 rounded-full bg-emerald-600" aria-hidden />
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="z-[250] w-80 sm:w-96" align="end">
+                  <Label className="text-sm font-medium">{t.stockEntryUi.notes}</Label>
+                  <Textarea
+                    value={form.notes}
+                    onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
+                    placeholder={t.stockEntryUi.notesPlaceholder}
+                    rows={5}
+                    className="mt-2 resize-none"
+                    autoFocus
+                  />
+                </PopoverContent>
+              </Popover>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9"
+                onClick={() => onOpenChange(false)}
+                aria-label={t.common.cancel}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </div>
 
-        {!warehouseId && (
-          <Alert variant="destructive" className="mx-5 mt-3 shrink-0">
+        {!effectiveWarehouseId && (
+          <Alert variant="destructive" className="mx-4 sm:mx-6 mt-2 shrink-0 py-2">
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>{t.stockEntryUi.branchRequiredDesc}</AlertDescription>
           </Alert>
         )}
 
-        {/* Body: sidebar + main */}
-        <div className="flex flex-1 min-h-0 overflow-hidden">
-          {/* Left — document */}
-          <aside className="w-[min(100%,300px)] shrink-0 border-r bg-muted/25 flex flex-col overflow-y-auto">
-            <div className="p-4 space-y-4">
-              <div>
-                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {t.stockEntryUi.entryReason}
-                </Label>
-                <div className="mt-2 grid grid-cols-1 gap-1.5">
-                  {entryReasons.map(({ value, label, Icon }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() =>
-                        setForm((p) => ({
-                          ...p,
-                          entryReason: value,
-                          sourceBranch: value === 'transfer_in' ? p.sourceBranch : '',
-                        }))
-                      }
-                      className={cn(
-                        'flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors',
-                        form.entryReason === value
-                          ? 'border-emerald-600 bg-emerald-600/10 text-emerald-900 dark:text-emerald-100 ring-1 ring-emerald-600/40'
-                          : 'border-border bg-background hover:bg-accent/60',
-                      )}
-                    >
-                      <Icon
-                        className={cn(
-                          'h-4 w-4 shrink-0',
-                          form.entryReason === value ? 'text-emerald-600' : 'text-muted-foreground',
-                        )}
-                      />
-                      <span className="font-medium leading-snug">{label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {needsSourceBranch && (
-                <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
-                  <Label className="text-sm">
-                    {t.stockEntryUi.sourceBranch} <span className="text-destructive">*</span>
-                  </Label>
-                  <Select
-                    value={form.sourceBranch}
-                    onValueChange={(v) => setForm((p) => ({ ...p, sourceBranch: v }))}
-                  >
-                    <SelectTrigger className="bg-background">
-                      <SelectValue placeholder={t.stockEntryUi.selectSource} />
-                    </SelectTrigger>
-                    <SelectContent className="z-[200]">
-                      {sourceBranches.map((b) => (
-                        <SelectItem key={b.id} value={b.id}>
-                          {b.name} ({b.code})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-              <div className="space-y-1.5">
-                <Label className="text-sm">{t.stockEntryUi.reference}</Label>
-                <Input
-                  value={form.reference}
-                  onChange={(e) => setForm((p) => ({ ...p, reference: e.target.value }))}
-                  placeholder={t.stockEntryUi.referencePlaceholder}
-                  className="bg-background"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-sm">{t.stockEntryUi.notes}</Label>
-                <Textarea
-                  value={form.notes}
-                  onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
-                  placeholder={t.stockEntryUi.notesPlaceholder}
-                  rows={3}
-                  className="bg-background resize-none"
-                />
-              </div>
-
-              <Collapsible
-                open={form.freightOpen}
-                onOpenChange={(freightOpen) => setForm((p) => ({ ...p, freightOpen }))}
+        <div className="shrink-0 border-b bg-muted/20 px-4 py-2 sm:px-6 space-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">{t.stockEntryUi.entryReason}</Label>
+              <Select
+                value={form.entryReason}
+                onValueChange={(value: StockEntryReason) =>
+                  setForm((p) => ({
+                    ...p,
+                    entryReason: value,
+                    sourceBranch: value === 'transfer_in' ? p.sourceBranch : '',
+                  }))
+                }
               >
-                <CollapsibleTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    className="w-full justify-between h-9 px-2 text-sm font-medium"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Truck className="h-4 w-4 text-muted-foreground" />
-                      {t.stockEntryUi.freightOptional}
-                    </span>
-                    <ChevronDown
-                      className={cn(
-                        'h-4 w-4 transition-transform',
-                        form.freightOpen && 'rotate-180',
-                      )}
-                    />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-3 pt-1">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t.stockEntryUi.freightLabel}</Label>
-                      <NumericInput
-                        min={0}
-                        value={form.freightCost}
-                        onValueChange={(v) => setForm((p) => ({ ...p, freightCost: v }))}
-                        className="h-9"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t.stockEntryUi.otherCostsLabel}</Label>
-                      <NumericInput
-                        min={0}
-                        value={form.otherCosts}
-                        onValueChange={(v) => setForm((p) => ({ ...p, otherCosts: v }))}
-                        className="h-9"
-                      />
-                    </div>
-                  </div>
-                  <Input
-                    value={form.otherCostsDescription}
-                    onChange={(e) =>
-                      setForm((p) => ({ ...p, otherCostsDescription: e.target.value }))
-                    }
-                    placeholder={t.stockEntryUi.otherCostsDescPlaceholder}
-                    className="h-9 text-sm bg-background"
-                  />
-                  {totalLandingCosts > 0 && form.items.length > 0 && (
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      {t.stockEntryUi.landingCostsHint
-                        .replace('{count}', String(form.items.length))
-                        .replace(
-                          '{perUnit}',
-                          formatCurrency(totalLandingCosts / Math.max(1, totals.units)),
-                        )}
-                    </p>
-                  )}
-                </CollapsibleContent>
-              </Collapsible>
+                <SelectTrigger className="bg-background h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="z-[200]">
+                  {entryReasons.map(({ value, label }) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          </aside>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">{t.stockEntryUi.entryDate}</Label>
+              <Input
+                type="date"
+                value={form.entryDate}
+                onChange={(e) => setForm((p) => ({ ...p, entryDate: e.target.value }))}
+                className="bg-background h-9"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">{t.stockEntryUi.reference}</Label>
+              <Input
+                value={form.reference}
+                onChange={(e) => setForm((p) => ({ ...p, reference: e.target.value }))}
+                placeholder={entryNumber}
+                className="bg-background h-9 font-mono text-sm"
+              />
+            </div>
+          </div>
 
-          {/* Right — products & lines */}
-          <div className="flex flex-1 flex-col min-w-0 min-h-0">
-            {/* Search */}
-            <div className="shrink-0 p-4 pb-2 space-y-2 border-b bg-background/80">
-              {initialProduct &&
-                !form.items.some((i) => i.productId === initialProduct.id) && (
-                  <div className="flex items-center gap-3 rounded-lg border border-dashed border-emerald-500/50 bg-emerald-500/5 px-3 py-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                        {t.stockEntryUi.selectedProduct}
-                      </p>
-                      <p className="text-sm font-medium truncate">{initialProduct.name}</p>
-                      <p className="text-xs font-mono text-muted-foreground">
-                        {initialProduct.sku} · {t.stockEntryUi.currentStock}:{' '}
-                        {initialProduct.stock ?? 0}
-                      </p>
-                    </div>
-                    <Button size="sm" className="shrink-0" onClick={() => handleAddItem(initialProduct)}>
-                      <Plus className="h-4 w-4 mr-1" />
-                      {t.stockEntryUi.addSelected}
-                    </Button>
-                  </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">{t.stockEntryUi.branch}</Label>
+              <Select
+                value={form.entryBranchId}
+                onValueChange={(v) => setForm((p) => ({ ...p, entryBranchId: v }))}
+              >
+                <SelectTrigger className="bg-background h-9">
+                  <SelectValue placeholder={t.stockEntryUi.selectSource} />
+                </SelectTrigger>
+                <SelectContent className="z-[200]">
+                  {branches.filter((b) => b.id).map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name} ({b.code})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">{t.stockEntryUi.currency}</Label>
+              <Select
+                value={form.currency}
+                onValueChange={(v) => {
+                  setForm((p) => ({ ...p, currency: v, currencyRate: v === 'KZ' ? 1 : p.currencyRate }));
+                  void loadExchangeRate(v);
+                }}
+              >
+                <SelectTrigger className="bg-background h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="z-[200]">
+                  {ENTRY_CURRENCIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">{t.stockEntryUi.exchangeRate}</Label>
+              <NumericInput
+                min={0}
+                value={form.currencyRate}
+                onValueChange={(v) => setForm((p) => ({ ...p, currencyRate: v }))}
+                className="h-9 bg-background font-mono text-sm"
+                disabled={form.currency === 'KZ'}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">{t.stockEntryUi.freightLabel}</Label>
+              <NumericInput
+                min={0}
+                value={form.freightCost}
+                onValueChange={(v) => setForm((p) => ({ ...p, freightCost: v }))}
+                className="h-9 bg-background"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">{t.stockEntryUi.otherCostsLabel}</Label>
+              <NumericInput
+                min={0}
+                value={form.otherCosts}
+                onValueChange={(v) => setForm((p) => ({ ...p, otherCosts: v }))}
+                className="h-9 bg-background"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">{t.stockEntryUi.otherCostsDescLabel}</Label>
+              <Input
+                value={form.otherCostsDescription}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, otherCostsDescription: e.target.value }))
+                }
+                placeholder={t.stockEntryUi.otherCostsDescPlaceholder}
+                className="h-9 bg-background text-sm"
+              />
+            </div>
+          </div>
+
+          {totalLandingCosts > 0 && fulfilledItems.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {t.stockEntryUi.landingCostsHint
+                .replace('{count}', String(fulfilledItems.length))
+                .replace(
+                  '{perUnit}',
+                  formatCurrency(totalLandingCosts / Math.max(1, totals.units)),
                 )}
+            </p>
+          )}
 
-              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {t.stockEntryUi.addProducts}
-              </Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder={t.stockEntryUi.searchPlaceholder}
-                  value={form.searchTerm}
-                  onChange={(e) => setForm((p) => ({ ...p, searchTerm: e.target.value }))}
-                  onFocus={() => setForm((p) => ({ ...p, searchFocused: true }))}
-                  onBlur={() => {
-                    window.setTimeout(
-                      () => setForm((p) => ({ ...p, searchFocused: false })),
-                      150,
-                    );
-                  }}
-                  className="pl-10 h-10 bg-background"
-                />
+          {needsSourceBranch && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="space-y-1.5 sm:col-span-1">
+                <Label className="text-sm font-medium">
+                  {t.stockEntryUi.sourceBranch} <span className="text-destructive">*</span>
+                </Label>
+                <Select
+                  value={form.sourceBranch}
+                  onValueChange={(v) => setForm((p) => ({ ...p, sourceBranch: v }))}
+                >
+                  <SelectTrigger className="bg-background h-9">
+                    <SelectValue placeholder={t.stockEntryUi.selectSource} />
+                  </SelectTrigger>
+                  <SelectContent className="z-[200]">
+                    {sourceBranches.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name} ({b.code})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              {!showPicker && (
-                <p className="text-xs text-muted-foreground">{t.stockEntryUi.searchHint}</p>
-              )}
             </div>
+          )}
+        </div>
 
-            {showPicker && filteredProducts.length > 0 && (
-              <div className="shrink-0 max-h-36 overflow-y-auto border-b bg-popover/50 px-2 py-1">
-                {filteredProducts.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className="w-full flex items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-accent transition-colors"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => handleAddItem(p)}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <span className="font-mono text-xs text-muted-foreground">{p.sku}</span>
-                      <p className="text-sm truncate">{p.name}</p>
-                    </div>
-                    <Badge variant="outline" className="shrink-0 font-normal text-xs">
-                      {p.stock ?? 0} {p.unit}
-                    </Badge>
-                    <div
-                      className="flex items-center gap-1 shrink-0"
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => e.stopPropagation()}
+        <div className="flex flex-1 flex-col min-h-0 overflow-hidden px-4 sm:px-6 py-2">
+          <div className="shrink-0 flex items-center justify-between mb-2 gap-2">
+            <div>
+              <h3 className="text-sm font-semibold">{t.stockEntryUi.linesTitle}</h3>
+              <p className="text-[11px] text-muted-foreground">{t.stockEntryUi.pickerKeyboardHint}</p>
+            </div>
+            <Button type="button" variant="outline" size="sm" className="h-8 shrink-0" onClick={addRows}>
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              {t.stockEntryUi.addLine}
+            </Button>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-auto border rounded-md bg-background [&_th]:h-7 [&_th]:px-1.5 [&_th]:text-[11px] [&_td]:px-1.5 [&_td]:py-0.5">
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm">
+                <TableRow>
+                  <TableHead className="min-w-[200px]">{t.stockEntryUi.colSelectProduct}</TableHead>
+                  <TableHead className="w-[110px]">{t.stockEntryUi.branch}</TableHead>
+                  <TableHead className="w-[48px] text-center">{t.stockEntryUi.colUnit}</TableHead>
+                  <TableHead className="w-[100px]">{t.stockEntryUi.colStock}</TableHead>
+                  <TableHead className="w-[88px]">{t.stockEntryUi.colQty}</TableHead>
+                  <TableHead className="w-[96px]">{t.stockEntryUi.colCost}</TableHead>
+                  <TableHead className="w-[88px] text-right">{t.stockEntryUi.colFreight}</TableHead>
+                  <TableHead className="w-[96px] text-right">{t.stockEntryUi.colTotal}</TableHead>
+                  <TableHead className="w-[40px]" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {form.lines.map((line, rowIndex) => {
+                  const product = line.productId ? productsById.get(line.productId) : undefined;
+                  const stock = product?.stock ?? 0;
+                  const stockAfter = product ? stock + line.quantity : null;
+                  const freightPerUnit = line.productId
+                    ? freightAllocations[line.productId] || 0
+                    : 0;
+                  const effectiveCost = (line.cost || 0) + freightPerUnit;
+                  const lineTotal = product ? line.quantity * effectiveCost : 0;
+
+                  return (
+                    <TableRow
+                      key={line.rowId}
+                      className={cn(product && 'bg-emerald-50/40 dark:bg-emerald-950/15')}
                     >
-                      <NumericInput
-                        integer
-                        min={1}
-                        value={form.newItemQty[p.id] ?? 1}
-                        onValueChange={(qty) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            newItemQty: { ...prev.newItemQty, [p.id]: qty },
-                          }))
-                        }
-                        className="w-16 h-8"
-                      />
-                      <Button
-                        type="button"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => handleAddItem(p)}
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Line items */}
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 pt-3">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold">
-                  {t.stockEntryUi.linesTitle}
-                  {form.items.length > 0 && (
-                    <span className="ml-2 text-muted-foreground font-normal">
-                      ({form.items.length})
-                    </span>
-                  )}
-                </h3>
-                {form.items.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs text-muted-foreground"
-                    onClick={() => setForm((p) => ({ ...p, items: [] }))}
-                  >
-                    {t.stockEntryUi.clearAll}
-                  </Button>
-                )}
-              </div>
-
-              {form.items.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 px-6 rounded-xl border border-dashed bg-muted/20 text-center">
-                  <PackagePlus className="h-12 w-12 text-muted-foreground/40 mb-4" />
-                  <p className="font-medium text-muted-foreground">{t.stockEntryUi.emptyTitle}</p>
-                  <p className="text-sm text-muted-foreground/80 mt-1 max-w-xs">
-                    {t.stockEntryUi.emptyHint}
-                  </p>
-                </div>
-              ) : (
-                <ul className="space-y-2">
-                  {form.items.map((item) => {
-                    const freightPerUnit = freightAllocations[item.productId] || 0;
-                    const effectiveCost = item.cost + freightPerUnit;
-                    const stockAfter = item.currentStock + item.quantity;
-                    const lineTotal = item.quantity * effectiveCost;
-
-                    return (
-                      <li
-                        key={item.productId}
-                        className="rounded-xl border bg-card shadow-sm overflow-hidden"
-                      >
-                        <div className="flex items-start gap-2 px-3 py-2.5 border-b bg-muted/30">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium leading-tight truncate">{item.name}</p>
-                            <p className="text-xs font-mono text-muted-foreground mt-0.5">{item.sku}</p>
-                          </div>
+                      <TableCell className="align-middle min-w-[200px]">
+                        {product ? (
+                          <p className="text-[11px] leading-tight whitespace-normal break-words">
+                            <span className="font-mono font-semibold">{product.sku}</span>
+                            <span className="mx-0.5">—</span>
+                            {product.name}
+                          </p>
+                        ) : (
+                          <Input
+                            ref={(el) => {
+                              productInputRefs.current[line.rowId] = el;
+                            }}
+                            value={line.search}
+                            onChange={(e) => updateLineSearch(line.rowId, e.target.value)}
+                            onFocus={() => {
+                              setPickerRowId(line.rowId);
+                              if (rowIndex >= linesRef.current.length - ROWS_NEAR_END_BUFFER - 1) {
+                                setForm((prev) => ({
+                                  ...prev,
+                                  lines: ensureRowsForIndex(prev.lines, rowIndex, createEmptyLine),
+                                }));
+                              }
+                            }}
+                            onKeyDown={(e) => handleProductKeyDown(e, rowIndex, line)}
+                            placeholder={t.stockEntryUi.searchShortPlaceholder}
+                            className="h-7 text-[11px] px-2 py-0 bg-background w-full min-w-0"
+                            autoComplete="off"
+                          />
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs truncate align-middle">
+                        {product ? resolveBranchName(product.branchId) : '—'}
+                      </TableCell>
+                      <TableCell className="text-center text-xs align-middle">
+                        {product?.unit ?? '—'}
+                      </TableCell>
+                      <TableCell className="tabular-nums text-xs align-middle">
+                        {product ? (
+                          <>
+                            {stock}
+                            <span className="text-muted-foreground mx-0.5">→</span>
+                            <span className="text-emerald-600">{stockAfter}</span>
+                          </>
+                        ) : (
+                          '—'
+                        )}
+                      </TableCell>
+                      <TableCell className="align-middle">
+                        <NumericInput
+                          ref={(el) => {
+                            qtyRefs.current[line.rowId] = el;
+                          }}
+                          integer
+                          min={1}
+                          value={line.quantity}
+                          onValueChange={(q) => updateLineQuantity(line.rowId, q)}
+                          onKeyDown={(e) => handleQtyKeyDown(e, rowIndex)}
+                          className="h-7 text-[11px]"
+                          disabled={!product}
+                          tabIndex={product ? 0 : -1}
+                        />
+                      </TableCell>
+                      <TableCell className="align-middle">
+                        <NumericInput
+                          min={0}
+                          value={line.cost}
+                          onValueChange={(c) => updateLineCost(line.rowId, c)}
+                          className="h-7 text-[11px] font-mono"
+                          disabled={!product}
+                          tabIndex={product ? 0 : -1}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums align-middle">
+                        {product && freightPerUnit > 0
+                          ? formatCurrency(freightPerUnit * line.quantity)
+                          : '—'}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs tabular-nums text-emerald-700 align-middle">
+                        {product ? formatCurrency(lineTotal) : '—'}
+                      </TableCell>
+                      <TableCell className="align-middle">
+                        {product && (
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                            onClick={() => handleRemoveItem(item.productId)}
+                            className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                            onClick={() => clearProductOnRow(line.rowId)}
+                            tabIndex={-1}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="h-3 w-3" />
                           </Button>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3">
-                          <div className="space-y-1">
-                            <span className="text-[10px] uppercase text-muted-foreground">
-                              {t.stockEntryUi.colStock}
-                            </span>
-                            <p className="text-sm font-medium tabular-nums">
-                              {item.currentStock}
-                              <span className="text-muted-foreground mx-1">→</span>
-                              <span className="text-emerald-600 dark:text-emerald-400" title={t.stockEntryUi.stockAfter}>
-                                {stockAfter}
-                              </span>
-                            </p>
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-[10px] uppercase text-muted-foreground">
-                              {t.stockEntryUi.colQty}
-                            </Label>
-                            <NumericInput
-                              integer
-                              min={1}
-                              value={item.quantity}
-                              onValueChange={(qty) => handleUpdateQuantity(item.productId, qty)}
-                              className="h-9"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-[10px] uppercase text-muted-foreground">
-                              {t.stockEntryUi.colCost}
-                            </Label>
-                            <NumericInput
-                              min={0}
-                              value={item.cost}
-                              onValueChange={(c) => handleUpdateCost(item.productId, c)}
-                              className="h-9 font-mono text-sm"
-                            />
-                          </div>
-                          <div className="space-y-1 sm:text-right">
-                            <span className="text-[10px] uppercase text-muted-foreground block">
-                              {t.stockEntryUi.colTotal}
-                            </span>
-                            <p className="text-sm font-bold font-mono text-emerald-700 dark:text-emerald-400">
-                              {formatCurrency(lineTotal)}
-                            </p>
-                            {freightPerUnit > 0 && (
-                              <p className="text-[10px] text-muted-foreground">
-                                {t.stockEntryUi.freightPerUnit
-                                  .replace('{amount}', formatCurrency(freightPerUnit))
-                                  .replace('{unit}', item.unit)}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="shrink-0 border-t bg-muted/30 px-5 py-3 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
+        <div className="shrink-0 border-t bg-muted/30 px-4 sm:px-6 py-3 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
           <div className="flex flex-wrap gap-4 text-sm">
             <div>
               <span className="text-muted-foreground">{t.stockEntryUi.summaryItems}: </span>
@@ -762,7 +1072,7 @@ export function StockEntryDialog({
             <Button
               className="bg-emerald-600 hover:bg-emerald-700 text-white min-w-[160px]"
               onClick={() => void handleApply()}
-              disabled={form.items.length === 0 || !warehouseId || submitting}
+              disabled={fulfilledItems.length === 0 || !effectiveWarehouseId || submitting}
             >
               {submitting ? (
                 <>
@@ -772,12 +1082,63 @@ export function StockEntryDialog({
               ) : (
                 <>
                   <Save className="h-4 w-4 mr-2" />
-                  {t.stockEntryUi.confirm.replace('{count}', String(form.items.length))}
+                  {t.stockEntryUi.confirm.replace('{count}', String(fulfilledItems.length))}
                 </>
               )}
             </Button>
           </div>
         </div>
+
+        {showPickerDropdown &&
+          pickerRowId &&
+          dialogContentRef.current &&
+          pickerAnchorRect &&
+          createPortal(
+            <div
+              role="listbox"
+              className="fixed z-[200] rounded-md border bg-popover text-popover-foreground shadow-md max-h-52 overflow-auto pointer-events-auto"
+              style={{
+                top: pickerAnchorRect.bottom + 2,
+                left: pickerAnchorRect.left,
+                width: Math.max(300, pickerAnchorRect.width),
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              {activePickerSuggestions.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground px-2 py-1.5">
+                  {t.stockEntryUi.noSearchResults}
+                </p>
+              ) : (
+                activePickerSuggestions.map((p, idx) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="option"
+                    aria-selected={idx === pickerHighlightIndex}
+                    className={cn(
+                      'w-full cursor-pointer text-left px-2 py-1.5 text-[11px] leading-tight border-b last:border-b-0 hover:bg-muted',
+                      idx === pickerHighlightIndex && 'bg-primary/15',
+                    )}
+                    onMouseEnter={() => setPickerHighlightIndex(idx)}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      selectProductOnRow(pickerRowId, p);
+                    }}
+                  >
+                    <span className="font-mono">{p.sku}</span>
+                    <span className="mx-0.5">—</span>
+                    {p.name}
+                    <span className="text-muted-foreground ml-1">
+                      ({p.stock ?? 0} {p.unit}
+                      {p.branchId ? ` · ${resolveBranchName(p.branchId)}` : ''})
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>,
+            dialogContentRef.current,
+          )}
       </DialogContent>
     </Dialog>
   );

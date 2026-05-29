@@ -163,6 +163,9 @@ async function getEntityAccountCode(client, entityType, entityId, entityName) {
   return fallback;
 }
 
+const INVENTORY_MERCHANDISE_ACCOUNT = '2.1.1';
+const INVENTORY_STOCK_ACCOUNT = '2.2';
+
 async function ensureFreightExpenseAccount(client) {
   const existing = await findAccountByCode(client, '6.2.6');
   if (existing) return existing.code;
@@ -184,6 +187,289 @@ async function ensureFreightExpenseAccount(client) {
   );
 
   return '6.2.6';
+}
+
+async function ensureInventoryShrinkageAccount(client) {
+  const existing = await findAccountByCode(client, '6.6.1');
+  if (existing) return existing.code;
+
+  const parentResult = await client.query(
+    `SELECT id FROM chart_of_accounts WHERE code = '6' AND is_active = true LIMIT 1`
+  );
+  if (parentResult.rows.length === 0) {
+    return '6.1';
+  }
+
+  await client.query(
+    `INSERT INTO chart_of_accounts
+     (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active, opening_balance, current_balance)
+     VALUES ($1, '6.6.1', 'Perdas e Quebras de Inventário', 'expense', 'debit', $2, 3, false, true, 0, 0)
+     ON CONFLICT (code) DO NOTHING`,
+    [randomUUID(), parentResult.rows[0].id]
+  );
+
+  return '6.6.1';
+}
+
+async function applyWeightedAverageCostAfterIn(client, productId, quantityIn, unitCostIn) {
+  const qty = requirePositive(quantityIn, 'quantityIn');
+  const unit = Math.max(0, parseFloat(unitCostIn) || 0);
+
+  const prodResult = await client.query(
+    'SELECT stock, cost FROM products WHERE id = $1 FOR UPDATE',
+    [productId]
+  );
+  if (prodResult.rows.length === 0) return;
+
+  const currentStock = parseFloat(prodResult.rows[0].stock) || 0;
+  const oldCost = parseFloat(prodResult.rows[0].cost) || 0;
+  const prevStock = Math.max(0, currentStock - qty);
+  const newCost =
+    currentStock > 0 ? (prevStock * oldCost + qty * unit) / currentStock : unit;
+
+  const nextAvg = Number(newCost.toFixed(4));
+  const nextLast = Number(unit.toFixed(4));
+
+  await client.query(
+    `UPDATE products
+     SET cost = $1, last_cost = $2, avg_cost = $1, updated_at = CURRENT_TIMESTAMP
+     WHERE id = $3`,
+    [nextAvg, nextLast, productId]
+  );
+}
+
+function normalizeStockAdjustmentReferenceType(direction, referenceType) {
+  const ref = String(referenceType || '').trim().toLowerCase();
+  if (direction === 'IN') {
+    if (['purchase', 'transfer', 'transfer_in', 'initial', 'correction', 'adjustment'].includes(ref)) {
+      return ref === 'transfer_in' ? 'transfer' : ref;
+    }
+    return 'adjustment';
+  }
+  if (['damage', 'expired', 'loss', 'internal_use', 'sample', 'donation', 'adjustment'].includes(ref)) {
+    return ref === 'expired' || ref === 'damaged' || ref === 'loss' ? 'damage' : ref;
+  }
+  return 'adjustment';
+}
+
+function buildStockAdjustmentJournalLines(direction, referenceType, totalValue, docLabel) {
+  const amount = Math.round((parseFloat(totalValue) || 0) * 100) / 100;
+  if (amount <= 0) return [];
+
+  const ref = String(referenceType || '').toLowerCase();
+
+  if (direction === 'IN') {
+    let creditAccount = '7.4';
+    let creditDesc = 'Contrapartida entrada inventário';
+
+    if (ref === 'initial') {
+      creditAccount = '5.3';
+      creditDesc = 'Existências iniciais';
+    } else if (ref === 'purchase') {
+      creditAccount = '3.2.1';
+      creditDesc = 'Fornecedores (entrada directa — preferir FC)';
+    } else if (ref === 'transfer' || ref === 'transfer_in') {
+      return [
+        {
+          accountCode: INVENTORY_STOCK_ACCOUNT,
+          description: `Entrada ${docLabel}`,
+          debit: amount,
+          credit: 0,
+        },
+        {
+          accountCode: INVENTORY_STOCK_ACCOUNT,
+          description: `Saída interna ${docLabel}`,
+          debit: 0,
+          credit: amount,
+        },
+      ];
+    } else if (ref === 'correction') {
+      creditDesc = 'Correção inventário';
+    }
+
+    return [
+      {
+        accountCode: INVENTORY_MERCHANDISE_ACCOUNT,
+        description: `Entrada mercadorias ${docLabel}`,
+        debit: amount,
+        credit: 0,
+      },
+      {
+        accountCode: creditAccount,
+        description: creditDesc,
+        debit: 0,
+        credit: amount,
+      },
+    ];
+  }
+
+  const shrinkageAccount = '6.6.1';
+  let expenseDesc = 'Saída inventário';
+  if (ref === 'damage' || ref === 'expired' || ref === 'loss') {
+    expenseDesc = 'Perdas / avarias inventário';
+  } else if (ref === 'internal_use') {
+    expenseDesc = 'Uso interno';
+  } else if (ref === 'sample') {
+    expenseDesc = 'Amostras';
+  } else if (ref === 'donation') {
+    expenseDesc = 'Donativos';
+  }
+
+  return [
+    {
+      accountCode: shrinkageAccount,
+      description: `${expenseDesc} ${docLabel}`,
+      debit: amount,
+      credit: 0,
+    },
+    {
+      accountCode: INVENTORY_MERCHANDISE_ACCOUNT,
+      description: `Saída mercadorias ${docLabel}`,
+      debit: 0,
+      credit: amount,
+    },
+  ];
+}
+
+/**
+ * Professional stock adjustment: movements + WAC (IN) + balanced journal in one transaction.
+ * Does NOT move cash — use Payments / Purchase Invoice for supplier cash and AP.
+ */
+async function processStockAdjustment(client, data) {
+  const {
+    direction,
+    warehouseId,
+    referenceNumber,
+    referenceType,
+    entryDate,
+    notes,
+    createdBy,
+    lines,
+  } = data;
+
+  const normalizedDirection = String(direction || '').trim().toUpperCase();
+  if (normalizedDirection !== 'IN' && normalizedDirection !== 'OUT') {
+    throw new Error('direction deve ser IN ou OUT');
+  }
+
+  requireParam(warehouseId, 'warehouseId');
+  if (!lines || !Array.isArray(lines) || lines.length === 0) {
+    throw new Error('Ajuste deve ter pelo menos uma linha');
+  }
+
+  const resolvedWarehouseId = await resolveWarehouseId(client, warehouseId);
+  if (!resolvedWarehouseId) {
+    throw new Error(`warehouseId inválido: ${warehouseId}`);
+  }
+
+  const docDate = entryDate || new Date().toISOString().split('T')[0];
+  await validatePeriod(client, docDate);
+
+  const movementRefType = normalizeStockAdjustmentReferenceType(
+    normalizedDirection,
+    referenceType
+  );
+  const documentId = randomUUID();
+  const docNumber = String(referenceNumber || '').trim() || `AJ-${docDate.replace(/-/g, '')}`;
+  const docLabel = docNumber;
+  const createdByUuid = normalizeUuid(createdBy);
+
+  if (normalizedDirection === 'OUT') {
+    await ensureInventoryShrinkageAccount(client);
+  }
+
+  const movementIds = [];
+  let totalValue = 0;
+
+  for (const line of lines) {
+    const qty = requirePositive(line.quantity, 'quantity');
+    const unitCost = Math.max(0, parseFloat(line.unitCost ?? line.cost ?? 0) || 0);
+    requireParam(line.productId, 'productId');
+
+    const movement = await recordStockMovement(client, {
+      productId: line.productId,
+      warehouseId: resolvedWarehouseId,
+      movementType: normalizedDirection,
+      quantity: qty,
+      unitCost,
+      referenceType: movementRefType,
+      referenceId: documentId,
+      referenceNumber: docNumber,
+      notes: notes || '',
+      createdBy: createdByUuid,
+    });
+
+    movementIds.push(movement.id);
+    const resolvedProductId = movement.product_id || line.productId;
+    totalValue += qty * unitCost;
+
+    if (normalizedDirection === 'IN' && unitCost > 0) {
+      await applyWeightedAverageCostAfterIn(client, resolvedProductId, qty, unitCost);
+    }
+  }
+
+  totalValue = Math.round(totalValue * 100) / 100;
+
+  let journalEntryId = null;
+  const journalLines = buildStockAdjustmentJournalLines(
+    normalizedDirection,
+    referenceType,
+    totalValue,
+    docLabel
+  );
+
+  if (journalLines.length > 0) {
+    if (journalLines.some((l) => l.accountCode === '6.6.1')) {
+      await ensureInventoryShrinkageAccount(client);
+    }
+
+    const entry = await createJournalEntry(client, {
+      description:
+        normalizedDirection === 'IN'
+          ? `Entrada inventário ${docLabel}`
+          : `Saída inventário ${docLabel}`,
+      referenceType: 'adjustment',
+      referenceId: documentId,
+      branchId: resolvedWarehouseId,
+      createdBy: createdByUuid,
+      entryDate: docDate,
+      lines: journalLines,
+    });
+    journalEntryId = entry.id;
+  }
+
+  await auditLog(client, {
+    tableName: 'stock_movements',
+    recordId: documentId,
+    action: 'create',
+    userId: createdByUuid,
+    branchId: resolvedWarehouseId,
+    newValues: {
+      direction: normalizedDirection,
+      referenceNumber: docNumber,
+      referenceType: movementRefType,
+      lines: lines.length,
+      totalValue,
+    },
+    description:
+      normalizedDirection === 'IN'
+        ? `Entrada inventário ${docLabel} (${lines.length} linha(s))`
+        : `Saída inventário ${docLabel} (${lines.length} linha(s))`,
+  });
+
+  console.log(
+    `[TX ENGINE] Stock adjustment ${docNumber} ${normalizedDirection} ✓ ` +
+      `lines=${lines.length} value=${totalValue} journal=${journalEntryId || 'n/a'}`
+  );
+
+  return {
+    documentId,
+    referenceNumber: docNumber,
+    movementIds,
+    journalEntryId,
+    totalValue,
+    direction: normalizedDirection,
+  };
 }
 
 // ==================== PERIOD VALIDATION ====================
@@ -1605,7 +1891,9 @@ module.exports = {
   processTransferApprove,
   processTransferReceive,
   processPayment,
+  processStockAdjustment,
   // Helpers
   auditLog,
   getEntityAccountCode,
+  ensureInventoryShrinkageAccount,
 };

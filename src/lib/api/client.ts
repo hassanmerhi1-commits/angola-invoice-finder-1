@@ -1784,6 +1784,25 @@ export const api = {
     createStockMovement: (data: any) => {
       return apiFetch<any>('/transactions/stock-movements', { method: 'POST', body: JSON.stringify(data) });
     },
+    stockAdjustment: (data: {
+      direction: 'IN' | 'OUT';
+      warehouseId: string;
+      referenceNumber: string;
+      referenceType: string;
+      entryDate?: string;
+      notes?: string;
+      createdBy?: string;
+      lines: { productId: string; quantity: number; unitCost: number }[];
+    }) => {
+      return apiFetch<{
+        documentId: string;
+        referenceNumber: string;
+        movementIds: string[];
+        journalEntryId: string | null;
+        totalValue: number;
+        direction: string;
+      }>('/transactions/stock-adjustment', { method: 'POST', body: JSON.stringify(data) });
+    },
     openItems: (params?: { entityType?: string; entityId?: string; branchId?: string; status?: string }) => {
       const sp = new URLSearchParams();
       if (params?.entityType) sp.append('entityType', params.entityType);
