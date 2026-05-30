@@ -2,15 +2,15 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-/** Shared bordered grid style for all app tables (thick cell borders). */
-const tableCellBorder = "border-2 border-black";
+/** Shared bordered grid — mid contrast (not pure black, not too light). */
+const tableCellBorder = "border-[1.5px] border-[hsl(var(--table-grid-border))]";
 
 const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
   ({ className, ...props }, ref) => (
-    <div className="relative w-full overflow-auto rounded-md border-2 border-black">
+    <div className="relative w-full overflow-auto rounded-md border-[1.5px] border-[hsl(var(--table-grid-border))]">
       <table
         ref={ref}
-        className={cn("w-full caption-bottom border-collapse text-sm font-bold", className)}
+        className={cn("w-full caption-bottom border-collapse text-sm font-semibold text-foreground", className)}
         {...props}
       />
     </div>
@@ -36,7 +36,7 @@ const TableFooter = React.forwardRef<HTMLTableSectionElement, React.HTMLAttribut
   ({ className, ...props }, ref) => (
     <tfoot
       ref={ref}
-      className={cn("bg-muted/50 font-bold [&>tr]:border-0", className)}
+      className={cn("bg-muted/50 font-semibold [&>tr]:border-0", className)}
       {...props}
     />
   ),
@@ -63,7 +63,7 @@ const TableHead = React.forwardRef<HTMLTableCellElement, React.ThHTMLAttributes<
       ref={ref}
       className={cn(
         tableCellBorder,
-        "h-8 px-2 py-1 text-left align-middle font-bold leading-tight text-foreground [&:has([role=checkbox])]:pr-0",
+        "h-8 px-2 py-1 text-left align-middle font-bold leading-tight text-foreground/80 [&:has([role=checkbox])]:pr-0",
         className,
       )}
       {...props}
@@ -78,7 +78,7 @@ const TableCell = React.forwardRef<HTMLTableCellElement, React.TdHTMLAttributes<
       ref={ref}
       className={cn(
         tableCellBorder,
-        "px-2 py-1 align-middle font-bold leading-tight [&:has([role=checkbox])]:pr-0",
+        "px-2 py-1 align-middle font-semibold leading-tight [&:has([role=checkbox])]:pr-0",
         className,
       )}
       {...props}

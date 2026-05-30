@@ -32,11 +32,13 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   const setLanguage = (lang: Language) => {
     setLanguageState(lang);
     localStorage.setItem(STORAGE_KEY, lang);
+    window.electronAPI?.app?.setUiLanguage?.(lang);
   };
 
   useEffect(() => {
     // Update document lang attribute
     document.documentElement.lang = language;
+    window.electronAPI?.app?.setUiLanguage?.(language);
   }, [language]);
 
   const value: LanguageContextType = {

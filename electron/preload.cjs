@@ -194,6 +194,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   getApiUrl: () => ipcRenderer.invoke('sync:getApiUrl'),
 
+  app: {
+    setUiLanguage: (lang) => ipcRenderer.invoke('app:setUiLanguage', lang),
+  },
+
   // Platform info
   platform: process.platform,
   isElectron: true,

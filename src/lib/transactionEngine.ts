@@ -108,6 +108,8 @@ export interface TransactionResult {
   journalEntryId?: string;
   openItemId?: string;
   documentLinkIds: string[];
+  /** Line productId → warehouse product row id after branch clone (purchase/sales). */
+  resolvedProductIds?: Record<string, string>;
 }
 
 // ==================== MAIN ENGINE (API-First) ====================
@@ -138,6 +140,9 @@ export async function processTransaction(request: TransactionRequest): Promise<T
       result.journalEntryId = apiResult.data.journalEntryId;
       result.openItemId = apiResult.data.openItemId;
       result.documentLinkIds = apiResult.data.documentLinkIds || [];
+      if (apiResult.data.resolvedProductIds && typeof apiResult.data.resolvedProductIds === 'object') {
+        result.resolvedProductIds = apiResult.data.resolvedProductIds;
+      }
 
       console.log(`[TransactionEngine] ✅ ${request.transactionType} ${request.documentNumber} processed via API`);
       if (result.journalEntryId) {

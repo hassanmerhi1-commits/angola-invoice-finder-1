@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { Product } from '@/types/erp';
 import { Button } from '@/components/ui/button';
 import {
@@ -35,6 +35,8 @@ interface AdvancedDataGridProps {
   branches?: any[];
   allBranchProducts?: Record<string, Product[]>;
   reservedQty?: Record<string, number>;
+  /** Rows already sorted by name from API — skip initial O(n log n) sort. */
+  preSorted?: boolean;
 }
 
 function matchesCondition(val: string, numVal: number, cond: FilterCondition, isNumber: boolean): boolean {
@@ -71,7 +73,7 @@ function matchesCondition(val: string, numVal: number, cond: FilterCondition, is
 
 export function AdvancedDataGrid({
   products, onSelectProduct, onDoubleClickProduct, selectedProductId, hideStock = false,
-  isHeadOffice = false, allBranchProducts = {}, reservedQty = {}
+  isHeadOffice = false, allBranchProducts = {}, reservedQty = {}, preSorted = false,
 }: AdvancedDataGridProps) {
   const { t } = useTranslation();
 
@@ -91,11 +93,29 @@ export function AdvancedDataGrid({
     { key: 'category', label: t.inventoryGridUi.category, minWidth: 120 },
     { key: 'supplierName', label: t.inventoryGridUi.supplierName, minWidth: 120 },
   ]), [t, isHeadOffice]);
-  const [sortColumn, setSortColumn] = useState<string>('sku');
+  const [sortColumn, setSortColumn] = useState<string>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [simpleFilters, setSimpleFilters] = useState<Record<string, { type: 'all' | 'blanks' | 'nonblanks' | 'value'; value?: string }>>({});
   const [customFilters, setCustomFilters] = useState<Record<string, CustomFilterState>>({});
   const [customDialogCol, setCustomDialogCol] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(520);
+  const ROW_HEIGHT = 28;
+  const OVERSCAN = 10;
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setViewportHeight(el.clientHeight || 520));
+    ro.observe(el);
+    setViewportHeight(el.clientHeight || 520);
+    return () => ro.disconnect();
+  }, []);
+
+  const onGridScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  }, []);
 
   const visibleColumns = useMemo(() => {
     if (hideStock) return COLUMNS.filter(c => c.key !== 'stock');
@@ -134,8 +154,16 @@ export function AdvancedDataGrid({
     return { str: String(val ?? ''), num: typeof val === 'number' ? val : parseFloat(String(val)) || 0 };
   };
 
+  const hasActiveFilters = Object.keys(simpleFilters).some(k => simpleFilters[k]?.type !== 'all') ||
+    Object.keys(customFilters).length > 0;
+
   const filteredProducts = useMemo(() => {
-    let result = [...products];
+    const needsCopy =
+      hasActiveFilters ||
+      !preSorted ||
+      sortColumn !== 'name' ||
+      sortDirection !== 'asc';
+    let result = needsCopy ? [...products] : products;
 
     // Simple filters (blanks, nonblanks, exact value)
     Object.entries(simpleFilters).forEach(([key, filter]) => {
@@ -167,18 +195,20 @@ export function AdvancedDataGrid({
       });
     });
 
-    result.sort((a, b) => {
-      const aVal = getCellRawValue(a, sortColumn);
-      const bVal = getCellRawValue(b, sortColumn);
-      const col = COLUMNS.find(c => c.key === sortColumn);
-      if (col?.type === 'number') {
-        return sortDirection === 'asc' ? aVal.num - bVal.num : bVal.num - aVal.num;
-      }
-      return sortDirection === 'asc' ? aVal.str.localeCompare(bVal.str) : bVal.str.localeCompare(aVal.str);
-    });
+    if (needsCopy || sortColumn !== 'name' || sortDirection !== 'asc') {
+      result.sort((a, b) => {
+        const aVal = getCellRawValue(a, sortColumn);
+        const bVal = getCellRawValue(b, sortColumn);
+        const col = COLUMNS.find(c => c.key === sortColumn);
+        if (col?.type === 'number') {
+          return sortDirection === 'asc' ? aVal.num - bVal.num : bVal.num - aVal.num;
+        }
+        return sortDirection === 'asc' ? aVal.str.localeCompare(bVal.str) : bVal.str.localeCompare(aVal.str);
+      });
+    }
 
     return result;
-  }, [products, simpleFilters, customFilters, sortColumn, sortDirection, reservedQty, isHeadOffice, allBranchProducts]);
+  }, [products, simpleFilters, customFilters, sortColumn, sortDirection, reservedQty, hasActiveFilters, preSorted, COLUMNS]);
 
   const handleSort = (column: string) => {
     if (sortColumn === column) {
@@ -188,9 +218,6 @@ export function AdvancedDataGrid({
       setSortDirection('asc');
     }
   };
-
-  const hasActiveFilters = Object.keys(simpleFilters).some(k => simpleFilters[k]?.type !== 'all') ||
-    Object.keys(customFilters).length > 0;
 
   const clearAllFilters = () => {
     setSimpleFilters({});
@@ -225,22 +252,41 @@ export function AdvancedDataGrid({
 
   const uniqueValues = useMemo(() => {
     const values: Record<string, string[]> = {};
+    const sample = products.length > 600 ? products.slice(0, 600) : products;
     visibleColumns.forEach(col => {
       if (col.computed) return;
       const set = new Set<string>();
-      products.forEach(p => {
+      for (const p of sample) {
         const v = String(p[col.key as keyof Product] ?? '');
         if (v) set.add(v);
-      });
+        if (set.size >= 24) break;
+      }
       values[col.key] = Array.from(set).sort().slice(0, 20);
     });
     return values;
   }, [products, visibleColumns]);
 
+  const virtualWindow = useMemo(() => {
+    const total = filteredProducts.length;
+    if (total === 0) {
+      return { start: 0, end: 0, topPad: 0, bottomPad: 0, rows: [] as Product[] };
+    }
+    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+    const count = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
+    const end = Math.min(total, start + count);
+    return {
+      start,
+      end,
+      topPad: start * ROW_HEIGHT,
+      bottomPad: Math.max(0, (total - end) * ROW_HEIGHT),
+      rows: filteredProducts.slice(start, end),
+    };
+  }, [filteredProducts, scrollTop, viewportHeight]);
+
   const currentDialogCol = customDialogCol ? COLUMNS.find(c => c.key === customDialogCol) : null;
 
   return (
-    <div className="flex flex-col h-full border-2 border-black rounded-lg bg-card overflow-hidden">
+    <div className="flex flex-col h-full border-[1.5px] border-[hsl(var(--table-grid-border))] rounded-lg bg-card overflow-hidden">
       {/* Info Bar */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b text-xs">
         <span className="text-muted-foreground">
@@ -254,8 +300,8 @@ export function AdvancedDataGrid({
         )}
       </div>
 
-      {/* Scrollable grid */}
-      <div className="flex-1 overflow-auto">
+      {/* Scrollable grid — virtualized rows (only visible slice in DOM) */}
+      <div ref={scrollRef} className="flex-1 overflow-auto" onScroll={onGridScroll}>
         <table className="w-full border-collapse" style={{ minWidth: visibleColumns.reduce((s, c) => s + c.minWidth, 0) }}>
           <thead className="sticky top-0 z-10 bg-muted">
             <tr>
@@ -268,7 +314,7 @@ export function AdvancedDataGrid({
                       <DropdownMenuTrigger asChild>
                         <button
                           className={cn(
-                            "w-full px-2 py-1 text-xs font-bold text-left leading-tight flex items-center justify-between hover:bg-accent",
+                            "w-full px-2 py-1 text-xs font-bold text-foreground/80 text-left leading-tight flex items-center justify-between hover:bg-accent",
                             hasFilter && "bg-primary/10 text-primary"
                           )}
                         >
@@ -319,23 +365,31 @@ export function AdvancedDataGrid({
             </tr>
           </thead>
           <tbody>
-            {filteredProducts.map((product, idx) => (
+            {virtualWindow.topPad > 0 && (
+              <tr aria-hidden>
+                <td colSpan={visibleColumns.length} style={{ height: virtualWindow.topPad, padding: 0, border: 'none' }} />
+              </tr>
+            )}
+            {virtualWindow.rows.map((product, sliceIdx) => {
+              const idx = virtualWindow.start + sliceIdx;
+              return (
               <tr
                 key={product.id}
                 onClick={() => onSelectProduct(product)}
                 onDoubleClick={() => onDoubleClickProduct?.(product)}
                 className={cn(
                   "cursor-pointer hover:bg-accent/50 transition-colors",
-                  selectedProductId === product.id && "bg-primary text-primary-foreground hover:bg-primary/90",
+                  selectedProductId === product.id && "bg-primary [&_td]:text-primary-foreground hover:bg-primary/90",
                   idx % 2 === 1 && selectedProductId !== product.id && "bg-muted/30"
                 )}
+                style={{ height: ROW_HEIGHT }}
               >
                 {visibleColumns.map(col => (
                   <td
                     key={col.key}
                     style={{ minWidth: col.minWidth }}
                     className={cn(
-                      "px-2 py-0.5 text-xs font-bold leading-tight truncate",
+                      "px-2 py-0.5 text-xs font-semibold leading-tight truncate",
                       col.type === 'number' && "text-right font-mono"
                     )}
                   >
@@ -343,7 +397,13 @@ export function AdvancedDataGrid({
                   </td>
                 ))}
               </tr>
-            ))}
+              );
+            })}
+            {virtualWindow.bottomPad > 0 && (
+              <tr aria-hidden>
+                <td colSpan={visibleColumns.length} style={{ height: virtualWindow.bottomPad, padding: 0, border: 'none' }} />
+              </tr>
+            )}
             {filteredProducts.length === 0 && (
               <tr>
                 <td colSpan={visibleColumns.length} className="text-center py-8 text-muted-foreground text-sm">

@@ -143,13 +143,20 @@ function productBelongsToBranchList(product: Product, branchId: string, apiSkus:
 }
 
 /** Drop rows owned by another branch; keep shared catalog and sede catalog rows (stock may be 0 at filial). */
-function filterProductsForApiScope(products: Product[], branchId?: string): Product[] {
+function filterProductsForApiScope(
+  products: Product[],
+  branchId?: string,
+  catalogBranchIds: string[] = [],
+): Product[] {
   if (!branchId) return products;
   const key = String(branchId).trim();
+  const isMainScope = catalogBranchIds.includes(key);
   return products.filter((p) => {
     const owner = String(p.branchId || '').trim();
-    if (owner && owner !== key) return false;
-    return true;
+    if (!owner) return true;
+    if (owner === key) return true;
+    if (isMainScope && catalogBranchIds.includes(owner)) return true;
+    return false;
   });
 }
 
@@ -157,20 +164,24 @@ function dedupeProductsBySku(products: Product[], branchId?: string, catalogBran
   return dedupeProductsForDisplay(products, branchId, catalogBranchIds);
 }
 
-export function useProducts(branchId?: string) {
+export type ProductsListOptions = { light?: boolean; enabled?: boolean };
+
+export function useProducts(branchId?: string, listOptions?: ProductsListOptions) {
+  const listEnabled = listOptions?.enabled !== false;
   const { branches } = useBranchContext();
   const catalogBranchIds = useMemo(
     () => branches.filter((b) => normalizeIsMain(b.isMain)).map((b) => b.id),
     [branches],
   );
   const [products, setProducts] = useState<Product[]>([]);
+  const [productsLoading, setProductsLoading] = useState(listEnabled);
   /** Ignores stale list fetches that finish after a newer write (e.g. add product). */
   const listGenerationRef = useRef(0);
 
   const fetchMergedProductList = useCallback(async (): Promise<Product[]> => {
     let apiProducts: Product[] | null = null;
     try {
-      const response = await api.products.list(branchId);
+      const response = await api.products.list(branchId, listOptions);
       if (!response.error && Array.isArray(response.data)) {
         apiProducts = filterProductsForApiScope(response.data.map(mapProduct), branchId);
       }
@@ -186,10 +197,14 @@ export function useProducts(branchId?: string) {
     }
 
     if (apiProducts !== null) {
+      // Light inventory list is already deduped on the server — skip O(n²) client merge.
+      if (listOptions?.light && !isDemoMode()) {
+        return filterProductsForApiScope(apiProducts, branchId, catalogBranchIds);
+      }
       const dedupedApi = dedupeProductsBySku(apiProducts, branchId, catalogBranchIds);
       // API is source of truth — merging Electron DB / localStorage re-shows duplicate SKUs after login.
       if (!isDemoMode()) {
-        return filterProductsForApiScope(dedupedApi, branchId);
+        return filterProductsForApiScope(dedupedApi, branchId, catalogBranchIds);
       }
       const apiIds = new Set(dedupedApi.map((p) => p.id));
       const apiSkus = new Set(
@@ -205,24 +220,44 @@ export function useProducts(branchId?: string) {
       return filterProductsForApiScope(
         dedupeProductsBySku([...dedupedApi, ...localOnly], branchId, catalogBranchIds),
         branchId,
+        catalogBranchIds,
       );
     }
 
     return filterProductsForApiScope(
       dedupeProductsBySku(localProducts, branchId, catalogBranchIds),
       branchId,
+      catalogBranchIds,
     );
-  }, [branchId, catalogBranchIds]);
+  }, [branchId, catalogBranchIds, listOptions?.light]);
 
   const refreshProducts = useCallback(async () => {
-    const generation = ++listGenerationRef.current;
-    const list = await fetchMergedProductList();
-    if (generation === listGenerationRef.current) {
-      setProducts(list);
+    if (!listEnabled) {
+      setProductsLoading(false);
+      return;
     }
-  }, [fetchMergedProductList]);
+    const generation = ++listGenerationRef.current;
+    setProductsLoading(true);
+    try {
+      const list = await fetchMergedProductList();
+      if (generation === listGenerationRef.current) {
+        setProducts(list);
+      }
+    } finally {
+      if (generation === listGenerationRef.current) {
+        setProductsLoading(false);
+      }
+    }
+  }, [fetchMergedProductList, listEnabled]);
 
-  useEffect(() => { refreshProducts(); }, [refreshProducts]);
+  useEffect(() => {
+    if (!listEnabled) {
+      setProducts([]);
+      setProductsLoading(false);
+      return;
+    }
+    void refreshProducts();
+  }, [refreshProducts, listEnabled]);
 
   useEffect(() => {
     const handleProductsChanged = (event: Event) => {
@@ -271,17 +306,22 @@ export function useProducts(branchId?: string) {
     } catch (e) {
       console.warn('[useProducts] local cache mirror after API create failed:', e);
     }
-    const merged = await fetchMergedProductList();
+    let merged = await fetchMergedProductList();
+    if (!merged.some((p) => p.id === savedProduct.id)) {
+      merged = dedupeProductsBySku([savedProduct, ...merged], branchId, catalogBranchIds);
+    }
     if (writeGeneration === listGenerationRef.current) {
       setProducts(merged);
     }
+    const changedBranch =
+      savedProduct.branchId || branchId || catalogBranchIds[0] || 'all';
     window.dispatchEvent(
       new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
-        detail: { branchId: savedProduct.branchId || branchId || 'all' },
-      })
+        detail: { branchId: changedBranch },
+      }),
     );
     return savedProduct;
-  }, [branchId, fetchMergedProductList]);
+  }, [branchId, catalogBranchIds, fetchMergedProductList]);
 
   const updateProduct = useCallback(async (product: Product) => {
     const writeGeneration = ++listGenerationRef.current;
@@ -329,7 +369,7 @@ export function useProducts(branchId?: string) {
     await refreshProducts();
   }, [refreshProducts]);
 
-  return { products, refreshProducts, addProduct, updateProduct, deleteProduct };
+  return { products, productsLoading, refreshProducts, addProduct, updateProduct, deleteProduct };
 }
 
 // ============================================

@@ -655,9 +655,22 @@ export const api = {
 
   // Products
   products: {
-    list: async (branchId?: string) => {
-      const endpoint = `/products${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`;
-      return apiFetch<any[]>(endpoint);
+    list: async (branchId?: string, opts?: { light?: boolean }) => {
+      const sp = new URLSearchParams();
+      if (branchId) sp.set('branchId', branchId);
+      if (opts?.light) sp.set('light', '1');
+      const qs = sp.toString();
+      return apiFetch<any[]>(`/products${qs ? `?${qs}` : ''}`);
+    },
+    inventoryConsolidated: () => apiFetch<any[]>('/products/inventory-consolidated'),
+    inventoryGrid: (opts: { branchId?: string; consolidated?: boolean }) => {
+      const sp = new URLSearchParams();
+      if (opts.branchId) sp.set('branchId', opts.branchId);
+      if (opts.consolidated) sp.set('consolidated', '1');
+      const qs = sp.toString();
+      return apiFetch<{ rows: any[]; count: number }>(
+        `/products/inventory-grid${qs ? `?${qs}` : ''}`,
+      );
     },
     get: async (id: string) => {
       return apiFetch<any>(`/products/${encodeURIComponent(id)}`);

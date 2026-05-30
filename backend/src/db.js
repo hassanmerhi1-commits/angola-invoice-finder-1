@@ -1359,7 +1359,7 @@ function runSqliteQuery(text, params = []) {
   const sql = toSqliteSql(text).trim();
   const stmt = sqlite.prepare(sql);
   const sqliteParams = expandPgPlaceholdersForSqlite(text, params);
-  const isSelect = /^select\b/i.test(sql);
+  const isSelect = /^(select|with)\b/i.test(sql);
   const hasReturning = /\breturning\b/i.test(sql);
 
   if (isSelect) {

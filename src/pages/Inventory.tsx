@@ -4,6 +4,8 @@ import { dedupeProductsForDisplay } from '@/lib/productDedupe';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useProducts } from '@/hooks/useERP';
+import { useInventoryGrid } from '@/hooks/useInventoryGrid';
+import { invalidateInventoryGridCache } from '@/lib/inventoryGrid';
 import { useInventoryBranchScope } from '@/hooks/useInventoryBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { normalizeIsMain } from '@/lib/branchAccess';
@@ -121,16 +123,41 @@ export default function Inventory() {
   /** Consolidated = sum all branches; otherwise stock for the selected branch (incl. main alone). */
   const listBranchId = inventoryListBranchId;
   const warehouseId = listBranchId ?? currentBranch?.id ?? null;
-  const { products, refreshProducts, updateProduct, addProduct, deleteProduct } = useProducts(listBranchId);
+
+  const mainBranch = useMemo(
+    () => branches.find((b) => normalizeIsMain(b.isMain)) ?? branches[0] ?? null,
+    [branches],
+  );
+
+  const catalogBranchIds = useMemo(
+    () => (allBranches.length > 0 ? allBranches : branches)
+      .filter((b) => normalizeIsMain(b.isMain))
+      .map((b) => b.id),
+    [allBranches, branches],
+  );
+
+  const catalogListBranchId = listBranchId ?? (isHeadOffice ? mainBranch?.id : undefined);
+  const {
+    rows: inventoryRows,
+    loading: inventoryGridLoading,
+    refresh: refreshInventoryGrid,
+  } = useInventoryGrid({
+    branchId: listBranchId,
+    consolidated: isHeadOffice,
+  });
+
+  const { refreshProducts, updateProduct, addProduct, deleteProduct } = useProducts(
+    catalogListBranchId,
+    { light: true, enabled: false },
+  );
 
   const productsById = useMemo(
-    () => new Map(products.map((p) => [p.id, p])),
-    [products],
+    () => new Map(inventoryRows.map((p) => [p.id, p])),
+    [inventoryRows],
   );
-  
-  // For head office: load all products per branch for qty breakdown
+
   const [allBranchProducts, setAllBranchProducts] = useState<Record<string, Product[]>>({});
-  
+
   const mapApiRowToProduct = useCallback((p: any): Product => ({
     id: p.id,
     name: p.name,
@@ -152,55 +179,54 @@ export default function Inventory() {
     createdAt: p.created_at || p.createdAt || '',
   }), []);
 
-  const mainBranch = useMemo(
-    () => branches.find((b) => normalizeIsMain(b.isMain)) ?? branches[0] ?? null,
-    [branches],
-  );
-
-  const catalogBranchIds = useMemo(
-    () => (allBranches.length > 0 ? allBranches : branches)
-      .filter((b) => normalizeIsMain(b.isMain))
-      .map((b) => b.id),
-    [allBranches, branches],
-  );
-
-  const loadBranchProducts = useCallback(async () => {
-    const branchProducts: Record<string, Product[]> = {};
+  const loadPerBranchBreakdown = useCallback(async () => {
+    if (!isHeadOffice) return;
     const branchList = allBranches.length > 0 ? allBranches : branches;
-    const targets = canSwitchBranch ? branchList : (currentBranch ? [currentBranch] : []);
-    for (const branch of targets) {
-      // Use API first (source of truth), fallback to localStorage
+    const targets = !canSwitchBranch && currentBranch ? [currentBranch] : branchList;
+    const fetchOneBranch = async (branch: (typeof branchList)[0]) => {
       try {
-        const result = await api.products.list(branch.id);
-        if (result.data && Array.isArray(result.data)) {
-          branchProducts[branch.id] = dedupeProductsForDisplay(
-            result.data.map(mapApiRowToProduct),
-            branch.id,
-            catalogBranchIds,
-          );
-          continue;
+        const result = await api.products.inventoryGrid({ branchId: branch.id });
+        if (result.data?.rows && Array.isArray(result.data.rows)) {
+          return {
+            branchId: branch.id,
+            rows: result.data.rows.map(mapApiRowToProduct),
+          };
         }
-      } catch (e) {
-        // API failed, fall back to localStorage
+      } catch {
+        /* API failed — local fallback */
       }
       const prods = await storageGetProducts(branch.id);
-      branchProducts[branch.id] = prods;
-    }
-    setAllBranchProducts(branchProducts);
-  }, [canSwitchBranch, branches, allBranches, currentBranch, mapApiRowToProduct, catalogBranchIds]);
-  
-  useEffect(() => {
-    loadBranchProducts();
-  }, [loadBranchProducts, products]);
+      return { branchId: branch.id, rows: prods };
+    };
+    await Promise.all(
+      targets.map(async (branch) => {
+        const { branchId, rows } = await fetchOneBranch(branch);
+        setAllBranchProducts((prev) => ({ ...prev, [branchId]: rows }));
+      }),
+    );
+  }, [
+    canSwitchBranch,
+    branches,
+    allBranches,
+    currentBranch,
+    isHeadOffice,
+    mapApiRowToProduct,
+    catalogBranchIds,
+  ]);
+
+  const reloadInventoryList = useCallback(async () => {
+    invalidateInventoryGridCache(listBranchId, isHeadOffice);
+    await refreshInventoryGrid();
+  }, [listBranchId, isHeadOffice, refreshInventoryGrid]);
 
   useEffect(() => {
     const onProductsChanged = () => {
-      void loadBranchProducts();
-      void refreshProducts();
+      invalidateInventoryGridCache(listBranchId, isHeadOffice);
+      void refreshInventoryGrid();
     };
     window.addEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
     return () => window.removeEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
-  }, [loadBranchProducts, refreshProducts]);
+  }, [listBranchId, isHeadOffice, refreshInventoryGrid]);
 
   const loadStockMovements = useCallback(async () => {
     // Try API first (live DB), fall back to localStorage
@@ -242,91 +268,29 @@ export default function Inventory() {
     setStockMovements(data);
   }, [currentBranch?.id, isHeadOffice]);
 
-  useEffect(() => {
-    loadStockMovements();
-  }, [loadStockMovements, products]);
+  const MOVEMENT_TABS = useMemo(
+    () =>
+      new Set([
+        'extracto',
+        'mes',
+        'grafico',
+        'preco-compra',
+        'cost-history',
+        'vendas-mensais',
+      ]),
+    [],
+  );
 
-  /** Sede: one row per SKU, stock = sum of each filial's stock (from per-branch API). */
-  const displayProducts = useMemo(() => {
-    const skuKey = (p: Product) => (p.sku || '').trim().toLowerCase() || p.id;
-    const rowStamp = (row: Product) => row.updatedAt || row.createdAt || '';
-
-    if (isHeadOffice) {
-      const bySku = new Map<string, Product>();
-      const mergeRow = (p: Product, addStock: number) => {
-        const key = skuKey(p);
-        const qty = Number(addStock) || 0;
-        const prev = bySku.get(key);
-        if (!prev) {
-          bySku.set(key, { ...p, stock: qty });
-          return;
-        }
-        const primary = rowStamp(p) >= rowStamp(prev) ? p : prev;
-        const secondary = primary === p ? prev : p;
-        bySku.set(key, {
-          ...primary,
-          supplierId: primary.supplierId || secondary.supplierId,
-          supplierName: primary.supplierName || secondary.supplierName,
-          stock: (Number(prev.stock) || 0) + qty,
-        });
-      };
-      const branchList = allBranches.length > 0 ? allBranches : branches;
-      let summedFromBranches = false;
-      for (const branch of branchList) {
-        const rows = allBranchProducts[branch.id] || [];
-        if (rows.length > 0) summedFromBranches = true;
-        for (const p of rows) {
-          mergeRow(p, Number(p.stock) || 0);
-        }
-      }
-      // Do not also merge the global "all products" list — it duplicates sede stock (e.g. 7000 + 7000 = 14000).
-      if (!summedFromBranches) {
-        for (const p of products) {
-          const key = skuKey(p);
-          const prev = bySku.get(key);
-          if (!prev) {
-            bySku.set(key, p);
-            continue;
-          }
-          const pick = (p.stock || 0) > (prev.stock || 0) ? p : prev;
-          const other = pick === p ? prev : p;
-          bySku.set(key, {
-            ...pick,
-            supplierId: pick.supplierId || other.supplierId,
-            supplierName: pick.supplierName || other.supplierName,
-          });
-        }
-      }
-      return dedupeProductsForDisplay(Array.from(bySku.values()), mainBranch?.id, catalogBranchIds);
-    }
-
-    const bySku = new Map<string, Product>();
-    for (const p of products) {
-      const key = skuKey(p);
-      const prev = bySku.get(key);
-      if (!prev) {
-        bySku.set(key, p);
-        continue;
-      }
-      const pick = (p.stock || 0) > (prev.stock || 0) ? p : prev;
-      const other = pick === p ? prev : p;
-      bySku.set(key, {
-        ...pick,
-        supplierId: pick.supplierId || other.supplierId,
-        supplierName: pick.supplierName || other.supplierName,
-      });
-    }
-    return dedupeProductsForDisplay(Array.from(bySku.values()), listBranchId, catalogBranchIds);
-  }, [products, isHeadOffice, branches, allBranches, allBranchProducts, mainBranch?.id, listBranchId, catalogBranchIds]);
+  const displayProducts = inventoryRows;
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const flatCatalog = useMemo(() => {
-    const rows = [...products];
+    const rows = [...inventoryRows];
     for (const branchRows of Object.values(allBranchProducts)) {
       rows.push(...branchRows);
     }
     return rows;
-  }, [products, allBranchProducts]);
+  }, [inventoryRows, allBranchProducts]);
 
   const stockEntrySearchProducts = useMemo(() => {
     if (canSwitchBranch && Object.keys(allBranchProducts).length > 0) {
@@ -337,15 +301,15 @@ export default function Inventory() {
       );
     }
     const branchId = listBranchId || currentBranch?.id || '';
-    return products.map((p) => ({ ...p, branchId: p.branchId || branchId }));
-  }, [canSwitchBranch, allBranchProducts, products, listBranchId, currentBranch?.id]);
+    return inventoryRows.map((p) => ({ ...p, branchId: p.branchId || branchId }));
+  }, [canSwitchBranch, allBranchProducts, inventoryRows, listBranchId, currentBranch?.id]);
 
   /** Full catalog for exit search (stock checked when selecting a line, not when searching). */
   const stockExitSearchProducts = useMemo(() => {
     if (stockEntrySearchProducts.length > 0) return stockEntrySearchProducts;
     if (flatCatalog.length > 0) return flatCatalog;
-    return products;
-  }, [stockEntrySearchProducts, flatCatalog, products]);
+    return inventoryRows;
+  }, [stockEntrySearchProducts, flatCatalog, inventoryRows]);
 
   const dialogProduct = useMemo(() => {
     if (!selectedProduct) return null;
@@ -366,10 +330,21 @@ export default function Inventory() {
       setActiveTab('lista');
     }
   }, [showDetailedQtyTab, activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'qtd-detalhada' && isHeadOffice) {
+      void loadPerBranchBreakdown();
+    }
+  }, [activeTab, isHeadOffice, loadPerBranchBreakdown]);
   const [stockListFilter, setStockListFilter] = useState<StockListFilter>('all');
   const [listSearch, setListSearch] = useState('');
   const listSearchRef = useRef<HTMLInputElement>(null);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+
+  useEffect(() => {
+    if (!MOVEMENT_TABS.has(activeTab)) return;
+    void loadStockMovements();
+  }, [activeTab, loadStockMovements, MOVEMENT_TABS]);
 
   const gridProducts = useMemo(() => {
     let rows = displayProducts;
@@ -485,7 +460,12 @@ export default function Inventory() {
         await addProduct(product);
         toast.success(t.productFormUi.productCreated);
       }
-      await loadBranchProducts();
+      await reloadInventoryList();
+      window.dispatchEvent(
+        new CustomEvent(PRODUCTS_CHANGED_EVENT, {
+          detail: { branchId: listBranchId ?? (product.branchId || 'all') },
+        }),
+      );
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       toast.error(message || t.productFormUi.productSaveFailed);
@@ -549,8 +529,7 @@ export default function Inventory() {
       toast.error(message || t.inventoryUi.importError);
     }
 
-    await refreshProducts();
-    await loadBranchProducts();
+    await reloadInventoryList();
   };
 
   // Handle stock adjustments from physical count
@@ -562,7 +541,7 @@ export default function Inventory() {
     const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
     
     adjustments.forEach(adj => {
-      const product = products.find(p => p.id === adj.productId);
+      const product = inventoryRows.find(p => p.id === adj.productId);
       if (product) {
         // Update product stock
         const updatedProduct = {
@@ -609,7 +588,7 @@ export default function Inventory() {
       }
     });
 
-    refreshProducts();
+    void reloadInventoryList();
   };
 
   const entryReferenceType = (reason: StockEntryReason): string => {
@@ -629,11 +608,10 @@ export default function Inventory() {
       window.dispatchEvent(
         new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: targetWarehouseId } }),
       );
-      await refreshProducts();
-      await loadBranchProducts();
+      await reloadInventoryList();
       await loadStockMovements();
     },
-    [refreshProducts, loadBranchProducts, loadStockMovements],
+    [reloadInventoryList, loadStockMovements],
   );
 
   const handleApplyStockEntry = useCallback(
@@ -826,7 +804,7 @@ export default function Inventory() {
   );
 
   // Get existing SKUs for duplicate detection
-  const existingSkus = products.map(p => p.sku);
+  const existingSkus = inventoryRows.map(p => p.sku);
 
   const productImportColumns: { key: keyof ExcelProduct; label: string }[] = [
     { key: 'codigo', label: t.inventoryUi.colCode },
@@ -1030,7 +1008,7 @@ export default function Inventory() {
           size="sm" 
           className="h-7 text-xs gap-1"
           onClick={() => {
-            exportProductsToExcel(products);
+            exportProductsToExcel(inventoryRows);
             toast.success(t.inventoryPageUi.exportedToExcel);
           }}
         >
@@ -1173,15 +1151,20 @@ export default function Inventory() {
         </div>
 
         <TabsContent value="lista" forceMount className="flex-1 min-h-0 m-0 p-2 data-[state=inactive]:hidden overflow-auto">
-          <AdvancedDataGrid 
-            products={gridProducts}
-            onSelectProduct={handleSelectProduct}
-            onDoubleClickProduct={handleDoubleClickProduct}
-            selectedProductId={selectedProduct?.id}
-            isHeadOffice={isHeadOffice}
-            branches={branches}
-            allBranchProducts={allBranchProducts}
-          />
+          {gridProducts.length === 0 && inventoryGridLoading ? (
+            <p className="text-center py-16 text-muted-foreground">{t.common.loading}</p>
+          ) : (
+            <AdvancedDataGrid 
+              products={gridProducts}
+              onSelectProduct={handleSelectProduct}
+              onDoubleClickProduct={handleDoubleClickProduct}
+              selectedProductId={selectedProduct?.id}
+              isHeadOffice={isHeadOffice}
+              branches={branches}
+              allBranchProducts={allBranchProducts}
+              preSorted
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="extracto" className={tabPanelClass}>
@@ -1356,6 +1339,7 @@ export default function Inventory() {
         onOpenChange={setDialogOpen}
         product={dialogProduct}
         catalogProducts={flatCatalog}
+        scopeBranchId={listBranchId ?? inventoryBranch?.id ?? null}
         onSave={handleSaveProduct}
       />
 
@@ -1380,23 +1364,23 @@ export default function Inventory() {
       <InventoryCountSheetDialog
         open={countSheetDialogOpen}
         onOpenChange={setCountSheetDialogOpen}
-        products={products}
+        products={inventoryRows}
         branch={currentBranch}
-        categories={[...new Set(products.map(p => p.category).filter(Boolean))]}
+        categories={[...new Set(inventoryRows.map(p => p.category).filter(Boolean))]}
       />
 
       {/* Inventory Reconciliation Dialog */}
       <InventoryReconciliationDialog
         open={reconciliationDialogOpen}
         onOpenChange={setReconciliationDialogOpen}
-        products={products}
+        products={inventoryRows}
         branch={currentBranch}
-        categories={[...new Set(products.map(p => p.category).filter(Boolean))]}
+        categories={[...new Set(inventoryRows.map(p => p.category).filter(Boolean))]}
         onReconcile={(adjustments) => {
           const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
           
           adjustments.forEach(adj => {
-            const product = products.find(p => p.id === adj.productId);
+            const product = inventoryRows.find(p => p.id === adj.productId);
             if (product) {
               // Update product stock to the counted value
               updateProduct({
@@ -1422,7 +1406,7 @@ export default function Inventory() {
             }
           });
 
-          refreshProducts();
+          void reloadInventoryList();
         }}
         currentUser={JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}')?.name}
       />
@@ -1431,7 +1415,7 @@ export default function Inventory() {
       <InventoryAdjustmentDialog
         open={adjustmentDialogOpen}
         onOpenChange={setAdjustmentDialogOpen}
-        products={products}
+        products={inventoryRows}
         branch={currentBranch}
         onApplyAdjustments={handleApplyAdjustments}
       />
@@ -1441,7 +1425,7 @@ export default function Inventory() {
         key={`stock-entry-${language}`}
         open={stockEntryDialogOpen}
         onOpenChange={setStockEntryDialogOpen}
-        products={products}
+        products={inventoryRows}
         searchProducts={stockEntrySearchProducts}
         currentBranch={currentBranch}
         warehouseId={warehouseId}
@@ -1453,7 +1437,7 @@ export default function Inventory() {
         key={`stock-exit-${language}`}
         open={stockExitDialogOpen}
         onOpenChange={setStockExitDialogOpen}
-        products={products}
+        products={inventoryRows}
         searchProducts={stockExitSearchProducts}
         currentBranch={currentBranch}
         warehouseId={warehouseId}

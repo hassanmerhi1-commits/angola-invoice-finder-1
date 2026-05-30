@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Product } from '@/types/erp';
 import { useBranches, useCategories, useSuppliers } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
@@ -8,6 +8,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -49,6 +59,8 @@ interface ProductDetailDialogProps {
   onSave: (product: Product) => void | Promise<void>;
   /** Pre-select supplier when creating from purchase invoice flow. */
   defaultSupplierName?: string;
+  /** Inventory branch scope (overrides global top-nav branch when creating). */
+  scopeBranchId?: string | null;
 }
 
 const UNITS = [
@@ -112,6 +124,7 @@ export function ProductDetailDialog({
   catalogProducts = [],
   onSave,
   defaultSupplierName = '',
+  scopeBranchId = null,
 }: ProductDetailDialogProps) {
   const { branches } = useBranches();
   const { categories } = useCategories();
@@ -198,6 +211,9 @@ export function ProductDetailDialog({
       .catch(() => {});
   }, [open]);
 
+  const formSnapshotRef = useRef('');
+  const [discardCloseOpen, setDiscardCloseOpen] = useState(false);
+
   const [formData, setFormData] = useState({
     id: '',
     sku: '',
@@ -233,9 +249,13 @@ export function ProductDetailDialog({
   });
 
   useEffect(() => {
+    if (!open) {
+      formSnapshotRef.current = '';
+      return;
+    }
     if (effectiveProduct) {
       const supplierId = resolveProductSupplierId(effectiveProduct, supplierSelectOptions);
-      setFormData({
+      const next = {
         id: effectiveProduct.id,
         sku: effectiveProduct.sku,
         name: effectiveProduct.name,
@@ -263,10 +283,12 @@ export function ProductDetailDialog({
         barcodes: effectiveProduct.barcode
           ? [{ barPrice: effectiveProduct.barcode, embalagem: 1, priceLC: effectiveProduct.price, plu: '', ultimoCusto: effectiveProduct.lastCost || effectiveProduct.cost }]
           : [{ barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }],
-      });
+      };
+      formSnapshotRef.current = JSON.stringify(next);
+      setFormData(next);
     } else {
       const supplierId = resolveProductSupplierId(null, supplierSelectOptions, defaultSupplierName);
-      setFormData({
+      const next = {
         id: '',
         sku: '',
         name: '',
@@ -288,15 +310,57 @@ export function ProductDetailDialog({
         avgCost: 0,
         lastCost: 0,
         stock: 0,
-        branchId: currentBranch && !currentBranch.isMain ? currentBranch.id : 'all',
+        branchId:
+          scopeBranchId ||
+          (currentBranch && !currentBranch.isMain ? currentBranch.id : 'all'),
         isActive: true,
         barcode: '',
         barcodes: [{ barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }],
-      });
+      };
+      formSnapshotRef.current = JSON.stringify(next);
+      setFormData(next);
     }
-  }, [effectiveProduct, open, activeCategories, supplierSelectOptions, currentBranch?.id, currentBranch?.isMain, defaultSupplierName]);
+  }, [
+    effectiveProduct,
+    open,
+    activeCategories,
+    supplierSelectOptions,
+    currentBranch?.id,
+    currentBranch?.isMain,
+    defaultSupplierName,
+    scopeBranchId,
+  ]);
 
   const set = (field: string, value: any) => setFormData(prev => ({ ...prev, [field]: value }));
+
+  const isFormDirty = useMemo(() => {
+    if (!open || !formSnapshotRef.current) return false;
+    return JSON.stringify(formData) !== formSnapshotRef.current;
+  }, [open, formData]);
+
+  const closeDialog = useCallback(() => {
+    setDiscardCloseOpen(false);
+    onOpenChange(false);
+  }, [onOpenChange]);
+
+  const requestClose = useCallback(() => {
+    if (isFormDirty) {
+      setDiscardCloseOpen(true);
+      return;
+    }
+    closeDialog();
+  }, [isFormDirty, closeDialog]);
+
+  const handleDialogOpenChange = useCallback(
+    (next: boolean) => {
+      if (next) {
+        onOpenChange(true);
+        return;
+      }
+      requestClose();
+    },
+    [onOpenChange, requestClose],
+  );
 
   // Auto-calculate price with IVA when price or IVA changes (bidirectional)
   const updatePrice = (newPrice: number) => {
@@ -324,12 +388,12 @@ export function ProductDetailDialog({
       return;
     }
 
-    const resolvedBranchId =
-      currentBranch && !currentBranch.isMain
-        ? currentBranch.id
-        : formData.branchId === 'all'
-          ? ''
-          : formData.branchId;
+    const resolvedBranchId = (() => {
+      if (!effectiveProduct && scopeBranchId) return scopeBranchId;
+      if (currentBranch && !currentBranch.isMain) return currentBranch.id;
+      if (formData.branchId === 'all') return '';
+      return formData.branchId;
+    })();
 
     const rawSupplierId = formData.supplierId;
     const selectedSupplier = isLegacySupplierSelectValue(rawSupplierId)
@@ -367,11 +431,12 @@ export function ProductDetailDialog({
       updatedAt: new Date().toISOString(),
     };
     await onSave(savedProduct);
-    onOpenChange(false);
+    closeDialog();
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent className="max-w-4xl p-0 gap-0" onOpenAutoFocus={e => e.preventDefault()}>
         <DialogHeader className="px-4 py-2 border-b bg-muted/50">
           <DialogTitle className="text-sm">{t.productDetailUi.title}</DialogTitle>
@@ -599,13 +664,27 @@ export function ProductDetailDialog({
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-4 py-3 border-t bg-muted/50">
           <Button onClick={handleSave} size="sm" className="h-8 gap-1">
-            <Check className="w-4 h-4" /> Guardar
+            <Check className="w-4 h-4" /> {t.common.save}
           </Button>
-          <Button variant="outline" size="sm" className="h-8 gap-1" onClick={() => onOpenChange(false)}>
-            <X className="w-4 h-4" /> Cancelar
+          <Button variant="outline" size="sm" className="h-8 gap-1" onClick={requestClose}>
+            <X className="w-4 h-4" /> {t.common.cancel}
           </Button>
         </div>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog open={discardCloseOpen} onOpenChange={setDiscardCloseOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t.common.confirmDiscardTitle}</AlertDialogTitle>
+          <AlertDialogDescription>{t.common.confirmDiscardDescription}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t.common.keepEditing}</AlertDialogCancel>
+          <AlertDialogAction onClick={closeDialog}>{t.common.discardAndClose}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }

@@ -249,6 +249,61 @@ function branchRefMatchesId(ref: BranchRef | undefined, id: string): boolean {
   return false;
 }
 
+/** Match a sale / movement row to a branch (header warehouse/branch ids only). */
+export function scopeBelongsToBranch(
+  scopeIds: (string | null | undefined)[],
+  branchId: string,
+  branchCatalog?: BranchRef[],
+): boolean {
+  const ids = scopeIds.map(normId).filter(Boolean);
+  if (!branchId || ids.length === 0) return !branchId;
+  const stub = {
+    id: '_',
+    invoiceNumber: '',
+    supplierAccountCode: '',
+    supplierName: '',
+    date: '',
+    paymentDate: '',
+    currency: 'AOA',
+    warehouseId: ids[0] || '',
+    warehouseName: '',
+    priceType: 'last_price' as const,
+    purchaseAccountCode: '',
+    ivaAccountCode: '',
+    transactionType: 'ALL',
+    currencyRate: 1,
+    taxRate2: 0,
+    surchargePercent: 0,
+    changePrice: false,
+    isPending: false,
+    lines: ids.slice(1).map((warehouseId, i) => ({
+      id: `_${i}`,
+      productId: '',
+      productCode: '',
+      description: '',
+      quantity: 0,
+      packaging: 1,
+      unitPrice: 0,
+      discountPct: 0,
+      taxRate: 0,
+      warehouseId,
+    })),
+    journalLines: [],
+    subtotal: 0,
+    ivaTotal: 0,
+    total: 0,
+    status: 'draft',
+    branchId: ids[0] || '',
+    branchName: '',
+    supplierBalance: 0,
+    createdBy: '',
+    createdByName: '',
+    createdAt: '',
+    updatedAt: '',
+  };
+  return invoiceBelongsToBranch(stub, branchId, branchCatalog);
+}
+
 export function invoiceBelongsToBranch(
   inv: PurchaseInvoice,
   branchId: string,

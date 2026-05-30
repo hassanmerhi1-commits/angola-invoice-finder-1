@@ -18,10 +18,12 @@ import {
   calculateLine,
   calculateInvoiceTotals,
   getPurchaseInvoices,
+  getPurchaseInvoiceById,
   savePurchaseInvoice,
   allocatePurchaseInvoiceNumber,
   peekPurchaseInvoiceNumber,
 } from '@/lib/purchaseInvoiceStorage';
+import { PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
 import { processTransaction } from '@/lib/transactionEngine';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
 import { Supplier, Product, PurchaseOrder } from '@/types/erp';
@@ -47,6 +49,16 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -1224,8 +1236,6 @@ export default function PurchaseInvoices() {
   const { user } = useAuth();
   const { currentBranch, branches } = useBranchContext();
   const { apiBranchId } = useBranchScope();
-  // Purchase pickers need the full product master (all warehouses); branch is chosen on the order/line, not here.
-  const { products, addProduct: addProductToStock, refreshProducts } = useProducts(undefined);
   const { suppliers, refreshSuppliers, createSupplier } = useSuppliers();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -1260,6 +1270,17 @@ export default function PurchaseInvoices() {
   const [form, setForm] = useState<Partial<PurchaseInvoice>>({});
   const [lines, setLines] = useState<PurchaseInvoiceLine[]>([]);
   const [journalLines, setJournalLines] = useState<PurchaseInvoiceJournalLine[]>([]);
+  /** Warehouse on the FC drives stock, costs (último custo), and FC numbering — not the global top-nav branch alone. */
+  const purchaseWarehouseId = useMemo(
+    () =>
+      String(form.warehouseId ?? '').trim() ||
+      String(currentBranch?.id ?? '').trim() ||
+      String(apiBranchId ?? '').trim(),
+    [form.warehouseId, currentBranch?.id, apiBranchId],
+  );
+  const { products, addProduct: addProductToStock, refreshProducts } = useProducts(
+    purchaseWarehouseId || undefined,
+  );
   // Freight / Transport cost
   const [freightCost, setFreightCost] = useState(0);
   const [freightOtherCosts, setFreightOtherCosts] = useState(0);
@@ -1268,8 +1289,8 @@ export default function PurchaseInvoices() {
 
   const numberingBranchId = useMemo(() => {
     const wh = String(form.warehouseId ?? '').trim();
-    return String(currentBranch?.id ?? '').trim() || wh;
-  }, [currentBranch?.id, form.warehouseId]);
+    return wh || String(currentBranch?.id ?? '').trim() || String(apiBranchId ?? '').trim();
+  }, [form.warehouseId, currentBranch?.id, apiBranchId]);
 
   useEffect(() => {
     if (mode !== 'create' || !numberingBranchId) {
@@ -1285,6 +1306,7 @@ export default function PurchaseInvoices() {
   const [freightPickerOpen, setFreightPickerOpen] = useState(false);
   /** Purchase invoice create: optional PO to pre-fill lines for the selected supplier. */
   const [fillFromPoId, setFillFromPoId] = useState('');
+  const [discardCloseOpen, setDiscardCloseOpen] = useState(false);
   // PO inline state
   const [poCreateOpen, setPoCreateOpen] = useState(false);
   const [poViewOrder, setPoViewOrder] = useState<any | null>(null);
@@ -1301,7 +1323,7 @@ export default function PurchaseInvoices() {
 
   useEffect(() => {
     if (mode === 'create') void refreshProducts();
-  }, [mode, refreshProducts]);
+  }, [mode, purchaseWarehouseId, refreshProducts]);
 
   useEffect(() => {
     if (poCreateOpen) void refreshProducts();
@@ -1734,14 +1756,33 @@ export default function PurchaseInvoices() {
     setProductPickerOpen(true);
   }, []);
 
+  const isCreateDirty = useMemo(() => {
+    if (lines.length > 0) return true;
+    if (String(form.supplierId ?? '').trim() || String(form.supplierName ?? '').trim()) return true;
+    if (String(form.supplierInvoiceNo ?? '').trim()) return true;
+    if (String(form.ref ?? '').trim() || String(form.ref2 ?? '').trim()) return true;
+    if (Number(freightCost) > 0 || Number(freightOtherCosts) > 0) return true;
+    if (journalLines.length > 0) return true;
+    return false;
+  }, [lines.length, form, freightCost, freightOtherCosts, journalLines.length]);
+
   const handleCloseCreate = useCallback(() => {
     setSaveError(null);
     clearPurchaseCreateIntent();
     urlCreateAppliedRef.current = false;
     setFillFromPoId('');
+    setDiscardCloseOpen(false);
     setMode("list");
     goToPurchaseListRoute();
   }, [goToPurchaseListRoute]);
+
+  const requestCloseCreate = useCallback(() => {
+    if (isCreateDirty) {
+      setDiscardCloseOpen(true);
+      return;
+    }
+    handleCloseCreate();
+  }, [isCreateDirty, handleCloseCreate]);
 
   const openSupplierPicker = useCallback(async () => {
     await refreshSuppliers();
@@ -2007,17 +2048,15 @@ export default function PurchaseInvoices() {
       return;
     }
 
-    // Warehouse drives stock; branch on the document = active context, or selected warehouse when context is missing.
+    // Warehouse = stock location, document branch, FC sequence, and accounting branch for this FC.
     const resolvedWarehouseId =
       String(form.warehouseId ?? '').trim() || String(currentBranch?.id ?? '').trim() || '';
     const whMeta = branches.find((b) => String(b.id) === String(resolvedWarehouseId));
     const resolvedWarehouseName =
       String(form.warehouseName ?? '').trim() || whMeta?.name || currentBranch?.name || '';
 
-    const resolvedBranchId =
-      String(currentBranch?.id ?? '').trim() || String(resolvedWarehouseId).trim() || '';
-    const resolvedBranchName =
-      currentBranch?.name || whMeta?.name || resolvedWarehouseName || '';
+    const resolvedBranchId = String(resolvedWarehouseId).trim();
+    const resolvedBranchName = resolvedWarehouseName || whMeta?.name || '';
 
     if (!resolvedBranchId) {
       setSaveError(t.purchaseInvoicesUi.noActiveBranchSelectWarehouse);
@@ -2043,7 +2082,7 @@ export default function PurchaseInvoices() {
 
     let allocatedInvoiceNumber: string;
     try {
-      allocatedInvoiceNumber = await allocatePurchaseInvoiceNumber(resolvedBranchId);
+      allocatedInvoiceNumber = await allocatePurchaseInvoiceNumber(resolvedWarehouseId);
     } catch (allocErr: unknown) {
       const msg = allocErr instanceof Error ? allocErr.message : t.purchaseInvoicesUi.unknownError;
       setSaveError(msg);
@@ -2257,6 +2296,14 @@ export default function PurchaseInvoices() {
         return;
       }
 
+      const resolvedIds = txResult.resolvedProductIds;
+      if (resolvedIds && Object.keys(resolvedIds).length > 0) {
+        invoice.lines = invoice.lines.map((line) => {
+          const mapped = line.productId ? resolvedIds[line.productId] : undefined;
+          return mapped && mapped !== line.productId ? { ...line, productId: mapped } : line;
+        });
+      }
+
       await savePurchaseInvoice(invoice);
       await syncPurchaseInvoiceDocument(invoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix);
 
@@ -2288,6 +2335,9 @@ export default function PurchaseInvoices() {
         // non-blocking
       }
       await Promise.all([refreshProducts(), refreshSuppliers()]);
+      window.dispatchEvent(
+        new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: resolvedWarehouseId } }),
+      );
 
       toast({
         title: t.purchaseInvoicesUi.purchaseInvoiceSavedTitle,
@@ -2295,8 +2345,8 @@ export default function PurchaseInvoices() {
       });
 
       await loadInvoiceList();
-      // Show the saved invoice immediately for printing
-      setViewInvoice(invoice);
+      const savedForView = (await getPurchaseInvoiceById(invoice.id)) || invoice;
+      setViewInvoice(savedForView);
       setMode('list');
       goToPurchaseListRoute();
     } catch (error: any) {
@@ -2995,7 +3045,7 @@ export default function PurchaseInvoices() {
       {/* ═══ TOP BAR ═══ */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-muted/60 border-b border-border shrink-0">
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleCloseCreate}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={requestCloseCreate}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <button
@@ -3060,7 +3110,7 @@ export default function PurchaseInvoices() {
           {nextFcPreview && (
             <span className="text-xs font-mono text-muted-foreground">{nextFcPreview}</span>
           )}
-          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={handleCloseCreate}>
+          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={requestCloseCreate}>
             <X className="h-3 w-3" /> {t.common.cancel}
           </Button>
           <Button size="sm" className="h-7 gap-1 text-xs" onClick={handleSave}>
@@ -3483,6 +3533,19 @@ export default function PurchaseInvoices() {
           }
         }}
       />
+
+      <AlertDialog open={discardCloseOpen} onOpenChange={setDiscardCloseOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.common.confirmDiscardTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{t.common.confirmDiscardDescription}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.common.keepEditing}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleCloseCreate}>{t.common.discardAndClose}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

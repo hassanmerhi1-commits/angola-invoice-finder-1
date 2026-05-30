@@ -12,6 +12,13 @@ import { isElectronMode, dbGetAll, dbInsert, lsGet, lsSet } from '@/lib/dbHelper
 import { api } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
 import * as storage from '@/lib/storage';
+import { branchIdsEqual } from '@/lib/branchAccess';
+import {
+  getPurchaseInvoices,
+  scopeBelongsToBranch,
+  type BranchRef,
+  type PurchaseInvoice,
+} from '@/lib/purchaseInvoiceStorage';
 
 const STORAGE_KEY = 'kwanzaerp_documents';
 
@@ -70,11 +77,84 @@ function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
   };
 }
 
+function mapPurchaseInvoiceToDocument(inv: PurchaseInvoice, branchName = ''): ERPDocument {
+  const lines: DocumentLine[] = (inv.lines || []).map((line, idx) => {
+    const gross = line.quantity * line.unitPrice;
+    const discountAmount = gross * ((line.discountPct || 0) / 100);
+    const afterDiscount = gross - discountAmount;
+    const taxAmount = afterDiscount * ((line.taxRate || 0) / 100);
+    return {
+      id: line.id || `line_${inv.id}_${idx}`,
+      productId: line.productId,
+      productSku: line.productCode || '',
+      description: line.description || '',
+      quantity: Number(line.quantity || 0),
+      unitPrice: Number(line.unitPrice || 0),
+      discount: Number(line.discountPct || 0),
+      discountAmount,
+      taxRate: Number(line.taxRate || 0),
+      taxAmount,
+      lineTotal: afterDiscount + taxAmount,
+    };
+  });
+
+  let status: DocumentStatus = 'draft';
+  const raw = String(inv.status || '').toLowerCase();
+  if (raw === 'cancelled' || raw === 'voided') status = 'cancelled';
+  else if (raw === 'posted' || raw === 'confirmed') status = 'confirmed';
+
+  const branchId = inv.branchId || inv.warehouseId || '';
+  return {
+    id: inv.id,
+    documentType: 'fatura_compra',
+    documentNumber: inv.invoiceNumber || '',
+    branchId,
+    branchName: inv.branchName || inv.warehouseName || branchName,
+    entityType: 'supplier',
+    entityName: inv.supplierName || '',
+    entityNif: inv.supplierNif,
+    lines,
+    subtotal: Number(inv.subtotal || 0),
+    totalDiscount: 0,
+    totalTax: Number(inv.ivaTotal || 0),
+    total: Number(inv.total || 0),
+    currency: inv.currency || 'AOA',
+    amountPaid: 0,
+    amountDue: Number(inv.total || 0),
+    status,
+    issueDate: inv.date || String(inv.createdAt || '').split('T')[0] || '',
+    createdBy: inv.createdBy || '',
+    createdByName: inv.createdByName || '',
+    createdAt: inv.createdAt || '',
+    updatedAt: inv.updatedAt || inv.createdAt || '',
+  };
+}
+
+/** Purchase invoices (FC) from API / SQLite — not stored in erp_documents. */
+export async function getPurchaseInvoicesAsDocuments(
+  branchId?: string,
+  branchNames: Record<string, string> = {},
+  branchCatalog: BranchRef[] = [],
+  includeAllBranches = false,
+): Promise<ERPDocument[]> {
+  const invoices = await getPurchaseInvoices(
+    includeAllBranches ? undefined : branchId,
+    branchCatalog,
+  );
+  return invoices
+    .map((inv) => {
+      const bid = inv.branchId || inv.warehouseId || '';
+      return mapPurchaseInvoiceToDocument(inv, branchNames[bid] || inv.branchName || '');
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
 /** Sales invoices from POS / transaction engine (`sales` table) — canonical in production. */
 export async function getSalesInvoicesAsDocuments(
   branchId?: string,
   branchNames: Record<string, string> = {},
   includeAllBranches = false,
+  branchCatalog: BranchRef[] = [],
 ): Promise<ERPDocument[]> {
   let rows: any[] = [];
 
@@ -82,13 +162,22 @@ export async function getSalesInvoicesAsDocuments(
     rows = await storage.getSales(includeAllBranches ? undefined : branchId);
   } else {
     const res = await api.sales.list(includeAllBranches ? undefined : branchId);
-    if (res.error || !Array.isArray(res.data)) {
-      console.warn('[Documents] sales API list failed:', res.error);
+    if (res.error) {
+      throw new Error(res.error);
+    }
+    if (!Array.isArray(res.data)) {
+      console.warn('[Documents] sales API returned non-array payload');
       return [];
     }
     rows = res.data;
     if (branchId && !includeAllBranches) {
-      rows = rows.filter((s) => String(s.branch_id || s.branchId) === String(branchId));
+      rows = rows.filter((s) =>
+        scopeBelongsToBranch(
+          [s.branch_id, s.branchId, s.warehouse_id, s.warehouseId],
+          branchId,
+          branchCatalog,
+        ),
+      );
     }
   }
 
@@ -111,12 +200,12 @@ export async function getDocuments(type?: DocumentType, branchId?: string): Prom
     }
     let docs = Array.from(byId.values());
     if (type) docs = docs.filter(d => d.documentType === type);
-    if (branchId) docs = docs.filter(d => d.branchId === branchId);
+    if (branchId) docs = docs.filter(d => branchIdsEqual(d.branchId, branchId));
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
   let docs = lsGet<ERPDocument[]>(STORAGE_KEY, []).map(normalizeSupplierPurchaseReturnDocument);
   if (type) docs = docs.filter(d => d.documentType === type);
-  if (branchId) docs = docs.filter(d => d.branchId === branchId);
+  if (branchId) docs = docs.filter(d => branchIdsEqual(d.branchId, branchId));
   return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 

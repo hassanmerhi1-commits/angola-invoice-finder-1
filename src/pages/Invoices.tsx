@@ -24,7 +24,13 @@ import {
 import { cn } from '@/lib/utils';
 import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
-import { getDocuments, convertDocument, getSalesInvoicesAsDocuments } from '@/lib/documentStorage';
+import {
+  getDocuments,
+  convertDocument,
+  getSalesInvoicesAsDocuments,
+  getPurchaseInvoicesAsDocuments,
+} from '@/lib/documentStorage';
+import type { BranchRef } from '@/lib/purchaseInvoiceStorage';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import {
   documentTypeForNewFromTab,
@@ -134,19 +140,31 @@ export default function Invoices() {
     const type = activeTab === 'all' ? undefined : activeTab;
     const branchFilter = listBranchId;
     const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
+    const branchCatalog: BranchRef[] = branches.map((b) => ({
+      id: b.id,
+      code: b.code,
+      name: b.name,
+      isMain: b.isMain,
+    }));
 
     const load = async () => {
       try {
-        const [storedDocs, salesDocs] = await Promise.all([
+        const loadSales = !type || type === 'fatura_venda';
+        const loadPurchase = !type || type === 'fatura_compra';
+
+        const [storedDocs, salesDocs, purchaseDocs] = await Promise.all([
           getDocuments(type, branchFilter),
-          !type || type === 'fatura_venda'
-            ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice)
+          loadSales
+            ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog)
+            : Promise.resolve([]),
+          loadPurchase
+            ? getPurchaseInvoicesAsDocuments(listBranchId, branchNames, branchCatalog, isHeadOffice)
             : Promise.resolve([]),
         ]);
 
         const seenNumbers = new Set(storedDocs.map((d) => d.documentNumber));
         const merged = [...storedDocs];
-        for (const doc of salesDocs) {
+        for (const doc of [...salesDocs, ...purchaseDocs]) {
           if (!doc.documentNumber || seenNumbers.has(doc.documentNumber)) continue;
           seenNumbers.add(doc.documentNumber);
           merged.push(doc);
@@ -157,7 +175,7 @@ export default function Invoices() {
       } catch (err) {
         console.error('[Invoices] load failed:', err);
         setDocuments([]);
-        toast.error(err instanceof Error ? err.message : t.invoicesUi.conversionNotAllowed);
+        toast.error(err instanceof Error ? err.message : t.common.loading);
       }
     };
 

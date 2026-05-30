@@ -18,6 +18,7 @@ const {
   processStockAdjustment,
 } = require('../transactionEngine');
 const { attachUserBranchScope, resolveWarehouseId } = require('../middleware/branchScope');
+const { isUniqueSkuBranchError } = require('../lib/productSkuResolve');
 const {
   createJournalEntry,
   generateSequenceNumber,
@@ -420,6 +421,8 @@ module.exports = function(broadcastTable) {
         journalEntryId: null,
         openItemId: null,
         documentLinkIds: [],
+        /** Catalog line productId → branch products.id used for stock/cost (when cloned). */
+        resolvedProductIds: {},
         errors: [],
       };
 
@@ -466,6 +469,9 @@ module.exports = function(broadcastTable) {
               `(line had ${entry.productId})`
             );
           }
+        }
+        if (stockProductIdByLine.size > 0) {
+          result.resolvedProductIds = Object.fromEntries(stockProductIdByLine);
         }
       }
 
@@ -749,10 +755,13 @@ module.exports = function(broadcastTable) {
         journalLinesCount: req.body.journalLines?.length,
         journalLines: req.body.journalLines?.map(l => ({ code: l.accountCode, d: l.debit, c: l.credit })),
       }, null, 2));
-      res.status(500).json({
+      const friendly = isUniqueSkuBranchError(error)
+        ? 'Já existe um produto com este código (SKU) nesta filial. Seleccione-o na lista da fatura em vez de criar um duplicado.'
+        : (error.message || 'Transaction failed');
+      res.status(isUniqueSkuBranchError(error) ? 409 : 500).json({
         success: false,
-        error: error.message || 'Transaction failed',
-        errors: [error.message],
+        error: friendly,
+        errors: [friendly],
         stockMovementIds: [],
         documentLinkIds: [],
       });

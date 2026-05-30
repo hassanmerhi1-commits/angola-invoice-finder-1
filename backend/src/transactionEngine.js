@@ -18,6 +18,12 @@
  */
 const db = require('./db');
 const { createJournalEntry, generateSequenceNumber, findAccountByCode } = require('./accounting');
+const {
+  findProductBySkuAndBranch,
+  isUniqueSkuBranchError,
+  loadMainBranchIds,
+  normalizeStoredBranchId,
+} = require('./lib/productSkuResolve');
 const { randomUUID } = require('crypto');
 
 // ==================== HELPERS ====================
@@ -530,15 +536,8 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
 
   const sku = src.sku != null ? String(src.sku).trim() : '';
   if (sku) {
-    const destCheck = await client.query(
-      `SELECT id, name FROM products
-       WHERE COALESCE(is_active, 1) != 0 AND branch_id = $1 AND LOWER(TRIM(sku)) = LOWER($2)
-       ORDER BY updated_at DESC, created_at DESC
-       LIMIT 1`,
-      [toBranch, sku]
-    );
-    if (destCheck.rows.length > 0) {
-      const existing = destCheck.rows[0];
+    const existing = await findProductBySkuAndBranch(client, sku, toBranch);
+    if (existing) {
       if (String(existing.id) === String(src.id)) {
         return existing.id;
       }
@@ -568,24 +567,40 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
 
   const cloneId = randomUUID();
   const unitCost = parseFloat(src.cost) || 0;
-  await client.query(
-    `INSERT INTO products (
-       id, name, sku, barcode, category, price, cost, first_cost, last_cost, avg_cost,
-       stock, unit, tax_rate, branch_id, is_active
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7, $7, 0, $8, $9, $10, true)`,
-    [
-      cloneId,
-      src.name,
-      sku || src.sku || '',
-      src.barcode || '',
-      src.category || 'GERAL',
-      parseFloat(src.price) || 0,
-      unitCost,
-      src.unit || 'UN',
-      parseFloat(src.tax_rate) || require('./taxDefaults').DEFAULT_VAT_RATE,
-      toBranch,
-    ]
-  );
+  const mainBranchIds = await loadMainBranchIds(client);
+  const storedBranchId = normalizeStoredBranchId(toBranch, mainBranchIds);
+
+  try {
+    await client.query(
+      `INSERT INTO products (
+         id, name, sku, barcode, category, price, cost, first_cost, last_cost, avg_cost,
+         stock, unit, tax_rate, branch_id, is_active
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7, $7, 0, $8, $9, $10, true)`,
+      [
+        cloneId,
+        src.name,
+        sku || src.sku || '',
+        src.barcode || '',
+        src.category || 'GERAL',
+        parseFloat(src.price) || 0,
+        unitCost,
+        src.unit || 'UN',
+        parseFloat(src.tax_rate) || require('./taxDefaults').DEFAULT_VAT_RATE,
+        storedBranchId,
+      ],
+    );
+  } catch (insertErr) {
+    if (isUniqueSkuBranchError(insertErr) && sku) {
+      const again = await findProductBySkuAndBranch(client, sku, toBranch);
+      if (again?.id) {
+        console.log(
+          `[TX ENGINE] Reused existing product ${sku} @ ${toBranch} (${again.id}) after UNIQUE conflict`,
+        );
+        return again.id;
+      }
+    }
+    throw insertErr;
+  }
   console.log(`[TX ENGINE] Cloned product ${sku || src.id} → branch ${toBranch} (${cloneId})`);
   return cloneId;
 }

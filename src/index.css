@@ -7,15 +7,17 @@
 @layer base {
   :root {
     --background: 220 20% 97%;
-    --foreground: 230 25% 15%;
+    --foreground: 228 20% 24%;
     --card: 0 0% 100%;
-    --card-foreground: 230 25% 15%;
+    --card-foreground: 228 20% 24%;
     --popover: 0 0% 100%;
-    --popover-foreground: 230 25% 15%;
+    --popover-foreground: 228 20% 24%;
+    /** Table grid — between pure black and light gray borders */
+    --table-grid-border: 220 12% 52%;
     --primary: 245 58% 51%;
     --primary-foreground: 0 0% 100%;
     --secondary: 220 14% 94%;
-    --secondary-foreground: 230 25% 15%;
+    --secondary-foreground: 228 20% 24%;
     --muted: 220 14% 94%;
     --muted-foreground: 220 10% 46%;
     --accent: 245 58% 96%;
@@ -76,6 +78,7 @@
     --destructive: 0 62% 55%;
     --destructive-foreground: 0 0% 100%;
     --border: 230 15% 20%;
+    --table-grid-border: 220 10% 38%;
     --input: 230 15% 20%;
     --ring: 245 58% 65%;
 
@@ -122,12 +125,23 @@
     border-collapse: collapse;
   }
 
+  /* Default table text only — do not set color on td/th so utility classes (entry/exit, debit/credit) win */
+  :where(#root table:not([data-plain-table="true"])) {
+    color: hsl(var(--foreground));
+  }
+
   #root table:not([data-plain-table="true"]) th,
   #root table:not([data-plain-table="true"]) td {
-    border: 2px solid #000;
-    font-weight: 700;
+    border: 1.5px solid hsl(var(--table-grid-border));
+    font-weight: 600;
     padding: 0.25rem 0.5rem;
-    line-height: 1.2;
+    line-height: 1.22;
+  }
+
+  :where(#root table:not([data-plain-table="true"]) th) {
+    color: hsl(var(--foreground) / 0.82);
+    font-weight: 700;
+    background: hsl(var(--muted) / 0.4);
   }
 }
 

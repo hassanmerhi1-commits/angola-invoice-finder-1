@@ -1403,6 +1403,11 @@ ipcMain.handle('syncOutbox:flush', async (_, apiBaseUrl) => {
 
 ipcMain.handle('sync:getApiUrl', async () => getCityApiBaseForClient());
 
+ipcMain.handle('app:setUiLanguage', (_, lang) => {
+  persistUiLanguage(lang);
+  return true;
+});
+
 // ============= SETUP WIZARD SUPPORT =============
 ipcMain.handle('setup:getConfig', async () => {
   try {
@@ -1899,6 +1904,87 @@ function openPurchaseProductPickerWindow(parentWindow) {
   });
 }
 
+/** User confirmed exit — skip on second close / before-quit pass. */
+let quitConfirmed = false;
+
+/** Mirrors renderer `kwanza_language` (en | pt) for native Electron dialogs. */
+let cachedUiLanguage = 'pt';
+
+const APP_EXIT_DIALOG = {
+  en: {
+    title: 'NEXOR ERP',
+    message: 'Close the application?',
+    detail: 'Are you sure you want to quit NEXOR ERP? Unsaved changes may be lost.',
+    cancel: 'Cancel',
+    quit: 'Quit',
+  },
+  pt: {
+    title: 'NEXOR ERP',
+    message: 'Fechar a aplicação?',
+    detail: 'Tem a certeza que deseja sair do NEXOR ERP? Alterações não guardadas podem ser perdidas.',
+    cancel: 'Cancelar',
+    quit: 'Sair',
+  },
+};
+
+function uiLanguageFilePath() {
+  return path.join(app.getPath('userData'), 'kwanza_language');
+}
+
+function persistUiLanguage(lang) {
+  if (lang !== 'en' && lang !== 'pt') return;
+  cachedUiLanguage = lang;
+  try {
+    fs.writeFileSync(uiLanguageFilePath(), lang, 'utf8');
+  } catch (e) {
+    console.warn('[App] could not persist UI language:', e.message);
+  }
+}
+
+function loadUiLanguageFromDisk() {
+  try {
+    const file = uiLanguageFilePath();
+    if (fs.existsSync(file)) {
+      const lang = fs.readFileSync(file, 'utf8').trim();
+      if (lang === 'en' || lang === 'pt') cachedUiLanguage = lang;
+    }
+  } catch (e) {
+    console.warn('[App] could not read UI language:', e.message);
+  }
+}
+
+function confirmAppExit(parentWindow) {
+  const copy = APP_EXIT_DIALOG[cachedUiLanguage] || APP_EXIT_DIALOG.pt;
+  const win =
+    parentWindow && !parentWindow.isDestroyed()
+      ? parentWindow
+      : BrowserWindow.getFocusedWindow() ||
+        (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+  const response = dialog.showMessageBoxSync(win, {
+    type: 'warning',
+    buttons: [copy.cancel, copy.quit],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    title: copy.title,
+    message: copy.message,
+    detail: copy.detail,
+  });
+  return response === 1;
+}
+
+function requestAppExit() {
+  if (quitConfirmed) {
+    app.quit();
+    return;
+  }
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  if (confirmAppExit(parent)) {
+    quitConfirmed = true;
+    app.quit();
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400, height: 900, minWidth: 1024, minHeight: 768,
@@ -1916,7 +2002,7 @@ function createWindow() {
     { label: 'NEXOR ERP', submenu: [
       { label: 'About', role: 'about' },
       { type: 'separator' },
-      { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }
+      { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => requestAppExit() }
     ]},
     { label: 'Edit', submenu: [
       { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
@@ -1958,11 +2044,18 @@ function createWindow() {
     }, 1500);
   });
 
+  mainWindow.on('close', (event) => {
+    if (quitConfirmed) return;
+    event.preventDefault();
+    requestAppExit();
+  });
+
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
 // ============= APP LIFECYCLE =============
 app.whenReady().then(async () => {
+  loadUiLanguageFromDisk();
   createSplashWindow();
 
   // Phase 6: initialize backend log directory under userData (cross-platform).
@@ -2071,6 +2164,11 @@ ipcMain.handle('backend:openLogDir', async () => {
 // Cleanup on quit — stop backend gracefully BEFORE killing WS / pool.
 let isQuittingCleanly = false;
 app.on('before-quit', async (event) => {
+  if (!quitConfirmed) {
+    event.preventDefault();
+    requestAppExit();
+    return;
+  }
   if (isQuittingCleanly) return; // second pass after we re-trigger app.quit()
   event.preventDefault();
   isQuittingCleanly = true;
