@@ -3799,7 +3799,8 @@ export const en = {
     pendingTransfersTitle: "Pending transfers",
     pendingTransfersDesc: "Awaiting approval to send",
     inTransitTitle: "In transit",
-    inTransitDesc: "Products on the way to destination",
+    inTransitDesc: "Stock was deducted at origin. Use Receive at the destination branch — products appear in that branch inventory only after receiving.",
+    inventoryAfterReceiveHint: "Destination inventory (e.g. Soyo) shows these products only after the transfer is received, not when it is in transit.",
     completedTransfersTitle: "Completed transfers",
     completedTransfersDesc: "Transfer history",
 
@@ -4061,8 +4062,28 @@ export const en = {
     },
   },
 
+  passwordChangeUi: {
+    title: "Change password",
+    description: "Update the login password for {name}.",
+    currentPassword: "Current password",
+    newPassword: "New password",
+    confirmPassword: "Confirm new password",
+    hint: "Minimum 8 characters. Use a strong password you do not use elsewhere.",
+    submit: "Update password",
+    success: "Password updated successfully",
+    failed: "Could not change password",
+    fillAllFields: "Fill in all password fields",
+    minLength: "Password must be at least 8 characters",
+    mismatch: "New passwords do not match",
+    sameAsCurrent: "New password must be different from the current password",
+  },
+
   userManagementUi: {
     fullNamePlaceholder: "e.g. John Smith",
+    resetPasswordSection: "Reset password",
+    resetPasswordHint: "Leave blank to keep the current password. The user will log in with username or email and this new password.",
+    roleUpdated: "Role updated",
+    roleAndPasswordUpdated: "Role and password updated",
   },
 
   categoriesUi: {

@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,11 +26,13 @@ import { BackendLogsCard } from '@/components/settings/BackendLogsCard';
 import { toast } from 'sonner';
 import { DatabaseBackupCard } from '@/components/settings/DatabaseBackupCard';
 import { DataConsistencyCard } from '@/components/settings/DataConsistencyCard';
+import { ChangePasswordCard } from '@/components/settings/ChangePasswordCard';
 import type { UpdateStatus, SetupConfig } from '@/types/electron';
 
 export default function Settings() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const [appVersion, setAppVersion] = useState<string>('');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [isChecking, setIsChecking] = useState(false);
@@ -68,6 +70,16 @@ export default function Settings() {
     };
     loadSetupConfig();
   }, [isElectron]);
+
+  useEffect(() => {
+    const focus = (location.state as { focus?: string } | null)?.focus;
+    if (focus === 'password') {
+      requestAnimationFrame(() => {
+        document.getElementById('change-password')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.pathname, location.state, navigate]);
 
   useEffect(() => {
     // Get app version on mount
@@ -192,6 +204,8 @@ export default function Settings() {
           </p>
         </div>
       </div>
+
+      <ChangePasswordCard />
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Application Info Card */}

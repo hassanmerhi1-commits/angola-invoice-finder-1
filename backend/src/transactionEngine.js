@@ -20,9 +20,9 @@ const db = require('./db');
 const { createJournalEntry, generateSequenceNumber, findAccountByCode } = require('./accounting');
 const {
   findProductBySkuAndBranch,
+  isCatalogBranchScope,
   isUniqueSkuBranchError,
   loadMainBranchIds,
-  normalizeStoredBranchId,
 } = require('./lib/productSkuResolve');
 const { randomUUID } = require('crypto');
 
@@ -538,6 +538,16 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
   if (sku) {
     const existing = await findProductBySkuAndBranch(client, sku, toBranch);
     if (existing) {
+      const inactive =
+        existing.is_active === 0 ||
+        existing.is_active === false ||
+        String(existing.is_active).toLowerCase() === 'false';
+      if (inactive) {
+        await client.query(
+          `UPDATE products SET is_active = true, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [existing.id],
+        );
+      }
       if (String(existing.id) === String(src.id)) {
         return existing.id;
       }
@@ -552,7 +562,7 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
   }
 
   const nameTrim = src.name != null ? String(src.name).trim() : '';
-  if (nameTrim) {
+  if (nameTrim && sku) {
     const byName = await client.query(
       `SELECT id, sku FROM products
        WHERE COALESCE(is_active, 1) != 0 AND branch_id = $1 AND LOWER(TRIM(name)) = LOWER($2)
@@ -561,14 +571,19 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
       [toBranch, nameTrim]
     );
     if (byName.rows.length > 0) {
-      return byName.rows[0].id;
+      const foundSku = String(byName.rows[0].sku || '').trim().toLowerCase();
+      if (foundSku === sku.toLowerCase()) {
+        return byName.rows[0].id;
+      }
     }
   }
 
   const cloneId = randomUUID();
   const unitCost = parseFloat(src.cost) || 0;
   const mainBranchIds = await loadMainBranchIds(client);
-  const storedBranchId = normalizeStoredBranchId(toBranch, mainBranchIds);
+  const storedBranchId = isCatalogBranchScope(toBranch, mainBranchIds)
+    ? null
+    : toBranch;
 
   try {
     await client.query(
@@ -593,6 +608,16 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
     if (isUniqueSkuBranchError(insertErr) && sku) {
       const again = await findProductBySkuAndBranch(client, sku, toBranch);
       if (again?.id) {
+        const inactive =
+          again.is_active === 0 ||
+          again.is_active === false ||
+          String(again.is_active).toLowerCase() === 'false';
+        if (inactive) {
+          await client.query(
+            `UPDATE products SET is_active = true, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+            [again.id],
+          );
+        }
         console.log(
           `[TX ENGINE] Reused existing product ${sku} @ ${toBranch} (${again.id}) after UNIQUE conflict`,
         );
@@ -668,14 +693,42 @@ async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
   );
   const total = Math.max(0, parseFloat(sumResult.rows[0]?.total || 0));
 
-  // Only filial-owned rows — do not copy branch stock onto shared catalog (branch_id NULL) duplicates.
+  const mainBranchIds = await loadMainBranchIds(client);
+  if (isCatalogBranchScope(wh, mainBranchIds)) {
+    const params = [total, skuTrim];
+    let sql = `
+      UPDATE products
+      SET stock = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE COALESCE(is_active, 1) != 0
+        AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)
+        AND (
+          branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`;
+    for (const mainId of mainBranchIds) {
+      params.push(mainId);
+      sql += ` OR branch_id = $${params.length}`;
+    }
+    sql += ')';
+    await client.query(sql, params);
+    return;
+  }
+
+  // Filial: branch-owned rows + any product id that has movements at this warehouse (catalog IN at filial).
   await client.query(
     `UPDATE products
      SET stock = $1, updated_at = CURRENT_TIMESTAMP
      WHERE COALESCE(is_active, 1) != 0
        AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)
-       AND branch_id = $3`,
-    [total, skuTrim, wh]
+       AND (
+         branch_id = $3
+         OR id IN (
+           SELECT DISTINCT sm.product_id
+           FROM stock_movements sm
+           INNER JOIN products pm ON pm.id = sm.product_id
+           WHERE sm.warehouse_id = $3
+             AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER($2)
+         )
+       )`,
+    [total, skuTrim, wh],
   );
 }
 
@@ -1884,6 +1937,7 @@ module.exports = {
   // Stock
   recordStockMovement,
   reconcileSkuStockAtWarehouse,
+  resolveOrCloneProductForBranch,
   resolveStockEntryDirection,
   normalizeStandaloneMovementType,
   getStock,

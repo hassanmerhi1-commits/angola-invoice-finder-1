@@ -2,6 +2,7 @@
  * Repairs data consistency issues detected by check-data-consistency.cjs
  */
 const db = require('./db');
+const { loadMainBranchIds } = require('./lib/productSkuResolve');
 
 async function tableExists(name) {
   if (db.engine === 'postgres') {
@@ -33,18 +34,54 @@ async function backfillClientBalancesFromOpenItems() {
   return { updated: result.rowCount || 0 };
 }
 
+/** Deactivate rows left from old repair that renamed SKUs to *-DUP-* when a canonical SKU still exists. */
+async function deactivateDupSuffixProducts() {
+  if (!(await tableExists('products'))) return { deactivated: 0 };
+
+  const dupRows = await db.query(
+    `SELECT id, sku FROM products
+     WHERE COALESCE(is_active, 1) != 0
+       AND sku LIKE '%-DUP-%'`,
+  );
+
+  let deactivated = 0;
+  for (const row of dupRows.rows || []) {
+    const sku = String(row.sku || '');
+    const baseSku = sku.replace(/-DUP-[a-f0-9]+$/i, '').trim();
+    if (!baseSku) continue;
+    const canonical = await db.query(
+      `SELECT id FROM products
+       WHERE id != $1
+         AND COALESCE(is_active, 1) != 0
+         AND LOWER(TRIM(sku)) = LOWER($2)
+       LIMIT 1`,
+      [row.id, baseSku],
+    );
+    if (canonical.rows[0]?.id) {
+      await db.query(
+        `UPDATE products SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        [row.id],
+      );
+      deactivated += 1;
+    }
+  }
+  return { deactivated };
+}
+
+/** Deactivate extra rows sharing SKU+branch — never rename SKUs to *-DUP-* (breaks catalog/filial pairing). */
 async function repairDuplicateProductSkus() {
-  if (!(await tableExists('products'))) return { renamed: 0 };
+  if (!(await tableExists('products'))) return { deactivated: 0 };
 
   const groups = await db.query(
     `SELECT LOWER(TRIM(sku)) AS sku_key, COALESCE(branch_id, '') AS branch_key, COUNT(*) AS n
      FROM products
      WHERE sku IS NOT NULL AND TRIM(sku) != ''
+       AND COALESCE(is_active, 1) != 0
      GROUP BY LOWER(TRIM(sku)), COALESCE(branch_id, '')
      HAVING COUNT(*) > 1`,
   );
 
-  let renamed = 0;
+  let deactivated = 0;
   for (const group of groups.rows || []) {
     const products = await db.query(
       `SELECT p.id, p.sku,
@@ -53,22 +90,20 @@ async function repairDuplicateProductSkus() {
        FROM products p
        WHERE LOWER(TRIM(p.sku)) = LOWER($1)
          AND COALESCE(p.branch_id, '') = $2
+         AND COALESCE(p.is_active, 1) != 0
        ORDER BY mov_count DESC, p.created_at ASC`,
       [group.sku_key, group.branch_key],
     );
     const rows = products.rows || [];
     for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      const suffix = String(row.id).replace(/-/g, '').slice(0, 8);
-      const newSku = `${row.sku}-DUP-${suffix}`;
       await db.query(
-        `UPDATE products SET sku = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-        [newSku, row.id],
+        `UPDATE products SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        [rows[i].id],
       );
-      renamed += 1;
+      deactivated += 1;
     }
   }
-  return { renamed };
+  return { deactivated };
 }
 
 async function reconcileProductStockFromMovements() {
@@ -131,6 +166,26 @@ async function deactivateDuplicateProductNames() {
     }
   }
 
+  const skipDeactivate = async (row) => {
+    const branchKey = String(row.branch_id || '').trim();
+    if (branchKey && !mainBranchIds.includes(branchKey)) {
+      return true;
+    }
+    if (!mainBranchIds.length) return false;
+    const placeholders = mainBranchIds.map((_, i) => `$${i + 2}`).join(', ');
+    const filialOnly = await db.query(
+      `SELECT 1
+       FROM stock_movements sm
+       WHERE sm.product_id = $1
+         AND sm.warehouse_id IS NOT NULL
+         AND TRIM(sm.warehouse_id) != ''
+         AND sm.warehouse_id NOT IN (${placeholders})
+       LIMIT 1`,
+      [row.id, ...mainBranchIds],
+    );
+    return filialOnly.rows.length > 0;
+  };
+
   let deactivated = 0;
   for (const group of groups.values()) {
     if (group.length < 2) continue;
@@ -140,6 +195,7 @@ async function deactivateDuplicateProductNames() {
       return Number(b.stock || 0) - Number(a.stock || 0);
     });
     for (let i = 1; i < group.length; i++) {
+      if (await skipDeactivate(group[i])) continue;
       await db.query(
         `UPDATE products SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
         [group[i].id],
@@ -161,6 +217,17 @@ async function assignBranchToOrphanProducts() {
     || (await db.query(`SELECT id FROM branches ORDER BY created_at LIMIT 1`)).rows[0]?.id;
   if (!branchId) return { updated: 0 };
 
+  const mainBranchIds = await loadMainBranchIds();
+  const mainIn =
+    mainBranchIds.length > 0
+      ? mainBranchIds.map((_, i) => `$${i + 2}`).join(', ')
+      : "''";
+  const params = [branchId, ...mainBranchIds];
+  const filialOnlyClause =
+    mainBranchIds.length > 0
+      ? `AND sm.warehouse_id NOT IN (${mainIn})`
+      : '';
+
   const result = await db.query(
     `UPDATE products SET branch_id = $1, updated_at = CURRENT_TIMESTAMP
      WHERE (branch_id IS NULL OR TRIM(branch_id) = '')
@@ -170,8 +237,15 @@ async function assignBranchToOrphanProducts() {
          WHERE p2.id != products.id
            AND LOWER(TRIM(p2.sku)) = LOWER(TRIM(products.sku))
            AND p2.branch_id = $1
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM stock_movements sm
+         WHERE sm.product_id = products.id
+           AND sm.warehouse_id IS NOT NULL
+           AND TRIM(sm.warehouse_id) != ''
+           ${filialOnlyClause}
        )`,
-    [branchId],
+    params,
   );
   return { updated: result.rowCount || 0 };
 }
@@ -184,7 +258,7 @@ async function runDataConsistencyRepair() {
     supplierReturns: { repaired: 0 },
     supplierBalances: { updated: 0 },
     clientBalances: { updated: 0 },
-    duplicateSkusRenamed: 0,
+    duplicateSkusDeactivated: 0,
     duplicateNamesDeactivated: 0,
     productsBranchAssigned: 0,
     productStockReconciled: 0,
@@ -206,10 +280,13 @@ async function runDataConsistencyRepair() {
   }
 
   try {
-    report.duplicateSkusRenamed = (await repairDuplicateProductSkus()).renamed;
+    report.dupSuffixDeactivated = (await deactivateDupSuffixProducts()).deactivated;
+    report.duplicateSkusDeactivated = (await repairDuplicateProductSkus()).deactivated;
     report.duplicateNamesDeactivated = (await deactivateDuplicateProductNames()).deactivated;
     report.productsBranchAssigned = (await assignBranchToOrphanProducts()).updated;
     report.productStockReconciled = (await reconcileProductStockFromMovements()).updated;
+    const { ensureFilialProductsFromAllMovements } = require('./lib/filialStockRepair');
+    report.filialStockReconciled = await ensureFilialProductsFromAllMovements();
   } catch (e) {
     report.productError = e.message;
   }

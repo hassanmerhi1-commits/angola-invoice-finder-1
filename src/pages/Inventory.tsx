@@ -180,9 +180,9 @@ export default function Inventory() {
   }), []);
 
   const loadPerBranchBreakdown = useCallback(async () => {
-    if (!isHeadOffice) return;
+    if (!canSwitchBranch) return;
     const branchList = allBranches.length > 0 ? allBranches : branches;
-    const targets = !canSwitchBranch && currentBranch ? [currentBranch] : branchList;
+    const targets = branchList;
     const fetchOneBranch = async (branch: (typeof branchList)[0]) => {
       try {
         const result = await api.products.inventoryGrid({ branchId: branch.id });
@@ -204,15 +204,7 @@ export default function Inventory() {
         setAllBranchProducts((prev) => ({ ...prev, [branchId]: rows }));
       }),
     );
-  }, [
-    canSwitchBranch,
-    branches,
-    allBranches,
-    currentBranch,
-    isHeadOffice,
-    mapApiRowToProduct,
-    catalogBranchIds,
-  ]);
+  }, [canSwitchBranch, branches, allBranches, mapApiRowToProduct]);
 
   const reloadInventoryList = useCallback(async () => {
     invalidateInventoryGridCache(listBranchId, isHeadOffice);
@@ -220,13 +212,21 @@ export default function Inventory() {
   }, [listBranchId, isHeadOffice, refreshInventoryGrid]);
 
   useEffect(() => {
-    const onProductsChanged = () => {
+    const onProductsChanged = (e: Event) => {
+      const detail = (e as CustomEvent<{ branchId?: string; toBranchId?: string; fromBranchId?: string }>)
+        ?.detail;
       invalidateInventoryGridCache(listBranchId, isHeadOffice);
+      if (detail?.toBranchId) invalidateInventoryGridCache(detail.toBranchId, false);
+      if (detail?.fromBranchId) invalidateInventoryGridCache(detail.fromBranchId, false);
+      if (detail?.branchId && detail.branchId !== 'all') {
+        invalidateInventoryGridCache(detail.branchId, false);
+      }
       void refreshInventoryGrid();
+      if (canSwitchBranch) void loadPerBranchBreakdown();
     };
     window.addEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
     return () => window.removeEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
-  }, [listBranchId, isHeadOffice, refreshInventoryGrid]);
+  }, [listBranchId, isHeadOffice, refreshInventoryGrid, canSwitchBranch, loadPerBranchBreakdown]);
 
   const loadStockMovements = useCallback(async () => {
     // Try API first (live DB), fall back to localStorage
@@ -332,10 +332,10 @@ export default function Inventory() {
   }, [showDetailedQtyTab, activeTab]);
 
   useEffect(() => {
-    if (activeTab === 'qtd-detalhada' && isHeadOffice) {
+    if (activeTab === 'qtd-detalhada' && showDetailedQtyTab) {
       void loadPerBranchBreakdown();
     }
-  }, [activeTab, isHeadOffice, loadPerBranchBreakdown]);
+  }, [activeTab, showDetailedQtyTab, loadPerBranchBreakdown]);
   const [stockListFilter, setStockListFilter] = useState<StockListFilter>('all');
   const [listSearch, setListSearch] = useState('');
   const listSearchRef = useRef<HTMLInputElement>(null);
@@ -451,7 +451,7 @@ export default function Inventory() {
     navigate('.', { replace: true, state: {} });
   }, [location.state, navigate]);
 
-  const handleSaveProduct = async (product: Product) => {
+  const handleSaveProduct = async (product: Product & { preserveStock?: boolean }) => {
     try {
       if (selectedProduct) {
         await updateProduct(product);
@@ -461,6 +461,7 @@ export default function Inventory() {
         toast.success(t.productFormUi.productCreated);
       }
       await reloadInventoryList();
+      if (canSwitchBranch) void loadPerBranchBreakdown();
       window.dispatchEvent(
         new CustomEvent(PRODUCTS_CHANGED_EVENT, {
           detail: { branchId: listBranchId ?? (product.branchId || 'all') },

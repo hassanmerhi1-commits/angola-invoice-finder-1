@@ -3802,7 +3802,8 @@ export const pt: TranslationKeys = {
     pendingTransfersTitle: "Transferências Pendentes",
     pendingTransfersDesc: "Aguardando aprovação para envio",
     inTransitTitle: "Em Trânsito",
-    inTransitDesc: "Produtos a caminho do destino",
+    inTransitDesc: "Stock já saiu da origem. Use Receber na filial de destino — o inventário dessa filial só mostra os produtos depois de receber.",
+    inventoryAfterReceiveHint: "O inventário da filial de destino (ex.: Soyo) só mostra estes produtos após receber a transferência, não enquanto está em trânsito.",
     completedTransfersTitle: "Transferências Concluídas",
     completedTransfersDesc: "Histórico de transferências",
 
@@ -4064,8 +4065,28 @@ export const pt: TranslationKeys = {
     },
   },
 
+  passwordChangeUi: {
+    title: "Alterar senha",
+    description: "Actualize a senha de acesso de {name}.",
+    currentPassword: "Senha actual",
+    newPassword: "Nova senha",
+    confirmPassword: "Confirmar nova senha",
+    hint: "Mínimo 8 caracteres. Use uma senha forte que não utilize noutros serviços.",
+    submit: "Actualizar senha",
+    success: "Senha actualizada com sucesso",
+    failed: "Não foi possível alterar a senha",
+    fillAllFields: "Preencha todos os campos de senha",
+    minLength: "A senha deve ter pelo menos 8 caracteres",
+    mismatch: "As senhas novas não coincidem",
+    sameAsCurrent: "A nova senha deve ser diferente da senha actual",
+  },
+
   userManagementUi: {
     fullNamePlaceholder: "Ex: João Silva",
+    resetPasswordSection: "Redefinir senha",
+    resetPasswordHint: "Deixe em branco para manter a senha actual. O utilizador entra com o nome de utilizador ou e-mail e esta nova senha.",
+    roleUpdated: "Função actualizada",
+    roleAndPasswordUpdated: "Função e senha actualizadas",
   },
 
   categoriesUi: {

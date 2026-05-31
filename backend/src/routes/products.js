@@ -11,6 +11,7 @@ const {
   loadMainBranchIds,
   normalizeStoredBranchId,
 } = require('../lib/productSkuResolve');
+const { ensureFilialProductsForWarehouse } = require('../lib/filialStockRepair');
 
 function sanitizeUuid(value) {
   if (typeof value !== 'string') return value ?? null;
@@ -131,6 +132,7 @@ function dedupeProductsBySku(rows, branchId, mainBranchIds = []) {
     const other = pick === row ? prev : row;
     bySku.set(key, {
       ...pick,
+      stock: Math.max(Number(pick.stock) || 0, Number(other.stock) || 0),
       supplier_id: pick.supplier_id || other.supplier_id || null,
       supplier_name: pick.supplier_name || other.supplier_name || null,
     });
@@ -265,12 +267,23 @@ function dedupeRowsBySkuFast(rows) {
   return Array.from(bySku.values());
 }
 
+/** Stable key per product line: SKU, or product id when SKU is empty. */
+function sqlMovementSkuKey(alias = 'pm') {
+  return `LOWER(TRIM(
+    CASE
+      WHEN TRIM(COALESCE(${alias}.sku, '')) != '' THEN COALESCE(${alias}.sku, '')
+      ELSE ${alias}.id
+    END
+  ))`;
+}
+
 /** One scan of movements per warehouse → stock by SKU (accurate qty, fast). */
 function sqlStockBySkuCte() {
+  const skuKey = sqlMovementSkuKey('pm');
   return `
     stock_by_sku AS (
       SELECT
-        LOWER(TRIM(COALESCE(pm.sku, ''))) AS sku_key,
+        ${skuKey} AS sku_key,
         CASE
           WHEN COALESCE(SUM(
             CASE
@@ -290,8 +303,7 @@ function sqlStockBySkuCte() {
       FROM stock_movements sm
       INNER JOIN products pm ON pm.id = sm.product_id
       WHERE sm.warehouse_id = $1
-        AND TRIM(COALESCE(pm.sku, '')) != ''
-      GROUP BY LOWER(TRIM(COALESCE(pm.sku, '')))
+      GROUP BY ${skuKey}
     )`;
 }
 
@@ -300,6 +312,49 @@ function sqlStockBySkuCte() {
  * Catalog/master rows (branch_id != warehouse) must NOT use products.stock from sede — that caused
  * Soyo showing Main qty and HQ totals doubling when summing filiais.
  */
+/** Hide catalog only when an active filial row exists for the same SKU (not merely same name). */
+function sqlHideCatalogWhenFilialHasSameSku() {
+  return `
+            AND NOT EXISTS (
+              SELECT 1 FROM products bx
+              WHERE COALESCE(bx.is_active, 1) != 0
+                AND bx.branch_id = $1
+                AND TRIM(COALESCE(p.sku, '')) != ''
+                AND LOWER(TRIM(COALESCE(bx.sku, ''))) = LOWER(TRIM(p.sku))
+            )`;
+}
+
+/** Pick one display row per SKU: filial row first, then row with most movements at this warehouse. */
+function sqlPickProductIdForSkuAtWarehouse(catalogPickClause) {
+  const p2Key = sqlMovementSkuKey('p2');
+  return `
+            p.id = (
+              SELECT p2.id
+              FROM products p2
+              WHERE ${p2Key} = ms.sku_key
+                AND (
+                  p2.branch_id = $1
+                  OR ${catalogPickClause}
+                  OR p2.id IN (
+                    SELECT DISTINCT sm.product_id
+                    FROM stock_movements sm
+                    WHERE sm.warehouse_id = $1
+                  )
+                )
+              ORDER BY
+                CASE WHEN p2.branch_id = $1 THEN 0 ELSE 1 END,
+                (
+                  SELECT COUNT(*)
+                  FROM stock_movements sm
+                  WHERE sm.product_id = p2.id
+                    AND sm.warehouse_id = $1
+                ) DESC,
+                p2.updated_at DESC,
+                p2.created_at DESC
+              LIMIT 1
+            )`;
+}
+
 function sqlGridStockExpr(alias = 'p', warehouseBranchParam = '$1') {
   return `CASE
             WHEN ${alias}.branch_id = ${warehouseBranchParam} THEN
@@ -315,8 +370,13 @@ function sqlGridStockExpr(alias = 'p', warehouseBranchParam = '$1') {
           END`;
 }
 
-/** Inventory grid filial: branch + catalog SKUs, stock from movements then product row. */
+/** Inventory grid filial: show every SKU with stock movements at this warehouse (transfer receive). */
 async function listProductsForBranchInventoryGrid(branchKey) {
+  try {
+    await ensureFilialProductsForWarehouse(branchKey);
+  } catch (err) {
+    console.warn('[PRODUCTS inventory-grid] filial stock reconcile:', err.message);
+  }
   const mainBranchIds = await loadMainBranchIds();
   const mainIn =
     mainBranchIds.length > 0
@@ -326,9 +386,43 @@ async function listProductsForBranchInventoryGrid(branchKey) {
   const catalogBranchClause = mainBranchIds.length
     ? `(p.branch_id IS NULL OR TRIM(COALESCE(p.branch_id, '')) = '' OR p.branch_id IN (${mainIn}))`
     : `(p.branch_id IS NULL OR TRIM(COALESCE(p.branch_id, '')) = '')`;
+  const catalogPickClause = mainBranchIds.length
+    ? `(p2.branch_id IS NULL OR TRIM(COALESCE(p2.branch_id, '')) = '' OR p2.branch_id IN (${mainIn}))`
+    : `(p2.branch_id IS NULL OR TRIM(COALESCE(p2.branch_id, '')) = '')`;
 
   const query = `
-          WITH ${sqlStockBySkuCte()}
+          WITH ${sqlStockBySkuCte()},
+          movement_skus AS (
+            SELECT sku_key, ledger_stock
+            FROM stock_by_sku
+            WHERE ledger_stock > 0.0001
+          )
+          SELECT
+            p.id,
+            p.name,
+            p.sku,
+            p.barcode,
+            p.category,
+            p.price,
+            p.cost,
+            p.first_cost,
+            p.last_cost,
+            p.avg_cost,
+            COALESCE(sbs.ledger_stock, 0) AS stock,
+            p.unit,
+            p.tax_rate,
+            CASE WHEN p.branch_id = $1 THEN p.branch_id ELSE $1 END AS branch_id,
+            p.supplier_id,
+            p.supplier_name
+          FROM products p
+          INNER JOIN movement_skus ms
+            ON ${sqlMovementSkuKey('p')} = ms.sku_key
+          LEFT JOIN stock_by_sku sbs
+            ON ms.sku_key = sbs.sku_key
+          WHERE ${sqlPickProductIdForSkuAtWarehouse(catalogPickClause)}
+
+          UNION ALL
+
           SELECT
             p.id,
             p.name,
@@ -349,7 +443,13 @@ async function listProductsForBranchInventoryGrid(branchKey) {
           FROM products p
           LEFT JOIN stock_by_sku sbs
             ON LOWER(TRIM(COALESCE(p.sku, ''))) = sbs.sku_key
-          WHERE COALESCE(p.is_active, 1) != 0 AND p.branch_id = $1
+          WHERE COALESCE(p.is_active, 1) != 0
+            AND p.branch_id = $1
+            AND TRIM(COALESCE(p.sku, '')) != ''
+            AND NOT EXISTS (
+              SELECT 1 FROM movement_skus ms
+              WHERE ms.sku_key = LOWER(TRIM(COALESCE(p.sku, '')))
+            )
 
           UNION ALL
 
@@ -376,11 +476,10 @@ async function listProductsForBranchInventoryGrid(branchKey) {
           WHERE COALESCE(p.is_active, 1) != 0
             AND TRIM(COALESCE(p.sku, '')) != ''
             AND ${catalogBranchClause}
+            ${sqlHideCatalogWhenFilialHasSameSku()}
             AND NOT EXISTS (
-              SELECT 1 FROM products bx
-              WHERE COALESCE(bx.is_active, 1) != 0
-                AND bx.branch_id = $1
-                AND LOWER(TRIM(COALESCE(bx.sku, ''))) = LOWER(TRIM(p.sku))
+              SELECT 1 FROM movement_skus ms
+              WHERE ms.sku_key = LOWER(TRIM(COALESCE(p.sku, '')))
             )
           ORDER BY name`;
   const result = await db.query(query, params);
@@ -432,7 +531,7 @@ async function listInventoryConsolidatedByBranches() {
   return Array.from(bySku.values());
 }
 
-/** Inventory grid: branch rows + catalog rows without a clone (no per-row correlated join). */
+/** Light list fallback — stock from movement ledger (same rules as inventory-grid). */
 async function listProductsForBranchFast(branchKey) {
   const mainBranchIds = await loadMainBranchIds();
   const mainIn =
@@ -444,22 +543,38 @@ async function listProductsForBranchFast(branchKey) {
     ? `(p.branch_id IS NULL OR TRIM(COALESCE(p.branch_id, '')) = '' OR p.branch_id IN (${mainIn}))`
     : `(p.branch_id IS NULL OR TRIM(COALESCE(p.branch_id, '')) = '')`;
 
+  const listSelect = `
+            p.id, p.name, p.sku, p.barcode, p.category, p.price, p.price2, p.price3, p.price4,
+            p.cost, p.first_cost, p.last_cost, p.avg_cost,
+            ${sqlGridStockExpr('p')} AS stock,
+            p.unit, p.tax_rate, p.branch_id, p.supplier_id, p.supplier_name,
+            p.is_active, p.created_at, p.updated_at`;
+
   const query = `
-          SELECT ${INVENTORY_LIST_COLUMNS}
-          FROM products
-          WHERE COALESCE(is_active, 1) != 0 AND branch_id = $1
-          UNION ALL
-          SELECT ${INVENTORY_LIST_COLUMNS}
+          WITH ${sqlStockBySkuCte()}
+          SELECT ${listSelect}
           FROM products p
+          LEFT JOIN stock_by_sku sbs
+            ON LOWER(TRIM(COALESCE(p.sku, ''))) = sbs.sku_key
+          WHERE COALESCE(p.is_active, 1) != 0 AND p.branch_id = $1
+
+          UNION ALL
+
+          SELECT
+            p.id, p.name, p.sku, p.barcode, p.category, p.price, p.price2, p.price3, p.price4,
+            p.cost, p.first_cost, p.last_cost, p.avg_cost,
+            ${sqlGridStockExpr('p')} AS stock,
+            p.unit, p.tax_rate,
+            $1 AS branch_id,
+            p.supplier_id, p.supplier_name,
+            p.is_active, p.created_at, p.updated_at
+          FROM products p
+          LEFT JOIN stock_by_sku sbs
+            ON LOWER(TRIM(COALESCE(p.sku, ''))) = sbs.sku_key
           WHERE COALESCE(p.is_active, 1) != 0
             AND TRIM(COALESCE(p.sku, '')) != ''
             AND ${catalogBranchClause}
-            AND NOT EXISTS (
-              SELECT 1 FROM products bx
-              WHERE COALESCE(bx.is_active, 1) != 0
-                AND bx.branch_id = $1
-                AND LOWER(TRIM(COALESCE(bx.sku, ''))) = LOWER(TRIM(p.sku))
-            )
+            ${sqlHideCatalogWhenFilialHasSameSku()}
           ORDER BY name`;
   const result = await db.query(query, params);
   return dedupeRowsBySkuFast(result.rows);
@@ -574,6 +689,32 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       console.error('[PRODUCTS inventory-consolidated]', error);
       res.status(500).json({ error: 'Failed to load consolidated inventory' });
+    }
+  });
+
+  /** Reconcile filial stock from movements only (does not create product rows). */
+  router.post('/repair-filial-stock', async (req, res) => {
+    try {
+      const branchId = resolveListBranchId(req, req.query.branchId || req.body?.branchId);
+      if (!branchId) {
+        return res.status(400).json({ error: 'branchId is required' });
+      }
+      const repair = await ensureFilialProductsForWarehouse(branchId);
+      const rows = await listProductsForBranchInventoryGrid(branchId);
+      const mainBranchIds = await loadMainBranchIds();
+      const deduped = dedupeProductsBySku(rows, String(branchId).trim(), mainBranchIds);
+      await broadcastTable('products');
+      res.json({
+        success: true,
+        branchId,
+        repair,
+        rows: deduped,
+        count: deduped.length,
+        dbPath: process.env.SQLITE_PATH || null,
+      });
+    } catch (error) {
+      console.error('[PRODUCTS repair-filial-stock]', error);
+      res.status(500).json({ error: error.message || 'Repair failed' });
     }
   });
 
@@ -805,46 +946,54 @@ module.exports = function(broadcastTable) {
   router.put('/:id', async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, sku, barcode, category, price, price2, price3, price4, cost, stock, unit, taxRate, branchId, isActive, version, supplierId, supplierName, lastCost, avgCost } = req.body;
+      const {
+        name, sku, barcode, category, price, price2, price3, price4, cost, stock, unit, taxRate,
+        branchId, isActive, version, supplierId, supplierName, lastCost, avgCost, preserveStock,
+      } = req.body;
+      const keepStock = preserveStock === true || preserveStock === 'true' || preserveStock === 1;
+      const setClause = keepStock
+        ? `name=$1, sku=$2, barcode=$3, category=$4, price=$5, cost=$6, stock=stock,
+           unit=$7, tax_rate=$8, branch_id=$9, is_active=$10,
+           price2=$11, price3=$12, price4=$13,
+           supplier_id=$14, supplier_name=$15,
+           last_cost=COALESCE($16, last_cost), avg_cost=COALESCE($17, avg_cost)`
+        : `name=$1, sku=$2, barcode=$3, category=$4, price=$5, cost=$6, stock=$7,
+           unit=$8, tax_rate=$9, branch_id=$10, is_active=$11,
+           price2=$12, price3=$13, price4=$14,
+           supplier_id=$15, supplier_name=$16,
+           last_cost=COALESCE($17, last_cost), avg_cost=COALESCE($18, avg_cost)`;
+      const updateParams = keepStock
+        ? [name, sku, barcode, category, price, cost, unit, taxRate,
+           resolveProductBranchId(req, branchId) ?? sanitizeUuid(branchId),
+           isActive !== false ? 1 : 0,
+           price2 || 0, price3 || 0, price4 || 0,
+           sanitizeUuid(supplierId), supplierName || null,
+           lastCost ?? null, avgCost ?? null]
+        : [name, sku, barcode, category, price, cost, stock, unit, taxRate,
+           resolveProductBranchId(req, branchId) ?? sanitizeUuid(branchId),
+           isActive !== false ? 1 : 0,
+           price2 || 0, price3 || 0, price4 || 0,
+           sanitizeUuid(supplierId), supplierName || null,
+           lastCost ?? null, avgCost ?? null];
       
       let result;
       if (version != null) {
         result = await db.query(
           `UPDATE products 
-           SET name=$1, sku=$2, barcode=$3, category=$4, price=$5, cost=$6, 
-               stock=$7, unit=$8, tax_rate=$9, branch_id=$10, is_active=$11,
-               price2=$12, price3=$13, price4=$14,
-               supplier_id=$15, supplier_name=$16,
-               last_cost=COALESCE($17, last_cost), avg_cost=COALESCE($18, avg_cost),
+           SET ${setClause},
                version = version + 1
-           WHERE id=$19 AND version=$20
+           WHERE id=$${updateParams.length + 1} AND version=$${updateParams.length + 2}
            RETURNING *`,
-          [name, sku, barcode, category, price, cost, stock, unit, taxRate,
-           resolveProductBranchId(req, branchId) ?? sanitizeUuid(branchId),
-           isActive !== false ? 1 : 0,
-           price2 || 0, price3 || 0, price4 || 0,
-           sanitizeUuid(supplierId), supplierName || null,
-           lastCost ?? null, avgCost ?? null,
-           id, version]
+          [...updateParams, id, version]
         );
         if (!checkOptimisticLock(result, res, 'Product')) return;
       } else {
         result = await db.query(
           `UPDATE products 
-           SET name=$1, sku=$2, barcode=$3, category=$4, price=$5, cost=$6, 
-               stock=$7, unit=$8, tax_rate=$9, branch_id=$10, is_active=$11,
-               price2=$12, price3=$13, price4=$14,
-               supplier_id=$15, supplier_name=$16,
-               last_cost=COALESCE($17, last_cost), avg_cost=COALESCE($18, avg_cost)
-           WHERE id=$19
+           SET ${setClause}
+           WHERE id=$${updateParams.length + 1}
            RETURNING *`,
-          [name, sku, barcode, category, price, cost, stock, unit, taxRate,
-           resolveProductBranchId(req, branchId) ?? sanitizeUuid(branchId),
-           isActive !== false ? 1 : 0,
-           price2 || 0, price3 || 0, price4 || 0,
-           sanitizeUuid(supplierId), supplierName || null,
-           lastCost ?? null, avgCost ?? null,
-           id]
+          [...updateParams, id]
         );
         if (result.rowCount === 0) {
           return res.status(404).json({ error: 'Product not found' });
@@ -853,14 +1002,25 @@ module.exports = function(broadcastTable) {
       
       const updated = result.rows[0];
       const skuKey = String(updated?.sku || '').trim();
-      if (skuKey && taxRate != null && taxRate !== '') {
-        await db.query(
-          `UPDATE products
-           SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP
-           WHERE COALESCE(is_active, 1) != 0
-             AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)`,
-          [Number(taxRate), skuKey]
-        );
+      if (skuKey) {
+        if (taxRate != null && taxRate !== '') {
+          await db.query(
+            `UPDATE products
+             SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP
+             WHERE COALESCE(is_active, 1) != 0
+               AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)`,
+            [Number(taxRate), skuKey]
+          );
+        }
+        if (price != null && price !== '') {
+          await db.query(
+            `UPDATE products
+             SET price = $1, price2 = $2, price3 = $3, price4 = $4, updated_at = CURRENT_TIMESTAMP
+             WHERE COALESCE(is_active, 1) != 0
+               AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($5)`,
+            [Number(price), Number(price2) || 0, Number(price3) || 0, Number(price4) || 0, skuKey]
+          );
+        }
       }
 
       await broadcastTable('products');

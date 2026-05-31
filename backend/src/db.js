@@ -548,7 +548,7 @@ function scheduleDataConsistencyRepair() {
         const fixes =
           (report.supplierBalances?.updated || 0) +
           (report.clientBalances?.updated || 0) +
-          (report.duplicateSkusRenamed || 0) +
+          (report.duplicateSkusDeactivated || 0) +
           (report.productStockReconciled || 0);
         if (fixes > 0) {
           console.log('[DB] Data consistency repair:', JSON.stringify(report));
@@ -1415,7 +1415,7 @@ try {
       ? sqlite.prepare('SELECT COUNT(*) AS total FROM products').get()?.total || 0
       : 0;
     console.log('[DB] Connected to SQLite:', dbPath, 'at', health.now);
-    console.log(`[DB] products_table=${productsExists} products_count=${productsCount}`);
+    console.log(`[DB] SQLITE_PATH=${dbPath} products_table=${productsExists} products_count=${productsCount}`);
   } else {
     console.log('[DB] Using PostgreSQL:', process.env.DATABASE_URL ? '[DATABASE_URL set]' : '[missing DATABASE_URL]');
   }

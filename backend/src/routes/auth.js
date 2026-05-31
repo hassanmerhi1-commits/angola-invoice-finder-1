@@ -10,6 +10,7 @@ const { loginRateLimiter } = require('../middleware/loginRateLimit');
 const {
   hashPassword,
   upgradePasswordHashIfLegacy,
+  verifyPassword,
   verifyPasswordWithDummyFallback,
 } = require('../lib/passwordAuth');
 const { findUserForLogin } = require('../lib/loginUserLookup');
@@ -269,6 +270,42 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('[AUTH ERROR] update user:', error);
     res.status(500).json({ error: error.message || 'Failed to update user' });
+  }
+});
+
+/** Logged-in user changes own password (requires current password). */
+router.post('/change-password', requireAuth, async (req, res) => {
+  try {
+    const currentPassword = req.body?.currentPassword;
+    const newPassword = req.body?.newPassword;
+    if (currentPassword == null || String(currentPassword).length === 0) {
+      return res.status(400).json({ error: 'Current password is required' });
+    }
+    if (newPassword == null || String(newPassword).length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    }
+
+    const row = await db.query('SELECT id, password_hash FROM users WHERE id = $1', [req.user.id]);
+    if (row.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const storedHash = row.rows[0].password_hash;
+    const valid = await verifyPassword(String(currentPassword), storedHash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    const passwordHash = await hashPassword(String(newPassword));
+    await db.query(
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [passwordHash, req.user.id],
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[AUTH ERROR] change-password:', error);
+    res.status(500).json({ error: error.message || 'Failed to change password' });
   }
 });
 

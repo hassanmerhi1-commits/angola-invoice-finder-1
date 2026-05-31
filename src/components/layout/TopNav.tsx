@@ -166,7 +166,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     {
       label: t.topNav.menus.utilities,
       items: [
-        { label: t.topNav.utilities.changePassword, icon: Shield, path: '/settings' },
+        { label: t.topNav.utilities.changePassword, icon: Shield, path: '/settings', state: { focus: 'password' } },
         { label: t.topNav.utilities.maintenance, icon: Settings, path: '/settings' },
         { label: t.topNav.utilities.calculator, icon: Calculator, action: () => setCalculatorOpen(true) },
         { label: 'separator' },

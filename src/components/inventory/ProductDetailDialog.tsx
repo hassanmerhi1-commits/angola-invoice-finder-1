@@ -212,6 +212,8 @@ export function ProductDetailDialog({
   }, [open]);
 
   const formSnapshotRef = useRef('');
+  /** Avoid re-filling the form when api.products.get returns after the user already edited. */
+  const formInitKeyRef = useRef('');
   const [discardCloseOpen, setDiscardCloseOpen] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -248,42 +250,65 @@ export function ProductDetailDialog({
     ],
   });
 
-  useEffect(() => {
-    if (!open) {
-      formSnapshotRef.current = '';
-      return;
-    }
-    if (effectiveProduct) {
-      const supplierId = resolveProductSupplierId(effectiveProduct, supplierSelectOptions);
-      const next = {
-        id: effectiveProduct.id,
-        sku: effectiveProduct.sku,
-        name: effectiveProduct.name,
-        category: resolveProductCategoryName(effectiveProduct.category, activeCategories),
-        unit: effectiveProduct.unit,
-        iva: effectiveProduct.taxRate,
+  const buildFormFromProduct = useCallback(
+    (src: Product) => {
+      const supplierId = resolveProductSupplierId(src, supplierSelectOptions);
+      return {
+        id: src.id,
+        sku: src.sku,
+        name: src.name,
+        category: resolveProductCategoryName(src.category, activeCategories),
+        unit: src.unit,
+        iva: src.taxRate,
         tipo: 'INVENTARIO',
-        fornecedorName: effectiveProduct.supplierName || supplierSelectOptions.find((s) => s.id === supplierId)?.name || '',
+        fornecedorName:
+          src.supplierName ||
+          supplierSelectOptions.find((s) => s.id === supplierId)?.name ||
+          '',
         supplierId,
         embalagem: 1,
         qtdMinima: 0,
         qtdMaxima: 0,
-        price: effectiveProduct.price,
-        price2: effectiveProduct.price2 || 0,
-        price3: effectiveProduct.price3 || 0,
-        price4: effectiveProduct.price4 || 0,
-        priceIVA: +(effectiveProduct.price * (1 + effectiveProduct.taxRate / 100)).toFixed(2),
-        cost: effectiveProduct.cost,
-        avgCost: effectiveProduct.avgCost || effectiveProduct.cost,
-        lastCost: effectiveProduct.lastCost || effectiveProduct.cost,
-        stock: effectiveProduct.stock,
-        branchId: effectiveProduct.branchId,
-        isActive: effectiveProduct.isActive,
-        barcode: effectiveProduct.barcode || '',
-        barcodes: effectiveProduct.barcode
-          ? [{ barPrice: effectiveProduct.barcode, embalagem: 1, priceLC: effectiveProduct.price, plu: '', ultimoCusto: effectiveProduct.lastCost || effectiveProduct.cost }]
+        price: src.price,
+        price2: src.price2 || 0,
+        price3: src.price3 || 0,
+        price4: src.price4 || 0,
+        priceIVA: +(src.price * (1 + src.taxRate / 100)).toFixed(2),
+        cost: src.cost,
+        avgCost: src.avgCost || src.cost,
+        lastCost: src.lastCost || src.cost,
+        stock: src.stock,
+        branchId: src.branchId,
+        isActive: src.isActive,
+        barcode: src.barcode || '',
+        barcodes: src.barcode
+          ? [
+              {
+                barPrice: src.barcode,
+                embalagem: 1,
+                priceLC: src.price,
+                plu: '',
+                ultimoCusto: src.lastCost || src.cost,
+              },
+            ]
           : [{ barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }],
       };
+    },
+    [activeCategories, supplierSelectOptions],
+  );
+
+  useEffect(() => {
+    if (!open) {
+      formSnapshotRef.current = '';
+      formInitKeyRef.current = '';
+      return;
+    }
+    const initKey = effectiveProduct?.id || 'new';
+    if (formInitKeyRef.current === initKey) return;
+    formInitKeyRef.current = initKey;
+
+    if (effectiveProduct) {
+      const next = buildFormFromProduct(effectiveProduct);
       formSnapshotRef.current = JSON.stringify(next);
       setFormData(next);
     } else {
@@ -321,8 +346,9 @@ export function ProductDetailDialog({
       setFormData(next);
     }
   }, [
-    effectiveProduct,
+    effectiveProduct?.id,
     open,
+    buildFormFromProduct,
     activeCategories,
     supplierSelectOptions,
     currentBranch?.id,
@@ -330,6 +356,15 @@ export function ProductDetailDialog({
     defaultSupplierName,
     scopeBranchId,
   ]);
+
+  // Apply fresher API row only before the user edits (same product id).
+  useEffect(() => {
+    if (!open || !loadedProduct?.id || formInitKeyRef.current !== loadedProduct.id) return;
+    if (formSnapshotRef.current !== JSON.stringify(formData)) return;
+    const next = buildFormFromProduct(loadedProduct);
+    formSnapshotRef.current = JSON.stringify(next);
+    setFormData(next);
+  }, [loadedProduct, open, buildFormFromProduct]);
 
   const set = (field: string, value: any) => setFormData(prev => ({ ...prev, [field]: value }));
 
@@ -406,7 +441,14 @@ export function ProductDetailDialog({
       ? undefined
       : rawSupplierId || undefined;
 
-    const savedProduct: Product = {
+    const isEdit = Boolean(effectiveProduct?.id || product?.id);
+    const stockFromDb =
+      loadedProduct?.stock ??
+      effectiveProduct?.stock ??
+      product?.stock ??
+      formData.stock;
+
+    const savedProduct: Product & { preserveStock?: boolean } = {
       id: formData.id || `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       name: formData.name,
       sku: skuTrim,
@@ -420,7 +462,8 @@ export function ProductDetailDialog({
       firstCost: effectiveProduct?.firstCost || product?.firstCost || formData.cost,
       lastCost: effectiveProduct?.lastCost || formData.lastCost || formData.cost,
       avgCost: formData.avgCost || formData.cost,
-      stock: formData.stock,
+      stock: isEdit ? stockFromDb : formData.stock,
+      preserveStock: isEdit,
       unit: formData.unit,
       taxRate: formData.iva,
       branchId: resolvedBranchId,

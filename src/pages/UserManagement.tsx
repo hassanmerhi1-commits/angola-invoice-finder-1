@@ -93,6 +93,8 @@ export default function UserManagement() {
   const [selectedRole, setSelectedRole] = useState<UserRole>('viewer');
   const [customPerms, setCustomPerms] = useState<string[]>([]);
   const [useCustomPerms, setUseCustomPerms] = useState(false);
+  const [editPassword, setEditPassword] = useState('');
+  const [editPasswordConfirm, setEditPasswordConfirm] = useState('');
 
   const filteredUsers = users.filter(u =>
     u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -120,6 +122,8 @@ export default function UserManagement() {
       setCustomPerms(rolePerms?.permissions || []);
     }
     
+    setEditPassword('');
+    setEditPasswordConfirm('');
     setEditDialogOpen(true);
   };
 
@@ -156,9 +160,25 @@ export default function UserManagement() {
 
   const handleSaveRole = async () => {
     if (!selectedUser) return;
+
+    const pwd = editPassword.trim();
+    if (pwd || editPasswordConfirm.trim()) {
+      if (pwd.length < 8) {
+        toast.error(t.passwordChangeUi.minLength);
+        return;
+      }
+      if (pwd !== editPasswordConfirm.trim()) {
+        toast.error(t.passwordChangeUi.mismatch);
+        return;
+      }
+    }
     
-    // Update user role in storage
-    await updateUser({ ...selectedUser, role: selectedRole });
+    // Update user role (and optional password) in storage
+    await updateUser({
+      ...selectedUser,
+      role: selectedRole,
+      ...(pwd ? { password: pwd } : {}),
+    });
     
     // Update in permissions system
     assignRole(selectedUser.id, selectedRole);
@@ -167,7 +187,12 @@ export default function UserManagement() {
       setCustomPermissions(selectedUser.id, customPerms);
     }
     
-    toast.success(`Role updated for ${selectedUser.name}`);
+    toast.success(
+      pwd ? t.userManagementUi.roleAndPasswordUpdated : t.userManagementUi.roleUpdated,
+      { description: selectedUser.name },
+    );
+    setEditPassword('');
+    setEditPasswordConfirm('');
     setEditDialogOpen(false);
   };
 
@@ -628,6 +653,37 @@ export default function UserManagement() {
           </DialogHeader>
 
           <div className="space-y-6 py-4">
+            <div className="rounded-lg border p-4 space-y-3 bg-muted/30">
+              <p className="text-sm font-medium">{t.userManagementUi.resetPasswordSection}</p>
+              <p className="text-xs text-muted-foreground">{t.userManagementUi.resetPasswordHint}</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-new-password">{t.passwordChangeUi.newPassword}</Label>
+                  <Input
+                    id="edit-new-password"
+                    type="password"
+                    autoComplete="new-password"
+                    value={editPassword}
+                    onChange={(e) => setEditPassword(e.target.value)}
+                    placeholder="••••••••"
+                    minLength={8}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-confirm-password">{t.passwordChangeUi.confirmPassword}</Label>
+                  <Input
+                    id="edit-confirm-password"
+                    type="password"
+                    autoComplete="new-password"
+                    value={editPasswordConfirm}
+                    onChange={(e) => setEditPasswordConfirm(e.target.value)}
+                    placeholder="••••••••"
+                    minLength={8}
+                  />
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <Label>Role</Label>
               <Select value={selectedRole} onValueChange={(v) => handleRoleChange(v as UserRole)}>

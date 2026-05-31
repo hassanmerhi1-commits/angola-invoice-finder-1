@@ -1278,9 +1278,6 @@ export default function PurchaseInvoices() {
       String(apiBranchId ?? '').trim(),
     [form.warehouseId, currentBranch?.id, apiBranchId],
   );
-  const { products, addProduct: addProductToStock, refreshProducts } = useProducts(
-    purchaseWarehouseId || undefined,
-  );
   // Freight / Transport cost
   const [freightCost, setFreightCost] = useState(0);
   const [freightOtherCosts, setFreightOtherCosts] = useState(0);
@@ -1318,16 +1315,30 @@ export default function PurchaseInvoices() {
   const [poProductSearch, setPoProductSearch] = useState('');
   const [poProductDropdownOpen, setPoProductDropdownOpen] = useState(false);
 
+  const productsBranchId = useMemo(() => {
+    if (poCreateOpen) {
+      const poBranch = String(poForm.branchId || '').trim();
+      if (poBranch) return poBranch;
+    }
+    const wh = String(purchaseWarehouseId || '').trim();
+    if (wh) return wh;
+    const scope = String(apiBranchId || '').trim();
+    if (scope) return scope;
+    return String(currentBranch?.id || '').trim() || undefined;
+  }, [poCreateOpen, poForm.branchId, purchaseWarehouseId, apiBranchId, currentBranch?.id]);
+
+  const { products, addProduct: addProductToStock, refreshProducts } = useProducts(productsBranchId);
+
   // Purchase orders
   const { orders, createOrder, receiveOrder, cancelOrder, refreshOrders } = usePurchaseOrders(apiBranchId);
 
   useEffect(() => {
     if (mode === 'create') void refreshProducts();
-  }, [mode, purchaseWarehouseId, refreshProducts]);
+  }, [mode, productsBranchId, refreshProducts]);
 
   useEffect(() => {
     if (poCreateOpen) void refreshProducts();
-  }, [poCreateOpen, refreshProducts]);
+  }, [poCreateOpen, productsBranchId, refreshProducts]);
 
   useEffect(() => {
     if (!poCreateOpen) {
@@ -2753,12 +2764,13 @@ export default function PurchaseInvoices() {
                       </div>
                     )}
                     {poProductDropdownOpen && (
-                      <div className="absolute z-[100] top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-lg max-h-[200px] overflow-y-auto">
+                      <div className="absolute z-[200] top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-lg max-h-[220px] overflow-y-auto">
                         {(() => {
                           const q = poProductSearch.toLowerCase();
                           const filtered = products.filter(p =>
-                            !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode?.toLowerCase().includes(q)
-                          ).slice(0, 50);
+                            p.isActive !== false &&
+                            (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode?.toLowerCase().includes(q))
+                          ).slice(0, 80);
                           if (filtered.length === 0) return <div className="p-3 text-sm text-muted-foreground text-center">{t.purchaseInvoicesUi.poNoProductsFound}</div>;
                           return filtered.map(p => (
                             <div

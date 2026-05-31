@@ -461,6 +461,47 @@ function copyBestLegacySqliteInto(targetPath) {
   return tryCopySqliteDatabase(best, target);
 }
 
+/**
+ * When several erp.db copies exist (C:\\nexor, AppData, NEXOR ERP\\data), use the largest
+ * file so transfers saved to a legacy path are not lost after restart.
+ */
+function pickCanonicalSqlitePath(preferredPath) {
+  const preferred = path.normalize(String(preferredPath || DEFAULT_NEXOR_PATH).trim());
+  const seen = new Set();
+  const candidates = [];
+  for (const p of [preferred, DEFAULT_NEXOR_PATH, ...findLegacySqliteCandidates()]) {
+    const key = String(p || '').trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    try {
+      if (!fs.existsSync(p)) continue;
+      const st = fs.statSync(p);
+      if (!st.isFile() || st.size < 512) continue;
+      candidates.push({ path: p, size: st.size, mtime: st.mtimeMs });
+    } catch (_) {}
+  }
+  if (candidates.length === 0) return ensureSqliteFileReady(preferred);
+
+  const preferredEntry = candidates.find((c) => c.path.toLowerCase() === preferred.toLowerCase());
+  if (preferredEntry && preferredEntry.size > 100 * 1024) {
+    return ensureSqliteFileReady(preferred);
+  }
+
+  candidates.sort((a, b) => b.size - a.size || b.mtime - a.mtime);
+  const picked = candidates[0].path;
+  if (picked.toLowerCase() !== preferred.toLowerCase()) {
+    console.warn(
+      `[DB] Preferred DB missing or empty; using ${picked} (${(candidates[0].size / 1024).toFixed(1)} KB)`,
+    );
+    try {
+      fs.writeFileSync(IP_FILE_PATH, picked, 'utf-8');
+    } catch (e) {
+      console.warn('[DB] Could not update IP file to canonical DB:', e.message);
+    }
+  }
+  return ensureSqliteFileReady(picked);
+}
+
 /** Map legacy .nexor setup paths to a real .db under C:\\NEXOR ERP\\data. */
 function migrateNexorPathToDb(nexorPath) {
   const base = path.basename(String(nexorPath || 'erp.nexor'), '.nexor');
@@ -1572,18 +1613,22 @@ function resolveStartupBackendPlan(dbResult) {
   const ip = parseIPFile();
   const saved = readSetupConfigFromDisk();
 
+  const finalizeSqlite = (rawPath) => {
+    const canonical = pickCanonicalSqlitePath(rawPath || DEFAULT_NEXOR_PATH);
+    copyBestLegacySqliteInto(canonical);
+    return canonical;
+  };
+
   if (ip.valid && ip.isServer && ip.path) {
-    return { mode: 'server', sqlitePath: ensureSqliteFileReady(ip.path) };
+    return { mode: 'server', sqlitePath: finalizeSqlite(ip.path) };
   }
   if (saved?.role === 'server') {
-    const dbPath = ensureSqliteFileReady(
-      saved?.serverConfig?.databasePath || DEFAULT_NEXOR_PATH
-    );
+    const dbPath = finalizeSqlite(saved?.serverConfig?.databasePath || DEFAULT_NEXOR_PATH);
     try { fs.writeFileSync(IP_FILE_PATH, dbPath, 'utf-8'); } catch (_) {}
     return { mode: 'server', sqlitePath: dbPath };
   }
   if (dbResult?.mode === 'server' && dbResult?.path) {
-    return { mode: 'server', sqlitePath: ensureSqliteFileReady(dbResult.path) };
+    return { mode: 'server', sqlitePath: finalizeSqlite(dbResult.path) };
   }
   if (ip.valid && !ip.isServer && ip.serverAddress) {
     return { mode: 'client', sqlitePath: null };
@@ -1592,11 +1637,9 @@ function resolveStartupBackendPlan(dbResult) {
     return { mode: 'client', sqlitePath: null };
   }
   if (dbResult?.needsConfig || !ip.valid) {
-    return { mode: 'standalone', sqlitePath: ensureSqliteFileReady(DEFAULT_NEXOR_PATH) };
+    return { mode: 'standalone', sqlitePath: finalizeSqlite(DEFAULT_NEXOR_PATH) };
   }
-  const fallbackDb = ip.valid && ip.path
-    ? ensureSqliteFileReady(ip.path)
-    : ensureSqliteFileReady(DEFAULT_NEXOR_PATH);
+  const fallbackDb = finalizeSqlite(ip.valid && ip.path ? ip.path : DEFAULT_NEXOR_PATH);
   return { mode: 'unknown', sqlitePath: fallbackDb };
 }
 

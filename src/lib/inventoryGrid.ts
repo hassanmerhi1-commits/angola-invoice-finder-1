@@ -7,7 +7,7 @@ const CACHE_TTL_MS = 120_000;
 
 type CacheEntry = { at: number; rows: Product[] };
 
-function cacheKey(branchId: string | undefined, consolidated: boolean): string {
+export function cacheKey(branchId: string | undefined, consolidated: boolean): string {
   return consolidated ? 'hq' : String(branchId || '').trim() || 'none';
 }
 
@@ -23,13 +23,27 @@ function readCache(key: string): Product[] | null {
   }
 }
 
-function writeCache(key: string, rows: Product[]): void {
+export function writeCache(key: string, rows: Product[]): void {
   try {
     const entry: CacheEntry = { at: Date.now(), rows };
     sessionStorage.setItem(CACHE_PREFIX + key, JSON.stringify(entry));
   } catch {
     /* quota */
   }
+}
+
+/** Clear cached grid rows after stock transfers or branch-scoped product changes. */
+export function invalidateInventoryGridCacheForBranches(
+  branchIds: Array<string | undefined | null>,
+): void {
+  const seen = new Set<string>();
+  for (const id of branchIds) {
+    const key = String(id || '').trim();
+    if (!key || key === 'all' || seen.has(key)) continue;
+    seen.add(key);
+    invalidateInventoryGridCache(key, false);
+  }
+  invalidateInventoryGridCache(undefined, true);
 }
 
 export function invalidateInventoryGridCache(branchId?: string, consolidated?: boolean): void {

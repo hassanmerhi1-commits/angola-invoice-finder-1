@@ -579,6 +579,13 @@ export const api = {
       }
       return apiFetch<any>('/auth/me');
     },
+    changePassword: async (currentPassword: string, newPassword: string) => {
+      await ensureBackendAuthToken();
+      return apiFetch<{ success: boolean }>('/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+    },
   },
 
   // Branches — Electron + SQLite: IPC main store does not persist branches (only Express DB does).
@@ -672,6 +679,11 @@ export const api = {
         `/products/inventory-grid${qs ? `?${qs}` : ''}`,
       );
     },
+    repairFilialStock: (branchId: string) =>
+      apiFetch<{ success: boolean; rows: any[]; count: number; repair?: unknown; dbPath?: string }>(
+        `/products/repair-filial-stock?branchId=${encodeURIComponent(branchId)}`,
+        { method: 'POST' },
+      ),
     get: async (id: string) => {
       return apiFetch<any>(`/products/${encodeURIComponent(id)}`);
     },

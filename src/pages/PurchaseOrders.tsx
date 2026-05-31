@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useProducts, useSuppliers, usePurchaseOrders, useAuth } from '@/hooks/useERP';
@@ -67,7 +67,6 @@ export default function PurchaseOrders() {
     cancelOrder 
   } = usePurchaseOrders(apiBranchId);
   const { suppliers } = useSuppliers();
-  const { products, refreshProducts } = useProducts(apiBranchId);
   const { toast } = useToast();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -97,6 +96,20 @@ export default function PurchaseOrders() {
     unitCost: 0,
   });
 
+  const [productSearch, setProductSearch] = useState('');
+  const [productDropdownOpen, setProductDropdownOpen] = useState(false);
+  const productSearchRef = useRef<HTMLDivElement>(null);
+
+  const productListBranchId = useMemo(() => {
+    const fromOrder = String(orderForm.branchId || '').trim();
+    if (fromOrder) return fromOrder;
+    const fromScope = String(apiBranchId || '').trim();
+    if (fromScope) return fromScope;
+    return String(currentBranch?.id || '').trim() || undefined;
+  }, [orderForm.branchId, apiBranchId, currentBranch?.id]);
+
+  const { products, refreshProducts } = useProducts(productListBranchId);
+
   const [barcodeInput, setBarcodeInput] = useState('');
   const [scanMode, setScanMode] = useState<'create' | 'receive' | null>(null);
 
@@ -112,7 +125,25 @@ export default function PurchaseOrders() {
 
   useEffect(() => {
     if (createDialogOpen) void refreshProducts();
-  }, [createDialogOpen, refreshProducts]);
+  }, [createDialogOpen, productListBranchId, refreshProducts]);
+
+  useEffect(() => {
+    if (!createDialogOpen) {
+      setProductDropdownOpen(false);
+      setProductSearch('');
+    }
+  }, [createDialogOpen]);
+
+  useEffect(() => {
+    if (!productDropdownOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (productSearchRef.current && !productSearchRef.current.contains(e.target as Node)) {
+        setProductDropdownOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [productDropdownOpen]);
 
   // Handle barcode scan for adding products
   const handleBarcodeScan = useCallback((barcode: string) => {
@@ -254,6 +285,7 @@ export default function PurchaseOrders() {
     });
 
     setNewItemForm({ productId: '', quantity: 1, unitCost: 0 });
+    setProductSearch('');
   };
 
   const handleRemoveItem = (productId: string) => {
@@ -686,33 +718,70 @@ export default function PurchaseOrders() {
               </p>
             </div>
 
-            {/* Add product to order manually */}
-            <div className="border rounded-lg p-4 space-y-4">
+            {/* Add product to order manually — searchable list (Select inside Dialog blocks clicks) */}
+            <div className="border rounded-lg p-4 space-y-4 overflow-visible relative z-20">
               <h4 className="font-medium">Adicionar Produto Manualmente</h4>
               <div className="grid grid-cols-4 gap-4">
-                <div className="col-span-2">
-                  <Select
-                    value={newItemForm.productId}
-                    onValueChange={(value) => {
-                      const product = products.find(p => p.id === value);
-                      setNewItemForm({
-                        ...newItemForm,
-                        productId: value,
-                        unitCost: product?.cost || 0,
-                      });
+                <div ref={productSearchRef} className="col-span-2 relative">
+                  <Input
+                    placeholder={t.purchaseInvoicesUi.searchProductByNameSkuOrCode}
+                    value={productSearch}
+                    onChange={(e) => {
+                      setProductSearch(e.target.value);
+                      setProductDropdownOpen(true);
                     }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={t.purchaseOrdersUi.selectProductPlaceholder} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {products.filter(p => p.isActive).map((product) => (
-                        <SelectItem key={product.id} value={product.id}>
-                          {product.name} ({product.sku}) {product.barcode && `- ${product.barcode}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    onFocus={() => setProductDropdownOpen(true)}
+                  />
+                  {newItemForm.productId && !productSearch && (
+                    <div className="absolute inset-0 flex items-center px-3 pointer-events-none">
+                      <span className="text-sm truncate">
+                        {products.find((p) => p.id === newItemForm.productId)?.name ||
+                          t.purchaseOrdersUi.selectProductPlaceholder}
+                      </span>
+                    </div>
+                  )}
+                  {productDropdownOpen && (
+                    <div className="absolute z-[200] top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-lg max-h-[220px] overflow-y-auto">
+                      {(() => {
+                        const q = productSearch.toLowerCase();
+                        const filtered = products
+                          .filter(
+                            (p) =>
+                              p.isActive !== false &&
+                              (!q ||
+                                p.name.toLowerCase().includes(q) ||
+                                p.sku.toLowerCase().includes(q) ||
+                                (p.barcode || '').toLowerCase().includes(q)),
+                          )
+                          .slice(0, 80);
+                        if (filtered.length === 0) {
+                          return (
+                            <div className="p-3 text-sm text-muted-foreground text-center">
+                              {t.purchaseInvoicesUi.poNoProductsFound}
+                            </div>
+                          );
+                        }
+                        return filtered.map((p) => (
+                          <div
+                            key={p.id}
+                            className="px-3 py-2 text-sm cursor-pointer hover:bg-accent flex justify-between gap-2"
+                            onClick={() => {
+                              setNewItemForm((prev) => ({
+                                ...prev,
+                                productId: p.id,
+                                unitCost: p.cost || 0,
+                              }));
+                              setProductSearch(p.name);
+                              setProductDropdownOpen(false);
+                            }}
+                          >
+                            <span className="truncate">{p.name}</span>
+                            <span className="text-muted-foreground shrink-0">{p.sku}</span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <Input

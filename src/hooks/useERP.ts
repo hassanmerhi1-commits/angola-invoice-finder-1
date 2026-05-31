@@ -15,6 +15,7 @@ import { normalizeTaxRate } from '@/lib/taxUtils';
 import { applyUserBranchLockOnLogin, normalizeIsMain } from '@/lib/branchAccess';
 import { mapStockTransferRow } from '@/lib/stockTransferUtils';
 import { dedupeProductsForDisplay } from '@/lib/productDedupe';
+import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
@@ -323,11 +324,13 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     return savedProduct;
   }, [branchId, catalogBranchIds, fetchMergedProductList]);
 
-  const updateProduct = useCallback(async (product: Product) => {
+  const updateProduct = useCallback(async (product: Product & { preserveStock?: boolean }) => {
     const writeGeneration = ++listGenerationRef.current;
+    const { preserveStock, ...rest } = product;
     const payload = {
-      ...product,
+      ...rest,
       branchId: normalizeProductBranchIdForApi(product.branchId) ?? undefined,
+      ...(preserveStock ? { preserveStock: true } : {}),
     };
     const result = await api.products.update(product.id, payload);
     let resolved = product;
@@ -1109,8 +1112,9 @@ export function useStockTransfers(branchId?: string) {
     notifyTransfersChanged();
     const fromBranchId = (result.data as { from_branch_id?: string; fromBranchId?: string })?.from_branch_id
       || (result.data as { fromBranchId?: string })?.fromBranchId;
+    invalidateInventoryGridCacheForBranches([fromBranchId]);
     window.dispatchEvent(new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
-      detail: { branchId: fromBranchId || 'all' },
+      detail: { branchId: fromBranchId || 'all', fromBranchId },
     }));
   }, [refreshTransfers, notifyTransfersChanged, t.erpUi.approveTransferFailed]);
 
@@ -1122,8 +1126,9 @@ export function useStockTransfers(branchId?: string) {
     const payload = result.data as { to_branch_id?: string; toBranchId?: string; from_branch_id?: string; fromBranchId?: string };
     const toBranchId = payload?.to_branch_id || payload?.toBranchId;
     const fromBranchId = payload?.from_branch_id || payload?.fromBranchId;
+    invalidateInventoryGridCacheForBranches([toBranchId, fromBranchId]);
     window.dispatchEvent(new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
-      detail: { branchId: toBranchId || fromBranchId || 'all' },
+      detail: { branchId: toBranchId || fromBranchId || 'all', toBranchId, fromBranchId },
     }));
   }, [refreshTransfers, notifyTransfersChanged, t.erpUi.receiveTransferFailed]);
 
