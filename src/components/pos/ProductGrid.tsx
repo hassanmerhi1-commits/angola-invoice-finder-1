@@ -10,7 +10,8 @@ interface ProductGridProps {
 }
 
 export function ProductGrid({ products, onProductSelect, searchTerm }: ProductGridProps) {
-  const filteredProducts = products.filter(product =>
+  const list = products ?? [];
+  const filteredProducts = list.filter(product =>
     product.isActive &&
     (product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
      product.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||

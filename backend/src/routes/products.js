@@ -402,14 +402,15 @@ function sqlGridStockExpr(alias = 'p', warehouseBranchParam = '$1') {
 
 /** Best selling price for this SKU across catalog + filial rows (fixes Qtd > 0 filial-only rows). */
 function sqlGridSellingPriceExpr(alias = 'p') {
+  const rowPvp = `MAX(COALESCE(${alias}.price, 0), COALESCE(${alias}.price2, 0))`;
   const siblingMax = `(
-    SELECT MAX(COALESCE(px.price, 0))
+    SELECT MAX(MAX(COALESCE(px.price, 0), COALESCE(px.price2, 0)))
     FROM products px
     WHERE COALESCE(px.is_active, 1) != 0
       AND TRIM(COALESCE(px.sku, '')) != ''
       AND ${sqlMovementSkuKey('px')} = ${sqlMovementSkuKey(alias)}
   )`;
-  return `MAX(COALESCE(${alias}.price, 0), COALESCE(${siblingMax}, 0))`;
+  return `MAX(${rowPvp}, COALESCE(${siblingMax}, 0))`;
 }
 
 /** Inventory grid filial: show every SKU with stock movements at this warehouse (transfer receive). */
@@ -562,20 +563,18 @@ async function listInventoryConsolidatedByBranches() {
   );
   const mainBranchIds = await loadMainBranchIds();
   const bySku = new Map();
-  await Promise.all(
-    (branchesResult.rows || []).map(async (b) => {
-      try {
-        const branchKey = String(b.id).trim();
-        const rows = await listProductsForBranchInventoryGrid(branchKey);
-        const deduped = dedupeProductsBySku(rows, branchKey, mainBranchIds);
-        for (const row of deduped) {
-          mergeConsolidatedSkuRow(bySku, row, mainBranchIds);
-        }
-      } catch (err) {
-        console.error('[PRODUCTS inventory-grid] branch', b.id, err.message);
+  for (const b of branchesResult.rows || []) {
+    try {
+      const branchKey = String(b.id).trim();
+      const rows = await listProductsForBranchInventoryGrid(branchKey);
+      const deduped = dedupeProductsBySku(rows, branchKey, mainBranchIds);
+      for (const row of deduped) {
+        mergeConsolidatedSkuRow(bySku, row, mainBranchIds);
       }
-    }),
-  );
+    } catch (err) {
+      console.error('[PRODUCTS inventory-grid] branch', b.id, err.message);
+    }
+  }
   return Array.from(bySku.values());
 }
 
@@ -630,8 +629,17 @@ async function listProductsForBranchFast(branchKey) {
   return dedupeRowsBySkuFast(result.rows);
 }
 
+let sellingHintsCache = null;
+let sellingHintsCacheAt = 0;
+const SELLING_HINTS_CACHE_MS = 120_000;
+
 /** Best selling price per canonical SKU (catalog + filial + PVP1 on purchase lines). */
 async function loadSellingPriceHintsBySku() {
+  const now = Date.now();
+  if (sellingHintsCache && now - sellingHintsCacheAt < SELLING_HINTS_CACHE_MS) {
+    return sellingHintsCache;
+  }
+
   const bySku = new Map();
 
   const productRows = await db.query(
@@ -679,7 +687,14 @@ async function loadSellingPriceHintsBySku() {
     console.warn('[PRODUCTS] purchase price hints:', err.message);
   }
 
+  sellingHintsCache = bySku;
+  sellingHintsCacheAt = now;
   return bySku;
+}
+
+function invalidateSellingHintsCache() {
+  sellingHintsCache = null;
+  sellingHintsCacheAt = 0;
 }
 
 function enrichInventoryGridSellingPrices(rows, priceBySku) {
@@ -688,7 +703,7 @@ function enrichInventoryGridSellingPrices(rows, priceBySku) {
     const key = canonicalSkuString(row.sku).toLowerCase();
     if (!key) return row;
     const hint = Number(priceBySku.get(key) || 0);
-    const current = Number(row.price) || 0;
+    const current = Math.max(Number(row.price) || 0, Number(row.price2) || 0);
     const best = Math.max(current, hint);
     if (best <= current) return row;
     return { ...row, price: best };
@@ -718,19 +733,13 @@ async function persistSellingPricesFromHints(priceBySku) {
 /** Set by module.exports — used after persisting selling prices from hints. */
 let onProductsTableChange = null;
 
-async function enrichAndPersistSellingPrices(rows) {
-  const priceBySku = await loadSellingPriceHintsBySku();
-  const enriched = enrichInventoryGridSellingPrices(rows, priceBySku);
-  try {
-    const n = await persistSellingPricesFromHints(priceBySku);
-    if (n > 0) await onProductsTableChange?.('products');
-  } catch (err) {
-    console.warn('[PRODUCTS] persist selling prices:', err.message);
-  }
-  return enriched;
+/** Apply global PVP hints to rows — read-only (no DB writes on list/grid; avoids SQLite lock). */
+async function enrichRowsWithSellingPrices(rows, priceBySkuPreloaded) {
+  const priceBySku = priceBySkuPreloaded ?? (await loadSellingPriceHintsBySku());
+  return enrichInventoryGridSellingPrices(rows, priceBySku);
 }
 
-async function listInventoryGridRows(branchId, consolidated) {
+async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded) {
   const mainBranchIds = await loadMainBranchIds();
   let rows;
   if (consolidated) {
@@ -747,7 +756,7 @@ async function listInventoryGridRows(branchId, consolidated) {
       rows = dedupeProductsBySku(rows, branchKey, mainBranchIds);
     }
   }
-  return enrichAndPersistSellingPrices(rows);
+  return enrichRowsWithSellingPrices(rows, priceBySkuPreloaded);
 }
 
 async function listProductsForBranch(branchKey, lightList) {
@@ -825,7 +834,7 @@ async function listProductsForBranch(branchKey, lightList) {
   const result = await db.query(query, [branchKey]);
   rows = dedupeProductsBySku(result.rows, branchKeyStr, mainBranchIds);
   }
-  return enrichAndPersistSellingPrices(rows);
+  return enrichRowsWithSellingPrices(rows);
 }
 
 module.exports = function(broadcastTable) {
@@ -877,6 +886,18 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  /** Best PVP per SKU (catalog + all filials + purchase PVP1) — for POS and single-branch inventory. */
+  router.get('/selling-prices', async (req, res) => {
+    try {
+      const priceBySku = await loadSellingPriceHintsBySku();
+      res.setHeader('Cache-Control', 'private, max-age=30');
+      res.json(Object.fromEntries(priceBySku));
+    } catch (error) {
+      console.error('[PRODUCTS selling-prices]', error);
+      res.status(500).json({ error: 'Failed to load selling prices' });
+    }
+  });
+
   /** Inventory lista tab — slim JSON, single query, optional session cache on client. */
   router.get('/inventory-grid', async (req, res) => {
     try {
@@ -895,9 +916,14 @@ module.exports = function(broadcastTable) {
       } else if (branchId === undefined) {
         return res.json({ rows: [], count: 0 });
       }
-      const rows = await listInventoryGridRows(branchId, wantConsolidated);
+      const priceBySku = await loadSellingPriceHintsBySku();
+      const rows = await listInventoryGridRows(branchId, wantConsolidated, priceBySku);
       res.setHeader('Cache-Control', 'private, max-age=5');
-      res.json({ rows, count: rows.length });
+      res.json({
+        rows,
+        count: rows.length,
+        sellingPrices: Object.fromEntries(priceBySku),
+      });
     } catch (error) {
       console.error('[PRODUCTS inventory-grid]', error);
       res.status(500).json({ error: 'Failed to load inventory grid' });
@@ -1216,6 +1242,7 @@ module.exports = function(broadcastTable) {
         }
       }
 
+      invalidateSellingHintsCache();
       await broadcastTable('products');
       res.json(updated);
     } catch (error) {

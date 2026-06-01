@@ -1,10 +1,10 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useProducts, useCart, useSales, useAuth } from '@/hooks/useERP';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useCart, useSales, useAuth } from '@/hooks/useERP';
+import { usePosProducts } from '@/hooks/usePosProducts';
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
 import { useKeyboardShortcuts, KeyboardShortcut } from '@/hooks/useKeyboardShortcuts';
-import { Sale, Product } from '@/types/erp';
+import { Sale } from '@/types/erp';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -23,8 +23,7 @@ import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 export default function POS() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { currentBranch } = useBranchContext();
-  const { products, refreshProducts } = useProducts(currentBranch?.id);
+  const { products = [], refreshProducts, currentBranch } = usePosProducts();
   const { user } = useAuth();
   const { t } = useTranslation();
   const cart = useCart();
@@ -67,7 +66,7 @@ export default function POS() {
         });
       }
     },
-    [products, cart]
+    [products, cart, t.posUi]
   );
 
   useBarcodeScanner({ onScan: handleBarcodeScan });
@@ -78,14 +77,14 @@ export default function POS() {
     } else {
       toast.info(t.posUi.emptyCart, { description: t.posUi.addProductsToCheckout });
     }
-  }, [cart.items.length]);
+  }, [cart.items.length, t.posUi]);
 
   const handleClearCart = useCallback(() => {
     if (cart.items.length > 0) {
       cart.clearCart();
       toast.info(t.posUi.cartCleared);
     }
-  }, [cart]);
+  }, [cart, t.posUi]);
 
   /** Same as receipt “Nova venda”: cart + checkout + receipt + last sale (TopNav / deep links). */
   const beginNewSaleSession = useCallback(() => {
@@ -175,7 +174,7 @@ export default function POS() {
         description: t.posUi.removeLastItem,
       },
     ],
-    [handleCheckout, handleClearCart, focusSearch, cart]
+    [handleCheckout, handleClearCart, focusSearch, cart, t.posUi]
   );
 
   useKeyboardShortcuts({ shortcuts, enabled: !checkoutOpen && !receiptOpen });

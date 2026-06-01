@@ -50,6 +50,44 @@ export function applyCanonicalSkuAggregates(
   };
 }
 
+/** PVP lookup per SKU (does not change stock/cost — for POS on a single branch). */
+export function buildSellingPriceBySku(
+  products: Product[],
+  hints: Record<string, number> = {},
+): Map<string, number> {
+  const agg = buildCanonicalSkuAggregates(products);
+  for (const [rawSku, rawPrice] of Object.entries(hints)) {
+    const key = canonicalProductSku(rawSku).toLowerCase();
+    const price = Number(rawPrice) || 0;
+    if (!key || price <= 0) continue;
+    const cur = agg.get(key) || {
+      stock: 0,
+      price: 0,
+      cost: 0,
+      firstCost: 0,
+      lastCost: 0,
+      avgCost: 0,
+    };
+    cur.price = Math.max(cur.price, price);
+    agg.set(key, cur);
+  }
+  const out = new Map<string, number>();
+  for (const [key, row] of agg) out.set(key, row.price);
+  return out;
+}
+
+export function withSellingPriceFromMap(
+  product: Product,
+  priceBySku: Map<string, number>,
+): Product {
+  const key = canonicalProductSku(product.sku).toLowerCase();
+  if (!key) return product;
+  const best = priceBySku.get(key) ?? 0;
+  const cur = Number(product.price) || 0;
+  if (best <= cur) return product;
+  return { ...product, price: best };
+}
+
 const DUP_SKU_SUFFIX_RE = /-DUP-[a-f0-9]+$/i;
 
 /** Canonical SKU (strip legacy *-DUP-* repair suffix). */

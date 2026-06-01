@@ -1,8 +1,13 @@
 import { Product } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { normalizeTaxRate } from '@/lib/taxUtils';
+import {
+  buildSellingPriceBySku,
+  withSellingPriceFromMap,
+} from '@/lib/productDedupe';
+import { writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
-const CACHE_PREFIX = 'nexor:inventory-grid:v9:';
+const CACHE_PREFIX = 'nexor:inventory-grid:v11:';
 
 /** Normalize stock from API row (movement ledger or products.stock). */
 export function readProductStock(row: Record<string, unknown> | Product): number {
@@ -117,12 +122,23 @@ export async function fetchInventoryGrid(opts: {
   if (res.error) {
     throw new Error(res.error);
   }
-  if (!Array.isArray(res.data?.rows)) {
+  const rawRows = Array.isArray(res.data?.rows)
+    ? res.data.rows
+    : Array.isArray(res.data)
+      ? res.data
+      : null;
+  if (!rawRows) {
     throw new Error('Failed to load inventory grid');
   }
-  const mapped = mapInventoryGridRows(res.data.rows);
-  writeCache(cacheKey(opts.branchId, opts.consolidated), mapped);
-  return mapped;
+  const hints = (res.data?.sellingPrices ?? {}) as Record<string, number>;
+  if (Object.keys(hints).length > 0) {
+    writeSellingPriceHintsSession(hints);
+  }
+  const mapped = mapInventoryGridRows(rawRows);
+  const priceBySku = buildSellingPriceBySku(mapped, hints);
+  const priced = mapped.map((row) => withSellingPriceFromMap(row, priceBySku));
+  writeCache(cacheKey(opts.branchId, opts.consolidated), priced);
+  return priced;
 }
 
 export function readInventoryGridCache(

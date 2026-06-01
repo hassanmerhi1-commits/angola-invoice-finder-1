@@ -675,10 +675,12 @@ export const api = {
       if (opts.branchId) sp.set('branchId', opts.branchId);
       if (opts.consolidated) sp.set('consolidated', '1');
       const qs = sp.toString();
-      return apiFetch<{ rows: any[]; count: number }>(
+      return apiFetch<{ rows: any[]; count: number; sellingPrices?: Record<string, number> }>(
         `/products/inventory-grid${qs ? `?${qs}` : ''}`,
       );
     },
+    sellingPrices: () =>
+      apiFetch<Record<string, number>>('/products/selling-prices'),
     repairFilialStock: (branchId: string) =>
       apiFetch<{ success: boolean; rows: any[]; count: number; repair?: unknown; dbPath?: string }>(
         `/products/repair-filial-stock?branchId=${encodeURIComponent(branchId)}`,

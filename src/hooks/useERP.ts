@@ -21,6 +21,12 @@ import {
   dedupeProductsForDisplay,
 } from '@/lib/productDedupe';
 import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
+import {
+  applySellingPriceHintsToProducts,
+  fetchSellingPriceHints,
+  invalidateSellingPriceHintsCache,
+  readSellingPriceHintsSession,
+} from '@/lib/sellingPriceHints';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
@@ -213,7 +219,18 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     }
 
     if (apiProducts !== null) {
-      const withCanonicalPrices = applyCanonicalSellingPrices(apiProducts);
+      let hints: Record<string, number> = readSellingPriceHintsSession();
+      if (Object.keys(hints).length === 0) {
+        try {
+          hints = await fetchSellingPriceHints();
+        } catch {
+          /* non-blocking */
+        }
+      }
+      const withCanonicalPrices = applySellingPriceHintsToProducts(
+        applyCanonicalSellingPrices(apiProducts),
+        hints,
+      );
       // Light inventory list is already deduped on the server — skip O(n²) client merge.
       if (listOptions?.light && !isDemoMode()) {
         return filterProductsForApiScope(withCanonicalPrices, branchId, catalogBranchIds);
@@ -222,7 +239,10 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
       // API is source of truth — merging Electron DB / localStorage re-shows duplicate SKUs after login.
       if (!isDemoMode()) {
         return filterProductsForApiScope(
-          applyCanonicalSellingPrices(dedupedApi),
+          applySellingPriceHintsToProducts(
+            applyCanonicalSellingPrices(dedupedApi),
+            hints,
+          ),
           branchId,
           catalogBranchIds,
         );
@@ -336,6 +356,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     }
     const changedBranch =
       savedProduct.branchId || branchId || catalogBranchIds[0] || 'all';
+    invalidateSellingPriceHintsCache();
     window.dispatchEvent(
       new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
         detail: { branchId: changedBranch },

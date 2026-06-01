@@ -9,15 +9,19 @@ import {
 export function useInventoryGrid(opts: {
   branchId?: string;
   consolidated: boolean;
+  /** When false, skips fetch (e.g. optional HQ price reference). */
+  enabled?: boolean;
 }) {
+  const enabled = opts.enabled !== false;
   const scopeKey = opts.consolidated ? 'hq' : String(opts.branchId || '').trim();
   const [rows, setRows] = useState<Product[]>(() =>
-    readInventoryGridCache(opts.branchId, opts.consolidated) ?? [],
+    enabled ? (readInventoryGridCache(opts.branchId, opts.consolidated) ?? []) : [],
   );
-  const [loading, setLoading] = useState(() => rows.length === 0);
+  const [loading, setLoading] = useState(() => enabled && rows.length === 0);
   const generationRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    if (!enabled) return;
     invalidateInventoryGridCache(opts.branchId, opts.consolidated);
     const gen = ++generationRef.current;
     if (rows.length === 0) setLoading(true);
@@ -31,9 +35,14 @@ export function useInventoryGrid(opts: {
     } finally {
       if (gen === generationRef.current) setLoading(false);
     }
-  }, [opts.branchId, opts.consolidated, rows.length]);
+  }, [enabled, opts.branchId, opts.consolidated, rows.length]);
 
   useEffect(() => {
+    if (!enabled) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
     const gen = ++generationRef.current;
     const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
     if (cached?.length) {
@@ -64,7 +73,7 @@ export function useInventoryGrid(opts: {
     return () => {
       generationRef.current++;
     };
-  }, [scopeKey, opts.branchId, opts.consolidated]);
+  }, [enabled, scopeKey, opts.branchId, opts.consolidated]);
 
   const invalidate = useCallback(() => {
     invalidateInventoryGridCache(opts.branchId, opts.consolidated);

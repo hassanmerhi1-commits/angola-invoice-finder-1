@@ -6,6 +6,11 @@ import {
   canonicalProductSku,
   dedupeProductsForDisplay,
 } from '@/lib/productDedupe';
+import {
+  fetchSellingPriceHints,
+  invalidateSellingPriceHintsCache,
+  mergeSellingPriceHintsIntoAggregates,
+} from '@/lib/sellingPriceHints';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useProducts } from '@/hooks/useERP';
@@ -141,7 +146,10 @@ export default function Inventory() {
     [allBranches, branches],
   );
 
-  const catalogListBranchId = listBranchId ?? (isHeadOffice ? mainBranch?.id : undefined);
+  /** Main/sede catalog prices apply to every filial scope (not only the active warehouse id). */
+  const catalogListBranchId = canSwitchBranch
+    ? mainBranch?.id
+    : (listBranchId ?? mainBranch?.id);
   const {
     rows: inventoryRows,
     loading: inventoryGridLoading,
@@ -165,6 +173,11 @@ export default function Inventory() {
   );
 
   const [allBranchProducts, setAllBranchProducts] = useState<Record<string, Product[]>>({});
+  const [sellingPriceHints, setSellingPriceHints] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    void fetchSellingPriceHints().then(setSellingPriceHints);
+  }, []);
 
   const mapApiRowToProduct = useCallback((p: any): Product => ({
     id: p.id,
@@ -214,6 +227,11 @@ export default function Inventory() {
     );
   }, [canSwitchBranch, branches, allBranches, mapApiRowToProduct]);
 
+  useEffect(() => {
+    if (!canSwitchBranch) return;
+    void loadPerBranchBreakdown();
+  }, [canSwitchBranch, inventoryScopeId, loadPerBranchBreakdown]);
+
   const reloadInventoryList = useCallback(async () => {
     if (listBranchId && !isHeadOffice) {
       try {
@@ -223,6 +241,8 @@ export default function Inventory() {
       }
     }
     invalidateInventoryGridCache(listBranchId, isHeadOffice);
+    invalidateSellingPriceHintsCache();
+    await fetchSellingPriceHints(true).then(setSellingPriceHints);
     await refreshInventoryGrid();
   }, [listBranchId, isHeadOffice, refreshInventoryGrid]);
 
@@ -244,6 +264,8 @@ export default function Inventory() {
       if (detail?.branchId && detail.branchId !== 'all') {
         invalidateInventoryGridCache(detail.branchId, false);
       }
+      invalidateSellingPriceHintsCache();
+      void fetchSellingPriceHints(true).then(setSellingPriceHints);
       void refreshInventoryGrid();
       if (canSwitchBranch) void loadPerBranchBreakdown();
     };
@@ -304,15 +326,18 @@ export default function Inventory() {
     [],
   );
 
-  const priceAggregateSource = useMemo(
-    () => [...inventoryRows, ...catalogProducts],
-    [inventoryRows, catalogProducts],
-  );
+  const priceAggregateSource = useMemo(() => {
+    const rows = [...inventoryRows, ...catalogProducts];
+    for (const branchRows of Object.values(allBranchProducts)) {
+      rows.push(...branchRows);
+    }
+    return rows;
+  }, [inventoryRows, catalogProducts, allBranchProducts]);
 
-  const skuPriceAggregates = useMemo(
-    () => buildCanonicalSkuAggregates(priceAggregateSource),
-    [priceAggregateSource],
-  );
+  const skuPriceAggregates = useMemo(() => {
+    const agg = buildCanonicalSkuAggregates(priceAggregateSource);
+    return mergeSellingPriceHintsIntoAggregates(agg, sellingPriceHints);
+  }, [priceAggregateSource, sellingPriceHints]);
 
   const displayProducts = useMemo(() => {
     const deduped = dedupeProductsForDisplay(
