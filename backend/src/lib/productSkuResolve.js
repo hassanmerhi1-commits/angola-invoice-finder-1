@@ -110,10 +110,39 @@ function isUniqueSkuBranchError(err) {
     && /sku|branch_id/i.test(msg);
 }
 
+const DUP_SKU_SUFFIX_RE = /-DUP-[a-f0-9]+$/i;
+
+/** Strip legacy repair suffix so ledger qty matches catalog SKU in grids. */
+function canonicalSkuString(sku) {
+  const raw = String(sku || '').trim();
+  if (!raw) return '';
+  const base = raw.replace(DUP_SKU_SUFFIX_RE, '').trim();
+  return base || raw;
+}
+
+/** SQLite-compatible canonical SKU text (id fallback when sku empty). */
+function sqlCanonicalSkuText(alias = 'pm') {
+  const raw = `TRIM(COALESCE(${alias}.sku, ''))`;
+  return `CASE
+    WHEN ${raw} = '' THEN CAST(${alias}.id AS TEXT)
+    WHEN INSTR(LOWER(${raw}), '-dup-') > 0
+      THEN TRIM(SUBSTR(${raw}, 1, INSTR(LOWER(${raw}), '-dup-') - 1))
+    ELSE ${raw}
+  END`;
+}
+
+/** Lowercase key for movement ledger / inventory grid (canonical SKU). */
+function sqlMovementSkuKey(alias = 'pm') {
+  return `LOWER(TRIM(${sqlCanonicalSkuText(alias)}))`;
+}
+
 module.exports = {
   loadMainBranchIds,
   isCatalogBranchScope,
   normalizeStoredBranchId,
   findProductBySkuAndBranch,
   isUniqueSkuBranchError,
+  canonicalSkuString,
+  sqlCanonicalSkuText,
+  sqlMovementSkuKey,
 };

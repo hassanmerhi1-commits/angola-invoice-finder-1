@@ -21,11 +21,17 @@ interface BranchStockDetailProps {
 
 function findProductInBranch(rows: Product[], selected: Product): Product | undefined {
   const skuKey = (selected.sku || '').trim().toLowerCase();
-  return rows.find((p) => {
-    if (p.id === selected.id) return true;
-    if (!skuKey) return false;
-    return (p.sku || '').trim().toLowerCase() === skuKey;
-  });
+  if (!skuKey && !selected.id) return undefined;
+  const byId = rows.find((p) => p.id === selected.id);
+  if (byId) return byId;
+  if (!skuKey) return undefined;
+  const skuMatches = rows.filter(
+    (p) => (p.sku || '').trim().toLowerCase() === skuKey,
+  );
+  if (skuMatches.length === 0) return undefined;
+  return skuMatches.reduce((best, p) =>
+    (Number(p.stock) || 0) >= (Number(best.stock) || 0) ? p : best,
+  );
 }
 
 export function BranchStockDetail({

@@ -14,9 +14,24 @@ interface InlineLineGridProps {
   warehouseName?: string;
 }
 
-type EditableField = 'quantity' | 'packaging' | 'unitPrice' | 'discountPct' | 'discountPct2' | 'ivaRate';
+type EditableField =
+  | 'quantity'
+  | 'packaging'
+  | 'unitPrice'
+  | 'price1'
+  | 'discountPct'
+  | 'discountPct2'
+  | 'ivaRate';
 
-const EDITABLE_FIELDS: EditableField[] = ['quantity', 'packaging', 'unitPrice', 'discountPct', 'discountPct2', 'ivaRate'];
+const EDITABLE_FIELDS: EditableField[] = [
+  'quantity',
+  'packaging',
+  'unitPrice',
+  'price1',
+  'discountPct',
+  'discountPct2',
+  'ivaRate',
+];
 
 export function InlineLineGrid({
   lines,
@@ -210,8 +225,7 @@ export function InlineLineGrid({
                   <td className="px-1 text-right font-mono font-semibold border-r border-border/50">{fmt(line.total)}</td>
                   {renderCell(idx, 'ivaRate', line.ivaRate)}
                   <td className="px-1 text-right font-mono border-r border-border/50">{fmt(priceIVA)}</td>
-                  {/* Price levels — read-only */}
-                  <td className="px-1 text-right font-mono border-r border-border/50 text-muted-foreground">{fmt(line.price1 || 0)}</td>
+                  {renderCell(idx, 'price1', line.price1 || 0)}
                   <td className="px-1 text-right font-mono border-r border-border/50 text-muted-foreground">{fmt(line.price2 || 0)}</td>
                   <td className="px-1 text-right font-mono border-r border-border/50 text-muted-foreground">{fmt(line.price3 || 0)}</td>
                   <td className="px-1 text-right font-mono border-r border-border/50 text-muted-foreground">{fmt(line.price4 || 0)}</td>

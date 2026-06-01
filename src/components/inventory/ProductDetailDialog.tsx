@@ -20,6 +20,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumericInput } from '@/components/ui/numeric-input';
+import { toast } from 'sonner';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -214,6 +216,7 @@ export function ProductDetailDialog({
   const formSnapshotRef = useRef('');
   /** Avoid re-filling the form when api.products.get returns after the user already edited. */
   const formInitKeyRef = useRef('');
+  const apiHydratedIdRef = useRef<string | null>(null);
   const [discardCloseOpen, setDiscardCloseOpen] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -301,6 +304,7 @@ export function ProductDetailDialog({
     if (!open) {
       formSnapshotRef.current = '';
       formInitKeyRef.current = '';
+      apiHydratedIdRef.current = null;
       return;
     }
     const initKey = effectiveProduct?.id || 'new';
@@ -349,21 +353,21 @@ export function ProductDetailDialog({
     effectiveProduct?.id,
     open,
     buildFormFromProduct,
-    activeCategories,
-    supplierSelectOptions,
-    currentBranch?.id,
-    currentBranch?.isMain,
     defaultSupplierName,
     scopeBranchId,
   ]);
 
-  // Apply fresher API row only before the user edits (same product id).
+  // Apply API row once per open (before user edits) — do not re-run when suppliers list loads.
   useEffect(() => {
     if (!open || !loadedProduct?.id || formInitKeyRef.current !== loadedProduct.id) return;
-    if (formSnapshotRef.current !== JSON.stringify(formData)) return;
-    const next = buildFormFromProduct(loadedProduct);
-    formSnapshotRef.current = JSON.stringify(next);
-    setFormData(next);
+    if (apiHydratedIdRef.current === loadedProduct.id) return;
+    setFormData((current) => {
+      if (formSnapshotRef.current !== JSON.stringify(current)) return current;
+      apiHydratedIdRef.current = loadedProduct.id;
+      const next = buildFormFromProduct(loadedProduct);
+      formSnapshotRef.current = JSON.stringify(next);
+      return next;
+    });
   }, [loadedProduct, open, buildFormFromProduct]);
 
   const set = (field: string, value: any) => setFormData(prev => ({ ...prev, [field]: value }));
@@ -397,20 +401,28 @@ export function ProductDetailDialog({
     [onOpenChange, requestClose],
   );
 
-  // Auto-calculate price with IVA when price or IVA changes (bidirectional)
   const updatePrice = (newPrice: number) => {
-    set('price', newPrice);
-    set('priceIVA', +(newPrice * (1 + formData.iva / 100)).toFixed(2));
+    setFormData((prev) => ({
+      ...prev,
+      price: newPrice,
+      priceIVA: +(newPrice * (1 + prev.iva / 100)).toFixed(2),
+    }));
   };
 
   const updatePriceFromIVA = (newPriceIVA: number) => {
-    set('priceIVA', newPriceIVA);
-    set('price', +(newPriceIVA / (1 + formData.iva / 100)).toFixed(2));
+    setFormData((prev) => ({
+      ...prev,
+      priceIVA: newPriceIVA,
+      price: +(newPriceIVA / (1 + prev.iva / 100)).toFixed(2),
+    }));
   };
 
   const updateIVA = (newIVA: number) => {
-    set('iva', newIVA);
-    set('priceIVA', +(formData.price * (1 + newIVA / 100)).toFixed(2));
+    setFormData((prev) => ({
+      ...prev,
+      iva: newIVA,
+      priceIVA: +(prev.price * (1 + newIVA / 100)).toFixed(2),
+    }));
   };
 
   const margin = formData.price > 0 && formData.cost > 0
@@ -420,6 +432,7 @@ export function ProductDetailDialog({
   const handleSave = async () => {
     const skuTrim = String(formData.sku || '').trim();
     if (!skuTrim) {
+      toast.error(t.productFormUi.nameSkuRequired);
       return;
     }
 
@@ -581,28 +594,28 @@ export function ProductDetailDialog({
               <div className="border-r p-3 space-y-1">
               <h4 className="text-[11px] font-semibold border-b pb-1 mb-1">{t.productDetailUi.pricesTitle}</h4>
                 <Row label={t.productDetailUi.price1ExVat}>
-                  <Input type="number" step="0.01" value={formData.price} onChange={e => updatePrice(parseFloat(e.target.value) || 0)} className="h-7 text-xs" />
+                  <NumericInput value={formData.price} onValueChange={updatePrice} className="h-7 text-xs" />
                 </Row>
                 <Row label={t.productDetailUi.price1IncVat}>
-                  <Input type="number" step="0.01" value={formData.priceIVA} onChange={e => updatePriceFromIVA(parseFloat(e.target.value) || 0)} className="h-7 text-xs font-medium" />
+                  <NumericInput value={formData.priceIVA} onValueChange={updatePriceFromIVA} className="h-7 text-xs font-medium" />
                 </Row>
                 <div className="border-t border-dashed my-1" />
                 <Row label={t.productDetailUi.price2ExVat}>
-                  <Input type="number" step="0.01" value={formData.price2} onChange={e => set('price2', parseFloat(e.target.value) || 0)} className="h-7 text-xs" />
+                  <NumericInput value={formData.price2} onValueChange={(v) => set('price2', v)} className="h-7 text-xs" />
                 </Row>
                 <ReadOnlyRow label={t.productDetailUi.price2IncVat} value={(formData.price2 * (1 + formData.iva / 100)).toFixed(2)} />
                 <Row label={t.productDetailUi.price3ExVat}>
-                  <Input type="number" step="0.01" value={formData.price3} onChange={e => set('price3', parseFloat(e.target.value) || 0)} className="h-7 text-xs" />
+                  <NumericInput value={formData.price3} onValueChange={(v) => set('price3', v)} className="h-7 text-xs" />
                 </Row>
                 <ReadOnlyRow label={t.productDetailUi.price3IncVat} value={(formData.price3 * (1 + formData.iva / 100)).toFixed(2)} />
                 <Row label={t.productDetailUi.price4ExVat}>
-                  <Input type="number" step="0.01" value={formData.price4} onChange={e => set('price4', parseFloat(e.target.value) || 0)} className="h-7 text-xs" />
+                  <NumericInput value={formData.price4} onValueChange={(v) => set('price4', v)} className="h-7 text-xs" />
                 </Row>
                 <ReadOnlyRow label={t.productDetailUi.price4IncVat} value={(formData.price4 * (1 + formData.iva / 100)).toFixed(2)} />
 
                 <h4 className="text-[11px] font-semibold border-b pb-1 mb-1 pt-2">{t.productDetailUi.costAkzTitle}</h4>
                 <Row label={t.productDetailUi.currentCost}>
-                  <Input type="number" step="0.01" value={formData.cost} onChange={e => set('cost', parseFloat(e.target.value) || 0)} className="h-7 text-xs" />
+                  <NumericInput value={formData.cost} onValueChange={(v) => set('cost', v)} className="h-7 text-xs" />
                 </Row>
                 <ReadOnlyRow label={t.productDetailUi.initialCost} value={(product?.firstCost || formData.cost).toFixed(2)} />
                 <ReadOnlyRow label={t.productDetailUi.avgCost} value={formData.avgCost.toFixed(2)} />
@@ -631,7 +644,7 @@ export function ProductDetailDialog({
               <div className="p-3 space-y-1">
                 <h4 className="text-[11px] font-semibold border-b pb-1 mb-1">{t.productDetailUi.stockBranchTitle}</h4>
                 <Row label={t.inventory.stock}>
-                  <Input type="number" value={formData.stock} onChange={e => set('stock', parseInt(e.target.value) || 0)} className="h-7 text-xs" />
+                  <NumericInput integer value={formData.stock} onValueChange={(v) => set('stock', v)} className="h-7 text-xs" />
                 </Row>
                 <Row label={t.productDetailUi.branch}>
                   <Select value={formData.branchId} onValueChange={v => set('branchId', v)}>

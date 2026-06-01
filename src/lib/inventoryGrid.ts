@@ -2,7 +2,20 @@ import { Product } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { normalizeTaxRate } from '@/lib/taxUtils';
 
-const CACHE_PREFIX = 'nexor:inventory-grid:v4:';
+const CACHE_PREFIX = 'nexor:inventory-grid:v9:';
+
+/** Normalize stock from API row (movement ledger or products.stock). */
+export function readProductStock(row: Record<string, unknown> | Product): number {
+  const raw =
+    row.stock ??
+    row.ledger_stock ??
+    row.ledgerStock ??
+    row.stock_qty ??
+    row.stockQty ??
+    0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
 const CACHE_TTL_MS = 120_000;
 
 type CacheEntry = { at: number; rows: Product[] };
@@ -79,7 +92,7 @@ export function mapInventoryGridRows(rows: any[]): Product[] {
       firstCost: Number(p.first_cost ?? p.firstCost ?? p.cost) || 0,
       lastCost: Number(p.last_cost ?? p.lastCost ?? p.cost) || 0,
       avgCost: Number(p.avg_cost ?? p.avgCost ?? p.cost) || 0,
-      stock: Number(p.stock) || 0,
+      stock: readProductStock(p),
       unit: p.unit ?? 'UN',
       taxRate: normalizeTaxRate(p.tax_rate ?? p.taxRate),
       branchId: p.branch_id ?? p.branchId ?? '',

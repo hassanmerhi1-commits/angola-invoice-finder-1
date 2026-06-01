@@ -1,7 +1,67 @@
 import type { Product } from '@/types/erp';
+import { readProductStock } from '@/lib/inventoryGrid';
+
+export type CanonicalSkuAggregates = {
+  stock: number;
+  price: number;
+  cost: number;
+  firstCost: number;
+  lastCost: number;
+  avgCost: number;
+};
+
+/** Max stock/price/cost across every row sharing a canonical SKU (catalog + filial). */
+export function buildCanonicalSkuAggregates(products: Product[]): Map<string, CanonicalSkuAggregates> {
+  const bySku = new Map<string, CanonicalSkuAggregates>();
+  for (const p of products) {
+    const key = canonicalProductSku(p.sku).toLowerCase();
+    if (!key) continue;
+    const cur = bySku.get(key) || {
+      stock: 0,
+      price: 0,
+      cost: 0,
+      firstCost: 0,
+      lastCost: 0,
+      avgCost: 0,
+    };
+    cur.stock = Math.max(cur.stock, readProductStock(p));
+    cur.price = Math.max(cur.price, Number(p.price) || 0);
+    cur.cost = Math.max(cur.cost, Number(p.cost) || 0);
+    cur.firstCost = Math.max(cur.firstCost, Number(p.firstCost) || 0);
+    cur.lastCost = Math.max(cur.lastCost, Number(p.lastCost) || 0);
+    cur.avgCost = Math.max(cur.avgCost, Number(p.avgCost) || 0);
+    bySku.set(key, cur);
+  }
+  return bySku;
+}
+
+export function applyCanonicalSkuAggregates(
+  product: Product,
+  agg: CanonicalSkuAggregates,
+): Product {
+  return {
+    ...product,
+    stock: Math.max(readProductStock(product), agg.stock),
+    price: Math.max(Number(product.price) || 0, agg.price),
+    cost: Math.max(Number(product.cost) || 0, agg.cost),
+    firstCost: Math.max(Number(product.firstCost) || 0, agg.firstCost),
+    lastCost: Math.max(Number(product.lastCost) || 0, agg.lastCost),
+    avgCost: Math.max(Number(product.avgCost) || 0, agg.avgCost),
+  };
+}
+
+const DUP_SKU_SUFFIX_RE = /-DUP-[a-f0-9]+$/i;
+
+/** Canonical SKU (strip legacy *-DUP-* repair suffix). */
+export function canonicalProductSku(sku?: string | null): string {
+  const raw = String(sku ?? '').trim();
+  if (!raw) return '';
+  const base = raw.replace(DUP_SKU_SUFFIX_RE, '').trim();
+  return base || raw;
+}
 
 export function normalizeProductSkuKey(sku?: string | null): string {
-  return String(sku ?? '').trim().toLowerCase();
+  return canonicalProductSku(sku).toLowerCase();
 }
 
 export function normalizeProductNameKey(name?: string | null): string {
@@ -69,6 +129,26 @@ function pickPreferredRow(
   return left >= right ? a : b;
 }
 
+function mergeProductRows(
+  a: Product,
+  b: Product,
+  branchId?: string,
+  catalogBranchIds: string[] = [],
+): Product {
+  const pick = pickPreferredRow(a, b, branchId, catalogBranchIds);
+  const other = pick === a ? b : a;
+  const mergeNum = (a?: number, b?: number) => Math.max(Number(a) || 0, Number(b) || 0);
+  return {
+    ...pick,
+    stock: mergeNum(readProductStock(pick), readProductStock(other)),
+    price: mergeNum(pick.price, other.price),
+    cost: mergeNum(pick.cost, other.cost),
+    firstCost: mergeNum(pick.firstCost, other.firstCost),
+    lastCost: mergeNum(pick.lastCost, other.lastCost),
+    avgCost: mergeNum(pick.avgCost, other.avgCost),
+  };
+}
+
 export function shouldMergeProductDuplicates(
   a: Product,
   b: Product,
@@ -120,7 +200,7 @@ export function dedupeProductsForDisplay(
       bySku.set(key, product);
       continue;
     }
-    bySku.set(key, pickPreferredRow(prev, product, branchId, catalogBranchIds));
+    bySku.set(key, mergeProductRows(prev, product, branchId, catalogBranchIds));
   }
 
   const merged: Product[] = [];
@@ -130,7 +210,7 @@ export function dedupeProductsForDisplay(
       merged.push(product);
       continue;
     }
-    merged[index] = pickPreferredRow(merged[index], product, branchId, catalogBranchIds);
+    merged[index] = mergeProductRows(merged[index], product, branchId, catalogBranchIds);
   }
   return merged;
 }

@@ -504,37 +504,105 @@ export async function applyStockUpdate(invoice: PurchaseInvoice): Promise<void> 
   }
 }
 
-// ---------- Phase 5: Update product purchase price via API ----------
+// ---------- Phase 5: Selling price from purchase line (PVP / price type) ----------
+
+export function resolveSellingPriceFromPurchaseLine(
+  line: PurchaseInvoiceLine,
+  product: { price?: number; price1?: number },
+  priceType: PurchaseInvoice['priceType'],
+  landedUnitCost: number,
+  newAvgCost: number,
+): number {
+  const p1 = Number(line.price1) || 0;
+  if (p1 > 0) return p1;
+  if (priceType === 'average_price' && newAvgCost > 0) return newAvgCost;
+  if (priceType === 'last_price' && landedUnitCost > 0) return landedUnitCost;
+  return Number(product.price) || 0;
+}
+
+function productToUpdatePayload(product: Record<string, unknown>, patch: Record<string, unknown>) {
+  return {
+    name: product.name,
+    sku: product.sku,
+    barcode: product.barcode ?? '',
+    category: product.category ?? 'GERAL',
+    price: Number(product.price) || 0,
+    price2: Number(product.price2) || 0,
+    price3: Number(product.price3) || 0,
+    price4: Number(product.price4) || 0,
+    cost: Number(product.cost) || 0,
+    unit: product.unit ?? 'UN',
+    taxRate: Number(product.tax_rate ?? product.taxRate) || 14,
+    branchId: product.branch_id ?? product.branchId,
+    isActive: product.is_active !== 0 && product.isActive !== false,
+    supplierId: product.supplier_id ?? product.supplierId,
+    supplierName: product.supplier_name ?? product.supplierName,
+    ...patch,
+    preserveStock: true,
+  };
+}
 
 export async function applyPriceUpdate(invoice: PurchaseInvoice): Promise<void> {
-  if (!invoice.changePrice) return;
-  
+  const hasSellingOnLines = invoice.lines.some(
+    (line) => Number(line.price1) > 0 || Number(line.price) > 0,
+  );
+  if (!invoice.changePrice && !hasSellingOnLines) return;
+
+  const branchId =
+    String(invoice.warehouseId || invoice.branchId || '').trim() || undefined;
+
   for (const line of invoice.lines) {
     if (!line.productId) continue;
-    
+
     try {
-      // Get current product data
-      const productsResponse = await api.products.list();
-      const products = productsResponse.data || [];
-      const product = products.find((p: any) => p.id === line.productId);
+      const getRes = await api.products.get(line.productId);
+      let product: any = getRes.data;
+      if (!product) {
+        const listRes = await api.products.list(branchId);
+        const rows = listRes.data || [];
+        product = rows.find((p: any) => p.id === line.productId);
+      }
       if (!product) continue;
 
-      const currentStock = product.stock || 0;
-      const previousStock = Math.max(currentStock - line.totalQty, 0);
-      const previousAverageCost = product.avgCost || product.cost || 0;
+      const landedUnitCost = Number(line.unitPrice) || 0;
+      const currentStock = Number(product.stock ?? product.stock_qty) || 0;
+      const qtyIn = Number(line.totalQty ?? line.quantity) || 0;
+      const previousStock = Math.max(currentStock - qtyIn, 0);
+      const previousAverageCost =
+        Number(product.avgCost ?? product.avg_cost ?? product.cost) || 0;
       const previousTotalValue = previousStock * previousAverageCost;
-      const newItemsTotalValue = line.totalQty * line.unitPrice;
-      const newTotalStock = previousStock + line.totalQty;
-      const newAvgCost = newTotalStock > 0
-        ? (previousTotalValue + newItemsTotalValue) / newTotalStock
-        : line.unitPrice;
+      const newItemsTotalValue = qtyIn * landedUnitCost;
+      const newTotalStock = previousStock + qtyIn;
+      const newAvgCost =
+        newTotalStock > 0
+          ? (previousTotalValue + newItemsTotalValue) / newTotalStock
+          : landedUnitCost;
 
-      await api.products.update(line.productId, {
-        cost: newAvgCost,
-        avgCost: newAvgCost,
-        lastCost: line.unitPrice,
-        firstCost: product.firstCost || line.unitPrice,
-      });
+      const sellingPrice = resolveSellingPriceFromPurchaseLine(
+        line,
+        product,
+        invoice.priceType,
+        landedUnitCost,
+        newAvgCost,
+      );
+      if (!invoice.changePrice && sellingPrice <= 0) continue;
+
+      const updateRes = await api.products.update(
+        line.productId,
+        productToUpdatePayload(product, {
+          cost: newAvgCost,
+          avgCost: newAvgCost,
+          lastCost: landedUnitCost,
+          firstCost: Number(product.firstCost ?? product.first_cost) || landedUnitCost,
+          price: sellingPrice,
+          price2: Number(line.price2) || Number(product.price2) || 0,
+          price3: Number(line.price3) || Number(product.price3) || 0,
+          price4: Number(line.price4) || Number(product.price4) || 0,
+        }),
+      );
+      if (updateRes.error) {
+        console.error('[PurchaseInvoice] Price update failed:', updateRes.error);
+      }
     } catch (err) {
       console.error('[PurchaseInvoice] Price update failed:', err);
     }

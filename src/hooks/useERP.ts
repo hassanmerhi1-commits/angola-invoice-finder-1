@@ -14,7 +14,12 @@ import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
 import { normalizeTaxRate } from '@/lib/taxUtils';
 import { applyUserBranchLockOnLogin, normalizeIsMain } from '@/lib/branchAccess';
 import { mapStockTransferRow } from '@/lib/stockTransferUtils';
-import { dedupeProductsForDisplay } from '@/lib/productDedupe';
+import {
+  applyCanonicalSkuAggregates,
+  buildCanonicalSkuAggregates,
+  canonicalProductSku,
+  dedupeProductsForDisplay,
+} from '@/lib/productDedupe';
 import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
@@ -165,6 +170,16 @@ function dedupeProductsBySku(products: Product[], branchId?: string, catalogBran
   return dedupeProductsForDisplay(products, branchId, catalogBranchIds);
 }
 
+/** Merge best selling price/cost per SKU (catalog + filial) for POS and pickers. */
+function applyCanonicalSellingPrices(products: Product[]): Product[] {
+  const aggregates = buildCanonicalSkuAggregates(products);
+  return products.map((p) => {
+    const key = canonicalProductSku(p.sku).toLowerCase();
+    const agg = key ? aggregates.get(key) : undefined;
+    return agg ? applyCanonicalSkuAggregates(p, agg) : p;
+  });
+}
+
 export type ProductsListOptions = { light?: boolean; enabled?: boolean };
 
 export function useProducts(branchId?: string, listOptions?: ProductsListOptions) {
@@ -198,14 +213,19 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     }
 
     if (apiProducts !== null) {
+      const withCanonicalPrices = applyCanonicalSellingPrices(apiProducts);
       // Light inventory list is already deduped on the server — skip O(n²) client merge.
       if (listOptions?.light && !isDemoMode()) {
-        return filterProductsForApiScope(apiProducts, branchId, catalogBranchIds);
+        return filterProductsForApiScope(withCanonicalPrices, branchId, catalogBranchIds);
       }
-      const dedupedApi = dedupeProductsBySku(apiProducts, branchId, catalogBranchIds);
+      const dedupedApi = dedupeProductsBySku(withCanonicalPrices, branchId, catalogBranchIds);
       // API is source of truth — merging Electron DB / localStorage re-shows duplicate SKUs after login.
       if (!isDemoMode()) {
-        return filterProductsForApiScope(dedupedApi, branchId, catalogBranchIds);
+        return filterProductsForApiScope(
+          applyCanonicalSellingPrices(dedupedApi),
+          branchId,
+          catalogBranchIds,
+        );
       }
       const apiIds = new Set(dedupedApi.map((p) => p.id));
       const apiSkus = new Set(

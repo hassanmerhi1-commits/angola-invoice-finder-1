@@ -242,6 +242,22 @@ async function applyWeightedAverageCostAfterIn(client, productId, quantityIn, un
      WHERE id = $3`,
     [nextAvg, nextLast, productId]
   );
+
+  const skuRow = await client.query(
+    `SELECT sku FROM products WHERE id = $1`,
+    [productId],
+  );
+  const skuKey = String(skuRow.rows[0]?.sku || '').trim();
+  if (skuKey) {
+    await client.query(
+      `UPDATE products
+       SET cost = $1, last_cost = $2, avg_cost = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE COALESCE(is_active, 1) != 0
+         AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($3)
+         AND id != $4`,
+      [nextAvg, nextLast, skuKey, productId],
+    );
+  }
 }
 
 function normalizeStockAdjustmentReferenceType(direction, referenceType) {

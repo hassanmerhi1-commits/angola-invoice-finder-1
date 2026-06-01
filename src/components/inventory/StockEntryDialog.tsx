@@ -102,8 +102,6 @@ interface StockEntryDialogProps {
     items: EntryItem[],
     meta: {
       reason: StockEntryReason;
-      sourceBranchId: string;
-      sourceBranchName: string;
       reference: string;
       entryDate: string;
       warehouseId: string;
@@ -142,7 +140,6 @@ const emptyForm = () => ({
   entryBranchId: '',
   currency: 'KZ',
   currencyRate: 1,
-  sourceBranch: '',
   reference: '',
   notes: '',
   lines: createInitialLines(),
@@ -273,11 +270,6 @@ export function StockEntryDialog({
     return () => clearTimeout(timer);
   }, [open, warehouseId, currentBranch?.id, initialProduct?.id, resetForm, focusQtyLine]);
 
-  const sourceBranches = useMemo(
-    () => branches.filter((b) => b.id !== currentBranch?.id),
-    [branches, currentBranch],
-  );
-
   const entryReasons = useMemo(
     () =>
       (
@@ -306,8 +298,9 @@ export function StockEntryDialog({
     [branchNameById, form.entryBranchId, currentBranch?.id, t.stockEntryUi.thisBranch],
   );
 
-  const effectiveWarehouseId = form.entryBranchId || warehouseId;
-  const entryBranchId = form.entryBranchId || warehouseId || currentBranch?.id || '';
+  const branchLocked = Boolean(warehouseId);
+  const effectiveWarehouseId = warehouseId || form.entryBranchId;
+  const entryBranchId = warehouseId || form.entryBranchId || currentBranch?.id || '';
 
   const entryNumber = useMemo(() => {
     const date = format(new Date(), 'yyyyMMdd');
@@ -578,7 +571,6 @@ export function StockEntryDialog({
     [fulfilledItems, itemsValue, totalLandingCosts],
   );
 
-  const needsSourceBranch = form.entryReason === 'transfer_in';
   const hasNotes = form.notes.trim().length > 0;
 
   const formatCurrency = (value: number) =>
@@ -615,18 +607,6 @@ export function StockEntryDialog({
       return;
     }
 
-    if (needsSourceBranch && !form.sourceBranch) {
-      toast({
-        title: t.stockEntryUi.sourceBranchRequiredTitle,
-        description: t.stockEntryUi.selectSourceBranchDesc,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    const sourceBranchName =
-      branches.find((b) => b.id === form.sourceBranch)?.name || t.stockEntryUi.notApplicable;
-
     const itemsWithFreight = fulfilledItems.map((item) => ({
       ...item,
       freightAllocation: freightAllocations[item.productId] || 0,
@@ -637,8 +617,6 @@ export function StockEntryDialog({
     try {
       await onApplyEntry(itemsWithFreight, {
         reason: form.entryReason,
-        sourceBranchId: form.sourceBranch,
-        sourceBranchName,
         reference: form.reference || entryNumber,
         entryDate: form.entryDate,
         warehouseId: effectiveWarehouseId,
@@ -742,11 +720,7 @@ export function StockEntryDialog({
               <Select
                 value={form.entryReason}
                 onValueChange={(value: StockEntryReason) =>
-                  setForm((p) => ({
-                    ...p,
-                    entryReason: value,
-                    sourceBranch: value === 'transfer_in' ? p.sourceBranch : '',
-                  }))
+                  setForm((p) => ({ ...p, entryReason: value }))
                 }
               >
                 <SelectTrigger className="bg-background h-9">
@@ -784,21 +758,29 @@ export function StockEntryDialog({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">{t.stockEntryUi.branch}</Label>
-              <Select
-                value={form.entryBranchId}
-                onValueChange={(v) => setForm((p) => ({ ...p, entryBranchId: v }))}
-              >
-                <SelectTrigger className="bg-background h-9">
-                  <SelectValue placeholder={t.stockEntryUi.selectSource} />
-                </SelectTrigger>
-                <SelectContent className="z-[200]">
-                  {branches.filter((b) => b.id).map((b) => (
-                    <SelectItem key={b.id} value={b.id}>
-                      {b.name} ({b.code})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {branchLocked ? (
+                <Input
+                  readOnly
+                  value={branchLabel}
+                  className="bg-muted/50 h-9 text-sm"
+                />
+              ) : (
+                <Select
+                  value={form.entryBranchId}
+                  onValueChange={(v) => setForm((p) => ({ ...p, entryBranchId: v }))}
+                >
+                  <SelectTrigger className="bg-background h-9">
+                    <SelectValue placeholder={t.stockEntryUi.selectBranchPlaceholder} />
+                  </SelectTrigger>
+                  <SelectContent className="z-[200]">
+                    {branches.filter((b) => b.id).map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name} ({b.code})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">{t.stockEntryUi.currency}</Label>
@@ -876,30 +858,6 @@ export function StockEntryDialog({
             </p>
           )}
 
-          {needsSourceBranch && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div className="space-y-1.5 sm:col-span-1">
-                <Label className="text-sm font-medium">
-                  {t.stockEntryUi.sourceBranch} <span className="text-destructive">*</span>
-                </Label>
-                <Select
-                  value={form.sourceBranch}
-                  onValueChange={(v) => setForm((p) => ({ ...p, sourceBranch: v }))}
-                >
-                  <SelectTrigger className="bg-background h-9">
-                    <SelectValue placeholder={t.stockEntryUi.selectSource} />
-                  </SelectTrigger>
-                  <SelectContent className="z-[200]">
-                    {sourceBranches.map((b) => (
-                      <SelectItem key={b.id} value={b.id}>
-                        {b.name} ({b.code})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="flex flex-1 flex-col min-h-0 overflow-hidden px-4 sm:px-6 py-2">

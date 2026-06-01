@@ -6,6 +6,7 @@ const db = require('../db');
 const {
   isCatalogBranchScope,
   loadMainBranchIds,
+  sqlMovementSkuKey,
 } = require('./productSkuResolve');
 
 /** Any product that received stock movements at this warehouse (incl. wrongly keyed branch-main / -DUP- rows). */
@@ -73,15 +74,6 @@ async function mergeDupProductMovementsAtWarehouse(warehouseId, clientOrDb = nul
     }
   }
   return { merged };
-}
-
-function sqlMovementSkuKey(alias = 'pm') {
-  return `LOWER(TRIM(
-    CASE
-      WHEN TRIM(COALESCE(${alias}.sku, '')) != '' THEN COALESCE(${alias}.sku, '')
-      ELSE ${alias}.id
-    END
-  ))`;
 }
 
 async function listSkusWithLedgerAtWarehouse(client, warehouseId) {

@@ -404,8 +404,9 @@ module.exports = function(broadcastTable) {
         userId, date, description, amount, currency,
         stockEntries, journalLines, openItem, documentLinks,
         priceUpdates, entityBalanceUpdate,
-        taxLines, linkedPurchaseOrderNumber,
+        taxLines, linkedPurchaseOrderNumber, changePrice,
       } = req.body;
+      const applySellingPrice = changePrice === true || changePrice === 'true' || changePrice === 1;
 
       const effectivePriceUpdates = new Map(
         (priceUpdates || []).map((pu) => [pu.productId, Number(pu.newUnitCost || 0)])
@@ -505,6 +506,48 @@ module.exports = function(broadcastTable) {
                WHERE id = $3`,
               [nextAvgCost, nextLastCost, targetProductId]
             );
+
+            const skuRow = await client.query(
+              'SELECT sku FROM products WHERE id = $1',
+              [targetProductId],
+            );
+            const skuKey = String(skuRow.rows[0]?.sku || '').trim();
+            if (skuKey) {
+              await client.query(
+                `UPDATE products
+                 SET cost = $1, last_cost = $2, avg_cost = $1, updated_at = CURRENT_TIMESTAMP
+                 WHERE COALESCE(is_active, 1) != 0
+                   AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($3)`,
+                [nextAvgCost, nextLastCost, skuKey],
+              );
+            }
+
+            const selling = pu.sellingPrice != null && pu.sellingPrice !== ''
+              ? Number(pu.sellingPrice)
+              : null;
+            const shouldApplySelling =
+              selling != null && !Number.isNaN(selling) && selling > 0
+              && (applySellingPrice || selling > 0);
+            if (shouldApplySelling) {
+              await client.query(
+                `UPDATE products
+                 SET price = $1, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = $2`,
+                [selling, targetProductId],
+              );
+              if (skuKey) {
+                await client.query(
+                  `UPDATE products
+                   SET price = $1, updated_at = CURRENT_TIMESTAMP
+                   WHERE COALESCE(is_active, 1) != 0
+                     AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)`,
+                  [selling, skuKey],
+                );
+              }
+              console.log(
+                `[TX API] selling price ${transactionType} ${documentNumber}: product=${targetProductId} price=${selling}`,
+              );
+            }
 
             console.log(
               `[TX API] price update ${transactionType} ${documentNumber}: product=${targetProductId} ` +

@@ -521,6 +521,7 @@ export const en = {
     reasonCorrection: "Error correction",
     sourceBranch: "Source branch",
     selectSource: "Select source...",
+    selectBranchPlaceholder: "Select branch...",
     notApplicable: "N/A",
     reference: "Reference",
     referencePlaceholder: "Delivery note, invoice no., etc.",

@@ -11,6 +11,7 @@ import {
 import { ChevronDown, ChevronUp, Filter, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
+import { readProductStock } from '@/lib/inventoryGrid';
 import {
   CustomFilterDialog,
   CustomFilterState,
@@ -122,10 +123,7 @@ export function AdvancedDataGrid({
     return COLUMNS;
   }, [hideStock]);
 
-  const getStockTotal = (product: Product): number => {
-    // Stock is resolved in Inventory displayProducts (Sede = sum per SKU, filial = branch only).
-    return product.stock || 0;
-  };
+  const getStockTotal = (product: Product): number => readProductStock(product);
 
   const calculateProfitMargin = (product: Product): number => {
     const cost = product.avgCost || product.lastCost || product.firstCost || product.cost || 0;
@@ -236,7 +234,20 @@ export function AdvancedDataGrid({
     }
     if (key === 'stock') {
       const qty = getStockTotal(product);
-      return <span className={cn("font-semibold", qty <= 0 ? 'text-destructive' : qty <= 10 ? 'text-amber-600' : '')}>{qty}</span>;
+      const display =
+        Math.abs(qty - Math.round(qty)) < 0.0001
+          ? String(Math.round(qty))
+          : qty.toLocaleString('pt-AO', { maximumFractionDigits: 3 });
+      return (
+        <span
+          className={cn(
+            'font-semibold tabular-nums',
+            qty <= 0 ? 'text-destructive' : qty <= 10 ? 'text-amber-600' : '',
+          )}
+        >
+          {display}
+        </span>
+      );
     }
     if (key === 'reservedQty') {
       const r = reservedQty[product.id] || 0;
@@ -374,7 +385,7 @@ export function AdvancedDataGrid({
               const idx = virtualWindow.start + sliceIdx;
               return (
               <tr
-                key={product.id}
+                key={`${product.id}:${product.sku || ''}`}
                 onClick={() => onSelectProduct(product)}
                 onDoubleClick={() => onDoubleClickProduct?.(product)}
                 className={cn(

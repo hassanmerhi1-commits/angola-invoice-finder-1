@@ -20,6 +20,8 @@ import {
   getPurchaseInvoices,
   getPurchaseInvoiceById,
   savePurchaseInvoice,
+  applyPriceUpdate,
+  resolveSellingPriceFromPurchaseLine,
   allocatePurchaseInvoiceNumber,
   peekPurchaseInvoiceNumber,
 } from '@/lib/purchaseInvoiceStorage';
@@ -2248,15 +2250,29 @@ export default function PurchaseInvoices() {
             warehouseId: l.warehouseId || invoice.warehouseId, // BRANCH-SCOPED
           })),
 
-        // Phase 2: Price updates (WAC) — ALWAYS update product cost on purchase invoice
+        changePrice: invoice.changePrice,
+        // Phase 2: Cost (WAC) + optional selling price when "Alterar preço" is checked
         priceUpdates: invoice.lines
           .filter(l => l.productId && l.totalQty > 0)
-          .map(l => ({
-            productId: l.productId,
-            newUnitCost: l.unitPrice + (freightAllocations[l.productId] || 0),
-            quantityReceived: l.totalQty,
-            updateAvgCost: true,
-          })),
+          .map(l => {
+            const landed = l.unitPrice + (freightAllocations[l.productId] || 0);
+            const sellingPrice = resolveSellingPriceFromPurchaseLine(
+              l,
+              { price: l.price1 },
+              invoice.priceType,
+              landed,
+              landed,
+            );
+            const applySelling =
+              invoice.changePrice || (Number(l.price1) > 0 && sellingPrice > 0);
+            return {
+              productId: l.productId,
+              newUnitCost: landed,
+              quantityReceived: l.totalQty,
+              updateAvgCost: true,
+              ...(applySelling && sellingPrice > 0 ? { sellingPrice } : {}),
+            };
+          }),
 
         // Phase 3: Journal entries
         journalLines: invoice.journalLines.map((line) => ({
@@ -2316,6 +2332,13 @@ export default function PurchaseInvoices() {
       }
 
       await savePurchaseInvoice(invoice);
+      if (invoice.changePrice) {
+        try {
+          await applyPriceUpdate(invoice);
+        } catch (priceErr) {
+          console.warn('[PurchaseInvoices] applyPriceUpdate:', priceErr);
+        }
+      }
       await syncPurchaseInvoiceDocument(invoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix);
 
       const orderNoRef = String(invoice.orderNo || form.orderNo || form.ref || '').trim();

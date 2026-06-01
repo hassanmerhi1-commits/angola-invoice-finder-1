@@ -1,11 +1,16 @@
 import { generateId } from '@/lib/utils';
 import { enrichProductSupplier } from '@/lib/productSupplierResolve';
-import { dedupeProductsForDisplay } from '@/lib/productDedupe';
+import {
+  applyCanonicalSkuAggregates,
+  buildCanonicalSkuAggregates,
+  canonicalProductSku,
+  dedupeProductsForDisplay,
+} from '@/lib/productDedupe';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useProducts } from '@/hooks/useERP';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
-import { invalidateInventoryGridCache } from '@/lib/inventoryGrid';
+import { invalidateInventoryGridCache, readProductStock } from '@/lib/inventoryGrid';
 import { useInventoryBranchScope } from '@/hooks/useInventoryBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { normalizeIsMain } from '@/lib/branchAccess';
@@ -146,10 +151,13 @@ export default function Inventory() {
     consolidated: isHeadOffice,
   });
 
-  const { refreshProducts, updateProduct, addProduct, deleteProduct } = useProducts(
-    catalogListBranchId,
-    { light: true, enabled: false },
-  );
+  const {
+    products: catalogProducts,
+    refreshProducts,
+    updateProduct,
+    addProduct,
+    deleteProduct,
+  } = useProducts(catalogListBranchId, { light: true, enabled: true });
 
   const productsById = useMemo(
     () => new Map(inventoryRows.map((p) => [p.id, p])),
@@ -169,7 +177,7 @@ export default function Inventory() {
     firstCost: Number(p.first_cost || p.firstCost || 0),
     lastCost: Number(p.last_cost || p.lastCost || 0),
     avgCost: Number(p.weighted_avg_cost || p.avg_cost || p.avgCost || 0),
-    stock: Number(p.stock || 0),
+    stock: readProductStock(p),
     unit: p.unit || 'UN',
     taxRate: normalizeTaxRate(p.tax_rate ?? p.taxRate),
     branchId: p.branch_id || p.branchId || null,
@@ -207,8 +215,23 @@ export default function Inventory() {
   }, [canSwitchBranch, branches, allBranches, mapApiRowToProduct]);
 
   const reloadInventoryList = useCallback(async () => {
+    if (listBranchId && !isHeadOffice) {
+      try {
+        await api.products.repairFilialStock(listBranchId);
+      } catch {
+        /* non-blocking — grid still loads */
+      }
+    }
     invalidateInventoryGridCache(listBranchId, isHeadOffice);
     await refreshInventoryGrid();
+  }, [listBranchId, isHeadOffice, refreshInventoryGrid]);
+
+  useEffect(() => {
+    if (!listBranchId || isHeadOffice) return;
+    void api.products.repairFilialStock(listBranchId).then(() => {
+      invalidateInventoryGridCache(listBranchId, false);
+      void refreshInventoryGrid();
+    });
   }, [listBranchId, isHeadOffice, refreshInventoryGrid]);
 
   useEffect(() => {
@@ -281,7 +304,28 @@ export default function Inventory() {
     [],
   );
 
-  const displayProducts = inventoryRows;
+  const priceAggregateSource = useMemo(
+    () => [...inventoryRows, ...catalogProducts],
+    [inventoryRows, catalogProducts],
+  );
+
+  const skuPriceAggregates = useMemo(
+    () => buildCanonicalSkuAggregates(priceAggregateSource),
+    [priceAggregateSource],
+  );
+
+  const displayProducts = useMemo(() => {
+    const deduped = dedupeProductsForDisplay(
+      inventoryRows,
+      listBranchId,
+      catalogBranchIds,
+    );
+    return deduped.map((p) => {
+      const key = canonicalProductSku(p.sku).toLowerCase();
+      const agg = key ? skuPriceAggregates.get(key) : undefined;
+      return agg ? applyCanonicalSkuAggregates(p, agg) : p;
+    });
+  }, [inventoryRows, listBranchId, catalogBranchIds, skuPriceAggregates]);
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const flatCatalog = useMemo(() => {
@@ -311,10 +355,20 @@ export default function Inventory() {
     return inventoryRows;
   }, [stockEntrySearchProducts, flatCatalog, inventoryRows]);
 
-  const dialogProduct = useMemo(() => {
+  const skuAggregatesForView = skuPriceAggregates;
+
+  const enrichedSelectedProduct = useMemo(() => {
     if (!selectedProduct) return null;
-    return enrichProductSupplier(selectedProduct, flatCatalog);
-  }, [selectedProduct, flatCatalog]);
+    const key = canonicalProductSku(selectedProduct.sku).toLowerCase();
+    const agg = key ? skuAggregatesForView.get(key) : undefined;
+    const base = agg ? applyCanonicalSkuAggregates(selectedProduct, agg) : selectedProduct;
+    return enrichProductSupplier(base, flatCatalog);
+  }, [selectedProduct, skuAggregatesForView, flatCatalog]);
+
+  const dialogProduct = useMemo(() => {
+    if (!enrichedSelectedProduct) return null;
+    return enrichedSelectedProduct;
+  }, [enrichedSelectedProduct]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [countSheetDialogOpen, setCountSheetDialogOpen] = useState(false);
@@ -332,10 +386,10 @@ export default function Inventory() {
   }, [showDetailedQtyTab, activeTab]);
 
   useEffect(() => {
-    if (activeTab === 'qtd-detalhada' && showDetailedQtyTab) {
+    if (showDetailedQtyTab) {
       void loadPerBranchBreakdown();
     }
-  }, [activeTab, showDetailedQtyTab, loadPerBranchBreakdown]);
+  }, [showDetailedQtyTab, loadPerBranchBreakdown, listBranchId, isHeadOffice]);
   const [stockListFilter, setStockListFilter] = useState<StockListFilter>('all');
   const [listSearch, setListSearch] = useState('');
   const listSearchRef = useRef<HTMLInputElement>(null);
@@ -348,8 +402,17 @@ export default function Inventory() {
 
   const gridProducts = useMemo(() => {
     let rows = displayProducts;
-    if (stockListFilter === 'qtyGt0') rows = rows.filter((p) => (p.stock || 0) > 0);
-    else if (stockListFilter === 'qtyLt0') rows = rows.filter((p) => (p.stock || 0) <= 0);
+    if (stockListFilter === 'qtyGt0') {
+      rows = rows.filter((p) => readProductStock(p) > 0.0001);
+    } else if (stockListFilter === 'qtyLt0') {
+      rows = rows.filter((p) => readProductStock(p) <= 0.0001);
+    }
+
+    rows = rows.map((p) => {
+      const key = canonicalProductSku(p.sku).toLowerCase();
+      const agg = key ? skuPriceAggregates.get(key) : undefined;
+      return agg ? applyCanonicalSkuAggregates(p, agg) : p;
+    });
 
     const q = listSearch.trim().toLowerCase();
     if (!q) return rows;
@@ -368,7 +431,7 @@ export default function Inventory() {
         || supplier.includes(q)
       );
     });
-  }, [displayProducts, stockListFilter, listSearch]);
+  }, [displayProducts, stockListFilter, listSearch, skuPriceAggregates]);
 
   const navigateProduct = useCallback((direction: -1 | 1) => {
     if (!gridProducts.length) return;
@@ -455,6 +518,9 @@ export default function Inventory() {
     try {
       if (selectedProduct) {
         await updateProduct(product);
+        setSelectedProduct((prev) =>
+          prev && prev.id === product.id ? { ...prev, ...product } : prev,
+        );
         toast.success(t.productFormUi.productUpdated);
       } else {
         await addProduct(product);
@@ -627,8 +693,6 @@ export default function Inventory() {
       }[],
       meta: {
         reason: StockEntryReason;
-        sourceBranchId: string;
-        sourceBranchName: string;
         reference: string;
         entryDate: string;
         warehouseId: string;
@@ -651,9 +715,7 @@ export default function Inventory() {
         meta.currency && meta.currency !== 'KZ'
           ? `${t.stockEntryUi.currency}: ${meta.currency} · ${t.stockEntryUi.exchangeRate}: ${meta.currencyRate}`
           : null,
-        meta.reason === 'transfer_in' && meta.sourceBranchName
-          ? `${t.stockEntryUi.reasonTransferIn}: ${meta.sourceBranchName}`
-          : null,
+        meta.reason === 'transfer_in' ? t.stockEntryUi.reasonTransferIn : null,
         meta.notes,
       ].filter(Boolean);
 
@@ -857,20 +919,20 @@ export default function Inventory() {
   }, [t]);
 
   const selectedProductMovements = useMemo(() => {
-    return filterMovementsForProduct(stockMovements, selectedProduct, allBranchProducts, scopedBranchIds)
+    return filterMovementsForProduct(stockMovements, enrichedSelectedProduct, allBranchProducts, scopedBranchIds)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [selectedProduct, stockMovements, allBranchProducts, scopedBranchIds]);
+  }, [enrichedSelectedProduct, stockMovements, allBranchProducts, scopedBranchIds]);
 
   const panelProps = useMemo(
     () => ({
-      product: selectedProduct,
+      product: enrichedSelectedProduct,
       movements: stockMovements,
       allBranchProducts,
       scopedBranchIds,
       uiLocale,
       getReasonLabel: getMovementReasonLabel,
     }),
-    [selectedProduct, stockMovements, allBranchProducts, scopedBranchIds, uiLocale, getMovementReasonLabel]
+    [enrichedSelectedProduct, stockMovements, allBranchProducts, scopedBranchIds, uiLocale, getMovementReasonLabel]
   );
 
   const tabPanelClass = 'flex-1 min-h-0 m-0 p-4 overflow-auto data-[state=inactive]:hidden';

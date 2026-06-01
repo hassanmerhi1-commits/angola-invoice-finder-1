@@ -82,11 +82,14 @@ export interface TransactionRequest {
   taxLines?: TaxLineEntry[];
   openItem?: OpenItemEntry;
   documentLinks?: DocumentLinkEntry[];
+  changePrice?: boolean;
   priceUpdates?: {
     productId: string;
     newUnitCost: number;
     quantityReceived: number;
     updateAvgCost: boolean;
+    /** Selling price (PVP) when changePrice is enabled on purchase invoice */
+    sellingPrice?: number;
   }[];
   entityBalanceUpdate?: {
     entityType: 'customer' | 'supplier';

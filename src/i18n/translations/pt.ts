@@ -523,6 +523,7 @@ export const pt: TranslationKeys = {
     reasonCorrection: "Correcção de erro",
     sourceBranch: "Filial de origem",
     selectSource: "Seleccionar origem...",
+    selectBranchPlaceholder: "Seleccionar filial...",
     notApplicable: "N/D",
     reference: "Referência",
     referencePlaceholder: "N.º guia, factura, etc.",
