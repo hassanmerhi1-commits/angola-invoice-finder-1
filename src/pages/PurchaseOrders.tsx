@@ -604,7 +604,7 @@ export default function PurchaseOrders() {
       {/* Create Order Dialog */}
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
         <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden p-0">
-          <DialogHeader className="px-6 pt-6 pb-2">
+          <DialogHeader className="px-6 pt-6 pb-2 pr-12">
             <DialogTitle>Nova Encomenda de Compra</DialogTitle>
           </DialogHeader>
 

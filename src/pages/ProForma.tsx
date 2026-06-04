@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useProducts, useClients, useAuth } from '@/hooks/useERP';
@@ -6,6 +7,7 @@ import { useProForma, productToProFormaItem } from '@/hooks/useProForma';
 import { ProForma, ProFormaItem } from '@/types/proforma';
 import { Product, Client } from '@/types/erp';
 import { printProFormaA4 } from '@/lib/proformaA4';
+import { proformaToErpDocumentPrefill } from '@/lib/proformaToDocument';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -38,6 +40,7 @@ import {
 export default function ProFormaPage() {
   const { t, language } = useTranslation();
   const p = t.proFormaUi;
+  const navigate = useNavigate();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { currentBranch } = useBranchContext();
   const { user } = useAuth();
@@ -48,7 +51,6 @@ export default function ProFormaPage() {
     refresh,
     createProForma,
     updateProFormaStatus,
-    convertToInvoice,
     duplicateProForma,
     deleteProForma,
     getStats,
@@ -58,7 +60,6 @@ export default function ProFormaPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showViewDialog, setShowViewDialog] = useState(false);
-  const [showConvertDialog, setShowConvertDialog] = useState(false);
   const [selectedProforma, setSelectedProforma] = useState<ProForma | null>(null);
   const [stats, setStats] = useState({ total: 0, draft: 0, sent: 0, accepted: 0, converted: 0, expired: 0, totalValue: 0, pendingValue: 0 });
 
@@ -78,11 +79,13 @@ export default function ProFormaPage() {
   const [selectedItems, setSelectedItems] = useState<ProFormaItem[]>([]);
   const [productSearch, setProductSearch] = useState('');
 
-  // Convert form state
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'transfer'>('cash');
-  const [amountPaid, setAmountPaid] = useState(0);
-
   // stats loaded via useEffect above
+
+  const openSalesInvoiceFromProforma = (proforma: ProForma) => {
+    navigate('/invoices', {
+      state: { prefillFromProforma: proformaToErpDocumentPrefill(proforma) },
+    });
+  };
 
   const filteredProformas = useMemo(() => {
     return proformas.filter((pf) => {
@@ -235,27 +238,6 @@ export default function ProFormaPage() {
       toast.success(p.sentToPrint);
     } catch {
       toast.error(p.printError);
-    }
-  };
-
-  const handleConvert = async () => {
-    if (!selectedProforma || !currentBranch || !user) return;
-    
-    const sale = await convertToInvoice(
-      selectedProforma.id,
-      currentBranch.code,
-      user.id,
-      user.name,
-      paymentMethod,
-      amountPaid || selectedProforma.total
-    );
-
-    if (sale) {
-      toast.success(p.invoiceCreatedSuccess.replace('{number}', sale.invoiceNumber));
-      setShowConvertDialog(false);
-      setSelectedProforma(null);
-    } else {
-      toast.error(p.convertError);
     }
   };
 
@@ -433,11 +415,7 @@ export default function ProFormaPage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => {
-                              setSelectedProforma(proforma);
-                              setAmountPaid(proforma.total);
-                              setShowConvertDialog(true);
-                            }}
+                            onClick={() => openSalesInvoiceFromProforma(proforma)}
                           >
                             <ArrowRight className="h-4 w-4" />
                           </Button>
@@ -788,8 +766,7 @@ export default function ProFormaPage() {
                 {['draft', 'sent', 'accepted'].includes(selectedProforma.status) && (
                   <Button onClick={() => {
                     setShowViewDialog(false);
-                    setAmountPaid(selectedProforma.total);
-                    setShowConvertDialog(true);
+                    openSalesInvoiceFromProforma(selectedProforma);
                   }}>
                     <ArrowRight className="h-4 w-4 mr-2" />
                     {p.convertToInvoice}
@@ -801,76 +778,6 @@ export default function ProFormaPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Convert Dialog */}
-      <Dialog open={showConvertDialog} onOpenChange={setShowConvertDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{p.convertTitle}</DialogTitle>
-          </DialogHeader>
-          
-          {selectedProforma && (
-            <div className="space-y-4">
-              <div className="p-4 bg-muted/50 rounded-lg">
-                <div className="flex justify-between mb-2">
-                  <span>{p.proFormaLabel}</span>
-                  <span className="font-medium">{selectedProforma.documentNumber}</span>
-                </div>
-                <div className="flex justify-between mb-2">
-                  <span>{p.summaryCustomer}</span>
-                  <span className="font-medium">{selectedProforma.customerName}</span>
-                </div>
-                <div className="flex justify-between text-lg">
-                  <span>Total:</span>
-                  <span className="font-bold">{formatMoney(selectedProforma.total)}</span>
-                </div>
-              </div>
-
-              <div>
-                <Label>{p.paymentMethod}</Label>
-                <Select value={paymentMethod} onValueChange={(v: 'cash' | 'card' | 'transfer') => setPaymentMethod(v)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cash">{p.paymentCash}</SelectItem>
-                    <SelectItem value="card">{p.paymentCard}</SelectItem>
-                    <SelectItem value="transfer">{p.paymentTransfer}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>{p.amountPaid}</Label>
-                <Input
-                  type="number"
-                  value={amountPaid}
-                  onChange={(e) => setAmountPaid(parseFloat(e.target.value) || 0)}
-                />
-              </div>
-
-              {paymentMethod === 'cash' && amountPaid > selectedProforma.total && (
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded">
-                  <span className="text-blue-700">
-                    <span className="text-blue-700">
-                      {p.changeAmount.replace('{amount}', formatMoney(amountPaid - selectedProforma.total))}
-                    </span>
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowConvertDialog(false)}>
-              {t.common.cancel}
-            </Button>
-            <Button onClick={handleConvert}>
-              <CheckCircle className="h-4 w-4 mr-2" />
-              {p.confirmConversion}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

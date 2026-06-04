@@ -302,7 +302,8 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
 
   useEffect(() => {
     const handleProductsChanged = (event: Event) => {
-      const customEvent = event as CustomEvent<{ branchId?: string }>;
+      const customEvent = event as CustomEvent<{ branchId?: string; lightweight?: boolean }>;
+      if (customEvent.detail?.lightweight) return;
       const changedBranchId = customEvent.detail?.branchId;
       const affectsAllBranches = !changedBranchId || changedBranchId === 'all';
       if (!branchId || affectsAllBranches || changedBranchId === branchId) {
@@ -313,7 +314,45 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     return () => window.removeEventListener(storage.PRODUCTS_CHANGED_EVENT, handleProductsChanged as EventListener);
   }, [branchId, refreshProducts]);
 
-  const addProduct = useCallback(async (product: Product): Promise<Product> => {
+  type ProductWriteOptions = { skipListMerge?: boolean; lightweightChangedEvent?: boolean };
+
+  const mergeSavedIntoProductList = useCallback(
+    (saved: Product, generation: number) => {
+      if (generation !== listGenerationRef.current) return;
+      setProducts((prev) => {
+        const idx = prev.findIndex((p) => p.id === saved.id);
+        if (idx >= 0) {
+          const next = prev.slice();
+          next[idx] = saved;
+          return next;
+        }
+        return dedupeProductsBySku([saved, ...prev], branchId, catalogBranchIds);
+      });
+    },
+    [branchId, catalogBranchIds],
+  );
+
+  const dispatchProductsChanged = useCallback(
+    (changedBranch: string, options?: ProductWriteOptions) => {
+      if (!options?.lightweightChangedEvent) {
+        invalidateSellingPriceHintsCache();
+      }
+      window.dispatchEvent(
+        new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
+          detail: {
+            branchId: changedBranch,
+            lightweight: options?.lightweightChangedEvent === true,
+          },
+        }),
+      );
+    },
+    [],
+  );
+
+  const addProduct = useCallback(async (
+    product: Product,
+    options?: ProductWriteOptions,
+  ): Promise<Product> => {
     const writeGeneration = ++listGenerationRef.current;
     const payload = {
       ...product,
@@ -347,25 +386,33 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     } catch (e) {
       console.warn('[useProducts] local cache mirror after API create failed:', e);
     }
-    let merged = await fetchMergedProductList();
-    if (!merged.some((p) => p.id === savedProduct.id)) {
-      merged = dedupeProductsBySku([savedProduct, ...merged], branchId, catalogBranchIds);
-    }
-    if (writeGeneration === listGenerationRef.current) {
-      setProducts(merged);
+    if (options?.skipListMerge) {
+      mergeSavedIntoProductList(savedProduct, writeGeneration);
+    } else {
+      let merged = await fetchMergedProductList();
+      if (!merged.some((p) => p.id === savedProduct.id)) {
+        merged = dedupeProductsBySku([savedProduct, ...merged], branchId, catalogBranchIds);
+      }
+      if (writeGeneration === listGenerationRef.current) {
+        setProducts(merged);
+      }
     }
     const changedBranch =
       savedProduct.branchId || branchId || catalogBranchIds[0] || 'all';
-    invalidateSellingPriceHintsCache();
-    window.dispatchEvent(
-      new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
-        detail: { branchId: changedBranch },
-      }),
-    );
+    dispatchProductsChanged(changedBranch, options);
     return savedProduct;
-  }, [branchId, catalogBranchIds, fetchMergedProductList]);
+  }, [
+    branchId,
+    catalogBranchIds,
+    dispatchProductsChanged,
+    fetchMergedProductList,
+    mergeSavedIntoProductList,
+  ]);
 
-  const updateProduct = useCallback(async (product: Product & { preserveStock?: boolean }) => {
+  const updateProduct = useCallback(async (
+    product: Product & { preserveStock?: boolean },
+    options?: ProductWriteOptions,
+  ): Promise<Product> => {
     const writeGeneration = ++listGenerationRef.current;
     const { preserveStock, ...rest } = product;
     const payload = {
@@ -390,25 +437,35 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
         console.warn('[useProducts] local cache mirror after API update failed:', e);
       }
     }
-    let merged = await fetchMergedProductList();
-    const idx = merged.findIndex((p) => p.id === resolved.id);
-    if (idx >= 0) {
-      merged = merged.slice();
-      merged[idx] = resolved;
+    if (options?.skipListMerge) {
+      mergeSavedIntoProductList(resolved, writeGeneration);
+    } else {
+      let merged = await fetchMergedProductList();
+      const idx = merged.findIndex((p) => p.id === resolved.id);
+      if (idx >= 0) {
+        merged = merged.slice();
+        merged[idx] = resolved;
+      }
+      if (writeGeneration === listGenerationRef.current) {
+        setProducts(merged);
+      }
     }
-    if (writeGeneration === listGenerationRef.current) {
-      setProducts(merged);
-    }
-    window.dispatchEvent(
-      new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
-        detail: { branchId: resolved.branchId || branchId || 'all' },
-      }),
-    );
-  }, [branchId, fetchMergedProductList]);
+    const changedBranch = resolved.branchId || branchId || 'all';
+    dispatchProductsChanged(changedBranch, options);
+    return resolved;
+  }, [
+    branchId,
+    dispatchProductsChanged,
+    fetchMergedProductList,
+    mergeSavedIntoProductList,
+  ]);
 
   const deleteProduct = useCallback(async (productId: string) => {
     ++listGenerationRef.current;
     const result = await api.products.delete(productId);
+    if (result.error) {
+      throw new Error(result.error);
+    }
     if (!result.data) await storage.deleteProduct(productId);
     await refreshProducts();
   }, [refreshProducts]);

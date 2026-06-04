@@ -70,6 +70,7 @@ function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
     issueTime: String(createdAt).includes('T')
       ? String(createdAt).split('T')[1]?.substring(0, 8) || ''
       : '',
+    dueDate: sale.dueDate || sale.due_date || undefined,
     createdBy: sale.cashierId || sale.cashier_id || '',
     createdByName: sale.cashierName || sale.cashier_name || '',
     createdAt,

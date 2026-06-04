@@ -46,10 +46,10 @@ const isUnifiedSqlite =
 if (!isUnifiedSqlite) fail('Packaged server.js is not the unified SQLite stack.');
 
 const db = fs.readFileSync(dbJs, 'utf8');
-if (db.includes("require('pg')") || db.includes('require("pg")')) {
-  fail('Packaged db.js still requires pg — backend tree is stale.');
-}
 if (!db.includes('better-sqlite3')) fail('Packaged db.js must use better-sqlite3.');
+if (!db.includes('USE_POSTGRES') && !db.includes('DB_ENGINE')) {
+  fail('Packaged db.js must support SQLite-first mode (DB_ENGINE / USE_POSTGRES).');
+}
 
 const testPort = 3199;
 const testDb = path.join(root, '.tmp-verify-packaged-backend.db');

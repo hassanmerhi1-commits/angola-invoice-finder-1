@@ -386,8 +386,11 @@ export function AdvancedDataGrid({
               return (
               <tr
                 key={`${product.id}:${product.sku || ''}`}
+                data-nexor-context="inventory-row"
+                data-nexor-id={product.id}
                 onClick={() => onSelectProduct(product)}
                 onDoubleClick={() => onDoubleClickProduct?.(product)}
+                onContextMenu={() => onSelectProduct(product)}
                 className={cn(
                   "cursor-pointer hover:bg-accent/50 transition-colors",
                   selectedProductId === product.id && "bg-primary [&_td]:text-primary-foreground hover:bg-primary/90",

@@ -25,8 +25,11 @@ import { HotUpdateSettingsCard } from '@/components/settings/HotUpdateSettingsCa
 import { BackendLogsCard } from '@/components/settings/BackendLogsCard';
 import { toast } from 'sonner';
 import { DatabaseBackupCard } from '@/components/settings/DatabaseBackupCard';
+import { DeploymentHealthCard } from '@/components/settings/DeploymentHealthCard';
 import { DataConsistencyCard } from '@/components/settings/DataConsistencyCard';
 import { ChangePasswordCard } from '@/components/settings/ChangePasswordCard';
+import { InteractionSettingsCard } from '@/components/settings/InteractionSettingsCard';
+import { DailyTodosSettingsCard } from '@/components/settings/DailyTodosSettingsCard';
 import type { UpdateStatus, SetupConfig } from '@/types/electron';
 
 export default function Settings() {
@@ -206,6 +209,9 @@ export default function Settings() {
       </div>
 
       <ChangePasswordCard />
+
+      <InteractionSettingsCard />
+      <DailyTodosSettingsCard />
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Application Info Card */}
@@ -436,6 +442,9 @@ export default function Settings() {
             </p>
           </CardContent>
         </Card>
+
+        {/* Phase A: database path, schema version, backups */}
+        <DeploymentHealthCard />
 
         {/* Database + preferences backup */}
         <DatabaseBackupCard />

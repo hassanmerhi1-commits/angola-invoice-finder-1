@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
+import { markSalePrintedAfterPrint } from '@/lib/markSalePrinted';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
 import {
   getDocuments,
@@ -42,6 +43,7 @@ import {
 } from '@/lib/invoicesWorkspace';
 import { DocumentFormDialog } from '@/components/documents/DocumentFormDialog';
 import { DocumentFlowViewer } from '@/components/documents/DocumentFlowViewer';
+import { setContextMenuResolver } from '@/lib/contextMenuRegistry';
 
 // Build flow nodes from a document and its linked chain
 function buildFlowNodes(doc: ERPDocument): { type: string; number: string; date: string; status: 'completed' | 'active' | 'pending'; amount?: number }[] {
@@ -186,6 +188,19 @@ export default function Invoices() {
     setInvoicesWorkspaceTab(activeTab);
   }, [activeTab]);
 
+  // Open sales invoice form when navigating from Pro Forma page conversion
+  useEffect(() => {
+    const st = location.state as { prefillFromProforma?: ERPDocument } | null;
+    if (!st?.prefillFromProforma) return;
+    setActiveTab('fatura_venda');
+    setInvoicesWorkspaceTab('fatura_venda');
+    setFormDocType('fatura_venda');
+    setEditDoc(null);
+    setPrefillDoc(st.prefillFromProforma);
+    setFormOpen(true);
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [location.state, location.pathname, navigate]);
+
   const openNewDocumentForTab = useCallback(
     (tab?: InvoicesWorkspaceTab) => {
       const type = documentTypeForNewFromTab(tab);
@@ -264,10 +279,12 @@ export default function Invoices() {
         toast.info(t.topNav.file.printSelectDocument);
         return;
       }
-      void printDocument(selected).catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        toast.error(message || t.invoiceViewUi.printError);
-      });
+      void printDocument(selected)
+        .then(() => markSalePrintedAfterPrint(selected))
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          toast.error(message || t.invoiceViewUi.printError);
+        });
     };
     const onExcel = () => {
       const rows = filteredDocs.map((d) => ({
@@ -302,7 +319,49 @@ export default function Invoices() {
     };
   }, [documents, selectedDocId, filteredDocs, t]);
 
+  useEffect(() => {
+    setContextMenuResolver((target) => {
+      const row = target.closest('[data-nexor-context="document-row"]');
+      if (!row) return [];
+      const docId = row.getAttribute('data-nexor-id');
+      const doc = documents.find((d) => d.id === docId);
+      if (!doc) return [];
+
+      return [
+        {
+          id: 'doc-edit',
+          label: t.interaction.openEdit,
+          onSelect: () => openEditDocument(doc),
+        },
+        {
+          id: 'doc-print',
+          label: t.interaction.printDocument,
+          onSelect: () => {
+            void printDocument(doc)
+              .then(() => markSalePrintedAfterPrint(doc))
+              .catch((err: unknown) => {
+                const message = err instanceof Error ? err.message : String(err);
+                toast.error(message || t.invoiceViewUi.printError);
+              });
+          },
+        },
+      ];
+    });
+    return () => setContextMenuResolver(null);
+  }, [documents, openEditDocument, t]);
+
   const handleConvert = async (doc: ERPDocument, targetType: DocumentType) => {
+    // Proforma → Sales invoice should open the form prefilled (draft),
+    // not auto-create a confirmed invoice.
+    if (doc.documentType === 'proforma' && targetType === 'fatura_venda') {
+      setActiveTab('fatura_venda');
+      setInvoicesWorkspaceTab('fatura_venda');
+      setFormDocType('fatura_venda');
+      setEditDoc(null);
+      setPrefillDoc(doc);
+      setFormOpen(true);
+      return;
+    }
     const result = await convertDocument(
       doc.id,
       targetType,
@@ -383,10 +442,12 @@ export default function Invoices() {
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedDoc}
           onClick={() => {
             if (!selectedDoc) return;
-            void printDocument(selectedDoc).catch((err: unknown) => {
-              const message = err instanceof Error ? err.message : String(err);
-              toast.error(message || t.invoiceViewUi.printError);
-            });
+            void printDocument(selectedDoc)
+              .then(() => markSalePrintedAfterPrint(selectedDoc))
+              .catch((err: unknown) => {
+                const message = err instanceof Error ? err.message : String(err);
+                toast.error(message || t.invoiceViewUi.printError);
+              });
           }}>
           <Printer className="w-3 h-3" /> {t.invoicesUi.print}
         </Button>
@@ -452,6 +513,7 @@ export default function Invoices() {
                 <th className="px-3 py-2 text-left font-semibold w-12">{t.invoicesUi.type}</th>
                 <th className="px-3 py-2 text-left font-semibold w-36">{t.invoicesUi.documentNo}</th>
                 <th className="px-3 py-2 text-left font-semibold w-24">{t.common.date}</th>
+                <th className="px-3 py-2 text-left font-semibold w-24">{t.invoicesUi.dueDate}</th>
                 <th className="px-3 py-2 text-left font-semibold">{activeTab === 'fatura_compra' || activeTab === 'pagamento' ? t.paymentsUi.supplier : t.paymentsUi.customer}</th>
                 <th className="px-3 py-2 text-left font-semibold w-24">{t.invoicesUi.nif}</th>
                 <th className="px-3 py-2 text-right font-semibold w-28">{t.common.total}</th>
@@ -467,14 +529,22 @@ export default function Invoices() {
                 const statusBadge = STATUS_BADGES[doc.status] ?? STATUS_BADGES.draft;
                 if (!config) return null;
                 return (
-                  <tr key={doc.id}
+                  <tr
+                    key={doc.id}
+                    data-nexor-context="document-row"
+                    data-nexor-id={doc.id}
                     className={cn("cursor-pointer hover:bg-accent/50 transition-colors",
                       selectedDocId === doc.id && "bg-primary/15")}
                     onClick={() => setSelectedDocId(doc.id)}
-                    onDoubleClick={() => openEditDocument(doc)}>
+                    onDoubleClick={() => openEditDocument(doc)}
+                    onContextMenu={() => setSelectedDocId(doc.id)}
+                  >
                     <td className={cn("px-3 py-1.5 font-medium", config.color)}>{config.prefix}</td>
                     <td className="px-3 py-1.5 font-mono">{doc.documentNumber}</td>
                     <td className="px-3 py-1.5 text-muted-foreground">{new Date(doc.issueDate).toLocaleDateString(locale)}</td>
+                    <td className="px-3 py-1.5 text-muted-foreground">
+                      {doc.dueDate ? new Date(doc.dueDate).toLocaleDateString(locale) : '—'}
+                    </td>
                     <td className="px-3 py-1.5">{doc.entityName}</td>
                     <td className="px-3 py-1.5 text-muted-foreground">{doc.entityNif || '-'}</td>
                     <td className="px-3 py-1.5 text-right font-mono font-medium">{doc.total.toLocaleString(locale)}</td>
@@ -496,7 +566,7 @@ export default function Invoices() {
             </tbody>
             <tfoot className="bg-muted/80 border-t-2 border-primary/30">
               <tr className="font-bold text-xs">
-                <td className="px-3 py-2" colSpan={5}>{t.invoicesUi.documentsTotal.replace('{count}', String(totals.count))}</td>
+                <td className="px-3 py-2" colSpan={6}>{t.invoicesUi.documentsTotal.replace('{count}', String(totals.count))}</td>
                 <td className="px-3 py-2 text-right font-mono">{totals.total.toLocaleString(locale)} Kz</td>
                 <td className="px-3 py-2 text-right font-mono text-green-600">{totals.paid.toLocaleString(locale)} Kz</td>
                 <td className="px-3 py-2 text-right font-mono text-destructive">{totals.due.toLocaleString(locale)} Kz</td>
@@ -540,7 +610,7 @@ export default function Invoices() {
       {/* Document Form Dialog */}
       {formOpen && (
         <DocumentFormDialog
-          key={formDocType}
+          key={`${formDocType}-${prefillDoc?.id ?? editDoc?.id ?? 'new'}`}
           open={formOpen}
           onOpenChange={setFormOpen}
           documentType={formDocType}

@@ -39,8 +39,9 @@ const SHUTDOWN_GRACE_MS = 4000;
 
 // Phase 5: health monitor tunables
 const HEALTH_INTERVAL_MS = 30000;       // poll cadence
-const HEALTH_TIMEOUT_MS = 4000;         // single-probe timeout
-const HEALTH_FAILS_BEFORE_RESTART = 3;  // 3 consecutive misses → restart
+const HEALTH_TIMEOUT_MS = 12000;        // must exceed SQLite busy_timeout (5s) under load
+const HEALTH_FAILS_BEFORE_DEGRADED = 2; // avoid false "not responding" during heavy inventory
+const HEALTH_FAILS_BEFORE_RESTART = 4;  // consecutive misses → restart
 const RESTART_BACKOFF_MS = 2000;        // wait between restart attempts
 const MAX_RESTART_ATTEMPTS = 3;         // give up after this many in a row
 
@@ -425,6 +426,8 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
     ...process.env,
     PORT: String(port),
     SQLITE_PATH: sqlitePath,
+    NEXOR_INSTALL_DIR: process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP',
+    NEXOR_IP_FILE: process.env.NEXOR_IP_FILE || 'C:\\NEXOR ERP\\IP',
     NODE_ENV: process.env.NODE_ENV || 'production',
     NODE_PATH: nodePath,
     ELECTRON_NO_ATTACH_CONSOLE: '1',
@@ -678,7 +681,9 @@ function probeHealthOnce(port, timeoutMs = HEALTH_TIMEOUT_MS) {
   const http = require('http');
   return new Promise((resolve) => {
     if (!port) return resolve(false);
-    const req = http.get({ host: '127.0.0.1', port, path: '/api/health', timeout: timeoutMs }, (res) => {
+    const req = http.get(
+      { host: '127.0.0.1', port, path: '/api/health?lite=1', timeout: timeoutMs },
+      (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => {
@@ -732,10 +737,17 @@ async function runHealthCheck() {
   consecutiveFails += 1;
   console.warn(`[BackendManager] health probe FAILED (${consecutiveFails}/${HEALTH_FAILS_BEFORE_RESTART}) port=${port}`);
 
-  if (consecutiveFails === 1) {
-    emitStatus({ state: 'degraded', detail: 'Backend not responding', fails: consecutiveFails });
+  if (consecutiveFails < HEALTH_FAILS_BEFORE_DEGRADED) {
+    // Silent miss — inventory/DB can block briefly without alarming the user.
   } else if (consecutiveFails < HEALTH_FAILS_BEFORE_RESTART) {
-    emitStatus({ state: 'degraded', detail: `Health check failed (${consecutiveFails}/${HEALTH_FAILS_BEFORE_RESTART})`, fails: consecutiveFails });
+    emitStatus({
+      state: 'degraded',
+      detail:
+        consecutiveFails === HEALTH_FAILS_BEFORE_DEGRADED
+          ? 'Backend busy — retrying'
+          : `Health check failed (${consecutiveFails}/${HEALTH_FAILS_BEFORE_RESTART})`,
+      fails: consecutiveFails,
+    });
   } else {
     await attemptRestart('health-check-failed');
   }

@@ -1,5 +1,5 @@
 // NEXOR ERP App Layout
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { TopNav } from './TopNav';
 import { StatusBar } from './StatusBar';
@@ -11,6 +11,9 @@ import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import { printCurrentPage } from '@/lib/printHtml';
+import { AppInteractionProvider } from '@/components/interaction/AppInteractionProvider';
+import { DailyTodoDialog } from '@/components/daily/DailyTodoDialog';
+import { ensureDayTodos, shouldShowDailyTodoDialog, todayKey } from '@/lib/dailyTodos';
 
 function resolveAppPathname(pathname: string): string {
   const p = pathname.replace(/\/$/, '') || '/';
@@ -24,6 +27,24 @@ export function AppLayout() {
   const location = useLocation();
   const { toast } = useToast();
   const { t } = useTranslation();
+  const [dailyTodoOpen, setDailyTodoOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    if (shouldShowDailyTodoDialog()) {
+      ensureDayTodos(todayKey());
+      setDailyTodoOpen(true);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    const onShow = () => {
+      ensureDayTodos(todayKey());
+      setDailyTodoOpen(true);
+    };
+    window.addEventListener('nexor:show-daily-todos', onShow);
+    return () => window.removeEventListener('nexor:show-daily-todos', onShow);
+  }, []);
 
   useEffect(() => {
     const onGlobalPrint = () => {
@@ -55,11 +76,14 @@ export function AppLayout() {
         />
       </div>
       <main className="flex min-h-0 flex-1 flex-col overflow-auto">
-        <Outlet />
+        <AppInteractionProvider>
+          <Outlet />
+        </AppInteractionProvider>
       </main>
       <div data-statusbar>
         <StatusBar />
       </div>
+      <DailyTodoDialog open={dailyTodoOpen} onOpenChange={setDailyTodoOpen} />
     </div>
   );
 }

@@ -16,6 +16,25 @@ const {
 } = require('../lib/productSkuResolve');
 const { ensureFilialProductsForWarehouse } = require('../lib/filialStockRepair');
 
+/** Avoid running full filial reconcile on every grid poll (locks SQLite, trips health checks). */
+const filialGridReconcileAt = new Map();
+const FILIAL_GRID_RECONCILE_COOLDOWN_MS = 120_000;
+
+async function ensureFilialForInventoryGrid(branchKey) {
+  const key = String(branchKey || '').trim();
+  if (!key) return;
+  const now = Date.now();
+  const last = filialGridReconcileAt.get(key) || 0;
+  if (now - last < FILIAL_GRID_RECONCILE_COOLDOWN_MS) return;
+  filialGridReconcileAt.set(key, now);
+  try {
+    await ensureFilialProductsForWarehouse(key);
+  } catch (err) {
+    filialGridReconcileAt.delete(key);
+    console.warn('[PRODUCTS inventory-grid] filial stock reconcile:', err.message);
+  }
+}
+
 function sanitizeUuid(value) {
   if (typeof value !== 'string') return value ?? null;
   const trimmed = value.trim();
@@ -415,11 +434,7 @@ function sqlGridSellingPriceExpr(alias = 'p') {
 
 /** Inventory grid filial: show every SKU with stock movements at this warehouse (transfer receive). */
 async function listProductsForBranchInventoryGrid(branchKey) {
-  try {
-    await ensureFilialProductsForWarehouse(branchKey);
-  } catch (err) {
-    console.warn('[PRODUCTS inventory-grid] filial stock reconcile:', err.message);
-  }
+  await ensureFilialForInventoryGrid(branchKey);
   const mainBranchIds = await loadMainBranchIds();
   const mainIn =
     mainBranchIds.length > 0
@@ -837,6 +852,54 @@ async function listProductsForBranch(branchKey, lightList) {
   return enrichRowsWithSellingPrices(rows);
 }
 
+/** Stock movements or sale lines for this product (any row sharing the same canonical SKU). */
+async function productTransactionCounts(productId) {
+  const id = String(productId || '').trim();
+  if (!id) {
+    return { movements: 0, sales: 0, total: 0, deletable: true };
+  }
+
+  const skuResult = await db.query('SELECT sku FROM products WHERE id = $1', [id]);
+  const sku = canonicalSkuString(skuResult.rows?.[0]?.sku || '');
+
+  let ids = [id];
+  if (sku) {
+    const idsResult = await db.query(
+      `SELECT id FROM products
+       WHERE LOWER(TRIM(${sqlCanonicalSkuText('products')})) = LOWER($1)`,
+      [sku],
+    );
+    const fromSku = (idsResult.rows || []).map((r) => r.id).filter(Boolean);
+    if (fromSku.length) ids = [...new Set(fromSku)];
+  }
+
+  const ph = ids.map((_, i) => `$${i + 1}`).join(', ');
+
+  let movements = 0;
+  let sales = 0;
+  try {
+    const mov = await db.query(
+      `SELECT COUNT(*) AS n FROM stock_movements WHERE product_id IN (${ph})`,
+      ids,
+    );
+    movements = Number(mov.rows?.[0]?.n || 0);
+  } catch (_) {
+    movements = 0;
+  }
+  try {
+    const sal = await db.query(
+      `SELECT COUNT(*) AS n FROM sale_items WHERE product_id IN (${ph})`,
+      ids,
+    );
+    sales = Number(sal.rows?.[0]?.n || 0);
+  } catch (_) {
+    sales = 0;
+  }
+
+  const total = movements + sales;
+  return { movements, sales, total, deletable: total === 0 };
+}
+
 module.exports = function(broadcastTable) {
   onProductsTableChange = broadcastTable;
   const router = express.Router();
@@ -1003,6 +1066,39 @@ module.exports = function(broadcastTable) {
       supplier_name: row.supplier_name || src.supplier_name || null,
     };
   }
+
+  router.get('/low-stock', async (req, res) => {
+    try {
+      const branchId = req.query.branchId ? String(req.query.branchId).trim() : '';
+      const params = [];
+      let query = `
+        SELECT id, sku, name, stock, min_stock, branch_id, unit
+        FROM products
+        WHERE COALESCE(is_active, 1) != 0
+          AND COALESCE(min_stock, 0) > 0
+          AND COALESCE(stock, 0) <= COALESCE(min_stock, 0)`;
+      if (branchId) {
+        params.push(branchId);
+        query += ` AND branch_id = $${params.length}`;
+      }
+      query += ' ORDER BY stock ASC NULLS FIRST, name ASC LIMIT 150';
+      const result = await db.query(query, params);
+      res.json(result.rows);
+    } catch (error) {
+      console.error('[PRODUCTS low-stock]', error);
+      res.status(500).json({ error: 'Failed to fetch low-stock products' });
+    }
+  });
+
+  router.get('/:id/deletable', async (req, res) => {
+    try {
+      const counts = await productTransactionCounts(req.params.id);
+      res.json(counts);
+    } catch (error) {
+      console.error('[PRODUCTS deletable]', error);
+      res.status(500).json({ error: 'Failed to check product transactions' });
+    }
+  });
 
   // Get single product (supplier resolved from sibling SKU rows when missing)
   router.get('/:id', async (req, res) => {
@@ -1394,13 +1490,20 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // Delete product (soft delete)
+  // Delete product (soft delete) — only when no stock movements or sales exist
   router.delete('/:id', async (req, res) => {
     try {
       const { id } = req.params;
-      
+      const counts = await productTransactionCounts(id);
+      if (!counts.deletable) {
+        return res.status(409).json({
+          error: 'Product has stock movements or sales and cannot be deleted',
+          ...counts,
+        });
+      }
+
       await db.query('UPDATE products SET is_active = false WHERE id = $1', [id]);
-      
+
       await broadcastTable('products');
       res.json({ success: true });
     } catch (error) {

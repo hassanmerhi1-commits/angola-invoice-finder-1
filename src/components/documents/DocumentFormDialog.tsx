@@ -2,7 +2,7 @@
 // Used for all document types: Proforma, Fatura, Recibo, Pagamento, etc.
 
 import { useState, useEffect, useMemo } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NumericInput } from '@/components/ui/numeric-input';
@@ -11,16 +11,26 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Plus, Trash2, Search, Save, Printer } from 'lucide-react';
+import { Plus, Trash2, Search, Save, Printer, X } from 'lucide-react';
 import { printDocument } from '@/lib/documentPDF';
+import { markSalePrintedAfterPrint } from '@/lib/markSalePrinted';
 import { cn } from '@/lib/utils';
 import { DocumentType, DocumentLine, ERPDocument, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
 import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocument } from '@/lib/documentStorage';
-import { useProducts, useAuth } from '@/hooks/useERP';
+import { linkProformaAfterInvoiceConfirm } from '@/lib/linkProformaConversion';
+import { useProducts, useAuth, useClients, useSuppliers } from '@/hooks/useERP';
+import type { Client, Supplier, OpenItem } from '@/types/erp';
+import { signedOpenItemBalance } from '@/lib/openItems';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { api } from '@/lib/api/client';
 import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { useTranslation } from '@/i18n';
+
+function defaultSalesDueDate(daysAhead = 15): string {
+  const d = new Date();
+  d.setDate(d.getDate() + daysAhead);
+  return d.toISOString().split('T')[0];
+}
 
 interface DocumentFormDialogProps {
   open: boolean;
@@ -37,6 +47,8 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const { products } = useProducts(currentBranch?.id);
+  const { clients } = useClients();
+  const { suppliers } = useSuppliers();
   const config = DOCUMENT_TYPE_CONFIG[documentType];
   const typeUi = (t.documentFormUi.types as Record<DocumentType, { full: string; short: string }>)[documentType];
   const finalConsumerName = t.pos.finalConsumer;
@@ -44,6 +56,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     n.toLocaleString(locale, { minimumFractionDigits: opts?.minimumFractionDigits, maximumFractionDigits: opts?.maximumFractionDigits });
 
   // Form state
+  const [entityId, setEntityId] = useState<string>('');
   const [entityName, setEntityName] = useState('');
   const [entityNif, setEntityNif] = useState('');
   const [entityAddress, setEntityAddress] = useState('');
@@ -55,6 +68,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const [amountPaid, setAmountPaid] = useState(0);
   const [lines, setLines] = useState<DocumentLine[]>([]);
   const [productSearch, setProductSearch] = useState('');
+  const [entityPickerOpen, setEntityPickerOpen] = useState(false);
   const [activeLineTab, setActiveLineTab] = useState('linhas');
 
   // Reset form when opening
@@ -62,30 +76,105 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     if (open) {
       const source = editDocument || prefillFrom;
       if (source) {
+        setEntityId(source.entityId || '');
         setEntityName(source.entityName);
         setEntityNif(source.entityNif || '');
         setEntityAddress(source.entityAddress || '');
         setEntityPhone(source.entityPhone || '');
-        setDueDate(source.dueDate || '');
+        setDueDate(source.dueDate || source.validUntil?.split('T')[0] || '');
         setValidUntil(source.validUntil || '');
         setNotes(source.notes || '');
         setPaymentMethod(source.paymentMethod || 'cash');
         setAmountPaid(source.amountPaid || 0);
         setLines(source.lines.map(l => ({ ...l })));
       } else {
+        setEntityId('');
         setEntityName('');
         setEntityNif('');
         setEntityAddress('');
         setEntityPhone('');
-        setDueDate('');
+        setDueDate(documentType === 'fatura_venda' ? defaultSalesDueDate() : '');
         setValidUntil('');
         setNotes('');
         setPaymentMethod('cash');
         setAmountPaid(0);
         setLines([]);
       }
+      setEntityPickerOpen(false);
     }
   }, [open, editDocument, prefillFrom, documentType]);
+
+  const entityDirectory = config.entityType === 'customer' ? clients : suppliers;
+
+  const filteredEntities = useMemo(() => {
+    const active = entityDirectory.filter((e) => e.isActive !== false);
+    const q = entityName.trim().toLowerCase();
+    if (!q) return active.slice(0, 25);
+    return active
+      .filter(
+        (e) =>
+          e.name.toLowerCase().includes(q) ||
+          (e.nif && e.nif.toLowerCase().includes(q)) ||
+          (e.phone && e.phone.includes(q)),
+      )
+      .slice(0, 25);
+  }, [entityDirectory, entityName]);
+
+  const selectEntity = (entity: Client | Supplier) => {
+    setEntityId(entity.id);
+    setEntityName(entity.name);
+    setEntityNif(entity.nif || '');
+    setEntityAddress(entity.address || '');
+    setEntityPhone(entity.phone || '');
+    setEntityPickerOpen(false);
+  };
+
+  const [entityOpenItemsLoading, setEntityOpenItemsLoading] = useState(false);
+  const [entityOpenItems, setEntityOpenItems] = useState<OpenItem[]>([]);
+
+  const mapOpenItemRow = (oi: any): OpenItem => ({
+    id: String(oi.id ?? ''),
+    entityType: (oi.entity_type ?? oi.entityType ?? 'customer') as OpenItem['entityType'],
+    entityId: String(oi.entity_id ?? oi.entityId ?? ''),
+    documentType: (oi.document_type ?? oi.documentType ?? 'invoice') as OpenItem['documentType'],
+    documentId: String(oi.document_id ?? oi.documentId ?? ''),
+    documentNumber: String(oi.document_number ?? oi.documentNumber ?? ''),
+    documentDate: String(oi.document_date ?? oi.documentDate ?? oi.created_at ?? oi.createdAt ?? ''),
+    dueDate: oi.due_date ?? oi.dueDate ?? undefined,
+    currency: String(oi.currency ?? 'AOA'),
+    originalAmount: Number(oi.original_amount ?? oi.originalAmount ?? 0),
+    remainingAmount: Number(oi.remaining_amount ?? oi.remainingAmount ?? 0),
+    isDebit: Boolean(oi.is_debit ?? oi.isDebit ?? true),
+    status: (oi.status ?? 'open') as OpenItem['status'],
+    branchId: String(oi.branch_id ?? oi.branchId ?? ''),
+    createdAt: String(oi.created_at ?? oi.createdAt ?? ''),
+    clearedAt: oi.cleared_at ?? oi.clearedAt ?? undefined,
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    if (documentType !== 'fatura_venda') return;
+    if (config.entityType !== 'customer') return;
+    if (!entityId) {
+      setEntityOpenItems([]);
+      setEntityOpenItemsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setEntityOpenItemsLoading(true);
+    void api.payments.openItems('customer', entityId).then((res) => {
+      if (cancelled) return;
+      const rows = Array.isArray(res.data) ? res.data : [];
+      setEntityOpenItems(rows.map(mapOpenItemRow).filter((x) => x.status !== 'cleared'));
+    }).catch(() => {
+      if (!cancelled) setEntityOpenItems([]);
+    }).finally(() => {
+      if (!cancelled) setEntityOpenItemsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, documentType, config.entityType, entityId]);
 
   // Filtered products for search
   const filteredProducts = useMemo(() => {
@@ -200,10 +289,12 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       toast.error(t.documentFormUi.printNeedsLines);
       return;
     }
-    void printDocument(doc).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(message || t.documentFormUi.printError);
-    });
+    void printDocument(doc)
+      .then(() => markSalePrintedAfterPrint(doc))
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(message || t.documentFormUi.printError);
+      });
   };
 
   const handleSave = async (status: 'draft' | 'confirmed') => {
@@ -219,6 +310,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       if (editDocument) {
         const updated: ERPDocument = {
           ...editDocument,
+          entityId: entityId || editDocument.entityId,
           entityName: entityName || finalConsumerName,
           entityNif,
           entityAddress,
@@ -234,6 +326,16 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           status,
         };
         await saveDocument(updated);
+        if (
+          editDocument.documentType === 'fatura_venda' &&
+          dueDate &&
+          dueDate !== editDocument.dueDate
+        ) {
+          const patchRes = await api.sales.updateDueDate(editDocument.id, dueDate);
+          if (patchRes.error) {
+            console.warn('[DocumentForm] due date patch failed:', patchRes.error);
+          }
+        }
         onSaved?.(updated);
         toast.success(t.documentFormUi.documentUpdatedToast.replace('{short}', typeUi.short));
       } else {
@@ -297,6 +399,8 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             change: config.requiresPayment ? Math.max(0, amountPaid - totals.total) : 0,
             customerNif: entityNif || undefined,
             customerName: (entityName || finalConsumerName) || undefined,
+            clientId: entityId || undefined,
+            dueDate: dueDate || undefined,
           });
 
           if (!saleResult.data) {
@@ -316,6 +420,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             user?.id || '',
             user?.name || '',
             {
+              entityId,
               entityName: entityName || finalConsumerName,
               entityNif,
               entityAddress,
@@ -324,11 +429,18 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               ...totals,
               paymentMethod: paymentMethod as any,
               amountPaid: config.requiresPayment ? amountPaid : totals.total,
-              amountDue: 0,
+              amountDue: Math.max(0, totals.total - (config.requiresPayment ? amountPaid : totals.total)),
+              dueDate,
               notes,
               status: 'confirmed',
+              parentDocumentId: prefillFrom?.id,
+              parentDocumentNumber: prefillFrom?.documentNumber,
+              parentDocumentType: prefillFrom?.documentType,
             }
           );
+          if (prefillFrom?.documentType === 'proforma') {
+            await linkProformaAfterInvoiceConfirm(prefillFrom, doc);
+          }
           onSaved?.(doc);
           toast.success(
             t.documentFormUi.documentCreatedWithStockToast
@@ -345,6 +457,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             user?.id || '',
             user?.name || '',
             {
+              entityId,
               entityName: entityName || finalConsumerName,
               entityNif,
               entityAddress,
@@ -379,10 +492,9 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto p-0">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2 bg-muted/50 border-b">
-          <DialogTitle className={cn("text-sm font-bold", config.color)}>
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto p-0 [&>button[data-dialog-close]]:hidden">
+        <div className="flex items-center gap-2 border-b bg-muted/50 px-4 py-2">
+          <DialogTitle className={cn("min-w-0 flex-1 text-sm font-bold", config.color)}>
             {editDocument
               ? `${t.documentFormUi.editPrefix} ${typeUi.short} — ${editDocument.documentNumber}`
               : `${t.documentFormUi.newPrefix} ${typeUi.full}`}
@@ -392,7 +504,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               </span>
             )}
           </DialogTitle>
-          <div className="flex gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <Button
               size="sm"
               variant="outline"
@@ -408,6 +520,16 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             <Button size="sm" className="h-7 text-xs gap-1" onClick={() => handleSave('confirmed')}>
               <Save className="w-3 h-3" /> {t.documentFormUi.confirmSave}
             </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={() => onOpenChange(false)}
+              aria-label={t.common.close}
+            >
+              <X className="h-4 w-4" />
+            </Button>
           </div>
         </div>
 
@@ -416,7 +538,41 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           <div className="grid grid-cols-4 gap-3">
             <div className="space-y-1">
               <Label className="text-xs">{config.entityType === 'customer' ? t.documentFormUi.customer : t.documentFormUi.supplier}</Label>
-              <Input value={entityName} onChange={e => setEntityName(e.target.value)} placeholder={finalConsumerName} className="h-8 text-xs" />
+              <div className="relative">
+                <Input
+                  value={entityName}
+                  onChange={(e) => {
+                    setEntityName(e.target.value);
+                    setEntityId('');
+                    setEntityPickerOpen(true);
+                  }}
+                  onFocus={() => setEntityPickerOpen(true)}
+                  onBlur={() => {
+                    window.setTimeout(() => setEntityPickerOpen(false), 150);
+                  }}
+                  placeholder={finalConsumerName}
+                  className="h-8 text-xs"
+                  autoComplete="off"
+                />
+                {entityPickerOpen && filteredEntities.length > 0 && (
+                  <div className="absolute z-50 top-full left-0 right-0 mt-0.5 border rounded-md bg-popover shadow-md max-h-40 overflow-y-auto">
+                    {filteredEntities.map((entity) => (
+                      <button
+                        key={entity.id}
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent/50 flex justify-between gap-2"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => selectEntity(entity)}
+                      >
+                        <span className="truncate font-medium">{entity.name}</span>
+                        <span className="text-muted-foreground shrink-0 tabular-nums">
+                          {entity.nif || '—'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">{t.documentFormUi.nif}</Label>
@@ -431,6 +587,54 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               <Input value={entityPhone} onChange={e => setEntityPhone(e.target.value)} className="h-8 text-xs" />
             </div>
           </div>
+
+          {/* Pending receipts / open items for selected customer */}
+          {documentType === 'fatura_venda' && config.entityType === 'customer' && entityId && (
+            <div className="border rounded-md">
+              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b bg-muted/40">
+                <div className="text-xs font-semibold">
+                  {t.paymentsUi.openItems} ({entityOpenItems.length})
+                </div>
+                {entityOpenItemsLoading && (
+                  <div className="text-xs text-muted-foreground">{t.common.loading}</div>
+                )}
+              </div>
+              <div className="max-h-40 overflow-y-auto">
+                {entityOpenItems.length === 0 && !entityOpenItemsLoading ? (
+                  <div className="px-3 py-4 text-xs text-muted-foreground">
+                    {t.paymentsUi.noneOpenItems}
+                  </div>
+                ) : (
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-background/90 backdrop-blur border-b">
+                      <tr>
+                        <th className="text-left font-semibold px-3 py-2">{t.paymentsUi.document}</th>
+                        <th className="text-left font-semibold px-3 py-2">{t.common.date}</th>
+                        <th className="text-left font-semibold px-3 py-2">{t.paymentsUi.dueDate}</th>
+                        <th className="text-right font-semibold px-3 py-2">{t.paymentsUi.openAmount}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/50">
+                      {entityOpenItems.map((oi) => (
+                        <tr key={oi.id} className="hover:bg-accent/30">
+                          <td className="px-3 py-2 font-mono">{oi.documentNumber}</td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {oi.documentDate ? new Date(oi.documentDate).toLocaleDateString(locale) : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {oi.dueDate ? new Date(oi.dueDate).toLocaleDateString(locale) : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-medium">
+                            {fmt(Math.abs(signedOpenItemBalance(oi)))} {t.common.currency}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Dates & payment row */}
           <div className="grid grid-cols-4 gap-3">

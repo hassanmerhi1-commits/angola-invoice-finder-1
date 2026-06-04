@@ -177,6 +177,7 @@ export function ProductDetailDialog({
   useEffect(() => {
     if (!open) {
       setLoadedProduct(null);
+      forceCloseRef.current = false;
       return;
     }
     void refreshSuppliers();
@@ -188,7 +189,7 @@ export function ProductDetailDialog({
     (async () => {
       try {
         const res = await api.products.get(product.id);
-        if (!cancelled && res.data) {
+        if (!cancelled && !forceCloseRef.current && res.data) {
           setLoadedProduct(mapApiProductRow(res.data as Record<string, unknown>));
         }
       } catch {
@@ -217,6 +218,7 @@ export function ProductDetailDialog({
   /** Avoid re-filling the form when api.products.get returns after the user already edited. */
   const formInitKeyRef = useRef('');
   const apiHydratedIdRef = useRef<string | null>(null);
+  const forceCloseRef = useRef(false);
   const [discardCloseOpen, setDiscardCloseOpen] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -379,11 +381,14 @@ export function ProductDetailDialog({
 
   const closeDialog = useCallback(() => {
     setDiscardCloseOpen(false);
+    formSnapshotRef.current = '';
+    formInitKeyRef.current = '';
+    apiHydratedIdRef.current = null;
     onOpenChange(false);
   }, [onOpenChange]);
 
   const requestClose = useCallback(() => {
-    if (isFormDirty) {
+    if (!forceCloseRef.current && isFormDirty) {
       setDiscardCloseOpen(true);
       return;
     }
@@ -429,7 +434,10 @@ export function ProductDetailDialog({
     ? (((formData.price - formData.cost) / formData.cost) * 100).toFixed(2)
     : '0.00';
 
+  const [saving, setSaving] = useState(false);
+
   const handleSave = async () => {
+    if (saving) return;
     const skuTrim = String(formData.sku || '').trim();
     if (!skuTrim) {
       toast.error(t.productFormUi.nameSkuRequired);
@@ -486,16 +494,41 @@ export function ProductDetailDialog({
       createdAt: effectiveProduct?.createdAt || product?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    await onSave(savedProduct);
-    closeDialog();
+    formSnapshotRef.current = JSON.stringify(formData);
+    forceCloseRef.current = true;
+    setDiscardCloseOpen(false);
+    onOpenChange(false);
+
+    setSaving(true);
+    try {
+      await onSave(savedProduct);
+    } catch {
+      forceCloseRef.current = false;
+      onOpenChange(true);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <>
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className="max-w-4xl p-0 gap-0" onOpenAutoFocus={e => e.preventDefault()}>
-        <DialogHeader className="px-4 py-2 border-b bg-muted/50">
+      <DialogContent
+        className="max-w-4xl gap-0 p-0 [&>button[data-dialog-close]]:hidden"
+        onOpenAutoFocus={e => e.preventDefault()}
+      >
+        <DialogHeader className="flex flex-row items-center justify-between gap-2 space-y-0 border-b bg-muted/50 px-4 py-2 pr-4">
           <DialogTitle className="text-sm">{t.productDetailUi.title}</DialogTitle>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={requestClose}
+            aria-label={t.common.close}
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </DialogHeader>
 
         <Tabs defaultValue="info" className="flex flex-col">
@@ -719,8 +752,8 @@ export function ProductDetailDialog({
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-4 py-3 border-t bg-muted/50">
-          <Button onClick={handleSave} size="sm" className="h-8 gap-1">
-            <Check className="w-4 h-4" /> {t.common.save}
+          <Button onClick={handleSave} size="sm" className="h-8 gap-1" disabled={saving}>
+            <Check className="w-4 h-4" /> {saving ? t.common.saving : t.common.save}
           </Button>
           <Button variant="outline" size="sm" className="h-8 gap-1" onClick={requestClose}>
             <X className="w-4 h-4" /> {t.common.cancel}

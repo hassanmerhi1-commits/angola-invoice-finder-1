@@ -138,7 +138,7 @@ export default function Suppliers() {
       if (selectedSupplier) handleOpenDialog(selectedSupplier);
     };
     const onDelete = () => {
-      if (selectedSupplier && confirm(t.suppliersUi.deleteConfirm || 'Eliminar fornecedor?')) {
+      if (selectedSupplier && confirm(t.suppliersUi.deleteConfirm)) {
         deleteSupplier(selectedSupplier.id);
         setSelectedSupplier(null);
       }
@@ -407,13 +407,13 @@ export default function Suppliers() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Nome</TableHead>
-                  <TableHead>NIF</TableHead>
-                  <TableHead>Contacto</TableHead>
-                  <TableHead>Prazo Pagamento</TableHead>
-                  <TableHead className="text-right">Saldo</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-right">Acções</TableHead>
+                  <TableHead>{t.suppliersUi.colName}</TableHead>
+                  <TableHead>{t.suppliersUi.colNif}</TableHead>
+                  <TableHead>{t.suppliersUi.colContact}</TableHead>
+                  <TableHead>{t.suppliersUi.colPaymentTerms}</TableHead>
+                  <TableHead className="text-right">{t.suppliersUi.colBalance}</TableHead>
+                  <TableHead>{t.suppliersUi.colStatus}</TableHead>
+                  <TableHead className="text-right">{t.suppliersUi.colActions}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -445,7 +445,12 @@ export default function Suppliers() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      {PAYMENT_TERMS.find(t => t.value === supplier.paymentTerms)?.label}
+                      {(() => {
+                        const term = PAYMENT_TERMS.find((pt) => pt.value === supplier.paymentTerms);
+                        return term
+                          ? (t.suppliersUi.paymentTerms[term.labelKey] as string)
+                          : supplier.paymentTerms;
+                      })()}
                     </TableCell>
                     <TableCell className="text-right font-mono font-bold">
                       {(supplier.balance || 0).toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
@@ -493,27 +498,27 @@ export default function Suppliers() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <Label htmlFor="name">Nome da Empresa *</Label>
+                <Label htmlFor="name">{t.suppliersUi.companyNameLabel}</Label>
                 <Input
                   id="name"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="Ex: Distribuidora Angola Lda"
+                  placeholder={t.suppliersUi.namePlaceholder}
                 />
               </div>
 
               <div>
-                <Label htmlFor="nif">NIF *</Label>
+                <Label htmlFor="nif">{t.suppliersUi.colNif} *</Label>
                 <Input
                   id="nif"
                   value={formData.nif}
                   onChange={(e) => setFormData({ ...formData, nif: e.target.value })}
-                  placeholder="Ex: 5000123456"
+                  placeholder={t.suppliersUi.nifPlaceholder}
                 />
               </div>
 
               <div>
-                <Label htmlFor="contactPerson">Pessoa de Contacto</Label>
+                <Label htmlFor="contactPerson">{t.suppliersUi.contactPersonLabel}</Label>
                 <Input
                   id="contactPerson"
                   value={formData.contactPerson}
@@ -523,48 +528,48 @@ export default function Suppliers() {
               </div>
 
               <div>
-                <Label htmlFor="phone">Telefone</Label>
+                <Label htmlFor="phone">{t.common.phone}</Label>
                 <Input
                   id="phone"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  placeholder="Ex: +244 923 456 789"
+                  placeholder={t.suppliersUi.phonePlaceholder}
                 />
               </div>
 
               <div>
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">{t.common.email}</Label>
                 <Input
                   id="email"
                   type="email"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  placeholder="Ex: contacto@empresa.ao"
+                  placeholder={t.suppliersUi.emailPlaceholder}
                 />
               </div>
 
               <div className="col-span-2">
-                <Label htmlFor="address">Endereço</Label>
+                <Label htmlFor="address">{t.common.address}</Label>
                 <Input
                   id="address"
                   value={formData.address}
                   onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                  placeholder="Ex: Rua Principal, 123"
+                  placeholder={t.suppliersUi.addressPlaceholder}
                 />
               </div>
 
               <div>
-                <Label htmlFor="city">Cidade</Label>
+                <Label htmlFor="city">{t.suppliersUi.cityLabel}</Label>
                 <Input
                   id="city"
                   value={formData.city}
                   onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                  placeholder="Ex: Luanda"
+                  placeholder={t.suppliersUi.cityPlaceholder}
                 />
               </div>
 
               <div>
-                <Label htmlFor="country">País</Label>
+                <Label htmlFor="country">{t.suppliersUi.countryLabel}</Label>
                 <Input
                   id="country"
                   value={formData.country}
@@ -573,7 +578,7 @@ export default function Suppliers() {
               </div>
 
               <div>
-                <Label htmlFor="paymentTerms">Prazo de Pagamento</Label>
+                <Label htmlFor="paymentTerms">{t.suppliersUi.paymentTermsLabel}</Label>
                 <Select
                   value={formData.paymentTerms}
                   onValueChange={(value: Supplier['paymentTerms']) =>
@@ -599,11 +604,11 @@ export default function Suppliers() {
                   checked={formData.isActive}
                   onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
                 />
-                <Label htmlFor="isActive">Fornecedor Activo</Label>
+                <Label htmlFor="isActive">{t.suppliersUi.activeSupplierLabel}</Label>
               </div>
 
               <div className="col-span-2">
-                <Label htmlFor="notes">Notas</Label>
+                <Label htmlFor="notes">{t.common.notes}</Label>
                 <Textarea
                   id="notes"
                   value={formData.notes}
@@ -630,16 +635,18 @@ export default function Suppliers() {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar Fornecedor</AlertDialogTitle>
+            <AlertDialogTitle>{t.suppliersUi.deleteDialogTitle}</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem a certeza que deseja eliminar "{selectedSupplier?.name}"? 
-              Esta acção não pode ser desfeita.
+              {t.suppliersUi.deleteDialogDescription.replace(
+                '{name}',
+                selectedSupplier?.name ?? '',
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
-              Eliminar
+              {t.suppliersUi.deleteDialogConfirm}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

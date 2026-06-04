@@ -84,6 +84,7 @@ import { saveStockMovement } from '@/lib/storage';
 import { applyStockAdjustmentLines } from '@/lib/inventoryStockAdjust';
 import { useTranslation } from '@/i18n';
 import type { StockEntryReason } from '@/components/inventory/StockEntryDialog';
+import { setContextMenuResolver } from '@/lib/contextMenuRegistry';
 import type { StockExitReasonCode } from '@/components/inventory/StockExitDialog';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 
@@ -154,6 +155,7 @@ export default function Inventory() {
     rows: inventoryRows,
     loading: inventoryGridLoading,
     refresh: refreshInventoryGrid,
+    patchRow: patchInventoryRow,
   } = useInventoryGrid({
     branchId: listBranchId,
     consolidated: isHeadOffice,
@@ -256,13 +258,21 @@ export default function Inventory() {
 
   useEffect(() => {
     const onProductsChanged = (e: Event) => {
-      const detail = (e as CustomEvent<{ branchId?: string; toBranchId?: string; fromBranchId?: string }>)
-        ?.detail;
+      const detail = (e as CustomEvent<{
+        branchId?: string;
+        toBranchId?: string;
+        fromBranchId?: string;
+        lightweight?: boolean;
+      }>)?.detail;
       invalidateInventoryGridCache(listBranchId, isHeadOffice);
       if (detail?.toBranchId) invalidateInventoryGridCache(detail.toBranchId, false);
       if (detail?.fromBranchId) invalidateInventoryGridCache(detail.fromBranchId, false);
       if (detail?.branchId && detail.branchId !== 'all') {
         invalidateInventoryGridCache(detail.branchId, false);
+      }
+      if (detail?.lightweight) {
+        void refreshInventoryGrid();
+        return;
       }
       invalidateSellingPriceHintsCache();
       void fetchSellingPriceHints(true).then(setSellingPriceHints);
@@ -353,6 +363,8 @@ export default function Inventory() {
   }, [inventoryRows, listBranchId, catalogBranchIds, skuPriceAggregates]);
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  /** null = loading/unknown; only true enables delete */
+  const [selectedCanDelete, setSelectedCanDelete] = useState<boolean | null>(null);
   const flatCatalog = useMemo(() => {
     const rows = [...inventoryRows];
     for (const branchRows of Object.values(allBranchProducts)) {
@@ -421,6 +433,55 @@ export default function Inventory() {
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
 
   useEffect(() => {
+    if (!selectedProduct?.id) {
+      setSelectedCanDelete(null);
+      return;
+    }
+    let cancelled = false;
+    void api.products.canDelete(selectedProduct.id).then((r) => {
+      if (cancelled) return;
+      if (r.data) {
+        setSelectedCanDelete(r.data.deletable);
+        return;
+      }
+      const sku = canonicalProductSku(selectedProduct.sku).toLowerCase();
+      const hasLocal = stockMovements.some(
+        (m) =>
+          m.productId === selectedProduct.id
+          || (m.sku && canonicalProductSku(m.sku).toLowerCase() === sku),
+      );
+      setSelectedCanDelete(!hasLocal);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProduct?.id, selectedProduct?.sku, stockMovements]);
+
+  const attemptDeleteProduct = useCallback(
+    async (product: Product) => {
+      const check = await api.products.canDelete(product.id);
+      if (check.data && !check.data.deletable) {
+        toast.error(t.inventoryUi.cannotDeleteHasTransactions);
+        return;
+      }
+      if (!confirm(t.inventoryUi.deleteConfirm)) return;
+      try {
+        await deleteProduct(product.id);
+        toast.success(t.inventoryUi.productDeleted);
+        if (selectedProduct?.id === product.id) {
+          setSelectedProduct(null);
+          setSelectedCanDelete(null);
+        }
+        void refreshInventoryGrid();
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(message || t.inventoryUi.cannotDeleteHasTransactions);
+      }
+    },
+    [deleteProduct, refreshInventoryGrid, selectedProduct?.id, t],
+  );
+
+  useEffect(() => {
     if (!MOVEMENT_TABS.has(activeTab)) return;
     void loadStockMovements();
   }, [activeTab, loadStockMovements, MOVEMENT_TABS]);
@@ -480,10 +541,7 @@ export default function Inventory() {
   // TopNav toolbar actions
   useEffect(() => {
     const onDelete = () => {
-      if (selectedProduct && confirm(t.inventoryUi.deleteConfirm)) {
-        deleteProduct(selectedProduct.id);
-        setSelectedProduct(null);
-      }
+      if (selectedProduct) void attemptDeleteProduct(selectedProduct);
     };
     const onEdit = () => {
       if (selectedProduct) handleOpenDialog(selectedProduct);
@@ -528,7 +586,32 @@ export default function Inventory() {
         window.removeEventListener(event, handler);
       }
     };
-  }, [selectedProduct, deleteProduct, gridProducts, t]);
+  }, [selectedProduct, attemptDeleteProduct, gridProducts, t]);
+
+  useEffect(() => {
+    setContextMenuResolver((target) => {
+      const row = target.closest('[data-nexor-context="inventory-row"]');
+      if (!row) return [];
+      const productId = row.getAttribute('data-nexor-id');
+      const product = gridProducts.find((p) => p.id === productId);
+      if (!product) return [];
+
+      return [
+        {
+          id: 'inv-edit',
+          label: t.interaction.openEdit,
+          onSelect: () => handleOpenDialog(product),
+        },
+        {
+          id: 'inv-delete',
+          label: t.common.delete,
+          destructive: true,
+          onSelect: () => void attemptDeleteProduct(product),
+        },
+      ];
+    });
+    return () => setContextMenuResolver(null);
+  }, [gridProducts, attemptDeleteProduct, t]);
 
   // TopNav toolbar "Novo"
   useEffect(() => {
@@ -540,27 +623,31 @@ export default function Inventory() {
   }, [location.state, navigate]);
 
   const handleSaveProduct = async (product: Product & { preserveStock?: boolean }) => {
+    const gridProduct: Product = {
+      ...product,
+      branchId: product.branchId || listBranchId || inventoryBranch?.id || '',
+    };
+    patchInventoryRow(gridProduct);
+    const writeOpts = { skipListMerge: true, lightweightChangedEvent: true } as const;
     try {
       if (selectedProduct) {
-        await updateProduct(product);
+        const saved = await updateProduct(product, writeOpts);
+        patchInventoryRow({ ...saved, branchId: saved.branchId || gridProduct.branchId });
         setSelectedProduct((prev) =>
-          prev && prev.id === product.id ? { ...prev, ...product } : prev,
+          prev && prev.id === product.id ? { ...prev, ...saved } : prev,
         );
         toast.success(t.productFormUi.productUpdated);
       } else {
-        await addProduct(product);
+        const saved = await addProduct(product, writeOpts);
+        patchInventoryRow({ ...saved, branchId: saved.branchId || gridProduct.branchId });
         toast.success(t.productFormUi.productCreated);
+        setSelectedProduct(null);
       }
-      await reloadInventoryList();
-      if (canSwitchBranch) void loadPerBranchBreakdown();
-      window.dispatchEvent(
-        new CustomEvent(PRODUCTS_CHANGED_EVENT, {
-          detail: { branchId: listBranchId ?? (product.branchId || 'all') },
-        }),
-      );
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       toast.error(message || t.productFormUi.productSaveFailed);
+      invalidateInventoryGridCache(listBranchId, isHeadOffice);
+      void refreshInventoryGrid();
       throw e;
     }
   };
@@ -1042,12 +1129,14 @@ export default function Inventory() {
           variant="outline" 
           size="sm" 
           className="h-7 text-xs gap-1 text-destructive" 
-          disabled={!selectedProduct}
+          disabled={!selectedProduct || selectedCanDelete !== true}
+          title={
+            selectedProduct && selectedCanDelete === false
+              ? t.inventoryUi.cannotDeleteHasTransactions
+              : undefined
+          }
           onClick={() => {
-            if (selectedProduct && confirm(t.inventoryUi.deleteConfirm)) {
-              deleteProduct(selectedProduct.id);
-              setSelectedProduct(null);
-            }
+            if (selectedProduct) void attemptDeleteProduct(selectedProduct);
           }}
         >
           <Trash2 className="w-3 h-3" />
@@ -1422,14 +1511,18 @@ export default function Inventory() {
         <span>{t.inventoryPageUi.status.productsCount.replace('{count}', String(displayProducts.length))}</span>
       </div>
 
-      <ProductDetailDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        product={dialogProduct}
-        catalogProducts={flatCatalog}
-        scopeBranchId={listBranchId ?? inventoryBranch?.id ?? null}
-        onSave={handleSaveProduct}
-      />
+      {dialogOpen ? (
+        <ProductDetailDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setDialogOpen(false);
+          }}
+          product={dialogProduct}
+          catalogProducts={flatCatalog}
+          scopeBranchId={listBranchId ?? inventoryBranch?.id ?? null}
+          onSave={handleSaveProduct}
+        />
+      ) : null}
 
       {/* Excel Import Dialog */}
       <ExcelImportDialog<ExcelProduct>

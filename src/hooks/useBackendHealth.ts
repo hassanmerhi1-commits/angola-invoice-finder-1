@@ -57,10 +57,11 @@ export function useBackendHealth() {
           break;
         }
         case 'degraded': {
+          if ((raw.fails ?? 0) < 2) break;
           incidentOpen.current = true;
           toast.warning('Backend not responding', {
             id: INCIDENT_TOAST_ID,
-            description: raw.detail || `Health check failed (${raw.fails ?? 1}/3)`,
+            description: raw.detail || `Health check failed (${raw.fails ?? 2}/4)`,
             duration: Infinity,
           });
           break;

@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState, startTransition } from 'react';
 import { Product } from '@/types/erp';
 import {
+  cacheKey,
   fetchInventoryGrid,
   invalidateInventoryGridCache,
   readInventoryGridCache,
+  writeCache,
 } from '@/lib/inventoryGrid';
+import { canonicalProductSku } from '@/lib/productDedupe';
 
 export function useInventoryGrid(opts: {
   branchId?: string;
@@ -79,5 +82,28 @@ export function useInventoryGrid(opts: {
     invalidateInventoryGridCache(opts.branchId, opts.consolidated);
   }, [opts.branchId, opts.consolidated]);
 
-  return { rows, loading, refresh, invalidate };
+  const patchRow = useCallback(
+    (product: Product) => {
+      if (!enabled) return;
+      const key = cacheKey(opts.branchId, opts.consolidated);
+      setRows((prev) => {
+        const skuKey = canonicalProductSku(product.sku).toLowerCase();
+        let idx = prev.findIndex((p) => p.id === product.id);
+        if (idx < 0 && skuKey) {
+          idx = prev.findIndex(
+            (p) => canonicalProductSku(p.sku).toLowerCase() === skuKey,
+          );
+        }
+        const next =
+          idx >= 0
+            ? prev.map((p, i) => (i === idx ? { ...p, ...product } : p))
+            : [product, ...prev];
+        writeCache(key, next);
+        return next;
+      });
+    },
+    [enabled, opts.branchId, opts.consolidated],
+  );
+
+  return { rows, loading, refresh, invalidate, patchRow };
 }

@@ -49,6 +49,29 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  // READ: Customer receivables from open items
+  router.get('/receivables-aging', async (req, res) => {
+    try {
+      const result = await db.query(
+        `SELECT oi.id, oi.entity_id, oi.document_id, oi.document_number, oi.document_date, oi.due_date,
+                oi.remaining_amount, oi.original_amount, oi.document_type,
+                c.name AS client_name, c.nif AS client_nif
+         FROM open_items oi
+         INNER JOIN clients c ON c.id = oi.entity_id
+         WHERE oi.entity_type = 'customer'
+           AND (oi.is_debit = 1 OR oi.is_debit = TRUE)
+           AND oi.status != 'cleared'
+           AND oi.remaining_amount > 0.01
+         ORDER BY oi.due_date ASC NULLS LAST, c.name, oi.document_date ASC
+         LIMIT 200`,
+      );
+      res.json(result.rows);
+    } catch (error) {
+      console.error('[PAYMENTS RECEIVABLES ERROR]', error);
+      res.status(500).json({ error: 'Failed to fetch receivables' });
+    }
+  });
+
   // READ: Supplier payables from open items (real balance after payments/returns)
   router.get('/payables-aging', async (req, res) => {
     try {

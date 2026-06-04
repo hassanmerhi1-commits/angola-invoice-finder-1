@@ -28,7 +28,7 @@ if (!USE_POSTGRES) {
   sqlite = new Database(dbPath);
   sqlite.pragma('foreign_keys = ON');
   sqlite.pragma('journal_mode = WAL');
-  sqlite.pragma('busy_timeout = 5000');
+  sqlite.pragma('busy_timeout = 8000');
 }
 
 const schemaPath = process.env.SQLITE_SCHEMA_PATH
@@ -133,6 +133,8 @@ function ensureOrgHierarchyTables() {
   tryAlterAdd('sales', 'agt_status TEXT');
   tryAlterAdd('sales', 'agt_code TEXT');
   tryAlterAdd('sales', 'agt_validated_at TEXT');
+  tryAlterAdd('sales', 'due_date TEXT');
+  tryAlterAdd('sales', 'printed_at TEXT');
 
   try {
     sqlite.prepare(`UPDATE branches SET node_role = 'main' WHERE is_main = 1 AND (node_role IS NULL OR node_role = 'shop')`).run();
@@ -1265,6 +1267,12 @@ function bootstrapSchemaAndSeed() {
 
   ensureAppTablesAndColumns();
   normalizeAdminBranchAssignments();
+  try {
+    const { recordAppMeta, readAppVersion } = require('./lib/deploymentStatus');
+    recordAppMeta(sqlite, readAppVersion());
+  } catch (e) {
+    console.warn('[DB] app_meta:', e.message);
+  }
 }
 
 /** Point admin/manager users at head office when branch_id is missing or stale. */
@@ -1438,7 +1446,7 @@ function openSqliteConnection() {
   sqlite = new Database(dbPath);
   sqlite.pragma('foreign_keys = ON');
   sqlite.pragma('journal_mode = WAL');
-  sqlite.pragma('busy_timeout = 5000');
+  sqlite.pragma('busy_timeout = 8000');
   return sqlite;
 }
 
@@ -1465,7 +1473,7 @@ function reopenSqliteConnection() {
   }
   closeSqliteConnection();
   openSqliteConnection();
-  ensureAppTablesAndColumns();
+  bootstrapSchemaAndSeed();
   return sqlite;
 }
 

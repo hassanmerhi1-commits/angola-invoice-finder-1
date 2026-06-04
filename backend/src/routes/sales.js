@@ -58,6 +58,52 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  router.post('/:id/mark-printed', async (req, res) => {
+    try {
+      const result = await db.query(
+        `UPDATE sales SET printed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 RETURNING id, invoice_number, printed_at`,
+        [req.params.id],
+      );
+      if (!result.rows[0]) {
+        return res.status(404).json({ error: 'Sale not found' });
+      }
+      await broadcastTable('sales');
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error('[SALES mark-printed]', error);
+      res.status(500).json({ error: error.message || 'Failed to mark printed' });
+    }
+  });
+
+  // Update due date on an existing sale (and linked open item)
+  router.patch('/:id', async (req, res) => {
+    try {
+      const { dueDate } = req.body;
+      if (!dueDate) {
+        return res.status(400).json({ error: 'dueDate is required' });
+      }
+      const due = String(dueDate).slice(0, 10);
+      const result = await db.query(
+        `UPDATE sales SET due_date = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
+        [due, req.params.id],
+      );
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Sale not found' });
+      }
+      await db.query(
+        `UPDATE open_items SET due_date = $1
+         WHERE document_id = $2 AND document_type = 'invoice' AND status != 'cleared'`,
+        [due, req.params.id],
+      );
+      await broadcastTable('sales');
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error('[SALES ERROR]', error);
+      res.status(500).json({ error: error.message || 'Failed to update sale' });
+    }
+  });
+
   // Preview next invoice number (actual number assigned atomically in processSale)
   router.get('/generate-invoice-number/:branchCode', async (req, res) => {
     const client = await db.pool.connect();

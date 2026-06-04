@@ -1200,6 +1200,7 @@ async function processSale(client, saleData) {
     paymentMethod, amountPaid, change,
     customerNif, customerName, clientId,
     clientRequestId, idempotencyKey,
+    dueDate,
   } = saleData;
   const clientReqId = clientRequestId || idempotencyKey || null;
 
@@ -1211,6 +1212,7 @@ async function processSale(client, saleData) {
 
   let invoiceNumber = saleData.invoiceNumber || null;
   const today = new Date().toISOString().split('T')[0];
+  const saleDueDate = dueDate ? String(dueDate).slice(0, 10) : today;
 
   // ── Step 0: Validate period ──
   await validatePeriod(client, today);
@@ -1285,11 +1287,11 @@ async function processSale(client, saleData) {
   await client.query(
     `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
       subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
-      customer_nif, customer_name, status, client_request_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed',$15)`,
+      customer_nif, customer_name, status, client_request_id, due_date)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed',$15,$16)`,
     [saleId, invoiceNumber, branchId, cashierId, cashierName,
      subtotal, taxAmount, discount || 0, totalAmount,
-     paymentMethod, amountPaid, change, customerNif, customerName, clientReqId]
+     paymentMethod, amountPaid, change, customerNif, customerName, clientReqId, saleDueDate]
   );
 
   // ── Step 3b: Insert sale_items + stock ──
@@ -1364,7 +1366,7 @@ async function processSale(client, saleData) {
     await createOpenItem(client, {
       entityType: 'customer', entityId: clientId, documentType: 'invoice',
       documentId: saleId, documentNumber: invoiceNumber, documentDate: today,
-      dueDate: today, originalAmount: totalAmount, isDebit: true, branchId,
+      dueDate: saleDueDate, originalAmount: totalAmount, isDebit: true, branchId,
     });
   }
 

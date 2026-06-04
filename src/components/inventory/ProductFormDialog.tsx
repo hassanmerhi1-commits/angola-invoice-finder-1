@@ -194,7 +194,7 @@ export function ProductFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl p-0">
         <form onSubmit={handleSubmit} className="flex max-h-[85dvh] flex-col">
-          <DialogHeader className="px-6 pt-6 pb-3">
+          <DialogHeader className="px-6 pt-6 pb-3 pr-12">
             <DialogTitle>{product ? t.productFormUi.editTitle : t.productFormUi.newTitle}</DialogTitle>
             <DialogDescription>
               {t.productFormUi.description}

@@ -2712,7 +2712,7 @@ export default function PurchaseInvoices() {
         {/* ═══ PO CREATE DIALOG ═══ */}
         <Dialog open={poCreateOpen} onOpenChange={setPoCreateOpen}>
           <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col gap-0 p-0">
-            <DialogHeader className="px-6 pt-6 pb-2">
+            <DialogHeader className="px-6 pt-6 pb-2 pr-12">
               <DialogTitle>{t.purchaseInvoicesUi.poNewTitle}</DialogTitle>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto overflow-x-hidden px-6 pb-2 space-y-4 min-h-0">

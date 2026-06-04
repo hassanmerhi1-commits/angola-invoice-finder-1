@@ -1616,6 +1616,12 @@ function resolveStartupBackendPlan(dbResult) {
   const finalizeSqlite = (rawPath) => {
     const canonical = pickCanonicalSqlitePath(rawPath || DEFAULT_NEXOR_PATH);
     copyBestLegacySqliteInto(canonical);
+    try {
+      fs.writeFileSync(IP_FILE_PATH, canonical, 'utf-8');
+      console.log('[DB] Canonical database path →', canonical);
+    } catch (e) {
+      console.warn('[DB] Could not write IP file:', e.message);
+    }
     return canonical;
   };
 

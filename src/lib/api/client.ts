@@ -670,6 +670,12 @@ export const api = {
       return apiFetch<any[]>(`/products${qs ? `?${qs}` : ''}`);
     },
     inventoryConsolidated: () => apiFetch<any[]>('/products/inventory-consolidated'),
+    lowStock: (branchId?: string) => {
+      const sp = new URLSearchParams();
+      if (branchId) sp.set('branchId', branchId);
+      const qs = sp.toString();
+      return apiFetch<any[]>(`/products/low-stock${qs ? `?${qs}` : ''}`);
+    },
     inventoryGrid: (opts: { branchId?: string; consolidated?: boolean }) => {
       const sp = new URLSearchParams();
       if (opts.branchId) sp.set('branchId', opts.branchId);
@@ -707,8 +713,12 @@ export const api = {
       }
       return apiFetch<any>(`/products/${id}/stock`, { method: 'PATCH', body: JSON.stringify({ quantityChange }) });
     },
+    canDelete: (id: string) =>
+      apiFetch<{ deletable: boolean; movements: number; sales: number; total: number }>(
+        `/products/${encodeURIComponent(id)}/deletable`,
+      ),
     delete: async (id: string) => {
-      return apiFetch<any>(`/products/${id}`, { method: 'DELETE' });
+      return apiFetch<any>(`/products/${encodeURIComponent(id)}`, { method: 'DELETE' });
     },
   },
 
@@ -736,6 +746,13 @@ export const api = {
       }
       return apiFetch<any[]>(endpoint);
     },
+    updateDueDate: (id: string, dueDate: string) =>
+      apiFetch<any>(`/sales/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ dueDate }),
+      }),
+    markPrinted: (id: string) =>
+      apiFetch<any>(`/sales/${encodeURIComponent(id)}/mark-printed`, { method: 'POST' }),
     create: async (data: any) => {
       const { newClientRequestId, enqueueOfflineSale } = await import('@/lib/sync/offlineSales');
       const body = {
@@ -1251,6 +1268,7 @@ export const api = {
       });
     },
     payablesAging: () => apiFetch<any[]>('/payments/payables-aging'),
+    receivablesAging: () => apiFetch<any[]>('/payments/receivables-aging'),
     create: (data: any) => {
       return apiFetch<any>('/payments', { method: 'POST', body: JSON.stringify(data) }).then((res) => {
         if (res.data !== undefined || !isDemoMode()) return res;
@@ -1621,6 +1639,46 @@ export const api = {
       }
       return apiFetch<any>(`/saft/summary?year=${year || new Date().getFullYear()}`);
     },
+  },
+
+  dailyBriefing: {
+    get: (branchId?: string) => {
+      const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<{
+        lowStock: any[];
+        receivables: any[];
+        payables: any[];
+        unprintedInvoices: any[];
+        priceChanges: any[];
+      }>(`/daily-briefing${q}`);
+    },
+  },
+
+  deployment: {
+    status: () =>
+      apiFetch<{
+        ok: boolean;
+        engine: string;
+        appVersion: string;
+        schemaVersion: number | null;
+        schemaVersionExpected: number;
+        schemaUpToDate: boolean;
+        database: {
+          path: string | null;
+          sizeBytes: number;
+          modifiedAt: string | null;
+          counts?: Record<string, number | null>;
+        };
+        ipFile?: { ipPath: string; configuredPath: string | null };
+        backups: {
+          directory: string | null;
+          count: number;
+          latest: { filename: string; sizeBytes: number; createdAt: string } | null;
+        };
+        duplicateDatabases: { path: string; sizeBytes: number; sizeMb?: number }[];
+        warnings: { code: string; message: string; paths?: string[] }[];
+        checkedAt: string;
+      }>('/deployment/status'),
   },
 
   // Dashboard KPIs

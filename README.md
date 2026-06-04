@@ -43,6 +43,7 @@ Outputs: `release/NEXOR-ERP-<version>-x64.exe` (NSIS) + `release/NEXOR-ERP-Porta
 
 ## Documentation
 
+- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — **One database per site**, releases, backups (Phase A)
 - [`DESKTOP-APP.md`](./DESKTOP-APP.md) — Desktop packaging
 - [`DOCKER-SETUP.md`](./DOCKER-SETUP.md) — Database setup
 - [`backend/README.md`](./backend/README.md) — Backend server

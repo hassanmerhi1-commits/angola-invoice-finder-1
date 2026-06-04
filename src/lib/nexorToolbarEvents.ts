@@ -1,5 +1,6 @@
 /** Global toolbar events — TopNav dispatches; pages subscribe. */
 export const NEXOR_TOOLBAR = {
+  NEW: 'nexor:toolbar-new',
   DELETE: 'nexor:toolbar-delete',
   EDIT: 'nexor:toolbar-edit',
   ALL: 'nexor:toolbar-all',

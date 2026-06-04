@@ -15,7 +15,10 @@ const db = require('./db');
 const { lanCors, securityHeaders, rateLimiter } = require('./middleware/security');
 const { DiscoveryBroadcaster } = require('./discovery');
 
+const { readAppVersion, EXPECTED_SCHEMA_VERSION } = require('./lib/deploymentStatus');
+
 const PORT = Number(process.env.PORT) || 3000;
+const APP_VERSION = readAppVersion();
 const app = express();
 const server = http.createServer(app);
 
@@ -49,21 +52,29 @@ app.get(/^\/app(?:\/.*)?$/, (req, res) => {
   else res.status(404).json({ error: 'Webapp not deployed' });
 });
 
-app.get('/api/health', async (_req, res) => {
+/** Fast ping for Electron health monitor — avoid heavy queries while SQLite is busy. */
+app.get('/api/health', async (req, res) => {
+  const lite = req.query.lite === '1' || req.query.lite === 'true';
   try {
-    const row = await db.query(db.engine === 'postgres' ? "SELECT NOW() AS now" : "SELECT datetime('now') AS now");
-    let products = 0;
-    try {
-      const c = await db.query('SELECT COUNT(*) AS n FROM products');
-      products = Number(c.rows[0]?.n || 0);
-    } catch (_) {}
-    res.json({
+    const row = await db.query(db.engine === 'postgres' ? 'SELECT NOW() AS now' : "SELECT datetime('now') AS now");
+    const payload = {
       ok: true,
       engine: db.engine || 'sqlite',
       time: row.rows[0]?.now,
-      products,
       unified: true,
-    });
+      appVersion: APP_VERSION,
+      schemaVersionExpected: EXPECTED_SCHEMA_VERSION,
+      dbPath: db.engine === 'sqlite' ? db.dbPath : undefined,
+    };
+    if (!lite) {
+      try {
+        const c = await db.query('SELECT COUNT(*) AS n FROM products');
+        payload.products = Number(c.rows[0]?.n || 0);
+      } catch (_) {
+        payload.products = null;
+      }
+    }
+    res.json(payload);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -87,6 +98,8 @@ app.use('/api/stock-transfers', require('./routes/stockTransfers')(broadcastTabl
 app.use('/api/journal-entries', require('./routes/journalEntries')(broadcastTable));
 app.use('/api/chart-of-accounts', require('./routes/chartOfAccounts')(broadcastTable));
 app.use('/api/dashboard', require('./routes/dashboard')(broadcastTable));
+app.use('/api/daily-briefing', require('./routes/dailyBriefing')(broadcastTable));
+app.use('/api/deployment', require('./routes/deployment')(broadcastTable));
 app.use('/api/tax', require('./routes/tax')(broadcastTable));
 app.use('/api/exchange-rates', require('./routes/exchangeRates')(broadcastTable));
 app.use('/api/approvals', require('./routes/approvals')(broadcastTable));

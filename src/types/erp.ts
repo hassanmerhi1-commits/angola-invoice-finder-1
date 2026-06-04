@@ -73,6 +73,7 @@ export interface Sale {
   change: number;
   customerNif?: string;
   customerName?: string;
+  dueDate?: string;
   status: 'completed' | 'voided' | 'pending';
   saftHash?: string; // For AGT compliance
   agtStatus?: 'pending' | 'validated' | 'rejected';
