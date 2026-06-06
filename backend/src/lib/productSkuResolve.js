@@ -3,6 +3,9 @@
  * Shared by products API and transaction engine to avoid UNIQUE(sku, branch_id) clashes.
  */
 
+const db = require('../db');
+const { headOfficeBranchWhere, orderByActiveDesc } = require('./sqlDialect');
+
 let mainBranchIdsCache = null;
 let mainBranchIdsCacheAt = 0;
 const MAIN_BRANCH_CACHE_MS = 60_000;
@@ -14,7 +17,7 @@ async function loadMainBranchIds(clientOrDb) {
     return mainBranchIdsCache;
   }
   const result = await q.query(
-    `SELECT id FROM branches WHERE COALESCE(is_main, 0) != 0 AND COALESCE(is_active, 1) != 0`,
+    `SELECT id FROM branches WHERE ${headOfficeBranchWhere(db)}`,
   );
   mainBranchIdsCache = result.rows.map((row) => String(row.id).trim()).filter(Boolean);
   mainBranchIdsCacheAt = now;
@@ -57,7 +60,7 @@ async function findProductBySkuAndBranch(client, sku, branchId) {
        FROM products
        WHERE LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
          AND (branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = '')
-       ORDER BY COALESCE(is_active, 1) DESC, updated_at DESC, created_at DESC
+       ORDER BY ${orderByActiveDesc(db, 'is_active')} DESC, updated_at DESC, created_at DESC
        LIMIT 1`,
       [skuTrim],
     );
@@ -68,7 +71,7 @@ async function findProductBySkuAndBranch(client, sku, branchId) {
        FROM products
        WHERE LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
          AND branch_id = $2
-       ORDER BY COALESCE(is_active, 1) DESC, updated_at DESC, created_at DESC
+       ORDER BY ${orderByActiveDesc(db, 'is_active')} DESC, updated_at DESC, created_at DESC
        LIMIT 1`,
       [skuTrim, storedBranch],
     );
@@ -83,7 +86,7 @@ async function findProductBySkuAndBranch(client, sku, branchId) {
          FROM products
          WHERE LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
            AND branch_id = $2
-         ORDER BY COALESCE(is_active, 1) DESC, updated_at DESC, created_at DESC
+         ORDER BY ${orderByActiveDesc(db, 'is_active')} DESC, updated_at DESC, created_at DESC
          LIMIT 1`,
         [skuTrim, mainId],
       );
@@ -97,7 +100,7 @@ async function findProductBySkuAndBranch(client, sku, branchId) {
      FROM products
      WHERE LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
        AND branch_id = $2
-     ORDER BY COALESCE(is_active, 1) DESC, updated_at DESC, created_at DESC
+     ORDER BY ${orderByActiveDesc(db, 'is_active')} DESC, updated_at DESC, created_at DESC
      LIMIT 1`,
     [skuTrim, toBranch],
   );
@@ -120,9 +123,17 @@ function canonicalSkuString(sku) {
   return base || raw;
 }
 
-/** SQLite-compatible canonical SKU text (id fallback when sku empty). */
+/** Canonical SKU text (id fallback when sku empty). */
 function sqlCanonicalSkuText(alias = 'pm') {
   const raw = `TRIM(COALESCE(${alias}.sku, ''))`;
+  if (db.engine === 'postgres') {
+    return `CASE
+      WHEN ${raw} = '' THEN ${alias}.id::text
+      WHEN POSITION('-dup-' IN LOWER(${raw})) > 0
+        THEN TRIM(SUBSTRING(${raw} FROM 1 FOR POSITION('-dup-' IN LOWER(${raw})) - 1))
+      ELSE ${raw}
+    END`;
+  }
   return `CASE
     WHEN ${raw} = '' THEN CAST(${alias}.id AS TEXT)
     WHEN INSTR(LOWER(${raw}), '-dup-') > 0

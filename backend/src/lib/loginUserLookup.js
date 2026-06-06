@@ -12,9 +12,10 @@ function buildLoginEmailCandidates(raw) {
   return [...candidates];
 }
 
-const ACTIVE_USER_SQL = `(is_active IS NULL OR is_active = 1 OR is_active = true OR is_active = '1' OR is_active = 'true')`;
+const { activeUserWhere } = require('./sqlDialect');
 
 async function findUserForLogin(db, rawIdentifier) {
+  const ACTIVE_USER_SQL = activeUserWhere(db);
   const trimmed = String(rawIdentifier || '').trim().toLowerCase();
   if (!trimmed) return null;
 

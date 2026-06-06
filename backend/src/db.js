@@ -135,6 +135,7 @@ function ensureOrgHierarchyTables() {
   tryAlterAdd('sales', 'agt_validated_at TEXT');
   tryAlterAdd('sales', 'due_date TEXT');
   tryAlterAdd('sales', 'printed_at TEXT');
+  tryAlterAdd('sales', 'client_id TEXT');
 
   try {
     sqlite.prepare(`UPDATE branches SET node_role = 'main' WHERE is_main = 1 AND (node_role IS NULL OR node_role = 'shop')`).run();
@@ -490,6 +491,8 @@ function ensureAppTablesAndColumns() {
   tryAlterAdd('products', 'last_cost REAL NOT NULL DEFAULT 0');
   tryAlterAdd('products', 'avg_cost REAL NOT NULL DEFAULT 0');
   tryAlterAdd('products', 'stock REAL NOT NULL DEFAULT 0');
+  tryAlterAdd('products', 'min_stock REAL NOT NULL DEFAULT 0');
+  tryAlterAdd('products', 'max_stock REAL NOT NULL DEFAULT 0');
   tryAlterAdd('products', "unit TEXT DEFAULT 'UN'");
   tryAlterAdd('products', 'tax_rate REAL NOT NULL DEFAULT 5');
   tryAlterAdd('products', 'branch_id TEXT');

@@ -4,12 +4,24 @@ Use this checklist on **every PC** (head office, Soyo, server).
 
 ## One database per site
 
+### PostgreSQL (recommended for server)
+
+| Role | Config |
+|------|--------|
+| Server | `C:\NEXOR ERP\database.env` with `DATABASE_URL` + `DB_ENGINE=postgres` |
+| Server marker | `C:\NEXOR ERP\IP` → `postgres` (or any path; `database.env` overrides) |
+| Clients | `C:\NEXOR ERP\IP` → server LAN IP only (no `database.env`) |
+
+Full steps: **[POSTGRESQL.md](./POSTGRESQL.md)**.
+
+### SQLite (legacy / rollback)
+
 | Role | Canonical path |
 |------|----------------|
 | Server / standalone | `C:\NEXOR ERP\data\erp.db` |
-| Config pointer | `C:\NEXOR ERP\IP` (must contain the full path to the `.db` file) |
+| Config pointer | `C:\NEXOR ERP\IP` (full path to the `.db` file) |
 
-On startup the app:
+On startup (SQLite only):
 
 1. Picks the **largest valid** `erp.db` if legacy copies exist (`C:\nexor\erp.db`, `%AppData%\NEXOR ERP\erp.db`, etc.).
 2. **Writes that path back** to the IP file so the next restart uses the same file.
@@ -21,7 +33,7 @@ On startup the app:
 3. **Do not** rely on Hot Update alone when the backend changed — rebuild ships new API routes and SQLite columns.
 4. After install, open **Settings → Database & deployment** and confirm:
    - App version matches your release tag (e.g. `1.0.46`)
-   - Schema version = expected (currently **23**)
+   - Schema version = expected (currently **24**)
    - **Active database** path is `C:\NEXOR ERP\data\erp.db` (or your chosen single path)
    - No duplicate-database warnings (or resolve them — see below)
    - Latest backup is recent
@@ -43,6 +55,6 @@ On startup the app:
 - `GET /api/health?lite=1` — ping + app version + db path  
 - `GET /api/deployment/status` — full Phase A report (schema, duplicates, backups)
 
-## PostgreSQL (optional)
+## PostgreSQL
 
-If `DATABASE_URL` is set, the app uses PostgreSQL instead of SQLite. Run `cd backend && node src/migrations/run.js` on the server. Phase A duplicate-file rules apply to SQLite installs only.
+Server cutover is configured via `C:\NEXOR ERP\database.env`, not the client `IP` file. See **[POSTGRESQL.md](./POSTGRESQL.md)**. Phase A duplicate-database warnings apply to SQLite installs only.

@@ -1,6 +1,7 @@
 // Branches API routes
 const express = require('express');
 const db = require('../db');
+const { branchesListSql } = require('../lib/sqlDialect');
 const crypto = require('crypto');
 
 function buildBranchCode(name = '') {
@@ -65,9 +66,7 @@ module.exports = function(broadcastTable) {
   // Get all branches
   router.get('/', async (req, res) => {
     try {
-      const result = await db.query(
-        'SELECT * FROM branches WHERE COALESCE(is_active, 1) != 0 ORDER BY is_main DESC, name'
-      );
+      const result = await db.query(branchesListSql(db));
       res.json(
         result.rows.map((row) => ({
           ...row,

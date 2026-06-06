@@ -46,7 +46,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
-  const { products } = useProducts(currentBranch?.id);
+  const { products } = useProducts(currentBranch?.id, { light: true });
   const { clients } = useClients();
   const { suppliers } = useSuppliers();
   const config = DOCUMENT_TYPE_CONFIG[documentType];

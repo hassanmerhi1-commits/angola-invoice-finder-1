@@ -1,4 +1,5 @@
 const db = require('../db');
+const { activeFlagWhere } = require('../lib/sqlDialect');
 
 async function authenticateSyncIngest(req, res, next) {
   const header = req.headers.authorization || '';
@@ -13,7 +14,7 @@ async function authenticateSyncIngest(req, res, next) {
   try {
     const r = await db.query(
       `SELECT id, role, city_id, branch_id FROM installations
-       WHERE api_key = $1 AND (is_active IS NOT FALSE AND is_active != 0) LIMIT 1`,
+       WHERE api_key = $1 AND ${activeFlagWhere(db, 'is_active')} LIMIT 1`,
       [token]
     );
     if (r.rows.length > 0) {

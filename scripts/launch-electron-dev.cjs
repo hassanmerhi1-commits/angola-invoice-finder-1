@@ -18,4 +18,9 @@ const child = spawn(electronPath, ['.'], {
   windowsHide: false,
 });
 
-child.on('exit', (code) => process.exit(code ?? 0));
+child.on('exit', (code, signal) => {
+  if (code && code !== 0) {
+    console.error(`[electron:dev] Electron exited with code ${code}${signal ? ` (signal ${signal})` : ''}`);
+  }
+  process.exit(code ?? 0);
+});

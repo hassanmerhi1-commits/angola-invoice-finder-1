@@ -1,4 +1,4 @@
-import React from "react";
+import React, { Suspense } from "react";
 import { invalidateElectronApiBaseCache, clearStaleClientConfigIfServerMachine } from "@/lib/api/config";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner, toast } from "@/components/ui/sonner";
@@ -17,7 +17,15 @@ import Setup from "./pages/Setup";
 import Dashboard from "./pages/Dashboard";
 import POS from "./pages/POS";
 import Invoices from "./pages/Invoices";
-import Inventory from "./pages/Inventory";
+const Inventory = React.lazy(() => import("./pages/Inventory"));
+
+function RouteLoadingFallback() {
+  return (
+    <div className="flex items-center justify-center min-h-[40vh]">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+    </div>
+  );
+}
 import DailyReports from "./pages/DailyReports";
 import Clients from "./pages/Clients";
 import StockTransfer from "./pages/StockTransfer";
@@ -259,7 +267,14 @@ function AppRoutes() {
         <Route path="/pos" element={<POS />} />
         <Route path="/vendas" element={<Vendas />} />
         <Route path="/invoices" element={<Invoices />} />
-        <Route path="/inventory" element={<Inventory />} />
+        <Route
+          path="/inventory"
+          element={(
+            <Suspense fallback={<RouteLoadingFallback />}>
+              <Inventory />
+            </Suspense>
+          )}
+        />
         <Route path="/categories" element={<Categories />} />
         <Route path="/suppliers" element={<Suppliers />} />
         <Route path="/purchase-orders" element={<PurchaseOrders />} />

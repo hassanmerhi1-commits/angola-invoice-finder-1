@@ -108,7 +108,7 @@ export default function PurchaseOrders() {
     return String(currentBranch?.id || '').trim() || undefined;
   }, [orderForm.branchId, apiBranchId, currentBranch?.id]);
 
-  const { products, refreshProducts } = useProducts(productListBranchId);
+  const { products, productsLoading } = useProducts(productListBranchId, { light: true });
 
   const [barcodeInput, setBarcodeInput] = useState('');
   const [scanMode, setScanMode] = useState<'create' | 'receive' | null>(null);
@@ -122,10 +122,6 @@ export default function PurchaseOrders() {
     window.addEventListener('nexor:purchase-orders-new', openCreate);
     return () => window.removeEventListener('nexor:purchase-orders-new', openCreate);
   }, []);
-
-  useEffect(() => {
-    if (createDialogOpen) void refreshProducts();
-  }, [createDialogOpen, productListBranchId, refreshProducts]);
 
   useEffect(() => {
     if (!createDialogOpen) {
@@ -754,6 +750,13 @@ export default function PurchaseOrders() {
                                 (p.barcode || '').toLowerCase().includes(q)),
                           )
                           .slice(0, 80);
+                        if (productsLoading && products.length === 0) {
+                          return (
+                            <div className="p-3 text-sm text-muted-foreground text-center">
+                              {t.common.loading}
+                            </div>
+                          );
+                        }
                         if (filtered.length === 0) {
                           return (
                             <div className="p-3 text-sm text-muted-foreground text-center">

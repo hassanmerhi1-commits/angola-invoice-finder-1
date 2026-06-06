@@ -87,6 +87,8 @@ export function DailyTodoBriefingList({
     if (kind === 'lowStock') return d.briefingEmptyLowStock;
     if (kind === 'toPrint') return d.briefingEmptyToPrint;
     if (kind === 'priceChanges') return d.briefingEmptyPriceChanges;
+    if (kind === 'receivables') return d.briefingEmptyReceivables;
+    if (kind === 'payables') return d.briefingEmptyPayables;
     return d.briefingEmptyDue;
   })();
 

@@ -1,11 +1,37 @@
 /**
  * NEXOR ERP — unified Express server (SQLite or PostgreSQL via ./db.js, all /api routes).
  */
-require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
-
-const express = require('express');
 const path = require('path');
 const fs = require('fs');
+
+/** Load C:\NEXOR ERP\database.env before db.js reads DATABASE_URL / DB_ENGINE. */
+function loadInstallDatabaseEnv() {
+  const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
+  const envPath = path.join(installDir, 'database.env');
+  if (!fs.existsSync(envPath)) return;
+  for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let val = trimmed.slice(eq + 1).trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"'))
+      || (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1);
+    }
+    if (process.env[key] === undefined || process.env[key] === '') {
+      process.env[key] = val;
+    }
+  }
+}
+
+loadInstallDatabaseEnv();
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+
+const express = require('express');
 const http = require('http');
 const os = require('os');
 const { Server } = require('socket.io');
@@ -93,6 +119,7 @@ app.use('/api/payments', require('./routes/payments')(broadcastTable));
 app.use('/api/transactions', require('./routes/transactions')(broadcastTable));
 app.use('/api/purchase-orders', require('./routes/purchaseOrders')(broadcastTable));
 app.use('/api/purchase-invoices', require('./routes/purchaseInvoices')(broadcastTable));
+app.use('/api/proformas', require('./routes/proformas')(broadcastTable));
 app.use('/api/supplier-returns', require('./routes/supplierReturns')(broadcastTable));
 app.use('/api/stock-transfers', require('./routes/stockTransfers')(broadcastTable));
 app.use('/api/journal-entries', require('./routes/journalEntries')(broadcastTable));

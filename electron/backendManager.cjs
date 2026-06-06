@@ -203,23 +203,71 @@ function closeLogStream() {
 // extraResources (electron-builder.json) in production at:
 //   <resourcesPath>/backend/src/server.js
 // --------------------------------------------------------------------------
+function isViableBackendEntry(entryPath) {
+  try {
+    const cwd = resolveBackendCwd(entryPath);
+    const required = [
+      path.join(cwd, 'node_modules', 'dotenv'),
+      path.join(cwd, 'src', 'lib', 'sqlDialect.js'),
+      path.join(cwd, 'scripts', 'lib', 'integrityRunner.js'),
+    ];
+    return required.every((p) => fs.existsSync(p));
+  } catch (_) {
+    return false;
+  }
+}
+
 function resolveBackendEntry() {
   let appPath = null;
   try {
     appPath = app.getAppPath();
   } catch (_) {}
 
-  // extraResources copies backend/ to <resources>/backend/ — that must win in production.
-  // (app.asar does not include backend/, so older logic often fell through to dev paths.)
-  const candidates = [
-    process.resourcesPath ? path.join(process.resourcesPath, 'backend', 'src', 'server.js') : null,
-    path.join(__dirname, '..', 'backend', 'src', 'server.js'),
-    appPath ? path.join(appPath, 'backend', 'src', 'server.js') : null,
-    process.resourcesPath ? path.join(process.resourcesPath, 'app.asar.unpacked', 'backend', 'src', 'server.js') : null,
-  ].filter(Boolean);
+  const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
+  const entryOverride = process.env.NEXOR_BACKEND_ENTRY;
+  const isDev =
+    process.env.ELECTRON_DEV === 'true'
+    || process.env.NODE_ENV === 'development';
 
-  for (const p of candidates) {
-    try { if (fs.existsSync(p)) return p; } catch (_) {}
+  const repoBackend = path.join(__dirname, '..', 'backend', 'src', 'server.js');
+  const installBackend = path.join(installDir, 'backend', 'src', 'server.js');
+  const packagedBackend = process.resourcesPath
+    ? path.join(process.resourcesPath, 'backend', 'src', 'server.js')
+    : null;
+  const unpackedBackend = process.resourcesPath
+    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'backend', 'src', 'server.js')
+    : null;
+
+  // Dev: repo backend first (avoids broken partial C:\NEXOR ERP\backend copies).
+  // Release: patched install dir, then packaged resources.
+  const candidates = isDev
+    ? [
+      entryOverride || null,
+      repoBackend,
+      installBackend,
+      packagedBackend,
+      appPath ? path.join(appPath, 'backend', 'src', 'server.js') : null,
+      unpackedBackend,
+    ]
+    : [
+      entryOverride || null,
+      installBackend,
+      packagedBackend,
+      unpackedBackend,
+      repoBackend,
+      appPath ? path.join(appPath, 'backend', 'src', 'server.js') : null,
+    ];
+
+  for (const p of candidates.filter(Boolean)) {
+    try {
+      if (fs.existsSync(p) && isViableBackendEntry(p)) {
+        console.log(`[BackendManager] using backend entry: ${p}`);
+        return p;
+      }
+      if (fs.existsSync(p)) {
+        console.warn(`[BackendManager] skipping incomplete backend at ${p}`);
+      }
+    } catch (_) {}
   }
   return null;
 }
@@ -422,22 +470,31 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
     throw new Error(err);
   }
 
+  const { loadDatabaseEnv } = require('./databaseConfig.cjs');
+  const dbEnv = loadDatabaseEnv();
+  const usePostgres = dbEnv.engine === 'postgres' && !!dbEnv.databaseUrl;
+
   const env = {
     ...process.env,
     PORT: String(port),
-    SQLITE_PATH: sqlitePath,
     NEXOR_INSTALL_DIR: process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP',
     NEXOR_IP_FILE: process.env.NEXOR_IP_FILE || 'C:\\NEXOR ERP\\IP',
     NODE_ENV: process.env.NODE_ENV || 'production',
     NODE_PATH: nodePath,
     ELECTRON_NO_ATTACH_CONSOLE: '1',
-    // Embedded ERP must use local SQLite (see IP file / SQLITE_PATH). Inherited
-    // DATABASE_URL / DB_ENGINE from the shell or backend/.env would switch
-    // backend/src/db.js to PostgreSQL, fail readiness (we probe sqlite), or
-    // crash when Docker is down — looks like "HTTP service not running".
-    DATABASE_URL: '',
-    DB_ENGINE: 'sqlite',
   };
+
+  if (usePostgres) {
+    env.DATABASE_URL = dbEnv.databaseUrl;
+    env.DB_ENGINE = 'postgres';
+    delete env.SQLITE_PATH;
+    console.log('[BackendManager] PostgreSQL mode (database.env)');
+  } else {
+    env.SQLITE_PATH = sqlitePath;
+    env.DATABASE_URL = '';
+    env.DB_ENGINE = 'sqlite';
+    console.log(`[BackendManager] SQLite file: ${sqlitePath}`);
+  }
   if (electronRunAsNode) {
     env.ELECTRON_RUN_AS_NODE = '1';
   } else {
@@ -448,7 +505,6 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
   console.log(
     `[BackendManager] spawning: ${runnerExe} ${entryPath} (cwd=${cwd}, runner=${runnerSource}, ELECTRON_RUN_AS_NODE=${electronRunAsNode ? '1' : 'off'})`
   );
-  console.log(`[BackendManager] SQLite file: ${sqlitePath}`);
   const proc = spawn(runnerExe, [entryPath], {
     cwd,
     env,

@@ -1,6 +1,7 @@
 // Suppliers API routes — with auto Chart of Accounts sub-account creation
 const express = require('express');
 const db = require('../db');
+const { openItemDebitAmountCase } = require('../lib/sqlDialect');
 
 /**
  * Auto-create a 3.2.XXX sub-account in chart_of_accounts for a supplier.
@@ -92,7 +93,7 @@ module.exports = function(broadcastTable) {
         `SELECT s.*,
                 COALESCE((
                   SELECT SUM(
-                    CASE WHEN oi.is_debit = 1 OR oi.is_debit = TRUE THEN oi.remaining_amount ELSE -oi.remaining_amount END
+                    ${openItemDebitAmountCase(db, 'oi')}
                   )
                   FROM open_items oi
                   WHERE oi.entity_type = 'supplier' AND oi.entity_id = s.id

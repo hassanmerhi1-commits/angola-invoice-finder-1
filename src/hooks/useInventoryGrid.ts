@@ -4,6 +4,7 @@ import {
   cacheKey,
   fetchInventoryGrid,
   invalidateInventoryGridCache,
+  isInventoryGridCacheFresh,
   readInventoryGridCache,
   writeCache,
 } from '@/lib/inventoryGrid';
@@ -53,6 +54,13 @@ export function useInventoryGrid(opts: {
       setLoading(false);
     } else {
       setLoading(true);
+    }
+
+    const cacheFresh = isInventoryGridCacheFresh(opts.branchId, opts.consolidated);
+    if (cacheFresh) {
+      return () => {
+        generationRef.current++;
+      };
     }
 
     void (async () => {

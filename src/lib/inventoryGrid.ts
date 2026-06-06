@@ -21,7 +21,7 @@ export function readProductStock(row: Record<string, unknown> | Product): number
   const n = Number(raw);
   return Number.isFinite(n) ? n : 0;
 }
-const CACHE_TTL_MS = 120_000;
+const CACHE_TTL_MS = 300_000;
 
 type CacheEntry = { at: number; rows: Product[] };
 
@@ -29,16 +29,20 @@ export function cacheKey(branchId: string | undefined, consolidated: boolean): s
   return consolidated ? 'hq' : String(branchId || '').trim() || 'none';
 }
 
-function readCache(key: string): Product[] | null {
+function readCacheEntry(key: string): CacheEntry | null {
   try {
     const raw = sessionStorage.getItem(CACHE_PREFIX + key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CacheEntry;
     if (Date.now() - parsed.at > CACHE_TTL_MS) return null;
-    return parsed.rows;
+    return parsed;
   } catch {
     return null;
   }
+}
+
+function readCache(key: string): Product[] | null {
+  return readCacheEntry(key)?.rows ?? null;
 }
 
 export function writeCache(key: string, rows: Product[]): void {
@@ -146,6 +150,17 @@ export function readInventoryGridCache(
   consolidated: boolean,
 ): Product[] | null {
   return readCache(cacheKey(branchId, consolidated));
+}
+
+/** True when session cache is still valid — skip network on repeat visits. */
+export function isInventoryGridCacheFresh(
+  branchId: string | undefined,
+  consolidated: boolean,
+  maxAgeMs = 60_000,
+): boolean {
+  const entry = readCacheEntry(cacheKey(branchId, consolidated));
+  if (!entry?.rows?.length) return false;
+  return Date.now() - entry.at <= maxAgeMs;
 }
 
 export async function loadInventoryGridWithCache(opts: {

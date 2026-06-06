@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useProducts, useClients, useAuth } from '@/hooks/useERP';
 import { useProForma, productToProFormaItem } from '@/hooks/useProForma';
 import { ProForma, ProFormaItem } from '@/types/proforma';
@@ -42,9 +42,10 @@ export default function ProFormaPage() {
   const p = t.proFormaUi;
   const navigate = useNavigate();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const { currentBranch } = useBranchContext();
+  const { currentBranch, apiBranchId } = useBranchScope();
   const { user } = useAuth();
-  const { products } = useProducts(currentBranch?.id);
+  const branchId = apiBranchId || currentBranch?.id;
+  const { products } = useProducts(branchId, { light: true });
   const { clients } = useClients();
   const {
     proformas,
@@ -54,7 +55,7 @@ export default function ProFormaPage() {
     duplicateProForma,
     deleteProForma,
     getStats,
-  } = useProForma(currentBranch?.id);
+  } = useProForma(branchId);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');

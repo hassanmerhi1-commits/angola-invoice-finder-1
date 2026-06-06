@@ -516,7 +516,7 @@ module.exports = function(broadcastTable) {
               await client.query(
                 `UPDATE products
                  SET cost = $1, last_cost = $2, avg_cost = $1, updated_at = CURRENT_TIMESTAMP
-                 WHERE COALESCE(is_active, 1) != 0
+                 WHERE ${require('../lib/sqlDialect').coalesceActiveNotZero(db, 'is_active')}
                    AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($3)`,
                 [nextAvgCost, nextLastCost, skuKey],
               );
@@ -539,7 +539,7 @@ module.exports = function(broadcastTable) {
                 await client.query(
                   `UPDATE products
                    SET price = $1, updated_at = CURRENT_TIMESTAMP
-                   WHERE COALESCE(is_active, 1) != 0
+                   WHERE ${require('../lib/sqlDialect').coalesceActiveNotZero(db, 'is_active')}
                      AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)`,
                   [selling, skuKey],
                 );

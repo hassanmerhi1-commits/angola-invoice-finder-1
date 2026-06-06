@@ -1,10 +1,10 @@
 // Backup API — SQLite (.db via better-sqlite3 backup) and PostgreSQL (pg_dump)
 const express = require('express');
-const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const db = require('../db');
+const { createPostgresBackup, restorePostgresBackup } = require('../lib/pgBackupCli');
 
 let restoreInProgress = false;
 
@@ -87,63 +87,6 @@ module.exports = function backupRoutes() {
         }
       }
     }
-  }
-
-  function getPgArgs() {
-    const args = [];
-    const connStr = process.env.DATABASE_URL;
-
-    if (connStr) {
-      try {
-        const url = new URL(connStr);
-        args.push('-h', url.hostname);
-        args.push('-p', url.port || '5432');
-        args.push('-U', url.username);
-        args.push('-d', url.pathname.replace('/', ''));
-      } catch {
-        args.push('-d', 'kwanza_erp');
-      }
-    } else {
-      args.push('-h', process.env.PGHOST || '127.0.0.1');
-      args.push('-p', process.env.PGPORT || '5432');
-      args.push('-U', process.env.PGUSER || 'postgres');
-      args.push('-d', process.env.PGDATABASE || 'kwanza_erp');
-    }
-    return args;
-  }
-
-  function pgEnv() {
-    const env = { ...process.env };
-    if (process.env.DATABASE_URL) {
-      try {
-        const url = new URL(process.env.DATABASE_URL);
-        env.PGPASSWORD = decodeURIComponent(url.password);
-      } catch { /* fallback */ }
-    }
-    if (!env.PGPASSWORD) {
-      env.PGPASSWORD = process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD || '';
-    }
-    return env;
-  }
-
-  async function createPostgresBackup(filepath) {
-    const pgArgs = [...getPgArgs(), '--format=plain', '--no-owner', '--no-acl', '-f', filepath];
-    await new Promise((resolve, reject) => {
-      execFile('pg_dump', pgArgs, { env: pgEnv(), timeout: 120000 }, (error, _stdout, stderr) => {
-        if (error) reject(new Error(stderr || error.message));
-        else resolve();
-      });
-    });
-  }
-
-  async function restorePostgresBackup(filepath) {
-    const pgArgs = [...getPgArgs(), '-f', filepath];
-    await new Promise((resolve, reject) => {
-      execFile('psql', pgArgs, { env: pgEnv(), timeout: 300000 }, (error, _stdout, stderr) => {
-        if (error) reject(new Error(stderr || error.message));
-        else resolve();
-      });
-    });
   }
 
   function assertNotRestoring(res) {

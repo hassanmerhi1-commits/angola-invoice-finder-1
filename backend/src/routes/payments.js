@@ -4,6 +4,9 @@ const db = require('../db');
 const { processPayment } = require('../transactionEngine');
 const { enqueuePaymentCreated } = require('../sync/outbox');
 const { ENTITY_BALANCE_SELECT } = require('../entityBalanceSql');
+const { listSupplierPayables } = require('../lib/supplierPayablesList');
+const { listCustomerReceivables } = require('../lib/customerReceivablesList');
+const { listChecklistDues } = require('../lib/openItemsBriefing');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -52,45 +55,53 @@ module.exports = function(broadcastTable) {
   // READ: Customer receivables from open items
   router.get('/receivables-aging', async (req, res) => {
     try {
-      const result = await db.query(
-        `SELECT oi.id, oi.entity_id, oi.document_id, oi.document_number, oi.document_date, oi.due_date,
-                oi.remaining_amount, oi.original_amount, oi.document_type,
-                c.name AS client_name, c.nif AS client_nif
-         FROM open_items oi
-         INNER JOIN clients c ON c.id = oi.entity_id
-         WHERE oi.entity_type = 'customer'
-           AND (oi.is_debit = 1 OR oi.is_debit = TRUE)
-           AND oi.status != 'cleared'
-           AND oi.remaining_amount > 0.01
-         ORDER BY oi.due_date ASC NULLS LAST, c.name, oi.document_date ASC
-         LIMIT 200`,
-      );
-      res.json(result.rows);
+      const branchId = req.query.branchId ? String(req.query.branchId).trim() : '';
+      const rows = await listCustomerReceivables(db, { branchId, sinceDays: null });
+      res.json(rows);
     } catch (error) {
       console.error('[PAYMENTS RECEIVABLES ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch receivables' });
     }
   });
 
-  // READ: Supplier payables from open items (real balance after payments/returns)
+  // READ: Checklist due receipts / due payments (matches Pagamentos → Itens em aberto)
+  router.get('/checklist-dues', async (_req, res) => {
+    try {
+      const dues = await listChecklistDues();
+      res.json(dues);
+    } catch (error) {
+      console.error('[PAYMENTS CHECKLIST DUES]', error);
+      res.status(500).json({ error: error.message || 'Failed to load checklist dues' });
+    }
+  });
+
+  // READ: Supplier payables (open items + confirmed purchase invoices missing open items)
   router.get('/payables-aging', async (req, res) => {
     try {
-      const result = await db.query(
-        `SELECT oi.id, oi.entity_id, oi.document_id, oi.document_number, oi.document_date, oi.due_date,
-                oi.remaining_amount, oi.original_amount, oi.document_type,
-                s.name AS supplier_name, s.nif AS supplier_nif, s.payment_terms
-         FROM open_items oi
-         INNER JOIN suppliers s ON s.id = oi.entity_id
-         WHERE oi.entity_type = 'supplier'
-           AND (oi.is_debit = 1 OR oi.is_debit = TRUE)
-           AND oi.status != 'cleared'
-           AND oi.remaining_amount > 0.01
-         ORDER BY s.name, oi.document_date ASC`,
-      );
-      res.json(result.rows);
+      const branchId = req.query.branchId ? String(req.query.branchId).trim() : '';
+      const rows = await listSupplierPayables(db, { branchId, sinceDays: null });
+      res.json(rows);
     } catch (error) {
       console.error('[PAYMENTS PAYABLES ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch payables' });
+    }
+  });
+
+  // POST: Backfill missing supplier open items from purchase invoices (admin repair)
+  router.post('/repair-supplier-payables', async (req, res) => {
+    try {
+      const { runSupplierBalanceRepair } = require('../supplierBalanceRepair');
+      const repair = await runSupplierBalanceRepair();
+      const rows = await listSupplierPayables(db, { sinceDays: null });
+      if (broadcastTable) await broadcastTable('suppliers');
+      res.json({
+        backfill: { created: repair.created ?? 0, skipped: repair.skipped ?? 0 },
+        repair,
+        payablesCount: rows.length,
+      });
+    } catch (error) {
+      console.error('[PAYMENTS PAYABLES REPAIR]', error);
+      res.status(500).json({ error: error.message || 'Failed to repair supplier payables' });
     }
   });
 

@@ -3,6 +3,7 @@
  */
 
 const db = require('../db');
+const { coalesceActiveNotZero } = require('./sqlDialect');
 const {
   isCatalogBranchScope,
   loadMainBranchIds,
@@ -17,7 +18,7 @@ async function reactivateFilialProductsWithMovements(warehouseId, clientOrDb = n
   const result = await q.query(
     `UPDATE products
      SET is_active = true, updated_at = CURRENT_TIMESTAMP
-     WHERE COALESCE(is_active, 0) = 0
+     WHERE ${db.engine === 'postgres' ? 'is_active IS FALSE' : 'COALESCE(is_active, 0) = 0'}
        AND id IN (
          SELECT DISTINCT sm.product_id
          FROM stock_movements sm
@@ -49,7 +50,7 @@ async function mergeDupProductMovementsAtWarehouse(warehouseId, clientOrDb = nul
     const canonical = await q.query(
       `SELECT id FROM products
        WHERE id != $1
-         AND COALESCE(is_active, 1) != 0
+         AND ${coalesceActiveNotZero(db, 'is_active')}
          AND LOWER(TRIM(sku)) = LOWER($2)
        ORDER BY
          CASE WHEN branch_id = $3 THEN 0

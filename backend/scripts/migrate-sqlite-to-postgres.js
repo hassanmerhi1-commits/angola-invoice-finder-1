@@ -7,8 +7,11 @@
  * - PostgreSQL schema uses UUID primary keys.
  * - We must generate deterministic mappings so all foreign keys remain consistent.
  *
+ * Prerequisite: empty-ish Postgres DB with schema applied:
+ *   cd backend && npm run migrate   (with DATABASE_URL set)
+ *
  * Usage (PowerShell):
- *   $env:SQLITE_PATH="C:\nexor\erp.db"
+ *   $env:SQLITE_PATH="C:\NEXOR ERP\data\erp.db"
  *   $env:DATABASE_URL="postgres://postgres:password@localhost:5432/kwanza_erp"
  *   node scripts/migrate-sqlite-to-postgres.js
  *
@@ -52,6 +55,34 @@ function pick(obj, keys) {
   return out;
 }
 
+function mapRef(map, id) {
+  if (id == null || id === '') return null;
+  return map.get(String(id)) || null;
+}
+
+function mapDocumentId(id, maps) {
+  const s = String(id);
+  return (
+    mapRef(maps.purchase_invoices, s)
+    || mapRef(maps.sales, s)
+    || mapRef(maps.payments, s)
+    || null
+  );
+}
+
+function mapEntityId(entityType, entityId, maps) {
+  const s = String(entityId);
+  if (entityType === 'supplier') return mapRef(maps.suppliers, s);
+  if (entityType === 'customer') return mapRef(maps.clients, s);
+  return null;
+}
+
+function parseDateOnly(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 /**
  * Build id mapping for a table that has a single primary key column `id`.
  * Returns Map<oldId:string, newId:uuid-string>
@@ -73,6 +104,11 @@ async function ensureCanConnect(pg) {
 async function truncateTarget(pg) {
   // Keep it limited to the core tables that exist in both schemas and are safe to re-import.
   const tables = [
+    'clearings',
+    'open_items',
+    'stock_movements',
+    'payments',
+    'purchase_invoices',
     'sale_items',
     'sales',
     'purchase_order_items',
@@ -147,6 +183,11 @@ async function main() {
       stock_transfers: sqliteTables.includes('stock_transfers') ? buildIdMap(sqlite, 'stock_transfers') : new Map(),
       stock_transfer_items: sqliteTables.includes('stock_transfer_items') ? buildIdMap(sqlite, 'stock_transfer_items') : new Map(),
       daily_reports: sqliteTables.includes('daily_reports') ? buildIdMap(sqlite, 'daily_reports') : new Map(),
+      purchase_invoices: sqliteTables.includes('purchase_invoices') ? buildIdMap(sqlite, 'purchase_invoices') : new Map(),
+      payments: sqliteTables.includes('payments') ? buildIdMap(sqlite, 'payments') : new Map(),
+      open_items: sqliteTables.includes('open_items') ? buildIdMap(sqlite, 'open_items') : new Map(),
+      clearings: sqliteTables.includes('clearings') ? buildIdMap(sqlite, 'clearings') : new Map(),
+      stock_movements: sqliteTables.includes('stock_movements') ? buildIdMap(sqlite, 'stock_movements') : new Map(),
     };
 
     await pg.query('BEGIN');
@@ -272,7 +313,7 @@ async function main() {
         category: r.category || null,
         price: safeNumber(r.price),
         cost: safeNumber(r.cost),
-        stock: Math.trunc(safeNumber(r.stock)),
+        stock: Math.max(0, Math.trunc(safeNumber(r.stock))),
         unit: r.unit || 'un',
         tax_rate: safeNumber(r.tax_rate),
         branch_id: r.branch_id ? (maps.branches.get(String(r.branch_id)) || null) : null,
@@ -357,13 +398,235 @@ async function main() {
       console.log('[MIGRATE] sale_items:', rows.length);
     }
 
-    // Purchase orders + stock transfers can be added next; start with the high-value POS core first.
+    // ========== purchase_invoices ==========
+    if (sqliteTables.includes('purchase_invoices')) {
+      const src = sqlite.prepare('SELECT * FROM purchase_invoices').all();
+      const rows = src.map(r => ({
+        id: maps.purchase_invoices.get(String(r.id)),
+        invoice_number: r.invoice_number,
+        supplier_account_code: r.supplier_account_code || '',
+        supplier_name: r.supplier_name || '',
+        supplier_id: r.supplier_id ? String(r.supplier_id) : '',
+        supplier_nif: r.supplier_nif || '',
+        supplier_phone: r.supplier_phone || '',
+        supplier_balance: safeNumber(r.supplier_balance),
+        ref: r.ref || '',
+        supplier_invoice_no: r.supplier_invoice_no || '',
+        contact: r.contact || '',
+        department: r.department || '',
+        ref2: r.ref2 || '',
+        date: parseDateOnly(r.date) || new Date(),
+        payment_date: parseDateOnly(r.payment_date),
+        project: r.project || '',
+        currency: r.currency || 'KZ',
+        warehouse_id: r.warehouse_id || '',
+        warehouse_name: r.warehouse_name || '',
+        price_type: r.price_type || 'last_price',
+        address: r.address || '',
+        purchase_account_code: r.purchase_account_code || '2.1.1',
+        iva_account_code: r.iva_account_code || '3.3.1',
+        transaction_type: r.transaction_type || 'ALL',
+        currency_rate: safeNumber(r.currency_rate),
+        tax_rate_2: safeNumber(r.tax_rate_2),
+        order_no: r.order_no || '',
+        surcharge_percent: safeNumber(r.surcharge_percent),
+        change_price: safeBool(r.change_price),
+        is_pending: safeBool(r.is_pending),
+        extra_note: r.extra_note || '',
+        lines_json: r.lines_json || '[]',
+        journal_lines_json: r.journal_lines_json || '[]',
+        subtotal: safeNumber(r.subtotal),
+        iva_total: safeNumber(r.iva_total),
+        total: safeNumber(r.total),
+        status: r.status || 'confirmed',
+        purchase_returns_status: r.purchase_returns_status || 'none',
+        purchase_returns_closed_at: r.purchase_returns_closed_at ? new Date(r.purchase_returns_closed_at) : null,
+        branch_id: r.branch_id ? String(r.branch_id) : '',
+        branch_name: r.branch_name || '',
+        created_by: r.created_by || '',
+        created_by_name: r.created_by_name || '',
+        created_at: r.created_at ? new Date(r.created_at) : new Date(),
+        updated_at: r.updated_at ? new Date(r.updated_at) : new Date(),
+      }));
+      const filtered = rows.filter(r => !!r.invoice_number);
+      await insertBatch(
+        pg,
+        'purchase_invoices',
+        [
+          'id', 'invoice_number', 'supplier_account_code', 'supplier_name', 'supplier_id', 'supplier_nif',
+          'supplier_phone', 'supplier_balance', 'ref', 'supplier_invoice_no', 'contact', 'department', 'ref2',
+          'date', 'payment_date', 'project', 'currency', 'warehouse_id', 'warehouse_name', 'price_type', 'address',
+          'purchase_account_code', 'iva_account_code', 'transaction_type', 'currency_rate', 'tax_rate_2', 'order_no',
+          'surcharge_percent', 'change_price', 'is_pending', 'extra_note', 'lines_json', 'journal_lines_json',
+          'subtotal', 'iva_total', 'total', 'status', 'purchase_returns_status', 'purchase_returns_closed_at',
+          'branch_id', 'branch_name', 'created_by', 'created_by_name', 'created_at', 'updated_at',
+        ],
+        filtered
+      );
+      console.log('[MIGRATE] purchase_invoices:', filtered.length);
+    }
+
+    // ========== payments ==========
+    if (sqliteTables.includes('payments')) {
+      const src = sqlite.prepare('SELECT * FROM payments').all();
+      const rows = src
+        .map(r => {
+          const entityId = mapEntityId(r.entity_type, r.entity_id, maps);
+          if (!entityId) return null;
+          return {
+            id: maps.payments.get(String(r.id)),
+            payment_number: r.payment_number,
+            payment_type: r.payment_type,
+            entity_type: r.entity_type,
+            entity_id: entityId,
+            entity_name: r.entity_name || null,
+            payment_method: r.payment_method || 'cash',
+            amount: safeNumber(r.amount),
+            currency: r.currency || 'AOA',
+            bank_account: r.bank_account || null,
+            reference: r.reference || null,
+            notes: r.notes || null,
+            branch_id: r.branch_id ? mapRef(maps.branches, r.branch_id) : null,
+            created_by: r.created_by ? mapRef(maps.users, r.created_by) : null,
+            created_at: r.created_at ? new Date(r.created_at) : new Date(),
+            posted_at: r.posted_at ? new Date(r.posted_at) : null,
+          };
+        })
+        .filter(Boolean);
+      await insertBatch(
+        pg,
+        'payments',
+        [
+          'id', 'payment_number', 'payment_type', 'entity_type', 'entity_id', 'entity_name',
+          'payment_method', 'amount', 'currency', 'bank_account', 'reference', 'notes',
+          'branch_id', 'created_by', 'created_at', 'posted_at',
+        ],
+        rows
+      );
+      console.log('[MIGRATE] payments:', rows.length);
+    }
+
+    /** Open-item UUIDs actually inserted (skip clearings that point at dropped rows). */
+    const insertedOpenItemIds = new Set();
+
+    // ========== open_items (AR/AP checklist + reports) ==========
+    if (sqliteTables.includes('open_items')) {
+      const src = sqlite.prepare('SELECT * FROM open_items').all();
+      const rows = src
+        .map(r => {
+          const entityId = mapEntityId(r.entity_type, r.entity_id, maps);
+          const documentId = mapDocumentId(r.document_id, maps);
+          if (!entityId || !documentId) return null;
+          return {
+            id: maps.open_items.get(String(r.id)),
+            entity_type: r.entity_type,
+            entity_id: entityId,
+            document_type: r.document_type,
+            document_id: documentId,
+            document_number: r.document_number,
+            document_date: parseDateOnly(r.document_date) || new Date(),
+            due_date: parseDateOnly(r.due_date),
+            currency: r.currency || 'AOA',
+            original_amount: safeNumber(r.original_amount),
+            remaining_amount: safeNumber(r.remaining_amount),
+            is_debit: safeBool(r.is_debit),
+            status: r.status || 'open',
+            branch_id: r.branch_id ? mapRef(maps.branches, r.branch_id) : null,
+            created_at: r.created_at ? new Date(r.created_at) : new Date(),
+            cleared_at: r.cleared_at ? new Date(r.cleared_at) : null,
+          };
+        })
+        .filter(Boolean);
+      for (const row of rows) insertedOpenItemIds.add(row.id);
+      await insertBatch(
+        pg,
+        'open_items',
+        [
+          'id', 'entity_type', 'entity_id', 'document_type', 'document_id', 'document_number',
+          'document_date', 'due_date', 'currency', 'original_amount', 'remaining_amount',
+          'is_debit', 'status', 'branch_id', 'created_at', 'cleared_at',
+        ],
+        rows
+      );
+      console.log('[MIGRATE] open_items:', rows.length, '(skipped', src.length - rows.length, 'unmapped refs)');
+    }
+
+    // ========== clearings ==========
+    if (sqliteTables.includes('clearings')) {
+      const src = sqlite.prepare('SELECT * FROM clearings').all();
+      const rows = src
+        .map(r => {
+          const debit = mapRef(maps.open_items, r.debit_item_id);
+          const credit = mapRef(maps.open_items, r.credit_item_id);
+          if (!debit || !credit || !insertedOpenItemIds.has(debit) || !insertedOpenItemIds.has(credit)) return null;
+          return {
+            id: maps.clearings.get(String(r.id)),
+            debit_item_id: debit,
+            credit_item_id: credit,
+            amount: safeNumber(r.amount),
+            clearing_date: parseDateOnly(r.clearing_date) || new Date(),
+            created_by: r.created_by ? mapRef(maps.users, r.created_by) : null,
+            created_at: r.created_at ? new Date(r.created_at) : new Date(),
+          };
+        })
+        .filter(Boolean);
+      try {
+        await insertBatch(
+          pg,
+          'clearings',
+          ['id', 'debit_item_id', 'credit_item_id', 'amount', 'clearing_date', 'created_by', 'created_at'],
+          rows
+        );
+        console.log('[MIGRATE] clearings:', rows.length);
+      } catch (e) {
+        console.warn('[MIGRATE] clearings skipped (non-fatal):', e.message);
+      }
+    }
+
+    // ========== stock_movements ==========
+    if (sqliteTables.includes('stock_movements')) {
+      const src = sqlite.prepare('SELECT * FROM stock_movements').all();
+      const rows = src
+        .map(r => {
+          const productId = mapRef(maps.products, r.product_id);
+          if (!productId) return null;
+          const refId = r.reference_id ? mapDocumentId(r.reference_id, maps) : null;
+          return {
+            id: maps.stock_movements.get(String(r.id)),
+            product_id: productId,
+            warehouse_id: r.warehouse_id ? mapRef(maps.branches, r.warehouse_id) : null,
+            movement_type: r.movement_type,
+            quantity: safeNumber(r.quantity),
+            unit_cost: safeNumber(r.unit_cost),
+            reference_type: r.reference_type,
+            reference_id: refId,
+            reference_number: r.reference_number || null,
+            notes: r.notes || null,
+            created_by: r.created_by ? mapRef(maps.users, r.created_by) : null,
+            created_at: r.created_at ? new Date(r.created_at) : new Date(),
+          };
+        })
+        .filter(Boolean);
+      await insertBatch(
+        pg,
+        'stock_movements',
+        [
+          'id', 'product_id', 'warehouse_id', 'movement_type', 'quantity', 'unit_cost',
+          'reference_type', 'reference_id', 'reference_number', 'notes', 'created_by', 'created_at',
+        ],
+        rows
+      );
+      console.log('[MIGRATE] stock_movements:', rows.length);
+    }
 
     if (!DRY_RUN) await pg.query('COMMIT');
     else await pg.query('ROLLBACK');
 
     // Summary counts
-    const countTables = ['branches', 'users', 'categories', 'suppliers', 'clients', 'products', 'sales', 'sale_items'];
+    const countTables = [
+      'branches', 'users', 'categories', 'suppliers', 'clients', 'products', 'sales', 'sale_items',
+      'purchase_invoices', 'payments', 'open_items', 'clearings', 'stock_movements',
+    ];
     for (const t of countTables) {
       try {
         const r = await pg.query(`SELECT COUNT(*)::int AS n FROM "${t}"`);

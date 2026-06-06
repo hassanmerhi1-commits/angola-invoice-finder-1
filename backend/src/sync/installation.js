@@ -3,6 +3,7 @@
  */
 const crypto = require('crypto');
 const db = require('../db');
+const { activeFlagWhere, mainBranchWhere } = require('../lib/sqlDialect');
 
 const ENV_ROLE = (process.env.NEXOR_INSTALLATION_ROLE || '').trim();
 const ENV_MAIN_URL = (process.env.NEXOR_MAIN_API_URL || '').trim();
@@ -39,7 +40,7 @@ async function tableExists(name) {
 async function loadInstallationFromDb() {
   if (!(await tableExists('installations'))) return null;
   const r = await db.query(
-    `SELECT * FROM installations WHERE is_active IS NOT FALSE AND is_active != 0
+    `SELECT * FROM installations WHERE ${activeFlagWhere(db, 'is_active')}
      ORDER BY created_at ASC LIMIT 1`
   );
   return r.rows[0] || null;
@@ -53,7 +54,7 @@ async function getInstallationConfig(force = false) {
 
   const row = await loadInstallationFromDb();
   const mainBranch = await db.query(
-    `SELECT id, city_id, node_role FROM branches WHERE is_main = 1 OR is_main = true LIMIT 1`
+    `SELECT id, city_id, node_role FROM branches WHERE ${mainBranchWhere(db)} LIMIT 1`
   ).catch(() => ({ rows: [] }));
 
   const isMain = !!(mainBranch.rows[0]?.id);
@@ -92,7 +93,7 @@ async function ensureDefaultInstallation(opts = {}) {
   if (existing) return existing;
 
   const mainRes = await db.query(
-    `SELECT id FROM branches WHERE is_main = 1 OR is_main = true ORDER BY created_at LIMIT 1`
+    `SELECT id FROM branches WHERE ${mainBranchWhere(db)} ORDER BY created_at LIMIT 1`
   );
   const mainId = mainRes.rows[0]?.id;
   const role = opts.role || (mainId ? 'main_server' : 'city_server');

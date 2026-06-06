@@ -24,7 +24,11 @@ Write-Host "`nPorts 3000-3009:"
   if ($c) { Write-Host "  LISTEN $_ PID $($c.OwningProcess)" }
 }
 
-Write-Host "`nDone. Start NEXOR ERP once from Start Menu or:"
-Write-Host '  C:\Program Files\NEXOR ERP\NEXOR ERP.exe'
+Write-Host "`nDone. Start NEXOR ERP once from:"
+Write-Host '  C:\NEXOR ERP\Start NEXOR ERP.bat'
+Write-Host '  or Start Menu / C:\Program Files\NEXOR ERP\NEXOR ERP.exe'
 Write-Host "Wait 30 seconds on the login screen, then sign in (admin / changeme if fresh DB)."
-Write-Host "Logs: $env:APPDATA\NEXOR ERP\logs\backend-*.log"
+Write-Host ""
+Write-Host "If login still shows 'Failed to connect to server', run AS ADMINISTRATOR:"
+Write-Host '  scripts\patch-start-menu-app.ps1'
+Write-Host ('Logs: ' + $env:APPDATA + '\NEXOR ERP\logs\backend-*.log')

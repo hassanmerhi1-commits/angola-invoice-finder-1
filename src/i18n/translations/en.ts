@@ -108,6 +108,8 @@ export const en = {
     tabPriceChanges: "Price changes",
     briefingLoading: "Loading…",
     briefingEmptyDue: "No receipts or payments due in the next 30 days.",
+    briefingEmptyReceivables: "No open customer invoices to collect.",
+    briefingEmptyPayables: "No open supplier invoices to pay.",
     briefingEmptyLowStock: "No products below minimum stock.",
     briefingEmptyToPrint: "No sales invoices waiting to be printed.",
     briefingEmptyPriceChanges: "No purchase invoices with selling-price updates in the last 14 days.",

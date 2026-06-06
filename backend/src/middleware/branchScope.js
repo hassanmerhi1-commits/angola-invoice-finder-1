@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+const { headOfficeBranchWhere, branchExistsWhere } = require('../lib/sqlDialect');
 const { JWT_SECRET } = require('../jwtSecret');
 const { getBearerToken } = require('./requireAdmin');
 
@@ -16,7 +17,7 @@ async function loadHeadOfficeBranch() {
   const result = await db.query(
     `SELECT id, is_main
      FROM branches
-     WHERE COALESCE(is_main, 0) != 0 AND COALESCE(is_active, 1) != 0
+     WHERE ${headOfficeBranchWhere(db)}
      ORDER BY created_at
      LIMIT 1`,
   );
@@ -29,7 +30,7 @@ async function branchExists(branchId) {
   const result = await db.query(
     `SELECT id, is_main
      FROM branches
-     WHERE id = $1 AND COALESCE(is_active, 1) != 0`,
+     WHERE id = $1 AND ${branchExistsWhere(db)}`,
     [id],
   );
   return result.rows[0] || null;

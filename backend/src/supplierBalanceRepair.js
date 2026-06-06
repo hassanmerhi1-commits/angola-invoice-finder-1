@@ -3,6 +3,8 @@
  * Fixes stale suppliers.balance after purchase returns posted before open-item linking.
  */
 const db = require('./db');
+const { OPEN_ITEM_IS_DEBIT_SQL } = require('./lib/openItemsSql');
+const { createOpenItem, syncSupplierBalanceFromOpenItems } = require('./transactionEngine');
 
 const UPDATE_OPEN_ITEM_REMAINING = `
   UPDATE open_items SET
@@ -410,8 +412,99 @@ async function repairUnallocatedSupplierPayments() {
   return { repaired };
 }
 
+/**
+ * Purchase invoices saved without processTransaction never created supplier open_items.
+ * Creates missing debit open items so AP reports and Payments work.
+ */
+async function backfillMissingSupplierOpenItems() {
+  if (!(await tableExists('open_items')) || !(await tableExists('purchase_invoices'))) {
+    return { created: 0, skipped: 0 };
+  }
+
+  const missing = await db.query(
+    `SELECT pi.id, pi.invoice_number, pi.supplier_id, pi.supplier_name, pi.date, pi.payment_date,
+            pi.total, pi.branch_id, pi.currency
+     FROM purchase_invoices pi
+     LEFT JOIN open_items oi ON oi.document_id = pi.id
+       AND oi.entity_type = 'supplier'
+       AND ${OPEN_ITEM_IS_DEBIT_SQL}
+     WHERE COALESCE(pi.status, 'confirmed') NOT IN ('cancelled', 'voided', 'draft')
+       AND COALESCE(pi.total, 0) > 0.01
+       AND TRIM(COALESCE(pi.supplier_id, '')) != ''
+       AND oi.id IS NULL
+     ORDER BY pi.date ASC
+     LIMIT 500`,
+  );
+
+  const rows = missing.rows || [];
+  if (!rows.length) return { created: 0, skipped: 0 };
+
+  const client = await db.pool.connect();
+  let created = 0;
+  let skipped = 0;
+  const touchedSuppliers = new Set();
+
+  try {
+    await client.query('BEGIN');
+    for (const pi of rows) {
+      const docDate = String(pi.date || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+      const dueDate = pi.payment_date ? String(pi.payment_date).slice(0, 10) : null;
+      try {
+        await createOpenItem(client, {
+          entityType: 'supplier',
+          entityId: String(pi.supplier_id),
+          documentType: 'invoice',
+          documentId: String(pi.id),
+          documentNumber: String(pi.invoice_number || pi.id),
+          documentDate: docDate,
+          dueDate,
+          originalAmount: Number(pi.total || 0),
+          isDebit: true,
+          branchId: pi.branch_id || null,
+          currency: pi.currency || 'AOA',
+        });
+        created += 1;
+        touchedSuppliers.add(String(pi.supplier_id));
+      } catch (err) {
+        if (/já registado|already|duplicate/i.test(String(err.message || ''))) {
+          skipped += 1;
+          continue;
+        }
+        throw err;
+      }
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  if (touchedSuppliers.size > 0) {
+    const syncClient = await db.pool.connect();
+    try {
+      for (const supplierId of touchedSuppliers) {
+        try {
+          await syncSupplierBalanceFromOpenItems(syncClient, supplierId);
+        } catch (_) {
+          /* best effort */
+        }
+      }
+    } finally {
+      syncClient.release();
+    }
+  }
+
+  if (created > 0) {
+    console.log(`[DB] Backfilled ${created} supplier payable open item(s) from purchase_invoices`);
+  }
+  return { created, skipped };
+}
+
 async function runSupplierBalanceRepair() {
   try {
+    const backfill = await backfillMissingSupplierOpenItems();
     const zeroed = await zeroClearedOpenItemRemainders();
     const misclassified = await fixMisclassifiedSupplierReturnOpenItems();
     const poDeduped = await deduplicateSupplierPoInvoiceOpenItems();
@@ -421,6 +514,7 @@ async function runSupplierBalanceRepair() {
     const netted = await netSupplierOpenItems();
     const balanceSync = await backfillSupplierBalancesFromOpenItems();
     if (
+      backfill.created > 0 ||
       zeroed.fixed > 0 ||
       misclassified.fixed > 0 ||
       poCleared.cleared > 0 ||
@@ -430,10 +524,10 @@ async function runSupplierBalanceRepair() {
       balanceSync.updated > 0
     ) {
       console.log(
-        `[DB] Supplier balance repair: ${zeroed.fixed} cleared-row fix(es), ${misclassified.fixed} return reclass, ${poDeduped.cleared} PO/FC dedup(s), ${poCleared.cleared} orphan PO clear(s), ${linkRepair.repaired} return link(s), ${paymentRepair.repaired} payment alloc(s), ${netted.repaired} credit/debit net(s), ${balanceSync.updated} balance sync(s)`
+        `[DB] Supplier balance repair: ${backfill.created} payable backfill(s), ${zeroed.fixed} cleared-row fix(es), ${misclassified.fixed} return reclass, ${poDeduped.cleared} PO/FC dedup(s), ${poCleared.cleared} orphan PO clear(s), ${linkRepair.repaired} return link(s), ${paymentRepair.repaired} payment alloc(s), ${netted.repaired} credit/debit net(s), ${balanceSync.updated} balance sync(s)`
       );
     }
-    return { ...zeroed, ...misclassified, ...poCleared, ...linkRepair, ...paymentRepair, ...netted, ...balanceSync };
+    return { ...backfill, ...zeroed, ...misclassified, ...poCleared, ...linkRepair, ...paymentRepair, ...netted, ...balanceSync };
   } catch (error) {
     console.warn('[DB] Supplier balance repair skipped:', error.message);
     return { repaired: 0, updated: 0, error: error.message };
@@ -442,6 +536,7 @@ async function runSupplierBalanceRepair() {
 
 module.exports = {
   runSupplierBalanceRepair,
+  backfillMissingSupplierOpenItems,
   repairSupplierReturnOpenItems,
   repairUnallocatedSupplierPayments,
   backfillSupplierBalancesFromOpenItems,

@@ -3,7 +3,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Download, FileText, Clock, AlertTriangle, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { Download, FileText, Clock, AlertTriangle, AlertCircle, CheckCircle, Loader2, Wrench } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
+import { isDemoMode } from '@/lib/api/config';
 import { format, differenceInDays, parseISO } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { exportToExcel } from '@/lib/excel';
@@ -46,20 +48,56 @@ export default function AccountsPayableReport() {
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [repairing, setRepairing] = useState(false);
   const [payableLines, setPayableLines] = useState<any[]>([]);
 
+  const loadPayables = async () => {
+    setLoading(true);
+    const res = await api.payments.payablesAging();
+    setPayableLines(Array.isArray(res.data) ? res.data : []);
+    setLoading(false);
+  };
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      const res = await api.payments.payablesAging();
-      if (!cancelled) {
-        setPayableLines(Array.isArray(res.data) ? res.data : []);
-        setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+    void loadPayables();
   }, []);
+
+  const handleRepairPayables = async () => {
+    if (isDemoMode()) {
+      toast({
+        title: t.common.error,
+        description: language === 'pt' ? 'Reparação só disponível com servidor ligado.' : 'Repair requires a connected server.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setRepairing(true);
+    try {
+      const res = await api.payments.repairSupplierPayables();
+      if (res.error) throw new Error(res.error);
+      const created = res.data?.backfill?.created ?? 0;
+      await loadPayables();
+      toast({
+        title: language === 'pt' ? 'Contas a pagar actualizadas' : 'Accounts payable updated',
+        description:
+          language === 'pt'
+            ? created > 0
+              ? `${created} documento(s) de compra ligado(s) a contas a pagar.`
+              : 'Nenhum documento em falta encontrado; lista actualizada.'
+            : created > 0
+              ? `Linked ${created} purchase invoice(s) to payables.`
+              : 'No missing documents found; list refreshed.',
+      });
+    } catch (e) {
+      toast({
+        title: t.common.error,
+        description: e instanceof Error ? e.message : String(e),
+        variant: 'destructive',
+      });
+    } finally {
+      setRepairing(false);
+    }
+  };
 
   const payableReport = useMemo((): PayableEntry[] => {
     const today = new Date();
@@ -256,8 +294,29 @@ export default function AccountsPayableReport() {
             <TableBody>
               {payableReport.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                    {language === 'pt' ? 'Nenhuma dívida em aberto a fornecedores' : 'No open supplier payables'}
+                  <TableCell colSpan={8} className="text-center py-8">
+                    <p className="text-muted-foreground mb-3">
+                      {language === 'pt'
+                        ? 'Nenhuma dívida em aberto a fornecedores. Se existem facturas de compra confirmadas, pode sincronizar contas a pagar.'
+                        : 'No open supplier payables. If you have confirmed purchase invoices, you can sync payables from them.'}
+                    </p>
+                    {!isDemoMode() && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={repairing || loading}
+                        onClick={() => void handleRepairPayables()}
+                      >
+                        {repairing ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Wrench className="h-4 w-4" />
+                        )}
+                        {language === 'pt' ? 'Sincronizar de facturas de compra' : 'Sync from purchase invoices'}
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ) : (

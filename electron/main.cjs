@@ -181,10 +181,18 @@ async function ensureEmbeddedBackendRunningIfNeeded() {
   try {
     if (getEmbeddedExpressPort()) return;
     const ipConfig = parseIPFile();
-    if (!ipConfig.valid || !ipConfig.isServer || !ipConfig.path) return;
+    const { loadDatabaseEnv } = require('./databaseConfig.cjs');
+    const dbEnv = loadDatabaseEnv();
+    const postgresServer = dbEnv.engine === 'postgres' && !!dbEnv.databaseUrl;
+    const sqlitePath = ipConfig.path ? String(ipConfig.path).trim() : null;
+    const isLocalServer =
+      ipConfig.valid
+      && ipConfig.isServer
+      && (ipConfig.usePostgres || postgresServer || !!sqlitePath);
+    if (!isLocalServer) return;
     console.warn('[DB→Express] Embedded ERP HTTP not listening — starting backend process…');
     cachedExpressProbePort = null;
-    const r = await backendManager.start({ mode: 'server', sqlitePath: ipConfig.path.trim() });
+    const r = await backendManager.start({ mode: 'server', sqlitePath: sqlitePath || null });
     if (r?.started && r.port) {
       await delay(800);
     } else if (r?.error) {
@@ -249,19 +257,25 @@ ipcMain.on('backend:getHttpOriginSync', (event) => {
 // ============= SINGLE-INSTANCE LOCK (Phase 2) =============
 // Prevent a second .exe launch from spawning a duplicate Express backend or
 // stealing the same port. Second launch focuses the existing window instead.
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+// Dev (`npm run electron:dev`) skips the lock so it can run beside the installed app.
+const isElectronDev =
+  process.env.ELECTRON_DEV === 'true'
+  || process.env.NODE_ENV === 'development';
+const gotSingleInstanceLock = isElectronDev || app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   console.log('[Startup] Another NEXOR ERP instance is already running — exiting.');
   app.quit();
   process.exit(0);
 }
-app.on('second-instance', () => {
-  if (typeof mainWindow !== 'undefined' && mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  }
-});
+if (!isElectronDev) {
+  app.on('second-instance', () => {
+    if (typeof mainWindow !== 'undefined' && mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
 
 // Backend port chosen by backendManager — exposed to renderer via preload.
 let backendPort = null;
@@ -623,11 +637,13 @@ function parseIPFile() {
       }
       return { valid: true, path: dbPath, isServer: true };
     }
-    // Legacy server mode - postgresql URL -> migrate to file DB default
+    // PostgreSQL server — connection string lives in C:\NEXOR ERP\database.env (not IP file)
     if (content.startsWith('postgresql://') || content.startsWith('postgres://')) {
-      console.log('[IP] PostgreSQL URL detected, migrating to SQLite .db mode');
-      try { fs.writeFileSync(IP_FILE_PATH, DEFAULT_NEXOR_PATH, 'utf-8'); } catch (e) {}
-      return { valid: true, path: DEFAULT_NEXOR_PATH, isServer: true };
+      console.log('[IP] PostgreSQL URL in IP file — use database.env; treating as server (API backend)');
+      return { valid: true, path: null, isServer: true, usePostgres: true };
+    }
+    if (/^postgres$/i.test(content)) {
+      return { valid: true, path: null, isServer: true, usePostgres: true };
     }
     // Hostname/IP — client unless it is this machine (common misconfig on server PCs)
     const clientHost = parseClientHostFromIpContent(content);
@@ -824,6 +840,10 @@ async function dbGetAll(table) {
     }
     if (table === 'journal_entries') {
       const r = await requestExpressJson('GET', '/api/journal-entries', null);
+      if (r && r.status === 200 && Array.isArray(r.json)) return r.json;
+    }
+    if (table === 'proformas') {
+      const r = await requestExpressJson('GET', '/api/proformas', null);
       if (r && r.status === 200 && Array.isArray(r.json)) return r.json;
     }
     return [];
@@ -1102,6 +1122,17 @@ async function dbDelete(table, id, companyId = null) {
     }
     if (table === 'products' && id) {
       const r = await requestExpressJson('DELETE', `/api/products/${encodeURIComponent(id)}`, null);
+      if (r && r.status >= 200 && r.status < 300) {
+        try {
+          broadcastUpdate(table, 'delete', id, companyId);
+        } catch (_) {}
+        return { success: true };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
+    if (table === 'proformas' && id) {
+      const r = await requestExpressJson('DELETE', `/api/proformas/${encodeURIComponent(id)}`, null);
       if (r && r.status >= 200 && r.status < 300) {
         try {
           broadcastUpdate(table, 'delete', id, companyId);
@@ -1592,7 +1623,21 @@ function repairIPFileForServerRole() {
   if (saved?.role !== 'server') return null;
 
   const ip = parseIPFile();
-  if (ip.valid && ip.isServer && ip.path) return ip.path;
+  if (ip.valid && ip.isServer && (ip.path || ip.usePostgres)) return ip.path || null;
+
+  const { loadDatabaseEnv } = require('./databaseConfig.cjs');
+  const dbEnv = loadDatabaseEnv();
+  if (dbEnv.engine === 'postgres' && dbEnv.databaseUrl) {
+    try {
+      if (!ip.valid || !ip.usePostgres) {
+        fs.writeFileSync(IP_FILE_PATH, 'postgres', 'utf-8');
+        console.log('[IP] Repaired server IP file → postgres (database.env)');
+      }
+    } catch (e) {
+      console.warn('[IP] Could not write postgres marker:', e.message);
+    }
+    return null;
+  }
 
   let dbPath = saved?.serverConfig?.databasePath || DEFAULT_NEXOR_PATH;
   if (!/\.db$/i.test(dbPath)) dbPath = DEFAULT_NEXOR_PATH;
@@ -1612,6 +1657,18 @@ function resolveStartupBackendPlan(dbResult) {
   repairIPFileForServerRole();
   const ip = parseIPFile();
   const saved = readSetupConfigFromDisk();
+  const { loadDatabaseEnv } = require('./databaseConfig.cjs');
+  const dbEnv = loadDatabaseEnv();
+
+  if (dbEnv.engine === 'postgres' && dbEnv.databaseUrl) {
+    return { mode: 'server', sqlitePath: null, usePostgres: true };
+  }
+  if (ip.valid && ip.isServer && ip.usePostgres) {
+    return { mode: 'server', sqlitePath: null, usePostgres: true, needsConfig: !!dbEnv.error || !dbEnv.databaseUrl };
+  }
+  if (dbResult?.mode === 'server' && dbResult?.usePostgres) {
+    return { mode: 'server', sqlitePath: null, usePostgres: true, needsConfig: !!dbResult.needsConfig };
+  }
 
   const finalizeSqlite = (rawPath) => {
     const canonical = pickCanonicalSqlitePath(rawPath || DEFAULT_NEXOR_PATH);
@@ -1625,6 +1682,9 @@ function resolveStartupBackendPlan(dbResult) {
     return canonical;
   };
 
+  if (ip.valid && ip.isServer && ip.usePostgres) {
+    return { mode: 'server', sqlitePath: null, usePostgres: true };
+  }
   if (ip.valid && ip.isServer && ip.path) {
     return { mode: 'server', sqlitePath: finalizeSqlite(ip.path) };
   }
@@ -1641,6 +1701,9 @@ function resolveStartupBackendPlan(dbResult) {
   }
   if (dbResult?.mode === 'client') {
     return { mode: 'client', sqlitePath: null };
+  }
+  if (dbResult?.needsConfig && dbResult?.mode === 'server' && dbResult?.usePostgres) {
+    return { mode: 'server', sqlitePath: null, usePostgres: true, needsConfig: true };
   }
   if (dbResult?.needsConfig || !ip.valid) {
     return { mode: 'standalone', sqlitePath: finalizeSqlite(DEFAULT_NEXOR_PATH) };
@@ -1668,17 +1731,43 @@ async function initDatabase() {
     return { success: true, mode: 'client', serverAddress };
   }
 
-  // Server mode - connect to local .nexor file
-  pgConnectionString = ipConfig.path || DEFAULT_NEXOR_PATH;
   isServerMode = true;
   serverAddress = null;
+
+  const { loadDatabaseEnv } = require('./databaseConfig.cjs');
+  const dbEnv = loadDatabaseEnv();
+  if (ipConfig.usePostgres || (dbEnv.engine === 'postgres' && dbEnv.databaseUrl)) {
+    if (dbEnv.error) {
+      return { success: false, error: dbEnv.error, mode: 'server', needsConfig: true };
+    }
+    if (!dbEnv.databaseUrl) {
+      return {
+        success: false,
+        error: 'Create C:\\NEXOR ERP\\database.env with DATABASE_URL (see database.env.example)',
+        mode: 'server',
+        needsConfig: true,
+      };
+    }
+    pgConnectionString = null;
+    console.log('SERVER MODE: PostgreSQL via database.env');
+    try {
+      ensureCompaniesRegistry();
+      startWebSocketServer();
+    } catch (error) {
+      console.warn('[Init] WebSocket/registry:', error.message);
+    }
+    return { success: true, mode: 'server', usePostgres: true, wsPort: WS_PORT };
+  }
+
+  // Server mode — legacy Electron SQLite shim (.nexor / erp.db); API uses SQLITE_PATH from backendManager
+  pgConnectionString = ipConfig.path || DEFAULT_NEXOR_PATH;
 
   try {
     if (pool) { await pool.end().catch(() => {}); pool = null; }
     await connectPostgres(pgConnectionString);
     ensureCompaniesRegistry();
     startWebSocketServer();
-    console.log('SERVER MODE: Connected to .nexor file');
+    console.log('SERVER MODE: Connected to SQLite file', pgConnectionString);
     return { success: true, mode: 'server', path: pgConnectionString, wsPort: WS_PORT };
   } catch (error) {
     console.error('Error initializing database:', error);
@@ -1793,7 +1882,22 @@ function loadRendererRoute(targetWindow, route = '/') {
   const source = getRendererSource();
 
   if (source.type === 'dev') {
-    targetWindow.loadURL(`${source.url}/#${normalizedRoute}`);
+    const devUrl = `${source.url}/#${normalizedRoute}`;
+    const handleDevFail = (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) return;
+      targetWindow.webContents.removeListener('did-fail-load', handleDevFail);
+      console.error('[Dev] Vite UI failed to load:', errorDescription, validatedURL || devUrl);
+      showRendererRecoveryScreen(
+        targetWindow,
+        `Dev UI not reachable (${errorDescription || errorCode}). `
+          + 'Keep this terminal open, ensure "npm run dev" is running on port 18080, then reload (Ctrl+R).',
+      );
+    };
+    targetWindow.webContents.once('did-fail-load', handleDevFail);
+    targetWindow.loadURL(devUrl).catch((error) => {
+      console.error('[Dev] loadURL failed:', error?.message || error);
+      showRendererRecoveryScreen(targetWindow, error?.message || 'Dev UI load failed');
+    });
     return;
   }
 
@@ -2128,9 +2232,6 @@ app.whenReady().then(async () => {
   const backendMode = startupPlan.mode;
   const backendSqlitePath = startupPlan.sqlitePath;
   console.log('[Init] Backend plan:', startupPlan);
-
-  // File-first mode: no PostgreSQL env wiring.
-  delete process.env.DATABASE_URL;
 
   // Phase 5: forward backend health events from backendManager → renderer.
   // Single status channel; payload shape: { state, detail?, port?, mode?, code?, fails?, attempts?, ts }

@@ -1,10 +1,12 @@
 // Pro Forma storage and management for NEXOR ERP
-// DUAL-MODE: Electron → DB + localStorage mirror | Web → localStorage
+// API-first (PostgreSQL) with localStorage mirror for offline / legacy
 import { ProForma, ProFormaItem } from '@/types/proforma';
 import { isElectronMode, dbGetAll, dbInsert, dbDelete as dbDeleteRow, lsGet, lsSet } from '@/lib/dbHelper';
 import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
+import { api } from '@/lib/api/client';
 
 const STORAGE_KEY = 'kwanzaerp_proformas';
+let localMigrationDone = false;
 
 function readLocalProformas(): ProForma[] {
   return lsGet<ProForma[]>(STORAGE_KEY, []);
@@ -29,7 +31,7 @@ function removeLocalProforma(id: string): void {
 function attachItemsToProforma(row: any, allItems: any[]): ProForma {
   const base = mapProformaFromDb(row);
   if (Array.isArray(row.items) && row.items.length > 0) {
-    return { ...base, items: row.items };
+    return { ...base, items: row.items.map(mapProformaItemFromDb) };
   }
   return {
     ...base,
@@ -39,8 +41,55 @@ function attachItemsToProforma(row: any, allItems: any[]): ProForma {
   };
 }
 
-// Pro Forma CRUD
-export async function getProFormas(branchId?: string): Promise<ProForma[]> {
+function sortProformas(list: ProForma[]): ProForma[] {
+  return [...list].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
+function filterByBranch(list: ProForma[], branchId?: string): ProForma[] {
+  if (!branchId) return list;
+  const key = String(branchId).trim();
+  return list.filter((p) => String(p.branchId || '').trim() === key);
+}
+
+async function fetchProformasFromApi(branchId?: string): Promise<ProForma[] | null> {
+  try {
+    const res = await api.proformas.list(branchId);
+    if (res.error) {
+      console.warn('[proforma] API list failed:', res.error);
+      return null;
+    }
+    if (!Array.isArray(res.data)) return null;
+    return sortProformas(res.data.map((row) => mapProformaFromDb(row)));
+  } catch (e) {
+    console.warn('[proforma] API list error:', e);
+    return null;
+  }
+}
+
+/** One-time push of browser localStorage proformas to server after Postgres cutover. */
+async function migrateLocalProformasToApi(branchId?: string): Promise<void> {
+  if (localMigrationDone) return;
+  localMigrationDone = true;
+  const local = filterByBranch(readLocalProformas(), branchId);
+  if (local.length === 0) return;
+  try {
+    const remote = await fetchProformasFromApi(branchId);
+    if (remote === null) return;
+    if (remote.length > 0) return;
+    for (const pf of local) {
+      const res = await api.proformas.create(pf);
+      if (res.error) {
+        console.warn('[proforma] local migration failed for', pf.id, res.error);
+      }
+    }
+  } catch (e) {
+    console.warn('[proforma] local migration error:', e);
+  }
+}
+
+async function loadLegacyProformas(branchId?: string): Promise<ProForma[]> {
   const localProformas = readLocalProformas();
 
   if (isElectronMode()) {
@@ -51,20 +100,34 @@ export async function getProFormas(branchId?: string): Promise<ProForma[]> {
     for (const pf of [...dbProformas, ...localProformas]) {
       byId.set(pf.id, pf);
     }
-    let proformas = Array.from(byId.values());
-    if (branchId) {
-      proformas = proformas.filter((p) => p.branchId === branchId);
-    }
-    return proformas.sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+    return sortProformas(filterByBranch(Array.from(byId.values()), branchId));
   }
 
-  const proformas = localProformas;
-  return branchId ? proformas.filter((p) => p.branchId === branchId) : proformas;
+  return sortProformas(filterByBranch(localProformas, branchId));
+}
+
+// Pro Forma CRUD
+export async function getProFormas(branchId?: string): Promise<ProForma[]> {
+  await migrateLocalProformasToApi(branchId);
+  const apiList = await fetchProformasFromApi(branchId);
+  if (apiList !== null) {
+    for (const pf of apiList) {
+      writeLocalProforma(pf);
+    }
+    return apiList;
+  }
+  return loadLegacyProformas(branchId);
 }
 
 export async function getProFormaById(id: string): Promise<ProForma | undefined> {
+  try {
+    const res = await api.proformas.get(id);
+    if (res.data && !res.error) {
+      return mapProformaFromDb(res.data);
+    }
+  } catch {
+    /* fallback */
+  }
   const proformas = await getProFormas();
   return proformas.find((p) => p.id === id);
 }
@@ -77,7 +140,24 @@ export async function saveProForma(proforma: ProForma): Promise<void> {
     updatedAt: now,
   };
 
-  if (isElectronMode()) {
+  let savedOnApi = false;
+  try {
+    const existing = await api.proformas.get(normalized.id);
+    const res = existing.data && !existing.error
+      ? await api.proformas.update(normalized)
+      : await api.proformas.create(normalized);
+    if (res.data && !res.error) {
+      const mapped = mapProformaFromDb(res.data);
+      writeLocalProforma(mapped);
+      savedOnApi = true;
+    } else if (res.error) {
+      console.warn('[proforma] API save failed:', res.error);
+    }
+  } catch (e) {
+    console.warn('[proforma] API save error:', e);
+  }
+
+  if (!savedOnApi && isElectronMode()) {
     const dbPayload = {
       ...mapProformaToDb(normalized),
       ...normalized,
@@ -107,14 +187,21 @@ export async function saveProForma(proforma: ProForma): Promise<void> {
         });
       }
     }
-    writeLocalProforma(normalized);
-    return;
   }
 
   writeLocalProforma(normalized);
 }
 
 export async function deleteProForma(id: string): Promise<void> {
+  try {
+    const res = await api.proformas.delete(id);
+    if (!res.error) {
+      removeLocalProforma(id);
+      return;
+    }
+  } catch {
+    /* fallback */
+  }
   if (isElectronMode()) {
     await dbDeleteRow('proformas', id);
   }
@@ -207,7 +294,7 @@ function mapProformaFromDb(row: any): ProForma {
       clientId: row.clientId || row.client_id || '',
       clientName: row.clientName || row.client_name || '',
       clientNif: row.clientNif || row.client_nif || '',
-      items: Array.isArray(row.items) ? row.items : [],
+      items: Array.isArray(row.items) ? row.items.map(mapProformaItemFromDb) : [],
       subtotal: Number(row.subtotal ?? 0),
       taxAmount: Number(row.taxAmount ?? row.tax_amount ?? 0),
       discount: Number(row.discount ?? 0),
@@ -240,7 +327,7 @@ function mapProformaFromDb(row: any): ProForma {
     clientId: row.client_id || row.clientId || '',
     clientName: row.client_name || row.clientName || '',
     clientNif: row.client_nif || row.clientNif || '',
-    items: [],
+    items: Array.isArray(row.items) ? row.items.map(mapProformaItemFromDb) : [],
     subtotal: Number(row.subtotal || 0),
     taxAmount: Number(row.tax_amount ?? row.taxAmount ?? 0),
     discount: Number(row.discount || 0),

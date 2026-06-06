@@ -219,6 +219,10 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     }
 
     if (apiProducts !== null) {
+      // Light picker lists (PO/PI/sales) only need cost/SKU — skip slow PVP hint fetch.
+      if (listOptions?.light && !isDemoMode()) {
+        return filterProductsForApiScope(apiProducts, branchId, catalogBranchIds);
+      }
       let hints: Record<string, number> = readSellingPriceHintsSession();
       if (Object.keys(hints).length === 0) {
         try {
@@ -231,10 +235,6 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
         applyCanonicalSellingPrices(apiProducts),
         hints,
       );
-      // Light inventory list is already deduped on the server — skip O(n²) client merge.
-      if (listOptions?.light && !isDemoMode()) {
-        return filterProductsForApiScope(withCanonicalPrices, branchId, catalogBranchIds);
-      }
       const dedupedApi = dedupeProductsBySku(withCanonicalPrices, branchId, catalogBranchIds);
       // API is source of truth — merging Electron DB / localStorage re-shows duplicate SKUs after login.
       if (!isDemoMode()) {
@@ -386,20 +386,26 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     } catch (e) {
       console.warn('[useProducts] local cache mirror after API create failed:', e);
     }
-    if (options?.skipListMerge) {
-      mergeSavedIntoProductList(savedProduct, writeGeneration);
-    } else {
-      let merged = await fetchMergedProductList();
-      if (!merged.some((p) => p.id === savedProduct.id)) {
-        merged = dedupeProductsBySku([savedProduct, ...merged], branchId, catalogBranchIds);
-      }
-      if (writeGeneration === listGenerationRef.current) {
-        setProducts(merged);
-      }
+    mergeSavedIntoProductList(savedProduct, writeGeneration);
+    if (!options?.skipListMerge) {
+      void fetchMergedProductList()
+        .then((merged) => {
+          let list = merged;
+          if (!list.some((p) => p.id === savedProduct.id)) {
+            list = dedupeProductsBySku([savedProduct, ...list], branchId, catalogBranchIds);
+          }
+          if (writeGeneration === listGenerationRef.current) {
+            setProducts(list);
+          }
+        })
+        .catch(() => { /* list already has optimistic row */ });
     }
     const changedBranch =
       savedProduct.branchId || branchId || catalogBranchIds[0] || 'all';
-    dispatchProductsChanged(changedBranch, options);
+    dispatchProductsChanged(changedBranch, {
+      ...options,
+      lightweightChangedEvent: options?.lightweightChangedEvent ?? true,
+    });
     return savedProduct;
   }, [
     branchId,

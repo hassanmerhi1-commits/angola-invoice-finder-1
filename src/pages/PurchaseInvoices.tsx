@@ -445,11 +445,12 @@ async function syncPurchaseInvoiceDocument(
 
 // ─────────── Product Picker Dialog ───────────
 function ProductPickerDialog({
-  open, onClose, products, onSelect, onCreateNew,
+  open, onClose, products, productsLoading, onSelect, onCreateNew,
 }: {
   open: boolean;
   onClose: () => void;
   products: Product[];
+  productsLoading?: boolean;
   onSelect: (p: Product) => void;
   onCreateNew: () => void;
 }) {
@@ -514,7 +515,14 @@ function ProductPickerDialog({
                   <TableCell className="text-xs">{p.category}</TableCell>
                 </TableRow>
               ))}
-              {filtered.length === 0 && (
+              {productsLoading && products.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                    {t.common.loading}
+                  </TableCell>
+                </TableRow>
+              )}
+              {!productsLoading && filtered.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     {t.purchaseInvoicesUi.poNoProductsFound}
@@ -1329,18 +1337,13 @@ export default function PurchaseInvoices() {
     return String(currentBranch?.id || '').trim() || undefined;
   }, [poCreateOpen, poForm.branchId, purchaseWarehouseId, apiBranchId, currentBranch?.id]);
 
-  const { products, addProduct: addProductToStock, refreshProducts } = useProducts(productsBranchId);
+  const { products, productsLoading, addProduct: addProductToStock, refreshProducts } = useProducts(
+    productsBranchId,
+    { light: true },
+  );
 
   // Purchase orders
   const { orders, createOrder, receiveOrder, cancelOrder, refreshOrders } = usePurchaseOrders(apiBranchId);
-
-  useEffect(() => {
-    if (mode === 'create') void refreshProducts();
-  }, [mode, productsBranchId, refreshProducts]);
-
-  useEffect(() => {
-    if (poCreateOpen) void refreshProducts();
-  }, [poCreateOpen, productsBranchId, refreshProducts]);
 
   useEffect(() => {
     if (!poCreateOpen) {
@@ -2794,7 +2797,12 @@ export default function PurchaseInvoices() {
                             p.isActive !== false &&
                             (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode?.toLowerCase().includes(q))
                           ).slice(0, 80);
-                          if (filtered.length === 0) return <div className="p-3 text-sm text-muted-foreground text-center">{t.purchaseInvoicesUi.poNoProductsFound}</div>;
+                          if (productsLoading && products.length === 0) {
+                            return <div className="p-3 text-sm text-muted-foreground text-center">{t.common.loading}</div>;
+                          }
+                          if (filtered.length === 0) {
+                            return <div className="p-3 text-sm text-muted-foreground text-center">{t.purchaseInvoicesUi.poNoProductsFound}</div>;
+                          }
                           return filtered.map(p => (
                             <div
                               key={p.id}
@@ -3520,6 +3528,7 @@ export default function PurchaseInvoices() {
         open={productPickerOpen}
         onClose={() => setProductPickerOpen(false)}
         products={products}
+        productsLoading={productsLoading}
         onSelect={handleAddProduct}
         onCreateNew={() => setShowCreateProduct(true)}
       />
@@ -3527,6 +3536,7 @@ export default function PurchaseInvoices() {
         open={poProductPickerOpen}
         onClose={() => setPoProductPickerOpen(false)}
         products={products}
+        productsLoading={productsLoading}
         onSelect={(p) => {
           setPoNewItem(prev => ({ ...prev, productId: p.id, unitCost: p.cost || 0 }));
           setPoProductPickerOpen(false);
@@ -3542,6 +3552,7 @@ export default function PurchaseInvoices() {
         open={showCreateProduct}
         onOpenChange={setShowCreateProduct}
         product={null}
+        scopeBranchId={productsBranchId}
         defaultSupplierName={String((form as { supplierName?: string }).supplierName || '')}
         onSave={async (newProduct) => {
           const savedProduct = await addProductToStock(newProduct);

@@ -143,6 +143,21 @@ async function fetchPendingForDestination(destination, limit = 20) {
   const cfg = await getInstallationConfig();
   if (cfg.isMainServer && destination === 'main') return [];
 
+  if (db.engine === 'postgres') {
+    const destJson = JSON.stringify([destination]);
+    const r = await db.query(
+      `SELECT * FROM sync_events
+       WHERE status IN ('pending', 'failed')
+         AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
+         AND destinations @> $1::jsonb
+         AND NOT (COALESCE(destinations_done, '[]'::jsonb) @> $1::jsonb)
+       ORDER BY created_at ASC
+       LIMIT $2`,
+      [destJson, limit]
+    );
+    return r.rows;
+  }
+
   const r = await db.query(
     `SELECT * FROM sync_events
      WHERE status IN ('pending', 'failed')

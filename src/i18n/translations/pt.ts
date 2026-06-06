@@ -117,6 +117,8 @@ export const pt: TranslationKeys = {
     briefingOpenInvoices: "Facturas",
     briefingOpenPurchaseInvoices: "Facturas de compra",
     briefingEmptyDue: "Sem valores a receber ou a pagar nos próximos 30 dias.",
+    briefingEmptyReceivables: "Sem facturas de cliente em aberto para receber.",
+    briefingEmptyPayables: "Sem facturas de fornecedor em aberto para pagar.",
     briefingEmptyLowStock: "Nenhum produto abaixo do stock mínimo.",
     briefingOverdue: "Em atraso",
     briefingDueToday: "Vence hoje",

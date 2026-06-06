@@ -1,7 +1,0 @@
-# This folder contains the built webapp for hot updates
-# 
-# To deploy updates:
-# 1. Build the frontend: npm run build
-# 2. Copy dist/* files here
-# 3. Optionally create version.json with: {"version": "1.0.1", "buildDate": "2024-01-23"}
-# 4. All connected Electron apps will load the new version on next reload

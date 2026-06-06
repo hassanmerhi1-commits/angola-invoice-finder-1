@@ -10,6 +10,7 @@ import {
   fetchSellingPriceHints,
   invalidateSellingPriceHintsCache,
   mergeSellingPriceHintsIntoAggregates,
+  readSellingPriceHintsSession,
 } from '@/lib/sellingPriceHints';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -162,12 +163,11 @@ export default function Inventory() {
   });
 
   const {
-    products: catalogProducts,
     refreshProducts,
     updateProduct,
     addProduct,
     deleteProduct,
-  } = useProducts(catalogListBranchId, { light: true, enabled: true });
+  } = useProducts(catalogListBranchId, { light: true, enabled: false });
 
   const productsById = useMemo(
     () => new Map(inventoryRows.map((p) => [p.id, p])),
@@ -175,11 +175,9 @@ export default function Inventory() {
   );
 
   const [allBranchProducts, setAllBranchProducts] = useState<Record<string, Product[]>>({});
-  const [sellingPriceHints, setSellingPriceHints] = useState<Record<string, number>>({});
-
-  useEffect(() => {
-    void fetchSellingPriceHints().then(setSellingPriceHints);
-  }, []);
+  const [sellingPriceHints, setSellingPriceHints] = useState<Record<string, number>>(
+    () => readSellingPriceHintsSession(),
+  );
 
   const mapApiRowToProduct = useCallback((p: any): Product => ({
     id: p.id,
@@ -229,11 +227,6 @@ export default function Inventory() {
     );
   }, [canSwitchBranch, branches, allBranches, mapApiRowToProduct]);
 
-  useEffect(() => {
-    if (!canSwitchBranch) return;
-    void loadPerBranchBreakdown();
-  }, [canSwitchBranch, inventoryScopeId, loadPerBranchBreakdown]);
-
   const reloadInventoryList = useCallback(async () => {
     if (listBranchId && !isHeadOffice) {
       try {
@@ -246,14 +239,6 @@ export default function Inventory() {
     invalidateSellingPriceHintsCache();
     await fetchSellingPriceHints(true).then(setSellingPriceHints);
     await refreshInventoryGrid();
-  }, [listBranchId, isHeadOffice, refreshInventoryGrid]);
-
-  useEffect(() => {
-    if (!listBranchId || isHeadOffice) return;
-    void api.products.repairFilialStock(listBranchId).then(() => {
-      invalidateInventoryGridCache(listBranchId, false);
-      void refreshInventoryGrid();
-    });
   }, [listBranchId, isHeadOffice, refreshInventoryGrid]);
 
   useEffect(() => {
@@ -337,30 +322,22 @@ export default function Inventory() {
   );
 
   const priceAggregateSource = useMemo(() => {
-    const rows = [...inventoryRows, ...catalogProducts];
+    const rows = [...inventoryRows];
     for (const branchRows of Object.values(allBranchProducts)) {
       rows.push(...branchRows);
     }
     return rows;
-  }, [inventoryRows, catalogProducts, allBranchProducts]);
+  }, [inventoryRows, allBranchProducts]);
 
   const skuPriceAggregates = useMemo(() => {
     const agg = buildCanonicalSkuAggregates(priceAggregateSource);
     return mergeSellingPriceHintsIntoAggregates(agg, sellingPriceHints);
   }, [priceAggregateSource, sellingPriceHints]);
 
-  const displayProducts = useMemo(() => {
-    const deduped = dedupeProductsForDisplay(
-      inventoryRows,
-      listBranchId,
-      catalogBranchIds,
-    );
-    return deduped.map((p) => {
-      const key = canonicalProductSku(p.sku).toLowerCase();
-      const agg = key ? skuPriceAggregates.get(key) : undefined;
-      return agg ? applyCanonicalSkuAggregates(p, agg) : p;
-    });
-  }, [inventoryRows, listBranchId, catalogBranchIds, skuPriceAggregates]);
+  const displayProducts = useMemo(
+    () => dedupeProductsForDisplay(inventoryRows, listBranchId, catalogBranchIds),
+    [inventoryRows, listBranchId, catalogBranchIds],
+  );
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   /** null = loading/unknown; only true enables delete */
@@ -494,12 +471,6 @@ export default function Inventory() {
       rows = rows.filter((p) => readProductStock(p) <= 0.0001);
     }
 
-    rows = rows.map((p) => {
-      const key = canonicalProductSku(p.sku).toLowerCase();
-      const agg = key ? skuPriceAggregates.get(key) : undefined;
-      return agg ? applyCanonicalSkuAggregates(p, agg) : p;
-    });
-
     const q = listSearch.trim().toLowerCase();
     if (!q) return rows;
 
@@ -517,7 +488,7 @@ export default function Inventory() {
         || supplier.includes(q)
       );
     });
-  }, [displayProducts, stockListFilter, listSearch, skuPriceAggregates]);
+  }, [displayProducts, stockListFilter, listSearch]);
 
   const navigateProduct = useCallback((direction: -1 | 1) => {
     if (!gridProducts.length) return;

@@ -1071,6 +1071,23 @@ export const api = {
     },
   },
 
+  proformas: {
+    list: (branchId?: string) => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/proformas${qs}`);
+    },
+    get: (id: string) => apiFetch<any>(`/proformas/${encodeURIComponent(id)}`),
+    create: (data: any) =>
+      apiFetch<any>('/proformas', { method: 'POST', body: JSON.stringify(data) }),
+    update: (data: any) =>
+      apiFetch<any>(`/proformas/${encodeURIComponent(data.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      apiFetch<any>(`/proformas/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
+
   purchaseInvoices: {
     list: (params?: { branchId?: string; status?: string }) => {
       const sp = new URLSearchParams();
@@ -1268,6 +1285,13 @@ export const api = {
       });
     },
     payablesAging: () => apiFetch<any[]>('/payments/payables-aging'),
+    checklistDues: () =>
+      apiFetch<{ receivables: any[]; payables: any[] }>('/payments/checklist-dues'),
+    repairSupplierPayables: () =>
+      apiFetch<{ backfill: { created: number; skipped: number }; payablesCount: number }>(
+        '/payments/repair-supplier-payables',
+        { method: 'POST' },
+      ),
     receivablesAging: () => apiFetch<any[]>('/payments/receivables-aging'),
     create: (data: any) => {
       return apiFetch<any>('/payments', { method: 'POST', body: JSON.stringify(data) }).then((res) => {
