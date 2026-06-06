@@ -3,7 +3,7 @@
   "productName": "NEXOR ERP",
   "description": "NEXOR ERP — O futuro é construído com nós",
   "private": true,
-  "version": "1.0.47",
+  "version": "1.0.48",
   "author": "NEXOR ERP",
   "type": "module",
   "main": "electron/main.cjs",
