@@ -18,7 +18,13 @@ async function loadHeadOfficeBranch() {
     `SELECT id, is_main
      FROM branches
      WHERE ${headOfficeBranchWhere(db)}
-     ORDER BY created_at
+     ORDER BY
+       CASE
+         WHEN UPPER(TRIM(COALESCE(code, ''))) = 'MAIN' THEN 0
+         WHEN name ILIKE '%main branch%' THEN 1
+         ELSE 2
+       END,
+       created_at
      LIMIT 1`,
   );
   return result.rows[0] || null;
@@ -115,12 +121,18 @@ async function attachUserBranchScope(req, res, next) {
  * Resolve branchId for list queries (respects filial lock server-side).
  * @returns {string|null|undefined} branch UUID, null = all branches (head office only), undefined = no access
  */
+function normalizeRequestedBranchId(requestedBranchId) {
+  const raw = requestedBranchId != null ? String(requestedBranchId).trim() : '';
+  if (!raw || raw === 'all') return '';
+  return raw;
+}
+
 function resolveListBranchId(req, requestedBranchId) {
   const scope = req.branchScope;
   if (scope?.forceBranchId) {
     return scope.forceBranchId;
   }
-  const raw = requestedBranchId != null ? String(requestedBranchId).trim() : '';
+  const raw = normalizeRequestedBranchId(requestedBranchId);
   if (raw) {
     if (scope?.forceBranchId && raw !== scope.forceBranchId) {
       return scope.forceBranchId;
@@ -141,6 +153,7 @@ function resolveWarehouseId(req, requestedWarehouseId) {
 module.exports = {
   attachUserBranchScope,
   resolveListBranchId,
+  normalizeRequestedBranchId,
   resolveWarehouseId,
   normalizeIsMain,
   buildBranchScopeFromUser,

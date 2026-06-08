@@ -33,8 +33,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { 
   FileText, 
   Plus, 
-  Edit, 
-  Trash2, 
   Filter, 
   BarChart3, 
   Eye, 
@@ -340,8 +338,7 @@ export default function Inventory() {
   );
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  /** null = loading/unknown; only true enables delete */
-  const [selectedCanDelete, setSelectedCanDelete] = useState<boolean | null>(null);
+  const [adjustmentBranchId, setAdjustmentBranchId] = useState('');
   const flatCatalog = useMemo(() => {
     const rows = [...inventoryRows];
     for (const branchRows of Object.values(allBranchProducts)) {
@@ -363,6 +360,25 @@ export default function Inventory() {
   }, [canSwitchBranch, allBranchProducts, inventoryRows, listBranchId, currentBranch?.id]);
 
   /** Full catalog for exit search (stock checked when selecting a line, not when searching). */
+  const adjustmentProducts = useMemo(() => {
+    const bid = adjustmentBranchId || listBranchId || currentBranch?.id || '';
+    if (!bid) return inventoryRows;
+    if (bid === (listBranchId || '')) return inventoryRows;
+    const cached = allBranchProducts[bid];
+    if (cached?.length) return cached;
+    return inventoryRows.filter((p) => !p.branchId || p.branchId === bid);
+  }, [adjustmentBranchId, listBranchId, currentBranch?.id, inventoryRows, allBranchProducts]);
+
+  const [productCreateScopeBranchId, setProductCreateScopeBranchId] = useState<string | null>(null);
+
+  const openNewProductDialog = useCallback((branchId?: string) => {
+    setSelectedProduct(null);
+    setProductCreateScopeBranchId(
+      branchId || listBranchId || currentBranch?.id || null,
+    );
+    setDialogOpen(true);
+  }, [listBranchId, currentBranch?.id]);
+
   const stockExitSearchProducts = useMemo(() => {
     if (stockEntrySearchProducts.length > 0) return stockEntrySearchProducts;
     if (flatCatalog.length > 0) return flatCatalog;
@@ -409,31 +425,6 @@ export default function Inventory() {
   const listSearchRef = useRef<HTMLInputElement>(null);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
 
-  useEffect(() => {
-    if (!selectedProduct?.id) {
-      setSelectedCanDelete(null);
-      return;
-    }
-    let cancelled = false;
-    void api.products.canDelete(selectedProduct.id).then((r) => {
-      if (cancelled) return;
-      if (r.data) {
-        setSelectedCanDelete(r.data.deletable);
-        return;
-      }
-      const sku = canonicalProductSku(selectedProduct.sku).toLowerCase();
-      const hasLocal = stockMovements.some(
-        (m) =>
-          m.productId === selectedProduct.id
-          || (m.sku && canonicalProductSku(m.sku).toLowerCase() === sku),
-      );
-      setSelectedCanDelete(!hasLocal);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedProduct?.id, selectedProduct?.sku, stockMovements]);
-
   const attemptDeleteProduct = useCallback(
     async (product: Product) => {
       const check = await api.products.canDelete(product.id);
@@ -447,7 +438,6 @@ export default function Inventory() {
         toast.success(t.inventoryUi.productDeleted);
         if (selectedProduct?.id === product.id) {
           setSelectedProduct(null);
-          setSelectedCanDelete(null);
         }
         void refreshInventoryGrid();
       } catch (err: unknown) {
@@ -594,25 +584,38 @@ export default function Inventory() {
   }, [location.state, navigate]);
 
   const handleSaveProduct = async (product: Product & { preserveStock?: boolean }) => {
+    const targetBranchId =
+      (product.branchId && product.branchId !== 'all' ? product.branchId : null)
+      || listBranchId
+      || inventoryBranch?.id
+      || mainBranch?.id
+      || '';
     const gridProduct: Product = {
       ...product,
-      branchId: product.branchId || listBranchId || inventoryBranch?.id || '',
+      branchId: targetBranchId,
     };
     patchInventoryRow(gridProduct);
-    const writeOpts = { skipListMerge: true, lightweightChangedEvent: true } as const;
+    const writeOpts = { skipListMerge: true, lightweightChangedEvent: false } as const;
+    let savedRow: Product | null = null;
     try {
       if (selectedProduct) {
-        const saved = await updateProduct(product, writeOpts);
-        patchInventoryRow({ ...saved, branchId: saved.branchId || gridProduct.branchId });
+        const saved = await updateProduct(gridProduct, writeOpts);
+        savedRow = { ...saved, branchId: saved.branchId || gridProduct.branchId };
+        patchInventoryRow(savedRow);
         setSelectedProduct((prev) =>
           prev && prev.id === product.id ? { ...prev, ...saved } : prev,
         );
         toast.success(t.productFormUi.productUpdated);
       } else {
-        const saved = await addProduct(product, writeOpts);
-        patchInventoryRow({ ...saved, branchId: saved.branchId || gridProduct.branchId });
+        const saved = await addProduct(gridProduct, writeOpts);
+        savedRow = { ...saved, branchId: saved.branchId || gridProduct.branchId };
+        patchInventoryRow(savedRow);
         toast.success(t.productFormUi.productCreated);
         setSelectedProduct(null);
+      }
+      await reloadInventoryList();
+      if (savedRow) {
+        patchInventoryRow(savedRow);
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
@@ -686,12 +689,21 @@ export default function Inventory() {
   const handleApplyAdjustments = (
     adjustments: { productId: string; newStock: number; difference: number }[],
     reason: string,
-    notes: string
+    notes: string,
+    receiptNumber: string,
+    warehouseId: string,
   ) => {
     const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
+    const noteParts = [
+      reason,
+      receiptNumber ? `${t.inventoryAdjustUi.receiptNumber}: ${receiptNumber}` : null,
+      notes || null,
+    ].filter(Boolean);
+    const movementNotes = noteParts.join(' — ');
     
     adjustments.forEach(adj => {
-      const product = inventoryRows.find(p => p.id === adj.productId);
+      const product = adjustmentProducts.find(p => p.id === adj.productId)
+        ?? inventoryRows.find(p => p.id === adj.productId);
       if (product) {
         // Update product stock
         const updatedProduct = {
@@ -707,12 +719,12 @@ export default function Inventory() {
           productId: adj.productId,
           productName: product.name,
           sku: product.sku,
-          branchId: currentBranch?.id || '',
+          branchId: warehouseId || currentBranch?.id || '',
           type: adj.difference > 0 ? 'IN' : 'OUT',
           quantity: Math.abs(adj.difference),
           reason: 'adjustment',
           createdBy: currentUser?.id || 'system',
-          notes: `${reason}${notes ? ': ' + notes : ''}`,
+          notes: movementNotes,
           createdAt: new Date().toISOString(),
         });
 
@@ -1086,33 +1098,6 @@ export default function Inventory() {
           <Plus className="w-3 h-3" />
           {t.common.new}
         </Button>
-        <Button 
-          variant="outline" 
-          size="sm" 
-          className="h-7 text-xs gap-1" 
-          disabled={!selectedProduct}
-          onClick={() => selectedProduct && handleOpenDialog(selectedProduct)}
-        >
-          <Edit className="w-3 h-3" />
-          {t.common.edit}
-        </Button>
-        <Button 
-          variant="outline" 
-          size="sm" 
-          className="h-7 text-xs gap-1 text-destructive" 
-          disabled={!selectedProduct || selectedCanDelete !== true}
-          title={
-            selectedProduct && selectedCanDelete === false
-              ? t.inventoryUi.cannotDeleteHasTransactions
-              : undefined
-          }
-          onClick={() => {
-            if (selectedProduct) void attemptDeleteProduct(selectedProduct);
-          }}
-        >
-          <Trash2 className="w-3 h-3" />
-          {t.common.delete}
-        </Button>
         <div className="w-px h-5 bg-border mx-1" />
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => {
           setStockListFilter((prev) => prev === 'all' ? 'qtyGt0' : prev === 'qtyGt0' ? 'qtyLt0' : 'all');
@@ -1185,7 +1170,12 @@ export default function Inventory() {
           variant="outline" 
           size="sm" 
           className="h-7 text-xs gap-1"
-          onClick={() => setAdjustmentDialogOpen(true)}
+          onClick={() => {
+            const bid = listBranchId || currentBranch?.id || '';
+            setAdjustmentBranchId(bid);
+            if (canSwitchBranch) void loadPerBranchBreakdown();
+            setAdjustmentDialogOpen(true);
+          }}
         >
           <Calculator className="w-3 h-3" />
           {t.inventoryPageUi.adjustStock}
@@ -1490,7 +1480,12 @@ export default function Inventory() {
           }}
           product={dialogProduct}
           catalogProducts={flatCatalog}
-          scopeBranchId={listBranchId ?? inventoryBranch?.id ?? null}
+          scopeBranchId={
+            productCreateScopeBranchId
+            ?? listBranchId
+            ?? inventoryBranch?.id
+            ?? null
+          }
           onSave={handleSaveProduct}
         />
       ) : null}
@@ -1567,8 +1562,19 @@ export default function Inventory() {
       <InventoryAdjustmentDialog
         open={adjustmentDialogOpen}
         onOpenChange={setAdjustmentDialogOpen}
-        products={inventoryRows}
-        branch={currentBranch}
+        products={adjustmentProducts}
+        branches={branches}
+        branchId={adjustmentBranchId || listBranchId || currentBranch?.id || ''}
+        onBranchChange={(id) => {
+          setAdjustmentBranchId(id);
+          if (canSwitchBranch && !allBranchProducts[id]?.length) {
+            void loadPerBranchBreakdown();
+          }
+        }}
+        canSwitchBranch={canSwitchBranch}
+        onAddProduct={() =>
+          openNewProductDialog(adjustmentBranchId || listBranchId || currentBranch?.id)
+        }
         onApplyAdjustments={handleApplyAdjustments}
       />
 
@@ -1581,6 +1587,10 @@ export default function Inventory() {
         searchProducts={stockEntrySearchProducts}
         currentBranch={currentBranch}
         warehouseId={warehouseId}
+        canSwitchBranch={canSwitchBranch}
+        onAddProduct={() =>
+          openNewProductDialog(listBranchId || currentBranch?.id || undefined)
+        }
         initialProduct={selectedProduct}
         onApplyEntry={handleApplyStockEntry}
       />

@@ -181,6 +181,8 @@ server.listen(PORT, '0.0.0.0', () => {
   migrateInventoryVatTo5(db).catch((e) => console.warn('[DB] Inventory VAT 5% patch:', e.message));
   startReplicatorWorker(4000);
   startAgtWorker(5000);
+  const { drainRedundantMainQueueOnHq } = require('./sync/outbox');
+  drainRedundantMainQueueOnHq().catch((e) => console.warn('[OUTBOX]', e.message));
 });
 
 io.on('connection', (socket) => {

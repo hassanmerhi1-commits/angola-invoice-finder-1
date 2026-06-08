@@ -123,8 +123,36 @@ function ensureOrgHierarchyTables() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_sync_events_status ON sync_events(status, next_retry_at);
+
+    CREATE TABLE IF NOT EXISTS sync_audit_log (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      sync_event_id TEXT,
+      event_type TEXT,
+      entity_type TEXT,
+      entity_id TEXT,
+      branch_id TEXT,
+      source TEXT NOT NULL,
+      destination TEXT NOT NULL,
+      idempotency_key TEXT,
+      status TEXT NOT NULL,
+      error_message TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sync_audit_created ON sync_audit_log(created_at);
+    CREATE INDEX IF NOT EXISTS idx_sync_audit_destination ON sync_audit_log(destination, status);
+
+    CREATE TABLE IF NOT EXISTS client_ingest_log (
+      idempotency_key TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      entity_id TEXT,
+      branch_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
+  tryAlterAdd('sync_events', 'destination TEXT');
+  tryAlterAdd('sync_events', 'entity_type TEXT');
   tryAlterAdd('branches', 'city_id TEXT');
   tryAlterAdd('branches', 'parent_branch_id TEXT');
   tryAlterAdd('branches', "node_role TEXT DEFAULT 'shop'");

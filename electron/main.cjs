@@ -355,6 +355,9 @@ const DATA_DIR = path.join(INSTALL_DIR, 'data');
 const DEFAULT_NEXOR_PATH = path.join(DATA_DIR, 'erp.db');
 const USE_LEGACY_WS = process.env.NEXOR_LEGACY_WS === 'true';
 const syncOutbox = require('./syncOutbox.cjs');
+const clientDb = require('./clientDb.cjs');
+const agtSyncWorker = require('./agtSyncWorker.cjs');
+const masterDataPull = require('./masterDataPull.cjs');
 let syncOutboxTimer = null;
 
 // Ensure install directory exists
@@ -1473,6 +1476,75 @@ ipcMain.handle('syncOutbox:flush', async (_, apiBaseUrl) => {
   }
 });
 
+ipcMain.handle('clientLocal:isEnabled', () => ({
+  enabled: !isServerMode && clientDb.isOfflineFirstEnabled(),
+  path: clientDb.CLIENT_DB_PATH,
+}));
+
+ipcMain.handle('clientLocal:saveSale', (_, saleData) => {
+  try {
+    if (!clientDb.isOfflineFirstEnabled()) {
+      return { ok: false, error: 'NEXOR_OFFLINE_FIRST is not enabled' };
+    }
+    clientDb.init();
+    const result = clientDb.saveSale(saleData);
+    agtSyncWorker.runAgtCycle().catch(() => {});
+    syncOutbox.flushToServer(getCityApiBaseForClient()).catch(() => {});
+    return { ok: true, ...result };
+  } catch (e) {
+    console.error('[CLIENT LOCAL] saveSale:', e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('clientLocal:syncProducts', (_, products) => {
+  try {
+    if (!clientDb.isOfflineFirstEnabled()) return { ok: false, updated: 0 };
+    clientDb.init();
+    return { ok: true, ...clientDb.syncProductsCache(products) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('clientLocal:listPending', () => {
+  try {
+    clientDb.init();
+    return { ok: true, items: clientDb.listPendingSummary() };
+  } catch (e) {
+    return { ok: false, items: [], error: e.message };
+  }
+});
+
+ipcMain.handle('clientLocal:listSales', (_, branchId) => {
+  try {
+    clientDb.init();
+    return { ok: true, sales: clientDb.listLocalSales(branchId) };
+  } catch (e) {
+    return { ok: false, sales: [], error: e.message };
+  }
+});
+
+ipcMain.handle('clientLocal:agtPendingCount', () => ({
+  count: clientDb.getPendingAgtCount(),
+}));
+
+ipcMain.handle('clientLocal:runAgtSync', async () => {
+  try {
+    return { ok: true, ...(await agtSyncWorker.runAgtCycle()) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('clientLocal:pullMasterData', async (_, branchId) => {
+  try {
+    return { ok: true, ...(await masterDataPull.pullMasterData(getCityApiBaseForClient(), branchId)) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 ipcMain.handle('sync:getApiUrl', async () => getCityApiBaseForClient());
 
 ipcMain.handle('app:setUiLanguage', (_, lang) => {
@@ -1727,8 +1799,30 @@ async function initDatabase() {
     pgConnectionString = null;
     console.log('CLIENT MODE: Will connect to', serverAddress);
     if (USE_LEGACY_WS) connectToServer();
+    if (clientDb.isOfflineFirstEnabled()) {
+      const localInit = clientDb.init();
+      if (localInit.ok) {
+        console.log('[CLIENT DB] Offline-first enabled:', localInit.path);
+      } else {
+        console.warn('[CLIENT DB] Offline-first init failed:', localInit.error);
+      }
+    }
     startSyncOutboxWorker();
-    return { success: true, mode: 'client', serverAddress };
+    if (clientDb.isOfflineFirstEnabled()) {
+      agtSyncWorker.startAgtSyncWorker(5000);
+      masterDataPull.startMasterDataPullWorker(
+        () => getCityApiBaseForClient(),
+        () => process.env.NEXOR_BRANCH_ID || null,
+        900000
+      );
+    }
+    return {
+      success: true,
+      mode: 'client',
+      serverAddress,
+      offlineFirst: clientDb.isOfflineFirstEnabled(),
+      clientDbPath: clientDb.CLIENT_DB_PATH,
+    };
   }
 
   isServerMode = true;

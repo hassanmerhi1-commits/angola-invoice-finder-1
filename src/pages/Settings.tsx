@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -25,6 +25,8 @@ import { HotUpdateSettingsCard } from '@/components/settings/HotUpdateSettingsCa
 import { BackendLogsCard } from '@/components/settings/BackendLogsCard';
 import { toast } from 'sonner';
 import { DatabaseBackupCard } from '@/components/settings/DatabaseBackupCard';
+import { ClientSyncSettingsCard } from '@/components/settings/ClientSyncSettingsCard';
+import { SyncHealthSettingsCard } from '@/components/settings/SyncHealthSettingsCard';
 import { DeploymentHealthCard } from '@/components/settings/DeploymentHealthCard';
 import { DataConsistencyCard } from '@/components/settings/DataConsistencyCard';
 import { ChangePasswordCard } from '@/components/settings/ChangePasswordCard';
@@ -446,8 +448,12 @@ export default function Settings() {
         {/* Phase A: database path, schema version, backups */}
         <DeploymentHealthCard />
 
+        <SyncHealthSettingsCard />
+
         {/* Database + preferences backup */}
         <DatabaseBackupCard />
+
+        <ClientSyncSettingsCard />
 
         {/* Data integrity / consistency */}
         <DataConsistencyCard />

@@ -39,6 +39,14 @@ function coalesceActiveNotZero(db, column = 'is_active') {
   return `COALESCE(${column}, 1) != 0`;
 }
 
+/** BOOLEAN column treated as truthy (PG) or 1/true (SQLite). */
+function isTruthySql(db, column) {
+  if (db.engine === 'postgres') {
+    return `(${column} IS TRUE)`;
+  }
+  return `(${column} = 1 OR ${column} = TRUE OR ${column} = '1' OR LOWER(CAST(${column} AS TEXT)) = 'true')`;
+}
+
 /** SQLite: COALESCE(is_main, 0) != 0 */
 function coalesceMainTruthy(db, column = 'is_main') {
   if (db.engine === 'postgres') {
@@ -48,7 +56,7 @@ function coalesceMainTruthy(db, column = 'is_main') {
 }
 
 function openItemIsDebitSql(db, alias = 'oi') {
-  const col = `${alias}.is_debit`;
+  const col = alias ? `${alias}.is_debit` : 'is_debit';
   if (db.engine === 'postgres') {
     return `(${col} IS TRUE)`;
   }
@@ -57,7 +65,8 @@ function openItemIsDebitSql(db, alias = 'oi') {
 
 function openItemDebitAmountCase(db, alias = 'oi', amountCol = 'remaining_amount') {
   const debit = openItemIsDebitSql(db, alias);
-  return `CASE WHEN ${debit} THEN ${alias}.${amountCol} ELSE -${alias}.${amountCol} END`;
+  const col = alias ? `${alias}.${amountCol}` : amountCol;
+  return `CASE WHEN ${debit} THEN ${col} ELSE -${col} END`;
 }
 
 /** branchScope: head office row when branches lack is_active (PG). */
@@ -94,8 +103,15 @@ function catalogBranchScopeClause(db, alias, mainInSql) {
   return empty;
 }
 
+function isPostgresEngine(db) {
+  if (db?.engine === 'postgres') return true;
+  const eng = String(process.env.DB_ENGINE || '').trim().toLowerCase();
+  if (eng === 'postgres') return true;
+  return !!String(process.env.DATABASE_URL || '').trim();
+}
+
 function sqlScalarMax(db, leftExpr, rightExpr) {
-  if (db.engine === 'postgres') {
+  if (isPostgresEngine(db)) {
     return `GREATEST((${leftExpr})::numeric, (${rightExpr})::numeric)`;
   }
   return `MAX(${leftExpr}, ${rightExpr})`;
@@ -114,12 +130,14 @@ module.exports = {
   mainBranchWhere,
   branchesListSql,
   coalesceActiveNotZero,
+  isTruthySql,
   coalesceMainTruthy,
   openItemIsDebitSql,
   openItemDebitAmountCase,
   headOfficeBranchWhere,
   branchExistsWhere,
   orderByActiveDesc,
+  isPostgresEngine,
   sqlScalarMax,
   emptyBranchIdClause,
   catalogBranchScopeClause,

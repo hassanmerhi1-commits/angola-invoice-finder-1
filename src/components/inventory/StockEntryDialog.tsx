@@ -97,6 +97,8 @@ interface StockEntryDialogProps {
   searchProducts?: Product[];
   currentBranch: Branch | null;
   warehouseId: string | null;
+  canSwitchBranch?: boolean;
+  onAddProduct?: () => void;
   initialProduct?: Product | null;
   onApplyEntry: (
     items: EntryItem[],
@@ -155,6 +157,8 @@ export function StockEntryDialog({
   searchProducts,
   currentBranch,
   warehouseId,
+  canSwitchBranch = false,
+  onAddProduct,
   initialProduct,
   onApplyEntry,
 }: StockEntryDialogProps) {
@@ -298,9 +302,11 @@ export function StockEntryDialog({
     [branchNameById, form.entryBranchId, currentBranch?.id, t.stockEntryUi.thisBranch],
   );
 
-  const branchLocked = Boolean(warehouseId);
-  const effectiveWarehouseId = warehouseId || form.entryBranchId;
-  const entryBranchId = warehouseId || form.entryBranchId || currentBranch?.id || '';
+  const branchLocked = Boolean(warehouseId) && !canSwitchBranch;
+  const effectiveWarehouseId = canSwitchBranch
+    ? (form.entryBranchId || warehouseId)
+    : (warehouseId || form.entryBranchId);
+  const entryBranchId = effectiveWarehouseId || currentBranch?.id || '';
 
   const entryNumber = useMemo(() => {
     const date = format(new Date(), 'yyyyMMdd');
@@ -745,11 +751,11 @@ export function StockEntryDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockEntryUi.reference}</Label>
+              <Label className="text-sm font-medium">{t.stockEntryUi.receiptNumber}</Label>
               <Input
                 value={form.reference}
                 onChange={(e) => setForm((p) => ({ ...p, reference: e.target.value }))}
-                placeholder={entryNumber}
+                placeholder={t.stockEntryUi.receiptNumberPlaceholder}
                 className="bg-background h-9 font-mono text-sm"
               />
             </div>
@@ -866,10 +872,18 @@ export function StockEntryDialog({
               <h3 className="text-sm font-semibold">{t.stockEntryUi.linesTitle}</h3>
               <p className="text-[11px] text-muted-foreground">{t.stockEntryUi.pickerKeyboardHint}</p>
             </div>
-            <Button type="button" variant="outline" size="sm" className="h-8 shrink-0" onClick={addRows}>
-              <Plus className="h-3.5 w-3.5 mr-1" />
-              {t.stockEntryUi.addLine}
-            </Button>
+            <div className="flex gap-2 shrink-0">
+              {onAddProduct ? (
+                <Button type="button" variant="outline" size="sm" className="h-8" onClick={onAddProduct}>
+                  <Package className="h-3.5 w-3.5 mr-1" />
+                  {t.stockEntryUi.newProduct}
+                </Button>
+              ) : null}
+              <Button type="button" variant="outline" size="sm" className="h-8" onClick={addRows}>
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                {t.stockEntryUi.addLine}
+              </Button>
+            </div>
           </div>
 
           <div className="flex-1 min-h-0 overflow-auto border rounded-md bg-background [&_th]:h-7 [&_th]:px-1.5 [&_th]:text-[11px] [&_td]:px-1.5 [&_td]:py-0.5">

@@ -4,7 +4,7 @@
  */
 
 const db = require('../db');
-const { headOfficeBranchWhere, orderByActiveDesc } = require('./sqlDialect');
+const { headOfficeBranchWhere, orderByActiveDesc, emptyBranchIdClause } = require('./sqlDialect');
 
 let mainBranchIdsCache = null;
 let mainBranchIdsCacheAt = 0;
@@ -59,7 +59,7 @@ async function findProductBySkuAndBranch(client, sku, branchId) {
       `SELECT id, name, sku, branch_id, is_active
        FROM products
        WHERE LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
-         AND (branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = '')
+         AND ${emptyBranchIdClause(db, 'branch_id')}
        ORDER BY ${orderByActiveDesc(db, 'is_active')} DESC, updated_at DESC, created_at DESC
        LIMIT 1`,
       [skuTrim],

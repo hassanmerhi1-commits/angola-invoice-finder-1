@@ -447,8 +447,9 @@ export function ProductDetailDialog({
     const resolvedBranchId = (() => {
       if (!effectiveProduct && scopeBranchId) return scopeBranchId;
       if (currentBranch && !currentBranch.isMain) return currentBranch.id;
-      if (formData.branchId === 'all') return '';
-      return formData.branchId;
+      if (formData.branchId && formData.branchId !== 'all') return formData.branchId;
+      const main = branches.find((b) => b.isMain) ?? branches[0];
+      return main?.id || scopeBranchId || '';
     })();
 
     const rawSupplierId = formData.supplierId;

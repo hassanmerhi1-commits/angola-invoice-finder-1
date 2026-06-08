@@ -72,7 +72,7 @@ Rows that cannot be linked (missing supplier/client/document) are skipped and lo
 
 ## 5. Verify
 
-- **Settings → Database & deployment**: engine PostgreSQL, schema version **25**.
+- **Settings → Database & deployment**: engine PostgreSQL, schema version **28**.
 - `GET http://127.0.0.1:<port>/api/deployment/status` — no SQLite duplicate warnings.
 - Pagamentos → Itens em aberto, checklist due payments, Contas a pagar report.
 - Create a backup (`.sql` when on PostgreSQL).

@@ -44,7 +44,9 @@ export interface ConsistencyRepairResult {
   supplierBalances?: { updated?: number };
   clientBalances?: { updated?: number };
   duplicateSkusRenamed?: number;
+  duplicateSkusDeactivated?: number;
   productsBranchAssigned?: number;
+  openingMovementsSeeded?: number;
   productStockReconciled?: number;
   supplierError?: string;
   clientError?: string;

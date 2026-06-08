@@ -1,5 +1,5 @@
 /**
- * Shop client offline outbox — JSON file queue flushed to city server /api/sync/client-ingest.
+ * Shop client sync outbox — SQLite (Phase B1) or legacy JSON file.
  */
 const fs = require('fs');
 const path = require('path');
@@ -8,7 +8,67 @@ const crypto = require('crypto');
 const INSTALL_DIR = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
 const OUTBOX_PATH = path.join(INSTALL_DIR, 'sync-pending.json');
 
-function readOutbox() {
+let clientDb = null;
+function getClientDb() {
+  if (!clientDb) {
+    try {
+      clientDb = require('./clientDb.cjs');
+    } catch (_) {
+      clientDb = null;
+    }
+  }
+  return clientDb;
+}
+
+function useSqliteOutbox() {
+  const cdb = getClientDb();
+  return cdb?.isOfflineFirstEnabled?.() && cdb?.getDb?.();
+}
+
+function loadClientSyncApiKey() {
+  const fromEnv = (process.env.NEXOR_CLIENT_SYNC_API_KEY || '').trim();
+  if (fromEnv) return fromEnv;
+
+  const candidates = [
+    path.join(INSTALL_DIR, 'sync.env'),
+    path.join(INSTALL_DIR, 'database.env'),
+  ];
+  for (const filePath of candidates) {
+    try {
+      if (!fs.existsSync(filePath)) continue;
+      for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eq = trimmed.indexOf('=');
+        if (eq <= 0) continue;
+        const key = trimmed.slice(0, eq).trim();
+        let val = trimmed.slice(eq + 1).trim();
+        if (
+          (val.startsWith('"') && val.endsWith('"'))
+          || (val.startsWith("'") && val.endsWith("'"))
+        ) {
+          val = val.slice(1, -1);
+        }
+        if (key === 'NEXOR_CLIENT_SYNC_API_KEY' && val) return val;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  return '';
+}
+
+function syncAuthHeaders() {
+  const key = loadClientSyncApiKey();
+  if (!key) return { 'Content-Type': 'application/json' };
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${key}`,
+    'X-Sync-Api-Key': key,
+  };
+}
+
+function readJsonOutbox() {
   try {
     if (fs.existsSync(OUTBOX_PATH)) {
       const data = JSON.parse(fs.readFileSync(OUTBOX_PATH, 'utf-8'));
@@ -20,7 +80,7 @@ function readOutbox() {
   return [];
 }
 
-function writeOutbox(events) {
+function writeJsonOutbox(events) {
   if (!fs.existsSync(INSTALL_DIR)) {
     fs.mkdirSync(INSTALL_DIR, { recursive: true });
   }
@@ -28,7 +88,36 @@ function writeOutbox(events) {
 }
 
 function enqueueEvent(event) {
-  const events = readOutbox();
+  const cdb = getClientDb();
+  if (useSqliteOutbox() && cdb) {
+    cdb.init();
+    const database = cdb.getDb();
+    const key = event.idempotencyKey || crypto.randomUUID();
+    const exists = database.prepare('SELECT id FROM sync_outbox WHERE id = ?').get(key);
+    if (exists) return { ok: true, duplicate: true, idempotencyKey: key };
+    const eventType = event.type || 'sale.created';
+    const entityType = event.entityType || eventType.split('.')[0] || 'sync';
+    const entityId =
+      event.entityId
+      || event.payload?.invoiceData?.id
+      || event.payload?.sessionData?.id
+      || key;
+    database.prepare(
+      `INSERT INTO sync_outbox (
+        id, event_type, entity_type, entity_id, payload_json, destination, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'CITY_SERVER', 'pending', ?)`
+    ).run(
+      key,
+      eventType,
+      entityType,
+      String(entityId),
+      JSON.stringify(event.payload || {}),
+      new Date().toISOString()
+    );
+    return { ok: true, idempotencyKey: key, pending: cdb.getPendingCount() };
+  }
+
+  const events = readJsonOutbox();
   const key = event.idempotencyKey || crypto.randomUUID();
   if (events.some((e) => e.idempotencyKey === key)) {
     return { ok: true, duplicate: true, idempotencyKey: key };
@@ -41,16 +130,26 @@ function enqueueEvent(event) {
     createdAt: new Date().toISOString(),
     attempts: 0,
   });
-  writeOutbox(events);
+  writeJsonOutbox(events);
   return { ok: true, idempotencyKey: key, pending: events.length };
 }
 
 function getPendingCount() {
-  return readOutbox().filter((e) => e.status === 'pending' || e.status === 'failed').length;
+  const cdb = getClientDb();
+  if (useSqliteOutbox() && cdb) {
+    cdb.init();
+    return cdb.getPendingCount();
+  }
+  return readJsonOutbox().filter((e) => e.status === 'pending' || e.status === 'failed').length;
 }
 
 function listPending() {
-  return readOutbox().filter((e) => e.status === 'pending' || e.status === 'failed');
+  const cdb = getClientDb();
+  if (useSqliteOutbox() && cdb) {
+    cdb.init();
+    return cdb.listPendingSummary();
+  }
+  return readJsonOutbox().filter((e) => e.status === 'pending' || e.status === 'failed');
 }
 
 async function checkServerHealth(apiBase) {
@@ -69,21 +168,76 @@ async function checkServerHealth(apiBase) {
   }
 }
 
+async function flushSqliteOutbox(apiBase, cdb) {
+  const events = cdb.getPendingOutboxEvents('CITY_SERVER');
+  let flushed = 0;
+
+  for (const ev of events) {
+    let payload;
+    try {
+      payload = JSON.parse(ev.payload_json);
+    } catch {
+      cdb.markOutboxFailed(ev.id, 'invalid payload_json', (ev.retry_count || 0) + 1);
+      continue;
+    }
+
+    const idempotencyKey = payload?.saleData?.clientRequestId
+      || payload?.clientRequestId
+      || (payload?.invoiceData?.id ? `purchase:${payload.invoiceData.id}` : null)
+      || (payload?.sessionData?.id ? `caixa:${payload.sessionData.id}` : null)
+      || ev.entity_id
+      || ev.id;
+
+    try {
+      const res = await fetch(`${apiBase.replace(/\/$/, '')}/api/sync/client-ingest`, {
+        method: 'POST',
+        headers: syncAuthHeaders(),
+        body: JSON.stringify({
+          events: [{
+            type: ev.event_type || 'sale.created',
+            idempotencyKey,
+            payload,
+          }],
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && body.success) {
+        cdb.markOutboxSent(ev.id);
+        flushed += 1;
+      } else if (res.status === 409) {
+        cdb.markOutboxSent(ev.id);
+        flushed += 1;
+      } else {
+        cdb.markOutboxFailed(ev.id, body.error || `HTTP ${res.status}`, (ev.retry_count || 0) + 1);
+      }
+    } catch (e) {
+      cdb.markOutboxFailed(ev.id, e.message, (ev.retry_count || 0) + 1);
+    }
+  }
+
+  return { flushed, pending: cdb.getPendingCount() };
+}
+
 async function flushToServer(apiBaseUrl) {
   const apiBase = apiBaseUrl || process.env.NEXOR_CITY_API_URL || 'http://127.0.0.1:3000';
   const healthy = await checkServerHealth(apiBase);
-  if (!healthy) return { flushed: 0, reason: 'server_unreachable' };
+  if (!healthy) return { flushed: 0, reason: 'server_unreachable', pending: getPendingCount() };
 
-  const events = readOutbox();
+  const cdb = getClientDb();
+  if (useSqliteOutbox() && cdb) {
+    cdb.init();
+    return flushSqliteOutbox(apiBase, cdb);
+  }
+
+  const events = readJsonOutbox();
   let flushed = 0;
-  const remaining = [];
 
   for (const ev of events) {
     if (ev.status === 'sent') continue;
     try {
       const res = await fetch(`${apiBase.replace(/\/$/, '')}/api/sync/client-ingest`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: syncAuthHeaders(),
         body: JSON.stringify({
           events: [{
             type: ev.type,
@@ -104,18 +258,16 @@ async function flushToServer(apiBaseUrl) {
         ev.attempts = (ev.attempts || 0) + 1;
         ev.status = 'failed';
         ev.lastError = body.error || `HTTP ${res.status}`;
-        remaining.push(ev);
       }
     } catch (e) {
       ev.attempts = (ev.attempts || 0) + 1;
       ev.status = 'failed';
       ev.lastError = e.message;
-      remaining.push(ev);
     }
   }
 
   const kept = events.filter((e) => e.status !== 'sent');
-  writeOutbox(kept);
+  writeJsonOutbox(kept);
   return { flushed, pending: kept.length };
 }
 
@@ -125,4 +277,5 @@ module.exports = {
   listPending,
   flushToServer,
   OUTBOX_PATH,
+  useSqliteOutbox,
 };

@@ -23,3 +23,12 @@ export async function getOfflinePendingCount(): Promise<number> {
   const r = await api.getPendingCount();
   return Number(r?.count ?? 0);
 }
+
+import { SALES_CHANGED_EVENT } from '@/lib/storage';
+
+export function dispatchSalesChanged(branchId?: string): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent(SALES_CHANGED_EVENT, { detail: { branchId } }),
+  );
+}

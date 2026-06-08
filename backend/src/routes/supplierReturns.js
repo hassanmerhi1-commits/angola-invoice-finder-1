@@ -3,13 +3,20 @@ const express = require('express');
 const { randomUUID } = require('crypto');
 const db = require('../db');
 
-function mapRow(row) {
-  let items = [];
-  try {
-    items = row.items_json ? JSON.parse(row.items_json) : [];
-  } catch {
-    items = [];
+function parseJsonColumn(val, fallback = []) {
+  if (val == null || val === '') return fallback;
+  if (typeof val === 'string') {
+    try {
+      return JSON.parse(val);
+    } catch {
+      return fallback;
+    }
   }
+  return val;
+}
+
+function mapRow(row) {
+  const items = parseJsonColumn(row.items_json, []);
   return {
     id: row.id,
     returnNumber: row.return_number,

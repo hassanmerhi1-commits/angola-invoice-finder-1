@@ -180,6 +180,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     flush: (apiBaseUrl) => ipcRenderer.invoke('syncOutbox:flush', apiBaseUrl),
   },
 
+  // Phase B1 — local SQLite save-first (shop client)
+  clientLocal: {
+    isEnabled: () => ipcRenderer.invoke('clientLocal:isEnabled'),
+    saveSale: (saleData) => ipcRenderer.invoke('clientLocal:saveSale', saleData),
+    listSales: (branchId) => ipcRenderer.invoke('clientLocal:listSales', branchId),
+    syncProducts: (products) => ipcRenderer.invoke('clientLocal:syncProducts', products),
+    listPending: () => ipcRenderer.invoke('clientLocal:listPending'),
+    getAgtPendingCount: () => ipcRenderer.invoke('clientLocal:agtPendingCount'),
+    runAgtSync: () => ipcRenderer.invoke('clientLocal:runAgtSync'),
+    pullMasterData: (branchId) => ipcRenderer.invoke('clientLocal:pullMasterData', branchId),
+  },
+
   // LAN server discovery (UDP broadcast)
   discovery: {
     scan: (timeoutMs) => ipcRenderer.invoke('discovery:scan', timeoutMs),

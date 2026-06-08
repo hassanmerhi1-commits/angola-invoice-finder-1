@@ -106,25 +106,75 @@ async function repairDuplicateProductSkus() {
   return { deactivated };
 }
 
-async function reconcileProductStockFromMovements() {
-  if (!(await tableExists('products')) || !(await tableExists('stock_movements'))) {
-    return { updated: 0 };
-  }
-  const result = await db.query(
-    `UPDATE products SET stock = COALESCE((
-       SELECT SUM(
-         CASE
-           WHEN sm.movement_type = 'IN' THEN sm.quantity
-           WHEN sm.movement_type = 'OUT' THEN -sm.quantity
-           ELSE 0
-         END
-       )
-       FROM stock_movements sm
-       WHERE sm.product_id = products.id
-     ), 0),
-     updated_at = CURRENT_TIMESTAMP`,
+/** Seed opening IN movements where products.stock exists but the ledger is empty. */
+async function seedLegacyOpeningStockMovements() {
+  const { ensureOpeningStockMovement } = require('./transactionEngine');
+  const mainBranches = await db.query(
+    `SELECT id FROM branches
+     WHERE COALESCE(is_main, false) = true
+     ORDER BY CASE WHEN UPPER(TRIM(COALESCE(code, ''))) = 'MAIN' THEN 0 ELSE 1 END`,
   );
-  return { updated: result.rowCount || 0 };
+  let warehouseIds = (mainBranches.rows || []).map((r) => String(r.id).trim()).filter(Boolean);
+  if (warehouseIds.length === 0) {
+    const any = await db.query(`SELECT id FROM branches ORDER BY name LIMIT 1`);
+    if (any.rows[0]?.id) warehouseIds = [String(any.rows[0].id)];
+  }
+  if (warehouseIds.length === 0) return { seeded: 0 };
+
+  const products = await db.query(
+    `SELECT id, sku, stock
+     FROM products
+     WHERE is_active IS DISTINCT FROM false`,
+  );
+
+  let seeded = 0;
+  for (const wh of warehouseIds) {
+    for (const p of products.rows || []) {
+      const before = await db.query(
+        `SELECT COUNT(*)::int AS n FROM stock_movements WHERE product_id = $1 AND warehouse_id = $2`,
+        [p.id, wh],
+      );
+      if (Number(before.rows[0]?.n || 0) > 0) continue;
+      if (parseFloat(p.stock || 0) <= 0.0001) continue;
+
+      await ensureOpeningStockMovement(db, p.id, wh, null);
+
+      const after = await db.query(
+        `SELECT COUNT(*)::int AS n FROM stock_movements WHERE product_id = $1 AND warehouse_id = $2`,
+        [p.id, wh],
+      );
+      if (Number(after.rows[0]?.n || 0) > Number(before.rows[0]?.n || 0)) seeded += 1;
+    }
+  }
+  return { seeded };
+}
+
+/** Align products.stock with movement ledger per SKU + warehouse (same as POS engine). */
+async function reconcileAllSkuStockAtWarehouses() {
+  const { reconcileSkuStockAtWarehouse } = require('./transactionEngine');
+  if (!(await tableExists('products')) || !(await tableExists('stock_movements'))) {
+    return { reconciled: 0 };
+  }
+  const pairs = await db.query(
+    `SELECT DISTINCT TRIM(pm.sku) AS sku, TRIM(sm.warehouse_id) AS wh
+     FROM stock_movements sm
+     INNER JOIN products pm ON pm.id = sm.product_id
+     WHERE TRIM(COALESCE(pm.sku, '')) != ''
+       AND TRIM(COALESCE(sm.warehouse_id, '')) != ''`,
+  );
+  let reconciled = 0;
+  for (const row of pairs.rows || []) {
+    await reconcileSkuStockAtWarehouse(db, row.sku, row.wh);
+    reconciled += 1;
+  }
+  return { reconciled };
+}
+
+/** @deprecated Prefer seedLegacyOpeningStockMovements + reconcileAllSkuStockAtWarehouses */
+async function reconcileProductStockFromMovements() {
+  const seeded = await seedLegacyOpeningStockMovements();
+  const synced = await reconcileAllSkuStockAtWarehouses();
+  return { updated: synced.reconciled, seeded: seeded.seeded };
 }
 
 async function deactivateDuplicateProductNames() {
@@ -259,8 +309,10 @@ async function runDataConsistencyRepair() {
     supplierBalances: { updated: 0 },
     clientBalances: { updated: 0 },
     duplicateSkusDeactivated: 0,
+    duplicateSkusRenamed: 0,
     duplicateNamesDeactivated: 0,
     productsBranchAssigned: 0,
+    openingMovementsSeeded: 0,
     productStockReconciled: 0,
   };
 
@@ -282,9 +334,12 @@ async function runDataConsistencyRepair() {
   try {
     report.dupSuffixDeactivated = (await deactivateDupSuffixProducts()).deactivated;
     report.duplicateSkusDeactivated = (await repairDuplicateProductSkus()).deactivated;
+    report.duplicateSkusRenamed = report.duplicateSkusDeactivated;
     report.duplicateNamesDeactivated = (await deactivateDuplicateProductNames()).deactivated;
     report.productsBranchAssigned = (await assignBranchToOrphanProducts()).updated;
-    report.productStockReconciled = (await reconcileProductStockFromMovements()).updated;
+    const stockRepair = await reconcileProductStockFromMovements();
+    report.openingMovementsSeeded = stockRepair.seeded || 0;
+    report.productStockReconciled = stockRepair.updated || 0;
     const { ensureFilialProductsFromAllMovements } = require('./lib/filialStockRepair');
     report.filialStockReconciled = await ensureFilialProductsFromAllMovements();
   } catch (e) {
@@ -299,6 +354,8 @@ module.exports = {
   backfillClientBalancesFromOpenItems,
   repairDuplicateProductSkus,
   deactivateDuplicateProductNames,
+  seedLegacyOpeningStockMovements,
+  reconcileAllSkuStockAtWarehouses,
   reconcileProductStockFromMovements,
   assignBranchToOrphanProducts,
 };

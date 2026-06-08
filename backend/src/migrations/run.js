@@ -109,6 +109,11 @@ const MIGRATIONS = [
   '023_sales_printed_at.sql',
   '024_products_min_stock.sql',
   '025_proformas.sql',
+  '026_sync_audit.sql',
+  '027_sync_outbox_destination.sql',
+  '028_client_ingest_log.sql',
+  '029_hq_ingest_log.sql',
+  '030_caixa_sync.sql',
 ];
 
 /**

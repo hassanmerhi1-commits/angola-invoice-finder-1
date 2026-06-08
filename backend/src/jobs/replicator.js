@@ -57,10 +57,10 @@ async function runReplicationCycle() {
       if (!dests.includes('main')) continue;
       try {
         await pushEventToMain(cfg.mainApiUrl, cfg.apiKey, event);
-        await markSyncEventSent(event.id, 'main');
+        await markSyncEventSent(event.id, 'main', { source: 'replicator' });
       } catch (e) {
         const attempts = Number(event.attempts || 0) + 1;
-        await markSyncEventFailed(event.id, e.message, attempts);
+        await markSyncEventFailed(event.id, e.message, attempts, 'main', { source: 'replicator' });
         console.warn('[REPLICATOR]', event.event_type, e.message);
       }
     }

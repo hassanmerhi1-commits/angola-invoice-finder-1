@@ -8,7 +8,8 @@
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore, useMemo } from 'react';
 import { Branch, Product, Sale, User, CartItem, SaleItem, DailySummary, Client, StockTransfer, Supplier, PurchaseOrder, PurchaseOrderItem, Category } from '@/types/erp';
 import { api, clearAuthSessionCache, ensureBackendAuthToken, isJwtAuthToken, setAuthToken } from '@/lib/api/client';
-import { isDemoMode } from '@/lib/api/config';
+import { isDemoMode, isThinClientMode } from '@/lib/api/config';
+import { lanCatalogScopeKey, readLanProducts, readLanSuppliers, saveLanProducts, saveLanSuppliers } from '@/lib/lanCatalogCache';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
 import { normalizeTaxRate } from '@/lib/taxUtils';
@@ -238,7 +239,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
       const dedupedApi = dedupeProductsBySku(withCanonicalPrices, branchId, catalogBranchIds);
       // API is source of truth — merging Electron DB / localStorage re-shows duplicate SKUs after login.
       if (!isDemoMode()) {
-        return filterProductsForApiScope(
+        const scoped = filterProductsForApiScope(
           applySellingPriceHintsToProducts(
             applyCanonicalSellingPrices(dedupedApi),
             hints,
@@ -246,6 +247,10 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
           branchId,
           catalogBranchIds,
         );
+        if (isThinClientMode()) {
+          saveLanProducts(lanCatalogScopeKey(branchId), scoped);
+        }
+        return scoped;
       }
       const apiIds = new Set(dedupedApi.map((p) => p.id));
       const apiSkus = new Set(
@@ -263,6 +268,18 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
         branchId,
         catalogBranchIds,
       );
+    }
+
+    if (isThinClientMode()) {
+      const cached = readLanProducts(lanCatalogScopeKey(branchId));
+      if (cached?.length) {
+        console.warn('[useProducts] Server unreachable — using cached product list');
+        return filterProductsForApiScope(
+          dedupeProductsBySku(cached, branchId, catalogBranchIds),
+          branchId,
+          catalogBranchIds,
+        );
+      }
     }
 
     return filterProductsForApiScope(
@@ -283,6 +300,23 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
       const list = await fetchMergedProductList();
       if (generation === listGenerationRef.current) {
         setProducts(list);
+        try {
+          const { syncProductsToLocalCache } = await import('@/lib/sync/offlineFirst');
+          await syncProductsToLocalCache(
+            list.map((p) => ({
+              id: p.id,
+              sku: p.sku,
+              name: p.name,
+              price: p.price,
+              cost: p.avgCost ?? p.cost,
+              taxRate: p.taxRate,
+              stock: p.stock,
+              branchId: p.branchId,
+            }))
+          );
+        } catch {
+          /* offline-first cache is optional */
+        }
       }
     } finally {
       if (generation === listGenerationRef.current) {
@@ -354,10 +388,16 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     options?: ProductWriteOptions,
   ): Promise<Product> => {
     const writeGeneration = ++listGenerationRef.current;
+    const normalizedBranch = normalizeProductBranchIdForApi(product.branchId);
     const payload = {
       ...product,
-      branchId: normalizeProductBranchIdForApi(product.branchId) ?? undefined,
+      branchId: normalizedBranch ?? product.branchId ?? undefined,
     };
+    if (payload.branchId === 'all' || payload.branchId === '') {
+      delete payload.branchId;
+    }
+    delete (payload as Record<string, unknown>).preserveStock;
+    delete (payload as Record<string, unknown>).id;
 
     const result = await api.products.create(payload);
     if (!result.data) {
@@ -535,51 +575,75 @@ export function useCart() {
 // ============================================
 // SALES
 // ============================================
+function mapSaleRow(s: any): Sale {
+  return {
+    id: s.id,
+    invoiceNumber: s.invoiceNumber || s.invoice_number || '',
+    branchId: s.branchId || s.branch_id || '',
+    cashierId: s.cashierId || s.cashier_id || '',
+    cashierName: s.cashierName || s.cashier_name || '',
+    items: (s.items || []).map((i: any) => ({
+      productId: i.productId || i.product_id,
+      productName: i.productName || i.product_name,
+      sku: i.sku || '',
+      quantity: Number(i.quantity) || 0,
+      unitPrice: Number(i.unitPrice ?? i.unit_price) || 0,
+      discount: Number(i.discount) || 0,
+      taxRate: Number(i.taxRate ?? i.tax_rate) || 0,
+      taxAmount: Number(i.taxAmount ?? i.tax_amount) || 0,
+      subtotal: Number(i.subtotal ?? i.total) || 0,
+    })),
+    subtotal: Number(s.subtotal || 0),
+    taxAmount: Number(s.taxAmount || s.tax_amount || 0),
+    discount: Number(s.discount || 0),
+    total: Number(s.total || 0),
+    paymentMethod: s.paymentMethod || s.payment_method || 'cash',
+    amountPaid: Number(s.amountPaid || s.amount_paid || 0),
+    change: Number(s.change || s.change_amount || 0),
+    customerNif: s.customerNif || s.customer_nif || '',
+    customerName: s.customerName || s.customer_name || '',
+    status: s.status || 'completed',
+    saftHash: s.saftHash || s.agt_hash || s.saft_hash || '',
+    createdAt: s.createdAt || s.created_at || '',
+  };
+}
+
 export function useSales(branchId?: string) {
   const [sales, setSales] = useState<Sale[]>([]);
 
   const refreshSales = useCallback(async () => {
     let data: any[] = [];
     try {
-      data = await apiFallback<any[]>(
-        () => api.sales.list(branchId),
-        () => storage.getSales(branchId)
-      );
+      const result = await api.sales.list(branchId);
+      if (result.data !== undefined) {
+        data = result.data;
+      } else if (isDemoMode()) {
+        data = await storage.getSales(branchId);
+      } else {
+        throw new Error(result.error || 'Failed to load sales');
+      }
     } catch (e) {
       console.error('[useSales] refresh failed:', e);
-      data = [];
+      if (isDemoMode()) {
+        try {
+          data = await storage.getSales(branchId);
+        } catch {
+          data = [];
+        }
+      } else {
+        data = [];
+      }
     }
-    setSales(data.map((s: any) => ({
-      id: s.id,
-      invoiceNumber: s.invoiceNumber || s.invoice_number || '',
-      branchId: s.branchId || s.branch_id || '',
-      cashierId: s.cashierId || s.cashier_id || '',
-      cashierName: s.cashierName || s.cashier_name || '',
-      items: (s.items || []).map((i: any) => ({
-        productId: i.productId || i.product_id,
-        productName: i.productName || i.product_name,
-        sku: i.sku || '',
-        quantity: i.quantity,
-        unitPrice: i.unitPrice || i.unit_price,
-        discount: i.discount || 0,
-        taxRate: i.taxRate || i.tax_rate || 0,
-        taxAmount: i.taxAmount || i.tax_amount || 0,
-        subtotal: i.subtotal || i.total || 0,
-      })),
-      subtotal: Number(s.subtotal || 0),
-      taxAmount: Number(s.taxAmount || s.tax_amount || 0),
-      discount: Number(s.discount || 0),
-      total: Number(s.total || 0),
-      paymentMethod: s.paymentMethod || s.payment_method || 'cash',
-      amountPaid: Number(s.amountPaid || s.amount_paid || 0),
-      change: Number(s.change || s.change_amount || 0),
-      customerNif: s.customerNif || s.customer_nif || '',
-      customerName: s.customerName || s.customer_name || '',
-      status: s.status || 'completed',
-      saftHash: s.saftHash || s.agt_hash || '',
-      createdAt: s.createdAt || s.created_at || '',
-    })));
+    setSales(data.map(mapSaleRow));
   }, [branchId]);
+
+  useEffect(() => {
+    const onSalesChanged = () => {
+      void refreshSales();
+    };
+    window.addEventListener(storage.SALES_CHANGED_EVENT, onSalesChanged);
+    return () => window.removeEventListener(storage.SALES_CHANGED_EVENT, onSalesChanged);
+  }, [refreshSales]);
 
   useEffect(() => { refreshSales(); }, [refreshSales]);
 
@@ -616,11 +680,20 @@ export function useSales(branchId?: string) {
       } catch { return ''; }
     })();
 
-    const invoicePreview = await api.sales.generateInvoiceNumber(branchCode);
+    let invoiceNumberHint = '';
+    try {
+      const invoicePreview = await api.sales.generateInvoiceNumber(branchCode);
+      invoiceNumberHint = invoicePreview.data?.invoiceNumber || '';
+    } catch {
+      /* offline-first: local engine assigns LOCAL-* invoice number */
+    }
+
     const apiResult = await api.sales.create({
       branchId,
+      branchCode,
       cashierId,
       cashierName,
+      invoiceNumber: invoiceNumberHint || undefined,
       items: saleItems,
       subtotal,
       taxAmount,
@@ -640,7 +713,7 @@ export function useSales(branchId?: string) {
 
     const sale: Sale = {
       id: apiResult.data.id,
-      invoiceNumber: apiResult.data.invoice_number || apiResult.data.invoiceNumber || invoicePreview.data?.invoiceNumber || '',
+      invoiceNumber: apiResult.data.invoice_number || apiResult.data.invoiceNumber || invoiceNumberHint || '',
       branchId,
       cashierId,
       cashierName,
@@ -660,6 +733,10 @@ export function useSales(branchId?: string) {
 
     console.log(`[POS] Sale ${sale.invoiceNumber} processed via backend API ✓`);
 
+    setSales((prev) => {
+      if (prev.some((row) => row.id === sale.id)) return prev;
+      return [sale, ...prev];
+    });
     await refreshSales();
     return sale;
   }, [refreshSales]);
@@ -1253,16 +1330,41 @@ export function useSuppliers() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
   const refreshSuppliers = useCallback(async () => {
-    let data: any[];
+    let data: any[] = [];
     try {
-      data = await apiFallback<any[]>(
-        () => api.suppliers.list(),
-        () => storage.getSuppliers()
-      );
+      const result = await api.suppliers.list();
+      if (result.data !== undefined) {
+        data = result.data;
+      } else if (isDemoMode()) {
+        data = await storage.getSuppliers();
+      } else if (isThinClientMode()) {
+        const cached = readLanSuppliers();
+        if (cached?.length) {
+          console.warn('[useSuppliers] Server unreachable — using cached suppliers');
+          setSuppliers(cached);
+          return;
+        }
+        data = await storage.getSuppliers();
+      } else {
+        throw new Error(result.error || 'API returned no data');
+      }
     } catch {
-      data = await storage.getSuppliers();
+      if (isThinClientMode()) {
+        const cached = readLanSuppliers();
+        if (cached?.length) {
+          console.warn('[useSuppliers] Server unreachable — using cached suppliers');
+          setSuppliers(cached);
+          return;
+        }
+      }
+      if (isDemoMode()) {
+        data = await storage.getSuppliers();
+      }
     }
     const mapped = Array.isArray(data) ? data.map(mapSupplier) : [];
+    if (mapped.length && isThinClientMode()) {
+      saveLanSuppliers(mapped);
+    }
     console.log(`[ERP] Suppliers loaded: ${mapped.length} total, ${mapped.filter(s => s.isActive).length} active`);
     setSuppliers(mapped);
   }, []);
@@ -1378,6 +1480,14 @@ function mapPurchaseOrderItem(item: any): PurchaseOrderItem {
   };
 }
 
+function normalizePurchaseOrderStatus(raw: unknown): PurchaseOrder['status'] {
+  const s = String(raw || 'pending').trim().toLowerCase().replace(/\s+/g, '_');
+  const allowed = new Set([
+    'draft', 'pending', 'awaiting_approval', 'approved', 'received', 'partial', 'cancelled',
+  ]);
+  return (allowed.has(s) ? s : 'pending') as PurchaseOrder['status'];
+}
+
 function mapPurchaseOrder(order: any): PurchaseOrder {
   return {
     id: order.id,
@@ -1394,7 +1504,7 @@ function mapPurchaseOrder(order: any): PurchaseOrder {
     freightDistributed: order.freightDistributed ?? order.freight_distributed ?? false,
     otherCosts: order.otherCosts ?? order.other_costs != null ? Number(order.otherCosts ?? order.other_costs) : undefined,
     otherCostsDescription: order.otherCostsDescription ?? order.other_costs_description,
-    status: order.status || 'pending',
+    status: normalizePurchaseOrderStatus(order.status),
     notes: order.notes || '',
     createdBy: order.createdBy ?? order.created_by ?? '',
     createdAt: order.createdAt ?? order.created_at ?? '',

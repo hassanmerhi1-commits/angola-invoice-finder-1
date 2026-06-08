@@ -39,6 +39,8 @@ import { ensureDayTodos, todayKey } from '@/lib/dailyTodos';
 import { useTranslation } from '@/i18n';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { ServerConnectionIndicator } from '@/components/layout/ServerConnectionIndicator';
+import { OfflineModeBanner } from '@/components/layout/OfflineModeBanner';
+import { SyncPendingBadge } from '@/components/layout/SyncPendingBadge';
 import { CalculatorDialog } from '@/components/utilities/CalculatorDialog';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { useBranchScope } from '@/hooks/useBranchScope';
@@ -399,6 +401,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
 
   return (
     <header className="sticky top-0 z-50">
+      <OfflineModeBanner />
       {/* ====== ROW 1: Menu Bar ====== */}
       <div className="h-10 px-3 bg-sidebar text-sidebar-foreground hidden lg:flex items-center justify-between">
         <div className="flex items-center gap-1">
@@ -447,6 +450,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
 
         <div className="flex items-center gap-2">
           <ServerConnectionIndicator />
+          <SyncPendingBadge />
           <Button
             type="button"
             variant="ghost"

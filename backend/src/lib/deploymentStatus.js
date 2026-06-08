@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 /** Bump when SQLite tryAlterAdd / migrations change (match highest migration number). */
-const EXPECTED_SCHEMA_VERSION = 25;
+const EXPECTED_SCHEMA_VERSION = 30;
 
 function readAppVersion() {
   const candidates = [

@@ -4,9 +4,22 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
-const { authenticateSyncIngest } = require('../middleware/syncAuth');
-const { processSale } = require('../transactionEngine');
-const { enqueueSaleCreated } = require('../sync/outbox');
+const {
+  authenticateSyncIngest,
+  authenticateClientIngest,
+  configuredClientIngestKeys,
+} = require('../middleware/syncAuth');
+const { requireAuth } = require('../middleware/requireAuth');
+const { applyClientIngestEvent, SUPPORTED_TYPES } = require('../sync/clientIngestHandlers');
+const { fetchMasterDataForBranch } = require('../sync/masterData');
+const { logSyncAudit, fetchRecentAudit } = require('../sync/auditLog');
+const { applyHqIngestEvent, findHqIngestReceipt } = require('../sync/hqIngestMirror');
+const { buildConsolidationReport } = require('../sync/consolidation');
+const {
+  fetchDeadLetterEvents,
+  replayDeadLetterEvent,
+  resolveDeadLetterEvent,
+} = require('../sync/outbox');
 
 function parseJsonField(val) {
   if (!val) return {};
@@ -87,16 +100,99 @@ async function mirrorPaymentEvent(payload) {
 
 async function applyEvent(event) {
   const payload = parseJsonField(event.payload);
+  const idem = event.idempotency_key || event.idempotencyKey;
   switch (event.event_type) {
     case 'sale.created':
       return mirrorSaleEvent(payload);
     case 'payment.created':
       return mirrorPaymentEvent(payload);
+    case 'purchase_invoice.created':
+    case 'stock_movement':
+      return applyHqIngestEvent({ event_type: event.event_type, payload, idempotency_key: idem });
     case 'journal.posted':
-      return { mirrored: false, reason: 'journal mirror deferred' };
+      return applyHqIngestEvent({ event_type: event.event_type, payload, idempotency_key: idem });
     default:
       return { skipped: true, reason: 'unknown type' };
   }
+}
+
+async function buildSyncStatusReport() {
+  const pending = await db.query(
+    `SELECT COUNT(*) AS n FROM sync_events WHERE status IN ('pending', 'failed')`
+  );
+  const dead = await db.query(
+    `SELECT COUNT(*) AS n FROM sync_events WHERE status = 'dead'`
+  );
+  const sent = await db.query(
+    `SELECT COUNT(*) AS n FROM sync_events WHERE status = 'sent'`
+  );
+
+  let byBranch = [];
+  let byDestination = { main: 0, agt: 0, other: 0 };
+
+  try {
+    const branchSql = db.engine === 'postgres'
+      ? `SELECT branch_id, status, COUNT(*)::int AS n
+         FROM sync_events
+         WHERE status IN ('pending', 'failed', 'dead')
+         GROUP BY branch_id, status`
+      : `SELECT branch_id, status, COUNT(*) AS n
+         FROM sync_events
+         WHERE status IN ('pending', 'failed', 'dead')
+         GROUP BY branch_id, status`;
+    const branchRes = await db.query(branchSql);
+    const branchMap = new Map();
+    for (const row of branchRes.rows) {
+      const bid = row.branch_id || 'unknown';
+      if (!branchMap.has(bid)) {
+        branchMap.set(bid, { branchId: bid, pending: 0, failed: 0, dead: 0 });
+      }
+      const entry = branchMap.get(bid);
+      if (row.status === 'pending') entry.pending += Number(row.n);
+      else if (row.status === 'failed') entry.failed += Number(row.n);
+      else if (row.status === 'dead') entry.dead += Number(row.n);
+    }
+    byBranch = Array.from(branchMap.values());
+  } catch {
+    /* sync_events may be empty */
+  }
+
+  try {
+    const destSql = db.engine === 'postgres'
+      ? `SELECT COALESCE(destination, 'legacy') AS dest, COUNT(*)::int AS n
+         FROM sync_events
+         WHERE status IN ('pending', 'failed')
+         GROUP BY COALESCE(destination, 'legacy')`
+      : `SELECT COALESCE(destination, 'legacy') AS dest, COUNT(*) AS n
+         FROM sync_events
+         WHERE status IN ('pending', 'failed')
+         GROUP BY COALESCE(destination, 'legacy')`;
+    const destRes = await db.query(destSql);
+    for (const row of destRes.rows) {
+      const d = row.dest;
+      const n = Number(row.n);
+      if (d === 'main') byDestination.main += n;
+      else if (d === 'agt') byDestination.agt += n;
+      else byDestination.other += n;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const recentAudit = await fetchRecentAudit(15);
+
+  return {
+    pending: Number(pending.rows[0]?.n || 0),
+    failed: Number(
+      (await db.query(`SELECT COUNT(*) AS n FROM sync_events WHERE status = 'failed'`)).rows[0]?.n || 0
+    ),
+    dead: Number(dead.rows[0]?.n || 0),
+    sent: Number(sent.rows[0]?.n || 0),
+    byBranch,
+    byDestination,
+    recentAudit,
+    clientIngestSecured: configuredClientIngestKeys().any,
+  };
 }
 
 module.exports = function syncIngestRouter(broadcastTable) {
@@ -112,11 +208,8 @@ module.exports = function syncIngestRouter(broadcastTable) {
           : { event_type: ev.type, payload: ev.payload, idempotency_key: ev.idempotencyKey };
         const idem = row.idempotency_key || row.idempotencyKey;
         if (idem) {
-          const exists = await db.query(
-            `SELECT id FROM sync_events WHERE idempotency_key = $1 AND status = 'sent' LIMIT 1`,
-            [idem]
-          );
-          if (exists.rows.length > 0) {
+          const receipt = await findHqIngestReceipt(idem);
+          if (receipt?.entity_id) {
             results.push({ idempotencyKey: idem, ok: true, duplicate: true });
             continue;
           }
@@ -128,11 +221,22 @@ module.exports = function syncIngestRouter(broadcastTable) {
           event_type: row.event_type || row.type,
           payload,
         });
+        await logSyncAudit({
+          eventType: row.event_type || row.type,
+          entityType: 'ingest',
+          source: 'hq_ingest',
+          destination: 'main',
+          idempotencyKey: idem,
+          status: result.skipped ? 'completed' : 'completed',
+        });
         results.push({ idempotencyKey: idem, ok: true, result });
       }
       if (broadcastTable) {
         await broadcastTable('sales');
         await broadcastTable('payments');
+        await broadcastTable('purchase_invoices');
+        await broadcastTable('products');
+        await broadcastTable('journal_entries');
       }
       res.json({ success: true, results });
     } catch (e) {
@@ -141,75 +245,213 @@ module.exports = function syncIngestRouter(broadcastTable) {
     }
   });
 
-  /** Shop client offline batch — applies sales on city server via transaction engine */
-  router.post('/client-ingest', async (req, res) => {
-    const client = await db.pool.connect();
+  /** Shop client batch — sales, payments, stock movements (Phase B3) */
+  router.post('/client-ingest', authenticateClientIngest, async (req, res) => {
+    const poolClient = await db.pool.connect();
     try {
       const events = Array.isArray(req.body?.events) ? req.body.events : [];
       const results = [];
+      let touchedSales = false;
+      let touchedProducts = false;
+      let touchedPayments = false;
+      let touchedPurchases = false;
+      let touchedCaixa = false;
 
       for (const ev of events) {
         const key = ev.idempotencyKey || ev.idempotency_key;
-        if (!key) {
-          results.push({ ok: false, error: 'missing idempotencyKey' });
-          continue;
+        const type = ev.type || ev.event_type;
+        try {
+          const result = await applyClientIngestEvent(poolClient, ev);
+          if (result.ok !== false) {
+            await logSyncAudit({
+              eventType: type,
+              entityType: result.eventType || type,
+              entityId:
+                result.saleId
+                || result.paymentId
+                || result.movementId
+                || result.purchaseInvoiceId
+                || result.sessionId
+                || null,
+              branchId:
+                ev.payload?.saleData?.branchId
+                || ev.payload?.paymentData?.branchId
+                || ev.payload?.invoiceData?.branchId
+                || ev.payload?.sessionData?.branchId
+                || null,
+              source: 'shop_client',
+              destination: 'city_server',
+              idempotencyKey: key,
+              status: 'completed',
+            });
+            if (type === 'sale.created') touchedSales = true;
+            if (type === 'payment.created') touchedPayments = true;
+            if (type === 'stock_movement' || type === 'purchase_invoice.created') touchedProducts = true;
+            if (type === 'purchase_invoice.created') touchedPurchases = true;
+            if (type === 'caixa.close') touchedCaixa = true;
+          } else {
+            await logSyncAudit({
+              eventType: type,
+              source: 'shop_client',
+              destination: 'city_server',
+              idempotencyKey: key,
+              status: 'failed',
+              errorMessage: result.error,
+            });
+          }
+          results.push({ idempotencyKey: key, ...result });
+        } catch (e) {
+          await poolClient.query('ROLLBACK').catch(() => {});
+          await logSyncAudit({
+            eventType: type,
+            source: 'shop_client',
+            destination: 'city_server',
+            idempotencyKey: key,
+            status: 'failed',
+            errorMessage: e.message,
+          });
+          results.push({ ok: false, idempotencyKey: key, error: e.message });
         }
-
-        const dup = await db.query(
-          `SELECT id FROM sales WHERE client_request_id = $1 LIMIT 1`,
-          [key]
-        );
-        if (dup.rows.length > 0) {
-          results.push({ ok: true, duplicate: true, saleId: dup.rows[0].id });
-          continue;
-        }
-
-        if (ev.type !== 'sale.created') {
-          results.push({ ok: false, error: `unsupported type ${ev.type}` });
-          continue;
-        }
-
-        const body = ev.payload?.saleData || ev.payload;
-        body.clientRequestId = key;
-
-        await client.query('BEGIN');
-        const sale = await processSale(client, body);
-        await client.query('COMMIT');
-
-        await db.query(
-          `UPDATE sales SET client_request_id = $1 WHERE id = $2`,
-          [key, sale.id]
-        );
-
-        await enqueueSaleCreated(null, sale.id, body.branchId, key);
-        results.push({ ok: true, saleId: sale.id, invoiceNumber: sale.invoice_number });
       }
 
       if (broadcastTable) {
-        await broadcastTable('sales');
-        await broadcastTable('products');
+        if (touchedSales) await broadcastTable('sales');
+        if (touchedPayments) await broadcastTable('payments');
+        if (touchedProducts) await broadcastTable('products');
+        if (touchedPurchases) await broadcastTable('purchase_invoices');
+        if (touchedCaixa) {
+          await broadcastTable('caixas');
+          await broadcastTable('caixa_sessions');
+        }
       }
-      res.json({ success: true, results });
+      res.json({ success: true, supportedTypes: Array.from(SUPPORTED_TYPES), results });
     } catch (e) {
-      await client.query('ROLLBACK').catch(() => {});
       console.error('[SYNC CLIENT INGEST]', e);
       res.status(500).json({ error: e.message });
     } finally {
-      client.release();
+      poolClient.release();
+    }
+  });
+
+  /** City → shop: products + clients snapshot (incremental via ?since=ISO) */
+  router.get('/master-data', authenticateClientIngest, async (req, res) => {
+    try {
+      const branchId = String(req.query.branchId || '').trim();
+      const since = req.query.since ? String(req.query.since) : null;
+      if (!branchId) return res.status(400).json({ error: 'branchId query required' });
+      const data = await fetchMasterDataForBranch(branchId, since);
+      res.json(data);
+    } catch (e) {
+      console.error('[SYNC MASTER DATA]', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** HQ consolidation rollup from mirrored city data */
+  router.get('/consolidation', requireAuth, async (req, res) => {
+    try {
+      const report = await buildConsolidationReport({
+        startDate: req.query.startDate ? String(req.query.startDate) : undefined,
+        endDate: req.query.endDate ? String(req.query.endDate) : undefined,
+      });
+      res.json(report);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** Dead letter queue — failed sync events after max retries */
+  router.get('/dead-letter', requireAuth, async (req, res) => {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 50, 100);
+      const events = await fetchDeadLetterEvents(limit);
+      res.json({ events });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.post('/dead-letter/:id/replay', requireAuth, async (req, res) => {
+    try {
+      const ok = await replayDeadLetterEvent(req.params.id);
+      if (!ok) return res.status(404).json({ error: 'Dead letter not found' });
+      await logSyncAudit({
+        eventType: 'dead_letter.replay',
+        entityType: 'sync_event',
+        entityId: req.params.id,
+        source: 'hq_admin',
+        destination: 'main',
+        status: 'completed',
+      });
+      res.json({ success: true, replayed: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.post('/dead-letter/:id/resolve', requireAuth, async (req, res) => {
+    try {
+      const note = req.body?.note || 'manually resolved';
+      const ok = await resolveDeadLetterEvent(req.params.id, note);
+      if (!ok) return res.status(404).json({ error: 'Dead letter not found' });
+      await logSyncAudit({
+        eventType: 'dead_letter.resolve',
+        entityType: 'sync_event',
+        entityId: req.params.id,
+        source: 'hq_admin',
+        destination: 'main',
+        status: 'completed',
+      });
+      res.json({ success: true, resolved: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** Logged-in server UI — sync queue health (single laptop / city server) */
+  router.get('/overview', requireAuth, async (_req, res) => {
+    try {
+      const { drainRedundantMainQueueOnHq } = require('../sync/outbox');
+      await drainRedundantMainQueueOnHq().catch(() => 0);
+      const report = await buildSyncStatusReport();
+      let recentIngest = [];
+      try {
+        const r = await db.query(
+          `SELECT idempotency_key, event_type, branch_id, entity_id, created_at
+           FROM client_ingest_log ORDER BY created_at DESC LIMIT 15`
+        );
+        recentIngest = r.rows;
+      } catch {
+        /* table may not exist pre-migration */
+      }
+      res.json({
+        ...report,
+        recentClientIngest: recentIngest,
+        supportedClientTypes: Array.from(SUPPORTED_TYPES),
+      });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
     }
   });
 
   router.get('/status', authenticateSyncIngest, async (_req, res) => {
     try {
-      const pending = await db.query(
-        `SELECT COUNT(*) AS n FROM sync_events WHERE status IN ('pending', 'failed')`
-      );
-      const dead = await db.query(
-        `SELECT COUNT(*) AS n FROM sync_events WHERE status = 'dead'`
-      );
+      res.json(await buildSyncStatusReport());
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** Lighter status for city ops / shop scripts (same key as client-ingest). */
+  router.get('/status/summary', authenticateClientIngest, async (_req, res) => {
+    try {
+      const full = await buildSyncStatusReport();
       res.json({
-        pending: Number(pending.rows[0]?.n || 0),
-        dead: Number(dead.rows[0]?.n || 0),
+        pending: full.pending,
+        failed: full.failed,
+        dead: full.dead,
+        byBranch: full.byBranch,
+        clientIngestSecured: full.clientIngestSecured,
       });
     } catch (e) {
       res.status(500).json({ error: e.message });

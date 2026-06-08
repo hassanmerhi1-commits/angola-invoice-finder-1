@@ -1,5 +1,18 @@
 /** Map purchase invoice records between API JSON and SQLite rows. */
 
+/** SQLite stores JSON in TEXT; PostgreSQL JSONB columns arrive already parsed. */
+function parseJsonColumn(val, fallback = []) {
+  if (val == null || val === '') return fallback;
+  if (typeof val === 'string') {
+    try {
+      return JSON.parse(val);
+    } catch {
+      return fallback;
+    }
+  }
+  return val;
+}
+
 function fromRow(row) {
   if (!row) return null;
   return {
@@ -34,8 +47,8 @@ function fromRow(row) {
     changePrice: !!row.change_price,
     isPending: !!row.is_pending,
     extraNote: row.extra_note || '',
-    lines: row.lines_json ? JSON.parse(row.lines_json) : [],
-    journalLines: row.journal_lines_json ? JSON.parse(row.journal_lines_json) : [],
+    lines: parseJsonColumn(row.lines_json, []),
+    journalLines: parseJsonColumn(row.journal_lines_json, []),
     subtotal: Number(row.subtotal || 0),
     ivaTotal: Number(row.iva_total || 0),
     total: Number(row.total || 0),

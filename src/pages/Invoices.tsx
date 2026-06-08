@@ -33,6 +33,7 @@ import {
 } from '@/lib/documentStorage';
 import type { BranchRef } from '@/lib/purchaseInvoiceStorage';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
+import { SALES_CHANGED_EVENT } from '@/lib/storage';
 import {
   documentTypeForNewFromTab,
   getInvoicesWorkspaceTab,
@@ -137,6 +138,12 @@ export default function Invoices() {
 
   // Load documents
   const [documents, setDocuments] = useState<ERPDocument[]>([]);
+
+  useEffect(() => {
+    const onSalesChanged = () => setRefreshKey((k) => k + 1);
+    window.addEventListener(SALES_CHANGED_EVENT, onSalesChanged);
+    return () => window.removeEventListener(SALES_CHANGED_EVENT, onSalesChanged);
+  }, []);
 
   useEffect(() => {
     const type = activeTab === 'all' ? undefined : activeTab;

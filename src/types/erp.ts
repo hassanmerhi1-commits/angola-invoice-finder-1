@@ -269,7 +269,7 @@ export interface PurchaseOrder {
   // Other costs (despesas)
   otherCosts?: number;
   otherCostsDescription?: string;
-  status: 'draft' | 'pending' | 'approved' | 'received' | 'partial' | 'cancelled';
+  status: 'draft' | 'pending' | 'awaiting_approval' | 'approved' | 'received' | 'partial' | 'cancelled';
   notes?: string;
   createdBy: string;
   createdAt: string;

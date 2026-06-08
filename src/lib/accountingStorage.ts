@@ -314,6 +314,16 @@ export async function closeCaixaSession(
         caixa.closingNotes = notes;
         await saveCaixa(caixa);
       }
+
+      try {
+        const { enqueueCaixaCloseSync } = await import('@/lib/sync/clientOutbox');
+        await enqueueCaixaCloseSync({
+          sessionData: { ...session },
+          ...(caixa ? { caixaData: { ...caixa } } : {}),
+        });
+      } catch {
+        /* non-fatal */
+      }
     }
     return;
   }

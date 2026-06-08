@@ -32,6 +32,16 @@ function isCompletedSale(sale: Sale | Record<string, unknown>): boolean {
   return status === 'completed' || status === 'paid';
 }
 
+function saleLineRevenue(item: {
+  subtotal?: number;
+  unitPrice?: number;
+  quantity?: number;
+}): number {
+  const subtotal = Number(item.subtotal);
+  if (subtotal > 0) return subtotal;
+  return (Number(item.unitPrice) || 0) * (Number(item.quantity) || 0);
+}
+
 function useChartSales(): Sale[] {
   const { apiBranchId } = useBranchScope();
   const { sales } = useSales(apiBranchId);
@@ -73,7 +83,7 @@ function useChartsI18n() {
   const { t, language } = useTranslation();
   const c = t.chartsUi;
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const fmtMoney = (value: number) => `${value.toLocaleString(locale)} Kz`;
+  const fmtMoney = (value: number) => `${(Number(value) || 0).toLocaleString(locale)} Kz`;
   return { c, locale, fmtMoney, months: c.monthsShort, language };
 }
 
@@ -210,8 +220,8 @@ export function TopProductsChart() {
       for (const item of (sale.items || [])) {
         const key = item.productId || item.productName;
         const existing = productMap.get(key) || { name: item.productName || key, revenue: 0, cost: 0 };
-        existing.revenue += (item.subtotal || item.unitPrice * item.quantity) || 0;
-        existing.cost += ((item as { costPrice?: number }).costPrice || 0) * item.quantity;
+        existing.revenue += saleLineRevenue(item);
+        existing.cost += (Number((item as { costPrice?: number }).costPrice) || 0) * (Number(item.quantity) || 0);
         productMap.set(key, existing);
       }
     }
@@ -411,8 +421,9 @@ export function ProfitMarginWidget() {
 
     for (const sale of completed) {
       for (const item of (sale.items || [])) {
-        const revenue = (item.subtotal || item.unitPrice * item.quantity) || 0;
-        const cost = (productCostMap.get(item.productId) || 0) * item.quantity;
+        const revenue = saleLineRevenue(item);
+        const qty = Number(item.quantity) || 0;
+        const cost = (productCostMap.get(item.productId) || 0) * qty;
         totalRevenue += revenue;
         totalCost += cost;
       }

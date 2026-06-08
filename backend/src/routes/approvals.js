@@ -150,6 +150,28 @@ module.exports = function(broadcastTable) {
           `UPDATE approval_requests SET status = 'approved', completed_at = CURRENT_TIMESTAMP WHERE id = $1`,
           [id]
         );
+        if (request.document_type === 'purchase_order' && request.document_id) {
+          try {
+            if (userId && /^[0-9a-f-]{36}$/i.test(String(userId))) {
+              await client.query(
+                `UPDATE purchase_orders
+                 SET status = 'approved', approved_by = $1::uuid, approved_at = CURRENT_TIMESTAMP
+                 WHERE id = $2 AND status IN ('awaiting_approval', 'pending')`,
+                [userId, request.document_id],
+              );
+            } else {
+              await client.query(
+                `UPDATE purchase_orders
+                 SET status = 'approved', approved_at = CURRENT_TIMESTAMP
+                 WHERE id = $1 AND status IN ('awaiting_approval', 'pending')`,
+                [request.document_id],
+              );
+            }
+            broadcastTable('purchase_orders');
+          } catch (poErr) {
+            console.warn('[APPROVAL] purchase_orders status sync skipped:', poErr.message);
+          }
+        }
       } else {
         // Move to next step
         await client.query(

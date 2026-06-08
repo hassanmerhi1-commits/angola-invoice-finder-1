@@ -16,9 +16,11 @@ const {
   validatePeriod,
   auditLog,
   processStockAdjustment,
+  applyPurchaseSupplierToProducts,
 } = require('../transactionEngine');
 const { attachUserBranchScope, resolveWarehouseId } = require('../middleware/branchScope');
 const { isUniqueSkuBranchError } = require('../lib/productSkuResolve');
+const { processTransactionBody } = require('../transactionProcessor');
 const {
   createJournalEntry,
   generateSequenceNumber,
@@ -398,393 +400,32 @@ module.exports = function(broadcastTable) {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
-
-      const {
-        transactionType, documentId, documentNumber, branchId,
-        userId, date, description, amount, currency,
-        stockEntries, journalLines, openItem, documentLinks,
-        priceUpdates, entityBalanceUpdate,
-        taxLines, linkedPurchaseOrderNumber, changePrice,
-      } = req.body;
-      const applySellingPrice = changePrice === true || changePrice === 'true' || changePrice === 1;
-
-      const effectivePriceUpdates = new Map(
-        (priceUpdates || []).map((pu) => [pu.productId, Number(pu.newUnitCost || 0)])
-      );
-
-      // Input validation
-      if (!branchId) throw new Error('branchId é obrigatório');
-      if (!transactionType) throw new Error('transactionType é obrigatório');
-
-      const result = {
-        success: false,
-        stockMovementIds: [],
-        journalEntryId: null,
-        openItemId: null,
-        documentLinkIds: [],
-        /** Catalog line productId → branch products.id used for stock/cost (when cloned). */
-        resolvedProductIds: {},
-        errors: [],
-      };
-
-      // Validate period
-      await validatePeriod(client, date || new Date().toISOString());
-
-      // Phase 1: Stock Movements (through engine)
-      /** Line productId → actual products.id used after branch clone (shared catalog → filial row). */
-      const stockProductIdByLine = new Map();
-      if (stockEntries && stockEntries.length > 0) {
-        for (const entry of stockEntries) {
-          const effectiveUnitCost = effectivePriceUpdates.get(entry.productId) ?? entry.unitCost ?? 0;
-
-          if (transactionType === 'purchase_invoice' && Number(effectiveUnitCost) !== Number(entry.unitCost || 0)) {
-            console.log(
-              `[TX API] purchase_invoice ${documentNumber}: landed cost applied for ${entry.productId} ` +
-              `base=${Number(entry.unitCost || 0)} final=${Number(effectiveUnitCost)}`
-            );
-          }
-
-          const stockDirection = resolveStockEntryDirection(entry, transactionType, openItem);
-          const stockReferenceType =
-            transactionType === 'credit_note' && openItem?.entityType === 'supplier'
-              ? 'supplier_return'
-              : transactionType;
-
-          const movement = await recordStockMovement(client, {
-            productId: entry.productId,
-            warehouseId: entry.warehouseId,
-            movementType: stockDirection,
-            quantity: entry.quantity,
-            unitCost: effectiveUnitCost,
-            referenceType: stockReferenceType,
-            referenceId: documentId,
-            referenceNumber: documentNumber,
-            createdBy: userId,
-          });
-          result.stockMovementIds.push(movement.id);
-          const resolvedPid = movement.product_id || entry.productId;
-          stockProductIdByLine.set(entry.productId, resolvedPid);
-          if (resolvedPid !== entry.productId) {
-            console.log(
-              `[TX API] ${transactionType} ${documentNumber}: stock on filial product ${resolvedPid} ` +
-              `(line had ${entry.productId})`
-            );
-          }
-        }
-        if (stockProductIdByLine.size > 0) {
-          result.resolvedProductIds = Object.fromEntries(stockProductIdByLine);
-        }
-      }
-
-      // Phase 2: Price Updates (WAC) — same product row that received stock
-      if (priceUpdates && priceUpdates.length > 0) {
-        for (const pu of priceUpdates) {
-          const targetProductId = stockProductIdByLine.get(pu.productId) || pu.productId;
-          const prodResult = await client.query(
-            'SELECT stock, cost FROM products WHERE id = $1 FOR UPDATE',
-            [targetProductId]
-          );
-          if (prodResult.rows.length > 0) {
-            const p = prodResult.rows[0];
-            const currentStock = parseInt(p.stock) || 0;
-            const currentCost = parseFloat(p.cost) || 0;
-            const previousStock = Math.max(currentStock - pu.quantityReceived, 0);
-            const prevTotal = previousStock * currentCost;
-            const newTotal = pu.quantityReceived * pu.newUnitCost;
-            const totalStock = previousStock + pu.quantityReceived;
-            const newAvg = totalStock > 0 ? (prevTotal + newTotal) / totalStock : pu.newUnitCost;
-
-            const nextAvgCost = Number(newAvg.toFixed(2));
-            const nextLastCost = Number(Number(pu.newUnitCost || 0).toFixed(2));
-
-            await client.query(
-              `UPDATE products
-               SET cost = $1,
-                   last_cost = $2,
-                   avg_cost = $1,
-                   updated_at = CURRENT_TIMESTAMP
-               WHERE id = $3`,
-              [nextAvgCost, nextLastCost, targetProductId]
-            );
-
-            const skuRow = await client.query(
-              'SELECT sku FROM products WHERE id = $1',
-              [targetProductId],
-            );
-            const skuKey = String(skuRow.rows[0]?.sku || '').trim();
-            if (skuKey) {
-              await client.query(
-                `UPDATE products
-                 SET cost = $1, last_cost = $2, avg_cost = $1, updated_at = CURRENT_TIMESTAMP
-                 WHERE ${require('../lib/sqlDialect').coalesceActiveNotZero(db, 'is_active')}
-                   AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($3)`,
-                [nextAvgCost, nextLastCost, skuKey],
-              );
-            }
-
-            const selling = pu.sellingPrice != null && pu.sellingPrice !== ''
-              ? Number(pu.sellingPrice)
-              : null;
-            const shouldApplySelling =
-              selling != null && !Number.isNaN(selling) && selling > 0
-              && (applySellingPrice || selling > 0);
-            if (shouldApplySelling) {
-              await client.query(
-                `UPDATE products
-                 SET price = $1, updated_at = CURRENT_TIMESTAMP
-                 WHERE id = $2`,
-                [selling, targetProductId],
-              );
-              if (skuKey) {
-                await client.query(
-                  `UPDATE products
-                   SET price = $1, updated_at = CURRENT_TIMESTAMP
-                   WHERE ${require('../lib/sqlDialect').coalesceActiveNotZero(db, 'is_active')}
-                     AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)`,
-                  [selling, skuKey],
-                );
-              }
-              console.log(
-                `[TX API] selling price ${transactionType} ${documentNumber}: product=${targetProductId} price=${selling}`,
-              );
-            }
-
-            console.log(
-              `[TX API] price update ${transactionType} ${documentNumber}: product=${targetProductId} ` +
-              `prevStock=${previousStock} received=${pu.quantityReceived} avgCost=${nextAvgCost} lastCost=${nextLastCost}`
-            );
-          }
-        }
-      }
-
-      // Phase 3: Journal Entry (through accounting engine — validates balance)
-      if (journalLines && journalLines.length > 0) {
-        if (journalLines.some((line) => line.accountCode === '6.2.6')) {
-          await ensureFreightExpenseAccount(client);
-        }
-        await ensureJournalLineAccounts(client, journalLines, entityBalanceUpdate, openItem);
-        await ensureSupplierJournalAccounts(client, journalLines, entityBalanceUpdate, openItem);
-
-        const entry = await createJournalEntry(client, {
-          description,
-          referenceType: transactionType,
-          referenceId: documentId,
-          branchId,
-          createdBy: userId,
-          lines: journalLines.map(l => ({
-            accountCode: l.accountCode,
-            description: l.note || description,
-            debit: l.debit || 0,
-            credit: l.credit || 0,
-          })),
-        });
-        result.journalEntryId = entry.id;
-      }
-
-      // Phase 3.5: Tax Engine (IVA / Retenção / IS)
-      if (Array.isArray(taxLines) && taxLines.length > 0) {
-        const d = new Date(date || new Date().toISOString());
-        const periodYear = d.getFullYear();
-        const periodMonth = d.getMonth() + 1;
-
-        // Ensure idempotency for retries
-        await client.query('DELETE FROM tax_lines WHERE document_type = $1 AND document_id = $2', [transactionType, documentId]);
-        await client.query('DELETE FROM tax_summaries WHERE document_type = $1 AND document_id = $2', [transactionType, documentId]);
-
-        for (const tl of taxLines) {
-          const taxCode = String(tl.taxCode || '').trim();
-          const taxRate = Number(tl.taxRate || 0);
-          const baseAmount = Number(tl.baseAmount || 0);
-          const taxAmount = Number(tl.taxAmount || 0);
-          const lineNumber = Number(tl.lineNumber || 1);
-          const isInclusive = !!tl.isInclusive;
-
-          if (!taxCode || !isFinite(baseAmount) || !isFinite(taxAmount)) continue;
-
-          let taxCodeId = null;
-          try {
-            const tc = await client.query('SELECT id FROM tax_codes WHERE code = $1 LIMIT 1', [taxCode]);
-            taxCodeId = tc.rows[0]?.id || null;
-          } catch {
-            taxCodeId = null;
-          }
-
-          await client.query(
-            `INSERT INTO tax_lines
-             (document_type, document_id, line_number, tax_code_id, tax_code, tax_rate, base_amount, tax_amount, is_inclusive)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-            [transactionType, documentId, lineNumber, taxCodeId, taxCode, taxRate, baseAmount, taxAmount, isInclusive]
-          );
-        }
-
-        // Create document-level summaries (grouped by tax code/rate)
-        const summaryRows = await client.query(
-          `SELECT tax_code, tax_rate,
-                  SUM(base_amount) AS total_base,
-                  SUM(tax_amount) AS total_tax
-           FROM tax_lines
-           WHERE document_type = $1 AND document_id = $2
-           GROUP BY tax_code, tax_rate`,
-          [transactionType, documentId]
-        );
-
-        const direction = transactionType === 'sale' ? 'output' : 'input';
-        for (const row of summaryRows.rows) {
-          await client.query(
-            `INSERT INTO tax_summaries
-             (document_type, document_id, tax_code, tax_rate, total_base, total_tax, direction, period_year, period_month)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-            [
-              transactionType,
-              documentId,
-              row.tax_code,
-              Number(row.tax_rate || 0),
-              Number(row.total_base || 0),
-              Number(row.total_tax || 0),
-              direction,
-              periodYear,
-              periodMonth,
-            ]
-          );
-        }
-      }
-
-      // Phase 4: Open Item (through engine)
-      if (openItem) {
-        const invoiceLink = (documentLinks || []).find((dl) =>
-          ['fatura_compra', 'purchase_invoice'].includes(String(dl.targetType || ''))
-        );
-        const isLinkedSupplierReturn =
-          transactionType === 'credit_note' &&
-          openItem.entityType === 'supplier' &&
-          !isOpenItemDebitFlag(openItem.isDebit) &&
-          !!invoiceLink;
-
-        if (isLinkedSupplierReturn) {
-          const applied = await reduceSupplierInvoiceOpenItem(client, {
-            entityId: openItem.entityId,
-            invoiceDocumentId: invoiceLink.targetId,
-            amount: openItem.originalAmount,
-          });
-          if (applied) {
-            result.openItemId = applied.id;
-            openItem.entityId = applied.entityId || openItem.entityId;
-            if (entityBalanceUpdate && entityBalanceUpdate.entityType === 'supplier') {
-              entityBalanceUpdate.entityId = applied.entityId || entityBalanceUpdate.entityId;
-            }
-            console.log(
-              `[TX API] Supplier return ${documentNumber}: reduced invoice ${applied.documentNumber} open item by ${applied.applied}`
-            );
-          } else {
-            const oi = await createOpenItem(client, {
-              entityType: openItem.entityType,
-              entityId: openItem.entityId,
-              documentType: openItem.documentType,
-              documentId,
-              documentNumber,
-              documentDate: date || new Date().toISOString().split('T')[0],
-              dueDate: openItem.dueDate || null,
-              originalAmount: openItem.originalAmount,
-              isDebit: openItem.isDebit,
-              branchId,
-              currency: openItem.currency || currency || 'AOA',
-            });
-            result.openItemId = oi.id;
-            console.warn(
-              `[TX API] Supplier return ${documentNumber}: invoice open item not found — created standalone credit open item`
-            );
-          }
-        } else {
-          let oi = null;
-          if (transactionType === 'purchase_invoice') {
-            const adopted = await adoptPurchaseOrderOpenItemForInvoice(client, {
-              entityId: openItem.entityId,
-              invoiceDocumentId: documentId,
-              invoiceDocumentNumber: documentNumber,
-              invoiceDocumentDate: date || new Date().toISOString().split('T')[0],
-              originalAmount: openItem.originalAmount,
-              dueDate: openItem.dueDate || null,
-              currency: openItem.currency || currency || 'AOA',
-              branchId,
-              purchaseOrderNumber: linkedPurchaseOrderNumber,
-            });
-            if (adopted) {
-              result.openItemId = adopted.id;
-              openItem.entityId = adopted.entityId || openItem.entityId;
-              if (entityBalanceUpdate && entityBalanceUpdate.entityType === 'supplier') {
-                entityBalanceUpdate.entityId = adopted.entityId || entityBalanceUpdate.entityId;
-              }
-            }
-          }
-          if (!result.openItemId) {
-            oi = await createOpenItem(client, {
-              entityType: openItem.entityType,
-              entityId: openItem.entityId,
-              documentType: openItem.documentType,
-              documentId,
-              documentNumber,
-              documentDate: date || new Date().toISOString().split('T')[0],
-              dueDate: openItem.dueDate || null,
-              originalAmount: openItem.originalAmount,
-              isDebit: openItem.isDebit,
-              branchId,
-              currency: openItem.currency || currency || 'AOA',
-            });
-            result.openItemId = oi.id;
-          }
-        }
-      }
-
-      // Phase 5: Document Links (through engine)
-      if (documentLinks && documentLinks.length > 0) {
-        for (const dl of documentLinks) {
-          const linkId = await linkDocuments(client, dl.sourceType, dl.sourceId, dl.sourceNumber, dl.targetType, dl.targetId, dl.targetNumber);
-          result.documentLinkIds.push(linkId);
-        }
-      }
-
-      // Phase 6: Entity balance — suppliers: sync from open_items (source of truth)
-      if (entityBalanceUpdate) {
-        const ebu = entityBalanceUpdate;
-        if (ebu.entityType === 'supplier' && ebu.entityId) {
-          await syncSupplierBalanceFromOpenItems(client, ebu.entityId);
-        } else if (ebu.entityType === 'customer') {
-          await client.query('UPDATE clients SET current_balance = COALESCE(current_balance, 0) + $1 WHERE id = $2', [ebu.amount, ebu.entityId]);
-        }
-      }
-
-      // Phase 7: Audit log (ERP traceability)
-      await auditLog(client, {
-        tableName: 'transactions',
-        recordId: documentId,
-        action: 'process',
-        userId,
-        userName: req.body.userName,
-        branchId,
-        oldValues: null,
-        newValues: {
-          transactionType,
-          documentNumber,
-          date,
-          amount,
-          currency,
-          stockEntriesCount: stockEntries?.length || 0,
-          journalLinesCount: journalLines?.length || 0,
-          taxLinesCount: Array.isArray(taxLines) ? taxLines.length : 0,
-        },
-        description: `${transactionType} ${documentNumber} processed`,
-      });
-
+      const result = await processTransactionBody(client, req.body);
       await client.query('COMMIT');
 
-      result.success = true;
-      console.log(`[TX API] ${transactionType} ${documentNumber}: stock=${result.stockMovementIds.length}, journal=${!!result.journalEntryId}, openItem=${!!result.openItemId} ✓`);
+      if (result.alreadyProcessed) {
+        return res.status(200).json(result);
+      }
+
+      if (req.body.transactionType === 'purchase_invoice' && req.body.documentId) {
+        try {
+          const { enqueuePurchaseInvoiceCreated } = require('../sync/outbox');
+          await enqueuePurchaseInvoiceCreated(
+            null,
+            req.body.documentId,
+            req.body.branchId,
+            result.stockMovementIds
+          );
+        } catch (syncErr) {
+          console.warn('[TX API] purchase sync enqueue skipped:', syncErr.message);
+        }
+      }
 
       await broadcastTable('products');
       if (result.journalEntryId) {
         await broadcastTable('journal_entries');
       }
-      res.status(201).json(result);
+      return res.status(201).json(result);
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[TX API ERROR]', error.message);
@@ -801,7 +442,7 @@ module.exports = function(broadcastTable) {
       const friendly = isUniqueSkuBranchError(error)
         ? 'Já existe um produto com este código (SKU) nesta filial. Seleccione-o na lista da fatura em vez de criar um duplicado.'
         : (error.message || 'Transaction failed');
-      res.status(isUniqueSkuBranchError(error) ? 409 : 500).json({
+      return res.status(isUniqueSkuBranchError(error) ? 409 : 500).json({
         success: false,
         error: friendly,
         errors: [friendly],

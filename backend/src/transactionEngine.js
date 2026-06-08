@@ -17,6 +17,13 @@
  *  10. Validation before any DB operation
  */
 const db = require('./db');
+const {
+  openItemIsDebitSql,
+  openItemDebitAmountCase,
+  emptyBranchIdClause,
+  coalesceActiveNotZero,
+  activeFlagWhere,
+} = require('./lib/sqlDialect');
 const { createJournalEntry, generateSequenceNumber, findAccountByCode } = require('./accounting');
 const {
   findProductBySkuAndBranch,
@@ -55,7 +62,7 @@ async function resolveWarehouseId(client, value) {
   if (db.engine !== 'sqlite') return null;
 
   const branchResult = await client.query(
-    'SELECT id FROM branches WHERE id = $1 AND COALESCE(is_active, 1) != 0 LIMIT 1',
+    `SELECT id FROM branches WHERE id = $1 AND ${activeFlagWhere(db, 'is_active')} LIMIT 1`,
     [trimmed]
   );
   return branchResult.rows[0]?.id || null;
@@ -252,11 +259,71 @@ async function applyWeightedAverageCostAfterIn(client, productId, quantityIn, un
     await client.query(
       `UPDATE products
        SET cost = $1, last_cost = $2, avg_cost = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE COALESCE(is_active, 1) != 0
+       WHERE ${coalesceActiveNotZero(db, 'is_active')}
          AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($3)
          AND id != $4`,
       [nextAvg, nextLast, skuKey, productId],
     );
+  }
+}
+
+/** Stamp supplier on purchased products (inventory grid "Fornecedor" column). */
+async function applyPurchaseSupplierToProducts(client, params) {
+  const supplierName = String(params.supplierName || '').trim();
+  const supplierUuid = normalizeUuid(params.supplierId);
+  if (!supplierName && !supplierUuid) return;
+
+  let linkedSupplierId = null;
+  if (supplierUuid) {
+    const chk = await client.query('SELECT id FROM suppliers WHERE id = $1 LIMIT 1', [supplierUuid]);
+    if (chk.rows.length > 0) linkedSupplierId = supplierUuid;
+  }
+
+  const productIds = [...new Set((params.productIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  const skuKeys = [...new Set((params.skuKeys || []).map((s) => String(s || '').trim()).filter(Boolean))];
+
+  for (const pid of productIds) {
+    if (linkedSupplierId) {
+      await client.query(
+        `UPDATE products
+         SET supplier_id = $1,
+             supplier_name = COALESCE(NULLIF($2, ''), supplier_name),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $3`,
+        [linkedSupplierId, supplierName, pid],
+      );
+    } else if (supplierName) {
+      await client.query(
+        `UPDATE products
+         SET supplier_name = COALESCE(NULLIF($1, ''), supplier_name),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2`,
+        [supplierName, pid],
+      );
+    }
+  }
+
+  for (const sku of skuKeys) {
+    if (linkedSupplierId) {
+      await client.query(
+        `UPDATE products
+         SET supplier_id = $1,
+             supplier_name = COALESCE(NULLIF($2, ''), supplier_name),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE ${coalesceActiveNotZero(db, 'is_active')}
+           AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($3)`,
+        [linkedSupplierId, supplierName, sku],
+      );
+    } else if (supplierName) {
+      await client.query(
+        `UPDATE products
+         SET supplier_name = COALESCE(NULLIF($1, ''), supplier_name),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE ${coalesceActiveNotZero(db, 'is_active')}
+           AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)`,
+        [supplierName, sku],
+      );
+    }
   }
 }
 
@@ -519,7 +586,7 @@ async function resolveStockProductId(client, productIdOrCode, warehouseId) {
   const lookup = await client.query(
     `SELECT id
      FROM products
-     WHERE COALESCE(is_active, 1) != 0
+     WHERE ${coalesceActiveNotZero(db, 'is_active')}
        AND (
          LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
          OR TRIM(COALESCE(barcode, '')) = $2
@@ -581,7 +648,7 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
   if (nameTrim && sku) {
     const byName = await client.query(
       `SELECT id, sku FROM products
-       WHERE COALESCE(is_active, 1) != 0 AND branch_id = $1 AND LOWER(TRIM(name)) = LOWER($2)
+       WHERE ${coalesceActiveNotZero(db, 'is_active')} AND branch_id = $1 AND LOWER(TRIM(name)) = LOWER($2)
        ORDER BY updated_at DESC, created_at DESC
        LIMIT 1`,
       [toBranch, nameTrim]
@@ -687,6 +754,65 @@ function normalizeStandaloneMovementType(body) {
   throw new Error(`Tipo de movimento inválido (use IN ou OUT): ${raw || '(vazio)'}`);
 }
 
+/**
+ * Products migrated from SQLite often have products.stock but no stock_movements.
+ * Before the first OUT, seed an opening IN so reconcile does not zero stock after a partial sale.
+ */
+async function ensureOpeningStockMovement(client, productId, warehouseId, createdByUuid) {
+  const wh = String(warehouseId || '').trim();
+  const pid = String(productId || '').trim();
+  if (!wh || !pid) return;
+
+  const movCount = await client.query(
+    `SELECT COUNT(*)::int AS n FROM stock_movements WHERE product_id = $1 AND warehouse_id = $2`,
+    [pid, wh],
+  );
+  if (Number(movCount.rows[0]?.n || 0) > 0) return;
+
+  const prod = await client.query(
+    `SELECT stock, sku FROM products WHERE id = $1 FOR UPDATE`,
+    [pid],
+  );
+  if (prod.rows.length === 0) return;
+
+  let legacy = Math.max(0, parseFloat(prod.rows[0].stock || 0));
+  const sku = String(prod.rows[0].sku || '').trim();
+  if (sku) {
+    const mainBranchIds = await loadMainBranchIds(client);
+    const isCatalogWh = isCatalogBranchScope(wh, mainBranchIds);
+    let legacySql = `
+      SELECT COALESCE(SUM(stock), 0) AS legacy_stock
+      FROM products
+      WHERE ${coalesceActiveNotZero(db, 'is_active')}
+        AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)`;
+    const params = [sku];
+    if (isCatalogWh) {
+      legacySql += ` AND (${emptyBranchIdClause(db, 'branch_id')}`;
+      for (const mainId of mainBranchIds) {
+        params.push(mainId);
+        legacySql += ` OR branch_id = $${params.length}`;
+      }
+      legacySql += ')';
+    } else {
+      params.push(wh);
+      legacySql += ` AND branch_id = $${params.length}`;
+    }
+    const skuLegacy = await client.query(legacySql, params);
+    legacy = Math.max(legacy, parseFloat(skuLegacy.rows[0]?.legacy_stock || 0));
+  }
+
+  if (legacy <= 0.0001) return;
+
+  const movementId = randomUUID();
+  await client.query(
+    `INSERT INTO stock_movements
+     (id, product_id, warehouse_id, movement_type, quantity, unit_cost,
+      reference_type, reference_id, reference_number, notes, created_by)
+     VALUES ($1, $2, $3, 'IN', $4, 0, 'opening_balance', NULL, 'LEGACY', 'Saldo inicial (stock existente)', $5)`,
+    [movementId, pid, wh, legacy, createdByUuid],
+  );
+}
+
 /** After movements, align products.stock with movement ledger for this SKU at this warehouse. */
 async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
   const skuTrim = String(sku || '').trim();
@@ -715,10 +841,10 @@ async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
     let sql = `
       UPDATE products
       SET stock = $1, updated_at = CURRENT_TIMESTAMP
-      WHERE COALESCE(is_active, 1) != 0
+      WHERE ${coalesceActiveNotZero(db, 'is_active')}
         AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)
         AND (
-          branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`;
+          ${emptyBranchIdClause(db, 'branch_id')}`;
     for (const mainId of mainBranchIds) {
       params.push(mainId);
       sql += ` OR branch_id = $${params.length}`;
@@ -732,7 +858,7 @@ async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
   await client.query(
     `UPDATE products
      SET stock = $1, updated_at = CURRENT_TIMESTAMP
-     WHERE COALESCE(is_active, 1) != 0
+     WHERE ${coalesceActiveNotZero(db, 'is_active')}
        AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)
        AND (
          branch_id = $3
@@ -807,6 +933,10 @@ async function recordStockMovement(client, params) {
   const resolvedProductId = await resolveProductForWarehouse(client, productId, resolvedWarehouseId);
   const referenceUuid = normalizeUuid(referenceId);
   const createdByUuid = normalizeUuid(createdBy);
+
+  if (normalizedMovementType === 'OUT') {
+    await ensureOpeningStockMovement(client, resolvedProductId, resolvedWarehouseId, createdByUuid);
+  }
 
   // Lock product row
   const productResult = await client.query(
@@ -1034,12 +1164,13 @@ async function adoptPurchaseOrderOpenItemForInvoice(client, {
   if (!poIds.length) return null;
 
   for (const poId of poIds) {
+    const debitWhere = openItemIsDebitSql(db, '');
     let result = await client.query(
       `SELECT id, entity_id, remaining_amount, document_number
        FROM open_items
        WHERE entity_type = 'supplier'
          AND document_id = $1
-         AND is_debit = 1
+         AND ${debitWhere}
          AND status != 'cleared'
        ORDER BY created_at ASC
        LIMIT 1`,
@@ -1053,7 +1184,7 @@ async function adoptPurchaseOrderOpenItemForInvoice(client, {
          WHERE entity_type = 'supplier'
            AND entity_id = $1
            AND document_id = $2
-           AND is_debit = 1
+           AND ${debitWhere}
            AND status != 'cleared'
          ORDER BY created_at ASC
          LIMIT 1`,
@@ -1099,9 +1230,10 @@ async function adoptPurchaseOrderOpenItemForInvoice(client, {
 
 async function syncSupplierBalanceFromOpenItems(client, supplierId) {
   if (!supplierId) return;
+  const balanceCase = openItemDebitAmountCase(db, '');
   await client.query(
     `UPDATE suppliers SET balance = COALESCE((
-       SELECT SUM(CASE WHEN is_debit = 1 OR is_debit = TRUE THEN remaining_amount ELSE -remaining_amount END)
+       SELECT SUM(${balanceCase})
        FROM open_items
        WHERE entity_type = 'supplier' AND entity_id = $1
      ), 0)
@@ -1121,12 +1253,13 @@ async function reduceSupplierInvoiceOpenItem(client, { entityId, invoiceDocument
   for (const docId of documentIds) {
     if (remaining <= 0.001) break;
 
+    const debitWhere = openItemIsDebitSql(db, '');
     let result = await client.query(
       `SELECT id, entity_id, remaining_amount, document_number
        FROM open_items
        WHERE entity_type = 'supplier'
          AND document_id = $1
-         AND is_debit = 1
+         AND ${debitWhere}
          AND status != 'cleared'
        ORDER BY created_at ASC
        LIMIT 1`,
@@ -1140,7 +1273,7 @@ async function reduceSupplierInvoiceOpenItem(client, { entityId, invoiceDocument
          WHERE entity_type = 'supplier'
            AND entity_id = $1
            AND document_id = $2
-           AND is_debit = 1
+           AND ${debitWhere}
            AND status != 'cleared'
          ORDER BY created_at ASC
          LIMIT 1`,
@@ -1248,6 +1381,8 @@ async function processSale(client, saleData) {
     resolvedItems.push({ ...item, resolvedPid: pid });
 
     if (!pid) continue;
+
+    await ensureOpeningStockMovement(client, pid, branchId, normalizeUuid(cashierId));
 
     const stockCheck = await client.query(
       `SELECT p.name, p.stock AS legacy_stock,
@@ -1836,6 +1971,7 @@ async function processPayment(client, paymentData) {
     ? invoiceIds.map((id) => String(id || '').trim()).filter(Boolean)
     : [];
 
+  const debitWhere = openItemIsDebitSql(db, '');
   let openInvoices;
   if (requestedIds.length > 0) {
     const ph = requestedIds.map((_, i) => `$${i + 3}`).join(', ');
@@ -1843,17 +1979,17 @@ async function processPayment(client, paymentData) {
       `SELECT * FROM open_items
        WHERE entity_type = $1 AND entity_id = $2
          AND status != 'cleared'
-         AND (is_debit = 1 OR is_debit = TRUE)
+         AND ${debitWhere}
          AND (document_id IN (${ph}) OR id IN (${ph}))
        ORDER BY document_date ASC`,
-      [entityType, entityId, ...requestedIds, ...requestedIds],
+      [entityType, entityId, ...requestedIds],
     );
   } else {
     openInvoices = await client.query(
       `SELECT * FROM open_items
        WHERE entity_type = $1 AND entity_id = $2
          AND status != 'cleared'
-         AND (is_debit = 1 OR is_debit = TRUE)
+         AND ${debitWhere}
        ORDER BY document_date ASC`,
       [entityType, entityId],
     );
@@ -1954,6 +2090,7 @@ async function processPayment(client, paymentData) {
 module.exports = {
   // Stock
   recordStockMovement,
+  ensureOpeningStockMovement,
   reconcileSkuStockAtWarehouse,
   resolveOrCloneProductForBranch,
   resolveStockEntryDirection,
@@ -1983,4 +2120,5 @@ module.exports = {
   auditLog,
   getEntityAccountCode,
   ensureInventoryShrinkageAccount,
+  applyPurchaseSupplierToProducts,
 };

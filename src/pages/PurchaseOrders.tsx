@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { navigateThenStartPurchaseCreate } from '@/lib/nexorPurchaseCreate';
+import { purchaseOrderNeedsApproval } from '@/lib/purchaseOrderApproval';
 import { Search, Plus, Eye, CheckCircle, Package, ShoppingCart, Trash2, Barcode, ScanLine, Truck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -60,11 +61,12 @@ export default function PurchaseOrders() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { branches, currentBranch, apiBranchId } = useBranchScope();
-  const { 
-    orders, 
-    createOrder, 
-    receiveOrder, 
-    cancelOrder 
+  const {
+    orders,
+    createOrder,
+    approveOrder,
+    receiveOrder,
+    cancelOrder,
   } = usePurchaseOrders(apiBranchId);
   const { suppliers } = useSuppliers();
   const { toast } = useToast();
@@ -398,6 +400,26 @@ export default function PurchaseOrders() {
     }
   };
 
+  const handleApprove = async (order: PurchaseOrder) => {
+    try {
+      await approveOrder(order.id, user?.id || '');
+      toast({
+        title: t.purchaseInvoicesUi.toastOrderApproved,
+        description: order.orderNumber,
+      });
+      if (selectedOrder?.id === order.id) {
+        setSelectedOrder({ ...order, status: 'approved' });
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : t.purchaseInvoicesUi.approveFailedDesc;
+      toast({
+        title: t.purchaseInvoicesUi.approveFailedTitle,
+        description: message,
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleCancel = (order: PurchaseOrder) => {
     cancelOrder(order.id);
     toast({
@@ -567,6 +589,18 @@ export default function PurchaseOrders() {
                         >
                           <Eye className="w-4 h-4" />
                         </Button>
+                        {purchaseOrderNeedsApproval(order.status) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-1 text-xs text-green-700 border-green-600/40"
+                            onClick={() => void handleApprove(order)}
+                            title={t.purchaseOrdersUi.approveOrder}
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            {t.purchaseOrdersUi.approveOrder}
+                          </Button>
+                        )}
                         {['approved', 'partial'].includes(order.status) && (
                           <Button
                             variant="ghost"
@@ -1016,6 +1050,12 @@ export default function PurchaseOrders() {
           )}
 
           <DialogFooter>
+            {selectedOrder && purchaseOrderNeedsApproval(selectedOrder.status) && (
+              <Button onClick={() => void handleApprove(selectedOrder)}>
+                <CheckCircle className="w-4 h-4 mr-2" />
+                {t.purchaseOrdersUi.approveOrder}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setViewDialogOpen(false)}>
               Fechar
             </Button>

@@ -20,9 +20,10 @@ import {
   ArrowDown,
   Save,
   RotateCcw,
-  FileSpreadsheet,
   Upload,
-  Calculator
+  Calculator,
+  Plus,
+  Receipt,
 } from 'lucide-react';
 import { Product, Branch } from '@/types/erp';
 import { cn } from '@/lib/utils';
@@ -46,15 +47,29 @@ interface InventoryAdjustmentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   products: Product[];
-  branch: Branch | null;
-  onApplyAdjustments: (adjustments: { productId: string; newStock: number; difference: number }[], reason: string, notes: string) => void;
+  branches: Branch[];
+  branchId: string;
+  onBranchChange: (branchId: string) => void;
+  canSwitchBranch?: boolean;
+  onAddProduct?: () => void;
+  onApplyAdjustments: (
+    adjustments: { productId: string; newStock: number; difference: number }[],
+    reason: string,
+    notes: string,
+    receiptNumber: string,
+    warehouseId: string,
+  ) => void;
 }
 
 export function InventoryAdjustmentDialog({
   open,
   onOpenChange,
   products,
-  branch,
+  branches,
+  branchId,
+  onBranchChange,
+  canSwitchBranch = false,
+  onAddProduct,
   onApplyAdjustments,
 }: InventoryAdjustmentDialogProps) {
   const { toast } = useToast();
@@ -63,8 +78,14 @@ export function InventoryAdjustmentDialog({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [adjustmentReason, setAdjustmentReason] = useState('physical_count');
   const [notes, setNotes] = useState('');
+  const [receiptNumber, setReceiptNumber] = useState('');
   const [adjustments, setAdjustments] = useState<Map<string, number | null>>(new Map());
   const [showOnlyDifferences, setShowOnlyDifferences] = useState(false);
+
+  const selectedBranch = useMemo(
+    () => branches.find((b) => b.id === branchId) ?? null,
+    [branches, branchId],
+  );
 
   const ADJUSTMENT_REASONS = useMemo(() => ([
     { value: 'physical_count', label: t.inventoryAdjustUi.reasonPhysicalCount },
@@ -167,6 +188,7 @@ export function InventoryAdjustmentDialog({
   const handleClearAll = () => {
     setAdjustments(new Map());
     setNotes('');
+    setReceiptNumber('');
   };
 
   // Apply adjustments
@@ -188,9 +210,18 @@ export function InventoryAdjustmentDialog({
       return;
     }
 
+    if (!branchId) {
+      toast({
+        title: t.inventoryAdjustUi.branchRequiredTitle,
+        description: t.inventoryAdjustUi.branchRequiredDesc,
+        variant: 'destructive',
+      });
+      return;
+    }
+
     const reasonLabel = ADJUSTMENT_REASONS.find(r => r.value === adjustmentReason)?.label || adjustmentReason;
     
-    onApplyAdjustments(itemsToAdjust, reasonLabel, notes);
+    onApplyAdjustments(itemsToAdjust, reasonLabel, notes, receiptNumber.trim(), branchId);
     
     toast({
       title: t.inventoryAdjustUi.appliedTitle,
@@ -258,7 +289,7 @@ export function InventoryAdjustmentDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ClipboardCheck className="w-5 h-5" />
-            {t.inventoryAdjustUi.title.replace('{branch}', branch?.name || t.inventoryAdjustUi.allBranches)}
+            {t.inventoryAdjustUi.title.replace('{branch}', selectedBranch?.name || t.inventoryAdjustUi.allBranches)}
           </DialogTitle>
           <DialogDescription>
             {t.inventoryAdjustUi.description}
@@ -266,6 +297,48 @@ export function InventoryAdjustmentDialog({
         </DialogHeader>
 
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label>{t.inventoryAdjustUi.branch}</Label>
+              {canSwitchBranch && branches.length > 0 ? (
+                <Select value={branchId} onValueChange={onBranchChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={t.inventoryAdjustUi.selectBranch} />
+                  </SelectTrigger>
+                  <SelectContent className="bg-background border shadow-lg z-50">
+                    {branches.filter((b) => b.id).map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name} ({b.code})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input readOnly value={selectedBranch?.name || '—'} className="bg-muted/50" />
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5">
+                <Receipt className="w-3.5 h-3.5" />
+                {t.inventoryAdjustUi.receiptNumber}
+              </Label>
+              <Input
+                value={receiptNumber}
+                onChange={(e) => setReceiptNumber(e.target.value)}
+                placeholder={t.inventoryAdjustUi.receiptNumberPlaceholder}
+                className="font-mono text-sm"
+              />
+            </div>
+            <div className="flex items-end">
+              {onAddProduct ? (
+                <Button type="button" variant="outline" className="w-full" onClick={onAddProduct}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  {t.inventoryAdjustUi.newProduct}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+
           {/* Toolbar */}
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[200px]">
@@ -436,7 +509,7 @@ export function InventoryAdjustmentDialog({
             <div className="space-y-3 p-4 border rounded-lg bg-muted/30">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Motivo do Ajuste</Label>
+                  <Label>{t.inventoryAdjustUi.adjustmentReason}</Label>
                   <Select value={adjustmentReason} onValueChange={setAdjustmentReason}>
                     <SelectTrigger>
                       <SelectValue />
@@ -451,7 +524,7 @@ export function InventoryAdjustmentDialog({
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Notas/Observações</Label>
+                  <Label>{t.inventoryAdjustUi.notes}</Label>
                   <Textarea
                     placeholder={t.inventoryAdjustUi.notesPlaceholder}
                     value={notes}
@@ -466,14 +539,14 @@ export function InventoryAdjustmentDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancelar
+            {t.common.cancel}
           </Button>
           <Button 
             onClick={handleApply}
-            disabled={summary.withDifferenceCount === 0}
+            disabled={summary.withDifferenceCount === 0 || !branchId}
           >
             <Save className="w-4 h-4 mr-2" />
-            Aplicar {summary.withDifferenceCount} Ajustes
+            {t.inventoryAdjustUi.applyCount.replace('{count}', String(summary.withDifferenceCount))}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -115,20 +115,93 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // APPROVE: Simple status update (no financial impact — allowed in route)
+  // APPROVE: status + linked approval_requests (no stock/accounting impact)
   router.post('/:id/approve', async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
       const { id } = req.params;
-      const { approvedBy } = req.body;
-      await client.query(
-        'UPDATE purchase_orders SET status = $1, approved_by = $2, approved_at = CURRENT_TIMESTAMP WHERE id = $3',
-        ['approved', approvedBy, id]
+      const approvedBy = req.body?.approvedBy != null ? String(req.body.approvedBy).trim() : '';
+
+      const orderResult = await client.query(
+        'SELECT id, status, order_number FROM purchase_orders WHERE id = $1 FOR UPDATE',
+        [id],
       );
+      if (!orderResult.rows.length) {
+        throw new Error('Ordem de compra não encontrada');
+      }
+      const order = orderResult.rows[0];
+      if (order.status === 'received' || order.status === 'cancelled') {
+        throw new Error(`Não é possível aprovar encomenda com estado: ${order.status}`);
+      }
+      if (order.status === 'approved') {
+        await client.query('COMMIT');
+        return res.json({ success: true, alreadyApproved: true });
+      }
+
+      if (approvedBy && /^[0-9a-f-]{36}$/i.test(approvedBy)) {
+        try {
+          await client.query(
+            `UPDATE purchase_orders SET status = 'approved', approved_by = $1, approved_at = CURRENT_TIMESTAMP WHERE id = $2`,
+            [approvedBy, id],
+          );
+        } catch (uuidErr) {
+          if (!/invalid input syntax for type uuid/i.test(String(uuidErr.message || uuidErr))) throw uuidErr;
+          await client.query(
+            `UPDATE purchase_orders SET status = 'approved', approved_at = CURRENT_TIMESTAMP WHERE id = $1`,
+            [id],
+          );
+        }
+      } else {
+        await client.query(
+          `UPDATE purchase_orders SET status = 'approved', approved_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [id],
+        );
+      }
+
+      try {
+        const ar = await client.query(
+          `SELECT id, current_step FROM approval_requests
+           WHERE document_type = 'purchase_order' AND document_id = $1 AND status = 'pending'
+           ORDER BY created_at DESC LIMIT 1`,
+          [id],
+        );
+        if (ar.rows.length > 0) {
+          const request = ar.rows[0];
+          if (approvedBy && /^[0-9a-f-]{36}$/i.test(approvedBy)) {
+            try {
+              await client.query(
+                `INSERT INTO approval_actions (request_id, step_number, action, user_id, comments)
+                 VALUES ($1, $2, 'approve', $3, 'Aprovado na encomenda')`,
+                [request.id, request.current_step, approvedBy],
+              );
+            } catch (_) {
+              await client.query(
+                `INSERT INTO approval_actions (request_id, step_number, action, comments)
+                 VALUES ($1, $2, 'approve', 'Aprovado na encomenda')`,
+                [request.id, request.current_step],
+              );
+            }
+          } else {
+            await client.query(
+              `INSERT INTO approval_actions (request_id, step_number, action, comments)
+               VALUES ($1, $2, 'approve', 'Aprovado na encomenda')`,
+              [request.id, request.current_step],
+            );
+          }
+          await client.query(
+            `UPDATE approval_requests SET status = 'approved', completed_at = CURRENT_TIMESTAMP WHERE id = $1`,
+            [request.id],
+          );
+        }
+      } catch (approvalErr) {
+        console.warn('[PURCHASE ORDERS] approval_requests sync skipped:', approvalErr.message);
+      }
+
       await client.query('COMMIT');
       await broadcastTable('purchase_orders');
-      res.json({ success: true });
+      if (broadcastTable) await broadcastTable('approval_requests');
+      res.json({ success: true, orderNumber: order.order_number });
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[PURCHASE ORDERS ERROR]', error);

@@ -1,7 +1,7 @@
 // Daily checklist briefing — stock, print queue, price changes (AR/AP via /payments/checklist-dues)
 const express = require('express');
 const db = require('../db');
-const { coalesceActiveNotZero } = require('../lib/sqlDialect');
+const { coalesceActiveNotZero, isTruthySql } = require('../lib/sqlDialect');
 
 const LOOKBACK_DAYS = 14;
 
@@ -44,12 +44,16 @@ module.exports = function dailyBriefingRoutes() {
       warnings.push(error.message);
     }
 
+    const unprintedPrintedFilter = db.engine === 'postgres'
+      ? 'printed_at IS NULL'
+      : "(printed_at IS NULL OR TRIM(COALESCE(CAST(printed_at AS TEXT), '')) = '')";
+
     const unprintedParams = [since];
     let unprintedQuery = `
       SELECT id, invoice_number, customer_name, total, created_at, branch_id
       FROM sales
       WHERE status = 'completed'
-        AND (printed_at IS NULL OR TRIM(COALESCE(printed_at, '')) = '')
+        AND ${unprintedPrintedFilter}
         AND date(created_at) >= date($1)`;
     if (branchId) {
       unprintedParams.push(branchId);
@@ -61,7 +65,7 @@ module.exports = function dailyBriefingRoutes() {
     let priceQuery = `
       SELECT id, invoice_number, supplier_name, date, total, change_price
       FROM purchase_invoices
-      WHERE (change_price = 1 OR change_price = TRUE)
+      WHERE ${isTruthySql(db, 'change_price')}
         AND COALESCE(status, 'confirmed') NOT IN ('cancelled', 'voided', 'draft')
         AND date >= $1`;
     if (branchId) {

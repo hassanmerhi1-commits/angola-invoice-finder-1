@@ -47,8 +47,16 @@ export function resolveUserBranch(branches: Branch[], branchId?: string | null):
   );
 }
 
+/** When several branches are flagged HQ (bad seed data), prefer code MAIN / "Main Branch". */
 export function resolveHeadOfficeBranch(branches: Branch[]): Branch | null {
-  return branches.find((b) => normalizeIsMain(b.isMain)) || branches[0] || null;
+  const mains = branches.filter((b) => normalizeIsMain(b.isMain));
+  if (mains.length === 0) return branches[0] || null;
+  if (mains.length === 1) return mains[0];
+  const byMainCode = mains.find((b) => String(b.code || '').trim().toUpperCase() === 'MAIN');
+  if (byMainCode) return byMainCode;
+  const byName = mains.find((b) => /main\s*branch/i.test(String(b.name || '')));
+  if (byName) return byName;
+  return mains[0];
 }
 
 /** Assigned branch; admin/manager without a valid assignment inherit head office. */

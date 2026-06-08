@@ -144,7 +144,9 @@ function RepairSummary({
     repairClientBalances: string;
     repairSkusRenamed: string;
     repairBranchAssigned: string;
+    repairOpeningStock: string;
     repairStockReconciled: string;
+    repairNoChanges: string;
   };
 }) {
   const lines: string[] = [];
@@ -157,16 +159,30 @@ function RepairSummary({
   if ((repair.clientBalances?.updated ?? 0) > 0) {
     lines.push(ui.repairClientBalances.replace('{n}', String(repair.clientBalances!.updated)));
   }
-  if ((repair.duplicateSkusRenamed ?? 0) > 0) {
-    lines.push(ui.repairSkusRenamed.replace('{n}', String(repair.duplicateSkusRenamed)));
+  if ((repair.duplicateSkusRenamed ?? repair.duplicateSkusDeactivated ?? 0) > 0) {
+    lines.push(
+      ui.repairSkusRenamed.replace(
+        '{n}',
+        String(repair.duplicateSkusRenamed ?? repair.duplicateSkusDeactivated ?? 0),
+      ),
+    );
   }
   if ((repair.productsBranchAssigned ?? 0) > 0) {
     lines.push(ui.repairBranchAssigned.replace('{n}', String(repair.productsBranchAssigned)));
   }
+  if ((repair.openingMovementsSeeded ?? 0) > 0) {
+    lines.push(ui.repairOpeningStock.replace('{n}', String(repair.openingMovementsSeeded)));
+  }
   if ((repair.productStockReconciled ?? 0) > 0) {
     lines.push(ui.repairStockReconciled.replace('{n}', String(repair.productStockReconciled)));
   }
-  if (lines.length === 0) return null;
+  if (lines.length === 0) {
+    return (
+      <div className="p-3 rounded-lg bg-muted/50 text-sm text-muted-foreground">
+        {ui.repairNoChanges}
+      </div>
+    );
+  }
   return (
     <div className="p-3 rounded-lg bg-accent/50 text-sm space-y-1">
       <p className="font-medium">{ui.repairApplied}</p>

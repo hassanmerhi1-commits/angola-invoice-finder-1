@@ -72,6 +72,7 @@ export default function Setup() {
   const [selectedProvince, setSelectedProvince] = useState('');
   const [selectedMunicipio, setSelectedMunicipio] = useState('');
   const [mainApiUrl, setMainApiUrl] = useState('');
+  const [serverRole, setServerRole] = useState<'city' | 'hq'>('city');
   const [discoveredServers, setDiscoveredServers] = useState<Array<{ address: string; port: number; name: string }>>([]);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [connectionError, setConnectionError] = useState('');
@@ -99,16 +100,20 @@ export default function Setup() {
 
   useEffect(() => {
     if (mode !== 'server-setup') return;
+    if (serverRole === 'hq') {
+      setIpFileContent('C:\\NEXOR ERP\\data\\nexor-heart.nexor');
+      return;
+    }
     if (!selectedMunicipio) return;
     const fileName = `${slugMunicipioName(selectedMunicipio)}.db`;
     setIpFileContent(`C:\\NEXOR ERP\\data\\${fileName}`);
-  }, [mode, selectedMunicipio]);
+  }, [mode, selectedMunicipio, serverRole]);
 
   const handleServerSetup = async () => {
     setIsLoading(true);
     const dbPath = ipFileContent || 'C:\\NEXOR ERP\\data\\nexor-heart.nexor';
 
-    if (!selectedProvince || !selectedMunicipio) {
+    if (serverRole === 'city' && (!selectedProvince || !selectedMunicipio)) {
       toast.error(t.setupUi.selectProvinceAndMunicipio);
       setIsLoading(false);
       return;
@@ -124,33 +129,53 @@ export default function Setup() {
 
         localStorage.setItem('kwanza_is_server', 'true');
         localStorage.removeItem('kwanza_client_config');
-        localStorage.setItem('nexor_installation_role', 'city_server');
-        localStorage.setItem(
-          'nexor_city_location',
-          JSON.stringify({ province: selectedProvince, municipio: selectedMunicipio }),
-        );
+
         try {
           const { invalidateElectronApiBaseCache, getApiUrl } = await import('@/lib/api/config');
           invalidateElectronApiBaseCache();
           const apiBase = await getApiUrl();
-          if (mainApiUrl.trim()) {
-            localStorage.setItem('nexor_main_api_url', mainApiUrl.trim());
-          }
-          const savedMain = localStorage.getItem('nexor_main_api_url') || '';
-          await fetch(`${apiBase}/api/installations/register-city`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              province: selectedProvince,
-              municipio: selectedMunicipio,
-              mainApiUrl: savedMain || null,
-            }),
-          }).catch(() => null);
-        } catch { /* ignore */ }
 
-        toast.success(t.setupUi.serverConfigured, {
-          description: `${t.setupUi.dbPathLabel}: ${dbPath}\n${t.setupUi.otherComputersConnect.replace('{ip}', detectedIp)}`
-        });
+          if (serverRole === 'hq') {
+            localStorage.setItem('nexor_installation_role', 'main_server');
+            localStorage.removeItem('nexor_city_location');
+            const regRes = await fetch(`${apiBase}/api/installations/register-main`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+            });
+            if (regRes.ok) {
+              const body = await regRes.json().catch(() => ({}));
+              if (body.apiKey) {
+                localStorage.setItem('nexor_sync_api_key', body.apiKey);
+              }
+            }
+            toast.success(t.setupUi.hqConfigured, {
+              description: `${t.setupUi.dbPathLabel}: ${dbPath}\n${t.setupUi.hqApiKeySaved}`,
+            });
+          } else {
+            localStorage.setItem('nexor_installation_role', 'city_server');
+            localStorage.setItem(
+              'nexor_city_location',
+              JSON.stringify({ province: selectedProvince, municipio: selectedMunicipio }),
+            );
+            if (mainApiUrl.trim()) {
+              localStorage.setItem('nexor_main_api_url', mainApiUrl.trim());
+            }
+            const savedMain = localStorage.getItem('nexor_main_api_url') || '';
+            await fetch(`${apiBase}/api/installations/register-city`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                province: selectedProvince,
+                municipio: selectedMunicipio,
+                mainApiUrl: savedMain || null,
+              }),
+            }).catch(() => null);
+            toast.success(t.setupUi.serverConfigured, {
+              description: `${t.setupUi.dbPathLabel}: ${dbPath}\n${t.setupUi.otherComputersConnect.replace('{ip}', detectedIp)}`,
+            });
+          }
+        } catch { /* ignore registration errors */ }
 
         await window.electronAPI!.setup?.saveConfig?.({
           setupComplete: true,
@@ -206,6 +231,7 @@ export default function Setup() {
 
         localStorage.setItem('kwanza_is_server', 'false');
         localStorage.setItem('nexor_installation_role', 'shop_client');
+        localStorage.setItem('nexor_offline_first', 'true');
         localStorage.setItem(
           'kwanza_client_config',
           JSON.stringify({
@@ -429,6 +455,30 @@ export default function Setup() {
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="grid gap-3 md:grid-cols-2">
+                <button
+                  type="button"
+                  className={`border-2 rounded-lg p-4 text-left transition-colors ${
+                    serverRole === 'city' ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
+                  }`}
+                  onClick={() => setServerRole('city')}
+                >
+                  <div className="font-semibold">{t.setupUi.serverRoleCity}</div>
+                  <p className="text-xs text-muted-foreground mt-1">{t.setupUi.serverRoleCityDesc}</p>
+                </button>
+                <button
+                  type="button"
+                  className={`border-2 rounded-lg p-4 text-left transition-colors ${
+                    serverRole === 'hq' ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
+                  }`}
+                  onClick={() => setServerRole('hq')}
+                >
+                  <div className="font-semibold">{t.setupUi.serverRoleHq}</div>
+                  <p className="text-xs text-muted-foreground mt-1">{t.setupUi.serverRoleHqDesc}</p>
+                </button>
+              </div>
+
+              {serverRole === 'city' && (
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Província</Label>
@@ -461,7 +511,9 @@ export default function Setup() {
                   </select>
                 </div>
               </div>
+              )}
 
+              {serverRole === 'city' && (
               <div className="space-y-2">
                 <Label>URL do servidor sede (opcional)</Label>
                 <Input
@@ -473,6 +525,7 @@ export default function Setup() {
                   Sede nacional para replicação de vendas em tempo quase real
                 </p>
               </div>
+              )}
 
               <div className="space-y-2">
                 <Label>Caminho do ficheiro .nexor</Label>
@@ -504,7 +557,11 @@ export default function Setup() {
                 </div>
               )}
 
-              <Button onClick={handleServerSetup} className="w-full" disabled={isLoading || !selectedProvince || !selectedMunicipio}>
+              <Button
+                onClick={handleServerSetup}
+                className="w-full"
+                disabled={isLoading || (serverRole === 'city' && (!selectedProvince || !selectedMunicipio))}
+              >
                 {isLoading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Configurando...</>
                   : <><CheckCircle className="h-4 w-4 mr-2" /> Iniciar Servidor</>}
               </Button>

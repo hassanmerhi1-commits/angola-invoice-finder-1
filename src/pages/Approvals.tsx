@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { api } from '@/lib/api/client';
+import { useAuth } from '@/hooks/useERP';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,44 +33,116 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   payment: 'docTypePayment',
 };
 
-// Demo data
-const DEMO_REQUESTS = [
-  { id: '1', document_type: 'purchase_order', document_number: 'OC-20260331-0005', amount: 850000, status: 'pending', current_step: 1, total_steps: 2, requested_by_name: 'Operador1', workflow_key: 'workflowHighValuePO', created_at: new Date().toISOString(), actions: [] },
-  { id: '2', document_type: 'expense', document_number: 'DESP-20260330-0012', amount: 75000, status: 'pending', current_step: 1, total_steps: 1, requested_by_name: 'Admin', workflow_key: 'workflowExpense', created_at: new Date(Date.now() - 86400000).toISOString(), actions: [] },
-  { id: '3', document_type: 'purchase_order', document_number: 'OC-20260329-0003', amount: 320000, status: 'approved', current_step: 1, total_steps: 1, requested_by_name: 'Operador2', workflow_key: 'workflowPurchaseOrder', created_at: new Date(Date.now() - 172800000).toISOString(), actions: [{ action: 'approve', user_name: 'Director', comments_key: 'commentPreferredSupplier', created_at: new Date(Date.now() - 86400000).toISOString() }] },
-  { id: '4', document_type: 'credit_note', document_number: 'NC-20260328-0001', amount: 45000, status: 'rejected', current_step: 1, total_steps: 1, requested_by_name: 'Admin', workflow_key: 'workflowCreditNote', created_at: new Date(Date.now() - 259200000).toISOString(), actions: [{ action: 'reject', user_name: 'Director', comments_key: 'commentInsufficientJustification', created_at: new Date(Date.now() - 172800000).toISOString() }] },
-];
+type ApprovalRequestRow = {
+  id: string;
+  document_type: string;
+  document_number: string;
+  amount: number;
+  status: string;
+  current_step: number;
+  total_steps: number;
+  requested_by_name: string;
+  workflow_name?: string;
+  workflow_key?: string;
+  created_at: string;
+  actions: Array<{ action: string; user_name?: string; comments?: string; comments_key?: string; created_at?: string }>;
+};
 
-const DEMO_WORKFLOWS = [
-  { id: '1', name_key: 'workflowPurchaseOrder', document_type: 'purchase_order', min_amount: 0, max_amount: 500000, steps: [{ step: 1, role: 'manager', label_key: 'rolePurchasingManager' }] },
-  { id: '2', name_key: 'workflowHighValuePOShort', document_type: 'purchase_order', min_amount: 500000, max_amount: null, steps: [{ step: 1, role: 'manager', label_key: 'rolePurchasingManager' }, { step: 2, role: 'admin', label_key: 'roleFinanceDirector' }] },
-  { id: '3', name_key: 'workflowExpense', document_type: 'expense', min_amount: 50000, max_amount: null, steps: [{ step: 1, role: 'manager', label_key: 'roleManager' }] },
-  { id: '4', name_key: 'workflowCreditNote', document_type: 'credit_note', min_amount: 0, max_amount: null, steps: [{ step: 1, role: 'admin', label_key: 'roleAdmin' }] },
-];
+type ApprovalWorkflowRow = {
+  id: string;
+  name?: string;
+  name_key?: string;
+  document_type: string;
+  min_amount: number;
+  max_amount: number | null;
+  steps: unknown;
+};
+
+function mapApprovalRequest(row: Record<string, unknown>): ApprovalRequestRow {
+  const actions = Array.isArray(row.actions) ? row.actions : [];
+  return {
+    id: String(row.id || ''),
+    document_type: String(row.document_type || ''),
+    document_number: String(row.document_number || ''),
+    amount: Number(row.amount || 0),
+    status: String(row.status || 'pending'),
+    current_step: Number(row.current_step || 1),
+    total_steps: Number(row.total_steps || 1),
+    requested_by_name: String(row.requested_by_name || row.requestedByName || '—'),
+    workflow_name: row.workflow_name != null ? String(row.workflow_name) : undefined,
+    workflow_key: row.workflow_key != null ? String(row.workflow_key) : undefined,
+    created_at: String(row.created_at || row.createdAt || new Date().toISOString()),
+    actions: actions.map((a: Record<string, unknown>) => ({
+      action: String(a.action || ''),
+      user_name: a.user_name != null ? String(a.user_name) : undefined,
+      comments: a.comments != null ? String(a.comments) : undefined,
+      comments_key: a.comments_key != null ? String(a.comments_key) : undefined,
+      created_at: a.created_at != null ? String(a.created_at) : undefined,
+    })),
+  };
+}
 
 export default function Approvals() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState('requests');
-  const [requests, setRequests] = useState(DEMO_REQUESTS);
-  const [workflows] = useState(DEMO_WORKFLOWS);
+  const [requests, setRequests] = useState<ApprovalRequestRow[]>([]);
+  const [workflows, setWorkflows] = useState<ApprovalWorkflowRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [actionDialog, setActionDialog] = useState<{ requestId: string; action: 'approve' | 'reject' } | null>(null);
   const [comments, setComments] = useState('');
 
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [reqRes, wfRes] = await Promise.all([
+        api.approvals.requests(),
+        api.approvals.workflows(),
+      ]);
+      setRequests(Array.isArray(reqRes.data) ? reqRes.data.map((r) => mapApprovalRequest(r)) : []);
+      setWorkflows(Array.isArray(wfRes.data) ? wfRes.data.map((wf: Record<string, unknown>) => ({
+        id: String(wf.id || ''),
+        name: wf.name != null ? String(wf.name) : undefined,
+        name_key: wf.name_key != null ? String(wf.name_key) : undefined,
+        document_type: String(wf.document_type || ''),
+        min_amount: Number(wf.min_amount ?? wf.minAmount ?? 0),
+        max_amount: wf.max_amount != null || wf.maxAmount != null ? Number(wf.max_amount ?? wf.maxAmount) : null,
+        steps: wf.steps,
+      })) : []);
+    } catch {
+      setRequests([]);
+      setWorkflows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadData(); }, [loadData]);
+
   const pendingCount = requests.filter(r => r.status === 'pending').length;
 
-  const handleAction = () => {
+  const handleAction = async () => {
     if (!actionDialog) return;
-    setRequests(prev => prev.map(r =>
-      r.id === actionDialog.requestId
-        ? { ...r, status: actionDialog.action === 'approve' ? 'approved' : 'rejected',
-            actions: [...r.actions, { action: actionDialog.action, user_name: 'Admin', comments, created_at: new Date().toISOString() }] }
-        : r
-    ));
-    toast.success(actionDialog.action === 'approve' ? t.approvalsUi.docApproved : t.approvalsUi.docRejected);
-    setActionDialog(null);
-    setComments('');
+    if (actionDialog.action === 'reject' && !comments.trim()) return;
+    try {
+      const fn = actionDialog.action === 'approve' ? api.approvals.approve : api.approvals.reject;
+      const res = await fn(
+        actionDialog.requestId,
+        user?.id || '',
+        user?.name || '',
+        comments.trim(),
+      );
+      if (res.error) throw new Error(res.error);
+      toast.success(actionDialog.action === 'approve' ? t.approvalsUi.docApproved : t.approvalsUi.docRejected);
+      setActionDialog(null);
+      setComments('');
+      await loadData();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : t.common.error;
+      toast.error(message);
+    }
   };
 
   return (
@@ -116,15 +190,34 @@ export default function Approvals() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {requests.map(req => {
-                const statusCfg = STATUS_CONFIG[req.status];
+              {loading && (
+                <TableRow>
+                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                    {t.common.loading}
+                  </TableCell>
+                </TableRow>
+              )}
+              {!loading && requests.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                    {t.approvalsUi.noPendingRequests ?? '—'}
+                  </TableCell>
+                </TableRow>
+              )}
+              {!loading && requests.map(req => {
+                const statusCfg = STATUS_CONFIG[req.status] || STATUS_CONFIG.pending;
                 const StatusIcon = statusCfg.icon;
+                const workflowLabel =
+                  req.workflow_name
+                  || (req.workflow_key ? t.approvalsUi[req.workflow_key as keyof typeof t.approvalsUi] : undefined)
+                  || req.workflow_key
+                  || '—';
                 return (
                   <TableRow key={req.id}>
                     <TableCell className="font-mono font-medium">{req.document_number}</TableCell>
                     <TableCell>{t.approvalsUi[DOC_TYPE_LABELS[req.document_type] as keyof typeof t.approvalsUi] || req.document_type}</TableCell>
                     <TableCell className="text-right font-mono">{req.amount.toLocaleString(uiLocale)} Kz</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{t.approvalsUi[req.workflow_key as keyof typeof t.approvalsUi] || req.workflow_key}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{workflowLabel}</TableCell>
                     <TableCell>
                       <span className="text-xs">{req.current_step}/{req.total_steps}</span>
                     </TableCell>
@@ -159,9 +252,10 @@ export default function Approvals() {
                       {req.actions.length > 0 && req.status !== 'pending' && (
                         <div className="text-xs text-muted-foreground flex items-center gap-1">
                           <MessageSquare className="w-3 h-3" />
-                          {(req.actions[req.actions.length - 1].comments_key
-                            ? (t.approvalsUi[req.actions[req.actions.length - 1].comments_key as keyof typeof t.approvalsUi] as any)
-                            : req.actions[req.actions.length - 1].comments
+                          {(req.actions[req.actions.length - 1].comments
+                            || (req.actions[req.actions.length - 1].comments_key
+                              ? (t.approvalsUi[req.actions[req.actions.length - 1].comments_key as keyof typeof t.approvalsUi] as string)
+                              : '')
                           )?.slice(0, 30)}...
                         </div>
                       )}
@@ -183,7 +277,9 @@ export default function Approvals() {
                   <CardContent className="py-4">
                     <div className="flex items-start justify-between">
                       <div>
-                        <h3 className="font-medium">{t.approvalsUi[wf.name_key as keyof typeof t.approvalsUi]}</h3>
+                        <h3 className="font-medium">
+                          {wf.name || (wf.name_key ? t.approvalsUi[wf.name_key as keyof typeof t.approvalsUi] : wf.document_type)}
+                        </h3>
                         <div className="flex items-center gap-2 mt-1">
                           <Badge variant="outline">{t.approvalsUi[DOC_TYPE_LABELS[wf.document_type] as keyof typeof t.approvalsUi]}</Badge>
                           <span className="text-xs text-muted-foreground">
@@ -207,7 +303,7 @@ export default function Approvals() {
                         <div key={i} className="flex items-center gap-2">
                           <div className="flex items-center gap-1.5 bg-muted px-3 py-1.5 rounded-md text-xs">
                             <span className="font-medium">{step.step}.</span>
-                            <span>{t.approvalsUi[step.label_key as keyof typeof t.approvalsUi]}</span>
+                            <span>{step.label_key ? t.approvalsUi[step.label_key as keyof typeof t.approvalsUi] : (step.label || step.role)}</span>
                             <Badge variant="secondary" className="text-[10px] ml-1">{step.role}</Badge>
                           </div>
                           {i < steps.length - 1 && <ArrowRight className="w-4 h-4 text-muted-foreground" />}

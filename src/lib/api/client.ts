@@ -19,6 +19,7 @@ import {
   setOfflineModeActive,
 } from '@/lib/offlineAuth';
 import { electronHttpJson, isElectronLanClient } from '@/lib/electronHttp';
+import { isNetworkErrorMessage } from '@/lib/networkErrors';
 
 export type LoginErrorKind = 'credentials' | 'connection';
 
@@ -696,7 +697,30 @@ export const api = {
       return apiFetch<any>(`/products/${encodeURIComponent(id)}`);
     },
     create: async (data: any) => {
-      return apiFetch<any>('/products', { method: 'POST', body: JSON.stringify(data) });
+      const rawBranch = data?.branchId;
+      const branchId =
+        rawBranch == null || rawBranch === '' || rawBranch === 'all'
+          ? undefined
+          : String(rawBranch);
+      const payload = {
+        name: data?.name,
+        sku: data?.sku,
+        barcode: data?.barcode,
+        category: data?.category,
+        price: data?.price,
+        price2: data?.price2,
+        price3: data?.price3,
+        price4: data?.price4,
+        cost: data?.cost,
+        stock: data?.stock,
+        unit: data?.unit,
+        taxRate: data?.taxRate,
+        branchId,
+        isActive: data?.isActive,
+        supplierId: data?.supplierId,
+        supplierName: data?.supplierName,
+      };
+      return apiFetch<any>('/products', { method: 'POST', body: JSON.stringify(payload) });
     },
     batchImport: async (products: any[]) => {
       return apiFetch<any>('/products/batch', { method: 'POST', body: JSON.stringify({ products }) });
@@ -726,25 +750,51 @@ export const api = {
   sales: {
     list: async (branchId?: string) => {
       const endpoint = `/sales${branchId ? `?branchId=${branchId}` : ''}`;
-      if (isElectronMode()) {
-        const apiResult = await apiFetch<any[]>(endpoint);
-        if (apiResult.data !== undefined) return apiResult;
-        const sql = branchId
-          ? 'SELECT * FROM sales WHERE branch_id = $1 ORDER BY created_at DESC'
-          : 'SELECT * FROM sales ORDER BY created_at DESC';
-        const params = branchId ? [branchId] : [];
-        return (async () => {
+      const { mergeSaleRows, readPendingSalesCache } = await import('@/lib/sync/pendingSalesCache');
+      const { getLocalSales } = await import('@/lib/sync/offlineFirst');
+
+      let serverRows: any[] | undefined;
+      let serverError: string | undefined;
+
+      const apiResult = await apiFetch<any[]>(endpoint);
+      if (apiResult.data !== undefined) {
+        serverRows = apiResult.data;
+      } else {
+        serverError = apiResult.error;
+        if (isElectronMode()) {
+          const sql = branchId
+            ? 'SELECT * FROM sales WHERE branch_id = $1 ORDER BY created_at DESC'
+            : 'SELECT * FROM sales ORDER BY created_at DESC';
+          const params = branchId ? [branchId] : [];
           const salesResult = await ipcQuery<any>(sql, params);
           if (salesResult.data) {
             for (const sale of salesResult.data) {
-              const itemsResult = await ipcQuery<any>('SELECT * FROM sale_items WHERE sale_id = $1', [sale.id]);
+              const itemsResult = await ipcQuery<any>(
+                'SELECT * FROM sale_items WHERE sale_id = $1',
+                [sale.id],
+              );
               sale.items = itemsResult.data || [];
             }
+            serverRows = salesResult.data;
+            serverError = undefined;
           }
-          return salesResult;
-        })();
+        }
       }
-      return apiFetch<any[]>(endpoint);
+
+      let merged = serverRows ?? [];
+      if (typeof window !== 'undefined') {
+        const localRows = await getLocalSales(branchId);
+        const pendingRows = readPendingSalesCache(branchId);
+        merged = mergeSaleRows(merged, [...localRows, ...pendingRows]);
+      }
+
+      if (merged.length > 0) {
+        return { data: merged, error: null };
+      }
+      if (serverError) {
+        return { error: serverError };
+      }
+      return { data: [], error: null };
     },
     updateDueDate: (id: string, dueDate: string) =>
       apiFetch<any>(`/sales/${encodeURIComponent(id)}`, {
@@ -754,29 +804,80 @@ export const api = {
     markPrinted: (id: string) =>
       apiFetch<any>(`/sales/${encodeURIComponent(id)}/mark-printed`, { method: 'POST' }),
     create: async (data: any) => {
-      const { newClientRequestId, enqueueOfflineSale } = await import('@/lib/sync/offlineSales');
+      const { newClientRequestId, enqueueOfflineSale, dispatchSalesChanged } = await import('@/lib/sync/offlineSales');
+      const { isOfflineFirstEnabled, saveSaleLocally } = await import('@/lib/sync/offlineFirst');
+      const { savePendingSaleCache } = await import('@/lib/sync/pendingSalesCache');
       const body = {
         ...data,
         clientRequestId: data.clientRequestId || newClientRequestId(),
       };
+
+      if (typeof window !== 'undefined' && (await isOfflineFirstEnabled())) {
+        const local = await saveSaleLocally(body);
+        if (local.ok && local.sale) {
+          const sale = local.sale as Record<string, unknown>;
+          dispatchSalesChanged(String(body.branchId || ''));
+          return {
+            data: {
+              ...sale,
+              ...body,
+              invoice_number: sale.invoice_number ?? sale.invoiceNumber,
+              pendingSync: true,
+            },
+            error: null,
+          };
+        }
+        if (local.error && !/not enabled/i.test(String(local.error))) {
+          return { error: local.error };
+        }
+      }
+
       const result = await apiFetch<any>('/sales', { method: 'POST', body: JSON.stringify(body) });
       if (result.error && typeof window !== 'undefined' && (window as any).electronAPI?.syncOutbox) {
-        const isNetwork =
-          /failed to fetch|network|abort|econnrefused|timeout/i.test(String(result.error));
-        if (isNetwork) {
+        if (isNetworkErrorMessage(result.error)) {
           const queued = await enqueueOfflineSale(body);
           if (queued) {
-            return {
-              data: {
-                id: body.clientRequestId,
-                invoice_number: body.invoiceNumber || `OFF-${body.clientRequestId.slice(0, 8)}`,
-                pendingSync: true,
-                client_request_id: body.clientRequestId,
-              },
-              error: null,
+            const stub = {
+              id: body.clientRequestId,
+              invoice_number: body.invoiceNumber || `OFF-${String(body.clientRequestId).slice(0, 8)}`,
+              invoiceNumber: body.invoiceNumber || `OFF-${String(body.clientRequestId).slice(0, 8)}`,
+              branch_id: body.branchId,
+              branchId: body.branchId,
+              cashier_id: body.cashierId,
+              cashierId: body.cashierId,
+              cashier_name: body.cashierName,
+              cashierName: body.cashierName,
+              items: body.items,
+              subtotal: body.subtotal,
+              tax_amount: body.taxAmount,
+              taxAmount: body.taxAmount,
+              discount: body.discount,
+              total: body.total,
+              payment_method: body.paymentMethod,
+              paymentMethod: body.paymentMethod,
+              amount_paid: body.amountPaid,
+              amountPaid: body.amountPaid,
+              change_amount: body.change,
+              change: body.change,
+              customer_nif: body.customerNif,
+              customerNif: body.customerNif,
+              customer_name: body.customerName,
+              customerName: body.customerName,
+              status: 'completed',
+              pendingSync: true,
+              client_request_id: body.clientRequestId,
+              clientRequestId: body.clientRequestId,
+              created_at: new Date().toISOString(),
+              createdAt: new Date().toISOString(),
             };
+            savePendingSaleCache(stub);
+            dispatchSalesChanged(String(body.branchId || ''));
+            return { data: stub, error: null };
           }
         }
+      }
+      if (result.data) {
+        dispatchSalesChanged(String(body.branchId || data.branchId || ''));
       }
       return result;
     },
@@ -1703,6 +1804,58 @@ export const api = {
         warnings: { code: string; message: string; paths?: string[] }[];
         checkedAt: string;
       }>('/deployment/status'),
+  },
+
+  sync: {
+    overview: () => apiFetch<any>('/sync/overview'),
+    consolidation: (params?: { startDate?: string; endDate?: string }) => {
+      const q = new URLSearchParams();
+      if (params?.startDate) q.set('startDate', params.startDate);
+      if (params?.endDate) q.set('endDate', params.endDate);
+      const qs = q.toString();
+      return apiFetch<any>(`/sync/consolidation${qs ? `?${qs}` : ''}`);
+    },
+    deadLetter: (limit = 50) => apiFetch<{ events: any[] }>(`/sync/dead-letter?limit=${limit}`),
+    replayDeadLetter: (id: string) =>
+      apiFetch<any>(`/sync/dead-letter/${encodeURIComponent(id)}/replay`, { method: 'POST' }),
+    resolveDeadLetter: (id: string, note?: string) =>
+      apiFetch<any>(`/sync/dead-letter/${encodeURIComponent(id)}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify({ note }),
+      }),
+    masterData: (branchId: string, since?: string) => {
+      const q = new URLSearchParams({ branchId });
+      if (since) q.set('since', since);
+      return apiFetch<any>(`/sync/master-data?${q.toString()}`);
+    },
+  },
+
+  installations: {
+    config: () => apiFetch<{
+      id: string;
+      role: string;
+      cityId?: string;
+      branchId?: string;
+      mainApiUrl?: string;
+      hasApiKey: boolean;
+      isMainServer: boolean;
+      isCityServer: boolean;
+    }>('/installations/config'),
+    registerMain: () =>
+      apiFetch<{ success: boolean; installationId?: string; apiKey?: string }>(
+        '/installations/register-main',
+        { method: 'POST', body: JSON.stringify({}) },
+      ),
+    registerCity: (data: {
+      province: string;
+      municipio: string;
+      mainApiUrl?: string | null;
+      branchId?: string;
+    }) =>
+      apiFetch<any>('/installations/register-city', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 
   // Dashboard KPIs

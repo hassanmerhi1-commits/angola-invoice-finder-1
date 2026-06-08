@@ -23,7 +23,7 @@ import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 export default function POS() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { products = [], refreshProducts, currentBranch } = usePosProducts();
+  const { products = [], refreshProducts, applySoldQuantities, currentBranch } = usePosProducts();
   const { user } = useAuth();
   const { t } = useTranslation();
   const cart = useCart();
@@ -188,6 +188,11 @@ export default function POS() {
     if (!currentBranch || !user) return;
 
     try {
+      const soldLines = cart.items.map((item) => ({
+        product: item.product,
+        quantity: item.quantity,
+      }));
+
       const sale = await completeSale(
         cart.items,
         currentBranch.code,
@@ -199,11 +204,15 @@ export default function POS() {
         customerName,
       );
 
+      applySoldQuantities(soldLines);
+      cart.clearCart();
+      setSearchTerm('');
+
       setLastSale(sale);
       setCheckoutOpen(false);
       setReceiptOpen(true);
-      refreshProducts();
-      
+      await refreshProducts();
+
       // Show feedback for cash payments
       if (paymentMethod === 'cash') {
         toast.info(t.posUi.saleCompleted, {

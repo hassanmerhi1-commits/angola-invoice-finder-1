@@ -79,21 +79,41 @@ async function runAgtCycle() {
     const events = await fetchPendingForDestination('agt', 10);
     for (const event of events) {
       if (event.event_type !== 'sale.created') {
-        await markSyncEventSent(event.id, 'agt');
+        await markSyncEventSent(event.id, 'agt', { source: 'agt_worker' });
         continue;
       }
       const snapshot = parsePayload(event);
       const saleId = event.entity_id || snapshot?.sale?.id;
+      const snapSale = snapshot?.sale;
+      const existingStatus = String(snapSale?.agt_status || '').toLowerCase();
+      if (existingStatus && ['validated', 'submitted', 'approved'].includes(existingStatus)) {
+        await markSyncEventSent(event.id, 'agt', { source: 'agt_worker' });
+        continue;
+      }
+      if (saleId) {
+        const live = await db.query('SELECT agt_status FROM sales WHERE id = $1', [saleId]);
+        const liveStatus = String(live.rows[0]?.agt_status || '').toLowerCase();
+        if (liveStatus && ['validated', 'submitted', 'approved'].includes(liveStatus)) {
+          await markSyncEventSent(event.id, 'agt', { source: 'agt_worker' });
+          continue;
+        }
+      }
       if (!saleId) {
-        await markSyncEventFailed(event.id, 'missing sale id', Number(event.attempts || 0) + 1);
+        await markSyncEventFailed(
+          event.id,
+          'missing sale id',
+          Number(event.attempts || 0) + 1,
+          'agt',
+          { source: 'agt_worker' }
+        );
         continue;
       }
       try {
         await processAgtForSale(saleId, snapshot);
-        await markSyncEventSent(event.id, 'agt');
+        await markSyncEventSent(event.id, 'agt', { source: 'agt_worker' });
       } catch (e) {
         const attempts = Number(event.attempts || 0) + 1;
-        await markSyncEventFailed(event.id, e.message, attempts);
+        await markSyncEventFailed(event.id, e.message, attempts, 'agt', { source: 'agt_worker' });
         console.warn('[AGT WORKER]', saleId, e.message);
       }
     }

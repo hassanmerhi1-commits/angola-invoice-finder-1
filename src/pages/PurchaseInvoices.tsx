@@ -26,6 +26,7 @@ import {
   peekPurchaseInvoiceNumber,
 } from '@/lib/purchaseInvoiceStorage';
 import { PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
+import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 import { processTransaction } from '@/lib/transactionEngine';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
 import { Supplier, Product, PurchaseOrder } from '@/types/erp';
@@ -75,6 +76,7 @@ import { saveDocument } from '@/lib/documentStorage';
 import { markPurchaseOrderReceivedFromInvoiceNumber } from '@/lib/storage';
 import type { ERPDocument } from '@/types/documents';
 import { usePurchaseOrders } from '@/hooks/useERP';
+import { purchaseOrderNeedsApproval } from '@/lib/purchaseOrderApproval';
 import { CompanySettings, getCompanySettings } from '@/lib/companySettings';
 import {
   writePurchaseCreateIntent,
@@ -1251,6 +1253,10 @@ export default function PurchaseInvoices() {
   const navigate = useNavigate();
   /** Prevents repeated startCreate+navigate while session intent stays hot (fixes render thrash / frozen UI). */
   const urlCreateAppliedRef = useRef(false);
+  /** Reuse the same FC id/number when the user retries after a save error (prevents duplicates). */
+  const createInvoiceSessionRef = useRef<{ id: string; invoiceNumber: string } | null>(null);
+  /** Blocks a second click before React re-renders with savingPurchase=true. */
+  const savingPurchaseRef = useRef(false);
 
    // State
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
@@ -1267,6 +1273,7 @@ export default function PurchaseInvoices() {
   const [showCreateSupplier, setShowCreateSupplier] = useState(false);
   const [newSupplierForm, setNewSupplierForm] = useState({ name: '', nif: '', email: '', phone: '', address: '', city: '', country: 'Angola', contactPerson: '', notes: '' });
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [savingPurchase, setSavingPurchase] = useState(false);
   const [nextFcPreview, setNextFcPreview] = useState<string | null>(null);
   const [openReturnCreateSignal, setOpenReturnCreateSignal] = useState(0);
   const [returnPreselectInvoiceId, setReturnPreselectInvoiceId] = useState<string | null>(null);
@@ -1343,7 +1350,7 @@ export default function PurchaseInvoices() {
   );
 
   // Purchase orders
-  const { orders, createOrder, receiveOrder, cancelOrder, refreshOrders } = usePurchaseOrders(apiBranchId);
+  const { orders, createOrder, approveOrder, receiveOrder, cancelOrder, refreshOrders } = usePurchaseOrders(apiBranchId);
 
   useEffect(() => {
     if (!poCreateOpen) {
@@ -1488,12 +1495,14 @@ export default function PurchaseInvoices() {
   }, [products, searchTerm]);
 
   // ─────── Create mode ───────
-  const startCreate = useCallback(() => {
+  const resetCreateFormState = useCallback(() => {
     const now = new Date().toISOString();
     const defaultBranch = branches.find((b) => b.id === currentBranch?.id) || branches[0];
     const wid = defaultBranch?.id || currentBranch?.id || '';
     const wname = defaultBranch?.name || currentBranch?.name || '';
     setSaveError(null);
+    createInvoiceSessionRef.current = null;
+    setNextFcPreview(null);
     setForm({
       date: now.split('T')[0],
       paymentDate: now.split('T')[0],
@@ -1509,6 +1518,19 @@ export default function PurchaseInvoices() {
       surchargePercent: 0,
       changePrice: true,
       isPending: false,
+      supplierId: undefined,
+      supplierName: undefined,
+      supplierAccountCode: undefined,
+      supplierNif: undefined,
+      supplierPhone: undefined,
+      supplierBalance: undefined,
+      supplierInvoiceNo: undefined,
+      ref: undefined,
+      ref2: undefined,
+      contact: undefined,
+      department: undefined,
+      orderNo: undefined,
+      extraNote: undefined,
     });
     setLines([]);
     setJournalLines([]);
@@ -1518,8 +1540,12 @@ export default function PurchaseInvoices() {
     setFreightSourceName('Caixa');
     setFillFromPoId('');
     setActiveTab('fatura');
-    setMode('create');
   }, [currentBranch, branches]);
+
+  const startCreate = useCallback(() => {
+    resetCreateFormState();
+    setMode('create');
+  }, [resetCreateFormState]);
 
   /** Leaving `/purchase-invoices/new` avoids staying on a route that always re-triggers create on mount. */
   const goToPurchaseListRoute = useCallback(() => {
@@ -1783,22 +1809,22 @@ export default function PurchaseInvoices() {
   }, [lines.length, form, freightCost, freightOtherCosts, journalLines.length]);
 
   const handleCloseCreate = useCallback(() => {
-    setSaveError(null);
+    resetCreateFormState();
     clearPurchaseCreateIntent();
     urlCreateAppliedRef.current = false;
-    setFillFromPoId('');
     setDiscardCloseOpen(false);
     setMode("list");
     goToPurchaseListRoute();
-  }, [goToPurchaseListRoute]);
+  }, [goToPurchaseListRoute, resetCreateFormState]);
 
   const requestCloseCreate = useCallback(() => {
+    if (savingPurchaseRef.current || savingPurchase) return;
     if (isCreateDirty) {
       setDiscardCloseOpen(true);
       return;
     }
     handleCloseCreate();
-  }, [isCreateDirty, handleCloseCreate]);
+  }, [isCreateDirty, handleCloseCreate, savingPurchase]);
 
   const openSupplierPicker = useCallback(async () => {
     await refreshSuppliers();
@@ -1940,6 +1966,10 @@ export default function PurchaseInvoices() {
 
   // ─────── SAVE (all phases) ───────
   const handleSave = useCallback(async () => {
+    if (savingPurchaseRef.current || savingPurchase) return;
+    savingPurchaseRef.current = true;
+    setSavingPurchase(true);
+    try {
     setSaveError(null);
     console.log('[PurchaseInvoices] === SAVE START ===');
     console.log('[PurchaseInvoices] form.supplierName:', form.supplierName);
@@ -1982,7 +2012,9 @@ export default function PurchaseInvoices() {
     const supplierInvoiceNo = String(formWithSupplier.supplierInvoiceNo || '').trim();
     if (supplierInvoiceNo) {
       const noLower = supplierInvoiceNo.toLowerCase();
+      const retryInvoiceId = createInvoiceSessionRef.current?.id;
       const localDup = invoices.find((inv) => {
+        if (retryInvoiceId && inv.id === retryInvoiceId) return false;
         if (!inv.supplierInvoiceNo?.trim()) return false;
         if (inv.supplierInvoiceNo.trim().toLowerCase() !== noLower) return false;
         if (inv.supplierId && resolvedSupplierId) {
@@ -2009,6 +2041,7 @@ export default function PurchaseInvoices() {
         const dupRes = await api.purchaseInvoices.checkDuplicate({
           supplierId: resolvedSupplierId,
           supplierInvoiceNo,
+          excludeId: retryInvoiceId,
         });
         if (dupRes.data?.duplicate) {
           setSaveError(t.purchaseInvoicesUi.duplicateSupplierInvoiceNo);
@@ -2097,13 +2130,18 @@ export default function PurchaseInvoices() {
     console.log('[PurchaseInvoices] All validations passed, building invoice...');
 
     let allocatedInvoiceNumber: string;
-    try {
-      allocatedInvoiceNumber = await allocatePurchaseInvoiceNumber(resolvedWarehouseId);
-    } catch (allocErr: unknown) {
-      const msg = allocErr instanceof Error ? allocErr.message : t.purchaseInvoicesUi.unknownError;
-      setSaveError(msg);
-      toast({ title: t.common.error, description: msg, variant: 'destructive' });
-      return;
+    const session = createInvoiceSessionRef.current;
+    if (session?.id && session.invoiceNumber) {
+      allocatedInvoiceNumber = session.invoiceNumber;
+    } else {
+      try {
+        allocatedInvoiceNumber = await allocatePurchaseInvoiceNumber(resolvedWarehouseId);
+      } catch (allocErr: unknown) {
+        const msg = allocErr instanceof Error ? allocErr.message : t.purchaseInvoicesUi.unknownError;
+        setSaveError(msg);
+        toast({ title: t.common.error, description: msg, variant: 'destructive' });
+        return;
+      }
     }
 
     const now = new Date().toISOString();
@@ -2111,7 +2149,7 @@ export default function PurchaseInvoices() {
     const manualJournalLines = journalLines;
 
     const invoice: PurchaseInvoice = {
-      id: generateId(),
+      id: session?.id || generateId(),
       invoiceNumber: allocatedInvoiceNumber,
       supplierAccountCode: resolvedSupplierAccountCode,
       supplierName: matchedSupplier?.name || form.supplierName || '',
@@ -2180,7 +2218,11 @@ export default function PurchaseInvoices() {
       labelDeductibleVat: t.purchaseInvoicesUi.deductibleVat,
     });
 
-    try {
+    createInvoiceSessionRef.current = {
+      id: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+    };
+
       console.log('[PurchaseInvoices] Calling processTransaction...', {
         type: 'purchase_invoice',
         docId: invoice.id,
@@ -2205,6 +2247,7 @@ export default function PurchaseInvoices() {
         description: `Fatura de Compra ${invoice.invoiceNumber} — ${invoice.supplierName}`,
         amount: invoice.total,
         linkedPurchaseOrderNumber: String(invoice.orderNo || form.orderNo || form.ref || '').trim() || undefined,
+        offlineSyncPayload: { invoiceData: invoice as unknown as Record<string, unknown> },
 
         // Angola Tax Engine: persist IVA (input) lines for IVA return + audit
         taxLines: [
@@ -2250,7 +2293,7 @@ export default function PurchaseInvoices() {
             quantity: l.totalQty,
             unitCost: l.unitPrice + (freightAllocations[l.productId] || 0),
             direction: 'IN' as const,
-            warehouseId: l.warehouseId || invoice.warehouseId, // BRANCH-SCOPED
+            warehouseId: invoice.warehouseId,
           })),
 
         changePrice: invoice.changePrice,
@@ -2309,6 +2352,19 @@ export default function PurchaseInvoices() {
       });
 
       console.log('[PurchaseInvoices] Transaction result:', JSON.stringify(txResult));
+
+      if (txResult.pendingSync) {
+        toast({
+          title: t.purchaseInvoicesUi.purchaseInvoiceSavedTitle,
+          description: `${invoice.invoiceNumber} — ${t.clientSyncUi.pendingLabel}`,
+        });
+        await loadInvoiceList();
+        resetCreateFormState();
+        clearPurchaseCreateIntent();
+        setMode('list');
+        goToPurchaseListRoute();
+        return;
+      }
 
       if (!txResult.success) {
         const txError = txResult.errors.join('; ') || t.purchaseInvoicesUi.stockAccountingNotUpdated;
@@ -2372,6 +2428,7 @@ export default function PurchaseInvoices() {
         // non-blocking
       }
       await Promise.all([refreshProducts(), refreshSuppliers()]);
+      invalidateInventoryGridCacheForBranches([resolvedWarehouseId, resolvedBranchId].filter(Boolean));
       window.dispatchEvent(
         new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: resolvedWarehouseId } }),
       );
@@ -2383,6 +2440,9 @@ export default function PurchaseInvoices() {
 
       await loadInvoiceList();
       const savedForView = (await getPurchaseInvoiceById(invoice.id)) || invoice;
+      resetCreateFormState();
+      clearPurchaseCreateIntent();
+      urlCreateAppliedRef.current = false;
       setViewInvoice(savedForView);
       setMode('list');
       goToPurchaseListRoute();
@@ -2394,8 +2454,11 @@ export default function PurchaseInvoices() {
         description: error?.message || t.purchaseInvoicesUi.notSyncedWithStockSupplier,
         variant: 'destructive',
       });
+    } finally {
+      savingPurchaseRef.current = false;
+      setSavingPurchase(false);
     }
-  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders]);
+  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList]);
 
   // ═══════════════ RENDER ═══════════════
 
@@ -2652,6 +2715,26 @@ export default function PurchaseInvoices() {
                             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPoViewOrder(order)} title={t.purchaseInvoicesUi.titlePrint}>
                               <Printer className="h-4 w-4" />
                             </Button>
+                            {purchaseOrderNeedsApproval(order.status) && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 gap-1 text-xs text-green-700 border-green-600/40"
+                                title={t.purchaseInvoicesUi.titleApprove}
+                                onClick={async () => {
+                                  try {
+                                    await approveOrder(order.id, user?.id || '');
+                                    toast({ title: t.purchaseInvoicesUi.toastOrderApproved, description: order.orderNumber });
+                                  } catch (err: unknown) {
+                                    const message = err instanceof Error ? err.message : t.purchaseInvoicesUi.approveFailedDesc;
+                                    toast({ title: t.purchaseInvoicesUi.approveFailedTitle, description: message, variant: 'destructive' });
+                                  }
+                                }}
+                              >
+                                <CheckCircle className="h-3.5 w-3.5" />
+                                {t.purchaseInvoicesUi.titleApprove}
+                              </Button>
+                            )}
                             {['approved', 'partial'].includes(order.status) && (
                               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
                                 setPoReceiveOrder(order);
@@ -3084,11 +3167,14 @@ export default function PurchaseInvoices() {
 
   // ─── CREATE MODE ─── Smart ERP Dense Layout
   return (
-    <div className="flex flex-col min-h-0 flex-1 h-full overflow-hidden text-xs animate-fade-in">
+    <div
+      className={`flex flex-col min-h-0 flex-1 h-full overflow-hidden text-xs animate-fade-in${savingPurchase ? ' pointer-events-none opacity-75' : ''}`}
+      aria-busy={savingPurchase}
+    >
       {/* ═══ TOP BAR ═══ */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-muted/60 border-b border-border shrink-0">
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={requestCloseCreate}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={requestCloseCreate} disabled={savingPurchase}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <button
@@ -3153,11 +3239,17 @@ export default function PurchaseInvoices() {
           {nextFcPreview && (
             <span className="text-xs font-mono text-muted-foreground">{nextFcPreview}</span>
           )}
-          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={requestCloseCreate}>
+          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={requestCloseCreate} disabled={savingPurchase}>
             <X className="h-3 w-3" /> {t.common.cancel}
           </Button>
-          <Button size="sm" className="h-7 gap-1 text-xs" onClick={handleSave}>
-            <Save className="h-3 w-3" /> {t.common.save}
+          <Button
+            size="sm"
+            className="h-7 gap-1 text-xs"
+            onClick={handleSave}
+            disabled={savingPurchase}
+            aria-disabled={savingPurchase}
+          >
+            <Save className="h-3 w-3" /> {savingPurchase ? t.common.saving : t.common.save}
           </Button>
         </div>
       </div>

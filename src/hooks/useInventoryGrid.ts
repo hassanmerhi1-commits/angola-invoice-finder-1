@@ -6,8 +6,10 @@ import {
   invalidateInventoryGridCache,
   isInventoryGridCacheFresh,
   readInventoryGridCache,
+  readInventoryGridCacheStale,
   writeCache,
 } from '@/lib/inventoryGrid';
+import { readLanInventoryGrid, saveLanInventoryGrid } from '@/lib/lanCatalogCache';
 import { canonicalProductSku } from '@/lib/productDedupe';
 
 export function useInventoryGrid(opts: {
@@ -18,9 +20,16 @@ export function useInventoryGrid(opts: {
 }) {
   const enabled = opts.enabled !== false;
   const scopeKey = opts.consolidated ? 'hq' : String(opts.branchId || '').trim();
-  const [rows, setRows] = useState<Product[]>(() =>
-    enabled ? (readInventoryGridCache(opts.branchId, opts.consolidated) ?? []) : [],
-  );
+  const initialCached = () => {
+    if (!enabled) return [];
+    return (
+      readInventoryGridCache(opts.branchId, opts.consolidated)
+      || readInventoryGridCacheStale(opts.branchId, opts.consolidated)
+      || readLanInventoryGrid(cacheKey(opts.branchId, opts.consolidated))
+      || []
+    );
+  };
+  const [rows, setRows] = useState<Product[]>(initialCached);
   const [loading, setLoading] = useState(() => enabled && rows.length === 0);
   const generationRef = useRef(0);
 
@@ -48,7 +57,10 @@ export function useInventoryGrid(opts: {
       return;
     }
     const gen = ++generationRef.current;
-    const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
+    const cached =
+      readInventoryGridCache(opts.branchId, opts.consolidated)
+      || readInventoryGridCacheStale(opts.branchId, opts.consolidated)
+      || readLanInventoryGrid(cacheKey(opts.branchId, opts.consolidated));
     if (cached?.length) {
       startTransition(() => setRows(cached));
       setLoading(false);
@@ -73,8 +85,15 @@ export function useInventoryGrid(opts: {
         startTransition(() => setRows(fresh));
       } catch (err) {
         console.error('[useInventoryGrid] load failed:', err);
-        if (gen === generationRef.current && !cached?.length) {
-          setRows([]);
+        if (gen === generationRef.current) {
+          const offlineRows =
+            readInventoryGridCacheStale(opts.branchId, opts.consolidated)
+            || readLanInventoryGrid(cacheKey(opts.branchId, opts.consolidated));
+          if (offlineRows?.length) {
+            startTransition(() => setRows(offlineRows));
+          } else if (!cached?.length) {
+            setRows([]);
+          }
         }
       } finally {
         if (gen === generationRef.current) setLoading(false);
@@ -107,6 +126,7 @@ export function useInventoryGrid(opts: {
             ? prev.map((p, i) => (i === idx ? { ...p, ...product } : p))
             : [product, ...prev];
         writeCache(key, next);
+        saveLanInventoryGrid(key, next);
         return next;
       });
     },

@@ -3,7 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { processPayment } = require('../transactionEngine');
 const { enqueuePaymentCreated } = require('../sync/outbox');
-const { ENTITY_BALANCE_SELECT } = require('../entityBalanceSql');
+const { getEntityBalanceSelect } = require('../entityBalanceSql');
 const { listSupplierPayables } = require('../lib/supplierPayablesList');
 const { listCustomerReceivables } = require('../lib/customerReceivablesList');
 const { listChecklistDues } = require('../lib/openItemsBriefing');
@@ -177,7 +177,7 @@ module.exports = function(broadcastTable) {
       const pResult = await db.query(pQuery, pParams);
 
       // 3) Current balance
-      const balResult = await db.query(ENTITY_BALANCE_SELECT, [entityType, entityId]);
+      const balResult = await db.query(getEntityBalanceSelect(), [entityType, entityId]);
 
       res.json({
         openItems: oiResult.rows,

@@ -102,6 +102,10 @@ export interface TransactionRequest {
   amount?: number;
   /** PO order number on purchase invoice — links payable to PO receipt before invoice is saved */
   linkedPurchaseOrderNumber?: string;
+  /** Shop client offline queue — invoice header for purchase_invoice.created sync */
+  offlineSyncPayload?: {
+    invoiceData: Record<string, unknown>;
+  };
 }
 
 export interface TransactionResult {
@@ -113,6 +117,8 @@ export interface TransactionResult {
   documentLinkIds: string[];
   /** Line productId → warehouse product row id after branch clone (purchase/sales). */
   resolvedProductIds?: Record<string, string>;
+  /** Queued for city server when shop client is offline */
+  pendingSync?: boolean;
 }
 
 // ==================== MAIN ENGINE (API-First) ====================
@@ -153,6 +159,23 @@ export async function processTransaction(request: TransactionRequest): Promise<T
       }
     } else if (apiResult.error) {
       console.error(`[TransactionEngine] ❌ API error for ${request.transactionType} ${request.documentNumber}:`, apiResult.error);
+      if (
+        request.transactionType === 'purchase_invoice'
+        && request.offlineSyncPayload?.invoiceData
+      ) {
+        const { enqueuePurchaseInvoiceSync, shouldQueueOnNetworkError } = await import('@/lib/sync/clientOutbox');
+        if (shouldQueueOnNetworkError(apiResult.error)) {
+          const queued = await enqueuePurchaseInvoiceSync({
+            invoiceData: request.offlineSyncPayload.invoiceData,
+            transactionData: request as unknown as Record<string, unknown>,
+          });
+          if (queued) {
+            result.success = true;
+            result.pendingSync = true;
+            return result;
+          }
+        }
+      }
       result.errors.push(apiResult.error);
       return result;
     } else if (apiResult.data && !apiResult.data.success) {
@@ -165,6 +188,23 @@ export async function processTransaction(request: TransactionRequest): Promise<T
     }
   } catch (error) {
     console.error('[TransactionEngine] ❌ API transaction failed:', error);
+    if (
+      request.transactionType === 'purchase_invoice'
+      && request.offlineSyncPayload?.invoiceData
+    ) {
+      const { enqueuePurchaseInvoiceSync, shouldQueueOnNetworkError } = await import('@/lib/sync/clientOutbox');
+      if (shouldQueueOnNetworkError(error)) {
+        const queued = await enqueuePurchaseInvoiceSync({
+          invoiceData: request.offlineSyncPayload.invoiceData,
+          transactionData: request as unknown as Record<string, unknown>,
+        });
+        if (queued) {
+          result.success = true;
+          result.pendingSync = true;
+          return result;
+        }
+      }
+    }
     result.errors.push(error instanceof Error ? error.message : 'Transaction failed');
     return result;
   }

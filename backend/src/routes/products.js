@@ -5,6 +5,7 @@ const db = require('../db');
 const {
   coalesceActiveNotZero,
   coalesceMainTruthy,
+  isPostgresEngine,
   sqlScalarMax,
   emptyBranchIdClause,
   catalogBranchScopeClause,
@@ -14,7 +15,7 @@ const productActive = (alias) => coalesceActiveNotZero(db, `${alias}.is_active`)
 const branchMainActive = (alias) => coalesceMainTruthy(db, `${alias}.is_main`);
 const { DEFAULT_VAT_RATE } = require('../taxDefaults');
 const { checkOptimisticLock } = require('../middleware/security');
-const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
+const { attachUserBranchScope, resolveListBranchId, normalizeRequestedBranchId } = require('../middleware/branchScope');
 const {
   findProductBySkuAndBranch,
   isUniqueSkuBranchError,
@@ -58,8 +59,14 @@ function resolveProductBranchId(req, requestedBranchId) {
   if (scoped === undefined) return undefined;
   if (!scoped) return null;
   const key = String(scoped).trim();
+  if (!key || key === 'all') return null;
   if (db.engine === 'sqlite') return key;
-  return sanitizeUuid(key) || key;
+  const uuid = sanitizeUuid(key);
+  if (!uuid) {
+    console.warn('[PRODUCTS] Ignoring invalid branchId for Postgres:', key);
+    return resolveListBranchId(req, null);
+  }
+  return uuid;
 }
 
 function normalizeSkuKey(sku) {
@@ -132,10 +139,24 @@ function dedupeRowKey(row, mainBranchIds = []) {
   return `${scope}|name:${nameKey || row.id}`;
 }
 
+async function resolveStoredBranchId(branchId) {
+  const mainBranchIds = await loadMainBranchIds();
+  return normalizeStoredBranchId(branchId, mainBranchIds);
+}
+
+/** On INSERT, keep explicit warehouse id so inventory grid lists zero-stock products (branch_id = $1). */
+async function resolveStoredBranchIdForCreate(branchId) {
+  const key = branchId == null ? '' : String(branchId).trim();
+  if (!key) return null;
+  if (db.engine === 'sqlite') return key;
+  const uuid = sanitizeUuid(key);
+  return uuid || null;
+}
+
 async function findExistingProductForUpsert({ sku, name, branchId }) {
   const skuTrim = String(sku || '').trim();
   const nameTrim = String(name || '').trim();
-  const storedBranchId = await normalizeStoredBranchId(branchId);
+  const storedBranchId = await resolveStoredBranchId(branchId);
 
   if (skuTrim) {
     const bySku = await findExistingProductBySku(skuTrim, storedBranchId ?? branchId);
@@ -436,16 +457,23 @@ function sqlGridRowPriceExpr(alias = 'p') {
 /** Best selling price for this SKU across catalog + filial rows (fixes Qtd > 0 filial-only rows). */
 function sqlGridSellingPriceExpr(alias = 'p') {
   const rowPvp = sqlScalarMax(db, `COALESCE(${alias}.price, 0)`, `COALESCE(${alias}.price2, 0)`);
-  const pairMax = sqlScalarMax(db, 'COALESCE(px.price, 0)', 'COALESCE(px.price2, 0)');
-  const siblingAgg = db.engine === 'postgres'
-    ? `SELECT MAX(${pairMax})`
-    : 'SELECT MAX(MAX(COALESCE(px.price, 0), COALESCE(px.price2, 0)))';
-  const siblingMax = `(
-    ${siblingAgg}
-    FROM products px
+  const pxWhere = `
     WHERE ${productActive('px')}
       AND TRIM(COALESCE(px.sku, '')) != ''
-      AND ${sqlMovementSkuKey('px')} = ${sqlMovementSkuKey(alias)}
+      AND ${sqlMovementSkuKey('px')} = ${sqlMovementSkuKey(alias)}`;
+  const siblingMax = isPostgresEngine(db)
+    ? `(
+    SELECT MAX(sub_val)
+    FROM (
+      SELECT ${sqlScalarMax(db, 'COALESCE(px.price, 0)', 'COALESCE(px.price2, 0)')} AS sub_val
+      FROM products px
+      ${pxWhere}
+    ) sku_prices
+  )`
+    : `(
+    SELECT MAX(MAX(COALESCE(px.price, 0), COALESCE(px.price2, 0)))
+    FROM products px
+    ${pxWhere}
   )`;
   return sqlScalarMax(db, rowPvp, `COALESCE(${siblingMax}, 0)`);
 }
@@ -726,6 +754,78 @@ function invalidateSellingHintsCache() {
   sellingHintsCacheAt = 0;
 }
 
+let purchaseSupplierCache = null;
+let purchaseSupplierCacheAt = 0;
+const PURCHASE_SUPPLIER_CACHE_MS = 120_000;
+
+/** Latest supplier per SKU from confirmed purchase invoices (for inventory grid). */
+async function loadLatestPurchaseSupplierBySku() {
+  const now = Date.now();
+  if (purchaseSupplierCache && now - purchaseSupplierCacheAt < PURCHASE_SUPPLIER_CACHE_MS) {
+    return purchaseSupplierCache;
+  }
+
+  const bySku = new Map();
+  try {
+    const invoices = await db.query(
+      `SELECT supplier_id, supplier_name, lines_json, date, updated_at
+       FROM purchase_invoices
+       WHERE TRIM(COALESCE(supplier_name, '')) != ''
+       ORDER BY date DESC, updated_at DESC
+       LIMIT 800`,
+    );
+    for (const inv of invoices.rows || []) {
+      const supplierName = String(inv.supplier_name || '').trim();
+      if (!supplierName) continue;
+      const supplierId = String(inv.supplier_id || '').trim() || null;
+      let lines = inv.lines_json;
+      if (typeof lines === 'string') {
+        try {
+          lines = JSON.parse(lines);
+        } catch {
+          lines = [];
+        }
+      }
+      if (!Array.isArray(lines)) continue;
+      for (const line of lines) {
+        const rawSku = line.productCode || line.product_code || line.sku || '';
+        const key = canonicalSkuString(rawSku).toLowerCase();
+        if (!key || bySku.has(key)) continue;
+        bySku.set(key, { supplier_id: supplierId, supplier_name: supplierName });
+      }
+    }
+  } catch (err) {
+    console.warn('[PRODUCTS] purchase supplier hints:', err.message);
+  }
+
+  purchaseSupplierCache = bySku;
+  purchaseSupplierCacheAt = now;
+  return bySku;
+}
+
+function enrichRowsWithPurchaseSuppliers(rows, supplierBySkuPreloaded) {
+  const bySku = supplierBySkuPreloaded;
+  if (!bySku?.size) return rows;
+  return rows.map((row) => {
+    const hasName = row.supplier_name != null && String(row.supplier_name).trim() !== '';
+    if (hasName) return row;
+    const key = canonicalSkuString(row.sku).toLowerCase();
+    if (!key) return row;
+    const hit = bySku.get(key);
+    if (!hit?.supplier_name) return row;
+    return {
+      ...row,
+      supplier_id: row.supplier_id || hit.supplier_id || null,
+      supplier_name: hit.supplier_name,
+    };
+  });
+}
+
+function invalidatePurchaseSupplierCache() {
+  purchaseSupplierCache = null;
+  purchaseSupplierCacheAt = 0;
+}
+
 function enrichInventoryGridSellingPrices(rows, priceBySku) {
   if (!priceBySku?.size) return rows;
   return rows.map((row) => {
@@ -768,6 +868,20 @@ async function enrichRowsWithSellingPrices(rows, priceBySkuPreloaded) {
   return enrichInventoryGridSellingPrices(rows, priceBySku);
 }
 
+function mergeFastPickerRowsIntoGrid(gridRows, fastRows) {
+  const bySku = new Map();
+  for (const row of gridRows) {
+    const key = normalizeSkuKey(row.sku) || String(row.id);
+    bySku.set(key, row);
+  }
+  for (const row of fastRows) {
+    const key = normalizeSkuKey(row.sku) || String(row.id);
+    if (!key || bySku.has(key)) continue;
+    bySku.set(key, row);
+  }
+  return Array.from(bySku.values());
+}
+
 async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded) {
   const mainBranchIds = await loadMainBranchIds();
   let rows;
@@ -778,6 +892,8 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
     if (!branchKey) return [];
     try {
       rows = await listProductsForBranchInventoryGrid(branchKey);
+      const fastRows = await listProductsForBranchFast(branchKey);
+      rows = mergeFastPickerRowsIntoGrid(rows, fastRows);
       rows = dedupeProductsBySku(rows, branchKey, mainBranchIds);
     } catch (err) {
       console.error('[PRODUCTS inventory-grid] filial query failed, fallback:', err.message);
@@ -785,6 +901,8 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
       rows = dedupeProductsBySku(rows, branchKey, mainBranchIds);
     }
   }
+  const supplierBySku = await loadLatestPurchaseSupplierBySku();
+  rows = enrichRowsWithPurchaseSuppliers(rows, supplierBySku);
   return enrichRowsWithSellingPrices(rows, priceBySkuPreloaded);
 }
 
@@ -861,8 +979,14 @@ async function listProductsForBranch(branchKey, lightList) {
               )${movementExistsSql}
             )
           ORDER BY name`;
-  const result = await db.query(query, [branchKey]);
-  rows = dedupeProductsBySku(result.rows, branchKeyStr, mainBranchIds);
+  try {
+    const result = await db.query(query, [branchKey]);
+    rows = dedupeProductsBySku(result.rows, branchKeyStr, mainBranchIds);
+  } catch (fullListErr) {
+    console.error('[PRODUCTS] full branch list failed, using fast list:', fullListErr.message);
+    rows = await listProductsForBranchFast(branchKey);
+    rows = dedupeProductsBySku(rows, branchKeyStr, mainBranchIds);
+  }
   }
   return enrichRowsWithSellingPrices(rows);
 }
@@ -1074,7 +1198,12 @@ module.exports = function(broadcastTable) {
        LIMIT 1`,
       [row.sku],
     );
-    const src = sibling.rows[0];
+    let src = sibling.rows[0];
+    if (!src) {
+      const bySku = await loadLatestPurchaseSupplierBySku();
+      const hit = bySku.get(canonicalSkuString(row.sku).toLowerCase());
+      if (hit) src = hit;
+    }
     if (!src) return row;
     return {
       ...row,
@@ -1119,7 +1248,10 @@ module.exports = function(broadcastTable) {
   // Get single product (supplier resolved from sibling SKU rows when missing)
   router.get('/:id', async (req, res) => {
     try {
-      const { id } = req.params;
+      const id = String(req.params.id || '').trim();
+      if (!id) {
+        return res.status(400).json({ error: 'Product id is required' });
+      }
       const result = await db.query('SELECT * FROM products WHERE id = $1', [id]);
       if (!result.rows[0]) {
         return res.status(404).json({ error: 'Product not found' });
@@ -1136,12 +1268,15 @@ module.exports = function(broadcastTable) {
   router.post('/', async (req, res) => {
     try {
       const { name, sku, barcode, category, price, price2, price3, price4, cost, stock, unit, taxRate, branchId, isActive, supplierId, supplierName } = req.body;
-      const activeInt = isActive !== false ? 1 : 0;
+      const activeFlag = isActive !== false;
+      const activeValue = db.engine === 'postgres' ? activeFlag : (activeFlag ? 1 : 0);
 
       const c = Number(cost) || 0;
-      const resolvedBranchId = resolveProductBranchId(req, branchId);
+      const resolvedBranchId = resolveProductBranchId(req, normalizeRequestedBranchId(branchId));
       if (resolvedBranchId === undefined) {
-        return res.status(403).json({ error: 'Sem filial atribuída para criar produtos.' });
+        return res.status(403).json({
+          error: 'Sem filial atribuída para criar produtos. Selecione uma filial no inventário ou no formulário.',
+        });
       }
 
       const skuTrim = String(sku || '').trim();
@@ -1149,12 +1284,14 @@ module.exports = function(broadcastTable) {
         return res.status(400).json({ error: 'Código (SKU) é obrigatório.' });
       }
 
-      const storedBranchId = await normalizeStoredBranchId(resolvedBranchId);
       const existing = await findExistingProductForUpsert({
         sku: skuTrim,
         name: String(name || '').trim(),
         branchId: resolvedBranchId,
       });
+      const storedBranchId = existing?.id
+        ? await resolveStoredBranchId(resolvedBranchId)
+        : await resolveStoredBranchIdForCreate(resolvedBranchId);
 
       if (existing?.id) {
         const canonicalSku =
@@ -1176,7 +1313,7 @@ module.exports = function(broadcastTable) {
            RETURNING *`,
           [
             name, canonicalSku, barcode, category, price, price2 || 0, price3 || 0, price4 || 0,
-            c, stock ?? null, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, activeInt,
+            c, stock ?? null, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, activeValue,
             storedBranchId,
             sanitizeUuid(supplierId), supplierName || null,
             existing.id,
@@ -1197,7 +1334,7 @@ module.exports = function(broadcastTable) {
           [
             id, name, skuTrim, barcode, category, price, price2 || 0, price3 || 0, price4 || 0,
             c,
-            stock || 0, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, storedBranchId, activeInt,
+            stock || 0, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, storedBranchId, activeValue,
             sanitizeUuid(supplierId), supplierName || null,
           ],
         );
@@ -1217,7 +1354,7 @@ module.exports = function(broadcastTable) {
            RETURNING *`,
           [
             name, skuTrim, barcode, category, price, price2 || 0, price3 || 0, price4 || 0,
-            c, stock ?? null, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, activeInt,
+            c, stock ?? null, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, activeValue,
             storedBranchId,
             sanitizeUuid(supplierId), supplierName || null,
             conflict.id,
@@ -1235,7 +1372,19 @@ module.exports = function(broadcastTable) {
           error: 'Já existe um produto com este código (SKU) nesta filial ou catálogo partilhado.',
         });
       }
-      res.status(500).json({ error: 'Failed to create product' });
+      if (/invalid input syntax for type uuid/i.test(msg)) {
+        return res.status(400).json({
+          error: 'Filial inválida. Selecione uma filial no inventário (ex.: Main Branch) e tente novamente.',
+        });
+      }
+      if (/foreign key|violates foreign key/i.test(msg)) {
+        return res.status(400).json({
+          error: 'Dados de referência inválidos (filial ou fornecedor). Verifique e tente novamente.',
+        });
+      }
+      res.status(500).json({
+        error: msg ? `Failed to create product: ${msg}` : 'Failed to create product',
+      });
     }
   });
 
@@ -1435,7 +1584,7 @@ module.exports = function(broadcastTable) {
           sku = `AUTO-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         }
         const name = rawName || sku;
-        const storedBranchId = await normalizeStoredBranchId(branchId);
+        const storedBranchId = await resolveStoredBranchId(branchId);
 
         try {
           if (existingId) {
