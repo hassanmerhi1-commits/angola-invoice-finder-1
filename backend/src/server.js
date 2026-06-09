@@ -102,7 +102,19 @@ app.get('/api/health', async (req, res) => {
     }
     res.json(payload);
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    const msg = String(e?.message || e || 'health check failed');
+    const pgDown = /ECONNREFUSED|connect timeout|ENOTFOUND|5432/i.test(msg)
+      && (db.engine === 'postgres' || !!process.env.DATABASE_URL);
+    res.status(pgDown ? 503 : 500).json({
+      ok: false,
+      unified: true,
+      engine: db.engine || 'postgres',
+      error: msg,
+      dbUnreachable: pgDown,
+      hint: pgDown
+        ? 'PostgreSQL is not running. Start Docker Desktop, then run: docker compose up -d postgres'
+        : undefined,
+    });
   }
 });
 

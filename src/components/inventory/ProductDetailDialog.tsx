@@ -753,7 +753,7 @@ export function ProductDetailDialog({
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-4 py-3 border-t bg-muted/50">
-          <Button onClick={handleSave} size="sm" className="h-8 gap-1" disabled={saving}>
+          <Button variant="outline" onClick={handleSave} size="sm" className="h-8 gap-1 text-foreground border-foreground hover:bg-muted" disabled={saving}>
             <Check className="w-4 h-4" /> {saving ? t.common.saving : t.common.save}
           </Button>
           <Button variant="outline" size="sm" className="h-8 gap-1" onClick={requestClose}>

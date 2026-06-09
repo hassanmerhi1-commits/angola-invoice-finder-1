@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useERP';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
@@ -31,6 +31,42 @@ export default function Login() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  useEffect(() => {
+    if (!window.electronAPI?.db?.getStatus) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await window.electronAPI?.db?.getStatus?.();
+        if (cancelled || !status) return;
+        if (status.backendNativeError) {
+          setLastConnectionError(String(status.backendNativeError));
+          return;
+        }
+        if (status.mode === 'server' && status.expressPort) {
+          const base = `http://127.0.0.1:${status.expressPort}`;
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 5000);
+          try {
+            const res = await fetch(`${base}/api/health?lite=1`, { signal: ctrl.signal });
+            const payload = await res.json().catch(() => null);
+            if (!cancelled && payload?.dbUnreachable) {
+              setLastConnectionError(
+                String(payload.hint || payload.error || 'PostgreSQL is not running. Start Docker Desktop.'),
+              );
+            }
+          } catch {
+            /* backend still starting */
+          } finally {
+            clearTimeout(timer);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
@@ -60,9 +96,11 @@ export default function Login() {
         }
         navigate('/');
       } else if (result.kind === 'connection') {
+        const msg = result.message || t.auth.connectionErrorDesc;
+        setLastConnectionError(msg);
         toast({
           title: t.auth.connectionErrorTitle,
-          description: t.auth.connectionErrorDesc,
+          description: msg,
           variant: 'destructive',
         });
       } else {

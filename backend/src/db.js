@@ -1433,7 +1433,7 @@ if (USE_POSTGRES) {
     connectionString: process.env.DATABASE_URL,
     max: Number(process.env.PG_POOL_MAX || 10),
     idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 30000),
-    connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 10000),
+    connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 4000),
   });
   pool = pgPool;
 } else {

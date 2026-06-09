@@ -304,7 +304,7 @@ export function AdvancedDataGrid({
           {filteredProducts.length} de {products.length} produtos
         </span>
         {hasActiveFilters && (
-          <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={clearAllFilters}>
+          <Button variant="outline" size="sm" className="h-6 text-xs text-foreground" onClick={clearAllFilters}>
             <X className="w-3 h-3 mr-1" />
             Limpar Filtros
           </Button>
@@ -326,7 +326,7 @@ export function AdvancedDataGrid({
                         <button
                           className={cn(
                             "w-full px-2 py-1 text-xs font-bold text-foreground/80 text-left leading-tight flex items-center justify-between hover:bg-accent",
-                            hasFilter && "bg-primary/10 text-primary"
+                            hasFilter && "bg-muted text-foreground font-semibold"
                           )}
                         >
                           <span className="truncate">{col.label}</span>

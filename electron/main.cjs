@@ -2580,8 +2580,8 @@ ipcMain.handle('db:getStatus', async () => {
 
   // Packaged cold start: backend may still be binding — retry health before reporting offline.
   if (!expressUp && (isServerMode || !serverAddress)) {
-    for (let i = 0; i < 15 && !expressUp; i++) {
-      await delay(500);
+    for (let i = 0; i < 6 && !expressUp; i++) {
+      await delay(400);
       if (i === 3 || i === 8) await ensureEmbeddedBackendRunningIfNeeded();
       expressPort = await resolveExpressTargetPort(false);
       expressUp = !!expressPort;

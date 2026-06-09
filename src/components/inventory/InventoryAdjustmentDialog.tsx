@@ -541,7 +541,9 @@ export function InventoryAdjustmentDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t.common.cancel}
           </Button>
-          <Button 
+          <Button
+            variant="outline"
+            className="text-foreground border-foreground hover:bg-muted"
             onClick={handleApply}
             disabled={summary.withDifferenceCount === 0 || !branchId}
           >

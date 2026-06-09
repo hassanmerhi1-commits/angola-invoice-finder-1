@@ -290,7 +290,7 @@ export type EmbeddedBackendWaitResult =
 export async function waitForEmbeddedBackendHealth(
   opts?: { timeoutMs?: number },
 ): Promise<EmbeddedBackendWaitResult> {
-  const timeoutMs = opts?.timeoutMs ?? (ipFileSaysServerMachine() ? 45000 : 28000);
+  const timeoutMs = opts?.timeoutMs ?? (ipFileSaysServerMachine() ? 20000 : 15000);
   const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
   if (!el?.isElectron) {
     return { ok: true, baseUrl: getApiUrl() };
@@ -394,27 +394,43 @@ export async function waitForEmbeddedBackendHealth(
       }
 
       const baseUrl = await getApiUrlAsync({ waitForPortMs: 2500 });
-      const healthOk = async (base: string): Promise<boolean> => {
+      const healthOk = async (base: string): Promise<{ ok: true } | { ok: false; fatal?: string }> => {
+        const parsePayload = (payload: unknown, statusOk: boolean) => {
+          if (statusOk && isEmbeddedHealthPayload(payload)) return { ok: true as const };
+          const p = payload as Record<string, unknown> | null;
+          if (p?.dbUnreachable || (p?.ok === false && /ECONNREFUSED|5432/i.test(String(p?.error || '')))) {
+            return {
+              ok: false as const,
+              fatal: String(p?.hint || p?.error || 'PostgreSQL is not running. Start Docker Desktop and PostgreSQL.'),
+            };
+          }
+          return { ok: false as const };
+        };
         try {
-          const r = await electronHttpJson(`${base}/api/health`, { timeoutMs: 4000 });
-          if (r.ok && isEmbeddedHealthPayload(r.json)) return true;
+          const r = await electronHttpJson(`${base}/api/health?lite=1`, { timeoutMs: 4000 });
+          const parsed = parsePayload(r.json, r.ok);
+          if (parsed.ok || parsed.fatal) return parsed;
         } catch {
           /* try fetch */
         }
-        if (typeof fetch === 'undefined') return false;
+        if (typeof fetch === 'undefined') return { ok: false };
         const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
         const timer = ctrl ? setTimeout(() => ctrl.abort(), 4000) : null;
         try {
-          const res = await fetch(`${base}/api/health`, ctrl ? { signal: ctrl.signal } : {});
+          const res = await fetch(`${base}/api/health?lite=1`, ctrl ? { signal: ctrl.signal } : {});
           const payload = await res.json().catch(() => null);
-          return res.ok && isEmbeddedHealthPayload(payload);
+          return parsePayload(payload, res.ok);
         } catch {
-          return false;
+          return { ok: false };
         } finally {
           if (timer) clearTimeout(timer);
         }
       };
-      if (await healthOk(baseUrl)) {
+      const health = await healthOk(baseUrl);
+      if (health.fatal) {
+        return { ok: false, error: health.fatal };
+      }
+      if (health.ok) {
         electronResolvedBase = baseUrl;
         electronCacheVerifiedAt = Date.now();
         return { ok: true, baseUrl };

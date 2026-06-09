@@ -522,7 +522,7 @@ export const api = {
             return { error: ready.error, errorKind: 'connection' as LoginErrorKind };
           }
         } else {
-          const ready = await waitForEmbeddedBackendHealth();
+          const ready = await waitForEmbeddedBackendHealth({ timeoutMs: 15000 });
           if (!ready.ok) {
             return { error: ready.error, errorKind: 'connection' as LoginErrorKind };
           }

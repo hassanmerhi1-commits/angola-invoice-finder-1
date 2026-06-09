@@ -1146,7 +1146,8 @@ export function StockEntryDialog({
               {t.common.cancel}
             </Button>
             <Button
-              className="bg-emerald-600 hover:bg-emerald-700 text-white min-w-[160px]"
+              variant="outline"
+              className="text-foreground border-foreground hover:bg-muted min-w-[160px]"
               onClick={() => void handleApply()}
               disabled={fulfilledItems.length === 0 || !effectiveWarehouseId || submitting}
             >

@@ -18,7 +18,7 @@ Configured in `electron-builder.json`:
 
 - **Owner:** `hassanmerhi1-commits`
 - **Repo:** `angola-invoice-finder-1`
-- **Current app version:** see `package.json` → `version` (e.g. `1.0.49`)
+- **Current app version:** see `package.json` → `version` (e.g. `1.0.51`)
 
 CI workflow: `.github/workflows/build-and-release.yml` (runs on tags `v*`).
 

@@ -43,9 +43,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify release artifacts
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path release -ErrorAction Stop | Format-Table Name, Length
+          if (-not (Test-Path release/latest.yml)) {
+            Write-Error "latest.yml missing — auto-update will not work"
+          }
+          $exe = Get-ChildItem release/*.exe | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "No .exe found in release/"
+          }
+          Write-Host "OK: $($exe.Name) + latest.yml"
+
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
+          name: NEXOR ERP ${{ github.ref_name }}
           files: |
             release/*.exe
             release/latest.yml
