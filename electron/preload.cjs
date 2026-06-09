@@ -139,9 +139,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     install: () => ipcRenderer.invoke('updater:install'),
     getVersion: () => ipcRenderer.invoke('updater:getVersion'),
     onStatus: (callback) => {
-      ipcRenderer.removeAllListeners('updater:status');
-      ipcRenderer.on('updater:status', (_, data) => callback(data));
+      const handler = (_, data) => callback(data);
+      ipcRenderer.on('updater:status', handler);
+      return () => ipcRenderer.removeListener('updater:status', handler);
     },
+    getDiagnostics: () => ipcRenderer.invoke('updater:getDiagnostics'),
   },
 
   // Hot updates

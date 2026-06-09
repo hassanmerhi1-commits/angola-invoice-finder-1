@@ -97,7 +97,7 @@ export default function Settings() {
       });
       
       // Listen for update status changes
-      window.electronAPI?.updater.onStatus((data) => {
+      const unsubscribe = window.electronAPI?.updater.onStatus((data) => {
         setUpdateStatus(data);
         
         if (data.status === 'checking') {
@@ -112,6 +112,9 @@ export default function Settings() {
           setIsDownloading(false);
         }
       });
+      return () => {
+        if (typeof unsubscribe === 'function') unsubscribe();
+      };
     }
   }, [isElectron]);
   
@@ -150,10 +153,20 @@ export default function Settings() {
     if (!isElectron) return;
     
     setIsChecking(true);
-    setUpdateStatus(null);
+    setUpdateStatus({ status: 'checking' });
     
     try {
-      await window.electronAPI?.updater.check();
+      const result = await window.electronAPI?.updater.check();
+      if (!result?.success) {
+        setUpdateStatus({ status: 'error', error: result?.error || 'Failed to check for updates' });
+        setIsChecking(false);
+        return;
+      }
+      if (result.isUpdateAvailable === false) {
+        setUpdateStatus({ status: 'not-available' });
+        setIsChecking(false);
+      }
+      // When an update exists, main process emits 'available' via onStatus.
     } catch (error) {
       setUpdateStatus({ status: 'error', error: 'Failed to check for updates' });
       setIsChecking(false);

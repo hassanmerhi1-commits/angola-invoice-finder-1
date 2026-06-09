@@ -344,6 +344,9 @@ const autoUpdater = updaterModule?.autoUpdater || createNoopAutoUpdater();
 const UPDATER_GITHUB_OWNER = 'hassanmerhi1-commits';
 const UPDATER_GITHUB_REPO = 'angola-invoice-finder-1';
 
+const UPDATER_GENERIC_FEED_URL =
+  `https://github.com/${UPDATER_GITHUB_OWNER}/${UPDATER_GITHUB_REPO}/releases/latest/download`;
+
 function configureAutoUpdaterFeed() {
   if (!updaterModule?.autoUpdater || typeof autoUpdater.setFeedURL !== 'function') return;
   try {
@@ -359,14 +362,22 @@ function configureAutoUpdaterFeed() {
         );
       }
     }
+    // Generic feed hits releases/latest/download/latest.yml directly (more reliable than GitHub atom feed).
     autoUpdater.setFeedURL({
-      provider: 'github',
-      owner: UPDATER_GITHUB_OWNER,
-      repo: UPDATER_GITHUB_REPO,
+      provider: 'generic',
+      url: UPDATER_GENERIC_FEED_URL,
     });
+    console.log(`[AutoUpdater] Feed URL: ${UPDATER_GENERIC_FEED_URL}`);
   } catch (err) {
     console.warn('[AutoUpdater] setFeedURL failed:', err?.message || err);
   }
+}
+
+const autoUpdaterLoaded = !!updaterModule?.autoUpdater;
+if (!autoUpdaterLoaded) {
+  console.error('[AutoUpdater] electron-updater failed to load — updates are disabled in this build.');
+} else {
+  console.log('[AutoUpdater] electron-updater loaded OK');
 }
 
 // ============= AUTO-UPDATER CONFIGURATION =============
@@ -2950,11 +2961,39 @@ ipcMain.handle('pdf:saveHtml', async (_, html, options = {}) => {
 ipcMain.handle('app:relaunch', () => { app.relaunch(); app.exit(0); });
 ipcMain.handle('app:version', () => app.getVersion());
 
+function sendUpdaterStatus(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater:status', payload);
+  }
+}
+
 // Auto-updater
 ipcMain.handle('updater:check', async () => {
-  try { await autoUpdater.checkForUpdates(); return { success: true }; }
-  catch (e) { return { success: false, error: e.message }; }
+  if (!autoUpdaterLoaded) {
+    const error = 'Auto-updater module is missing from this install. Reinstall from the latest GitHub release.';
+    sendUpdaterStatus({ status: 'error', error });
+    return { success: false, error };
+  }
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    if (result == null) {
+      const error = 'Update check skipped (app not packaged for production).';
+      sendUpdaterStatus({ status: 'error', error });
+      return { success: false, error };
+    }
+    return { success: true, isUpdateAvailable: !!result.isUpdateAvailable, version: result.versionInfo?.version };
+  } catch (e) {
+    const error = e?.message || String(e);
+    sendUpdaterStatus({ status: 'error', error });
+    return { success: false, error };
+  }
 });
+ipcMain.handle('updater:getDiagnostics', () => ({
+  loaded: autoUpdaterLoaded,
+  currentVersion: app.getVersion(),
+  feedUrl: UPDATER_GENERIC_FEED_URL,
+  packaged: app.isPackaged,
+}));
 ipcMain.handle('updater:download', async () => {
   try { await autoUpdater.downloadUpdate(); return { success: true }; }
   catch (e) { return { success: false, error: e.message }; }

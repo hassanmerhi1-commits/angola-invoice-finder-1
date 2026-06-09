@@ -401,7 +401,7 @@ const App = () => {
       }
     };
 
-    updater.onStatus((data: any) => {
+    const unsubscribe = updater.onStatus((data: any) => {
       if (!data || typeof data !== "object") return;
       notify(data as UpdateStatus);
     });
@@ -415,6 +415,7 @@ const App = () => {
     return () => {
       unsubscribed = true;
       clearTimeout(t);
+      if (typeof unsubscribe === "function") unsubscribe();
     };
   }, [isElectron]);
 

@@ -65,6 +65,7 @@ jobs:
             Write-Error "No .exe found in release/"
           }
           Write-Host "OK: $($exe.Name) + latest.yml"
+          node scripts/verify-packaged-updater.mjs
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2

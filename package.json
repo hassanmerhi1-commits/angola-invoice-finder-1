@@ -3,7 +3,7 @@
   "productName": "NEXOR ERP",
   "description": "NEXOR ERP — O futuro é construído com nós",
   "private": true,
-  "version": "1.0.53",
+  "version": "1.0.54",
   "author": "NEXOR ERP",
   "repository": {
     "type": "git",
@@ -21,7 +21,7 @@
     "rebuild:backend": "node scripts/rebuild-backend-native.mjs",
     "postgres:up": "docker compose up -d postgres",
     "postgres:migrate": "npm run migrate --prefix backend",
-    "electron:build": "npm run build && npm run rebuild:backend && electron-builder --win && node scripts/verify-packaged-backend.mjs",
+    "electron:build": "npm run build && npm run rebuild:backend && electron-builder --win && node scripts/verify-packaged-backend.mjs && node scripts/verify-packaged-updater.mjs",
     "electron:build:mac": "npm run build && npm run rebuild:backend && electron-builder --mac",
     "electron:build:linux": "npm run build && npm run rebuild:backend && electron-builder --linux",
     "i18n:audit": "node scripts/i18n-audit.mjs",
