@@ -340,10 +340,40 @@ function createNoopAutoUpdater() {
 
 const autoUpdater = updaterModule?.autoUpdater || createNoopAutoUpdater();
 
+// Canonical GitHub Releases target (must match electron-builder.json + CI).
+const UPDATER_GITHUB_OWNER = 'hassanmerhi1-commits';
+const UPDATER_GITHUB_REPO = 'angola-invoice-finder-1';
+
+function configureAutoUpdaterFeed() {
+  if (!updaterModule?.autoUpdater || typeof autoUpdater.setFeedURL !== 'function') return;
+  try {
+    const updateYml = process.resourcesPath
+      ? path.join(process.resourcesPath, 'app-update.yml')
+      : '';
+    if (updateYml && fs.existsSync(updateYml)) {
+      const text = fs.readFileSync(updateYml, 'utf8');
+      const embeddedRepo = text.match(/^repo:\s*(\S+)/m)?.[1]?.trim();
+      if (embeddedRepo && embeddedRepo !== UPDATER_GITHUB_REPO) {
+        console.warn(
+          `[AutoUpdater] app-update.yml repo="${embeddedRepo}" is wrong — using "${UPDATER_GITHUB_REPO}"`,
+        );
+      }
+    }
+    autoUpdater.setFeedURL({
+      provider: 'github',
+      owner: UPDATER_GITHUB_OWNER,
+      repo: UPDATER_GITHUB_REPO,
+    });
+  } catch (err) {
+    console.warn('[AutoUpdater] setFeedURL failed:', err?.message || err);
+  }
+}
+
 // ============= AUTO-UPDATER CONFIGURATION =============
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 autoUpdater.logger = console;
+configureAutoUpdaterFeed();
 
 // ============= CONFIGURATION =============
 const INSTALL_DIR = 'C:\\NEXOR ERP';

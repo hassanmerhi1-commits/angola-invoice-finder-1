@@ -3,8 +3,12 @@
   "productName": "NEXOR ERP",
   "description": "NEXOR ERP — O futuro é construído com nós",
   "private": true,
-  "version": "1.0.51",
+  "version": "1.0.52",
   "author": "NEXOR ERP",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hassanmerhi1-commits/angola-invoice-finder-1.git"
+  },
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {

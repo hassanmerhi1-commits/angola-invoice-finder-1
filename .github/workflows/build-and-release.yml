@@ -50,6 +50,16 @@ jobs:
           if (-not (Test-Path release/latest.yml)) {
             Write-Error "latest.yml missing — auto-update will not work"
           }
+          $appUpdate = Get-ChildItem -Path release/win-unpacked/resources/app-update.yml -ErrorAction SilentlyContinue
+          if (-not $appUpdate) {
+            Write-Error "app-update.yml missing from packaged resources"
+          } else {
+            $yml = Get-Content $appUpdate.FullName -Raw
+            if ($yml -notmatch 'repo:\s*angola-invoice-finder-1') {
+              Write-Error "app-update.yml has wrong repo — expected angola-invoice-finder-1"
+            }
+            Write-Host "OK: app-update.yml repo verified"
+          }
           $exe = Get-ChildItem release/*.exe | Select-Object -First 1
           if (-not $exe) {
             Write-Error "No .exe found in release/"
