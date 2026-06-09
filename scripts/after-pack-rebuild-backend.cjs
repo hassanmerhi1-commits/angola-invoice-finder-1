@@ -59,4 +59,7 @@ module.exports = async function afterPack(context) {
   }
 
   console.log('[after-pack-rebuild-backend] OK');
+
+  const ensureUpdaterDeps = require('./after-pack-ensure-updater-deps.cjs');
+  await ensureUpdaterDeps(context);
 };

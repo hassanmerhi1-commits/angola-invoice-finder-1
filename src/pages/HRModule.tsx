@@ -21,6 +21,7 @@ import {
   CheckCircle, XCircle, AlertCircle
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 import { Employee, PayrollEntry, AttendanceRecord, LeaveRequest, DEPARTMENTS, calculatePayroll, calculateIRT, INSS_EMPLOYEE_RATE } from '@/types/hr';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { format, differenceInCalendarDays } from 'date-fns';
@@ -320,12 +321,12 @@ export default function HRModule() {
           onClick={() => selectedEmployee && openEditEmployee(selectedEmployee)}>
           <Edit2 className="w-3 h-3" /> Editar
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-destructive" disabled={!selectedEmployee}
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedEmployee}
           onClick={() => selectedEmployee && deleteEmployee(selectedEmployee)}>
           <Trash2 className="w-3 h-3" /> Eliminar
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-green-600 border-green-200 hover:bg-green-50 dark:border-green-800 dark:hover:bg-green-950/30"
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM}
           onClick={() => setPayrollOpen(true)}>
           <DollarSign className="w-3 h-3" /> {t.hrUi.generatePayroll}
         </Button>

@@ -38,6 +38,9 @@ jobs:
       - name: Rebuild native modules for Electron
         run: npm run rebuild:backend
 
+      - name: Stage electron-updater runtime dependencies
+        run: node scripts/stage-updater-runtime-deps.cjs
+
       - name: Build Electron installer
         run: npx electron-builder --win --publish never --config.win.signAndEditExecutable=false
         env:

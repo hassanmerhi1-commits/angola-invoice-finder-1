@@ -26,6 +26,7 @@ import { AGTQRCode } from '@/components/invoice/AGTQRCode';
 import { toast } from 'sonner';
 import { NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
+import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 
 const paymentLabels: Record<string, { labelKey: 'cash' | 'card' | 'transfer' | 'mixed'; icon: any; color: string }> = {
   cash: { labelKey: 'cash', icon: Banknote, color: 'text-success' },
@@ -129,9 +130,9 @@ export default function Vendas() {
         </Button>
 
         <Button
-          variant="default"
+          variant="outline"
           size="sm"
-          className="h-8 text-xs gap-1.5"
+          className={NEXOR_TOOLBAR_BTN_SM}
           onClick={() => navigate('/pos', { state: NEXOR_POS_NEW_SALE_NAV_STATE })}
         >
           <ShoppingCart className="w-3.5 h-3.5" /> {t.topNav.toolbar.newSale}

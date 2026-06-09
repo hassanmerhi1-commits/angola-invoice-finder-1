@@ -593,7 +593,7 @@ export default function PurchaseOrders() {
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-7 gap-1 text-xs text-green-700 border-green-600/40"
+                            className="h-7 gap-1 text-xs text-foreground hover:bg-muted"
                             onClick={() => void handleApprove(order)}
                             title={t.purchaseOrdersUi.approveOrder}
                           >

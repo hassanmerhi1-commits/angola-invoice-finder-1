@@ -33,6 +33,7 @@ import {
 } from '@/lib/documentStorage';
 import type { BranchRef } from '@/lib/purchaseInvoiceStorage';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
+import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 import { SALES_CHANGED_EVENT } from '@/lib/storage';
 import {
   documentTypeForNewFromTab,
@@ -397,7 +398,7 @@ export default function Invoices() {
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b flex-wrap">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
+            <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM}>
               <Plus className="w-3 h-3" /> {t.invoicesUi.newDocument} <ChevronDown className="w-3 h-3" />
             </Button>
           </DropdownMenuTrigger>
@@ -426,7 +427,7 @@ export default function Invoices() {
         {selectedDoc && DOCUMENT_TYPE_CONFIG[selectedDoc.documentType].canConvertTo.length > 0 && selectedDoc.status !== 'converted' && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-blue-600 border-blue-200">
+              <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM}>
                 <ArrowRightLeft className="w-3 h-3" /> {t.invoicesUi.convert} <ChevronDown className="w-3 h-3" />
               </Button>
             </DropdownMenuTrigger>

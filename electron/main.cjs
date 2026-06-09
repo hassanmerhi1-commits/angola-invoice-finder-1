@@ -323,8 +323,6 @@ class MissingWebSocketServer {
 const WebSocket = wsModule?.WebSocket || wsModule || MissingWebSocket;
 const WebSocketServer = wsModule?.WebSocketServer || MissingWebSocketServer;
 
-const updaterModule = requireRuntimeModule('electron-updater');
-
 function createNoopAutoUpdater() {
   const fail = () => Promise.reject(new Error('Missing "electron-updater" module in this desktop build.'));
   return {
@@ -338,8 +336,6 @@ function createNoopAutoUpdater() {
   };
 }
 
-const autoUpdater = updaterModule?.autoUpdater || createNoopAutoUpdater();
-
 // Canonical GitHub Releases target (must match electron-builder.json + CI).
 const UPDATER_GITHUB_OWNER = 'hassanmerhi1-commits';
 const UPDATER_GITHUB_REPO = 'angola-invoice-finder-1';
@@ -347,8 +343,30 @@ const UPDATER_GITHUB_REPO = 'angola-invoice-finder-1';
 const UPDATER_GENERIC_FEED_URL =
   `https://github.com/${UPDATER_GITHUB_OWNER}/${UPDATER_GITHUB_REPO}/releases/latest/download`;
 
+let autoUpdater = createNoopAutoUpdater();
+let autoUpdaterLoaded = false;
+let autoUpdaterLoadError = null;
+let autoUpdaterEventsBound = false;
+
+function getRuntimeNodeModulesDir() {
+  if (process.resourcesPath) {
+    const packaged = path.join(process.resourcesPath, 'runtime-deps', 'node_modules');
+    if (fs.existsSync(packaged)) return packaged;
+  }
+  return path.join(__dirname, '..', 'node_modules');
+}
+
+function prependRuntimeModulePaths() {
+  const runtimeNodeModules = getRuntimeNodeModulesDir();
+  if (!fs.existsSync(runtimeNodeModules)) return runtimeNodeModules;
+  if (!module.paths.includes(runtimeNodeModules)) {
+    module.paths.unshift(runtimeNodeModules);
+  }
+  return runtimeNodeModules;
+}
+
 function configureAutoUpdaterFeed() {
-  if (!updaterModule?.autoUpdater || typeof autoUpdater.setFeedURL !== 'function') return;
+  if (!autoUpdaterLoaded || typeof autoUpdater.setFeedURL !== 'function') return;
   try {
     const updateYml = process.resourcesPath
       ? path.join(process.resourcesPath, 'app-update.yml')
@@ -362,7 +380,6 @@ function configureAutoUpdaterFeed() {
         );
       }
     }
-    // Generic feed hits releases/latest/download/latest.yml directly (more reliable than GitHub atom feed).
     autoUpdater.setFeedURL({
       provider: 'generic',
       url: UPDATER_GENERIC_FEED_URL,
@@ -373,18 +390,74 @@ function configureAutoUpdaterFeed() {
   }
 }
 
-const autoUpdaterLoaded = !!updaterModule?.autoUpdater;
-if (!autoUpdaterLoaded) {
-  console.error('[AutoUpdater] electron-updater failed to load — updates are disabled in this build.');
-} else {
-  console.log('[AutoUpdater] electron-updater loaded OK');
+function bindAutoUpdaterEvents() {
+  if (autoUpdaterEventsBound || !autoUpdaterLoaded) return;
+  autoUpdaterEventsBound = true;
+  autoUpdater.on('checking-for-update', () => {
+    mainWindow?.webContents.send('updater:status', { status: 'checking' });
+  });
+  autoUpdater.on('update-available', (info) => {
+    mainWindow?.webContents.send('updater:status', { status: 'available', version: info.version });
+  });
+  autoUpdater.on('update-not-available', () => {
+    mainWindow?.webContents.send('updater:status', { status: 'not-available' });
+  });
+  autoUpdater.on('download-progress', (progress) => {
+    mainWindow?.webContents.send('updater:status', { status: 'downloading', progress: progress.percent });
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('updater:status', { status: 'downloaded', version: info.version });
+  });
+  autoUpdater.on('error', (err) => {
+    mainWindow?.webContents.send('updater:status', { status: 'error', error: err.message });
+  });
 }
 
-// ============= AUTO-UPDATER CONFIGURATION =============
-autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = true;
-autoUpdater.logger = console;
-configureAutoUpdaterFeed();
+function initAutoUpdater() {
+  if (autoUpdaterLoaded) return true;
+
+  const runtimeNodeModules = prependRuntimeModulePaths();
+  const candidates = [
+    path.join(runtimeNodeModules, 'electron-updater'),
+    () => requireRuntimeModule('electron-updater'),
+  ];
+
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      let mod = null;
+      if (typeof candidate === 'function') {
+        mod = candidate();
+      } else if (fs.existsSync(path.join(candidate, 'package.json'))) {
+        mod = require(candidate);
+      } else {
+        continue;
+      }
+      if (!mod?.autoUpdater) {
+        throw new Error('electron-updater module loaded but autoUpdater export is missing');
+      }
+      autoUpdater = mod.autoUpdater;
+      autoUpdater.autoDownload = false;
+      autoUpdater.autoInstallOnAppQuit = true;
+      autoUpdater.logger = console;
+      configureAutoUpdaterFeed();
+      bindAutoUpdaterEvents();
+      autoUpdaterLoaded = true;
+      autoUpdaterLoadError = null;
+      console.log(
+        `[AutoUpdater] loaded OK (${typeof candidate === 'function' ? 'requireRuntimeModule' : candidate})`,
+      );
+      return true;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  autoUpdaterLoadError = lastError?.message || 'electron-updater not found in runtime-deps';
+  autoUpdater = createNoopAutoUpdater();
+  console.error('[AutoUpdater] init failed:', autoUpdaterLoadError);
+  return false;
+}
 
 // ============= CONFIGURATION =============
 const INSTALL_DIR = 'C:\\NEXOR ERP';
@@ -2413,9 +2486,13 @@ app.whenReady().then(async () => {
   // Check for updates (production only)
   const isDev = process.env.NODE_ENV === 'development' || process.env.ELECTRON_DEV === 'true';
   if (!isDev) {
+    initAutoUpdater();
     setTimeout(() => {
+      if (!autoUpdaterLoaded) return;
       autoUpdater.checkForUpdates().catch(err => console.log('[AutoUpdater] Check failed:', err.message));
     }, 3000);
+  } else {
+    initAutoUpdater();
   }
 });
 
@@ -2969,8 +3046,11 @@ function sendUpdaterStatus(payload) {
 
 // Auto-updater
 ipcMain.handle('updater:check', async () => {
+  initAutoUpdater();
   if (!autoUpdaterLoaded) {
-    const error = 'Auto-updater module is missing from this install. Reinstall from the latest GitHub release.';
+    const error = autoUpdaterLoadError
+      ? `Auto-updater failed to load: ${autoUpdaterLoadError}`
+      : 'Auto-updater module is missing from this install. Reinstall from the latest GitHub release.';
     sendUpdaterStatus({ status: 'error', error });
     return { success: false, error };
   }
@@ -2988,38 +3068,23 @@ ipcMain.handle('updater:check', async () => {
     return { success: false, error };
   }
 });
-ipcMain.handle('updater:getDiagnostics', () => ({
-  loaded: autoUpdaterLoaded,
-  currentVersion: app.getVersion(),
-  feedUrl: UPDATER_GENERIC_FEED_URL,
-  packaged: app.isPackaged,
-}));
+ipcMain.handle('updater:getDiagnostics', () => {
+  initAutoUpdater();
+  return {
+    loaded: autoUpdaterLoaded,
+    loadError: autoUpdaterLoadError,
+    runtimeDepsPath: getRuntimeNodeModulesDir(),
+    currentVersion: app.getVersion(),
+    feedUrl: UPDATER_GENERIC_FEED_URL,
+    packaged: app.isPackaged,
+  };
+});
 ipcMain.handle('updater:download', async () => {
   try { await autoUpdater.downloadUpdate(); return { success: true }; }
   catch (e) { return { success: false, error: e.message }; }
 });
 ipcMain.handle('updater:install', () => { autoUpdater.quitAndInstall(); return { success: true }; });
 ipcMain.handle('updater:getVersion', () => app.getVersion());
-
-// Auto-updater events → renderer
-autoUpdater.on('checking-for-update', () => {
-  mainWindow?.webContents.send('updater:status', { status: 'checking' });
-});
-autoUpdater.on('update-available', (info) => {
-  mainWindow?.webContents.send('updater:status', { status: 'available', version: info.version });
-});
-autoUpdater.on('update-not-available', () => {
-  mainWindow?.webContents.send('updater:status', { status: 'not-available' });
-});
-autoUpdater.on('download-progress', (progress) => {
-  mainWindow?.webContents.send('updater:status', { status: 'downloading', progress: progress.percent });
-});
-autoUpdater.on('update-downloaded', (info) => {
-  mainWindow?.webContents.send('updater:status', { status: 'downloaded', version: info.version });
-});
-autoUpdater.on('error', (err) => {
-  mainWindow?.webContents.send('updater:status', { status: 'error', error: err.message });
-});
 
 // Hot update IPC
 ipcMain.handle('hotUpdate:getConfig', () => {

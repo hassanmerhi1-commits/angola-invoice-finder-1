@@ -21,6 +21,7 @@ import {
   ArrowRight, Calculator
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 
 interface ImportOrder {
   id: string;
@@ -241,12 +242,12 @@ export default function ImportModule() {
               </Button>
             )}
             {selectedOrder.status === 'in_customs' && (
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-green-600" onClick={() => updateStatus(selectedOrder.id, 'cleared')}>
+              <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => updateStatus(selectedOrder.id, 'cleared')}>
                 <CheckCircle className="w-3 h-3" /> {t.importsUi.statusCleared}
               </Button>
             )}
             {selectedOrder.status === 'cleared' && (
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-green-600" onClick={() => updateStatus(selectedOrder.id, 'received')}>
+              <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => updateStatus(selectedOrder.id, 'received')}>
                 <Package className="w-3 h-3" /> {t.importsUi.statusReceived}
               </Button>
             )}

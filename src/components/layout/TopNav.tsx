@@ -22,6 +22,7 @@ import { navigateThenStartPurchaseCreate, resolveAppPathname } from '@/lib/nexor
 import { getInvoicesWorkspaceTab, NEXOR_INVOICES_NEW, NEXOR_INVOICES_NEW_RECEIPT } from '@/lib/invoicesWorkspace';
 import { NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 import { dispatchToolbarEvent, NEXOR_TOOLBAR, NEXOR_SUPPLIERS_NEW } from '@/lib/nexorToolbarEvents';
+import { NEXOR_TOOLBAR_BTN } from '@/lib/nexorToolbarStyles';
 import { 
   Building2, User as UserIcon, LogOut, Settings, Menu,
   LayoutDashboard, ShoppingCart, FileText, Package, Users,
@@ -81,7 +82,6 @@ type ToolbarButtonConfig = {
   actionKey: ToolbarActionKey;
   label: string;
   icon: LucideIcon;
-  variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link' | 'modern' | 'modern-outline';
 };
 
 export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout }: TopNavProps) {
@@ -205,8 +205,6 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
   ];
 
   // ========== ACTION TOOLBAR ==========
-  const getButtonVariant = (variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link' | 'modern' | 'modern-outline') => variant ?? 'outline';
-
   const handleToolbarNew = useCallback(() => {
     const p = resolveAppPathname(location.pathname);
     // Exact segment matching — avoid `includes('stock')` matching /stock-transfer, etc.
@@ -329,10 +327,10 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     if (p === '/' || p === '') return [];
 
     const base: ToolbarButtonConfig[] = [
-      { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen, variant: 'outline' },
-      { actionKey: 'new', label: t.topNav.toolbar.new, icon: Plus, variant: 'default' },
-      { actionKey: 'delete', label: t.topNav.toolbar.delete, icon: Trash2, variant: 'destructive' },
-      { actionKey: 'edit', label: t.topNav.toolbar.edit, icon: Pencil, variant: 'outline' },
+      { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen },
+      { actionKey: 'new', label: t.topNav.toolbar.new, icon: Plus },
+      { actionKey: 'delete', label: t.topNav.toolbar.delete, icon: Trash2 },
+      { actionKey: 'edit', label: t.topNav.toolbar.edit, icon: Pencil },
     ];
 
     // Before `includes('invoices')` — `/purchase-invoices` matches that substring and would get the wrong toolbar.
@@ -349,49 +347,49 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     if (p.includes('inventory') || p.includes('stock')) {
       return [
         ...base,
-        { actionKey: 'transfer', label: t.topNav.toolbar.transfer, icon: ArrowRightLeft, variant: 'outline' },
-        { actionKey: 'adjustEntry', label: t.topNav.toolbar.adjustEntry, icon: PackagePlus, variant: 'outline' },
-        { actionKey: 'adjustExit', label: t.topNav.toolbar.adjustExit, icon: PackageMinus, variant: 'destructive' },
-        { actionKey: 'minQty', label: t.topNav.toolbar.minQty, icon: Filter, variant: 'outline' },
+        { actionKey: 'transfer', label: t.topNav.toolbar.transfer, icon: ArrowRightLeft },
+        { actionKey: 'adjustEntry', label: t.topNav.toolbar.adjustEntry, icon: PackagePlus },
+        { actionKey: 'adjustExit', label: t.topNav.toolbar.adjustExit, icon: PackageMinus },
+        { actionKey: 'minQty', label: t.topNav.toolbar.minQty, icon: Filter },
       ];
     }
     if (p.includes('chart-of-accounts')) {
       return [
         ...base,
-        { actionKey: 'salesInvoice', label: t.topNav.toolbar.salesInvoice, icon: FileText, variant: 'outline' },
-        { actionKey: 'receipt', label: t.topNav.toolbar.receipt, icon: Receipt, variant: 'outline' },
-        { actionKey: 'payment', label: t.topNav.toolbar.payment, icon: DollarSign, variant: 'outline' },
-        { actionKey: 'purchaseInvoice', label: t.topNav.toolbar.purchaseInvoice, icon: Truck, variant: 'outline' },
-        { actionKey: 'journalEntry', label: t.topNav.toolbar.journalEntry, icon: BookOpen, variant: 'outline' },
+        { actionKey: 'salesInvoice', label: t.topNav.toolbar.salesInvoice, icon: FileText },
+        { actionKey: 'receipt', label: t.topNav.toolbar.receipt, icon: Receipt },
+        { actionKey: 'payment', label: t.topNav.toolbar.payment, icon: DollarSign },
+        { actionKey: 'purchaseInvoice', label: t.topNav.toolbar.purchaseInvoice, icon: Truck },
+        { actionKey: 'journalEntry', label: t.topNav.toolbar.journalEntry, icon: BookOpen },
       ];
     }
     if (p === '/invoices' || p.startsWith('/invoices/')) {
       return [
-        { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen, variant: 'outline' },
-        { actionKey: 'new', label: t.topNav.toolbar.new, icon: Plus, variant: 'default' },
-        { actionKey: 'print', label: t.topNav.file.print, icon: Printer, variant: 'outline' },
-        { actionKey: 'agtSend', label: t.topNav.toolbar.agtSend, icon: Upload, variant: 'outline' },
+        { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen },
+        { actionKey: 'new', label: t.topNav.toolbar.new, icon: Plus },
+        { actionKey: 'print', label: t.topNav.file.print, icon: Printer },
+        { actionKey: 'agtSend', label: t.topNav.toolbar.agtSend, icon: Upload },
       ];
     }
     if (p.includes('fiscal') || p.includes('proforma')) {
       return [
         ...base,
-        { actionKey: 'print', label: t.topNav.file.print, icon: Printer, variant: 'outline' },
-        { actionKey: 'agtSend', label: t.topNav.toolbar.agtSend, icon: Upload, variant: 'outline' },
+        { actionKey: 'print', label: t.topNav.file.print, icon: Printer },
+        { actionKey: 'agtSend', label: t.topNav.toolbar.agtSend, icon: Upload },
       ];
     }
     if (p === '/vendas' || p.startsWith('/vendas/')) {
       return [
-        { actionKey: 'newSale', label: t.topNav.toolbar.newSale, icon: Plus, variant: 'default' },
-        { actionKey: 'save', label: t.topNav.toolbar.save, icon: Save, variant: 'outline' },
-        { actionKey: 'void', label: t.topNav.toolbar.void, icon: X, variant: 'destructive' },
+        { actionKey: 'newSale', label: t.topNav.toolbar.newSale, icon: Plus },
+        { actionKey: 'save', label: t.topNav.toolbar.save, icon: Save },
+        { actionKey: 'void', label: t.topNav.toolbar.void, icon: X },
       ];
     }
     if (p.includes('pos')) {
       return [
-        { actionKey: 'newSale', label: t.topNav.toolbar.newSale, icon: Plus, variant: 'default' },
-        { actionKey: 'save', label: t.topNav.toolbar.save, icon: Save, variant: 'outline' },
-        { actionKey: 'void', label: t.topNav.toolbar.void, icon: X, variant: 'destructive' },
+        { actionKey: 'newSale', label: t.topNav.toolbar.newSale, icon: Plus },
+        { actionKey: 'save', label: t.topNav.toolbar.save, icon: Save },
+        { actionKey: 'void', label: t.topNav.toolbar.void, icon: X },
       ];
     }
     return base;
@@ -553,9 +551,9 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
             <Button
               key={`${btn.actionKey}-${idx}`}
               type="button"
-              variant={getButtonVariant(btn?.variant)}
+              variant="outline"
               size="sm"
-              className="h-7 text-xs gap-1.5 px-3 rounded-lg"
+              className={NEXOR_TOOLBAR_BTN}
               onClick={() => handleToolbarClick(btn.actionKey)}
             >
               <btn.icon className="w-3.5 h-3.5" />
@@ -566,7 +564,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <Button
             variant="outline"
             size="sm"
-            className="h-7 text-xs gap-1.5 px-3 rounded-lg"
+            className={NEXOR_TOOLBAR_BTN}
             onClick={() => dispatchToolbarEvent(NEXOR_TOOLBAR.FILTER)}
           >
             <Filter className="w-3.5 h-3.5" />
@@ -575,7 +573,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <Button
             variant="outline"
             size="sm"
-            className="h-7 text-xs gap-1.5 px-3 rounded-lg"
+            className={NEXOR_TOOLBAR_BTN}
             onClick={() => dispatchToolbarEvent(NEXOR_TOOLBAR.EXCEL)}
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />

@@ -19,6 +19,7 @@ import {
   ChevronRight, ChevronDown, Printer, Download, Eye
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { NEXOR_TAB_TRIGGER, NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 import AccountLedgerDialog from '@/components/accounting/AccountLedgerDialog';
 
 // Category tabs
@@ -247,41 +248,41 @@ export default function ChartOfAccounts() {
     <div className="flex flex-col h-full bg-background">
       {/* Action Toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b flex-wrap">
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={openCreateDialog}>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={openCreateDialog}>
           <Plus className="w-3 h-3" /> {t.chartOfAccountsUi.newAccount}
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedAccountInCurrentTab} onClick={() => selectedAccountInCurrentTab && openEditDialog(selectedAccountInCurrentTab)}>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccountInCurrentTab} onClick={() => selectedAccountInCurrentTab && openEditDialog(selectedAccountInCurrentTab)}>
           <Edit2 className="w-3 h-3" /> {t.common.edit}
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-destructive" disabled={!selectedAccountInCurrentTab || selectedAccountInCurrentTab.is_header}
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccountInCurrentTab || selectedAccountInCurrentTab.is_header}
           onClick={() => selectedAccountInCurrentTab && handleDelete(selectedAccountInCurrentTab)}>
           <Trash2 className="w-3 h-3" /> {t.common.delete}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
         {/* Action buttons */}
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:hover:bg-blue-950/30" disabled={!selectedAccount}
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccount}
           onClick={() => { navigate('/invoices'); window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new', { detail: { tab: 'fatura_venda' } })), 150); }}>
           <FileText className="w-3 h-3" /> {t.chartOfAccountsUi.salesInvoice}
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-green-600 border-green-200 hover:bg-green-50 dark:border-green-800 dark:hover:bg-green-950/30" disabled={!selectedAccount}
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccount}
           onClick={() => { navigate('/invoices'); window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new-receipt')), 150); }}>
           <Receipt className="w-3 h-3" /> {t.chartOfAccountsUi.receipt}
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-orange-600 border-orange-200 hover:bg-orange-50 dark:border-orange-800 dark:hover:bg-orange-950/30" disabled={!selectedAccount}
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccount}
           onClick={() => navigate('/payments')}>
           <Banknote className="w-3 h-3" /> {t.chartOfAccountsUi.payment}
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-purple-600 border-purple-200 hover:bg-purple-50 dark:border-purple-800 dark:hover:bg-purple-950/30" disabled={!selectedAccount}
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccount}
           onClick={() => navigate('/fiscal-documents')}>
           <CreditCard className="w-3 h-3" /> {t.chartOfAccountsUi.creditNote}
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 bg-primary/10 text-primary border-primary/30 hover:bg-primary/20" disabled={!selectedAccount}
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccount}
           onClick={() => selectedAccount && openLedger(selectedAccount)}>
           <Eye className="w-3 h-3" /> {t.chartOfAccountsUi.ledger}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={expandAll}>{t.chartOfAccountsUi.expand}</Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={collapseAll}>{t.chartOfAccountsUi.collapse}</Button>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={expandAll}>{t.chartOfAccountsUi.expand}</Button>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={collapseAll}>{t.chartOfAccountsUi.collapse}</Button>
         <Button variant="outline" size="icon" className="h-7 w-7" onClick={refetch}><RefreshCw className="w-3 h-3" /></Button>
         <div className="flex-1" />
         <div className="relative">
@@ -298,7 +299,7 @@ export default function ChartOfAccounts() {
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0 overflow-x-auto">
           {CATEGORY_TABS.map(tab => (
             <TabsTrigger key={tab.key} value={tab.key}
-              className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-primary/10 px-4 py-1.5">
+              className={cn(NEXOR_TAB_TRIGGER, 'px-4 py-1.5')}>
               {t.chartOfAccountsUi[tab.labelKey as keyof typeof t.chartOfAccountsUi] as string}
             </TabsTrigger>
           ))}

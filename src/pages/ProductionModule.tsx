@@ -19,6 +19,7 @@ import {
   Play, CheckCircle, XCircle, Layers, Settings, DollarSign
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 
 // Types
 interface BOMItem {
@@ -407,17 +408,17 @@ export default function ProductionModule() {
           <Layers className="w-3 h-3" /> Nova BOM
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-blue-600 border-blue-200"
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM}
           disabled={!selectedOrder || selectedOrder.status !== 'planned'}
           onClick={() => selectedOrder && startOrder(selectedOrder.id)}>
           <Play className="w-3 h-3" /> Iniciar
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-green-600 border-green-200"
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM}
           disabled={!selectedOrder || selectedOrder.status !== 'in_progress'}
           onClick={openComplete}>
           <CheckCircle className="w-3 h-3" /> Concluir
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 text-destructive"
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM}
           disabled={!selectedOrder || selectedOrder.status === 'completed' || selectedOrder.status === 'cancelled'}
           onClick={() => selectedOrder && cancelOrder(selectedOrder.id)}>
           <XCircle className="w-3 h-3" /> Cancelar

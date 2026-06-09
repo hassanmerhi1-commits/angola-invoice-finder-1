@@ -86,12 +86,7 @@ import type { StockEntryReason } from '@/components/inventory/StockEntryDialog';
 import { setContextMenuResolver } from '@/lib/contextMenuRegistry';
 import type { StockExitReasonCode } from '@/components/inventory/StockExitDialog';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
-
-/** Inventory toolbar: neutral black text, no accent colors on buttons. */
-const INV_TOOLBAR_BTN = 'h-7 text-xs gap-1 text-foreground hover:bg-muted';
-const INV_ACTION_BTN = 'h-6 text-xs gap-1 text-foreground hover:bg-muted';
-const INV_TAB_TRIGGER =
-  'text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:text-foreground';
+import { NEXOR_ACTION_BTN, NEXOR_TAB_TRIGGER, NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 
 type StockListFilter = 'all' | 'qtyGt0' | 'qtyLt0';
 
@@ -1114,12 +1109,12 @@ export default function Inventory() {
           />
         </div>
         <div className="w-px h-5 bg-border mx-1 shrink-0" />
-        <Button variant="outline" size="sm" className={INV_TOOLBAR_BTN} onClick={() => handleOpenDialog()}>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => handleOpenDialog()}>
           <Plus className="w-3 h-3" />
           {t.common.new}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
-        <Button variant="outline" size="sm" className={INV_TOOLBAR_BTN} onClick={() => {
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => {
           setStockListFilter((prev) => prev === 'all' ? 'qtyGt0' : prev === 'qtyGt0' ? 'qtyLt0' : 'all');
         }}>
           <Filter className="w-3 h-3" />
@@ -1128,7 +1123,7 @@ export default function Inventory() {
         <Button
           variant="outline"
           size="sm"
-          className={INV_TOOLBAR_BTN}
+          className={NEXOR_TOOLBAR_BTN_SM}
           disabled={!warehouseId}
           title={!warehouseId ? t.stockEntryUi.branchRequiredDesc : undefined}
           onClick={() => setStockEntryDialogOpen(true)}
@@ -1139,7 +1134,7 @@ export default function Inventory() {
         <Button
           variant="outline"
           size="sm"
-          className={INV_TOOLBAR_BTN}
+          className={NEXOR_TOOLBAR_BTN_SM}
           disabled={!warehouseId}
           title={!warehouseId ? t.stockExitUi.branchRequiredDesc : undefined}
           onClick={() => setStockExitDialogOpen(true)}
@@ -1147,14 +1142,14 @@ export default function Inventory() {
           <PackageMinus className="w-3 h-3" />
           {t.inventoryPageUi.adjustExit}
         </Button>
-        <Button variant="outline" size="sm" className={INV_TOOLBAR_BTN} onClick={() => setImportDialogOpen(true)}>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => setImportDialogOpen(true)}>
           <Upload className="w-3 h-3" />
           {t.common.import}
         </Button>
         <Button
           variant="outline"
           size="sm"
-          className={INV_TOOLBAR_BTN}
+          className={NEXOR_TOOLBAR_BTN_SM}
           onClick={() => {
             exportProductsToExcel(inventoryRows);
             toast.success(t.inventoryPageUi.exportedToExcel);
@@ -1163,18 +1158,18 @@ export default function Inventory() {
           <Download className="w-3 h-3" />
           {t.common.export}
         </Button>
-        <Button variant="outline" size="sm" className={INV_TOOLBAR_BTN} onClick={() => setCountSheetDialogOpen(true)}>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => setCountSheetDialogOpen(true)}>
           <ClipboardList className="w-3 h-3" />
           {t.inventoryPageUi.countSheet}
         </Button>
-        <Button variant="outline" size="sm" className={INV_TOOLBAR_BTN} onClick={() => setReconciliationDialogOpen(true)}>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => setReconciliationDialogOpen(true)}>
           <ClipboardCheck className="w-3 h-3" />
           {t.inventoryPageUi.reconcile}
         </Button>
         <Button
           variant="outline"
           size="sm"
-          className={INV_TOOLBAR_BTN}
+          className={NEXOR_TOOLBAR_BTN_SM}
           onClick={() => {
             const bid = listBranchId || currentBranch?.id || '';
             setAdjustmentBranchId(bid);
@@ -1188,7 +1183,7 @@ export default function Inventory() {
         <Button
           variant="outline"
           size="sm"
-          className={INV_TOOLBAR_BTN}
+          className={NEXOR_TOOLBAR_BTN_SM}
           onClick={() => setLabelPrintDialogOpen(true)}
           disabled={!selectedProduct && displayProducts.length === 0}
         >
@@ -1218,48 +1213,48 @@ export default function Inventory() {
       {/* Sub-tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0">
-          <TabsTrigger value="lista" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="lista" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.list}
           </TabsTrigger>
-          <TabsTrigger value="extracto" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="extracto" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.statement}
           </TabsTrigger>
-          <TabsTrigger value="mes" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="mes" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.month}
           </TabsTrigger>
           {showDetailedQtyTab && (
-            <TabsTrigger value="qtd-detalhada" className={INV_TAB_TRIGGER}>
+            <TabsTrigger value="qtd-detalhada" className={NEXOR_TAB_TRIGGER}>
               {t.inventoryPageUi.tabs.detailedQty}
             </TabsTrigger>
           )}
-          <TabsTrigger value="transferencia" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="transferencia" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.pendingTransfer}
           </TabsTrigger>
-          <TabsTrigger value="grafico" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="grafico" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.chart}
           </TabsTrigger>
-          <TabsTrigger value="preco-compra" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="preco-compra" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.purchasePrice}
           </TabsTrigger>
-          <TabsTrigger value="no-serie" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="no-serie" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.serialNo}
           </TabsTrigger>
-          <TabsTrigger value="info-produto" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="info-produto" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.productInfo}
           </TabsTrigger>
-          <TabsTrigger value="cost-history" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="cost-history" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.costHistory}
           </TabsTrigger>
-          <TabsTrigger value="pedidos" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="pedidos" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.orders}
           </TabsTrigger>
-          <TabsTrigger value="barcode-qty" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="barcode-qty" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.barcodeQty}
           </TabsTrigger>
-          <TabsTrigger value="vendas-mensais" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="vendas-mensais" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.monthlySales}
           </TabsTrigger>
-          <TabsTrigger value="auditoria" className={INV_TAB_TRIGGER}>
+          <TabsTrigger value="auditoria" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.audit}
           </TabsTrigger>
         </TabsList>
@@ -1267,27 +1262,27 @@ export default function Inventory() {
         {/* Action buttons row */}
         <div className="flex items-center gap-1 px-2 py-1 bg-muted/30 border-b">
           <div className="flex-1" />
-          <Button variant="outline" size="sm" className={INV_ACTION_BTN} onClick={() => setActiveTab('info-produto')}>
+          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setActiveTab('info-produto')}>
             <FileText className="w-3 h-3" />
             {t.inventoryPageUi.note}
           </Button>
-          <Button variant="outline" size="sm" className={INV_ACTION_BTN} onClick={() => setStockListFilter('all')}>
+          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setStockListFilter('all')}>
             {t.common.all}
           </Button>
-          <Button variant="outline" size="sm" className={INV_ACTION_BTN} onClick={() => setStockListFilter('qtyGt0')}>
+          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setStockListFilter('qtyGt0')}>
             {t.inventoryPageUi.qtyGt0}
           </Button>
-          <Button variant="outline" size="sm" className={INV_ACTION_BTN} onClick={() => setStockListFilter('qtyLt0')}>
+          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setStockListFilter('qtyLt0')}>
             {t.inventoryPageUi.qtyLt0}
           </Button>
-          <Button variant="outline" size="sm" className={INV_ACTION_BTN} onClick={() => setActiveTab('preco-compra')}>
+          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setActiveTab('preco-compra')}>
             {t.inventoryPageUi.costLt}
           </Button>
-          <Button variant="outline" size="sm" className={INV_ACTION_BTN} onClick={() => setActiveTab('grafico')}>
+          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setActiveTab('grafico')}>
             <BarChart3 className="w-3 h-3" />
             {t.inventoryPageUi.chart}
           </Button>
-          <Button variant="outline" size="sm" className={INV_ACTION_BTN} onClick={() => selectedProduct && handleOpenDialog(selectedProduct)} disabled={!selectedProduct}>
+          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => selectedProduct && handleOpenDialog(selectedProduct)} disabled={!selectedProduct}>
             <Eye className="w-3 h-3" />
             {t.inventoryPageUi.view}
           </Button>

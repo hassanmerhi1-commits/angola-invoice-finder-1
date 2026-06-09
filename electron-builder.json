@@ -22,27 +22,14 @@
   "asarUnpack": [],
   "extraResources": [
     {
-      "from": "node_modules",
+      "from": "build/updater-runtime-deps/node_modules",
       "to": "runtime-deps/node_modules",
-      "filter": [
-        "ws/**/*",
-        "electron-updater/**/*",
-        "builder-util-runtime/**/*",
-        "lazy-val/**/*",
-        "semver/**/*",
-        "js-yaml/**/*",
-        "argparse/**/*",
-        "sax/**/*",
-        "lodash.isequal/**/*",
-        "lodash.escaperegexp/**/*",
-        "tiny-typed-emitter/**/*",
-        "debug/**/*",
-        "ms/**/*",
-        "fs-extra/**/*",
-        "graceful-fs/**/*",
-        "jsonfile/**/*",
-        "universalify/**/*"
-      ]
+      "filter": ["**/*"]
+    },
+    {
+      "from": "node_modules/ws",
+      "to": "runtime-deps/node_modules/ws",
+      "filter": ["**/*"]
     },
     {
       "from": "backend",

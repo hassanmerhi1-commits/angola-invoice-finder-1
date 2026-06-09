@@ -3056,7 +3056,7 @@ export default function PurchaseInvoices() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                className="h-7 gap-1 text-xs text-green-700 border-green-600/40"
+                                className="h-7 gap-1 text-xs text-foreground hover:bg-muted"
                                 title={t.purchaseInvoicesUi.titleApprove}
                                 onClick={async () => {
                                   try {
