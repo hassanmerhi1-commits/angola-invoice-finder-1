@@ -257,14 +257,12 @@ export default function Inventory() {
         void refreshInventoryGrid();
         return;
       }
-      invalidateSellingPriceHintsCache();
-      void fetchSellingPriceHints(true).then(setSellingPriceHints);
-      void refreshInventoryGrid();
+      void reloadInventoryList();
       if (canSwitchBranch) void loadPerBranchBreakdown();
     };
     window.addEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
     return () => window.removeEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
-  }, [listBranchId, isHeadOffice, refreshInventoryGrid, canSwitchBranch, loadPerBranchBreakdown]);
+  }, [listBranchId, isHeadOffice, reloadInventoryList, canSwitchBranch, loadPerBranchBreakdown]);
 
   const loadStockMovements = useCallback(async () => {
     // Try API first (live DB), fall back to localStorage
@@ -332,10 +330,14 @@ export default function Inventory() {
     return mergeSellingPriceHintsIntoAggregates(agg, sellingPriceHints);
   }, [priceAggregateSource, sellingPriceHints]);
 
-  const displayProducts = useMemo(
-    () => dedupeProductsForDisplay(inventoryRows, listBranchId, catalogBranchIds),
-    [inventoryRows, listBranchId, catalogBranchIds],
-  );
+  const displayProducts = useMemo(() => {
+    const deduped = dedupeProductsForDisplay(inventoryRows, listBranchId, catalogBranchIds);
+    return deduped.map((p) => {
+      const key = canonicalProductSku(p.sku).toLowerCase();
+      const agg = key ? skuPriceAggregates.get(key) : undefined;
+      return agg ? applyCanonicalSkuAggregates(p, agg) : p;
+    });
+  }, [inventoryRows, listBranchId, catalogBranchIds, skuPriceAggregates]);
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [adjustmentBranchId, setAdjustmentBranchId] = useState('');
@@ -414,6 +416,12 @@ export default function Inventory() {
       setActiveTab('lista');
     }
   }, [showDetailedQtyTab, activeTab]);
+
+  useEffect(() => {
+    if (canSwitchBranch) {
+      void loadPerBranchBreakdown();
+    }
+  }, [canSwitchBranch, loadPerBranchBreakdown, listBranchId, isHeadOffice]);
 
   useEffect(() => {
     if (showDetailedQtyTab) {
@@ -795,6 +803,9 @@ export default function Inventory() {
         currency: string;
         currencyRate: number;
         notes: string;
+        totalLandingCosts?: number;
+        freightSourceAccount?: string;
+        freightSourceName?: string;
       },
     ) => {
       const targetWarehouseId = meta.warehouseId || warehouseId;
@@ -831,6 +842,9 @@ export default function Inventory() {
         createdBy: currentUser?.id || currentUser?.name || 'system',
         productsById,
         fallbackUpdateProduct: updateProduct,
+        landingCosts: meta.totalLandingCosts,
+        freightSourceAccount: meta.freightSourceAccount,
+        freightSourceName: meta.freightSourceName,
       });
 
       for (const item of items) {

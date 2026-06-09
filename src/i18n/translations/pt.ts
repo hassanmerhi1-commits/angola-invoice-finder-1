@@ -662,6 +662,11 @@ export const pt: TranslationKeys = {
     otherCostsDescLabel: "Descrição",
     otherCostsDescPlaceholder: "Descarga, seguro...",
     landingCostsHint: "Será distribuído entre {count} produto(s) (~{perUnit} por unidade em média)",
+    freightPaymentSource: "Frete pago de",
+    choosePaymentAccount: "Escolher conta de pagamento",
+    accountSearchPlaceholder: "Pesquisar por código ou nome...",
+    colAccountCode: "Conta",
+    colAccountName: "Nome",
     summaryItems: "Itens",
     summaryUnits: "Unidades",
     summaryProductsValue: "Valor produtos",
@@ -3726,6 +3731,18 @@ export const pt: TranslationKeys = {
 
     // Save results
     purchaseInvoiceSavedTitle: "Fatura de Compra Guardada",
+    purchaseSavedPartialSync:
+      "Fatura guardada mas o stock ou o valor a pagar ao fornecedor pode estar em falta. Abra Inventário e Pagamentos e actualize, ou peça suporte para repostar.",
+    repostStockPayable: "Repostar stock e valor a pagar",
+    repostStockPayableDoneTitle: "Stock e valor a pagar actualizados",
+    repostStockPayableDoneDesc: "Fatura {no} — stock e valor a pagar ao fornecedor foram repostados.",
+    repostAlreadySyncedTitle: "Já sincronizado",
+    repostAlreadySyncedDesc: "A fatura {no} já tem movimentos de stock e valor a pagar.",
+    purchaseInvoiceUpdatedTitle: "Fatura de compra actualizada",
+    markAsPaid: "Marcar como pago",
+    markedPaidTitle: "Marcada como paga",
+    markedPaidDesc: "A fatura {no} já não está pendente de pagamento.",
+    selectInvoiceToEdit: "Seleccione primeiro uma fatura de compra na lista.",
     notSyncedWithStockSupplier: "A compra não foi sincronizada corretamente com stock e fornecedor.",
     savePurchaseInvoiceErrorTitle: "Erro ao guardar a fatura de compra",
 
@@ -3998,6 +4015,10 @@ export const pt: TranslationKeys = {
     selectSourceBranch: "Selecione a filial de origem",
     selectDestinationBranch: "Selecione a filial de destino",
     selectProduct: "Selecione um produto",
+    searchProductPlaceholder: "Pesquisar por código ou nome…",
+    noSearchResults: "Nenhum produto corresponde à pesquisa",
+    selectSourceFirst: "Seleccione primeiro a filial de origem",
+    stockAvailable: "Stock: {stock}",
     notesPlaceholder: "Notas adicionais sobre a transferência...",
     createTransfer: "Criar Transferência",
 

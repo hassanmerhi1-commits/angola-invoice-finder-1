@@ -30,6 +30,7 @@ const {
   isCatalogBranchScope,
   isUniqueSkuBranchError,
   loadMainBranchIds,
+  sqlMovementSkuKey,
 } = require('./lib/productSkuResolve');
 const { randomUUID } = require('crypto');
 
@@ -130,7 +131,11 @@ function buildPurchaseReceiveCostPlan(items, receivedQuantities, totalLandingCos
 
 async function auditLog(client, params) {
   const { tableName, recordId, action, userId, userName, branchId, oldValues, newValues, description } = params;
+  const savepointName = 'audit_log_insert';
+  let savepointCreated = false;
   try {
+    await client.query(`SAVEPOINT ${savepointName}`);
+    savepointCreated = true;
     await client.query(
       `INSERT INTO audit_log (id, table_name, record_id, action, user_id, user_name, branch_id, old_values, new_values, description)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
@@ -139,7 +144,16 @@ async function auditLog(client, params) {
        newValues ? JSON.stringify(newValues) : null,
        description]
     );
+    await client.query(`RELEASE SAVEPOINT ${savepointName}`);
   } catch (e) {
+    if (savepointCreated) {
+      try {
+        await client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);
+        await client.query(`RELEASE SAVEPOINT ${savepointName}`);
+      } catch (rollbackError) {
+        console.error('[AUDIT] Failed to recover savepoint:', rollbackError.message);
+      }
+    }
     console.warn('[AUDIT] Log skipped:', e.message);
   }
 }
@@ -341,11 +355,18 @@ function normalizeStockAdjustmentReferenceType(direction, referenceType) {
   return 'adjustment';
 }
 
-function buildStockAdjustmentJournalLines(direction, referenceType, totalValue, docLabel) {
+function buildStockAdjustmentJournalLines(direction, referenceType, totalValue, docLabel, freightOpts = {}) {
   const amount = Math.round((parseFloat(totalValue) || 0) * 100) / 100;
   if (amount <= 0) return [];
 
   const ref = String(referenceType || '').toLowerCase();
+  const landingCosts = Math.round((parseFloat(freightOpts.landingCosts) || 0) * 100) / 100;
+  const freightSourceAccount = String(freightOpts.freightSourceAccount || '').trim();
+  const freightSourceName = String(freightOpts.freightSourceName || '').trim() || 'Pagamento frete';
+  const splitFreight = landingCosts > 0 && freightSourceAccount.length > 0;
+  const merchandiseValue = splitFreight
+    ? Math.max(Math.round((amount - landingCosts) * 100) / 100, 0)
+    : amount;
 
   if (direction === 'IN') {
     let creditAccount = '7.4';
@@ -375,6 +396,41 @@ function buildStockAdjustmentJournalLines(direction, referenceType, totalValue, 
     } else if (ref === 'correction') {
       creditDesc = 'Correção inventário';
     }
+
+    const lines = [];
+    if (merchandiseValue > 0) {
+      lines.push(
+        {
+          accountCode: INVENTORY_MERCHANDISE_ACCOUNT,
+          description: `Entrada mercadorias ${docLabel}`,
+          debit: merchandiseValue,
+          credit: 0,
+        },
+        {
+          accountCode: creditAccount,
+          description: creditDesc,
+          debit: 0,
+          credit: merchandiseValue,
+        },
+      );
+    }
+    if (splitFreight) {
+      lines.push(
+        {
+          accountCode: '6.2.6',
+          description: `Frete / transporte ${docLabel}`,
+          debit: landingCosts,
+          credit: 0,
+        },
+        {
+          accountCode: freightSourceAccount,
+          description: `${freightSourceName} — frete ${docLabel}`,
+          debit: 0,
+          credit: landingCosts,
+        },
+      );
+    }
+    if (lines.length > 0) return lines;
 
     return [
       {
@@ -434,6 +490,9 @@ async function processStockAdjustment(client, data) {
     notes,
     createdBy,
     lines,
+    landingCosts,
+    freightSourceAccount,
+    freightSourceName,
   } = data;
 
   const normalizedDirection = String(direction || '').trim().toUpperCase();
@@ -504,12 +563,16 @@ async function processStockAdjustment(client, data) {
     normalizedDirection,
     referenceType,
     totalValue,
-    docLabel
+    docLabel,
+    { landingCosts, freightSourceAccount, freightSourceName },
   );
 
   if (journalLines.length > 0) {
     if (journalLines.some((l) => l.accountCode === '6.6.1')) {
       await ensureInventoryShrinkageAccount(client);
+    }
+    if (journalLines.some((l) => l.accountCode === '6.2.6')) {
+      await ensureFreightExpenseAccount(client);
     }
 
     const entry = await createJournalEntry(client, {
@@ -815,9 +878,11 @@ async function ensureOpeningStockMovement(client, productId, warehouseId, create
 
 /** After movements, align products.stock with movement ledger for this SKU at this warehouse. */
 async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
-  const skuTrim = String(sku || '').trim();
+  const skuKey = String(sku || '').trim().toLowerCase();
   const wh = String(warehouseId || '').trim();
-  if (!skuTrim || !wh) return;
+  if (!skuKey || !wh) return;
+
+  const pmSkuMatch = `${sqlMovementSkuKey('pm')} = $2`;
 
   const sumResult = await client.query(
     `SELECT COALESCE(SUM(
@@ -830,19 +895,21 @@ async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
      FROM stock_movements sm
      INNER JOIN products pm ON pm.id = sm.product_id
      WHERE sm.warehouse_id = $1
-       AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER($2)`,
-    [wh, skuTrim]
+       AND ${pmSkuMatch}`,
+    [wh, skuKey]
   );
   const total = Math.max(0, parseFloat(sumResult.rows[0]?.total || 0));
 
   const mainBranchIds = await loadMainBranchIds(client);
+  const rowSkuMatch = `${sqlMovementSkuKey('products')} = $2`;
+
   if (isCatalogBranchScope(wh, mainBranchIds)) {
-    const params = [total, skuTrim];
+    const params = [total, skuKey];
     let sql = `
       UPDATE products
       SET stock = $1, updated_at = CURRENT_TIMESTAMP
       WHERE ${coalesceActiveNotZero(db, 'is_active')}
-        AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)
+        AND ${rowSkuMatch}
         AND (
           ${emptyBranchIdClause(db, 'branch_id')}`;
     for (const mainId of mainBranchIds) {
@@ -859,7 +926,7 @@ async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
     `UPDATE products
      SET stock = $1, updated_at = CURRENT_TIMESTAMP
      WHERE ${coalesceActiveNotZero(db, 'is_active')}
-       AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)
+       AND ${rowSkuMatch}
        AND (
          branch_id = $3
          OR id IN (
@@ -867,10 +934,10 @@ async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
            FROM stock_movements sm
            INNER JOIN products pm ON pm.id = sm.product_id
            WHERE sm.warehouse_id = $3
-             AND LOWER(TRIM(COALESCE(pm.sku, ''))) = LOWER($2)
+             AND ${pmSkuMatch}
          )
        )`,
-    [total, skuTrim, wh],
+    [total, skuKey, wh],
   );
 }
 

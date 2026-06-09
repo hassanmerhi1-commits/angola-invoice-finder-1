@@ -142,15 +142,22 @@ export async function processTransaction(request: TransactionRequest): Promise<T
 
   try {
     const apiResult = await api.transactions.process(request);
+    const payload = apiResult.data;
+    const txOk =
+      payload?.success === true
+      || payload?.alreadyProcessed === true
+      || (Array.isArray(payload?.stockMovementIds) && payload.stockMovementIds.length > 0)
+      || !!payload?.journalEntryId
+      || !!payload?.openItemId;
 
-    if (apiResult.data?.success) {
+    if (payload && txOk) {
       result.success = true;
-      result.stockMovementIds = apiResult.data.stockMovementIds || [];
-      result.journalEntryId = apiResult.data.journalEntryId;
-      result.openItemId = apiResult.data.openItemId;
-      result.documentLinkIds = apiResult.data.documentLinkIds || [];
-      if (apiResult.data.resolvedProductIds && typeof apiResult.data.resolvedProductIds === 'object') {
-        result.resolvedProductIds = apiResult.data.resolvedProductIds;
+      result.stockMovementIds = payload.stockMovementIds || [];
+      result.journalEntryId = payload.journalEntryId;
+      result.openItemId = payload.openItemId;
+      result.documentLinkIds = payload.documentLinkIds || [];
+      if (payload.resolvedProductIds && typeof payload.resolvedProductIds === 'object') {
+        result.resolvedProductIds = payload.resolvedProductIds;
       }
 
       console.log(`[TransactionEngine] ✅ ${request.transactionType} ${request.documentNumber} processed via API`);

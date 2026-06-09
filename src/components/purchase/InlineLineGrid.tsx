@@ -9,6 +9,11 @@ interface InlineLineGridProps {
   lines: PurchaseInvoiceLine[];
   onLinesChange: (lines: PurchaseInvoiceLine[]) => void;
   onOpenProductPicker: () => void;
+  /** Called when Tab moves past the last editable cell on the last row (add next product). */
+  onTabPastLastCell?: () => void;
+  /** When set, starts editing this cell (e.g. qty after picking a product). */
+  focusCell?: { row: number; field: EditableField } | null;
+  onFocusCellConsumed?: () => void;
   onRemoveLine: (idx: number) => void;
   freightAllocations?: Record<string, number>;
   warehouseName?: string;
@@ -37,6 +42,9 @@ export function InlineLineGrid({
   lines,
   onLinesChange,
   onOpenProductPicker,
+  onTabPastLastCell,
+  focusCell,
+  onFocusCellConsumed,
   onRemoveLine,
   freightAllocations = {},
   warehouseName = '',
@@ -54,6 +62,16 @@ export function InlineLineGrid({
       inputRef.current.select();
     }
   }, [editCell]);
+
+  useEffect(() => {
+    if (!focusCell) return;
+    const line = lines[focusCell.row];
+    if (!line) return;
+    setSelectedRow(focusCell.row);
+    setEditCell({ row: focusCell.row, field: focusCell.field });
+    setEditValue(String(line[focusCell.field] ?? 0));
+    onFocusCellConsumed?.();
+  }, [focusCell, lines, onFocusCellConsumed]);
 
   const startEdit = useCallback((row: number, field: EditableField) => {
     const line = lines[row];
@@ -84,8 +102,12 @@ export function InlineLineGrid({
     if (direction === 'right' || direction === 'down') {
       if (direction === 'right' && fieldIdx < EDITABLE_FIELDS.length - 1) {
         setTimeout(() => startEdit(row, EDITABLE_FIELDS[fieldIdx + 1]), 0);
+      } else if (direction === 'right' && row === lines.length - 1 && fieldIdx === EDITABLE_FIELDS.length - 1) {
+        setTimeout(() => (onTabPastLastCell ?? onOpenProductPicker)(), 0);
       } else if (row < lines.length - 1) {
         setTimeout(() => startEdit(row + 1, direction === 'down' ? field : EDITABLE_FIELDS[0]), 0);
+      } else if (direction === 'down' && row === lines.length - 1) {
+        setTimeout(() => (onTabPastLastCell ?? onOpenProductPicker)(), 0);
       }
     } else if (direction === 'left' || direction === 'up') {
       if (direction === 'left' && fieldIdx > 0) {
@@ -94,7 +116,7 @@ export function InlineLineGrid({
         setTimeout(() => startEdit(row - 1, direction === 'up' ? field : EDITABLE_FIELDS[EDITABLE_FIELDS.length - 1]), 0);
       }
     }
-  }, [commitEdit, startEdit, lines.length]);
+  }, [commitEdit, startEdit, lines.length, onTabPastLastCell, onOpenProductPicker]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!editCell) return;

@@ -153,7 +153,42 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
     }
   });
 
+  async function postPurchaseAccountingIfNeeded(client, inv) {
+    const status = String(inv.status || 'confirmed').toLowerCase();
+    if (['cancelled', 'voided', 'draft'].includes(status)) return null;
+    const lines = Array.isArray(inv.lines) ? inv.lines : [];
+    const hasStockLines = lines.some(
+      (l) => l.productId && Number(l.totalQty || l.quantity || 0) > 0,
+    );
+    if (!hasStockLines) return null;
+
+    const stockCheck = await client.query(
+      `SELECT id FROM stock_movements
+       WHERE reference_id = $1
+         AND reference_type IN ('purchase_invoice', 'purchase')
+       LIMIT 1`,
+      [inv.id],
+    );
+    if (stockCheck.rows.length > 0) return null;
+
+    const { processTransactionBody } = require('../transactionProcessor');
+    const txResult = await processTransactionBody(client, buildPurchaseInvoiceTransactionBody(inv));
+
+    const warehouseId = inv.warehouseId || inv.branchId;
+    if (warehouseId && txResult?.stockMovementIds?.length > 0) {
+      try {
+        const { ensureFilialProductsForWarehouse } = require('../lib/filialStockRepair');
+        await ensureFilialProductsForWarehouse(warehouseId, client);
+      } catch (filialErr) {
+        console.warn('[PURCHASE INVOICES] filial stock repair:', filialErr.message);
+      }
+    }
+
+    return txResult;
+  }
+
   router.post('/', async (req, res) => {
+    const client = await db.pool.connect();
     try {
       const row = toRow(req.body);
       if (!row.id) return res.status(400).json({ error: 'id is required' });
@@ -167,11 +202,41 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
           existingInvoiceNumber: dup.invoice_number,
         });
       }
-      await db.query(UPSERT_SQL, rowParams(row));
+
+      const skipAccounting = req.body?.skipAccounting === true || req.body?.metadataOnly === true;
+
+      await client.query('BEGIN');
+      await client.query(UPSERT_SQL, rowParams(row));
+      const saved = await client.query('SELECT * FROM purchase_invoices WHERE id = $1', [row.id]);
+      const inv = fromRow(saved.rows[0]);
+
+      let txResult = null;
+      if (!skipAccounting) {
+        txResult = await postPurchaseAccountingIfNeeded(client, inv);
+      }
+
+      await client.query('COMMIT');
+
       await broadcastTable?.('purchase_invoices');
-      const saved = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [row.id]);
-      res.status(201).json(fromRow(saved.rows[0]));
+      if (txResult?.stockMovementIds?.length) {
+        await broadcastTable?.('products');
+      }
+      if (txResult?.journalEntryId) {
+        await broadcastTable?.('journal_entries');
+      }
+
+      const payload = fromRow(saved.rows[0]);
+      if (txResult) {
+        payload.accounting = {
+          success: true,
+          stockMovementIds: txResult.stockMovementIds || [],
+          openItemId: txResult.openItemId || null,
+          journalEntryId: txResult.journalEntryId || null,
+        };
+      }
+      res.status(201).json(payload);
     } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
       console.error('[PURCHASE INVOICES]', error);
       const msg = String(error?.message || '');
       if (/unique|duplicate/i.test(msg)) {
@@ -182,6 +247,64 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
         });
       }
       res.status(500).json({ error: msg || 'Failed to save purchase invoice' });
+    } finally {
+      client.release();
+    }
+  });
+
+  /** Repair invoices saved without stock/payables (orphan headers). */
+  router.post('/backfill-accounting', async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+      const limit = Math.min(Number(req.body?.limit) || 100, 500);
+      const missing = await client.query(
+        `SELECT pi.id
+         FROM purchase_invoices pi
+         LEFT JOIN stock_movements sm
+           ON sm.reference_id = pi.id
+          AND sm.reference_type IN ('purchase_invoice', 'purchase')
+         WHERE COALESCE(pi.status, 'confirmed') NOT IN ('cancelled', 'voided', 'draft')
+           AND sm.id IS NULL
+         ORDER BY pi.created_at DESC
+         LIMIT $1`,
+        [limit],
+      );
+
+      let posted = 0;
+      let failed = 0;
+      const errors = [];
+
+      for (const row of missing.rows || []) {
+        try {
+          await client.query('BEGIN');
+          const saved = await client.query('SELECT * FROM purchase_invoices WHERE id = $1', [row.id]);
+          if (!saved.rows[0]) {
+            await client.query('ROLLBACK');
+            continue;
+          }
+          const inv = fromRow(saved.rows[0]);
+          const txResult = await postPurchaseAccountingIfNeeded(client, inv);
+          await client.query('COMMIT');
+          if (txResult?.stockMovementIds?.length) posted += 1;
+        } catch (err) {
+          try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+          failed += 1;
+          errors.push({ id: row.id, error: err.message });
+        }
+      }
+
+      if (posted > 0) {
+        await broadcastTable?.('products');
+        await broadcastTable?.('journal_entries');
+        await broadcastTable?.('purchase_invoices');
+      }
+
+      res.json({ posted, failed, errors: errors.slice(0, 20) });
+    } catch (error) {
+      console.error('[PURCHASE INVOICES] backfill-accounting:', error);
+      res.status(500).json({ error: error.message || 'Backfill failed' });
+    } finally {
+      client.release();
     }
   });
 
@@ -204,6 +327,163 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
     } catch (error) {
       console.error('[PURCHASE INVOICES]', error);
       res.status(500).json({ error: error.message || 'Failed to update purchase invoice' });
+    }
+  });
+
+  function buildPurchaseInvoiceTransactionBody(inv) {
+    const lines = Array.isArray(inv.lines) ? inv.lines : [];
+    const warehouseId = inv.warehouseId || inv.branchId;
+    const stockEntries = lines
+      .filter((l) => l.productId && Number(l.totalQty || l.quantity || 0) > 0)
+      .map((l) => ({
+        productId: l.productId,
+        productName: l.description || '',
+        productSku: l.productCode || '',
+        quantity: Number(l.totalQty || l.quantity || 0),
+        unitCost: Number(l.unitPrice || 0),
+        direction: 'IN',
+        warehouseId,
+      }));
+
+    const priceUpdates = lines
+      .filter((l) => l.productId && Number(l.totalQty || l.quantity || 0) > 0)
+      .map((l) => {
+        const landed = Number(l.unitPrice || 0);
+        const selling = Number(l.price1 || 0);
+        const row = {
+          productId: l.productId,
+          newUnitCost: landed,
+          quantityReceived: Number(l.totalQty || l.quantity || 0),
+          updateAvgCost: true,
+        };
+        if (inv.changePrice && selling > 0) row.sellingPrice = selling;
+        return row;
+      });
+
+    const journalLines = (inv.journalLines || []).map((l) => ({
+      accountCode: l.accountCode,
+      accountName: l.accountName,
+      debit: Number(l.debit || 0),
+      credit: Number(l.credit || 0),
+      note: l.note,
+    }));
+
+    return {
+      transactionType: 'purchase_invoice',
+      documentId: inv.id,
+      documentNumber: inv.invoiceNumber,
+      branchId: inv.branchId || warehouseId,
+      branchName: inv.branchName || inv.warehouseName,
+      userId: inv.createdBy || 'system',
+      userName: inv.createdByName || '',
+      date: inv.date,
+      currency: inv.currency || 'KZ',
+      description: `Fatura de Compra ${inv.invoiceNumber} — ${inv.supplierName}`,
+      amount: Number(inv.total || 0),
+      linkedPurchaseOrderNumber: inv.orderNo || undefined,
+      changePrice: !!inv.changePrice,
+      stockEntries,
+      priceUpdates,
+      journalLines,
+      openItem: {
+        entityType: 'supplier',
+        entityId: inv.supplierId,
+        entityName: inv.supplierName,
+        documentType: 'invoice',
+        originalAmount: Number(inv.total || 0),
+        isDebit: true,
+        dueDate: inv.paymentDate,
+        currency: inv.currency === 'KZ' ? 'AOA' : inv.currency,
+      },
+      entityBalanceUpdate: {
+        entityType: 'supplier',
+        entityId: inv.supplierId,
+        entityName: inv.supplierName,
+        entityNif: inv.supplierNif,
+        amount: Number(inv.total || 0),
+      },
+    };
+  }
+
+  /** Re-post stock / payables when header was saved but transaction engine failed earlier. */
+  router.post('/:id/repost-accounting', async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+      const saved = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [req.params.id]);
+      if (!saved.rows[0]) return res.status(404).json({ error: 'Not found' });
+      const inv = fromRow(saved.rows[0]);
+
+      const stockCheck = await client.query(
+        `SELECT id FROM stock_movements
+         WHERE reference_id = $1
+           AND reference_type IN ('purchase_invoice', 'purchase')
+         LIMIT 1`,
+        [inv.id],
+      );
+      const openCheck = await client.query(
+        `SELECT id FROM open_items WHERE document_id = $1 LIMIT 1`,
+        [inv.id],
+      );
+
+      const needsStock = stockCheck.rows.length === 0;
+      const needsPayable = openCheck.rows.length === 0;
+      if (!needsStock && !needsPayable) {
+        return res.json({
+          success: true,
+          skipped: true,
+          stockMovementIds: stockCheck.rows.map((r) => r.id),
+          openItemId: openCheck.rows[0]?.id || null,
+        });
+      }
+
+      let txResult = null;
+      if (needsStock) {
+        await client.query('BEGIN');
+        const { processTransactionBody } = require('../transactionProcessor');
+        txResult = await processTransactionBody(client, buildPurchaseInvoiceTransactionBody(inv));
+        await client.query('COMMIT');
+      }
+
+      let backfill = { created: 0, skipped: 0 };
+      if (needsPayable || !txResult?.openItemId) {
+        const { backfillMissingSupplierOpenItems } = require('../supplierBalanceRepair');
+        backfill = await backfillMissingSupplierOpenItems();
+      }
+
+      const openAfter = await client.query(
+        `SELECT id FROM open_items WHERE document_id = $1 LIMIT 1`,
+        [inv.id],
+      );
+
+      const warehouseId = inv.warehouseId || inv.branchId;
+      if (warehouseId && (needsStock || txResult?.stockMovementIds?.length > 0)) {
+        try {
+          const { ensureFilialProductsForWarehouse } = require('../lib/filialStockRepair');
+          await ensureFilialProductsForWarehouse(warehouseId, client);
+        } catch (filialErr) {
+          console.warn('[PURCHASE INVOICES] filial stock repair:', filialErr.message);
+        }
+      }
+
+      await broadcastTable?.('products');
+      await broadcastTable?.('purchase_invoices');
+      if (broadcastTable && (txResult?.journalEntryId || backfill.created > 0)) {
+        await broadcastTable('journal_entries');
+      }
+
+      res.json({
+        success: true,
+        repostedStock: needsStock,
+        backfill,
+        stockMovementIds: txResult?.stockMovementIds || [],
+        openItemId: txResult?.openItemId || openAfter.rows[0]?.id || null,
+      });
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+      console.error('[PURCHASE INVOICES] repost-accounting:', error);
+      res.status(500).json({ error: error.message || 'Failed to repost accounting' });
+    } finally {
+      client.release();
     }
   });
 

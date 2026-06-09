@@ -87,6 +87,19 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  // POST: Fast backfill — create missing supplier payables from saved purchase invoices only
+  router.post('/backfill-missing-payables', async (req, res) => {
+    try {
+      const { backfillMissingSupplierOpenItems } = require('../supplierBalanceRepair');
+      const backfill = await backfillMissingSupplierOpenItems();
+      if (broadcastTable) await broadcastTable('suppliers');
+      res.json(backfill);
+    } catch (error) {
+      console.error('[PAYMENTS BACKFILL]', error);
+      res.status(500).json({ error: error.message || 'Failed to backfill payables' });
+    }
+  });
+
   // POST: Backfill missing supplier open items from purchase invoices (admin repair)
   router.post('/repair-supplier-payables', async (req, res) => {
     try {

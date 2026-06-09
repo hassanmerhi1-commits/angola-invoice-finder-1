@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { format } from 'date-fns';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NumericInput } from '@/components/ui/numeric-input';
@@ -41,6 +42,7 @@ import {
   X,
   Hash,
   StickyNote,
+  Search,
 } from 'lucide-react';
 import { Product, Branch } from '@/types/erp';
 import { useBranches } from '@/hooks/useERP';
@@ -111,8 +113,82 @@ interface StockEntryDialogProps {
       currency: string;
       currencyRate: number;
       notes: string;
+      totalLandingCosts?: number;
+      freightSourceAccount?: string;
+      freightSourceName?: string;
     },
   ) => void | Promise<void>;
+}
+
+function FreightAccountPickerDialog({
+  open,
+  onClose,
+  onSelect,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSelect: (code: string, name: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [search, setSearch] = useState('');
+  const accounts = useMemo(() => {
+    try {
+      const data = localStorage.getItem('kwanzaerp_chart_of_accounts');
+      const all: Array<{ code: string; name: string; is_active: boolean }> = data ? JSON.parse(data) : [];
+      return all.filter((a) => a.is_active !== false).sort((a, b) => a.code.localeCompare(b.code));
+    } catch {
+      return [];
+    }
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    if (!search) return accounts;
+    const q = search.toLowerCase();
+    return accounts.filter(
+      (a) => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q),
+    );
+  }, [accounts, search]);
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-xl max-h-[70vh]">
+        <DialogHeader>
+          <DialogTitle>{t.stockEntryUi.choosePaymentAccount}</DialogTitle>
+        </DialogHeader>
+        <Input
+          placeholder={t.stockEntryUi.accountSearchPlaceholder}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          autoFocus
+        />
+        <ScrollArea className="h-[350px]">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t.stockEntryUi.colAccountCode}</TableHead>
+                <TableHead>{t.stockEntryUi.colAccountName}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((a) => (
+                <TableRow
+                  key={a.code}
+                  className="cursor-pointer hover:bg-accent"
+                  onClick={() => {
+                    onSelect(a.code, a.name);
+                    onClose();
+                  }}
+                >
+                  <TableCell className="font-mono">{a.code}</TableCell>
+                  <TableCell>{a.name}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 const REASON_ICONS: Record<StockEntryReason, typeof PackagePlus> = {
@@ -148,6 +224,8 @@ const emptyForm = () => ({
   freightCost: 0,
   otherCosts: 0,
   otherCostsDescription: '',
+  freightSourceAccount: '4.1.1',
+  freightSourceName: 'Caixa',
 });
 
 export function StockEntryDialog({
@@ -176,6 +254,7 @@ export function StockEntryDialog({
   const linesRef = useRef(form.lines);
   linesRef.current = form.lines;
   const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
+  const [freightAccountPickerOpen, setFreightAccountPickerOpen] = useState(false);
 
   const catalogProducts = useMemo(() => {
     if (searchProducts && searchProducts.length > 0) return searchProducts;
@@ -630,6 +709,9 @@ export function StockEntryDialog({
         currency: form.currency,
         currencyRate: form.currencyRate,
         notes: buildNotes(),
+        totalLandingCosts,
+        freightSourceAccount: totalLandingCosts > 0 ? form.freightSourceAccount : undefined,
+        freightSourceName: totalLandingCosts > 0 ? form.freightSourceName : undefined,
       });
       resetForm();
       onOpenChange(false);
@@ -821,7 +903,7 @@ export function StockEntryDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">{t.stockEntryUi.freightLabel}</Label>
               <NumericInput
@@ -851,6 +933,28 @@ export function StockEntryDialog({
                 className="h-9 bg-background text-sm"
               />
             </div>
+            {totalLandingCosts > 0 && (
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">{t.stockEntryUi.freightPaymentSource}</Label>
+                <div className="flex gap-1">
+                  <Input
+                    readOnly
+                    value={`${form.freightSourceAccount} — ${form.freightSourceName}`}
+                    className="h-9 bg-background text-xs font-mono flex-1 min-w-0"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9 shrink-0"
+                    title={t.stockEntryUi.choosePaymentAccount}
+                    onClick={() => setFreightAccountPickerOpen(true)}
+                  >
+                    <Search className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
 
           {totalLandingCosts > 0 && fulfilledItems.length > 0 && (
@@ -1112,6 +1216,13 @@ export function StockEntryDialog({
             dialogContentRef.current,
           )}
       </DialogContent>
+      <FreightAccountPickerDialog
+        open={freightAccountPickerOpen}
+        onClose={() => setFreightAccountPickerOpen(false)}
+        onSelect={(code, name) =>
+          setForm((p) => ({ ...p, freightSourceAccount: code, freightSourceName: name }))
+        }
+      />
     </Dialog>
   );
 }

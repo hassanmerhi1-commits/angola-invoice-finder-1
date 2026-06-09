@@ -254,6 +254,9 @@ module.exports = function(broadcastTable) {
         notes: req.body.notes,
         createdBy: req.body.createdBy ?? req.body.created_by ?? req.user?.id,
         lines: req.body.lines,
+        landingCosts: req.body.landingCosts ?? req.body.landing_costs,
+        freightSourceAccount: req.body.freightSourceAccount ?? req.body.freight_source_account,
+        freightSourceName: req.body.freightSourceName ?? req.body.freight_source_name,
       });
       await client.query('COMMIT');
       await broadcastTable('products');
@@ -418,6 +421,17 @@ module.exports = function(broadcastTable) {
           );
         } catch (syncErr) {
           console.warn('[TX API] purchase sync enqueue skipped:', syncErr.message);
+        }
+        const warehouseId =
+          req.body.stockEntries?.[0]?.warehouseId
+          || req.body.branchId;
+        if (warehouseId && result.stockMovementIds?.length > 0) {
+          try {
+            const { ensureFilialProductsForWarehouse } = require('../lib/filialStockRepair');
+            await ensureFilialProductsForWarehouse(warehouseId, client);
+          } catch (filialErr) {
+            console.warn('[TX API] filial stock repair after purchase:', filialErr.message);
+          }
         }
       }
 

@@ -86,7 +86,7 @@ export async function syncPurchaseInvoiceReturnStatus(
     purchaseReturnsClosedAt:
       status === 'full' ? new Date().toISOString() : invoice.purchaseReturnsClosedAt,
     updatedAt: new Date().toISOString(),
-  });
+  }, { metadataOnly: true });
 }
 
 export async function syncAllPurchaseInvoiceReturnStatuses(branchId?: string): Promise<void> {
@@ -107,7 +107,7 @@ export async function syncAllPurchaseInvoiceReturnStatuses(branchId?: string): P
           purchaseReturnsClosedAt:
             status === 'full' ? new Date().toISOString() : inv.purchaseReturnsClosedAt,
           updatedAt: new Date().toISOString(),
-        });
+        }, { metadataOnly: true });
       }),
   );
 }

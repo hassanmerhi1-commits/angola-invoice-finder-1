@@ -100,6 +100,7 @@ const STORAGE_KEYS = {
 export const PRODUCTS_CHANGED_EVENT = 'kwanzaerp:products-changed';
 export const SALES_CHANGED_EVENT = 'kwanzaerp:sales-changed';
 export const SUPPLIERS_CHANGED_EVENT = 'kwanzaerp:suppliers-changed';
+export const OPEN_ITEMS_CHANGED_EVENT = 'kwanzaerp:open-items-changed';
 export const STOCK_TRANSFERS_CHANGED_EVENT = 'kwanzaerp:stock-transfers-changed';
 
 /** Remove browser product cache so the next session loads only from the API. */
@@ -133,6 +134,11 @@ function getDemoDefault<T>(factory: () => T, emptyValue: T): T {
 function emitProductsChanged(branchId?: string): void {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId } }));
+}
+
+export function emitOpenItemsChanged(branchId?: string): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(OPEN_ITEMS_CHANGED_EVENT, { detail: { branchId } }));
 }
 
 // ============= BRANCH FUNCTIONS =============

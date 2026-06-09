@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import { generateId } from '@/lib/utils';
+import { cn, generateId } from '@/lib/utils';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import QRCode from 'qrcode';
@@ -20,12 +20,15 @@ import {
   getPurchaseInvoices,
   getPurchaseInvoiceById,
   savePurchaseInvoice,
-  applyPriceUpdate,
   resolveSellingPriceFromPurchaseLine,
   allocatePurchaseInvoiceNumber,
   peekPurchaseInvoiceNumber,
 } from '@/lib/purchaseInvoiceStorage';
-import { PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
+import {
+  PRODUCTS_CHANGED_EVENT,
+  SUPPLIERS_CHANGED_EVENT,
+  OPEN_ITEMS_CHANGED_EVENT,
+} from '@/lib/storage';
 import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 import { processTransaction } from '@/lib/transactionEngine';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
@@ -85,6 +88,8 @@ import {
   NEXOR_PURCHASE_NEW_QUERY_KEY,
   PURCHASE_INVOICES_NEW_PATH,
 } from '@/lib/nexorPurchaseCreate';
+import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
+import { setContextMenuResolver } from '@/lib/contextMenuRegistry';
 
 function ivaRateToTaxCode(rate: number): string {
   const r = Number(rate || 0);
@@ -1257,6 +1262,8 @@ export default function PurchaseInvoices() {
   const createInvoiceSessionRef = useRef<{ id: string; invoiceNumber: string } | null>(null);
   /** Blocks a second click before React re-renders with savingPurchase=true. */
   const savingPurchaseRef = useRef(false);
+  /** When set, save updates the existing invoice without re-posting stock/accounting. */
+  const editingInvoiceRef = useRef<PurchaseInvoice | null>(null);
 
    // State
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
@@ -1283,6 +1290,8 @@ export default function PurchaseInvoices() {
   const [filterSupplier, setFilterSupplier] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
+  const [selectedListInvoiceId, setSelectedListInvoiceId] = useState<string | null>(null);
+  const [gridFocusCell, setGridFocusCell] = useState<{ row: number; field: 'quantity' } | null>(null);
   // Form state
   const [form, setForm] = useState<Partial<PurchaseInvoice>>({});
   const [lines, setLines] = useState<PurchaseInvoiceLine[]>([]);
@@ -1502,6 +1511,7 @@ export default function PurchaseInvoices() {
     const wname = defaultBranch?.name || currentBranch?.name || '';
     setSaveError(null);
     createInvoiceSessionRef.current = null;
+    editingInvoiceRef.current = null;
     setNextFcPreview(null);
     setForm({
       date: now.split('T')[0],
@@ -1546,6 +1556,164 @@ export default function PurchaseInvoices() {
     resetCreateFormState();
     setMode('create');
   }, [resetCreateFormState]);
+
+  const formatInvoiceDateField = (value?: string) => {
+    if (!value) return '';
+    return value.includes('T') ? value.split('T')[0] : value;
+  };
+
+  const startEditInvoice = useCallback(async (inv: PurchaseInvoice) => {
+    const full = (await getPurchaseInvoiceById(inv.id)) || inv;
+    editingInvoiceRef.current = full;
+    createInvoiceSessionRef.current = {
+      id: full.id,
+      invoiceNumber: full.invoiceNumber,
+    };
+    setNextFcPreview(full.invoiceNumber);
+    setForm({
+      date: formatInvoiceDateField(full.date),
+      paymentDate: formatInvoiceDateField(full.paymentDate),
+      currency: full.currency || 'KZ',
+      warehouseId: full.warehouseId,
+      warehouseName: full.warehouseName,
+      priceType: full.priceType || 'last_price',
+      purchaseAccountCode: full.purchaseAccountCode || '2.1.1',
+      ivaAccountCode: full.ivaAccountCode || '3.3.1',
+      transactionType: full.transactionType || 'ALL',
+      currencyRate: full.currencyRate ?? 1,
+      taxRate2: full.taxRate2 ?? 0,
+      surchargePercent: full.surchargePercent ?? 0,
+      changePrice: full.changePrice ?? false,
+      isPending: full.isPending ?? false,
+      supplierId: full.supplierId,
+      supplierName: full.supplierName,
+      supplierAccountCode: full.supplierAccountCode,
+      supplierNif: full.supplierNif,
+      supplierPhone: full.supplierPhone,
+      supplierBalance: full.supplierBalance,
+      supplierInvoiceNo: full.supplierInvoiceNo,
+      ref: full.ref,
+      ref2: full.ref2,
+      contact: full.contact,
+      department: full.department,
+      orderNo: full.orderNo,
+      extraNote: full.extraNote,
+      address: full.address,
+      project: full.project,
+    });
+    setLines(full.lines || []);
+    setJournalLines(full.journalLines || []);
+    setFreightCost(0);
+    setFreightOtherCosts(0);
+    setFillFromPoId('');
+    setActiveTab('fatura');
+    setSaveError(null);
+    setSelectedListInvoiceId(full.id);
+    setMode('create');
+  }, []);
+
+  const handleMarkAsPaid = useCallback(async (inv: PurchaseInvoice) => {
+    if (!inv.isPending) return;
+    try {
+      const now = new Date().toISOString();
+      const updated: PurchaseInvoice = {
+        ...inv,
+        isPending: false,
+        paymentDate: formatInvoiceDateField(now) || now.split('T')[0],
+        updatedAt: now,
+      };
+      await savePurchaseInvoice(updated, { metadataOnly: true });
+      await loadInvoiceList();
+      setSelectedListInvoiceId(updated.id);
+      toast({
+        title: t.purchaseInvoicesUi.markedPaidTitle,
+        description: t.purchaseInvoicesUi.markedPaidDesc.replace('{no}', updated.invoiceNumber),
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : t.purchaseInvoicesUi.unknownError;
+      toast({ title: t.common.error, description: message, variant: 'destructive' });
+    }
+  }, [loadInvoiceList, toast, t]);
+
+  const broadcastPurchaseAccountingSync = useCallback(async (
+    warehouseId: string,
+    branchId: string,
+  ) => {
+    invalidateInventoryGridCacheForBranches([warehouseId, branchId].filter(Boolean));
+    window.dispatchEvent(
+      new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: warehouseId } }),
+    );
+    window.dispatchEvent(
+      new CustomEvent(OPEN_ITEMS_CHANGED_EVENT, { detail: { branchId } }),
+    );
+    window.dispatchEvent(new CustomEvent(SUPPLIERS_CHANGED_EVENT, { detail: {} }));
+    if (warehouseId) {
+      try {
+        await api.products.repairFilialStock(warehouseId);
+      } catch (repairErr) {
+        console.warn('[PurchaseInvoices] repairFilialStock:', repairErr);
+      }
+    }
+    await Promise.all([refreshProducts(), refreshSuppliers(), loadInvoiceList()]);
+  }, [loadInvoiceList, refreshProducts, refreshSuppliers]);
+
+  const ensurePurchaseAccountingPosted = useCallback(async (
+    invoiceId: string,
+    txResult: { stockMovementIds?: string[]; openItemId?: string; success?: boolean },
+  ) => {
+    const stockIds = [...(txResult.stockMovementIds || [])];
+    let openItemId = txResult.openItemId;
+    const needsRepair = !txResult.success || stockIds.length === 0 || !openItemId;
+
+    if (needsRepair) {
+      try {
+        const repair = await api.purchaseInvoices.repostAccounting(invoiceId);
+        if (repair.data?.stockMovementIds?.length) {
+          stockIds.splice(0, stockIds.length, ...repair.data.stockMovementIds);
+        }
+        if (repair.data?.openItemId) {
+          openItemId = repair.data.openItemId;
+        }
+      } catch (repairErr) {
+        console.warn('[PurchaseInvoices] repost-accounting:', repairErr);
+      }
+    }
+    if (!openItemId) {
+      try {
+        await api.payments.backfillMissingPayables();
+      } catch (backfillErr) {
+        console.warn('[PurchaseInvoices] backfill payables:', backfillErr);
+      }
+    }
+    return { stockMovementIds: stockIds, openItemId };
+  }, []);
+
+  const handleRepostAccounting = useCallback(async (inv: PurchaseInvoice) => {
+    try {
+      const warehouseId = String(inv.warehouseId || inv.branchId || '').trim();
+      const branchId = String(inv.branchId || inv.warehouseId || '').trim();
+      const posted = await ensurePurchaseAccountingPosted(inv.id, {});
+      await broadcastPurchaseAccountingSync(warehouseId, branchId);
+      setSelectedListInvoiceId(inv.id);
+      const hasStock = (posted.stockMovementIds?.length ?? 0) > 0;
+      const hasPayable = !!posted.openItemId;
+      if (hasStock && hasPayable) {
+        toast({
+          title: t.purchaseInvoicesUi.repostStockPayableDoneTitle,
+          description: t.purchaseInvoicesUi.repostStockPayableDoneDesc.replace('{no}', inv.invoiceNumber),
+        });
+      } else {
+        toast({
+          title: t.purchaseInvoicesUi.transactionEngineFailureTitle,
+          description: t.purchaseInvoicesUi.purchaseSavedPartialSync,
+          variant: 'destructive',
+        });
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : t.purchaseInvoicesUi.unknownError;
+      toast({ title: t.common.error, description: message, variant: 'destructive' });
+    }
+  }, [broadcastPurchaseAccountingSync, ensurePurchaseAccountingPosted, toast, t]);
 
   /** Leaving `/purchase-invoices/new` avoids staying on a route that always re-triggers create on mount. */
   const goToPurchaseListRoute = useCallback(() => {
@@ -1725,7 +1893,10 @@ export default function PurchaseInvoices() {
       lastCost: p.lastCost || p.cost || 0,
       avgCost: p.avgCost || p.cost || 0,
     });
-    setLines(prev => [...prev, newLine]);
+    setLines((prev) => {
+      setGridFocusCell({ row: prev.length, field: 'quantity' });
+      return [...prev, newLine];
+    });
   }, [form.warehouseId, form.warehouseName, currentBranch]);
 
   const applyLinesFromPurchaseOrder = useCallback(
@@ -1797,6 +1968,87 @@ export default function PurchaseInvoices() {
   const handleOpenProductPicker = useCallback(() => {
     setProductPickerOpen(true);
   }, []);
+
+  useEffect(() => {
+    if (mode !== 'list') return;
+
+    const selected = selectedListInvoiceId
+      ? invoices.find((i) => i.id === selectedListInvoiceId)
+      : undefined;
+
+    const onEdit = () => {
+      if (selected) {
+        void startEditInvoice(selected);
+      } else {
+        toast({
+          title: t.common.error,
+          description: t.purchaseInvoicesUi.selectInvoiceToEdit,
+          variant: 'destructive',
+        });
+      }
+    };
+    const onAll = () => setSelectedListInvoiceId(null);
+
+    const handlers: Record<string, () => void> = {
+      [NEXOR_TOOLBAR.EDIT]: onEdit,
+      [NEXOR_TOOLBAR.ALL]: onAll,
+    };
+    for (const [event, handler] of Object.entries(handlers)) {
+      window.addEventListener(event, handler);
+    }
+    return () => {
+      for (const [event, handler] of Object.entries(handlers)) {
+        window.removeEventListener(event, handler);
+      }
+    };
+  }, [mode, selectedListInvoiceId, invoices, startEditInvoice, toast, t]);
+
+  useEffect(() => {
+    if (mode !== 'list' || listTab !== 'faturas') {
+      setContextMenuResolver(null);
+      return;
+    }
+
+    setContextMenuResolver((target) => {
+      const row = target.closest('[data-nexor-context="purchase-invoice-row"]');
+      if (!row) return [];
+      const invoiceId = row.getAttribute('data-nexor-id');
+      const inv = invoices.find((i) => i.id === invoiceId);
+      if (!inv) return [];
+
+      const items = [
+        {
+          id: 'pi-edit',
+          label: t.interaction.openEdit,
+          onSelect: () => {
+            setSelectedListInvoiceId(inv.id);
+            void startEditInvoice(inv);
+          },
+        },
+      ];
+      if (inv.isPending) {
+        items.push({
+          id: 'pi-mark-paid',
+          label: t.purchaseInvoicesUi.markAsPaid,
+          onSelect: () => {
+            setSelectedListInvoiceId(inv.id);
+            void handleMarkAsPaid(inv);
+          },
+        });
+      }
+      items.push({
+        id: 'pi-repost',
+        label: t.purchaseInvoicesUi.repostStockPayable,
+        onSelect: () => {
+          setSelectedListInvoiceId(inv.id);
+          void handleRepostAccounting(inv);
+        },
+      });
+      return items;
+    });
+
+    return () => setContextMenuResolver(null);
+  }, [mode, listTab, invoices, startEditInvoice, handleMarkAsPaid, handleRepostAccounting, t]);
 
   const isCreateDirty = useMemo(() => {
     if (lines.length > 0) return true;
@@ -2129,6 +2381,85 @@ export default function PurchaseInvoices() {
 
     console.log('[PurchaseInvoices] All validations passed, building invoice...');
 
+    const editingOriginal = editingInvoiceRef.current;
+    if (editingOriginal) {
+      const now = new Date().toISOString();
+      const manualJournalLines = journalLines;
+      const updatedInvoice: PurchaseInvoice = {
+        ...editingOriginal,
+        supplierAccountCode: resolvedSupplierAccountCode,
+        supplierName: matchedSupplier?.name || form.supplierName || '',
+        supplierId: resolvedSupplierId,
+        supplierNif: matchedSupplier?.nif || form.supplierNif,
+        supplierPhone: matchedSupplier?.phone || form.supplierPhone,
+        supplierBalance: form.supplierBalance || 0,
+        ref: form.ref,
+        supplierInvoiceNo: formWithSupplier.supplierInvoiceNo,
+        contact: form.contact,
+        department: form.department,
+        ref2: form.ref2,
+        date: form.date || editingOriginal.date,
+        paymentDate: form.paymentDate || editingOriginal.paymentDate,
+        project: form.project,
+        currency: form.currency || 'KZ',
+        warehouseId: resolvedWarehouseId,
+        warehouseName: resolvedWarehouseName,
+        priceType: form.priceType || 'last_price',
+        address: form.address,
+        purchaseAccountCode: form.purchaseAccountCode || '2.1.1',
+        ivaAccountCode: form.ivaAccountCode || '3.3.1',
+        transactionType: form.transactionType || 'ALL',
+        currencyRate: form.currencyRate || 1,
+        taxRate2: Number(form.taxRate2 || 0),
+        orderNo: form.orderNo,
+        surchargePercent: Number(form.surchargePercent || 0),
+        changePrice: form.changePrice || false,
+        isPending: form.isPending || false,
+        extraNote: form.extraNote,
+        lines,
+        journalLines: [],
+        subtotal: totals.subtotal,
+        ivaTotal: totals.ivaTotal,
+        total: supplierNetPayable,
+        branchId: resolvedBranchId,
+        branchName: resolvedBranchName,
+        updatedAt: now,
+      };
+      updatedInvoice.journalLines = buildPurchaseInvoiceJournalLines({
+        documentId: updatedInvoice.id,
+        invoiceNumber: updatedInvoice.invoiceNumber,
+        currency: updatedInvoice.currency,
+        purchaseAccountCode: updatedInvoice.purchaseAccountCode || '2.1.1',
+        ivaAccountCode: updatedInvoice.ivaAccountCode || '3.3.1',
+        supplierAccountCode: updatedInvoice.supplierAccountCode,
+        supplierName: updatedInvoice.supplierName,
+        subtotal: updatedInvoice.subtotal,
+        ivaTotal: updatedInvoice.ivaTotal,
+        supplierTotal: supplierGrossTotal,
+        withholdingAmount,
+        stampAmount,
+        landingCosts: totalLandingCosts,
+        freightSourceAccount,
+        freightSourceName,
+        manualLines: manualJournalLines,
+        labelFreightLine: t.purchaseInvoicesUi.transportOnPurchases,
+        labelDeductibleVat: t.purchaseInvoicesUi.deductibleVat,
+      });
+      await savePurchaseInvoice(updatedInvoice, { metadataOnly: true });
+      await syncPurchaseInvoiceDocument(updatedInvoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix);
+      toast({
+        title: t.purchaseInvoicesUi.purchaseInvoiceUpdatedTitle,
+        description: `${updatedInvoice.invoiceNumber} — ${updatedInvoice.supplierName}`,
+      });
+      await loadInvoiceList();
+      editingInvoiceRef.current = null;
+      resetCreateFormState();
+      clearPurchaseCreateIntent();
+      setMode('list');
+      goToPurchaseListRoute();
+      return;
+    }
+
     let allocatedInvoiceNumber: string;
     const session = createInvoiceSessionRef.current;
     if (session?.id && session.invoiceNumber) {
@@ -2148,7 +2479,7 @@ export default function PurchaseInvoices() {
 
     const manualJournalLines = journalLines;
 
-    const invoice: PurchaseInvoice = {
+    let invoice: PurchaseInvoice = {
       id: session?.id || generateId(),
       invoiceNumber: allocatedInvoiceNumber,
       supplierAccountCode: resolvedSupplierAccountCode,
@@ -2223,7 +2554,23 @@ export default function PurchaseInvoices() {
       invoiceNumber: invoice.invoiceNumber,
     };
 
-      console.log('[PurchaseInvoices] Calling processTransaction...', {
+      const saveResult = await savePurchaseInvoice(invoice);
+      invoice = saveResult.invoice;
+      await syncPurchaseInvoiceDocument(invoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix);
+
+      let txResult: Awaited<ReturnType<typeof processTransaction>> = {
+        success: false,
+        errors: [],
+        stockMovementIds: saveResult.accounting?.stockMovementIds || [],
+        openItemId: saveResult.accounting?.openItemId || undefined,
+        journalEntryId: saveResult.accounting?.journalEntryId || undefined,
+        documentLinkIds: [],
+      };
+      if (saveResult.accounting?.success && (txResult.stockMovementIds?.length ?? 0) > 0) {
+        txResult.success = true;
+        console.log('[PurchaseInvoices] Stock posted by server on save:', txResult.stockMovementIds?.length);
+      } else {
+      console.log('[PurchaseInvoices] Server save did not post stock — calling processTransaction...', {
         type: 'purchase_invoice',
         docId: invoice.id,
         docNumber: invoice.invoiceNumber,
@@ -2233,8 +2580,7 @@ export default function PurchaseInvoices() {
         linesCount: invoice.lines.length,
         total: invoice.total,
       });
-      // Use central transaction engine for atomic processing
-      const txResult = await processTransaction({
+      txResult = await processTransaction({
         transactionType: 'purchase_invoice',
         documentId: invoice.id,
         documentNumber: invoice.invoiceNumber,
@@ -2285,12 +2631,12 @@ export default function PurchaseInvoices() {
 
         // Phase 1: Stock entries — scoped to the selected warehouse
         stockEntries: invoice.lines
-          .filter(l => l.productId && l.totalQty > 0)
+          .filter(l => l.productId && (l.totalQty || l.quantity) > 0)
           .map(l => ({
             productId: l.productId,
             productName: l.description,
             productSku: l.productCode,
-            quantity: l.totalQty,
+            quantity: l.totalQty || l.quantity,
             unitCost: l.unitPrice + (freightAllocations[l.productId] || 0),
             direction: 'IN' as const,
             warehouseId: invoice.warehouseId,
@@ -2299,8 +2645,9 @@ export default function PurchaseInvoices() {
         changePrice: invoice.changePrice,
         // Phase 2: Cost (WAC) + optional selling price when "Alterar preço" is checked
         priceUpdates: invoice.lines
-          .filter(l => l.productId && l.totalQty > 0)
+          .filter(l => l.productId && (l.totalQty || l.quantity) > 0)
           .map(l => {
+            const lineQty = l.totalQty || l.quantity;
             const landed = l.unitPrice + (freightAllocations[l.productId] || 0);
             const sellingPrice = resolveSellingPriceFromPurchaseLine(
               l,
@@ -2314,7 +2661,7 @@ export default function PurchaseInvoices() {
             return {
               productId: l.productId,
               newUnitCost: landed,
-              quantityReceived: l.totalQty,
+              quantityReceived: lineQty,
               updateAvgCost: true,
               ...(applySelling && sellingPrice > 0 ? { sellingPrice } : {}),
             };
@@ -2352,6 +2699,7 @@ export default function PurchaseInvoices() {
       });
 
       console.log('[PurchaseInvoices] Transaction result:', JSON.stringify(txResult));
+      }
 
       if (txResult.pendingSync) {
         toast({
@@ -2367,19 +2715,7 @@ export default function PurchaseInvoices() {
       }
 
       if (!txResult.success) {
-        const txError = txResult.errors.join('; ') || t.purchaseInvoicesUi.stockAccountingNotUpdated;
-        const description = txError.includes('invalid input syntax for type uuid')
-          ? t.purchaseInvoicesUi.invalidIdReopenSupplierWarehouse
-          : txError;
-
         console.error('[PurchaseInvoices] Transaction engine errors:', txResult.errors);
-          setSaveError(description);
-        toast({
-          title: t.purchaseInvoicesUi.transactionEngineFailureTitle,
-          description,
-          variant: 'destructive',
-        });
-        return;
       }
 
       const resolvedIds = txResult.resolvedProductIds;
@@ -2388,62 +2724,57 @@ export default function PurchaseInvoices() {
           const mapped = line.productId ? resolvedIds[line.productId] : undefined;
           return mapped && mapped !== line.productId ? { ...line, productId: mapped } : line;
         });
+        await savePurchaseInvoice(invoice, { metadataOnly: true });
       }
 
-      await savePurchaseInvoice(invoice);
-      if (invoice.changePrice) {
-        try {
-          await applyPriceUpdate(invoice);
-        } catch (priceErr) {
-          console.warn('[PurchaseInvoices] applyPriceUpdate:', priceErr);
-        }
-      }
-      await syncPurchaseInvoiceDocument(invoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix);
+      const posted = await ensurePurchaseAccountingPosted(invoice.id, txResult);
+      await broadcastPurchaseAccountingSync(resolvedWarehouseId, resolvedBranchId);
 
       const orderNoRef = String(invoice.orderNo || form.orderNo || form.ref || '').trim();
       if (orderNoRef && resolvedSupplierId) {
-        const linkRes = await api.purchaseOrders.markReceivedFromInvoice({
-          orderNumber: orderNoRef,
-          supplierId: resolvedSupplierId,
-          receivedBy: user?.id || '',
-        });
-        if (linkRes.data?.success || linkRes.data?.skipped) {
-          await refreshOrders();
-        } else {
-          const ok = await markPurchaseOrderReceivedFromInvoiceNumber(
-            orderNoRef,
-            resolvedSupplierId,
-            user?.id || '',
-          );
-          if (ok) await refreshOrders();
-          else if (linkRes.error) {
-            console.warn('[PurchaseInvoices] Could not mark linked PO as received:', linkRes.error);
+        void (async () => {
+          try {
+            const linkRes = await api.purchaseOrders.markReceivedFromInvoice({
+              orderNumber: orderNoRef,
+              supplierId: resolvedSupplierId,
+              receivedBy: user?.id || '',
+            });
+            if (linkRes.data?.success || linkRes.data?.skipped) {
+              await refreshOrders();
+            } else {
+              const ok = await markPurchaseOrderReceivedFromInvoiceNumber(
+                orderNoRef,
+                resolvedSupplierId,
+                user?.id || '',
+              );
+              if (ok) await refreshOrders();
+            }
+          } catch (poErr) {
+            console.warn('[PurchaseInvoices] PO link after save:', poErr);
           }
-        }
+        })();
       }
 
-      try {
-        await api.suppliers.reconcileBalances();
-      } catch {
-        // non-blocking
-      }
-      await Promise.all([refreshProducts(), refreshSuppliers()]);
-      invalidateInventoryGridCacheForBranches([resolvedWarehouseId, resolvedBranchId].filter(Boolean));
-      window.dispatchEvent(
-        new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: resolvedWarehouseId } }),
-      );
-
+      const stillNoStock = (posted.stockMovementIds?.length ?? 0) === 0;
+      const stillNoPayable = !posted.openItemId;
+      const txError = txResult.errors.join('; ');
       toast({
-        title: t.purchaseInvoicesUi.purchaseInvoiceSavedTitle,
-        description: `${invoice.invoiceNumber} — ${invoice.supplierName} — ${invoice.total.toLocaleString(uiLocale)} ${invoice.currency}`,
+        title: stillNoStock || stillNoPayable
+          ? t.purchaseInvoicesUi.transactionEngineFailureTitle
+          : t.purchaseInvoicesUi.purchaseInvoiceSavedTitle,
+        description: stillNoStock || stillNoPayable
+          ? (txError || t.purchaseInvoicesUi.purchaseSavedPartialSync)
+          : `${invoice.invoiceNumber} — ${invoice.supplierName} — ${invoice.total.toLocaleString(uiLocale)} ${invoice.currency}`,
+        variant: stillNoStock || stillNoPayable ? 'destructive' : undefined,
       });
+      if (stillNoStock || stillNoPayable) {
+        setSaveError(txError || t.purchaseInvoicesUi.purchaseSavedPartialSync);
+      }
 
-      await loadInvoiceList();
-      const savedForView = (await getPurchaseInvoiceById(invoice.id)) || invoice;
       resetCreateFormState();
       clearPurchaseCreateIntent();
       urlCreateAppliedRef.current = false;
-      setViewInvoice(savedForView);
+      setViewInvoice(invoice);
       setMode('list');
       goToPurchaseListRoute();
     } catch (error: any) {
@@ -2458,7 +2789,7 @@ export default function PurchaseInvoices() {
       savingPurchaseRef.current = false;
       setSavingPurchase(false);
     }
-  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList]);
+  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList, ensurePurchaseAccountingPosted, broadcastPurchaseAccountingSync]);
 
   // ═══════════════ RENDER ═══════════════
 
@@ -2606,8 +2937,14 @@ export default function PurchaseInvoices() {
                     {filtered.map(inv => (
                       <TableRow
                         key={inv.id}
-                        className="cursor-pointer hover:bg-accent/50 h-8 transition-colors duration-100"
-                        onClick={() => setViewInvoice(inv)}
+                        data-nexor-context="purchase-invoice-row"
+                        data-nexor-id={inv.id}
+                        className={cn(
+                          'cursor-pointer hover:bg-accent/50 h-8 transition-colors duration-100',
+                          selectedListInvoiceId === inv.id && 'bg-primary/10 hover:bg-primary/15',
+                        )}
+                        onClick={() => setSelectedListInvoiceId(inv.id)}
+                        onDoubleClick={() => setViewInvoice(inv)}
                       >
                         <TableCell className="font-mono text-[11px] font-medium py-1">{inv.invoiceNumber}</TableCell>
                         <TableCell className="text-[11px] py-1">{inv.supplierInvoiceNo || '—'}</TableCell>
@@ -3408,6 +3745,9 @@ export default function PurchaseInvoices() {
             lines={lines}
             onLinesChange={setLines}
             onOpenProductPicker={handleOpenProductPicker}
+            onTabPastLastCell={handleOpenProductPicker}
+            focusCell={gridFocusCell}
+            onFocusCellConsumed={() => setGridFocusCell(null)}
             onRemoveLine={removeLine}
             freightAllocations={freightAllocations}
             warehouseName={form.warehouseName || currentBranch?.name || ''}

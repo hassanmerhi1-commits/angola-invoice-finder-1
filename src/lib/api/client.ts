@@ -1211,6 +1211,20 @@ export const api = {
       apiFetch<any>('/purchase-invoices', { method: 'POST', body: JSON.stringify(invoice) }),
     delete: (id: string) =>
       apiFetch<any>(`/purchase-invoices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    repostAccounting: (id: string) =>
+      apiFetch<{
+        success: boolean;
+        skipped?: boolean;
+        repostedStock?: boolean;
+        stockMovementIds?: string[];
+        openItemId?: string | null;
+        backfill?: { created: number; skipped: number };
+      }>(`/purchase-invoices/${encodeURIComponent(id)}/repost-accounting`, { method: 'POST' }),
+    backfillAccounting: (limit = 100) =>
+      apiFetch<{ posted: number; failed: number; errors?: { id: string; error: string }[] }>(
+        '/purchase-invoices/backfill-accounting',
+        { method: 'POST', body: JSON.stringify({ limit }) },
+      ),
   },
 
   // Chart of Accounts
@@ -1388,6 +1402,11 @@ export const api = {
     payablesAging: () => apiFetch<any[]>('/payments/payables-aging'),
     checklistDues: () =>
       apiFetch<{ receivables: any[]; payables: any[] }>('/payments/checklist-dues'),
+    backfillMissingPayables: () =>
+      apiFetch<{ created: number; skipped: number }>(
+        '/payments/backfill-missing-payables',
+        { method: 'POST' },
+      ),
     repairSupplierPayables: () =>
       apiFetch<{ backfill: { created: number; skipped: number }; payablesCount: number }>(
         '/payments/repair-supplier-payables',
@@ -2055,6 +2074,9 @@ export const api = {
       notes?: string;
       createdBy?: string;
       lines: { productId: string; quantity: number; unitCost: number }[];
+      landingCosts?: number;
+      freightSourceAccount?: string;
+      freightSourceName?: string;
     }) => {
       return apiFetch<{
         documentId: string;

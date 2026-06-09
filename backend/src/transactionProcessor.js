@@ -14,6 +14,7 @@ const {
   applyPurchaseSupplierToProducts,
 } = require('./transactionEngine');
 const { isUniqueSkuBranchError } = require('./lib/productSkuResolve');
+const { coalesceActiveNotZero } = require('./lib/sqlDialect');
 const {
   createJournalEntry,
 } = require('./accounting');
@@ -284,7 +285,7 @@ async function processTransactionBody(client, body) {
               await client.query(
                 `UPDATE products
                  SET cost = $1, last_cost = $2, avg_cost = $1, updated_at = CURRENT_TIMESTAMP
-                 WHERE ${require('../lib/sqlDialect').coalesceActiveNotZero(db, 'is_active')}
+                 WHERE ${coalesceActiveNotZero(db, 'is_active')}
                    AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($3)`,
                 [nextAvgCost, nextLastCost, skuKey],
               );
@@ -307,7 +308,7 @@ async function processTransactionBody(client, body) {
                 await client.query(
                   `UPDATE products
                    SET price = $1, updated_at = CURRENT_TIMESTAMP
-                   WHERE ${require('../lib/sqlDialect').coalesceActiveNotZero(db, 'is_active')}
+                   WHERE ${coalesceActiveNotZero(db, 'is_active')}
                      AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)`,
                   [selling, skuKey],
                 );

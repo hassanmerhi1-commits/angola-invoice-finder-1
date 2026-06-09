@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from '@/i18n';
 import { useProducts, useStockTransfers, useAuth } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
@@ -14,7 +14,21 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowRightLeft, Plus, Package, Check, X, Truck, Clock } from 'lucide-react';
+import { ArrowRightLeft, Plus, Package, Check, X, Truck, Clock, Search } from 'lucide-react';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
+
+const transferDialogFullscreen = cn(
+  'fixed inset-0 left-0 top-0 z-50 flex h-screen w-screen max-w-none translate-x-0 translate-y-0',
+  'flex-col gap-0 overflow-hidden rounded-none border-0 p-0',
+  'data-[state=open]:slide-in-from-left-0 data-[state=open]:slide-in-from-top-0',
+  'data-[state=closed]:slide-out-to-left-0 data-[state=closed]:slide-out-to-top-0',
+);
+import {
+  filterProductsForSearch,
+  sortProductSearchResults,
+  PRODUCT_LINE_SUGGESTION_LIMIT,
+} from '@/components/inventory/productLineSearch';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useToast } from '@/hooks/use-toast';
@@ -64,6 +78,7 @@ export default function StockTransfer() {
   const [notes, setNotes] = useState('');
   const [transferItems, setTransferItems] = useState<TransferItem[]>([]);
   const [transferQtyDrafts, setTransferQtyDrafts] = useState<Record<string, string>>({});
+  const [productSearch, setProductSearch] = useState('');
   const [receivedQuantities, setReceivedQuantities] = useState<Record<string, number>>({});
   const [receivedQtyDrafts, setReceivedQtyDrafts] = useState<Record<string, string>>({});
 
@@ -80,7 +95,31 @@ export default function StockTransfer() {
     setNotes('');
     setTransferItems([]);
     setTransferQtyDrafts({});
+    setProductSearch('');
   };
+
+  const usedProductIds = useMemo(
+    () => new Set(transferItems.map((item) => item.productId)),
+    [transferItems],
+  );
+
+  const searchableSourceProducts = useMemo(
+    () => sourceProducts.filter((p) => p.isActive !== false && (p.stock ?? 0) > 0),
+    [sourceProducts],
+  );
+
+  const productSearchResults = useMemo(() => {
+    const term = productSearch.trim();
+    if (!term || !fromBranchId) return [];
+    return filterProductsForSearch(
+      searchableSourceProducts,
+      term,
+      usedProductIds,
+      fromBranchId,
+    )
+      .sort((a, b) => sortProductSearchResults(a, b, term, fromBranchId))
+      .slice(0, PRODUCT_LINE_SUGGESTION_LIMIT);
+  }, [productSearch, fromBranchId, searchableSourceProducts, usedProductIds]);
 
   const commitTransferItems = (items: TransferItem[], drafts: Record<string, string>): TransferItem[] =>
     items.map((item) => {
@@ -119,6 +158,7 @@ export default function StockTransfer() {
     setFromBranchId(branchId);
     setTransferItems([]);
     setTransferQtyDrafts({});
+    setProductSearch('');
     // Reset destination if same as new source
     if (toBranchId === branchId) setToBranchId('');
   };
@@ -403,15 +443,38 @@ export default function StockTransfer() {
       </Tabs>
 
       {/* New Transfer Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t.stockTransferUi.newTransferTitle}</DialogTitle>
-            <DialogDescription>
-              {t.stockTransferUi.newTransferDesc}
-            </DialogDescription>
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) resetForm();
+        }}
+      >
+        <DialogContent className={cn(transferDialogFullscreen, '[&>button]:hidden')}>
+          <DialogHeader className="shrink-0 border-b px-4 py-3 sm:px-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <DialogTitle>{t.stockTransferUi.newTransferTitle}</DialogTitle>
+                <DialogDescription>
+                  {t.stockTransferUi.newTransferDesc}
+                </DialogDescription>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                onClick={() => {
+                  setDialogOpen(false);
+                  resetForm();
+                }}
+                aria-label={t.common.cancel}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-4 py-3 sm:px-6">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>De (Origem):</Label>
@@ -446,26 +509,75 @@ export default function StockTransfer() {
             </div>
 
             <div className="space-y-2">
-              <Label>Adicionar Produtos (do stock de {branches.find(b => b.id === fromBranchId)?.name || '...'}):</Label>
-              <Select onValueChange={(value) => {
-                const product = sourceProducts.find(p => p.id === value);
-                if (product) handleAddProduct(product);
-              }}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t.stockTransferUi.selectProduct} />
-                </SelectTrigger>
-                <SelectContent>
-                  {sourceProducts.filter(p => p.stock > 0).map(product => (
-                    <SelectItem key={product.id} value={product.id}>
-                      {product.name} - Stock: {product.stock}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>
+                {t.stockTransferUi.selectProduct}
+                {fromBranchId
+                  ? ` — ${branches.find((b) => b.id === fromBranchId)?.name || ''}`
+                  : ''}
+              </Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && productSearchResults[0]) {
+                      e.preventDefault();
+                      handleAddProduct(productSearchResults[0]);
+                      setProductSearch('');
+                    }
+                  }}
+                  placeholder={
+                    fromBranchId
+                      ? t.stockTransferUi.searchProductPlaceholder
+                      : t.stockTransferUi.selectSourceFirst
+                  }
+                  disabled={!fromBranchId}
+                  className="pl-10"
+                  autoComplete="off"
+                />
+              </div>
+              {fromBranchId && productSearch.trim() && (
+                <ScrollArea className="h-52 border rounded-md bg-background">
+                  {productSearchResults.length === 0 ? (
+                    <p className="text-sm text-muted-foreground p-3">
+                      {t.stockTransferUi.noSearchResults}
+                    </p>
+                  ) : (
+                    <ul className="divide-y">
+                      {productSearchResults.map((product) => (
+                        <li key={product.id}>
+                          <button
+                            type="button"
+                            className={cn(
+                              'w-full text-left px-3 py-2 text-sm hover:bg-muted/80 transition-colors',
+                              'flex flex-wrap items-baseline gap-x-2 gap-y-0.5',
+                            )}
+                            onClick={() => {
+                              handleAddProduct(product);
+                              setProductSearch('');
+                            }}
+                          >
+                            <span className="font-mono font-semibold">{product.sku}</span>
+                            <span className="text-muted-foreground">—</span>
+                            <span className="flex-1 min-w-0">{product.name}</span>
+                            <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                              {t.stockTransferUi.stockAvailable.replace(
+                                '{stock}',
+                                String(product.stock ?? 0),
+                              )}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </ScrollArea>
+              )}
             </div>
 
             {transferItems.length > 0 && (
-              <div className="border rounded-lg">
+              <div className="border rounded-lg max-h-[min(40vh,320px)] overflow-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -530,7 +642,7 @@ export default function StockTransfer() {
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t px-4 py-3 sm:px-6">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {t.common.cancel}
             </Button>
@@ -544,20 +656,35 @@ export default function StockTransfer() {
 
       {/* Receive Dialog */}
       <Dialog open={receiveDialogOpen} onOpenChange={setReceiveDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t.stockTransferUi.receiveTransferTitle}</DialogTitle>
-            <DialogDescription>
-              {t.stockTransferUi.receiveTransferDesc}
-            </DialogDescription>
+        <DialogContent className={cn(transferDialogFullscreen, '[&>button]:hidden')}>
+          <DialogHeader className="shrink-0 border-b px-4 py-3 sm:px-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <DialogTitle>{t.stockTransferUi.receiveTransferTitle}</DialogTitle>
+                <DialogDescription>
+                  {t.stockTransferUi.receiveTransferDesc}
+                </DialogDescription>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                onClick={() => setReceiveDialogOpen(false)}
+                aria-label={t.common.cancel}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-4 py-3 sm:px-6">
             {selectedTransfer && (
-              <div className="border rounded-lg">
+              <div className="border rounded-lg overflow-auto max-h-[min(50vh,400px)]">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Produto</TableHead>
+                      <TableHead>SKU</TableHead>
                       <TableHead>Enviado</TableHead>
                       <TableHead>Recebido</TableHead>
                     </TableRow>
@@ -566,6 +693,7 @@ export default function StockTransfer() {
                     {selectedTransfer.items.map(item => (
                       <TableRow key={item.productId}>
                         <TableCell>{item.productName}</TableCell>
+                        <TableCell className="font-mono text-sm">{item.sku}</TableCell>
                         <TableCell>{item.quantity}</TableCell>
                         <TableCell>
                           <Input
@@ -607,7 +735,7 @@ export default function StockTransfer() {
               </div>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t px-4 py-3 sm:px-6">
             <Button variant="outline" onClick={() => setReceiveDialogOpen(false)}>
               {t.common.cancel}
             </Button>

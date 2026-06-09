@@ -25,6 +25,7 @@ import { useClients, useSuppliers } from '@/hooks/useERP';
 import type { OpenItem, Payment } from '@/types/erp';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
 import * as storage from '@/lib/storage';
+import { OPEN_ITEMS_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import { isOpenItemDebit, signedOpenItemBalance } from '@/lib/openItems';
 
 // Demo data for localStorage mode
@@ -98,6 +99,16 @@ function usePaymentsData(branchId?: string) {
   useEffect(() => { refresh(); }, [refresh]);
 
   useEffect(() => subscribeSupplierReturnsChanged(refresh), [refresh]);
+
+  useEffect(() => {
+    const onChanged = () => { void refresh(); };
+    window.addEventListener(OPEN_ITEMS_CHANGED_EVENT, onChanged);
+    window.addEventListener(SUPPLIERS_CHANGED_EVENT, onChanged);
+    return () => {
+      window.removeEventListener(OPEN_ITEMS_CHANGED_EVENT, onChanged);
+      window.removeEventListener(SUPPLIERS_CHANGED_EVENT, onChanged);
+    };
+  }, [refresh]);
 
   const createPayment = useCallback(async (paymentData: any) => {
     const res = await api.payments.create(paymentData);

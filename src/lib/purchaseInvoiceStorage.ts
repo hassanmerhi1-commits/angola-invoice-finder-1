@@ -398,16 +398,39 @@ export function generatePurchaseInvoiceNumber(branchCode: string): string {
   return `FC-${branchCode}-${date}-${seq}`;
 }
 
-export async function savePurchaseInvoice(invoice: PurchaseInvoice): Promise<PurchaseInvoice> {
+export type PurchaseInvoiceAccounting = {
+  success: boolean;
+  stockMovementIds: string[];
+  openItemId?: string | null;
+  journalEntryId?: string | null;
+};
+
+export type SavePurchaseInvoiceResult = {
+  invoice: PurchaseInvoice;
+  accounting?: PurchaseInvoiceAccounting;
+};
+
+export async function savePurchaseInvoice(
+  invoice: PurchaseInvoice,
+  opts?: { metadataOnly?: boolean },
+): Promise<SavePurchaseInvoiceResult> {
   const payload = normalizeInvoiceWarehouse({
     ...invoice,
     updatedAt: new Date().toISOString(),
   });
 
   if (usePurchaseInvoiceApi()) {
-    const res = await api.purchaseInvoices.save(payload);
+    const body = opts?.metadataOnly
+      ? { ...payload, metadataOnly: true }
+      : payload;
+    const res = await api.purchaseInvoices.save(body);
     if (res.error) throw new Error(res.error);
-    return res.data ? mapPIFromApiRow(res.data) : payload;
+    const row = res.data as Record<string, unknown> | undefined;
+    const accounting = row?.accounting as PurchaseInvoiceAccounting | undefined;
+    return {
+      invoice: row ? mapPIFromApiRow(row) : payload,
+      accounting,
+    };
   }
 
   const all = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []);
@@ -415,7 +438,7 @@ export async function savePurchaseInvoice(invoice: PurchaseInvoice): Promise<Pur
   if (idx >= 0) all[idx] = payload;
   else all.push(payload);
   lsSet(STORAGE_KEY, all);
-  return payload;
+  return { invoice: payload };
 }
 
 export async function deletePurchaseInvoice(id: string): Promise<void> {

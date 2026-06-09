@@ -28,6 +28,8 @@ export const getProductSearchTier = (product: Product, rawTerm: string): Product
   if (skuCompact === termCompact) return 'exact';
   if (skuCompact.startsWith(termCompact)) return 'skuPrefix';
   if (name.includes(term)) return 'name';
+  const barcode = String(product.barcode || '').toLowerCase();
+  if (barcode && barcode.includes(term)) return 'name';
 
   return null;
 };

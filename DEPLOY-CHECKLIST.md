@@ -29,6 +29,16 @@ Fill in your site values once (section 0), then follow the steps in order.
 
 ---
 
+## 0b. Remote customer laptops (GitHub auto-update)
+
+For PCs **not on your LAN** (e.g. a customer test laptop): install once, then publish new versions via GitHub Releases. The app checks for updates on startup and prompts the user to download/install.
+
+**Full steps:** [RELEASE.md](./RELEASE.md) — bump `package.json` version → `git tag vX.Y.Z` → push tag → verify on test laptop.
+
+Hot Update (§4 below) is for LAN only; **GitHub auto-update** is for internet-connected customers.
+
+---
+
 ## 1. When do you need a full rebuild?
 
 | You changed | Server | Clients |

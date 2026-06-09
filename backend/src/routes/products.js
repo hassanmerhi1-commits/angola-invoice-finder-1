@@ -886,10 +886,15 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
   const mainBranchIds = await loadMainBranchIds();
   let rows;
   if (consolidated) {
+    const branchesResult = await db.query('SELECT id FROM branches ORDER BY name');
+    for (const b of branchesResult.rows || []) {
+      await ensureFilialForInventoryGrid(String(b.id).trim());
+    }
     rows = await listInventoryConsolidatedByBranches();
   } else {
     const branchKey = String(branchId || '').trim();
     if (!branchKey) return [];
+    await ensureFilialForInventoryGrid(branchKey);
     try {
       rows = await listProductsForBranchInventoryGrid(branchKey);
       const fastRows = await listProductsForBranchFast(branchKey);
@@ -1069,7 +1074,6 @@ module.exports = function(broadcastTable) {
       if (!branchId) {
         return res.status(400).json({ error: 'branchId is required' });
       }
-      await ensureFilialForInventoryGrid(branchId);
       const repair = await ensureFilialProductsForWarehouse(branchId);
       const rows = await listProductsForBranchInventoryGrid(branchId);
       const mainBranchIds = await loadMainBranchIds();

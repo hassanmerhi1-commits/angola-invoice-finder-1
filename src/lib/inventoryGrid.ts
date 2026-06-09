@@ -8,7 +8,7 @@ import {
 } from '@/lib/productDedupe';
 import { writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
-const CACHE_PREFIX = 'nexor:inventory-grid:v11:';
+const CACHE_PREFIX = 'nexor:inventory-grid:v12:';
 
 /** Normalize stock from API row (movement ledger or products.stock). */
 export function readProductStock(row: Record<string, unknown> | Product): number {

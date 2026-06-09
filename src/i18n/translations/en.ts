@@ -660,6 +660,11 @@ export const en = {
     otherCostsDescLabel: "Description",
     otherCostsDescPlaceholder: "Unloading, insurance...",
     landingCostsHint: "Allocated across {count} product(s) (~{perUnit} per unit on average)",
+    freightPaymentSource: "Freight paid from",
+    choosePaymentAccount: "Choose payment account",
+    accountSearchPlaceholder: "Search by code or name...",
+    colAccountCode: "Account",
+    colAccountName: "Name",
     summaryItems: "Items",
     summaryUnits: "Units",
     summaryProductsValue: "Product value",
@@ -3723,6 +3728,18 @@ export const en = {
 
     // Save results
     purchaseInvoiceSavedTitle: "Purchase invoice saved",
+    purchaseSavedPartialSync:
+      "Invoice saved but stock or supplier payable may be missing. Open Inventory and Payments and press refresh, or contact support to repost.",
+    repostStockPayable: "Repost stock & payable",
+    repostStockPayableDoneTitle: "Stock and payable updated",
+    repostStockPayableDoneDesc: "Invoice {no} — stock and supplier payable were reposted.",
+    repostAlreadySyncedTitle: "Already synced",
+    repostAlreadySyncedDesc: "Invoice {no} already has stock and payable entries.",
+    purchaseInvoiceUpdatedTitle: "Purchase invoice updated",
+    markAsPaid: "Mark as paid",
+    markedPaidTitle: "Marked as paid",
+    markedPaidDesc: "Invoice {no} is no longer pending payment.",
+    selectInvoiceToEdit: "Select a purchase invoice from the list first.",
     notSyncedWithStockSupplier: "The purchase was not correctly synced with stock and supplier.",
     savePurchaseInvoiceErrorTitle: "Failed to save purchase invoice",
 
@@ -3995,6 +4012,10 @@ export const en = {
     selectSourceBranch: "Select source branch",
     selectDestinationBranch: "Select destination branch",
     selectProduct: "Select a product",
+    searchProductPlaceholder: "Search by code or name…",
+    noSearchResults: "No products match your search",
+    selectSourceFirst: "Select a source branch first",
+    stockAvailable: "Stock: {stock}",
     notesPlaceholder: "Additional notes about the transfer...",
     createTransfer: "Create transfer",
 

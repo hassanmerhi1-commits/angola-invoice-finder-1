@@ -44,6 +44,9 @@ export interface ApplyStockAdjustParams {
   updateProductCost?: (productId: string) => Promise<void>;
   fallbackUpdateProduct?: (product: Product) => Promise<void>;
   productsById?: Map<string, Product>;
+  landingCosts?: number;
+  freightSourceAccount?: string;
+  freightSourceName?: string;
 }
 
 export interface ApplyStockAdjustResult {
@@ -68,6 +71,9 @@ export async function applyStockAdjustmentLines(
     createdBy,
     fallbackUpdateProduct,
     productsById,
+    landingCosts,
+    freightSourceAccount,
+    freightSourceName,
   } = params;
 
   const validLines = lines.filter((l) => l.productId && l.quantity > 0);
@@ -89,6 +95,9 @@ export async function applyStockAdjustmentLines(
         quantity: l.quantity,
         unitCost: l.unitCost ?? productsById?.get(l.productId)?.cost ?? 0,
       })),
+      landingCosts: landingCosts && landingCosts > 0 ? landingCosts : undefined,
+      freightSourceAccount: freightSourceAccount?.trim() || undefined,
+      freightSourceName: freightSourceName?.trim() || undefined,
     });
 
     if (result.error) {

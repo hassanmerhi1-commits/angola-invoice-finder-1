@@ -105,13 +105,13 @@ async function ensureFilialProductsForWarehouse(warehouseId, clientOrDb = null) 
 
   const q = clientOrDb || db;
   const mainBranchIds = await loadMainBranchIds(q);
-  if (isCatalogBranchScope(wh, mainBranchIds)) {
-    return { reactivated: 0, merged: 0, reconciled: 0 };
-  }
+  const isCatalog = isCatalogBranchScope(wh, mainBranchIds);
 
   const { reconcileSkuStockAtWarehouse } = require('../transactionEngine');
   const reactivated = await reactivateFilialProductsWithMovements(wh, q);
-  const { merged } = await mergeDupProductMovementsAtWarehouse(wh, q);
+  const { merged } = isCatalog
+    ? { merged: 0 }
+    : await mergeDupProductMovementsAtWarehouse(wh, q);
   const skus = await listSkusWithLedgerAtWarehouse(q, wh);
   let reconciled = 0;
 
@@ -130,24 +130,11 @@ async function ensureFilialProductsForWarehouse(warehouseId, clientOrDb = null) 
 }
 
 async function ensureFilialProductsFromAllMovements() {
-  const mainBranchIds = await loadMainBranchIds();
-  const mainIn =
-    mainBranchIds.length > 0
-      ? mainBranchIds.map((_, i) => `$${i + 1}`).join(', ')
-      : "''";
-  const params = [...mainBranchIds];
-  const excludeMain =
-    mainBranchIds.length > 0
-      ? `AND sm.warehouse_id NOT IN (${mainIn})`
-      : '';
-
   const warehouses = await db.query(
     `SELECT DISTINCT sm.warehouse_id AS id
      FROM stock_movements sm
      WHERE sm.warehouse_id IS NOT NULL
-       AND TRIM(sm.warehouse_id) != ''
-       ${excludeMain}`,
-    params,
+       AND TRIM(sm.warehouse_id) != ''`,
   );
 
   let reactivated = 0;

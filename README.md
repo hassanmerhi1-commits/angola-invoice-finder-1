@@ -45,6 +45,7 @@ Outputs: `release/NEXOR-ERP-<version>-x64.exe` (NSIS) + `release/NEXOR-ERP-Porta
 
 - [`SYNC-ARCHITECTURE-GAP.md`](./SYNC-ARCHITECTURE-GAP.md) — **Phase B sync spec** vs current code + phased build plan
 - [`DEPLOYMENT.md`](./DEPLOYMENT.md) — **One database per site**, releases, backups (Phase A)
+- [`RELEASE.md`](./RELEASE.md) — **GitHub auto-updates** (publish tag → customer laptops update over internet)
 - [`DESKTOP-APP.md`](./DESKTOP-APP.md) — Desktop packaging
 - [`DOCKER-SETUP.md`](./DOCKER-SETUP.md) — Database setup
 - [`backend/README.md`](./backend/README.md) — Backend server
