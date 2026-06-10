@@ -39,7 +39,6 @@ import {
   FileSpreadsheet,
   ChevronLeft,
   ChevronRight,
-  AlertCircle,
   Download,
   Upload,
   ArrowRightLeft,
@@ -1063,17 +1062,6 @@ export default function Inventory() {
           </AlertDescription>
         </Alert>
       )}
-      {/* Filial Notice */}
-      {isFilial && (
-        <Alert className="mx-3 mt-3 rounded-xl bg-warning/10 border-warning/20">
-          <AlertCircle className="h-4 w-4 text-warning" />
-          <AlertDescription className="text-foreground">
-            <strong>{t.inventoryPageUi.branchModeTitle}</strong>{' '}
-            {t.inventoryPageUi.branchModeDesc.replace('{branch}', formatBranchDisplayName(currentBranch))}
-          </AlertDescription>
-        </Alert>
-      )}
-      
       {/* Toolbar */}
       <div className="flex items-center gap-1.5 px-3 py-2 bg-card/50 border-b backdrop-blur-sm">
         {canSwitchBranch && (
@@ -1425,7 +1413,7 @@ export default function Inventory() {
                   <div><strong>{t.inventoryPageUi.productInfo.name}</strong> {selectedProduct.name}</div>
                   <div><strong>{t.inventoryPageUi.productInfo.category}</strong> {selectedProduct.category}</div>
                   <div><strong>{t.inventoryPageUi.productInfo.price}</strong> {selectedProduct.price.toLocaleString(uiLocale)} Kz</div>
-                  <div><strong>{t.inventoryPageUi.productInfo.cost}</strong> {selectedProduct.cost.toLocaleString(uiLocale)} Kz</div>
+                  <div><strong>{t.inventoryPageUi.productInfo.cost}</strong> {(selectedProduct.avgCost || selectedProduct.lastCost || selectedProduct.cost || 0).toLocaleString(uiLocale)} Kz</div>
                   <div><strong>{t.inventoryPageUi.productInfo.stock}</strong> {selectedProduct.stock} {selectedProduct.unit}</div>
                   <div><strong>{t.inventoryPageUi.productInfo.vat}</strong> {selectedProduct.taxRate}%</div>
                 </div>

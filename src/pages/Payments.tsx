@@ -493,7 +493,7 @@ export default function Payments() {
                     </thead>
                     <tbody className="divide-y">
                       {entityPayableItems.map(oi => (
-                        <tr key={oi.id} className={cn("cursor-pointer hover:bg-accent/50", selectedOpenItems.has(oi.id) && "bg-primary/10")}>
+                        <tr key={oi.id} className={cn("cursor-pointer hover:bg-accent/50", selectedOpenItems.has(oi.id) && "nexor-row-selected")}>
                           <td className="px-2 py-1.5">
                             <Checkbox
                               checked={selectedOpenItems.has(oi.id)}

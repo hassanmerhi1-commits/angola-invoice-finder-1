@@ -176,10 +176,21 @@ export function generateReceiptText(
 }
 
 // Generate ESC/POS commands for thermal printer
+export const POS_RECEIPT_COPY_LABELS = ['ORIGINAL', 'CLIENTE'] as const;
+
+export type PrintReceiptOptions = {
+  openDrawer?: boolean;
+  copies?: number;
+  copyLabels?: string[];
+  /** Skip preview and print immediately (POS auto-print). */
+  direct?: boolean;
+};
+
 export function generateESCPOSReceipt(
   sale: Sale,
   branch: Branch,
-  config: PrinterConfig = DEFAULT_PRINTER_CONFIG
+  config: PrinterConfig = DEFAULT_PRINTER_CONFIG,
+  copyLabel?: string,
 ): Uint8Array {
   const company = getCompanySettings();
   const encoder = new TextEncoder();
@@ -199,6 +210,15 @@ export function generateESCPOSReceipt(
   // Initialize
   addCommand(ESC_POS.INIT);
   addCommand(ESC_POS.ALIGN_CENTER);
+
+  if (copyLabel) {
+    addCommand(ESC_POS.BOLD_ON);
+    addCommand(ESC_POS.DOUBLE_WIDTH_ON);
+    addText(`*** ${copyLabel.toUpperCase()} ***\n`);
+    addCommand(ESC_POS.NORMAL_SIZE);
+    addCommand(ESC_POS.BOLD_OFF);
+    addText('\n');
+  }
   
   // Header - Bold and larger with branch info
   addCommand(ESC_POS.BOLD_ON);
@@ -315,7 +335,9 @@ export async function printViaSerial(data: Uint8Array): Promise<boolean> {
 export async function printViaBrowser(
   sale: Sale,
   branch: Branch,
-  paperWidth: 58 | 80 = 80
+  paperWidth: 58 | 80 = 80,
+  copyLabel?: string,
+  options: { direct?: boolean } = {},
 ): Promise<void> {
   // Pre-generate QR code as data URL to avoid CDN delays
   const { generateAGTQRCodeDataURL } = await import('./agtQRCode');
@@ -391,6 +413,7 @@ export async function printViaBrowser(
   </style>
 </head>
 <body>
+  ${copyLabel ? `<div class="center bold large" style="margin-bottom:6px;">*** ${copyLabel.toUpperCase()} ***</div>` : ''}
   ${company.logo ? `<div class="center" style="margin-bottom: 5px;"><img src="${company.logo}" alt="Logo" style="max-height: 40px; max-width: ${paperWidth === 80 ? '60' : '40'}mm; object-fit: contain;"></div>` : ''}
   <div class="center bold large">${company.tradeName || company.name || branch.name.toUpperCase()}</div>
   <div class="center small">${branch.address || ''}</div>
@@ -479,7 +502,31 @@ export async function printViaBrowser(
   `;
   
   const { printHtml } = await import('./printHtml');
-  await printHtml(html);
+  await printHtml(html, { direct: options.direct });
+}
+
+function normalizePrintReceiptOptions(
+  openDrawerOrOptions: boolean | PrintReceiptOptions = false,
+): PrintReceiptOptions {
+  if (typeof openDrawerOrOptions === 'boolean') {
+    return { openDrawer: openDrawerOrOptions };
+  }
+  return openDrawerOrOptions;
+}
+
+/** POS auto-print: always thermal, 2 copies (original + customer). */
+export async function printPosThermalReceipts(
+  sale: Sale,
+  branch: Branch,
+  options: { openDrawer?: boolean } = {},
+): Promise<{ success: boolean; method: string }> {
+  const config = getPrinterConfig();
+  return printReceipt(sale, branch, config, {
+    openDrawer: options.openDrawer ?? false,
+    copies: POS_RECEIPT_COPY_LABELS.length,
+    copyLabels: [...POS_RECEIPT_COPY_LABELS],
+    direct: true,
+  });
 }
 
 // Main print function - tries thermal first, falls back to browser
@@ -487,34 +534,47 @@ export async function printReceipt(
   sale: Sale,
   branch: Branch,
   config: PrinterConfig = DEFAULT_PRINTER_CONFIG,
-  openDrawer: boolean = false
+  openDrawerOrOptions: boolean | PrintReceiptOptions = false,
 ): Promise<{ success: boolean; method: string }> {
-  // Try Web Serial API for USB thermal printers (Electron/Chrome)
-  if (config.type === 'usb' && 'serial' in navigator) {
-    try {
-      let data = generateESCPOSReceipt(sale, branch, config);
-      
-      if (openDrawer) {
-        const encoder = new TextEncoder();
-        const drawerCmd = encoder.encode(ESC_POS.OPEN_DRAWER);
-        const combined = new Uint8Array(data.length + drawerCmd.length);
-        combined.set(drawerCmd);
-        combined.set(data, drawerCmd.length);
-        data = combined;
+  const options = normalizePrintReceiptOptions(openDrawerOrOptions);
+  const copies = Math.max(1, options.copies ?? 1);
+  const copyLabels = options.copyLabels ?? [];
+  let lastMethod = 'browser';
+
+  for (let copyIndex = 0; copyIndex < copies; copyIndex++) {
+    const copyLabel = copyLabels[copyIndex];
+    const openDrawer = options.openDrawer === true && copyIndex === 0;
+
+    if (config.type === 'usb' && 'serial' in navigator) {
+      try {
+        let data = generateESCPOSReceipt(sale, branch, config, copyLabel);
+
+        if (openDrawer) {
+          const encoder = new TextEncoder();
+          const drawerCmd = encoder.encode(ESC_POS.OPEN_DRAWER);
+          const combined = new Uint8Array(data.length + drawerCmd.length);
+          combined.set(drawerCmd);
+          combined.set(data, drawerCmd.length);
+          data = combined;
+        }
+
+        const success = await printViaSerial(data);
+        if (success) {
+          lastMethod = 'serial';
+          continue;
+        }
+      } catch (error) {
+        console.warn('Serial printing failed, falling back to browser:', error);
       }
-      
-      const success = await printViaSerial(data);
-      if (success) {
-        return { success: true, method: 'serial' };
-      }
-    } catch (error) {
-      console.warn('Serial printing failed, falling back to browser:', error);
     }
+
+    await printViaBrowser(sale, branch, config.paperWidth, copyLabel, {
+      direct: options.direct ?? false,
+    });
+    lastMethod = 'browser';
   }
-  
-  // Fallback to browser printing
-  printViaBrowser(sale, branch, config.paperWidth);
-  return { success: true, method: 'browser' };
+
+  return { success: true, method: lastMethod };
 }
 
 // Open cash drawer only

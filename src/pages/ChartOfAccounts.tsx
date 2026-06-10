@@ -488,7 +488,7 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
       <tr
         className={cn(
           "cursor-pointer transition-colors hover:bg-accent/50",
-          isSelected && "bg-primary/15 hover:bg-primary/20",
+          isSelected && "nexor-row-selected",
           account.is_header && "bg-muted/40 font-semibold"
         )}
         onClick={() => onSelect(account.id)}

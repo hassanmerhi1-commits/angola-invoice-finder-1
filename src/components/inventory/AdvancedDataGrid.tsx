@@ -393,7 +393,7 @@ export function AdvancedDataGrid({
                 onContextMenu={() => onSelectProduct(product)}
                 className={cn(
                   "cursor-pointer hover:bg-accent/50 transition-colors",
-                  selectedProductId === product.id && "bg-primary [&_td]:text-primary-foreground hover:bg-primary/90",
+                  selectedProductId === product.id && "nexor-row-selected",
                   idx % 2 === 1 && selectedProductId !== product.id && "bg-muted/30"
                 )}
                 style={{ height: ROW_HEIGHT }}

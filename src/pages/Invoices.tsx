@@ -542,7 +542,7 @@ export default function Invoices() {
                     data-nexor-context="document-row"
                     data-nexor-id={doc.id}
                     className={cn("cursor-pointer hover:bg-accent/50 transition-colors",
-                      selectedDocId === doc.id && "bg-primary/15")}
+                      selectedDocId === doc.id && "nexor-row-selected")}
                     onClick={() => setSelectedDocId(doc.id)}
                     onDoubleClick={() => openEditDocument(doc)}
                     onContextMenu={() => setSelectedDocId(doc.id)}

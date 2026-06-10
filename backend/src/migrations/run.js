@@ -114,6 +114,7 @@ const MIGRATIONS = [
   '028_client_ingest_log.sql',
   '029_hq_ingest_log.sql',
   '030_caixa_sync.sql',
+  '031_purchase_invoice_freight.sql',
 ];
 
 /**

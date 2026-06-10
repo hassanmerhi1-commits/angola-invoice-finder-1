@@ -708,7 +708,7 @@ export default function Journals() {
                 return (
                   <tr key={entry.id}
                     className={cn("cursor-pointer hover:bg-accent/50 transition-colors",
-                      selectedEntryId === entry.id && "bg-primary/15")}
+                      selectedEntryId === entry.id && "nexor-row-selected")}
                     onClick={() => setSelectedEntryId(entry.id)}
                     onDoubleClick={() => { setSelectedEntryId(entry.id); setViewEntryOpen(true); }}>
                     <td className="px-3 py-1.5 text-muted-foreground">

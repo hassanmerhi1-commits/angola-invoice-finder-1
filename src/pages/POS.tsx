@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useCart, useSales, useAuth } from '@/hooks/useERP';
+import { printPosThermalReceipts } from '@/lib/thermalPrinter';
 import { usePosProducts } from '@/hooks/usePosProducts';
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
 import { useKeyboardShortcuts, KeyboardShortcut } from '@/hooks/useKeyboardShortcuts';
@@ -14,7 +15,8 @@ import { Cart } from '@/components/pos/Cart';
 import { CheckoutDialog } from '@/components/pos/CheckoutDialog';
 import { ReceiptDialog } from '@/components/pos/ReceiptDialog';
 import { BranchSelector } from '@/components/BranchSelector';
-import { Search, ScanBarcode, Keyboard, ShoppingCart } from 'lucide-react';
+import { Search, ScanBarcode, Keyboard, ShoppingCart, FileText } from 'lucide-react';
+import { PosEndOfDayReportDialog } from '@/components/pos/PosEndOfDayReportDialog';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 import { readNexorPosNewSaleFlag, NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
@@ -27,13 +29,14 @@ export default function POS() {
   const { user } = useAuth();
   const { t } = useTranslation();
   const cart = useCart();
-  const { completeSale } = useSales(currentBranch?.id);
+  const { completeSale, sales, refreshSales } = useSales(currentBranch?.id);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
+  const [endOfDayOpen, setEndOfDayOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Handle barcode scan
@@ -212,8 +215,20 @@ export default function POS() {
       setCheckoutOpen(false);
       setReceiptOpen(true);
       await refreshProducts();
+      void refreshSales();
 
-      // Show feedback for cash payments
+      try {
+        const printResult = await printPosThermalReceipts(sale, currentBranch, {
+          openDrawer: paymentMethod === 'cash',
+        });
+        if (printResult.success) {
+          toast.success(t.receiptUi.autoPrintSuccess);
+        }
+      } catch (printError) {
+        console.warn('[POS] Auto thermal print failed:', printError);
+        toast.error(t.receiptUi.autoPrintError);
+      }
+
       if (paymentMethod === 'cash') {
         toast.info(t.posUi.saleCompleted, {
           description: t.posUi.cashPaymentRecorded,
@@ -265,6 +280,16 @@ export default function POS() {
               <ScanBarcode className="w-4 h-4" />
               {lastScannedBarcode ? lastScannedBarcode : t.posUi.scannerReady}
             </Badge>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 text-xs gap-1.5 shrink-0"
+              onClick={() => setEndOfDayOpen(true)}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              {t.posUi.endOfDayButton}
+            </Button>
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant="outline" size="icon" className="shrink-0">
@@ -334,6 +359,14 @@ export default function POS() {
         sale={lastSale}
         branch={currentBranch}
         onNewSale={handleNewSale}
+      />
+
+      <PosEndOfDayReportDialog
+        open={endOfDayOpen}
+        onOpenChange={setEndOfDayOpen}
+        sales={sales}
+        cashier={user}
+        branch={currentBranch}
       />
     </div>
   );

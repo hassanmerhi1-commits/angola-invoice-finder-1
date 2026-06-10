@@ -319,7 +319,7 @@ export default function Suppliers() {
             <FileSpreadsheet className="w-4 h-4 mr-2" />
             {t.common.export}
           </Button>
-          <Button className="rounded-xl gradient-primary shadow-glow" onClick={() => handleOpenDialog()}>
+          <Button className="rounded-xl" onClick={() => handleOpenDialog()}>
             <Plus className="w-4 h-4 mr-2" />
             {t.suppliersUi.newSupplierCta}
           </Button>
@@ -328,43 +328,43 @@ export default function Suppliers() {
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-3">
-        <Card className="overflow-hidden">
+        <Card className="nexor-stat-card overflow-hidden">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-2xl gradient-primary shadow-md">
-                <Truck className="w-6 h-6 text-primary-foreground" />
+              <div className="p-3 rounded-xl gradient-primary">
+                <Truck className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t.suppliersUi.totalSuppliers}</p>
-                <p className="text-3xl font-extrabold tracking-tight">{suppliers.length}</p>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t.suppliersUi.totalSuppliers}</p>
+                <p className="text-3xl font-semibold tracking-tight text-slate-800">{suppliers.length}</p>
               </div>
             </div>
           </CardContent>
         </Card>
-        <Card className="overflow-hidden">
+        <Card className="nexor-stat-card overflow-hidden">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-2xl gradient-success shadow-md">
-                <Truck className="w-6 h-6 text-success-foreground" />
+              <div className="p-3 rounded-xl gradient-success">
+                <Truck className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t.common.active}</p>
-                <p className="text-3xl font-extrabold tracking-tight">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t.common.active}</p>
+                <p className="text-3xl font-semibold tracking-tight text-slate-800">
                   {suppliers.filter(s => s.isActive).length}
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
-        <Card className="overflow-hidden">
+        <Card className="nexor-stat-card overflow-hidden">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-2xl gradient-warm shadow-md">
-                <Truck className="w-6 h-6 text-warning-foreground" />
+              <div className="p-3 rounded-xl gradient-warm">
+                <Truck className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t.common.inactive}</p>
-                <p className="text-3xl font-extrabold tracking-tight">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t.common.inactive}</p>
+                <p className="text-3xl font-semibold tracking-tight text-slate-800">
                   {suppliers.filter(s => !s.isActive).length}
                 </p>
               </div>

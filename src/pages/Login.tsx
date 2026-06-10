@@ -143,25 +143,25 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex">
-      <div className="hidden lg:flex flex-1 gradient-primary items-center justify-center p-12 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-10">
-          <div className="absolute top-20 left-20 w-72 h-72 rounded-full bg-white/20 blur-3xl" />
-          <div className="absolute bottom-20 right-20 w-96 h-96 rounded-full bg-white/10 blur-3xl" />
+      <div className="hidden lg:flex flex-1 nexor-auth-hero items-center justify-center p-12 relative overflow-hidden border-r border-slate-200/80">
+        <div className="absolute inset-0 opacity-60">
+          <div className="absolute top-20 left-20 w-72 h-72 rounded-full bg-sky-100/60 blur-3xl" />
+          <div className="absolute bottom-20 right-20 w-96 h-96 rounded-full bg-indigo-100/40 blur-3xl" />
         </div>
 
-        <div className="relative z-10 text-center text-white max-w-md">
-          <div className="mx-auto w-24 h-24 rounded-3xl bg-white/10 backdrop-blur-sm flex items-center justify-center mb-8 shadow-xl overflow-hidden">
+        <div className="relative z-10 text-center max-w-md">
+          <div className="mx-auto w-24 h-24 rounded-3xl bg-white border border-slate-200/80 flex items-center justify-center mb-8 shadow-sm overflow-hidden">
             <img src={logoSrc} alt={companyName} className="w-16 h-16 object-contain" />
           </div>
-          <h1 className="text-4xl font-extrabold mb-3 tracking-tight">{companyName}</h1>
-          <p className="text-lg text-white/70 font-medium">{t.auth.tagline}</p>
-          <div className="mt-12 flex items-center justify-center gap-6 text-white/50 text-sm">
+          <h1 className="text-4xl font-semibold mb-3 tracking-tight text-slate-800">{companyName}</h1>
+          <p className="text-lg text-slate-500 font-medium">{t.auth.tagline}</p>
+          <div className="mt-12 flex items-center justify-center gap-6 text-slate-400 text-sm">
             <div className="flex items-center gap-2">
               <Shield className="w-4 h-4" /> {t.auth.safe}
             </div>
-            <div className="w-1 h-1 rounded-full bg-white/30" />
+            <div className="w-1 h-1 rounded-full bg-slate-300" />
             <div>{t.auth.multiBranch}</div>
-            <div className="w-1 h-1 rounded-full bg-white/30" />
+            <div className="w-1 h-1 rounded-full bg-slate-300" />
             <div>AGT Compliance</div>
           </div>
         </div>
@@ -170,10 +170,10 @@ export default function Login() {
       <div className="flex-1 flex items-center justify-center p-6 bg-background">
         <div className="w-full max-w-sm space-y-8">
           <div className="lg:hidden text-center">
-            <div className="mx-auto w-16 h-16 rounded-2xl gradient-primary flex items-center justify-center mb-4 shadow-glow overflow-hidden">
+            <div className="mx-auto w-16 h-16 rounded-2xl bg-white border border-slate-200/80 flex items-center justify-center mb-4 shadow-sm overflow-hidden">
               <img src={logoSrc} alt={companyName} className="w-10 h-10 object-contain" />
             </div>
-            <h1 className="text-2xl font-extrabold text-gradient">{companyName}</h1>
+            <h1 className="text-2xl font-semibold text-slate-800">{companyName}</h1>
           </div>
 
           <div>
@@ -238,9 +238,9 @@ export default function Login() {
               {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
             </div>
 
-            <Button type="submit" className="w-full h-11 rounded-xl text-sm font-bold gradient-primary shadow-glow" disabled={isLoading}>
+            <Button type="submit" className="w-full h-11 rounded-xl text-sm font-semibold" disabled={isLoading}>
               {isLoading ? (
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <div className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
               ) : (
                 <>
                   <LogIn className="w-4 h-4 mr-2" />

@@ -230,7 +230,7 @@ export function InlineLineGrid({
                   key={line.id}
                   className={cn(
                     'h-[22px] border-b border-border/30 transition-colors duration-50 cursor-default',
-                    isSelected ? 'bg-primary/10' : 'hover:bg-accent/20',
+                    isSelected ? 'nexor-row-selected' : 'hover:bg-accent/20',
                     idx % 2 === 1 && !isSelected && 'bg-muted/10'
                   )}
                   onClick={() => setSelectedRow(idx)}

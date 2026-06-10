@@ -288,6 +288,15 @@ export const en = {
     cashPaymentRecorded: "Cash payment recorded",
     completeSaleError: "Failed to complete sale",
     shoppingCartTitle: "Shopping cart",
+    endOfDayButton: "End of day",
+    endOfDayTitle: "Cashier end-of-day report",
+    endOfDayCashier: "Cashier",
+    endOfDayDate: "Date",
+    endOfDayInvoice: "Invoice",
+    endOfDayTime: "Time",
+    endOfDaySalesCount: "Sales",
+    endOfDayNoSales: "No sales today for this cashier",
+    endOfDayPrint: "Print report",
   },
 
   checkoutUi: {
@@ -324,6 +333,8 @@ export const en = {
     newSale: "New sale",
     printerSettings: "Printer settings",
     thanksDefault: "Thank you for your preference!",
+    autoPrintSuccess: "Thermal receipt printed (original + customer copy)",
+    autoPrintError: "Auto-print failed — use Thermal button on receipt screen",
   },
 
   printerUi: {

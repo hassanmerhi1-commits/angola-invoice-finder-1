@@ -64,7 +64,7 @@ export function AppLayout() {
   }, [location.pathname, t.topNav.file.printUnavailablePage, toast]);
 
   return (
-    <div className="h-screen flex flex-col bg-background overflow-hidden">
+    <div className="h-screen flex flex-col bg-slate-50/50 overflow-hidden">
       <BranchAccessGuard />
       <div data-topnav>
         <TopNav

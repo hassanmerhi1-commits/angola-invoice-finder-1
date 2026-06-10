@@ -14,50 +14,44 @@
     --popover-foreground: 228 20% 24%;
     /** Table grid — between pure black and light gray borders */
     --table-grid-border: 220 12% 52%;
-    --primary: 245 58% 51%;
+    --primary: 214 45% 48%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 14% 94%;
-    --secondary-foreground: 228 20% 24%;
-    --muted: 220 14% 94%;
-    --muted-foreground: 220 10% 46%;
-    --accent: 245 58% 96%;
-    --accent-foreground: 245 58% 51%;
-    --destructive: 0 72% 51%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 215 25% 27%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 214 32% 96%;
+    --accent-foreground: 214 45% 38%;
+    --destructive: 0 55% 52%;
     --destructive-foreground: 0 0% 100%;
-    --border: 220 13% 90%;
-    --input: 220 13% 90%;
-    --ring: 245 58% 51%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 214 45% 48%;
     --radius: 0.75rem;
 
     /* Extended palette */
-    --success: 152 57% 46%;
-    --success-foreground: 0 0% 100%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 100%;
-    --info: 205 78% 56%;
-    --info-foreground: 0 0% 100%;
-
-    /* Gradient tokens */
-    --gradient-primary: linear-gradient(135deg, hsl(245 58% 51%), hsl(280 60% 55%));
-    --gradient-accent: linear-gradient(135deg, hsl(205 78% 56%), hsl(245 58% 51%));
-    --gradient-warm: linear-gradient(135deg, hsl(38 92% 50%), hsl(15 80% 55%));
-    --gradient-success: linear-gradient(135deg, hsl(152 57% 46%), hsl(170 60% 45%));
+    --success: 168 36% 42%;
+    --success-foreground: 168 40% 28%;
+    --warning: 38 42% 48%;
+    --warning-foreground: 32 45% 32%;
+    --info: 214 42% 48%;
+    --info-foreground: 214 45% 32%;
 
     /* Shadows */
-    --shadow-sm: 0 1px 2px 0 hsl(230 25% 15% / 0.05);
-    --shadow-md: 0 4px 6px -1px hsl(230 25% 15% / 0.07), 0 2px 4px -2px hsl(230 25% 15% / 0.05);
-    --shadow-lg: 0 10px 15px -3px hsl(230 25% 15% / 0.08), 0 4px 6px -4px hsl(230 25% 15% / 0.04);
-    --shadow-xl: 0 20px 25px -5px hsl(230 25% 15% / 0.1), 0 8px 10px -6px hsl(230 25% 15% / 0.06);
-    --shadow-glow: 0 0 20px -5px hsl(245 58% 51% / 0.25);
+    --shadow-sm: 0 1px 2px 0 hsl(215 25% 27% / 0.04);
+    --shadow-md: 0 1px 3px 0 hsl(215 25% 27% / 0.06), 0 1px 2px -1px hsl(215 25% 27% / 0.04);
+    --shadow-lg: 0 4px 6px -1px hsl(215 25% 27% / 0.07), 0 2px 4px -2px hsl(215 25% 27% / 0.04);
+    --shadow-xl: 0 10px 15px -3px hsl(215 25% 27% / 0.08), 0 4px 6px -4px hsl(215 25% 27% / 0.04);
+    --shadow-glow: 0 1px 3px 0 hsl(214 45% 48% / 0.12);
 
-    --sidebar-background: 230 25% 15%;
-    --sidebar-foreground: 220 14% 94%;
-    --sidebar-primary: 245 58% 65%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 215 25% 27%;
+    --sidebar-primary: 214 45% 48%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 230 20% 22%;
-    --sidebar-accent-foreground: 220 14% 94%;
-    --sidebar-border: 230 20% 22%;
-    --sidebar-ring: 245 58% 51%;
+    --sidebar-accent: 220 14% 96%;
+    --sidebar-accent-foreground: 215 25% 27%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 214 45% 48%;
   }
 
   .dark {
@@ -146,33 +140,53 @@
 }
 
 @layer utilities {
+  /** Light blue row highlight for grids and list tables */
+  .nexor-row-selected {
+    @apply bg-sky-100 text-foreground dark:bg-sky-950/45;
+  }
+  .nexor-row-selected:hover {
+    @apply bg-sky-200 dark:bg-sky-900/55;
+  }
+
   .glass {
     @apply bg-card/80 backdrop-blur-xl border border-border/50;
   }
+  /* Legacy names → light professional icon badges */
   .gradient-primary {
-    background: var(--gradient-primary);
+    @apply bg-sky-50 text-sky-600;
   }
   .gradient-accent {
-    background: var(--gradient-accent);
+    @apply bg-indigo-50 text-indigo-600;
   }
   .gradient-warm {
-    background: var(--gradient-warm);
+    @apply bg-amber-50 text-amber-700;
   }
   .gradient-success {
-    background: var(--gradient-success);
+    @apply bg-emerald-50 text-emerald-600;
   }
   .shadow-card {
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-sm);
   }
   .shadow-card-hover {
-    box-shadow: var(--shadow-lg);
+    box-shadow: var(--shadow-md);
   }
   .shadow-glow {
     box-shadow: var(--shadow-glow);
   }
   .text-gradient {
-    @apply bg-clip-text text-transparent;
-    background: var(--gradient-primary);
+    @apply text-slate-800;
+  }
+  .nexor-auth-hero {
+    @apply bg-gradient-to-br from-slate-50 via-sky-50/80 to-indigo-50/50 text-slate-800;
+  }
+  .nexor-page-surface {
+    @apply bg-slate-50/40 min-h-full;
+  }
+  .nexor-stat-card {
+    @apply border-slate-200/80 bg-white/90 shadow-sm;
+  }
+  .nexor-mobile-nav-active {
+    @apply bg-sky-50 text-sky-800 border border-sky-200/70 shadow-sm;
   }
 }
 

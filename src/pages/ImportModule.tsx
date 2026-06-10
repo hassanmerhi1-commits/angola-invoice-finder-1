@@ -300,7 +300,7 @@ export default function ImportModule() {
               {filteredOrders.map(order => {
                 const TransportIcon = transportIcon(order.transportMode);
                 return (
-                  <tr key={order.id} className={cn("cursor-pointer hover:bg-accent/50", selectedId === order.id && "bg-primary/15")}
+                  <tr key={order.id} className={cn("cursor-pointer hover:bg-accent/50", selectedId === order.id && "nexor-row-selected")}
                     onClick={() => setSelectedId(order.id)}>
                     <td className="px-3 py-1.5 font-mono">{order.orderNumber}</td>
                     <td className="px-3 py-1.5 font-medium">{order.supplierName}</td>

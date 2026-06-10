@@ -110,6 +110,11 @@ export interface PurchaseInvoice {
   changePrice: boolean;
   isPending: boolean;
   extraNote?: string;
+  /** Freight / landing costs allocated into product unit cost on post. */
+  freightCost?: number;
+  freightOtherCosts?: number;
+  freightSourceAccount?: string;
+  freightSourceName?: string;
   lines: PurchaseInvoiceLine[];
   journalLines: PurchaseInvoiceJournalLine[];
   subtotal: number;
@@ -697,6 +702,38 @@ export async function applySupplierBalanceUpdate(invoice: PurchaseInvoice): Prom
   }
 }
 
+/** Read freight fields from invoice header or journal lines (6.2.6 debit). */
+export function resolvePurchaseInvoiceFreight(inv: Pick<PurchaseInvoice, 'freightCost' | 'freightOtherCosts' | 'freightSourceAccount' | 'freightSourceName' | 'journalLines'>): {
+  freightCost: number;
+  freightOtherCosts: number;
+  freightSourceAccount: string;
+  freightSourceName: string;
+} {
+  const freightCost = Number(inv.freightCost || 0);
+  const freightOtherCosts = Number(inv.freightOtherCosts || 0);
+  let freightSourceAccount = String(inv.freightSourceAccount || '').trim();
+  let freightSourceName = String(inv.freightSourceName || '').trim();
+
+  if (freightCost > 0 || freightOtherCosts > 0) {
+    return { freightCost, freightOtherCosts, freightSourceAccount, freightSourceName };
+  }
+
+  const journal = Array.isArray(inv.journalLines) ? inv.journalLines : [];
+  const landingFromJournal = journal
+    .filter((line) => String(line.accountCode || '').trim() === '6.2.6')
+    .reduce((sum, line) => sum + Number(line.debit || 0), 0);
+  const freightCredit = journal.find(
+    (line) => Number(line.credit || 0) > 0 && String(line.accountCode || '').trim() !== '3.2.1',
+  );
+
+  return {
+    freightCost: Math.round(landingFromJournal * 100) / 100,
+    freightOtherCosts: 0,
+    freightSourceAccount: freightSourceAccount || String(freightCredit?.accountCode || '').trim(),
+    freightSourceName: freightSourceName || String(freightCredit?.accountName || '').trim(),
+  };
+}
+
 /** API returns camelCase; map legacy snake_case if needed. */
 function mapPIFromApiRow(row: PurchaseInvoice | Record<string, unknown>): PurchaseInvoice {
   if (row && typeof row === 'object' && 'invoiceNumber' in row && !('invoice_number' in row)) {
@@ -739,6 +776,10 @@ function mapPIFromDb(row: any): PurchaseInvoice {
     changePrice: !!row.change_price,
     isPending: !!row.is_pending,
     extraNote: row.extra_note,
+    freightCost: Number(row.freight_cost ?? row.freightCost ?? 0),
+    freightOtherCosts: Number(row.freight_other_costs ?? row.freightOtherCosts ?? 0),
+    freightSourceAccount: row.freight_source_account || row.freightSourceAccount || '',
+    freightSourceName: row.freight_source_name || row.freightSourceName || '',
     lines: Array.isArray(row.lines)
       ? row.lines
       : row.lines_json
@@ -791,6 +832,10 @@ function mapPIToDb(invoice: PurchaseInvoice): any {
     change_price: invoice.changePrice ? 1 : 0,
     is_pending: invoice.isPending ? 1 : 0,
     extra_note: invoice.extraNote || '',
+    freight_cost: Number(invoice.freightCost || 0),
+    freight_other_costs: Number(invoice.freightOtherCosts || 0),
+    freight_source_account: invoice.freightSourceAccount || '',
+    freight_source_name: invoice.freightSourceName || '',
     lines_json: JSON.stringify(invoice.lines),
     journal_lines_json: JSON.stringify(invoice.journalLines),
     subtotal: invoice.subtotal,

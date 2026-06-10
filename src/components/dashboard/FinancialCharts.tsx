@@ -70,14 +70,22 @@ function getPaymentsFromStorage() {
   } catch { return []; }
 }
 
+/** Muted, professional palette for dashboard charts */
 const CHART_COLORS = [
-  'hsl(var(--primary))',
-  'hsl(var(--destructive))',
-  'hsl(142, 76%, 36%)',
-  'hsl(38, 92%, 50%)',
-  'hsl(262, 83%, 58%)',
-  'hsl(199, 89%, 48%)',
+  'hsl(214, 42%, 58%)',
+  'hsl(168, 32%, 48%)',
+  'hsl(38, 42%, 55%)',
+  'hsl(260, 28%, 58%)',
+  'hsl(200, 35%, 52%)',
+  'hsl(350, 32%, 58%)',
 ];
+const CHART_REVENUE = 'hsl(168, 36%, 46%)';
+const CHART_EXPENSE = 'hsl(350, 32%, 58%)';
+const CHART_PRIMARY = 'hsl(214, 42%, 58%)';
+const CHART_PRIMARY_FILL = 'hsl(214, 42%, 58% / 0.15)';
+const CHART_MARGIN_GOOD = 'hsl(168, 36%, 46%)';
+const CHART_MARGIN_OK = 'hsl(38, 42%, 52%)';
+const CHART_MARGIN_LOW = 'hsl(350, 32%, 55%)';
 
 function useChartsI18n() {
   const { t, language } = useTranslation();
@@ -117,9 +125,9 @@ export function RevenueExpensesChart() {
   const hasData = data.some((row) => row.receita > 0 || row.despesa > 0);
 
   return (
-    <Card>
+    <Card className="nexor-stat-card">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">{c.revenueVsExpenses.replace('{year}', String(year))}</CardTitle>
+        <CardTitle className="text-sm font-medium text-slate-700">{c.revenueVsExpenses.replace('{year}', String(year))}</CardTitle>
       </CardHeader>
       <CardContent>
         {hasData ? (
@@ -133,8 +141,8 @@ export function RevenueExpensesChart() {
                 contentStyle={{ borderRadius: 8, fontSize: 12 }}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="receita" name={c.revenue} fill="hsl(142, 76%, 36%)" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="despesa" name={c.expenses} fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="receita" name={c.revenue} fill={CHART_REVENUE} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="despesa" name={c.expenses} fill={CHART_EXPENSE} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         ) : (
@@ -178,9 +186,9 @@ export function CashFlowChart() {
   const hasData = data.some((row) => row.entrada > 0 || row.saida > 0);
 
   return (
-    <Card>
+    <Card className="nexor-stat-card">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">{c.cashFlowAccumulated}</CardTitle>
+        <CardTitle className="text-sm font-medium text-slate-700">{c.cashFlowAccumulated}</CardTitle>
       </CardHeader>
       <CardContent>
         {hasData ? (
@@ -193,7 +201,7 @@ export function CashFlowChart() {
                 formatter={(value: number) => fmtMoney(value)}
                 contentStyle={{ borderRadius: 8, fontSize: 12 }}
               />
-              <Area type="monotone" dataKey="saldo" name={c.balance} fill="hsl(var(--primary) / 0.2)" stroke="hsl(var(--primary))" strokeWidth={2} />
+              <Area type="monotone" dataKey="saldo" name={c.balance} fill={CHART_PRIMARY_FILL} stroke={CHART_PRIMARY} strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
         ) : (
@@ -233,9 +241,9 @@ export function TopProductsChart() {
   }, [sales]);
 
   return (
-    <Card>
+    <Card className="nexor-stat-card">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">{c.topProductsByRevenue}</CardTitle>
+        <CardTitle className="text-sm font-medium text-slate-700">{c.topProductsByRevenue}</CardTitle>
       </CardHeader>
       <CardContent>
         {data.length > 0 ? (
@@ -248,7 +256,7 @@ export function TopProductsChart() {
                 formatter={(value: number) => fmtMoney(value)}
                 contentStyle={{ borderRadius: 8, fontSize: 12 }}
               />
-              <Bar dataKey="revenue" name={c.revenue} fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="revenue" name={c.revenue} fill={CHART_PRIMARY} radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
         ) : (
@@ -297,12 +305,12 @@ export function ARAgingChart() {
   }, [language, sales, c.agingCurrent, c.aging1_30, c.aging31_60, c.aging61_90, c.aging90plus]);
 
   const hasData = data.some((row) => row.value > 0);
-  const colors = ['hsl(142, 76%, 36%)', 'hsl(199, 89%, 48%)', 'hsl(38, 92%, 50%)', 'hsl(25, 95%, 53%)', 'hsl(var(--destructive))'];
+  const colors = CHART_COLORS;
 
   return (
-    <Card>
+    <Card className="nexor-stat-card">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">{c.arAging}</CardTitle>
+        <CardTitle className="text-sm font-medium text-slate-700">{c.arAging}</CardTitle>
       </CardHeader>
       <CardContent>
         {hasData ? (
@@ -371,9 +379,9 @@ export function DailySalesChart() {
   const hasData = data.some(d => d.total > 0);
 
   return (
-    <Card>
+    <Card className="nexor-stat-card">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">{c.dailySales14}</CardTitle>
+        <CardTitle className="text-sm font-medium text-slate-700">{c.dailySales14}</CardTitle>
       </CardHeader>
       <CardContent>
         {hasData ? (
@@ -389,7 +397,7 @@ export function DailySalesChart() {
                 ]}
                 contentStyle={{ borderRadius: 8, fontSize: 12 }}
               />
-              <Line type="monotone" dataKey="total" name={c.sales} stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+              <Line type="monotone" dataKey="total" name={c.sales} stroke={CHART_PRIMARY} strokeWidth={2} dot={{ r: 3, fill: CHART_PRIMARY }} activeDot={{ r: 5 }} />
             </LineChart>
           </ResponsiveContainer>
         ) : (
@@ -435,12 +443,12 @@ export function ProfitMarginWidget() {
     return { totalRevenue, totalCost, grossProfit, margin };
   }, [sales, products]);
 
-  const marginColor = data.margin >= 30 ? 'hsl(142, 76%, 36%)' : data.margin >= 15 ? 'hsl(38, 92%, 50%)' : 'hsl(var(--destructive))';
+  const marginColor = data.margin >= 30 ? CHART_MARGIN_GOOD : data.margin >= 15 ? CHART_MARGIN_OK : CHART_MARGIN_LOW;
 
   return (
-    <Card>
+    <Card className="nexor-stat-card">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">{c.grossProfitMargin}</CardTitle>
+        <CardTitle className="text-sm font-medium text-slate-700">{c.grossProfitMargin}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="flex items-center gap-6">
@@ -500,12 +508,12 @@ export function PaymentMethodChart() {
     return Object.values(methods).filter(m => m.value > 0);
   }, [language, sales, c.methodCash, c.methodCard, c.methodTransfer, c.methodMixed]);
 
-  const colors = ['hsl(142, 76%, 36%)', 'hsl(var(--primary))', 'hsl(38, 92%, 50%)', 'hsl(262, 83%, 58%)'];
+  const colors = CHART_COLORS;
 
   return (
-    <Card>
+    <Card className="nexor-stat-card">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">{c.paymentMethods}</CardTitle>
+        <CardTitle className="text-sm font-medium text-slate-700">{c.paymentMethods}</CardTitle>
       </CardHeader>
       <CardContent>
         {data.length > 0 ? (
@@ -573,24 +581,24 @@ export function StockValuationWidget() {
   }, [products]);
 
   return (
-    <Card>
+    <Card className="nexor-stat-card">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">{c.stockValuation}</CardTitle>
+        <CardTitle className="text-sm font-medium text-slate-700">{c.stockValuation}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
-          <div className="p-3 rounded-lg bg-accent/50">
-            <p className="text-[10px] text-muted-foreground uppercase font-medium">{c.costValue}</p>
-            <p className="text-lg font-bold">{fmtMoney(data.totalCostValue)}</p>
+          <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/60">
+            <p className="text-[10px] text-slate-500 uppercase font-medium">{c.costValue}</p>
+            <p className="text-lg font-semibold text-slate-800">{fmtMoney(data.totalCostValue)}</p>
           </div>
-          <div className="p-3 rounded-lg bg-accent/50">
-            <p className="text-[10px] text-muted-foreground uppercase font-medium">{c.saleValue}</p>
-            <p className="text-lg font-bold">{fmtMoney(data.totalSaleValue)}</p>
+          <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/60">
+            <p className="text-[10px] text-slate-500 uppercase font-medium">{c.saleValue}</p>
+            <p className="text-lg font-semibold text-slate-800">{fmtMoney(data.totalSaleValue)}</p>
           </div>
         </div>
         <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">{c.potentialProfit}</span>
-          <span className="font-bold text-green-600">{fmtMoney(data.potentialProfit)} ({data.profitPercent.toFixed(1)}%)</span>
+          <span className="text-slate-500">{c.potentialProfit}</span>
+          <span className="font-semibold text-emerald-700">{fmtMoney(data.potentialProfit)} ({data.profitPercent.toFixed(1)}%)</span>
         </div>
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>{c.activeProducts.replace('{count}', String(data.activeProducts))}</span>

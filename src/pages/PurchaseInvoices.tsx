@@ -23,6 +23,7 @@ import {
   resolveSellingPriceFromPurchaseLine,
   allocatePurchaseInvoiceNumber,
   peekPurchaseInvoiceNumber,
+  resolvePurchaseInvoiceFreight,
 } from '@/lib/purchaseInvoiceStorage';
 import {
   PRODUCTS_CHANGED_EVENT,
@@ -1603,8 +1604,13 @@ export default function PurchaseInvoices() {
     });
     setLines(full.lines || []);
     setJournalLines(full.journalLines || []);
-    setFreightCost(0);
-    setFreightOtherCosts(0);
+    {
+      const freight = resolvePurchaseInvoiceFreight(full);
+      setFreightCost(freight.freightCost);
+      setFreightOtherCosts(freight.freightOtherCosts);
+      if (freight.freightSourceAccount) setFreightSourceAccount(freight.freightSourceAccount);
+      if (freight.freightSourceName) setFreightSourceName(freight.freightSourceName);
+    }
     setFillFromPoId('');
     setActiveTab('fatura');
     setSaveError(null);
@@ -2416,6 +2422,10 @@ export default function PurchaseInvoices() {
         changePrice: form.changePrice || false,
         isPending: form.isPending || false,
         extraNote: form.extraNote,
+        freightCost,
+        freightOtherCosts,
+        freightSourceAccount,
+        freightSourceName,
         lines,
         journalLines: [],
         subtotal: totals.subtotal,
@@ -2513,6 +2523,10 @@ export default function PurchaseInvoices() {
       changePrice: form.changePrice || false,
       isPending: form.isPending || false,
       extraNote: form.extraNote,
+      freightCost,
+      freightOtherCosts,
+      freightSourceAccount,
+      freightSourceName,
       lines,
       journalLines: [],
       subtotal: totals.subtotal,
@@ -2941,7 +2955,7 @@ export default function PurchaseInvoices() {
                         data-nexor-id={inv.id}
                         className={cn(
                           'cursor-pointer hover:bg-accent/50 h-8 transition-colors duration-100',
-                          selectedListInvoiceId === inv.id && 'bg-primary/10 hover:bg-primary/15',
+                          selectedListInvoiceId === inv.id && 'nexor-row-selected',
                         )}
                         onClick={() => setSelectedListInvoiceId(inv.id)}
                         onDoubleClick={() => setViewInvoice(inv)}

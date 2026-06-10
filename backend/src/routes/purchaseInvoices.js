@@ -11,13 +11,14 @@ const UPSERT_SQL = `
     warehouse_id, warehouse_name, price_type, address,
     purchase_account_code, iva_account_code, transaction_type, currency_rate,
     tax_rate_2, order_no, surcharge_percent, change_price, is_pending, extra_note,
+    freight_cost, freight_other_costs, freight_source_account, freight_source_name,
     lines_json, journal_lines_json, subtotal, iva_total, total, status,
     purchase_returns_status, purchase_returns_closed_at,
     branch_id, branch_name, created_by, created_by_name, created_at, updated_at
   ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
     $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
-    $40,$41,$42,$43,$44,$45
+    $40,$41,$42,$43,$44,$45,$46,$47,$48,$49
   )
   ON CONFLICT(id) DO UPDATE SET
     invoice_number = excluded.invoice_number,
@@ -50,6 +51,10 @@ const UPSERT_SQL = `
     change_price = excluded.change_price,
     is_pending = excluded.is_pending,
     extra_note = excluded.extra_note,
+    freight_cost = excluded.freight_cost,
+    freight_other_costs = excluded.freight_other_costs,
+    freight_source_account = excluded.freight_source_account,
+    freight_source_name = excluded.freight_source_name,
     lines_json = excluded.lines_json,
     journal_lines_json = excluded.journal_lines_json,
     subtotal = excluded.subtotal,
@@ -86,6 +91,63 @@ async function findDuplicateSupplierInvoice(supplierId, supplierInvoiceNo, exclu
   return result.rows[0] || null;
 }
 
+function roundMoney(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function resolvePurchaseInvoiceLandingCosts(inv) {
+  const explicit =
+    roundMoney(Number(inv.freightCost ?? inv.freight_cost ?? 0))
+    + roundMoney(Number(inv.freightOtherCosts ?? inv.freight_other_costs ?? 0));
+  if (explicit > 0) return explicit;
+
+  const journal = Array.isArray(inv.journalLines) ? inv.journalLines : [];
+  const fromJournal = journal
+    .filter((line) => String(line.accountCode || line.account_code || '').trim() === '6.2.6')
+    .reduce((sum, line) => sum + Number(line.debit || 0), 0);
+  return roundMoney(fromJournal);
+}
+
+/** Allocate total landing costs across invoice lines (proportional to line value). */
+function buildPurchaseInvoiceFreightAllocations(lines, totalLandingCosts) {
+  const stockLines = (lines || []).filter(
+    (l) => l.productId && Number(l.totalQty || l.quantity || 0) > 0,
+  );
+  if (stockLines.length === 0 || totalLandingCosts <= 0) {
+    return new Map();
+  }
+
+  const normalized = stockLines.map((line) => {
+    const qty = Number(line.totalQty || line.quantity || 0);
+    const unitCost = roundMoney(line.unitPrice || 0);
+    const lineTotal = roundMoney(Number(line.total || 0) > 0 ? line.total : unitCost * qty);
+    return { line, qty, unitCost, lineTotal };
+  });
+
+  const totalProducts = roundMoney(
+    normalized.reduce((sum, entry) => sum + entry.lineTotal, 0),
+  );
+  if (totalProducts <= 0) return new Map();
+
+  const allocations = new Map();
+  let allocatedFreight = 0;
+
+  normalized.forEach((entry, index) => {
+    const isLast = index === normalized.length - 1;
+    const freightShare = isLast
+      ? roundMoney(totalLandingCosts - allocatedFreight)
+      : roundMoney((entry.lineTotal / totalProducts) * totalLandingCosts);
+    allocatedFreight = roundMoney(allocatedFreight + freightShare);
+    const freightPerUnit = entry.qty > 0 ? roundMoney(freightShare / entry.qty) : 0;
+    allocations.set(
+      entry.line.productId,
+      roundMoney(entry.unitCost + freightPerUnit),
+    );
+  });
+
+  return allocations;
+}
+
 function rowParams(r) {
   return [
     r.id, r.invoice_number, r.supplier_account_code, r.supplier_name, r.supplier_id,
@@ -94,6 +156,7 @@ function rowParams(r) {
     r.warehouse_id, r.warehouse_name, r.price_type, r.address,
     r.purchase_account_code, r.iva_account_code, r.transaction_type, r.currency_rate,
     r.tax_rate_2, r.order_no, r.surcharge_percent, r.change_price, r.is_pending, r.extra_note,
+    r.freight_cost, r.freight_other_costs, r.freight_source_account, r.freight_source_name,
     r.lines_json, r.journal_lines_json, r.subtotal, r.iva_total, r.total, r.status,
     r.purchase_returns_status, r.purchase_returns_closed_at,
     r.branch_id, r.branch_name, r.created_by, r.created_by_name, r.created_at, r.updated_at,
@@ -333,22 +396,28 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   function buildPurchaseInvoiceTransactionBody(inv) {
     const lines = Array.isArray(inv.lines) ? inv.lines : [];
     const warehouseId = inv.warehouseId || inv.branchId;
+    const totalLandingCosts = resolvePurchaseInvoiceLandingCosts(inv);
+    const landedUnitCosts = buildPurchaseInvoiceFreightAllocations(lines, totalLandingCosts);
+
     const stockEntries = lines
       .filter((l) => l.productId && Number(l.totalQty || l.quantity || 0) > 0)
-      .map((l) => ({
-        productId: l.productId,
-        productName: l.description || '',
-        productSku: l.productCode || '',
-        quantity: Number(l.totalQty || l.quantity || 0),
-        unitCost: Number(l.unitPrice || 0),
-        direction: 'IN',
-        warehouseId,
-      }));
+      .map((l) => {
+        const landed = landedUnitCosts.get(l.productId) ?? roundMoney(l.unitPrice || 0);
+        return {
+          productId: l.productId,
+          productName: l.description || '',
+          productSku: l.productCode || '',
+          quantity: Number(l.totalQty || l.quantity || 0),
+          unitCost: landed,
+          direction: 'IN',
+          warehouseId,
+        };
+      });
 
     const priceUpdates = lines
       .filter((l) => l.productId && Number(l.totalQty || l.quantity || 0) > 0)
       .map((l) => {
-        const landed = Number(l.unitPrice || 0);
+        const landed = landedUnitCosts.get(l.productId) ?? roundMoney(l.unitPrice || 0);
         const selling = Number(l.price1 || 0);
         const row = {
           productId: l.productId,

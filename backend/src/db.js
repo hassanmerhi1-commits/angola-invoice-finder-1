@@ -506,6 +506,10 @@ function ensureAppTablesAndColumns() {
   tryAlterAdd('purchase_orders', 'freight_distributed INTEGER DEFAULT 0');
   tryAlterAdd('purchase_order_items', 'freight_allocation REAL DEFAULT 0');
   tryAlterAdd('purchase_order_items', 'effective_cost REAL DEFAULT 0');
+  tryAlterAdd('purchase_invoices', 'freight_cost REAL DEFAULT 0');
+  tryAlterAdd('purchase_invoices', 'freight_other_costs REAL DEFAULT 0');
+  tryAlterAdd('purchase_invoices', 'freight_source_account TEXT DEFAULT ""');
+  tryAlterAdd('purchase_invoices', 'freight_source_name TEXT DEFAULT ""');
   tryAlterAdd('suppliers', 'balance REAL NOT NULL DEFAULT 0');
   // Legacy databases can have a minimal products table; ensure import/API columns exist.
   tryAlterAdd('products', 'barcode TEXT');

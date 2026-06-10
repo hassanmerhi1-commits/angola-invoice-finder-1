@@ -9,10 +9,11 @@ import {
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Printer, Settings, Check, FileOutput } from 'lucide-react';
-import { 
-  printReceipt, 
-  getPrinterConfig, 
-  openCashDrawer 
+import {
+  printReceipt,
+  getPrinterConfig,
+  openCashDrawer,
+  POS_RECEIPT_COPY_LABELS,
 } from '@/lib/thermalPrinter';
 import { PrinterSettingsDialog } from './PrinterSettingsDialog';
 import { AGTQRCode } from '@/components/invoice/AGTQRCode';
@@ -55,7 +56,11 @@ export function ReceiptDialog({
       const config = getPrinterConfig();
       const autoOpenDrawer = localStorage.getItem('kwanza_auto_open_drawer') !== 'false';
       
-      const result = await printReceipt(sale, branch, config, autoOpenDrawer);
+      const result = await printReceipt(sale, branch, config, {
+        openDrawer: autoOpenDrawer,
+        copies: POS_RECEIPT_COPY_LABELS.length,
+        copyLabels: [...POS_RECEIPT_COPY_LABELS],
+      });
       
       if (result.success) {
         toast.success(

@@ -234,7 +234,7 @@ export default function Extracto() {
               {entitySummaries.map(s => {
                 const key = s.nif || s.name;
                 return (
-                  <tr key={key} className={cn("cursor-pointer hover:bg-accent/50", selectedEntity === key && "bg-primary/15")}
+                  <tr key={key} className={cn("cursor-pointer hover:bg-accent/50", selectedEntity === key && "nexor-row-selected")}
                     onClick={() => setSelectedEntity(key)}>
                     <td className="px-3 py-1.5 font-medium">{s.name}</td>
                     <td className="px-3 py-1.5 text-muted-foreground">{s.nif || '-'}</td>

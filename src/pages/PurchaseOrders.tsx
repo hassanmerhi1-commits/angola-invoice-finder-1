@@ -466,7 +466,7 @@ export default function PurchaseOrders() {
             <Truck className="w-4 h-4 mr-2" />
             Gerir Fornecedores
           </Button>
-          <Button className="rounded-xl gradient-primary shadow-glow" onClick={handleOpenPurchaseInvoice}>
+          <Button className="rounded-xl" onClick={handleOpenPurchaseInvoice}>
             <Plus className="w-4 h-4 mr-2" />
             Nova Fatura de Compra
           </Button>
@@ -475,54 +475,54 @@ export default function PurchaseOrders() {
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-4">
-        <Card className="overflow-hidden">
+        <Card className="nexor-stat-card overflow-hidden">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-2xl gradient-primary shadow-md">
-                <ShoppingCart className="w-6 h-6 text-primary-foreground" />
+              <div className="p-3 rounded-xl gradient-primary">
+                <ShoppingCart className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Encomendas</p>
-                <p className="text-3xl font-extrabold tracking-tight">{stats.total}</p>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Encomendas</p>
+                <p className="text-3xl font-semibold tracking-tight text-slate-800">{stats.total}</p>
               </div>
             </div>
           </CardContent>
         </Card>
-        <Card className="overflow-hidden">
+        <Card className="nexor-stat-card overflow-hidden">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-2xl gradient-warm shadow-md">
-                <Package className="w-6 h-6 text-warning-foreground" />
+              <div className="p-3 rounded-xl gradient-warm">
+                <Package className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Pendentes</p>
-                <p className="text-3xl font-extrabold tracking-tight">{stats.pending}</p>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pendentes</p>
+                <p className="text-3xl font-semibold tracking-tight text-slate-800">{stats.pending}</p>
               </div>
             </div>
           </CardContent>
         </Card>
-        <Card className="overflow-hidden">
+        <Card className="nexor-stat-card overflow-hidden">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-2xl gradient-success shadow-md">
-                <CheckCircle className="w-6 h-6 text-success-foreground" />
+              <div className="p-3 rounded-xl gradient-success">
+                <CheckCircle className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Recebidas</p>
-                <p className="text-3xl font-extrabold tracking-tight">{stats.received}</p>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Recebidas</p>
+                <p className="text-3xl font-semibold tracking-tight text-slate-800">{stats.received}</p>
               </div>
             </div>
           </CardContent>
         </Card>
-        <Card className="overflow-hidden">
+        <Card className="nexor-stat-card overflow-hidden">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-2xl gradient-accent shadow-md">
-                <ShoppingCart className="w-6 h-6 text-info-foreground" />
+              <div className="p-3 rounded-xl gradient-accent">
+                <ShoppingCart className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Valor Total</p>
-                <p className="text-2xl font-extrabold tracking-tight">{stats.totalValue.toLocaleString('pt-AO')} Kz</p>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Valor Total</p>
+                <p className="text-2xl font-semibold tracking-tight text-slate-800">{stats.totalValue.toLocaleString('pt-AO')} Kz</p>
               </div>
             </div>
           </CardContent>

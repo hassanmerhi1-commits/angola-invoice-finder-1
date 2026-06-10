@@ -632,7 +632,7 @@ export function StockExitDialog({
           '[&>button]:hidden',
         )}
       >
-        <div className="shrink-0 border-b bg-gradient-to-r from-red-500/10 via-background to-background px-4 py-3 sm:px-6">
+        <div className="shrink-0 border-b bg-gradient-to-r from-rose-50/80 via-background to-background px-4 py-3 sm:px-6">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-destructive text-white shadow-sm">
@@ -1007,7 +1007,7 @@ export function StockExitDialog({
                       className={cn(
                         'w-full cursor-pointer text-left px-2 py-1.5 text-[11px] leading-tight border-b last:border-b-0 hover:bg-muted',
                         outOfStock && 'opacity-60',
-                        idx === pickerHighlightIndex && 'bg-primary/15',
+                        idx === pickerHighlightIndex && 'nexor-row-selected',
                       )}
                       onMouseEnter={() => setPickerHighlightIndex(idx)}
                       onPointerDown={(e) => {

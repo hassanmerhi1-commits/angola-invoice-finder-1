@@ -110,12 +110,12 @@ export default function Vendas() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-full nexor-page-surface">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b flex-wrap">
         <div className="flex items-center gap-2">
-          <div className="p-2 rounded-xl gradient-primary shadow-md">
-            <Receipt className="w-5 h-5 text-primary-foreground" />
+          <div className="p-2 rounded-xl gradient-primary">
+            <Receipt className="w-5 h-5" />
           </div>
           <div>
             <h1 className="text-lg font-bold leading-none">{t.vendasUi.title}</h1>
@@ -159,15 +159,15 @@ export default function Vendas() {
           { label: t.vendasUi.payment.cash, value: `${totals.cash.toLocaleString(uiLocale)} Kz`, icon: Banknote, gradient: 'gradient-warm' },
           { label: t.vendasUi.payment.card, value: `${totals.card.toLocaleString(uiLocale)} Kz`, icon: CreditCard, gradient: 'gradient-accent' },
         ].map((stat, i) => (
-          <Card key={i} className="overflow-hidden">
+          <Card key={i} className="nexor-stat-card overflow-hidden">
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-2xl ${stat.gradient} shadow-md`}>
-                  <stat.icon className="w-5 h-5 text-primary-foreground" />
+                <div className={`p-2.5 rounded-xl ${stat.gradient}`}>
+                  <stat.icon className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{stat.label}</p>
-                  <p className="text-xl font-extrabold tracking-tight">{stat.value}</p>
+                  <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">{stat.label}</p>
+                  <p className="text-xl font-semibold tracking-tight text-slate-800">{stat.value}</p>
                 </div>
               </div>
             </CardContent>

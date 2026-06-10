@@ -378,7 +378,7 @@ export default function HRModule() {
             </thead>
             <tbody className="divide-y divide-border/50">
               {filteredEmployees.map(emp => (
-                <tr key={emp.id} className={cn("cursor-pointer hover:bg-accent/50", selectedId === emp.id && "bg-primary/15")}
+                <tr key={emp.id} className={cn("cursor-pointer hover:bg-accent/50", selectedId === emp.id && "nexor-row-selected")}
                   onClick={() => setSelectedId(emp.id)} onDoubleClick={() => openEditEmployee(emp)}>
                   <td className="px-3 py-1.5 font-mono">{emp.employeeNumber}</td>
                   <td className="px-3 py-1.5 font-medium">{emp.fullName}</td>

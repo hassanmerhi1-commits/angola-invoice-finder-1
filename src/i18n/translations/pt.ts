@@ -290,6 +290,15 @@ export const pt: TranslationKeys = {
     cashPaymentRecorded: "Pagamento em dinheiro registado",
     completeSaleError: "Erro ao finalizar venda",
     shoppingCartTitle: "Carrinho de Compras",
+    endOfDayButton: "Fecho do dia",
+    endOfDayTitle: "Relatório de fecho de caixa",
+    endOfDayCashier: "Caixa",
+    endOfDayDate: "Data",
+    endOfDayInvoice: "Fatura",
+    endOfDayTime: "Hora",
+    endOfDaySalesCount: "Vendas",
+    endOfDayNoSales: "Sem vendas hoje para este caixa",
+    endOfDayPrint: "Imprimir relatório",
   },
 
   checkoutUi: {
@@ -326,6 +335,8 @@ export const pt: TranslationKeys = {
     newSale: "Nova Venda",
     printerSettings: "Config. Impressora",
     thanksDefault: "Obrigado pela preferência!",
+    autoPrintSuccess: "Recibo térmico impresso (original + via cliente)",
+    autoPrintError: "Impressão automática falhou — use o botão Térmica no ecrã do recibo",
   },
 
   printerUi: {

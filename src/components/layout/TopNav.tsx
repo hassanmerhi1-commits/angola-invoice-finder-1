@@ -401,7 +401,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     <header className="sticky top-0 z-50">
       <OfflineModeBanner />
       {/* ====== ROW 1: Menu Bar ====== */}
-      <div className="h-10 px-3 bg-sidebar text-sidebar-foreground hidden lg:flex items-center justify-between">
+      <div className="h-10 px-3 bg-sidebar text-sidebar-foreground hidden lg:flex items-center justify-between border-b border-sidebar-border shadow-sm">
         <div className="flex items-center gap-1">
           {/* Logo */}
           <div className="flex items-center gap-2 pr-4 mr-2 border-r border-sidebar-border">
@@ -486,7 +486,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1.5 text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent">
-                <div className="w-6 h-6 rounded-full gradient-primary flex items-center justify-center text-primary-foreground text-[10px] font-bold">
+                <div className="w-6 h-6 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center text-[10px] font-semibold">
                   {user?.name?.charAt(0)?.toUpperCase() || 'U'}
                 </div>
                 <span className="hidden xl:inline">{user?.name}</span>
@@ -583,7 +583,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       )}
 
       {/* ====== Mobile Header ====== */}
-      <div className="h-14 px-4 flex lg:hidden items-center justify-between bg-sidebar text-sidebar-foreground">
+      <div className="h-14 px-4 flex lg:hidden items-center justify-between bg-sidebar text-sidebar-foreground border-b border-sidebar-border shadow-sm">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-sidebar-accent flex items-center justify-center">
             <img src={logo || defaultLogo} alt={companyName} className="w-full h-full object-contain" />
@@ -637,7 +637,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
                 onClick={() => setMobileMenuOpen(false)}
                 className={({ isActive }) => cn(
                   "flex flex-col items-center gap-1.5 p-3 rounded-xl text-[10px] font-medium transition-all",
-                  isActive ? "gradient-primary text-primary-foreground shadow-glow" : "bg-muted hover:bg-accent"
+                  isActive ? "nexor-mobile-nav-active" : "bg-slate-50 hover:bg-slate-100 text-slate-600"
                 )}
               >
                 <tab.icon className="w-5 h-5" />
