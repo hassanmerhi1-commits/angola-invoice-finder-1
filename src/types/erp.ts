@@ -450,6 +450,8 @@ export interface OpenItem {
   id: string;
   entityType: 'customer' | 'supplier';
   entityId: string;
+  /** Resolved from suppliers/clients when listing open items */
+  entityName?: string;
   documentType: 'invoice' | 'credit_note' | 'debit_note' | 'payment' | 'advance';
   documentId: string;
   documentNumber: string;

@@ -15,13 +15,26 @@ module.exports = function(broadcastTable) {
   router.get('/', async (req, res) => {
     try {
       const { entityType, entityId, branchId } = req.query;
-      let query = 'SELECT * FROM payments WHERE 1=1';
+      let query = `
+        SELECT p.*,
+          COALESCE(
+            NULLIF(TRIM(p.entity_name), ''),
+            CASE
+              WHEN p.entity_type = 'supplier' THEN s.name
+              WHEN p.entity_type = 'customer' THEN c.name
+              ELSE NULL
+            END
+          ) AS entity_name
+        FROM payments p
+        LEFT JOIN suppliers s ON p.entity_type = 'supplier' AND s.id = p.entity_id
+        LEFT JOIN clients c ON p.entity_type = 'customer' AND c.id = p.entity_id
+        WHERE 1=1`;
       const params = [];
       let idx = 1;
-      if (entityType) { query += ` AND entity_type = $${idx++}`; params.push(entityType); }
-      if (entityId) { query += ` AND entity_id = $${idx++}`; params.push(entityId); }
-      if (branchId) { query += ` AND branch_id = $${idx++}`; params.push(branchId); }
-      query += ' ORDER BY created_at DESC';
+      if (entityType) { query += ` AND p.entity_type = $${idx++}`; params.push(entityType); }
+      if (entityId) { query += ` AND p.entity_id = $${idx++}`; params.push(entityId); }
+      if (branchId) { query += ` AND p.branch_id = $${idx++}`; params.push(branchId); }
+      query += ' ORDER BY p.created_at DESC';
       const result = await db.query(query, params);
       res.json(result.rows);
     } catch (error) {

@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import type { Client, Supplier } from '@/types/erp';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
@@ -53,6 +54,7 @@ function mapOpenItemRow(oi: any): OpenItem {
     id: oi.id,
     entityType: oi.entity_type || oi.entityType,
     entityId: oi.entity_id || oi.entityId,
+    entityName: oi.entity_name || oi.entityName || undefined,
     documentType: oi.document_type || oi.documentType,
     documentId: oi.document_id || oi.documentId,
     documentNumber: oi.document_number || oi.documentNumber,
@@ -148,6 +150,8 @@ export default function Payments() {
 
   // New payment form
   const [entityId, setEntityId] = useState('');
+  const [entitySearch, setEntitySearch] = useState('');
+  const [entityPickerOpen, setEntityPickerOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'transfer' | 'cheque'>('cash');
   const [amount, setAmount] = useState('');
   const [reference, setReference] = useState('');
@@ -156,6 +160,56 @@ export default function Payments() {
 
   const entities = paymentType === 'receipt' ? clients : suppliers;
   const entityLabel = paymentType === 'receipt' ? t.paymentsUi.customer : t.paymentsUi.supplier;
+
+  const filteredEntities = useMemo(() => {
+    const active = entities.filter((e) => e.isActive !== false);
+    const q = entitySearch.trim().toLowerCase();
+    if (!q) return [];
+    return active
+      .filter((e) => {
+        const name = e.name.toLowerCase();
+        const nif = String(e.nif || '').toLowerCase();
+        const phone = String(e.phone || '');
+        const id = String(e.id || '').toLowerCase();
+        return (
+          name.includes(q)
+          || nif.includes(q)
+          || phone.includes(q)
+          || id.includes(q)
+        );
+      })
+      .slice(0, 30);
+  }, [entities, entitySearch]);
+
+  const formatEntityOption = (entity: Client | Supplier) => {
+    const code = String(entity.nif || '').trim();
+    return code ? `${entity.name} — ${code}` : entity.name;
+  };
+
+  const selectEntity = (entity: Client | Supplier) => {
+    setEntityId(entity.id);
+    setEntitySearch(formatEntityOption(entity));
+    setEntityPickerOpen(false);
+    setSelectedOpenItems(new Set());
+    setAmount('');
+    const entType = paymentType === 'receipt' ? 'customer' : 'supplier';
+    void loadOpenItems(entType, entity.id);
+  };
+
+  const resolveEntityName = useCallback((
+    entityType: string,
+    entityId: string,
+    cachedName?: string,
+  ) => {
+    const name = String(cachedName || '').trim();
+    if (name) return name;
+    const id = String(entityId || '').trim();
+    if (!id) return '—';
+    if (entityType === 'supplier') {
+      return suppliers.find((s) => String(s.id) === id)?.name || id;
+    }
+    return clients.find((c) => String(c.id) === id)?.name || id;
+  }, [suppliers, clients]);
 
   const entityOpenItems = useMemo(() => {
     if (!entityId) return [];
@@ -186,29 +240,40 @@ export default function Payments() {
 
   const filteredPayments = useMemo(() => {
     const typeFilter = activeTab === 'receipts' ? 'receipt' : 'payment';
+    const q = searchTerm.trim().toLowerCase();
     return payments
       .filter(p => activeTab === 'open-items' || p.paymentType === typeFilter)
-      .filter(p => !searchTerm || p.entityName?.toLowerCase().includes(searchTerm.toLowerCase()) || p.paymentNumber.includes(searchTerm));
-  }, [payments, activeTab, searchTerm]);
+      .filter((p) => {
+        if (!q) return true;
+        const party = resolveEntityName(p.entityType, p.entityId, p.entityName).toLowerCase();
+        return party.includes(q) || p.paymentNumber.toLowerCase().includes(q);
+      });
+  }, [payments, activeTab, searchTerm, resolveEntityName]);
+
+  const filteredOpenItems = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return openItems
+      .filter((oi) => oi.status !== 'cleared')
+      .filter((oi) => {
+        if (!q) return true;
+        const party = resolveEntityName(oi.entityType, oi.entityId, oi.entityName).toLowerCase();
+        return (
+          party.includes(q)
+          || oi.documentNumber.toLowerCase().includes(q)
+        );
+      });
+  }, [openItems, searchTerm, resolveEntityName]);
 
   const resetForm = () => {
     setEntityId('');
+    setEntitySearch('');
+    setEntityPickerOpen(false);
     setPaymentMethod('cash');
     setAmount('');
     setReference('');
     setNotes('');
     setSelectedOpenItems(new Set());
   };
-
-  const handleEntityChange = useCallback((id: string) => {
-    setEntityId(id);
-    setSelectedOpenItems(new Set());
-    setAmount('');
-    if (id) {
-      const entType = paymentType === 'receipt' ? 'customer' : 'supplier';
-      loadOpenItems(entType, id);
-    }
-  }, [paymentType, loadOpenItems]);
 
   const payableItemsKey = entityPayableItems.map((oi) => oi.id).join('|');
   useEffect(() => {
@@ -379,7 +444,9 @@ export default function Payments() {
                   <tr key={p.id} className="hover:bg-accent/50 transition-colors">
                     <td className="px-3 py-2 font-mono text-xs">{p.paymentNumber}</td>
                     <td className="px-3 py-2 text-muted-foreground">{new Date(p.createdAt).toLocaleDateString(locale)}</td>
-                    <td className="px-3 py-2">{p.entityName}</td>
+                    <td className="px-3 py-2 font-medium">
+                      {resolveEntityName(p.entityType, p.entityId, p.entityName)}
+                    </td>
                     <td className="px-3 py-2">
                       <Badge variant="outline" className="text-xs">
                         {p.paymentMethod === 'cash'
@@ -413,6 +480,7 @@ export default function Payments() {
           <table className="w-full text-sm">
             <thead className="bg-muted/60 border-b sticky top-0">
               <tr>
+                <th className="px-3 py-2 text-left font-semibold">{t.paymentsUi.party}</th>
                 <th className="px-3 py-2 text-left font-semibold">{t.paymentsUi.type}</th>
                 <th className="px-3 py-2 text-left font-semibold">{t.paymentsUi.document}</th>
                 <th className="px-3 py-2 text-left font-semibold">{t.common.date}</th>
@@ -423,8 +491,11 @@ export default function Payments() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {openItems.filter(oi => oi.status !== 'cleared').map(oi => (
+              {filteredOpenItems.map(oi => (
                 <tr key={oi.id} className="hover:bg-accent/50">
+                  <td className="px-3 py-2 font-medium">
+                    {resolveEntityName(oi.entityType, oi.entityId, oi.entityName)}
+                  </td>
                   <td className="px-3 py-2">
                     <Badge variant={oi.entityType === 'customer' ? 'default' : 'secondary'} className="text-xs">
                       {oi.entityType === 'customer' ? t.paymentsUi.customer : t.paymentsUi.supplier}
@@ -444,7 +515,7 @@ export default function Payments() {
               ))}
             </tbody>
           </table>
-          {openItems.filter(oi => oi.status !== 'cleared').length === 0 && (
+          {filteredOpenItems.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
               <p>{t.paymentsUi.noneOpenItems}</p>
@@ -455,7 +526,10 @@ export default function Payments() {
 
       {/* New Payment Dialog */}
       <Dialog open={showNewDialog} onOpenChange={setShowNewDialog}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent
+          className="max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto"
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {paymentType === 'receipt' ? <ArrowDownCircle className="w-5 h-5 text-green-500" /> : <ArrowUpCircle className="w-5 h-5 text-red-500" />}
@@ -464,24 +538,61 @@ export default function Payments() {
           </DialogHeader>
 
           <div className="space-y-4">
-            {/* Entity Select */}
+            {/* Entity search (name, NIF/code, phone) */}
             <div>
               <Label>{entityLabel}</Label>
-              <Select value={entityId} onValueChange={handleEntityChange}>
-                <SelectTrigger><SelectValue placeholder={`Seleccionar ${entityLabel.toLowerCase()}...`} /></SelectTrigger>
-                <SelectContent>
-                  {entities.map(e => (
-                    <SelectItem key={e.id} value={e.id}>{e.name} — {e.nif}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="relative">
+                <Input
+                  value={entitySearch}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setEntitySearch(value);
+                    setEntityId('');
+                    setEntityPickerOpen(value.trim().length > 0);
+                    setSelectedOpenItems(new Set());
+                    setAmount('');
+                  }}
+                  onBlur={() => {
+                    window.setTimeout(() => setEntityPickerOpen(false), 150);
+                  }}
+                  placeholder={t.paymentsUi.entitySearchPlaceholder.replace('{entity}', entityLabel.toLowerCase())}
+                  className="h-10"
+                  autoComplete="off"
+                />
+                {entityPickerOpen && entitySearch.trim() && filteredEntities.length > 0 && (
+                  <div className="absolute z-50 top-full left-0 right-0 mt-1 border rounded-md bg-popover shadow-lg max-h-56 overflow-y-auto">
+                    {filteredEntities.map((entity) => (
+                      <button
+                        key={entity.id}
+                        type="button"
+                        className={cn(
+                          'w-full text-left px-3 py-2.5 text-sm hover:bg-accent/50 flex justify-between gap-3 border-b border-border/40 last:border-0',
+                          entityId === entity.id && 'nexor-row-selected',
+                        )}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => selectEntity(entity)}
+                      >
+                        <span className="truncate font-medium">{entity.name}</span>
+                        <span className="text-muted-foreground shrink-0 font-mono text-xs tabular-nums">
+                          {entity.nif || '—'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {entityPickerOpen && entitySearch.trim() && filteredEntities.length === 0 && (
+                  <div className="absolute z-50 top-full left-0 right-0 mt-1 border rounded-md bg-popover shadow-md px-3 py-2 text-sm text-muted-foreground">
+                    {t.paymentsUi.noEntityMatch}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Open Items for this entity */}
             {entityId && entityPayableItems.length > 0 && (
               <div>
                 <Label className="mb-2 block">{t.paymentsUi.openDocsToOffset}</Label>
-                <div className="border rounded-md max-h-48 overflow-y-auto">
+                <div className="border rounded-md max-h-64 overflow-y-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-muted/60 sticky top-0">
                       <tr>

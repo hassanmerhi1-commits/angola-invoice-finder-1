@@ -282,15 +282,25 @@ module.exports = function(broadcastTable) {
   router.get('/open-items', async (req, res) => {
     try {
       const { entityType, entityId, status, branchId } = req.query;
-      let query = 'SELECT * FROM open_items WHERE 1=1';
+      let query = `
+        SELECT oi.*,
+          CASE
+            WHEN oi.entity_type = 'supplier' THEN s.name
+            WHEN oi.entity_type = 'customer' THEN c.name
+            ELSE NULL
+          END AS entity_name
+        FROM open_items oi
+        LEFT JOIN suppliers s ON oi.entity_type = 'supplier' AND s.id = oi.entity_id
+        LEFT JOIN clients c ON oi.entity_type = 'customer' AND c.id = oi.entity_id
+        WHERE 1=1`;
       const params = [];
       let idx = 1;
-      if (entityType) { query += ` AND entity_type = $${idx++}`; params.push(entityType); }
-      if (entityId) { query += ` AND entity_id = $${idx++}`; params.push(entityId); }
-      if (branchId) { query += ` AND branch_id = $${idx++}`; params.push(branchId); }
-      if (status) { query += ` AND status = $${idx++}`; params.push(status); }
-      else { query += ` AND status != 'cleared'`; }
-      query += ' ORDER BY document_date ASC';
+      if (entityType) { query += ` AND oi.entity_type = $${idx++}`; params.push(entityType); }
+      if (entityId) { query += ` AND oi.entity_id = $${idx++}`; params.push(entityId); }
+      if (branchId) { query += ` AND oi.branch_id = $${idx++}`; params.push(branchId); }
+      if (status) { query += ` AND oi.status = $${idx++}`; params.push(status); }
+      else { query += ` AND oi.status != 'cleared'`; }
+      query += ' ORDER BY oi.document_date ASC';
       const result = await db.query(query, params);
       res.json(result.rows);
     } catch (error) {
