@@ -200,8 +200,18 @@ export interface ElectronAPI {
     download: () => Promise<{ success: boolean; error?: string }>;
     install: () => Promise<{ success: boolean }>;
     getVersion: () => Promise<string>;
-    getDiagnostics: () => Promise<{ loaded: boolean; currentVersion: string; feedUrl: string; packaged: boolean }>;
+    getDiagnostics: () => Promise<{
+      loaded: boolean;
+      loadError?: string | null;
+      currentVersion: string;
+      feedUrl: string;
+      latestYmlUrl?: string;
+      remoteVersion?: string | null;
+      remoteCheckError?: string | null;
+      packaged: boolean;
+    }>;
     onStatus: (callback: (data: UpdateStatus) => void) => (() => void) | void;
+    openReleasePage: () => Promise<{ success: boolean; url?: string }>;
   };
 
   // Hot updates

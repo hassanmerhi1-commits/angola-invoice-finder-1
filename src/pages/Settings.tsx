@@ -151,24 +151,24 @@ export default function Settings() {
 
   const handleCheckForUpdates = async () => {
     if (!isElectron) return;
-    
+
     setIsChecking(true);
     setUpdateStatus({ status: 'checking' });
-    
+
     try {
       const result = await window.electronAPI?.updater.check();
       if (!result?.success) {
         setUpdateStatus({ status: 'error', error: result?.error || 'Failed to check for updates' });
-        setIsChecking(false);
         return;
       }
-      if (result.isUpdateAvailable === false) {
+      if (result.isUpdateAvailable && result.version) {
+        setUpdateStatus({ status: 'available', version: result.version });
+      } else {
         setUpdateStatus({ status: 'not-available' });
-        setIsChecking(false);
       }
-      // When an update exists, main process emits 'available' via onStatus.
-    } catch (error) {
+    } catch {
       setUpdateStatus({ status: 'error', error: 'Failed to check for updates' });
+    } finally {
       setIsChecking(false);
     }
   };
@@ -178,11 +178,26 @@ export default function Settings() {
     
     setIsDownloading(true);
     try {
-      await window.electronAPI?.updater.download();
-    } catch (error) {
-      setUpdateStatus({ status: 'error', error: 'Failed to download update' });
+      const result = await window.electronAPI?.updater.download();
+      if (!result?.success) {
+        setUpdateStatus({
+          status: 'error',
+          error: result?.error || 'In-app download failed. Use "Download from GitHub" below.',
+        });
+        setIsDownloading(false);
+      }
+    } catch {
+      setUpdateStatus({
+        status: 'error',
+        error: 'In-app download failed. Use "Download from GitHub" below.',
+      });
       setIsDownloading(false);
     }
+  };
+
+  const handleOpenReleasePage = async () => {
+    if (!isElectron) return;
+    await window.electronAPI?.updater.openReleasePage?.();
   };
 
   const handleInstallUpdate = async () => {
@@ -329,18 +344,52 @@ export default function Settings() {
                       Install Update & Restart
                     </Button>
                   ) : updateStatus?.status === 'available' ? (
-                    <Button 
-                      onClick={handleDownloadUpdate} 
-                      disabled={isDownloading}
-                      className="w-full gap-2"
-                    >
-                      {isDownloading ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
+                    <>
+                      <Button 
+                        onClick={handleDownloadUpdate} 
+                        disabled={isDownloading}
+                        className="w-full gap-2"
+                      >
+                        {isDownloading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Download className="w-4 h-4" />
+                        )}
+                        Download Update
+                      </Button>
+                      <Button
+                        onClick={handleOpenReleasePage}
+                        variant="outline"
+                        className="w-full gap-2"
+                      >
                         <Download className="w-4 h-4" />
-                      )}
-                      Download Update
-                    </Button>
+                        Download from GitHub
+                      </Button>
+                    </>
+                  ) : updateStatus?.status === 'error' ? (
+                    <>
+                      <Button 
+                        onClick={handleCheckForUpdates} 
+                        disabled={isChecking}
+                        variant="outline"
+                        className="w-full gap-2"
+                      >
+                        {isChecking ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-4 h-4" />
+                        )}
+                        Check for Updates
+                      </Button>
+                      <Button
+                        onClick={handleOpenReleasePage}
+                        variant="outline"
+                        className="w-full gap-2"
+                      >
+                        <Download className="w-4 h-4" />
+                        Download from GitHub
+                      </Button>
+                    </>
                   ) : (
                     <Button 
                       onClick={handleCheckForUpdates} 

@@ -144,6 +144,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('updater:status', handler);
     },
     getDiagnostics: () => ipcRenderer.invoke('updater:getDiagnostics'),
+    openReleasePage: () => ipcRenderer.invoke('updater:openReleasePage'),
   },
 
   // Hot updates

@@ -342,6 +342,9 @@ const UPDATER_GITHUB_REPO = 'angola-invoice-finder-1';
 
 const UPDATER_GENERIC_FEED_URL =
   `https://github.com/${UPDATER_GITHUB_OWNER}/${UPDATER_GITHUB_REPO}/releases/latest/download`;
+const UPDATER_LATEST_YML_URL = `${UPDATER_GENERIC_FEED_URL}/latest.yml`;
+const UPDATER_CHECK_TIMEOUT_MS = 25000;
+const UPDATER_HTTP_TIMEOUT_MS = 15000;
 
 let autoUpdater = createNoopAutoUpdater();
 let autoUpdaterLoaded = false;
@@ -387,6 +390,170 @@ function configureAutoUpdaterFeed() {
     console.log(`[AutoUpdater] Feed URL: ${UPDATER_GENERIC_FEED_URL}`);
   } catch (err) {
     console.warn('[AutoUpdater] setFeedURL failed:', err?.message || err);
+  }
+}
+
+function compareSemver(a, b) {
+  const pa = String(a || '').split('.').map((x) => parseInt(x, 10) || 0);
+  const pb = String(b || '').split('.').map((x) => parseInt(x, 10) || 0);
+  const len = Math.max(pa.length, pb.length, 3);
+  for (let i = 0; i < len; i += 1) {
+    const da = pa[i] || 0;
+    const db = pb[i] || 0;
+    if (da > db) return 1;
+    if (da < db) return -1;
+  }
+  return 0;
+}
+
+function parseLatestYmlVersion(text) {
+  const match = String(text || '').match(/^version:\s*([^\s\r\n#]+)/m);
+  return match?.[1]?.trim() || null;
+}
+
+function fetchTextWithRedirects(url, timeoutMs = UPDATER_HTTP_TIMEOUT_MS, redirectsLeft = 5) {
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const lib = parsed.protocol === 'https:' ? require('https') : http;
+    const req = lib.get(
+      parsed,
+      {
+        timeout: timeoutMs,
+        headers: { 'User-Agent': 'NEXOR-ERP-Updater', Accept: 'text/yaml, text/plain, */*' },
+      },
+      (res) => {
+        const status = res.statusCode || 0;
+        if (status >= 300 && status < 400 && res.headers.location && redirectsLeft > 0) {
+          const nextUrl = new URL(res.headers.location, parsed).toString();
+          res.resume();
+          fetchTextWithRedirects(nextUrl, timeoutMs, redirectsLeft - 1).then(resolve).catch(reject);
+          return;
+        }
+        if (status !== 200) {
+          res.resume();
+          reject(new Error(`HTTP ${status} fetching ${url}`));
+          return;
+        }
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => resolve(data));
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error(`Timed out fetching ${url}`));
+    });
+  });
+}
+
+async function checkLatestVersionViaHttp() {
+  const text = await fetchTextWithRedirects(UPDATER_LATEST_YML_URL);
+  const latest = parseLatestYmlVersion(text);
+  if (!latest) {
+    throw new Error('Could not read version from latest.yml on GitHub');
+  }
+  const current = app.getVersion();
+  return {
+    latest,
+    current,
+    isUpdateAvailable: compareSemver(latest, current) > 0,
+  };
+}
+
+function withTimeout(promise, timeoutMs, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    }),
+  ]);
+}
+
+async function runUpdateCheck() {
+  initAutoUpdater();
+  sendUpdaterStatus({ status: 'checking' });
+
+  if (!autoUpdaterLoaded) {
+    try {
+      const httpResult = await checkLatestVersionViaHttp();
+      if (httpResult.isUpdateAvailable) {
+        sendUpdaterStatus({ status: 'available', version: httpResult.latest });
+        return {
+          success: true,
+          isUpdateAvailable: true,
+          version: httpResult.latest,
+          source: 'http',
+          warning: autoUpdaterLoadError,
+        };
+      }
+      sendUpdaterStatus({ status: 'not-available' });
+      return {
+        success: true,
+        isUpdateAvailable: false,
+        version: httpResult.latest,
+        source: 'http',
+        warning: autoUpdaterLoadError,
+      };
+    } catch (httpErr) {
+      const error = autoUpdaterLoadError
+        ? `Auto-updater failed to load: ${autoUpdaterLoadError}`
+        : (httpErr?.message || String(httpErr));
+      sendUpdaterStatus({ status: 'error', error });
+      return { success: false, error };
+    }
+  }
+
+  try {
+    const result = await withTimeout(
+      autoUpdater.checkForUpdates(),
+      UPDATER_CHECK_TIMEOUT_MS,
+      'Update check',
+    );
+    if (result == null) {
+      throw new Error('Update check skipped (app not packaged for production).');
+    }
+    const version = result.updateInfo?.version || result.versionInfo?.version;
+    const available =
+      !!result.isUpdateAvailable
+      || (version && compareSemver(version, app.getVersion()) > 0);
+    if (available) {
+      sendUpdaterStatus({ status: 'available', version });
+      return { success: true, isUpdateAvailable: true, version };
+    }
+    sendUpdaterStatus({ status: 'not-available' });
+    return { success: true, isUpdateAvailable: false, version };
+  } catch (primaryErr) {
+    console.warn('[AutoUpdater] electron-updater check failed, trying HTTP fallback:', primaryErr?.message || primaryErr);
+    try {
+      const httpResult = await checkLatestVersionViaHttp();
+      if (httpResult.isUpdateAvailable) {
+        sendUpdaterStatus({ status: 'available', version: httpResult.latest });
+        return {
+          success: true,
+          isUpdateAvailable: true,
+          version: httpResult.latest,
+          source: 'http-fallback',
+        };
+      }
+      sendUpdaterStatus({ status: 'not-available' });
+      return {
+        success: true,
+        isUpdateAvailable: false,
+        version: httpResult.latest,
+        source: 'http-fallback',
+      };
+    } catch (httpErr) {
+      const error = `${primaryErr?.message || primaryErr} (HTTP fallback: ${httpErr?.message || httpErr})`;
+      sendUpdaterStatus({ status: 'error', error });
+      return { success: false, error };
+    }
   }
 }
 
@@ -2488,8 +2655,7 @@ app.whenReady().then(async () => {
   if (!isDev) {
     initAutoUpdater();
     setTimeout(() => {
-      if (!autoUpdaterLoaded) return;
-      autoUpdater.checkForUpdates().catch(err => console.log('[AutoUpdater] Check failed:', err.message));
+      runUpdateCheck().catch((err) => console.log('[AutoUpdater] Startup check failed:', err?.message || err));
     }, 3000);
   } else {
     initAutoUpdater();
@@ -3045,37 +3211,26 @@ function sendUpdaterStatus(payload) {
 }
 
 // Auto-updater
-ipcMain.handle('updater:check', async () => {
+ipcMain.handle('updater:check', async () => runUpdateCheck());
+ipcMain.handle('updater:getDiagnostics', async () => {
   initAutoUpdater();
-  if (!autoUpdaterLoaded) {
-    const error = autoUpdaterLoadError
-      ? `Auto-updater failed to load: ${autoUpdaterLoadError}`
-      : 'Auto-updater module is missing from this install. Reinstall from the latest GitHub release.';
-    sendUpdaterStatus({ status: 'error', error });
-    return { success: false, error };
-  }
+  let remoteVersion = null;
+  let remoteCheckError = null;
   try {
-    const result = await autoUpdater.checkForUpdates();
-    if (result == null) {
-      const error = 'Update check skipped (app not packaged for production).';
-      sendUpdaterStatus({ status: 'error', error });
-      return { success: false, error };
-    }
-    return { success: true, isUpdateAvailable: !!result.isUpdateAvailable, version: result.versionInfo?.version };
-  } catch (e) {
-    const error = e?.message || String(e);
-    sendUpdaterStatus({ status: 'error', error });
-    return { success: false, error };
+    const httpResult = await checkLatestVersionViaHttp();
+    remoteVersion = httpResult.latest;
+  } catch (err) {
+    remoteCheckError = err?.message || String(err);
   }
-});
-ipcMain.handle('updater:getDiagnostics', () => {
-  initAutoUpdater();
   return {
     loaded: autoUpdaterLoaded,
     loadError: autoUpdaterLoadError,
     runtimeDepsPath: getRuntimeNodeModulesDir(),
     currentVersion: app.getVersion(),
     feedUrl: UPDATER_GENERIC_FEED_URL,
+    latestYmlUrl: UPDATER_LATEST_YML_URL,
+    remoteVersion,
+    remoteCheckError,
     packaged: app.isPackaged,
   };
 });
@@ -3084,6 +3239,11 @@ ipcMain.handle('updater:download', async () => {
   catch (e) { return { success: false, error: e.message }; }
 });
 ipcMain.handle('updater:install', () => { autoUpdater.quitAndInstall(); return { success: true }; });
+ipcMain.handle('updater:openReleasePage', () => {
+  const url = `https://github.com/${UPDATER_GITHUB_OWNER}/${UPDATER_GITHUB_REPO}/releases/latest`;
+  shell.openExternal(url);
+  return { success: true, url };
+});
 ipcMain.handle('updater:getVersion', () => app.getVersion());
 
 // Hot update IPC
