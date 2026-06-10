@@ -204,7 +204,13 @@ export interface ElectronAPI {
   // Auto-updater
   updater: {
     check: () => Promise<{ success: boolean; error?: string; isUpdateAvailable?: boolean; version?: string }>;
-    download: () => Promise<{ success: boolean; error?: string }>;
+    download: () => Promise<{
+      success: boolean;
+      error?: string;
+      version?: string;
+      openedBrowser?: boolean;
+      url?: string;
+    }>;
     install: () => Promise<{ success: boolean }>;
     getVersion: () => Promise<string>;
     getDiagnostics: () => Promise<{

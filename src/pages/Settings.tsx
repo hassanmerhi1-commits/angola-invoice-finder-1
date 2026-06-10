@@ -205,20 +205,31 @@ export default function Settings() {
     if (!isElectron) return;
     
     setIsDownloading(true);
+    setUpdateStatus({ status: 'downloading', progress: 0 });
     try {
       const result = await window.electronAPI?.updater.download();
-      if (!result?.success) {
+      if (result?.success) {
         setUpdateStatus({
-          status: 'error',
-          error: result?.error || 'In-app download failed. Use "Download from GitHub" below.',
+          status: 'downloaded',
+          version: (result as { version?: string }).version,
         });
-        setIsDownloading(false);
+        return;
       }
+      const errText =
+        result?.error
+        || 'In-app download failed. Use "Download from GitHub" below.';
+      setUpdateStatus({
+        status: 'error',
+        error: (result as { openedBrowser?: boolean })?.openedBrowser
+          ? `${errText} Check your browser downloads folder.`
+          : errText,
+      });
     } catch {
       setUpdateStatus({
         status: 'error',
         error: 'In-app download failed. Use "Download from GitHub" below.',
       });
+    } finally {
       setIsDownloading(false);
     }
   };
