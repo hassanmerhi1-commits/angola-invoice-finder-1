@@ -45,6 +45,7 @@ export default function Settings() {
   const [companySettingsOpen, setCompanySettingsOpen] = useState(false);
   const [setupConfig, setSetupConfig] = useState<SetupConfig | null>(null);
   const [isResettingSetup, setIsResettingSetup] = useState(false);
+  const [isStandaloneSwitching, setIsStandaloneSwitching] = useState(false);
   
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -118,6 +119,33 @@ export default function Settings() {
     }
   }, [isElectron]);
   
+  const handleStandaloneTestSwitch = async () => {
+    if (!isElectron || !window.electronAPI?.setup?.configureStandalone) return;
+    setIsStandaloneSwitching(true);
+    try {
+      const result = await window.electronAPI.setup.configureStandalone();
+      if (!result.success) {
+        throw new Error(result.error || 'Standalone setup failed');
+      }
+      localStorage.setItem('kwanza_setup_complete', 'true');
+      localStorage.setItem('kwanza_is_server', 'true');
+      localStorage.removeItem('kwanza_client_config');
+      localStorage.removeItem('kwanza_mode');
+      localStorage.removeItem('nexor_offline_first');
+      const { invalidateElectronApiBaseCache } = await import('@/lib/api/config');
+      invalidateElectronApiBaseCache();
+      toast.success('Standalone test server enabled', {
+        description: `Database: ${result.databasePath || 'erp.db'}. Login: admin / changeme`,
+      });
+      setTimeout(() => window.location.reload(), 800);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Standalone setup failed';
+      toast.error(message);
+    } finally {
+      setIsStandaloneSwitching(false);
+    }
+  };
+
   const handleResetSetup = async () => {
     setIsResettingSetup(true);
     try {
@@ -488,6 +516,21 @@ export default function Settings() {
             )}
             
             <Separator />
+            {isElectron && window.electronAPI?.setup?.configureStandalone && (
+              <Button
+                variant="outline"
+                onClick={handleStandaloneTestSwitch}
+                disabled={isStandaloneSwitching}
+                className="w-full gap-2"
+              >
+                {isStandaloneSwitching ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Monitor className="w-4 h-4" />
+                )}
+                Use as standalone test server
+              </Button>
+            )}
             <Button 
               variant="destructive" 
               onClick={handleResetSetup}

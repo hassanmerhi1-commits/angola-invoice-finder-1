@@ -1932,6 +1932,69 @@ ipcMain.handle('setup:reset', async () => {
   }
 });
 
+/** One-click standalone test server — embedded SQLite, no PostgreSQL/Docker. */
+ipcMain.handle('setup:configureStandalone', async () => {
+  try {
+    const {
+      defaultSqliteDatabasePath,
+      clearPostgresDatabaseEnv,
+    } = require('./databaseConfig.cjs');
+
+    const dbPath = ensureSqliteFileReady(defaultSqliteDatabasePath());
+    copyBestLegacySqliteInto(dbPath);
+    fs.writeFileSync(IP_FILE_PATH, dbPath, 'utf-8');
+
+    const envClear = clearPostgresDatabaseEnv();
+    if (envClear.removed) {
+      console.log('[Setup] Removed database.env for standalone SQLite mode');
+    }
+
+    const configPath = path.join(INSTALL_DIR, 'setup-config.json');
+    const serverConfig = {
+      setupComplete: true,
+      role: 'server',
+      serverConfig: {
+        databasePath: dbPath,
+        serverIp: getLocalIP(),
+        httpPort: 3000,
+        serverPort: WS_PORT,
+      },
+      clientConfig: null,
+    };
+    fs.writeFileSync(configPath, JSON.stringify(serverConfig, null, 2), 'utf-8');
+
+    isServerMode = true;
+    serverAddress = null;
+    pgConnectionString = null;
+
+    const dbResult = await initDatabase();
+    if (!dbResult.success) {
+      return { success: false, error: dbResult.error || 'Database init failed', databasePath: dbPath };
+    }
+
+    await backendManager.stop();
+    const spawnResult = await backendManager.start({ mode: 'server', sqlitePath: dbPath });
+    if (spawnResult.error) {
+      return {
+        success: false,
+        error: spawnResult.error,
+        databasePath: dbPath,
+        backendStarted: false,
+      };
+    }
+    backendPort = spawnResult.port || backendManager.getPort();
+
+    return {
+      success: true,
+      databasePath: dbPath,
+      backendPort: backendPort,
+      postgresEnvRemoved: envClear.removed === true,
+    };
+  } catch (e) {
+    return { success: false, error: e?.message || String(e) };
+  }
+});
+
 function getLocalIP() {
   const ips = getLocalIPv4Addresses();
   return ips.find((ip) => !ip.startsWith('127.')) || '127.0.0.1';
@@ -2010,18 +2073,12 @@ function resolveStartupBackendPlan(dbResult) {
   repairIPFileForServerRole();
   const ip = parseIPFile();
   const saved = readSetupConfigFromDisk();
-  const { loadDatabaseEnv } = require('./databaseConfig.cjs');
-  const dbEnv = loadDatabaseEnv();
-
-  if (dbEnv.engine === 'postgres' && dbEnv.databaseUrl) {
-    return { mode: 'server', sqlitePath: null, usePostgres: true };
-  }
-  if (ip.valid && ip.isServer && ip.usePostgres) {
-    return { mode: 'server', sqlitePath: null, usePostgres: true, needsConfig: !!dbEnv.error || !dbEnv.databaseUrl };
-  }
-  if (dbResult?.mode === 'server' && dbResult?.usePostgres) {
-    return { mode: 'server', sqlitePath: null, usePostgres: true, needsConfig: !!dbResult.needsConfig };
-  }
+  const {
+    resolveInstallDatabaseMode,
+    isSqliteDatabaseIpContent,
+    readIpFileContent,
+  } = require('./databaseConfig.cjs');
+  const dbMode = resolveInstallDatabaseMode();
 
   const finalizeSqlite = (rawPath) => {
     const canonical = pickCanonicalSqlitePath(rawPath || DEFAULT_NEXOR_PATH);
@@ -2034,6 +2091,24 @@ function resolveStartupBackendPlan(dbResult) {
     }
     return canonical;
   };
+
+  // Standalone / test laptops: .db path in IP file beats a copied database.env.
+  if (dbMode.forceSqlite && dbMode.sqlitePath) {
+    return { mode: 'server', sqlitePath: finalizeSqlite(dbMode.sqlitePath) };
+  }
+  if (isSqliteDatabaseIpContent(readIpFileContent())) {
+    return { mode: 'server', sqlitePath: finalizeSqlite(readIpFileContent()) };
+  }
+
+  if (dbMode.engine === 'postgres' && dbMode.databaseUrl) {
+    return { mode: 'server', sqlitePath: null, usePostgres: true };
+  }
+  if (ip.valid && ip.isServer && ip.usePostgres) {
+    return { mode: 'server', sqlitePath: null, usePostgres: true, needsConfig: !!dbMode.error || !dbMode.databaseUrl };
+  }
+  if (dbResult?.mode === 'server' && dbResult?.usePostgres) {
+    return { mode: 'server', sqlitePath: null, usePostgres: true, needsConfig: !!dbResult.needsConfig };
+  }
 
   if (ip.valid && ip.isServer && ip.usePostgres) {
     return { mode: 'server', sqlitePath: null, usePostgres: true };
@@ -2109,13 +2184,16 @@ async function initDatabase() {
   isServerMode = true;
   serverAddress = null;
 
-  const { loadDatabaseEnv } = require('./databaseConfig.cjs');
-  const dbEnv = loadDatabaseEnv();
-  if (ipConfig.usePostgres || (dbEnv.engine === 'postgres' && dbEnv.databaseUrl)) {
-    if (dbEnv.error) {
-      return { success: false, error: dbEnv.error, mode: 'server', needsConfig: true };
+  const { resolveInstallDatabaseMode } = require('./databaseConfig.cjs');
+  const dbMode = resolveInstallDatabaseMode();
+  const wantsPostgres =
+    !dbMode.forceSqlite
+    && (ipConfig.usePostgres || (dbMode.engine === 'postgres' && dbMode.databaseUrl));
+  if (wantsPostgres) {
+    if (dbMode.error) {
+      return { success: false, error: dbMode.error, mode: 'server', needsConfig: true };
     }
-    if (!dbEnv.databaseUrl) {
+    if (!dbMode.databaseUrl) {
       return {
         success: false,
         error: 'Create C:\\NEXOR ERP\\database.env with DATABASE_URL (see database.env.example)',

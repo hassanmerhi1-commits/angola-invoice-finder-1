@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Server, Monitor, Wifi, CheckCircle, XCircle, Loader2, FolderOpen } from 'lucide-react';
+import { Server, Monitor, Wifi, CheckCircle, XCircle, Loader2, FolderOpen, FlaskConical } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 import { parseLanServerEndpoint } from '@/lib/lanServerAddress';
@@ -340,6 +340,47 @@ export default function Setup() {
     }
   };
 
+  const handleStandaloneTestSetup = async () => {
+    setIsLoading(true);
+    try {
+      if (isElectron && window.electronAPI?.setup?.configureStandalone) {
+        const result = await window.electronAPI.setup.configureStandalone();
+        if (!result.success) {
+          throw new Error(result.error || t.setupUi.standaloneConfigError);
+        }
+
+        localStorage.setItem('kwanza_setup_complete', 'true');
+        localStorage.setItem('kwanza_is_server', 'true');
+        localStorage.removeItem('kwanza_client_config');
+        localStorage.removeItem('kwanza_mode');
+        localStorage.removeItem('nexor_offline_first');
+
+        const { invalidateElectronApiBaseCache } = await import('@/lib/api/config');
+        invalidateElectronApiBaseCache();
+
+        toast.success(t.setupUi.standaloneConfigured, {
+          description: t.setupUi.standaloneConfiguredDesc.replace(
+            '{path}',
+            result.databasePath || 'C:\\NEXOR ERP\\data\\erp.db',
+          ),
+        });
+        setMode('complete');
+        return;
+      }
+
+      // Web preview fallback
+      localStorage.setItem('kwanza_setup_complete', 'true');
+      localStorage.setItem('kwanza_mode', 'demo');
+      toast.success(t.setupUi.demoModeActivated, { description: t.setupUi.demoModeDesc });
+      setMode('complete');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : t.setupUi.standaloneConfigError;
+      toast.error(t.setupUi.standaloneConfigError, { description: message });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const startDemoMode = () => {
     localStorage.setItem('kwanza_setup_complete', 'true');
     localStorage.setItem('kwanza_mode', 'demo');
@@ -374,6 +415,33 @@ export default function Setup() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6 px-6 pb-8">
+              <button
+                type="button"
+                disabled={isLoading}
+                className="group w-full border-2 border-primary rounded-xl p-5 flex items-center gap-4 bg-primary/5 hover:bg-primary/10 transition-all cursor-pointer disabled:opacity-60"
+                onClick={() => void handleStandaloneTestSetup()}
+              >
+                <div className="w-14 h-14 bg-primary/15 rounded-full flex items-center justify-center shrink-0">
+                  {isLoading ? (
+                    <Loader2 className="h-7 w-7 text-primary animate-spin" />
+                  ) : (
+                    <FlaskConical className="h-7 w-7 text-primary" />
+                  )}
+                </div>
+                <div className="text-left flex-1">
+                  <div className="font-semibold text-lg text-foreground">{t.setupUi.standaloneTestTitle}</div>
+                  <div className="text-sm text-muted-foreground">{t.setupUi.standaloneTestDesc}</div>
+                </div>
+                <Badge>{t.setupUi.standaloneTestBadge}</Badge>
+              </button>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card px-2 text-muted-foreground">{t.setupUi.howUsed}</span>
+                </div>
+              </div>
+
               <div className="grid gap-4 md:grid-cols-2">
                 <button
                   className="group border-2 border-border rounded-xl p-6 flex flex-col items-center gap-3 hover:border-primary hover:bg-primary/5 transition-all cursor-pointer"

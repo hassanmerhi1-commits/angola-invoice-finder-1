@@ -101,6 +101,13 @@ export interface ElectronAPI {
     getConfig: () => Promise<{ success: boolean; config?: SetupConfig }>;
     saveConfig: (config: SetupConfig) => Promise<{ success: boolean; error?: string }>;
     reset: () => Promise<{ success: boolean; error?: string }>;
+    configureStandalone?: () => Promise<{
+      success: boolean;
+      error?: string;
+      databasePath?: string;
+      backendPort?: number;
+      postgresEnvRemoved?: boolean;
+    }>;
   };
 
   // Database management (legacy)

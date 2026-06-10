@@ -503,7 +503,12 @@ export function ProductDetailDialog({
     setSaving(true);
     try {
       await onSave(savedProduct);
-    } catch {
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : t.productFormUi.productSaveFailed;
+      toast.error(message);
       forceCloseRef.current = false;
       onOpenChange(true);
     } finally {

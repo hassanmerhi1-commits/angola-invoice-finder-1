@@ -205,6 +205,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getConfig: () => ipcRenderer.invoke('setup:getConfig'),
     saveConfig: (config) => ipcRenderer.invoke('setup:saveConfig', config),
     reset: () => ipcRenderer.invoke('setup:reset'),
+    configureStandalone: () => ipcRenderer.invoke('setup:configureStandalone'),
   },
 
   getApiUrl: () => ipcRenderer.invoke('sync:getApiUrl'),

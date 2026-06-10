@@ -470,9 +470,9 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
     throw new Error(err);
   }
 
-  const { loadDatabaseEnv } = require('./databaseConfig.cjs');
-  const dbEnv = loadDatabaseEnv();
-  const usePostgres = dbEnv.engine === 'postgres' && !!dbEnv.databaseUrl;
+  const { resolveInstallDatabaseMode } = require('./databaseConfig.cjs');
+  const dbMode = resolveInstallDatabaseMode();
+  const usePostgres = dbMode.engine === 'postgres' && !!dbMode.databaseUrl && !dbMode.forceSqlite;
 
   const env = {
     ...process.env,
@@ -485,15 +485,18 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
   };
 
   if (usePostgres) {
-    env.DATABASE_URL = dbEnv.databaseUrl;
+    env.DATABASE_URL = dbMode.databaseUrl;
     env.DB_ENGINE = 'postgres';
     delete env.SQLITE_PATH;
     console.log('[BackendManager] PostgreSQL mode (database.env)');
   } else {
-    env.SQLITE_PATH = sqlitePath;
+    const resolvedSqlite = dbMode.forceSqlite && dbMode.sqlitePath
+      ? dbMode.sqlitePath
+      : sqlitePath;
+    env.SQLITE_PATH = resolvedSqlite;
     env.DATABASE_URL = '';
     env.DB_ENGINE = 'sqlite';
-    console.log(`[BackendManager] SQLite file: ${sqlitePath}`);
+    console.log(`[BackendManager] SQLite file: ${resolvedSqlite}`);
   }
   if (electronRunAsNode) {
     env.ELECTRON_RUN_AS_NODE = '1';

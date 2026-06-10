@@ -35,6 +35,61 @@ function parseEnvFile(content) {
   return out;
 }
 
+function readIpFileContent() {
+  try {
+    const ipPath = path.join(installDir(), 'IP');
+    if (!fs.existsSync(ipPath)) return '';
+    return fs.readFileSync(ipPath, 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+function isSqliteDatabaseIpContent(content) {
+  return /^[A-Za-z]:\\.+\.db$/i.test(String(content || '').trim());
+}
+
+function defaultSqliteDatabasePath() {
+  return path.join(installDir(), 'data', 'erp.db');
+}
+
+/**
+ * IP file with a .db path = embedded SQLite on this PC (standalone / test installs).
+ * That wins over database.env postgres copied from a production server.
+ */
+function resolveInstallDatabaseMode() {
+  const ipContent = readIpFileContent();
+
+  if (isSqliteDatabaseIpContent(ipContent)) {
+    return {
+      engine: 'sqlite',
+      databaseUrl: '',
+      sqlitePath: ipContent.trim(),
+      filePath: null,
+      forceSqlite: true,
+    };
+  }
+
+  if (/^postgres$/i.test(ipContent) || /^postgres(ql)?:\/\//i.test(ipContent)) {
+    const env = loadDatabaseEnv();
+    return {
+      engine: 'postgres',
+      databaseUrl: env.databaseUrl,
+      filePath: env.filePath,
+      error: env.error,
+      forceSqlite: false,
+      sqlitePath: null,
+    };
+  }
+
+  const env = loadDatabaseEnv();
+  return {
+    ...env,
+    forceSqlite: false,
+    sqlitePath: null,
+  };
+}
+
 function loadDatabaseEnv() {
   const filePath = databaseEnvPath();
   if (!fs.existsSync(filePath)) {
@@ -70,9 +125,29 @@ function isPostgresMode() {
   return loadDatabaseEnv().engine === 'postgres' && !!loadDatabaseEnv().databaseUrl;
 }
 
+function clearPostgresDatabaseEnv() {
+  const filePath = databaseEnvPath();
+  if (!fs.existsSync(filePath)) return { removed: false };
+  try {
+    const backup = `${filePath}.postgres-backup`;
+    if (!fs.existsSync(backup)) {
+      fs.copyFileSync(filePath, backup);
+    }
+    fs.unlinkSync(filePath);
+    return { removed: true, backup };
+  } catch (e) {
+    return { removed: false, error: e.message };
+  }
+}
+
 module.exports = {
   DATABASE_ENV_FILENAME,
   databaseEnvPath,
   loadDatabaseEnv,
   isPostgresMode,
+  readIpFileContent,
+  isSqliteDatabaseIpContent,
+  defaultSqliteDatabasePath,
+  resolveInstallDatabaseMode,
+  clearPostgresDatabaseEnv,
 };

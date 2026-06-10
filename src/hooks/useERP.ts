@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback, useRef, useSyncExternalStore, useMemo
 import { Branch, Product, Sale, User, CartItem, SaleItem, DailySummary, Client, StockTransfer, Supplier, PurchaseOrder, PurchaseOrderItem, Category } from '@/types/erp';
 import { api, clearAuthSessionCache, ensureBackendAuthToken, isJwtAuthToken, setAuthToken } from '@/lib/api/client';
 import { isDemoMode, isThinClientMode } from '@/lib/api/config';
+import { isOfflineModeActive } from '@/lib/offlineAuth';
 import { lanCatalogScopeKey, readLanProducts, readLanSuppliers, saveLanProducts, saveLanSuppliers } from '@/lib/lanCatalogCache';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
@@ -141,6 +142,18 @@ function mapStockTransfer(transfer: any): StockTransfer {
 function normalizeProductBranchIdForApi(branchId?: string | null): string | null | undefined {
   if (branchId == null || branchId === '' || branchId === 'all') return null;
   return branchId;
+}
+
+function readStoredUserBranchId(): string | undefined {
+  try {
+    const raw = localStorage.getItem('kwanzaerp_current_user');
+    if (!raw) return undefined;
+    const u = JSON.parse(raw) as { branchId?: string };
+    const id = String(u.branchId ?? '').trim();
+    return id && id !== 'all' ? id : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeProductSku(sku?: string): string {
@@ -387,14 +400,25 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     product: Product,
     options?: ProductWriteOptions,
   ): Promise<Product> => {
+    if (isOfflineModeActive()) {
+      throw new Error(
+        'Cannot save products while signed in offline. Connect to the server and log in again.',
+      );
+    }
+
     const writeGeneration = ++listGenerationRef.current;
     const normalizedBranch = normalizeProductBranchIdForApi(product.branchId);
     const payload = {
       ...product,
       branchId: normalizedBranch ?? product.branchId ?? undefined,
     };
-    if (payload.branchId === 'all' || payload.branchId === '') {
-      delete payload.branchId;
+    if (!payload.branchId || payload.branchId === 'all' || payload.branchId === '') {
+      const fallbackBranch = readStoredUserBranchId() || branchId;
+      if (fallbackBranch && fallbackBranch !== 'all') {
+        payload.branchId = fallbackBranch;
+      } else {
+        delete payload.branchId;
+      }
     }
     delete (payload as Record<string, unknown>).preserveStock;
     delete (payload as Record<string, unknown>).id;
