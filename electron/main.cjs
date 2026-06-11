@@ -438,7 +438,44 @@ function buildReleaseAssetUrl(version, fileName) {
 }
 
 function getUpdaterPendingDir() {
-  return path.join(app.getPath('cache'), 'nexor-erp-updater', 'pending');
+  // %TEMP% — downloaded .exe runs reliably here (Roaming cache can hit EACCES on spawn).
+  return path.join(app.getPath('temp'), 'nexor-erp-updater', 'pending');
+}
+
+function unblockWindowsDownload(filePath) {
+  if (process.platform !== 'win32') return;
+  try {
+    const { execFileSync } = require('child_process');
+    const escaped = String(filePath).replace(/'/g, "''");
+    execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', `Unblock-File -LiteralPath '${escaped}'`],
+      { stdio: 'ignore', timeout: 15000, windowsHide: true },
+    );
+  } catch (err) {
+    console.warn('[AutoUpdater] Unblock-File:', err?.message || err);
+  }
+}
+
+function launchDownloadedInstaller(installerPath) {
+  unblockWindowsDownload(installerPath);
+
+  if (process.platform === 'win32') {
+    const { spawn } = require('child_process');
+    // cmd start avoids Node spawn EACCES on internet-downloaded executables.
+    const quoted = `"${installerPath}"`;
+    const child = spawn(
+      process.env.ComSpec || 'cmd.exe',
+      ['/d', '/s', '/c', 'start', '""', quoted, '--updated'],
+      { detached: true, stdio: 'ignore', windowsHide: true },
+    );
+    child.unref();
+    return;
+  }
+
+  const { execFile } = require('child_process');
+  const child = execFile(installerPath, ['--updated'], { detached: true, stdio: 'ignore' });
+  child.unref();
 }
 
 function verifySha512File(filePath, expectedBase64) {
@@ -567,6 +604,7 @@ async function downloadUpdateViaHttp(releaseInfo) {
       await verifySha512File(destPath, releaseInfo.sha512);
     }
 
+    unblockWindowsDownload(destPath);
     pendingHttpInstallerPath = destPath;
     sendUpdaterStatus({ status: 'downloaded', version: releaseInfo.version });
     return { success: true, version: releaseInfo.version, source: 'http' };
@@ -3531,12 +3569,21 @@ ipcMain.handle('updater:getDiagnostics', async () => {
   };
 });
 ipcMain.handle('updater:download', async () => runUpdateDownload());
-ipcMain.handle('updater:install', () => {
+ipcMain.handle('updater:install', async () => {
   if (pendingHttpInstallerPath && fs.existsSync(pendingHttpInstallerPath)) {
-    const { spawn } = require('child_process');
-    spawn(pendingHttpInstallerPath, ['--updated'], { detached: true, stdio: 'ignore' }).unref();
-    app.quit();
-    return { success: true, source: 'http' };
+    try {
+      launchDownloadedInstaller(pendingHttpInstallerPath);
+      setImmediate(() => app.quit());
+      return { success: true, source: 'http' };
+    } catch (err) {
+      console.error('[AutoUpdater] install launch failed:', err?.message || err);
+      const shellError = await shell.openPath(pendingHttpInstallerPath);
+      if (shellError) {
+        return { success: false, error: shellError };
+      }
+      setImmediate(() => app.quit());
+      return { success: true, source: 'http-shell-fallback' };
+    }
   }
   autoUpdater.quitAndInstall();
   return { success: true, source: 'electron-updater' };
