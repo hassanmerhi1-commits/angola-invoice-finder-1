@@ -8,10 +8,22 @@ const path = require('path');
 const EXPECTED_SCHEMA_VERSION = 37;
 
 function readAppVersion() {
+  if (process.env.NEXOR_APP_VERSION) {
+    return String(process.env.NEXOR_APP_VERSION);
+  }
   const candidates = [
     path.resolve(__dirname, '../../../package.json'),
+    path.resolve(__dirname, '../../../../package.json'),
     path.resolve(__dirname, '../../package.json'),
   ];
+  for (const pkgPath of candidates) {
+    try {
+      if (fs.existsSync(pkgPath)) {
+        const version = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version;
+        if (version && version !== '1.0.0') return version;
+      }
+    } catch (_) {}
+  }
   for (const pkgPath of candidates) {
     try {
       if (fs.existsSync(pkgPath)) {
@@ -19,7 +31,7 @@ function readAppVersion() {
       }
     } catch (_) {}
   }
-  return process.env.NEXOR_APP_VERSION || 'unknown';
+  return 'unknown';
 }
 
 function statDbFile(filePath) {
@@ -130,19 +142,29 @@ function getLatestBackup(backupDir) {
 }
 
 async function readSchemaVersionFromDb(db) {
-  if (db.engine !== 'sqlite' || !db.sqlite) {
-    return { stored: null, expected: EXPECTED_SCHEMA_VERSION };
-  }
   try {
-    const row = db.sqlite.prepare('SELECT value FROM app_meta WHERE key = ?').get('schema_version');
-    const stored = row?.value != null ? Number(row.value) : null;
-    return {
-      stored: Number.isFinite(stored) ? stored : null,
-      expected: EXPECTED_SCHEMA_VERSION,
-    };
+    if (db.engine === 'postgres') {
+      const result = await db.query(
+        "SELECT value FROM app_meta WHERE key = 'schema_version' LIMIT 1",
+      );
+      const stored = result.rows[0]?.value != null ? Number(result.rows[0].value) : null;
+      return {
+        stored: Number.isFinite(stored) ? stored : null,
+        expected: EXPECTED_SCHEMA_VERSION,
+      };
+    }
+    if (db.engine === 'sqlite' && db.sqlite) {
+      const row = db.sqlite.prepare('SELECT value FROM app_meta WHERE key = ?').get('schema_version');
+      const stored = row?.value != null ? Number(row.value) : null;
+      return {
+        stored: Number.isFinite(stored) ? stored : null,
+        expected: EXPECTED_SCHEMA_VERSION,
+      };
+    }
   } catch {
-    return { stored: null, expected: EXPECTED_SCHEMA_VERSION };
+    /* app_meta may not exist yet on first boot */
   }
+  return { stored: null, expected: EXPECTED_SCHEMA_VERSION };
 }
 
 /**
@@ -289,10 +311,39 @@ function recordAppMeta(sqlite, appVersion) {
   upsert.run('last_started_at', new Date().toISOString());
 }
 
+async function recordAppMetaForDb(db, appVersion) {
+  const version = String(appVersion || readAppVersion());
+  const now = new Date().toISOString();
+  if (db.engine === 'sqlite' && db.sqlite) {
+    recordAppMeta(db.sqlite, version);
+    return;
+  }
+  if (db.engine !== 'postgres') return;
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key VARCHAR(64) PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  for (const [key, value] of [
+    ['schema_version', String(EXPECTED_SCHEMA_VERSION)],
+    ['app_version', version],
+    ['last_started_at', now],
+  ]) {
+    await db.query(
+      `INSERT INTO app_meta (key, value, updated_at) VALUES ($1, $2, $3)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+      [key, value, now],
+    );
+  }
+}
+
 module.exports = {
   EXPECTED_SCHEMA_VERSION,
   readAppVersion,
   buildDeploymentStatus,
   recordAppMeta,
+  recordAppMetaForDb,
   listSqliteCandidatePaths,
 };

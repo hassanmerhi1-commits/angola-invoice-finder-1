@@ -41,7 +41,7 @@ const db = require('./db');
 const { lanCors, securityHeaders, rateLimiter } = require('./middleware/security');
 const { DiscoveryBroadcaster } = require('./discovery');
 
-const { readAppVersion, EXPECTED_SCHEMA_VERSION } = require('./lib/deploymentStatus');
+const { readAppVersion, EXPECTED_SCHEMA_VERSION, recordAppMetaForDb } = require('./lib/deploymentStatus');
 
 const PORT = Number(process.env.PORT) || 3000;
 const APP_VERSION = readAppVersion();
@@ -175,6 +175,13 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
     await ensurePhaseSchema(db);
   } catch (e) {
     console.warn('[SCHEMA]', e.message);
+  }
+
+  try {
+    await recordAppMetaForDb(db, readAppVersion());
+    console.log(`[SCHEMA] app_meta schema_version=${EXPECTED_SCHEMA_VERSION}`);
+  } catch (e) {
+    console.warn('[SCHEMA] app_meta:', e.message);
   }
 
   server.listen(PORT, '0.0.0.0', () => {

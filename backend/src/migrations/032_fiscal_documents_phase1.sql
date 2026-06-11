@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS transport_documents (
 CREATE INDEX IF NOT EXISTS idx_transport_documents_branch ON transport_documents(branch_id);
 CREATE INDEX IF NOT EXISTS idx_transport_documents_status ON transport_documents(status);
 
+-- Prerequisite for per-branch fiscal sequences (migration 017 may not have run on older DBs).
+ALTER TABLE public.document_sequences
+  ADD COLUMN IF NOT EXISTS branch_id VARCHAR(64) NOT NULL DEFAULT '';
+
+ALTER TABLE public.document_sequences
+  DROP CONSTRAINT IF EXISTS document_sequences_document_type_fiscal_year_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_sequences_scope
+  ON public.document_sequences(document_type, fiscal_year, branch_id);
+
 DO $$
 DECLARE
   yr INTEGER := EXTRACT(YEAR FROM CURRENT_DATE)::INTEGER;

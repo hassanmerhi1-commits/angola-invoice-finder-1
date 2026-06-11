@@ -100,6 +100,8 @@ const MIGRATIONS = [
   '014_chart_of_accounts_children_count.sql',
   '015_products_supplier.sql',
   '016_freight_expense_account.sql',
+  '016_purchase_invoice_sequence.sql',
+  '017_branch_document_sequences.sql',
   '017_multi_price_levels.sql',
   '018_purchase_invoices_table.sql',
   '019_org_hierarchy.sql',
@@ -122,6 +124,7 @@ const MIGRATIONS = [
   '036_company_settings_phase4.sql',
   '037_fiscal_audit_phase5.sql',
   '038_audit_log_actions_phase5.sql',
+  '039_app_meta_schema_version.sql',
 ];
 
 /**
@@ -236,8 +239,8 @@ async function runMigrations() {
           await db.query(statements[i]);
         } catch (err) {
           // Log but continue on "already exists" type errors
-          if (err.code === '42P07' || err.code === '42710' || err.code === '23505') {
-            // 42P07 = relation already exists, 42710 = type already exists, 23505 = duplicate key
+          if (err.code === '42P07' || err.code === '42710' || err.code === '23505' || err.code === '42701') {
+            // 42P07 = relation already exists, 42710 = type already exists, 23505 = duplicate key, 42701 = duplicate column
             continue;
           }
           console.error(`[MIGRATE] ❌ Error in ${file} (statement ${i + 1}):`, err.message);
@@ -247,6 +250,10 @@ async function runMigrations() {
 
       console.log(`[MIGRATE] ✅ ${file} applied (${statements.length} statements)`);
     }
+
+    const { recordAppMetaForDb, readAppVersion, EXPECTED_SCHEMA_VERSION } = require('../lib/deploymentStatus');
+    await recordAppMetaForDb(db, readAppVersion());
+    console.log(`[MIGRATE] app_meta schema_version=${EXPECTED_SCHEMA_VERSION}`);
 
     console.log('[MIGRATE] ✅ All migrations completed successfully!');
     console.log('[MIGRATE] Database is ready.');

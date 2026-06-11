@@ -68,6 +68,26 @@ async function ensureAuditLogActions(db) {
   }
 }
 
+/** Legacy PostgreSQL DBs may lack document_sequences.branch_id (migration 017 skipped). */
+async function ensureDocumentSequencesBranchScope(db) {
+  if (db.engine !== 'postgres') return;
+  try {
+    await db.query(
+      `ALTER TABLE public.document_sequences
+       ADD COLUMN IF NOT EXISTS branch_id VARCHAR(64) NOT NULL DEFAULT ''`,
+    );
+    await db.query(
+      'ALTER TABLE public.document_sequences DROP CONSTRAINT IF EXISTS document_sequences_document_type_fiscal_year_key',
+    );
+    await db.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_document_sequences_scope
+       ON public.document_sequences(document_type, fiscal_year, branch_id)`,
+    );
+  } catch (err) {
+    console.warn('[SCHEMA] document_sequences branch scope:', err.message);
+  }
+}
+
 async function ensureCreditNoteRestoreStockColumn(db) {
   if (db.engine === 'postgres') {
     const check = await db.query(
@@ -112,6 +132,7 @@ async function ensurePhaseSchema(db) {
   const migrationsDir = path.join(__dirname, '../migrations');
 
   if (db.engine === 'postgres') {
+    await ensureDocumentSequencesBranchScope(db);
     for (const file of MIGRATION_FILES) {
       const sqlFile = path.join(migrationsDir, file);
       if (!fs.existsSync(sqlFile)) continue;
@@ -158,6 +179,7 @@ async function ensurePhaseSchema(db) {
 
 module.exports = {
   ensurePhaseSchema,
+  ensureDocumentSequencesBranchScope,
   ensureCreditNoteRestoreStockColumn,
   ensureAuditLogActions,
 };

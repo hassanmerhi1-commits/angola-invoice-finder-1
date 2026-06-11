@@ -483,6 +483,16 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
   const dbMode = resolveInstallDatabaseMode();
   const usePostgres = dbMode.engine === 'postgres' && !!dbMode.databaseUrl && !dbMode.forceSqlite;
 
+  let nexorAppVersion = process.env.NEXOR_APP_VERSION || '';
+  if (!nexorAppVersion) {
+    try {
+      const rootPkg = path.join(app.getAppPath(), 'package.json');
+      if (fs.existsSync(rootPkg)) {
+        nexorAppVersion = JSON.parse(fs.readFileSync(rootPkg, 'utf8')).version || '';
+      }
+    } catch (_) {}
+  }
+
   const env = {
     ...process.env,
     PORT: String(port),
@@ -492,6 +502,9 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
     NODE_PATH: nodePath,
     ELECTRON_NO_ATTACH_CONSOLE: '1',
   };
+  if (nexorAppVersion) {
+    env.NEXOR_APP_VERSION = nexorAppVersion;
+  }
 
   if (usePostgres) {
     env.DATABASE_URL = dbMode.databaseUrl;
