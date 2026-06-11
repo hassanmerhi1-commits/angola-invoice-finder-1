@@ -457,25 +457,14 @@ function unblockWindowsDownload(filePath) {
   }
 }
 
-function launchDownloadedInstaller(installerPath) {
+async function launchDownloadedInstaller(installerPath) {
   unblockWindowsDownload(installerPath);
 
-  if (process.platform === 'win32') {
-    const { spawn } = require('child_process');
-    // cmd start avoids Node spawn EACCES on internet-downloaded executables.
-    const quoted = `"${installerPath}"`;
-    const child = spawn(
-      process.env.ComSpec || 'cmd.exe',
-      ['/d', '/s', '/c', 'start', '""', quoted, '--updated'],
-      { detached: true, stdio: 'ignore', windowsHide: true },
-    );
-    child.unref();
-    return;
+  // shell.openPath → ShellExecute on Windows; avoids Node spawn EACCES on downloaded .exe.
+  const shellError = await shell.openPath(installerPath);
+  if (shellError) {
+    throw new Error(shellError);
   }
-
-  const { execFile } = require('child_process');
-  const child = execFile(installerPath, ['--updated'], { detached: true, stdio: 'ignore' });
-  child.unref();
 }
 
 function verifySha512File(filePath, expectedBase64) {
@@ -3572,17 +3561,14 @@ ipcMain.handle('updater:download', async () => runUpdateDownload());
 ipcMain.handle('updater:install', async () => {
   if (pendingHttpInstallerPath && fs.existsSync(pendingHttpInstallerPath)) {
     try {
-      launchDownloadedInstaller(pendingHttpInstallerPath);
-      setImmediate(() => app.quit());
-      return { success: true, source: 'http' };
+      await launchDownloadedInstaller(pendingHttpInstallerPath);
+      setTimeout(() => app.quit(), 500);
+      return { success: true, source: 'http-shell' };
     } catch (err) {
-      console.error('[AutoUpdater] install launch failed:', err?.message || err);
-      const shellError = await shell.openPath(pendingHttpInstallerPath);
-      if (shellError) {
-        return { success: false, error: shellError };
-      }
-      setImmediate(() => app.quit());
-      return { success: true, source: 'http-shell-fallback' };
+      const message = err?.message || String(err);
+      console.error('[AutoUpdater] install launch failed:', message);
+      sendUpdaterStatus({ status: 'error', error: message });
+      return { success: false, error: message };
     }
   }
   autoUpdater.quitAndInstall();

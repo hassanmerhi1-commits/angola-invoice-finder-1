@@ -241,7 +241,14 @@ export default function Settings() {
 
   const handleInstallUpdate = async () => {
     if (!isElectron) return;
-    await window.electronAPI?.updater.install();
+    try {
+      const result = await window.electronAPI?.updater.install();
+      if (result && !result.success) {
+        toast.error(result.error || 'Could not launch installer. Run the downloaded .exe manually.');
+      }
+    } catch {
+      toast.error('Could not launch installer. Run the downloaded .exe manually.');
+    }
   };
 
   const getStatusBadge = () => {
