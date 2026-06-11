@@ -257,25 +257,27 @@ ipcMain.on('backend:getHttpOriginSync', (event) => {
 // ============= SINGLE-INSTANCE LOCK (Phase 2) =============
 // Prevent a second .exe launch from spawning a duplicate Express backend or
 // stealing the same port. Second launch focuses the existing window instead.
-// Dev (`npm run electron:dev`) skips the lock so it can run beside the installed app.
 const isElectronDev =
   process.env.ELECTRON_DEV === 'true'
   || process.env.NODE_ENV === 'development';
-const gotSingleInstanceLock = isElectronDev || app.requestSingleInstanceLock();
+if (isElectronDev) {
+  // Avoid GPU shader cache "Access is denied" crashes on Windows dev sessions.
+  app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+  app.commandLine.appendSwitch('disable-gpu-program-cache');
+}
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
-  console.log('[Startup] Another NEXOR ERP instance is already running — exiting.');
+  console.log('[Startup] Another NEXOR ERP window is already open — focusing it and exiting this launch.');
   app.quit();
   process.exit(0);
 }
-if (!isElectronDev) {
-  app.on('second-instance', () => {
-    if (typeof mainWindow !== 'undefined' && mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
-    }
-  });
-}
+app.on('second-instance', () => {
+  if (typeof mainWindow !== 'undefined' && mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
 
 // Backend port chosen by backendManager — exposed to renderer via preload.
 let backendPort = null;
@@ -2976,13 +2978,19 @@ function createWindow() {
   mainWindow.webContents.on('dom-ready', injectBackendPort);
   mainWindow.webContents.on('did-finish-load', injectBackendPort);
 
+  const revealMainWindow = () => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isVisible()) return;
+    console.warn('[Startup] Showing main window');
+    if (splashWindow) { splashWindow.close(); splashWindow = null; }
+    mainWindow.show();
+    mainWindow.focus();
+  };
+
   mainWindow.once('ready-to-show', () => {
-    setTimeout(() => {
-      if (splashWindow) { splashWindow.close(); splashWindow = null; }
-      mainWindow.show();
-      mainWindow.focus();
-    }, 1500);
+    setTimeout(revealMainWindow, isDev ? 400 : 1500);
   });
+  // If the renderer hangs before ready-to-show, don't leave a blank splash forever.
+  setTimeout(revealMainWindow, isDev ? 10000 : 20000);
 
   mainWindow.on('close', (event) => {
     if (quitConfirmed) return;

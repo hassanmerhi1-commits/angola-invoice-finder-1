@@ -458,6 +458,10 @@ export function exportSAFTToJSON(saft: SAFTAO): string {
 
 // Export to XML (for compatibility)
 export function exportSAFTToXML(saft: SAFTAO): string {
+  if (!saft?.AuditFile) {
+    throw new Error('Invalid SAF-T response from server');
+  }
+
   const escapeXML = (str: string | undefined | null): string => {
     if (!str) return '';
     return str
@@ -544,6 +548,9 @@ export function downloadSAFTFile(
 export interface SAFTSummary {
   period: string;
   totalInvoices: number;
+  totalSalesInvoices: number;
+  totalCreditNotes: number;
+  totalDebitNotes: number;
   totalProducts: number;
   totalCustomers: number;
   totalCredit: number;
@@ -552,21 +559,41 @@ export interface SAFTSummary {
 }
 
 export function getSAFTSummary(saft: SAFTAO): SAFTSummary {
+  if (!saft?.AuditFile) {
+    throw new Error('Invalid SAF-T response from server');
+  }
   const header = saft.AuditFile.Header;
-  const salesInvoices = saft.AuditFile.SourceDocuments.SalesInvoices;
-  
-  const totalTax = salesInvoices?.Invoice.reduce(
+  const salesInvoices = saft.AuditFile.SourceDocuments?.SalesInvoices;
+  const rawInvoice = salesInvoices?.Invoice;
+  const invoices = Array.isArray(rawInvoice) ? rawInvoice : rawInvoice ? [rawInvoice] : [];
+
+  const totalTax = invoices.reduce(
     (sum, inv) => sum + inv.DocumentTotals.TaxPayable,
-    0
+    0,
   ) || 0;
-  
+
+  const totalSalesInvoices = invoices.filter((inv) => inv.InvoiceType === 'FT' || !inv.InvoiceType).length;
+  const totalCreditNotes = invoices.filter((inv) => inv.InvoiceType === 'NC').length;
+  const totalDebitNotes = invoices.filter((inv) => inv.InvoiceType === 'ND').length;
+
   return {
     period: `${header.StartDate} a ${header.EndDate}`,
-    totalInvoices: salesInvoices?.NumberOfEntries || 0,
-    totalProducts: saft.AuditFile.MasterFiles.Product.length,
-    totalCustomers: saft.AuditFile.MasterFiles.Customer.length,
-    totalCredit: salesInvoices?.TotalCredit || 0,
-    totalDebit: salesInvoices?.TotalDebit || 0,
+    totalInvoices: salesInvoices?.NumberOfEntries || invoices.length,
+    totalSalesInvoices,
+    totalCreditNotes,
+    totalDebitNotes,
+    totalProducts: Array.isArray(saft.AuditFile.MasterFiles?.Product)
+      ? saft.AuditFile.MasterFiles.Product.length
+      : 0,
+    totalCustomers: Array.isArray(saft.AuditFile.MasterFiles?.Customer)
+      ? saft.AuditFile.MasterFiles.Customer.length
+      : 0,
+    totalCredit: typeof salesInvoices?.TotalCredit === 'number'
+      ? salesInvoices.TotalCredit
+      : parseFloat(String(salesInvoices?.TotalCredit || 0)),
+    totalDebit: typeof salesInvoices?.TotalDebit === 'number'
+      ? salesInvoices.TotalDebit
+      : parseFloat(String(salesInvoices?.TotalDebit || 0)),
     totalTax,
   };
 }

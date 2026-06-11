@@ -19,22 +19,25 @@ import { toast } from 'sonner';
 import {
   Plus, Search, Printer, RefreshCw, FileText, Receipt,
   Banknote, CreditCard, ArrowRight, Download, XCircle, CheckCircle,
-  Clock, ChevronDown, ArrowRightLeft
+  Clock, ChevronDown, ArrowRightLeft, Send,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
 import { markSalePrintedAfterPrint } from '@/lib/markSalePrinted';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
+import type { CreditNote } from '@/types/erp';
+import { api } from '@/lib/api/client';
 import {
   getDocuments,
   convertDocument,
   getSalesInvoicesAsDocuments,
   getPurchaseInvoicesAsDocuments,
+  mapCreditNoteToDocument,
 } from '@/lib/documentStorage';
 import type { BranchRef } from '@/lib/purchaseInvoiceStorage';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
-import { SALES_CHANGED_EVENT } from '@/lib/storage';
+import { SALES_CHANGED_EVENT, CREDIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
 import {
   documentTypeForNewFromTab,
   getInvoicesWorkspaceTab,
@@ -44,8 +47,28 @@ import {
   type InvoicesWorkspaceTab,
 } from '@/lib/invoicesWorkspace';
 import { DocumentFormDialog } from '@/components/documents/DocumentFormDialog';
+import { isFiscallyImmutable } from '@/lib/fiscalImmutability';
 import { DocumentFlowViewer } from '@/components/documents/DocumentFlowViewer';
 import { setContextMenuResolver } from '@/lib/contextMenuRegistry';
+import { useAgtTransmit } from '@/hooks/useAgtTransmit';
+import { usePermissions } from '@/hooks/usePermissions';
+import { isAgtValidated } from '@/lib/agtStatus';
+
+/** Prefer canonical sales row over stale local erp_documents mirror (doc_* ids). */
+function resolveCanonicalSaleDocument(doc: ERPDocument, all: ERPDocument[]): ERPDocument {
+  if (doc.documentType !== 'fatura_venda' || !doc.documentNumber) return doc;
+  const canonical = all.find(
+    (d) => d.documentType === 'fatura_venda'
+      && d.documentNumber === doc.documentNumber
+      && !d.id.startsWith('doc_'),
+  );
+  if (!canonical) return doc;
+  return {
+    ...canonical,
+    agtStatus: canonical.agtStatus || doc.agtStatus,
+    agtCode: canonical.agtCode || doc.agtCode,
+  };
+}
 
 // Build flow nodes from a document and its linked chain
 function buildFlowNodes(doc: ERPDocument): { type: string; number: string; date: string; status: 'completed' | 'active' | 'pending'; amount?: number }[] {
@@ -119,10 +142,13 @@ export default function Invoices() {
     converted: { label: t.documentStatus.converted, variant: 'secondary' },
   }), [t]);
   const { user } = useAuth();
+  const { hasPermission } = usePermissions(user?.id);
+  const canSendAgt = hasPermission('agt_send');
   const { currentBranch, branches, isHeadOffice, listBranchId } = useBranchScope();
   const navigate = useNavigate();
   const location = useLocation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const { transmit: transmitAgt } = useAgtTransmit();
 
   const [activeTab, setActiveTab] = useState<DocumentType | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -142,8 +168,13 @@ export default function Invoices() {
 
   useEffect(() => {
     const onSalesChanged = () => setRefreshKey((k) => k + 1);
+    const onCreditNotesChanged = () => setRefreshKey((k) => k + 1);
     window.addEventListener(SALES_CHANGED_EVENT, onSalesChanged);
-    return () => window.removeEventListener(SALES_CHANGED_EVENT, onSalesChanged);
+    window.addEventListener(CREDIT_NOTES_CHANGED_EVENT, onCreditNotesChanged);
+    return () => {
+      window.removeEventListener(SALES_CHANGED_EVENT, onSalesChanged);
+      window.removeEventListener(CREDIT_NOTES_CHANGED_EVENT, onCreditNotesChanged);
+    };
   }, []);
 
   useEffect(() => {
@@ -159,10 +190,23 @@ export default function Invoices() {
 
     const load = async () => {
       try {
+        if (type === 'nota_credito') {
+          let cnRes = await api.fiscalDocuments.listCreditNotes(listBranchId);
+          if ((!cnRes.data || cnRes.data.length === 0) && listBranchId) {
+            cnRes = await api.fiscalDocuments.listCreditNotes();
+          }
+          const mapped = (cnRes.data || []).map((cn: CreditNote) =>
+            mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
+          );
+          setDocuments(mapped);
+          return;
+        }
+
         const loadSales = !type || type === 'fatura_venda';
         const loadPurchase = !type || type === 'fatura_compra';
 
-        const [storedDocs, salesDocs, purchaseDocs] = await Promise.all([
+        const loadFiscalCreditNotes = !type;
+        const [storedDocs, salesDocs, purchaseDocs, cnRes] = await Promise.all([
           getDocuments(type, branchFilter),
           loadSales
             ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog)
@@ -170,11 +214,34 @@ export default function Invoices() {
           loadPurchase
             ? getPurchaseInvoicesAsDocuments(listBranchId, branchNames, branchCatalog, isHeadOffice)
             : Promise.resolve([]),
+          loadFiscalCreditNotes
+            ? api.fiscalDocuments.listCreditNotes(listBranchId).then(async (res) => {
+                if ((!res.data || res.data.length === 0) && listBranchId) {
+                  return api.fiscalDocuments.listCreditNotes();
+                }
+                return res;
+              })
+            : Promise.resolve({ data: [] as CreditNote[] }),
         ]);
 
-        const seenNumbers = new Set(storedDocs.map((d) => d.documentNumber));
-        const merged = [...storedDocs];
-        for (const doc of [...salesDocs, ...purchaseDocs]) {
+        const salesByNumber = new Map(
+          salesDocs.filter((d) => d.documentNumber).map((d) => [d.documentNumber, d]),
+        );
+        const fiscalCreditDocs = (cnRes.data || []).map((cn: CreditNote) =>
+          mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
+        );
+        const merged: ERPDocument[] = [];
+        const seenNumbers = new Set<string>();
+        for (const doc of storedDocs) {
+          if (doc.documentType === 'fatura_venda' && doc.documentNumber && salesByNumber.has(doc.documentNumber)) {
+            continue;
+          }
+          // Local erp_documents copies are stale; fiscal API is canonical for credit notes.
+          if (doc.documentType === 'nota_credito') continue;
+          merged.push(doc);
+          if (doc.documentNumber) seenNumbers.add(doc.documentNumber);
+        }
+        for (const doc of [...salesDocs, ...purchaseDocs, ...fiscalCreditDocs]) {
           if (!doc.documentNumber || seenNumbers.has(doc.documentNumber)) continue;
           seenNumbers.add(doc.documentNumber);
           merged.push(doc);
@@ -190,7 +257,7 @@ export default function Invoices() {
     };
 
     load();
-  }, [activeTab, listBranchId, isHeadOffice, branches, refreshKey]);
+  }, [activeTab, listBranchId, isHeadOffice, branches, refreshKey, t.pos.finalConsumer]);
 
   useEffect(() => {
     setInvoicesWorkspaceTab(activeTab);
@@ -209,9 +276,18 @@ export default function Invoices() {
     navigate(location.pathname, { replace: true, state: {} });
   }, [location.state, location.pathname, navigate]);
 
+  const openFiscalCreditNoteCreate = useCallback(() => {
+    navigate('/fiscal-documents', { state: { openCreditNoteCreate: true } });
+  }, [navigate]);
+
   const openNewDocumentForTab = useCallback(
     (tab?: InvoicesWorkspaceTab) => {
-      const type = documentTypeForNewFromTab(tab);
+      const resolved = tab ?? getInvoicesWorkspaceTab();
+      if (resolved === 'nota_credito') {
+        openFiscalCreditNoteCreate();
+        return;
+      }
+      const type = documentTypeForNewFromTab(resolved);
       if (type === 'fatura_compra') {
         navigateThenStartPurchaseCreate(navigate, location.pathname);
         return;
@@ -221,7 +297,7 @@ export default function Invoices() {
       setPrefillDoc(null);
       setFormOpen(true);
     },
-    [navigate, location.pathname],
+    [navigate, location.pathname, openFiscalCreditNoteCreate],
   );
 
   // TopNav toolbar "Novo" — match active document tab (read tab at click time)
@@ -269,8 +345,20 @@ export default function Invoices() {
   };
 
   const openEditDocument = (doc: ERPDocument) => {
-    setFormDocType(doc.documentType);
-    setEditDoc(doc);
+    if (doc.documentType === 'nota_credito') {
+      const isLocalOnly = doc.id.startsWith('doc_');
+      navigate('/fiscal-documents', {
+        state: isLocalOnly
+          ? { openCreditNoteNumber: doc.documentNumber }
+          : { openCreditNoteId: doc.id },
+      });
+      return;
+    }
+    const resolved = doc.documentType === 'fatura_venda'
+      ? resolveCanonicalSaleDocument(doc, documents)
+      : doc;
+    setFormDocType(resolved.documentType);
+    setEditDoc(resolved);
     setPrefillDoc(null);
     setFormOpen(true);
   };
@@ -335,10 +423,11 @@ export default function Invoices() {
       const doc = documents.find((d) => d.id === docId);
       if (!doc) return [];
 
-      return [
+      const immutable = isFiscallyImmutable(doc);
+      const items = [
         {
-          id: 'doc-edit',
-          label: t.interaction.openEdit,
+          id: immutable ? 'doc-view' : 'doc-edit',
+          label: immutable ? t.invoicesUi.viewEdit : t.interaction.openEdit,
           onSelect: () => openEditDocument(doc),
         },
         {
@@ -354,11 +443,36 @@ export default function Invoices() {
           },
         },
       ];
+      if (
+        canSendAgt
+        && doc.documentType === 'fatura_venda'
+        && immutable
+        && doc.status !== 'cancelled'
+        && !isAgtValidated(resolveCanonicalSaleDocument(doc, documents).agtStatus)
+      ) {
+        const target = resolveCanonicalSaleDocument(doc, documents);
+        items.push({
+          id: 'doc-send-agt',
+          label: t.documentFormUi.sendToAgt,
+          onSelect: () => {
+            void transmitAgt('sale', target.id, {
+              documentNumber: target.documentNumber,
+              onSuccess: () => refresh(),
+            });
+          },
+        });
+      }
+      return items;
     });
     return () => setContextMenuResolver(null);
-  }, [documents, openEditDocument, t]);
+  }, [documents, openEditDocument, t, transmitAgt, refresh, canSendAgt]);
 
   const handleConvert = async (doc: ERPDocument, targetType: DocumentType) => {
+    if (targetType === 'nota_credito' && doc.documentType === 'fatura_venda') {
+      navigate('/fiscal-documents', { state: { openCreditNoteForSaleId: doc.id } });
+      toast.info(t.invoicesUi.creditNoteUseFiscalDocs);
+      return;
+    }
     // Proforma → Sales invoice should open the form prefilled (draft),
     // not auto-create a confirmed invoice.
     if (doc.documentType === 'proforma' && targetType === 'fatura_venda') {
@@ -411,6 +525,8 @@ export default function Invoices() {
               <DropdownMenuItem key={key} onClick={() => {
                 if (key === 'fatura_compra') {
                   navigateThenStartPurchaseCreate(navigate, location.pathname);
+                } else if (key === 'nota_credito') {
+                  openFiscalCreditNoteCreate();
                 } else {
                   openNewDocument(key);
                 }
@@ -609,6 +725,43 @@ export default function Invoices() {
                 {t.common.generate}: {selectedDoc.childDocuments.map(c => c.number).join(', ')}
               </span>
             )}
+            {selectedDoc.documentType === 'nota_credito' && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="ml-auto h-6 text-[10px] gap-1 px-2"
+                onClick={() => navigate('/fiscal-documents', { state: { openCreditNoteId: selectedDoc.id } })}
+              >
+                {t.fiscalDocumentsUi.actionView}
+              </Button>
+            )}
+            {canSendAgt && selectedDoc.documentType === 'fatura_venda'
+              && isFiscallyImmutable(selectedDoc)
+              && selectedDoc.status !== 'cancelled' && (() => {
+              const agtTarget = resolveCanonicalSaleDocument(selectedDoc, documents);
+              return isAgtValidated(agtTarget.agtStatus) ? (
+                <Badge variant="default" className="ml-auto h-6 text-[10px] px-2">
+                  {t.agtUi.agtValidatedLabel}
+                  {agtTarget.agtCode ? ` · ${agtTarget.agtCode}` : ''}
+                </Badge>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="ml-auto h-6 text-[10px] gap-1 px-2"
+                  onClick={() => {
+                    const target = agtTarget;
+                    void transmitAgt('sale', target.id, {
+                      documentNumber: target.documentNumber,
+                      onSuccess: () => refresh(),
+                    });
+                  }}
+                >
+                  <Send className="w-3 h-3" />
+                  {t.documentFormUi.sendToAgt}
+                </Button>
+              );
+            })()}
           </div>
           {/* Document Flow Chain */}
           <DocumentFlowViewer nodes={buildFlowNodes(selectedDoc)} className="border-t bg-muted/20 px-3 py-1" />

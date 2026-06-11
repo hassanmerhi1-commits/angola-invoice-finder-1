@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Plus, Trash2, Search, Save, Printer, X } from 'lucide-react';
+import { Plus, Trash2, Search, Save, Printer, X, Send } from 'lucide-react';
 import { printDocument } from '@/lib/documentPDF';
 import { markSalePrintedAfterPrint } from '@/lib/markSalePrinted';
 import { cn } from '@/lib/utils';
@@ -23,8 +23,13 @@ import type { Client, Supplier, OpenItem } from '@/types/erp';
 import { signedOpenItemBalance } from '@/lib/openItems';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { api } from '@/lib/api/client';
+import { isAgtValidated } from '@/lib/agtStatus';
 import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { useTranslation } from '@/i18n';
+import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutability';
+import { useAgtTransmit } from '@/hooks/useAgtTransmit';
+import { usePermissions } from '@/hooks/usePermissions';
+import { SALES_CHANGED_EVENT } from '@/lib/storage';
 
 function defaultSalesDueDate(daysAhead = 15): string {
   const d = new Date();
@@ -45,12 +50,17 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { user } = useAuth();
+  const { hasPermission } = usePermissions(user?.id);
   const { currentBranch } = useBranchContext();
   const { products } = useProducts(currentBranch?.id, { light: true });
   const { clients } = useClients();
   const { suppliers } = useSuppliers();
   const config = DOCUMENT_TYPE_CONFIG[documentType];
   const typeUi = (t.documentFormUi.types as Record<DocumentType, { full: string; short: string }>)[documentType];
+  const fiscalLocked = Boolean(editDocument && isFiscallyImmutable(editDocument));
+  const dueDateOnlyEdit = Boolean(editDocument && allowsDueDateOnlyEdit(editDocument));
+  const formReadOnly = fiscalLocked && !dueDateOnlyEdit;
+  const contentLocked = formReadOnly || dueDateOnlyEdit;
   const finalConsumerName = t.pos.finalConsumer;
   const fmt = (n: number, opts?: Intl.NumberFormatOptions) =>
     n.toLocaleString(locale, { minimumFractionDigits: opts?.minimumFractionDigits, maximumFractionDigits: opts?.maximumFractionDigits });
@@ -70,11 +80,18 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const [productSearch, setProductSearch] = useState('');
   const [entityPickerOpen, setEntityPickerOpen] = useState(false);
   const [activeLineTab, setActiveLineTab] = useState('linhas');
+  const { transmit: transmitAgt, transmitting: agtTransmitting } = useAgtTransmit();
+  const [agtStatus, setAgtStatus] = useState<string | undefined>();
+  const [agtCode, setAgtCode] = useState<string | undefined>();
+
+  const agtValidated = isAgtValidated(agtStatus);
 
   // Reset form when opening
   useEffect(() => {
     if (open) {
       const source = editDocument || prefillFrom;
+      setAgtStatus(editDocument?.agtStatus);
+      setAgtCode(editDocument?.agtCode);
       if (source) {
         setEntityId(source.entityId || '');
         setEntityName(source.entityName);
@@ -103,6 +120,18 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       setEntityPickerOpen(false);
     }
   }, [open, editDocument, prefillFrom, documentType]);
+
+  // Fresh AGT status from server (list rows may be stale local mirrors).
+  useEffect(() => {
+    if (!open || !editDocument || documentType !== 'fatura_venda' || !editDocument.documentNumber) return;
+    let cancelled = false;
+    void api.agt.getDocumentStatus('sale', editDocument.id, editDocument.documentNumber).then((res) => {
+      if (cancelled || !res.data) return;
+      if (res.data.agtStatus) setAgtStatus(res.data.agtStatus);
+      if (res.data.agtCode) setAgtCode(res.data.agtCode);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open, editDocument?.id, editDocument?.documentNumber, documentType]);
 
   const entityDirectory = config.entityType === 'customer' ? clients : suppliers;
 
@@ -308,6 +337,11 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
     try {
       if (editDocument) {
+        if (formReadOnly) {
+          toast.error(t.documentFormUi.fiscalLockedSaveError);
+          return;
+        }
+
         const updated: ERPDocument = {
           ...editDocument,
           entityId: entityId || editDocument.entityId,
@@ -315,15 +349,22 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           entityNif,
           entityAddress,
           entityPhone,
-          lines,
-          ...totals,
-          paymentMethod: paymentMethod as any,
-          amountPaid: config.requiresPayment ? amountPaid : 0,
-          amountDue: config.requiresPayment ? totals.total - amountPaid : totals.total,
+          lines: dueDateOnlyEdit ? editDocument.lines : lines,
+          ...(dueDateOnlyEdit ? {
+            subtotal: editDocument.subtotal,
+            totalDiscount: editDocument.totalDiscount,
+            totalTax: editDocument.totalTax,
+            total: editDocument.total,
+          } : totals),
+          paymentMethod: dueDateOnlyEdit ? editDocument.paymentMethod : (paymentMethod as any),
+          amountPaid: dueDateOnlyEdit ? editDocument.amountPaid : (config.requiresPayment ? amountPaid : 0),
+          amountDue: dueDateOnlyEdit
+            ? editDocument.amountDue
+            : (config.requiresPayment ? totals.total - amountPaid : totals.total),
           dueDate,
-          validUntil,
-          notes,
-          status,
+          validUntil: dueDateOnlyEdit ? editDocument.validUntil : validUntil,
+          notes: dueDateOnlyEdit ? editDocument.notes : notes,
+          status: editDocument.status,
         };
         await saveDocument(updated);
         if (
@@ -333,11 +374,15 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         ) {
           const patchRes = await api.sales.updateDueDate(editDocument.id, dueDate);
           if (patchRes.error) {
-            console.warn('[DocumentForm] due date patch failed:', patchRes.error);
+            throw new Error(patchRes.error);
           }
         }
         onSaved?.(updated);
-        toast.success(t.documentFormUi.documentUpdatedToast.replace('{short}', typeUi.short));
+        toast.success(
+          dueDateOnlyEdit
+            ? t.documentFormUi.dueDateUpdatedToast.replace('{short}', typeUi.short)
+            : t.documentFormUi.documentUpdatedToast.replace('{short}', typeUi.short),
+        );
       } else {
         // For confirmed fatura_venda, route through the backend transaction engine
         // so stock is decremented and journal entries (including branch Caixa) are created
@@ -411,7 +456,13 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             throw new Error(saleError);
           }
 
-          // Also save as ERP document for the document list
+          const sale = saleResult.data as Record<string, unknown>;
+          const saleId = String(sale.id || '');
+          const saleInvoiceNumber = String(
+            sale.invoice_number || sale.invoiceNumber || invoiceNumber,
+          );
+
+          // Mirror in erp_documents using the same id as `sales` (required for AGT transmit)
           const doc = await createDocument(
             documentType,
             branchId,
@@ -420,6 +471,8 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             user?.id || '',
             user?.name || '',
             {
+              id: saleId,
+              documentNumber: saleInvoiceNumber,
               entityId,
               entityName: entityName || finalConsumerName,
               entityNif,
@@ -433,6 +486,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               dueDate,
               notes,
               status: 'confirmed',
+              fiscalLocked: true,
               parentDocumentId: prefillFrom?.id,
               parentDocumentNumber: prefillFrom?.documentNumber,
               parentDocumentType: prefillFrom?.documentType,
@@ -486,8 +540,30 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       }
       onOpenChange(false);
     } catch (error: any) {
-      toast.error(error.message || t.documentFormUi.saveError);
+      const message = error?.message === 'FISCAL_IMMUTABLE'
+        ? t.documentFormUi.fiscalLockedSaveError
+        : (error.message || t.documentFormUi.saveError);
+      toast.error(message);
     }
+  };
+
+  const canTransmitAgt = Boolean(
+    hasPermission('agt_send')
+    && editDocument
+    && documentType === 'fatura_venda'
+    && fiscalLocked
+    && editDocument.status !== 'cancelled',
+  );
+
+  const handleTransmitAgt = () => {
+    if (!editDocument || agtValidated) return;
+    void transmitAgt('sale', editDocument.id, {
+      documentNumber: editDocument.documentNumber,
+      onSuccess: () => window.dispatchEvent(new Event(SALES_CHANGED_EVENT)),
+    }).then((data) => {
+      if (data?.agtStatus) setAgtStatus(data.agtStatus);
+      if (data?.agtCode) setAgtCode(data.agtCode);
+    });
   };
 
   return (
@@ -514,12 +590,28 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             >
               <Printer className="w-3 h-3" /> {t.documentFormUi.print}
             </Button>
-            <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleSave('draft')}>
-              <Save className="w-3 h-3" /> {t.documentFormUi.saveDraft}
-            </Button>
-            <Button size="sm" className="h-7 text-xs gap-1" onClick={() => handleSave('confirmed')}>
-              <Save className="w-3 h-3" /> {t.documentFormUi.confirmSave}
-            </Button>
+            {canTransmitAgt && (
+              <Button
+                size="sm"
+                variant="default"
+                className="h-7 text-xs gap-1"
+                onClick={handleTransmitAgt}
+                disabled={agtTransmitting || agtValidated}
+              >
+                <Send className="w-3 h-3" />
+                {agtValidated ? t.agtUi.agtValidatedLabel : t.documentFormUi.sendToAgt}
+              </Button>
+            )}
+            {!fiscalLocked && (
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleSave('draft')}>
+                <Save className="w-3 h-3" /> {t.documentFormUi.saveDraft}
+              </Button>
+            )}
+            {!formReadOnly && (
+              <Button size="sm" className="h-7 text-xs gap-1" onClick={() => handleSave('confirmed')}>
+                <Save className="w-3 h-3" /> {dueDateOnlyEdit ? t.documentFormUi.saveDueDate : t.documentFormUi.confirmSave}
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -534,6 +626,38 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         </div>
 
         <div className="p-4 space-y-4">
+          {fiscalLocked && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
+              {dueDateOnlyEdit
+                ? t.documentFormUi.fiscalLockedDueDateOnly
+                : t.documentFormUi.fiscalLockedBanner}
+            </div>
+          )}
+          {canTransmitAgt && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="font-medium">{t.documentFormUi.agtStatusLabel}</p>
+                <p className="text-muted-foreground text-xs">
+                  {agtValidated
+                    ? t.invoiceViewUi.agtValidated
+                    : agtStatus === 'rejected'
+                      ? t.invoiceViewUi.agtRejected
+                      : t.invoiceViewUi.agtPending}
+                  {agtCode ? ` · ${t.invoiceViewUi.cuce}: ${agtCode}` : ''}
+                </p>
+              </div>
+              <Button
+                size="sm"
+                className="gap-1"
+                onClick={handleTransmitAgt}
+                disabled={agtTransmitting || agtValidated}
+              >
+                <Send className="w-3 h-3" />
+                {agtValidated ? t.agtUi.agtValidatedLabel : t.documentFormUi.sendToAgt}
+              </Button>
+            </div>
+          )}
+          <div className={contentLocked ? 'pointer-events-none opacity-80 space-y-4' : 'space-y-4'}>
           {/* Entity info row */}
           <div className="grid grid-cols-4 gap-3">
             <div className="space-y-1">
@@ -636,22 +760,27 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             </div>
           )}
 
+          </div>
+
           {/* Dates & payment row */}
           <div className="grid grid-cols-4 gap-3">
             {documentType === 'proforma' && (
               <div className="space-y-1">
                 <Label className="text-xs">{t.documentFormUi.validUntil}</Label>
-                <Input type="date" value={validUntil} onChange={e => setValidUntil(e.target.value)} className="h-8 text-xs" />
+                <Input type="date" value={validUntil} onChange={e => setValidUntil(e.target.value)} className="h-8 text-xs" disabled={contentLocked} />
               </div>
             )}
             {(documentType !== 'proforma') && (
               <div className="space-y-1">
                 <Label className="text-xs">{t.documentFormUi.dueDate}</Label>
-                <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="h-8 text-xs" />
+                <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="h-8 text-xs" disabled={formReadOnly} />
               </div>
             )}
+          </div>
+
+          <div className={contentLocked ? 'pointer-events-none opacity-80 space-y-4' : 'space-y-4'}>
             {config.requiresPayment && (
-              <>
+              <div className="grid grid-cols-4 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">{t.documentFormUi.paymentMethod}</Label>
                   <Select value={paymentMethod} onValueChange={setPaymentMethod}>
@@ -668,9 +797,8 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                   <Label className="text-xs">{t.documentFormUi.amountPaid}</Label>
                   <Input type="number" value={amountPaid} onChange={e => setAmountPaid(Number(e.target.value))} className="h-8 text-xs" />
                 </div>
-              </>
+              </div>
             )}
-          </div>
 
           {/* Product search + add */}
           <div className="flex gap-2 items-end">
@@ -825,6 +953,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                 </>
               )}
             </div>
+          </div>
           </div>
         </div>
       </DialogContent>

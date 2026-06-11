@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
@@ -15,8 +16,9 @@ import { toast } from 'sonner';
 import {
   Plus, Search, Edit2, Trash2, RefreshCw, FileText,
   Calendar, Eye, Printer, Download, CheckCircle, XCircle,
-  Filter, ChevronLeft, ChevronRight
+  Filter, ChevronLeft, ChevronRight, ExternalLink,
 } from 'lucide-react';
+import { mapAuditLogRow, type AuditLogRow } from '@/lib/auditLogDisplay';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Account } from '@/types/accounting';
@@ -295,17 +297,33 @@ function JournalsTrialBalancePanel() {
   );
 }
 
+const JOURNALS_AUDIT_ACTION_LABELS: Record<string, string> = {
+  create: 'actionCreate',
+  update: 'actionUpdate',
+  delete: 'actionDelete',
+  login: 'actionLogin',
+  logout: 'actionLogout',
+  print: 'actionPrint',
+  export: 'actionExport',
+  issue: 'actionCreate',
+  agt_transmit: 'actionSendAgt',
+  saft_export: 'actionExport',
+  void: 'actionVoid',
+};
+
 function JournalsAuditPanel() {
   const { t, language } = useTranslation();
+  const navigate = useNavigate();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const [rows, setRows] = useState<any[]>([]);
+  const [rows, setRows] = useState<AuditLogRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await api.audit.list({ limit: 200 });
-      setRows(res.data || []);
+      const raw = Array.isArray(res.data) ? res.data : [];
+      setRows(raw.map((row) => mapAuditLogRow(row as Record<string, unknown>)));
     } catch {
       setRows([]);
     } finally {
@@ -316,12 +334,26 @@ function JournalsAuditPanel() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => subscribeSupplierReturnsChanged(() => { void load(); }), [load]);
 
+  const formatAction = (action: string) => {
+    const labelKey = JOURNALS_AUDIT_ACTION_LABELS[action];
+    if (labelKey) {
+      return t.auditTrailUi[labelKey];
+    }
+    return action;
+  };
+
   return (
     <div className="flex flex-col h-full p-3 gap-2">
-      <div className="flex justify-end">
-        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={load}>
-          <RefreshCw className="w-3 h-3 mr-1" /> {t.common.refresh}
-        </Button>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">{t.journalsUi.auditHintDesc}</p>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => navigate('/audit-trail')}>
+            <ExternalLink className="w-3 h-3 mr-1" /> {t.journalsUi.openFullAudit}
+          </Button>
+          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={load}>
+            <RefreshCw className="w-3 h-3 mr-1" /> {t.common.refresh}
+          </Button>
+        </div>
       </div>
       <div className="flex-1 overflow-auto border rounded-lg">
         {loading ? (
@@ -333,7 +365,8 @@ function JournalsAuditPanel() {
             <thead className="bg-muted/60 border-b sticky top-0">
               <tr>
                 <th className="px-3 py-2 text-left">{t.common.date}</th>
-                <th className="px-3 py-2 text-left">{t.common.type}</th>
+                <th className="px-3 py-2 text-left">{t.auditTrailUi.colAction}</th>
+                <th className="px-3 py-2 text-left">{t.auditTrailUi.colModule}</th>
                 <th className="px-3 py-2 text-left">{t.common.description}</th>
                 <th className="px-3 py-2 text-left">{t.common.user}</th>
               </tr>
@@ -342,18 +375,19 @@ function JournalsAuditPanel() {
               {rows.map(row => (
                 <tr key={row.id} className="hover:bg-accent/30">
                   <td className="px-3 py-1.5 text-muted-foreground">
-                    {new Date(row.created_at || row.timestamp || '').toLocaleString(uiLocale)}
+                    {new Date(row.createdAt).toLocaleString(uiLocale)}
                   </td>
-                  <td className="px-3 py-1.5 font-mono">{row.table_name || row.entity_type || '—'}</td>
-                  <td className="px-3 py-1.5">{row.description || row.action || '—'}</td>
-                  <td className="px-3 py-1.5">{row.user_name || row.userName || '—'}</td>
+                  <td className="px-3 py-1.5">{formatAction(row.action)}</td>
+                  <td className="px-3 py-1.5 font-mono text-muted-foreground">{row.tableName}</td>
+                  <td className="px-3 py-1.5">{row.description}</td>
+                  <td className="px-3 py-1.5">{row.userName}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
         {!loading && rows.length === 0 && (
-          <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.auditHintDesc}</p>
+          <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.auditEmpty}</p>
         )}
       </div>
     </div>

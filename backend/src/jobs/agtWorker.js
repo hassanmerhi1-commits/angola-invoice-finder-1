@@ -1,9 +1,9 @@
 /**
- * AGT async worker — sign + transmit for queued sale events.
+ * AGT async worker — transmit queued sale events via unified transmission service.
  */
 const db = require('../db');
-const { signSaleInvoice } = require('../agt/signSale');
-const { transmitInvoice } = require('../agt/connector');
+const { transmitFiscalEntity } = require('../agt/agtTransmission');
+const { getAgtConfig } = require('../agt/agtConfig');
 const {
   fetchPendingForDestination,
   markSyncEventSent,
@@ -21,61 +21,17 @@ function parsePayload(row) {
   }
 }
 
-async function processAgtForSale(saleId, snapshot) {
-  await signSaleInvoice(saleId);
-
-  const sale = snapshot?.sale || (await db.query('SELECT * FROM sales WHERE id = $1', [saleId])).rows[0];
-  if (!sale) throw new Error('Sale not found for AGT');
-
-  const payload = {
-    documentType: 'FT',
-    invoiceNumber: sale.invoice_number,
-    date: sale.created_at,
-    customerNif: sale.customer_nif || '999999990',
-    customerName: sale.customer_name || 'Consumidor Final',
-    subtotal: parseFloat(sale.subtotal),
-    taxAmount: parseFloat(sale.tax_amount),
-    total: parseFloat(sale.total),
-    hash: sale.saft_hash,
-  };
-
-  const crypto = require('crypto');
-  const transmissionId = crypto.randomUUID();
-  await db.query(
-    `INSERT INTO agt_transmissions (id, invoice_id, invoice_number, transmission_type, request_payload, agt_status)
-     VALUES ($1, $2, $3, 'invoice', $4, 'pending')`,
-    [transmissionId, saleId, sale.invoice_number, JSON.stringify(payload)]
-  );
-
-  const result = await transmitInvoice(payload);
-
-  if (transmissionId) {
-    await db.query(
-      `UPDATE agt_transmissions
-       SET response_payload = $1, agt_code = $2, agt_status = $3, validated_at = $4
-       WHERE id = $5`,
-      [
-        JSON.stringify(result.responsePayload),
-        result.agtCode,
-        result.agtStatus,
-        result.validatedAt,
-        transmissionId,
-      ]
-    );
-  }
-
-  await db.query(
-    `UPDATE sales SET agt_status = $1, agt_code = $2, agt_validated_at = $3 WHERE id = $4`,
-    [result.agtStatus, result.agtCode, result.validatedAt, saleId]
-  );
-
-  return result;
+async function processAgtForSale(saleId) {
+  return transmitFiscalEntity('sale', saleId);
 }
 
 async function runAgtCycle() {
   if (running) return;
   running = true;
   try {
+    const config = await getAgtConfig();
+    if (!config.autoTransmit) return;
+
     const events = await fetchPendingForDestination('agt', 10);
     for (const event of events) {
       if (event.event_type !== 'sale.created') {
@@ -104,12 +60,12 @@ async function runAgtCycle() {
           'missing sale id',
           Number(event.attempts || 0) + 1,
           'agt',
-          { source: 'agt_worker' }
+          { source: 'agt_worker' },
         );
         continue;
       }
       try {
-        await processAgtForSale(saleId, snapshot);
+        await processAgtForSale(saleId);
         await markSyncEventSent(event.id, 'agt', { source: 'agt_worker' });
       } catch (e) {
         const attempts = Number(event.attempts || 0) + 1;

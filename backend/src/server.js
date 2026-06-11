@@ -148,6 +148,9 @@ app.use('/api/consistency', require('./routes/consistency')(broadcastTable));
 app.use('/api/budgets', require('./routes/budgets')(broadcastTable));
 app.use('/api/daily-reports', require('./routes/dailyReports')(broadcastTable));
 app.use('/api/agt', require('./routes/agt')(broadcastTable));
+app.use('/api/signing', require('./routes/signing')());
+app.use('/api/fiscal-documents', require('./routes/fiscalDocuments')(broadcastTable));
+app.use('/api/company-settings', require('./routes/companySettings')());
 app.use('/api/sync', require('./routes/syncIngest')(broadcastTable));
 app.use('/api/installations', require('./routes/installations')());
 
@@ -155,10 +158,11 @@ const { startReplicatorWorker } = require('./jobs/replicator');
 const { startAgtWorker } = require('./jobs/agtWorker');
 const { ensureDefaultInstallation } = require('./sync/installation');
 const { upgradeLegacyPasswordHashesOnStartup } = require('./lib/upgradeLegacyPasswords');
+const { ensurePhaseSchema } = require('./lib/ensurePhaseSchema');
 
-const saftRouter = require('./routes/saft')(broadcastTable);
+const saftRouter = require('./routes/saft')();
 app.use('/api/saft', saftRouter);
-app.use('/api/saft-xml', require('./routes/saftXml')(saftRouter));
+app.use('/api/saft-xml', require('./routes/saftXml')());
 
 app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
   if (req.accepts(['html', 'json']) !== 'html') return next();
@@ -166,36 +170,44 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
   return res.redirect(302, target);
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  const nets = os.networkInterfaces();
-  const ips = [];
-  for (const k of Object.keys(nets)) {
-    for (const iface of nets[k] || []) {
-      if (iface.family === 'IPv4' && !iface.internal) ips.push(iface.address);
-    }
+(async () => {
+  try {
+    await ensurePhaseSchema(db);
+  } catch (e) {
+    console.warn('[SCHEMA]', e.message);
   }
-  console.log('');
-  console.log('╔═══════════════════════════════════════════════════════════════╗');
-  console.log('║  NEXOR ERP SERVER (SQLite unified)                             ║');
-  console.log('╠═══════════════════════════════════════════════════════════════╣');
-  console.log(`║  http://localhost:${PORT}                                       `.slice(0, 66).padEnd(66) + '║');
-  for (const ip of ips.slice(0, 4)) {
-    const line = `║  LAN: http://${ip}:${PORT}`;
-    console.log(line.padEnd(66) + '║');
-  }
-  console.log('╚═══════════════════════════════════════════════════════════════╝');
-  console.log('[SERVER] SQLite unified backend — all /api routes active');
-  discoveryBroadcaster.start().catch((e) => console.warn('[Discovery]', e.message));
 
-  ensureDefaultInstallation().catch((e) => console.warn('[INSTALL]', e.message));
-  upgradeLegacyPasswordHashesOnStartup().catch((e) => console.warn('[AUTH]', e.message));
-  const { migrateInventoryVatTo5 } = require('./migrateInventoryVat5');
-  migrateInventoryVatTo5(db).catch((e) => console.warn('[DB] Inventory VAT 5% patch:', e.message));
-  startReplicatorWorker(4000);
-  startAgtWorker(5000);
-  const { drainRedundantMainQueueOnHq } = require('./sync/outbox');
-  drainRedundantMainQueueOnHq().catch((e) => console.warn('[OUTBOX]', e.message));
-});
+  server.listen(PORT, '0.0.0.0', () => {
+    const nets = os.networkInterfaces();
+    const ips = [];
+    for (const k of Object.keys(nets)) {
+      for (const iface of nets[k] || []) {
+        if (iface.family === 'IPv4' && !iface.internal) ips.push(iface.address);
+      }
+    }
+    console.log('');
+    console.log('╔═══════════════════════════════════════════════════════════════╗');
+    console.log('║  NEXOR ERP SERVER (SQLite unified)                             ║');
+    console.log('╠═══════════════════════════════════════════════════════════════╣');
+    console.log(`║  http://localhost:${PORT}                                       `.slice(0, 66).padEnd(66) + '║');
+    for (const ip of ips.slice(0, 4)) {
+      const line = `║  LAN: http://${ip}:${PORT}`;
+      console.log(line.padEnd(66) + '║');
+    }
+    console.log('╚═══════════════════════════════════════════════════════════════╝');
+    console.log('[SERVER] SQLite unified backend — all /api routes active');
+    discoveryBroadcaster.start().catch((e) => console.warn('[Discovery]', e.message));
+
+    ensureDefaultInstallation().catch((e) => console.warn('[INSTALL]', e.message));
+    upgradeLegacyPasswordHashesOnStartup().catch((e) => console.warn('[AUTH]', e.message));
+    const { migrateInventoryVatTo5 } = require('./migrateInventoryVat5');
+    migrateInventoryVatTo5(db).catch((e) => console.warn('[DB] Inventory VAT 5% patch:', e.message));
+    startReplicatorWorker(4000);
+    startAgtWorker(5000);
+    const { drainRedundantMainQueueOnHq } = require('./sync/outbox');
+    drainRedundantMainQueueOnHq().catch((e) => console.warn('[OUTBOX]', e.message));
+  });
+})();
 
 io.on('connection', (socket) => {
   discoveryBroadcaster.setConnectedClients(io.engine.clientsCount);

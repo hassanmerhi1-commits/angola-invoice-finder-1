@@ -384,10 +384,19 @@ function resolveEmbeddedBackendRunner() {
 // --------------------------------------------------------------------------
 function isPortFree(port) {
   return new Promise((resolve) => {
-    const tester = net.createServer()
-      .once('error', () => resolve(false))
-      .once('listening', () => tester.close(() => resolve(true)))
-      .listen(port, '127.0.0.1');
+    const socket = net.connect({ host: '127.0.0.1', port, timeout: 500 });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once('timeout', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', (err) => {
+      socket.destroy();
+      resolve(err?.code === 'ECONNREFUSED' || err?.code === 'ECONNRESET');
+    });
   });
 }
 

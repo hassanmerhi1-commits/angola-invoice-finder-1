@@ -1,140 +1,150 @@
-// Fiscal Documents Hooks for AGT Compliance — API-First
+// Fiscal Documents Hooks — API-backed (Phase 1 AGT)
 import { useState, useEffect, useCallback } from 'react';
-import { 
-  CreditNote, 
+import {
+  CreditNote,
   CreditNoteItem,
-  DebitNote, 
+  DebitNote,
   DebitNoteItem,
-  TransportDocument, 
+  TransportDocument,
   TransportDocumentItem,
   CompanyInfo,
   SAFTExport,
-  Sale
+  Sale,
 } from '@/types/erp';
 import * as fiscalStorage from '@/lib/fiscalDocuments';
 import { api } from '@/lib/api/client';
+import { CREDIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
+import { getCompanySettings } from '@/lib/companySettings';
+import { exportSAFTToXML } from '@/lib/saftAO';
+
+async function resolveBranchName(branchId: string, cachedName?: string) {
+  if (cachedName) return cachedName;
+  try {
+    const response = await api.branches.list();
+    const branches = response.data || [];
+    return branches.find((b: { id: string }) => b.id === branchId)?.name || '';
+  } catch {
+    return '';
+  }
+}
 
 // ==================== CREDIT NOTES ====================
 
 export function useCreditNotes(branchId?: string) {
   const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const refreshCreditNotes = useCallback(() => {
-    setCreditNotes(fiscalStorage.getCreditNotes(branchId));
+  const refreshCreditNotes = useCallback(async (listBranchId?: string) => {
+    setLoading(true);
+    const filterBranch = listBranchId !== undefined ? listBranchId : branchId;
+    try {
+      let result = await api.fiscalDocuments.listCreditNotes(filterBranch || undefined);
+      if (result.error) throw new Error(result.error);
+      if (result.data) {
+        let notes = result.data as CreditNote[];
+        if (notes.length === 0 && filterBranch) {
+          const allRes = await api.fiscalDocuments.listCreditNotes();
+          if (allRes.data?.length) notes = allRes.data as CreditNote[];
+        }
+        setCreditNotes(notes);
+        setLoading(false);
+        return;
+      }
+    } catch {
+      /* fallback below */
+    }
+    setCreditNotes(fiscalStorage.getCreditNotes(filterBranch || branchId));
+    setLoading(false);
   }, [branchId]);
 
   useEffect(() => {
-    refreshCreditNotes();
+    void refreshCreditNotes();
   }, [refreshCreditNotes]);
 
   const createCreditNote = useCallback(async (
-    branchId: string,
+    branchIdParam: string,
     branchCode: string,
     originalSale: Sale,
     reason: CreditNote['reason'],
     reasonDescription: string,
     items: CreditNoteItem[],
     issuedBy: string,
-    restoreStock: boolean = true
+    restoreStock: boolean = true,
+    branchNameHint?: string,
   ): Promise<CreditNote> => {
-    // Get branches from API
-    let branches: any[] = [];
-    try {
-      const response = await api.branches.list();
-      branches = response.data || [];
-    } catch {
-      const raw = localStorage.getItem('kwanzaerp_branches');
-      branches = raw ? JSON.parse(raw) : [];
-    }
-    const branch = branches.find((b: any) => b.id === branchId);
-    const previousHash = await fiscalStorage.getLastDocumentHash('credit');
-    const documentNumber = fiscalStorage.generateCreditNoteNumber(branchCode);
-    
-    const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
-    const taxAmount = items.reduce((sum, item) => sum + item.taxAmount, 0);
-    const total = subtotal + taxAmount;
-
-    const creditNote: CreditNote = {
-      id: `cn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      documentNumber,
-      branchId,
-      branchName: branch?.name || '',
+    const branchName = await resolveBranchName(branchIdParam, branchNameHint);
+    const payload = {
+      branchId: branchIdParam,
+      branchCode,
+      branchName,
       originalInvoiceId: originalSale.id,
-      originalInvoiceNumber: originalSale.invoiceNumber,
       reason,
       reasonDescription,
       items,
-      subtotal,
-      taxAmount,
-      total,
-      customerNif: originalSale.customerNif,
-      customerName: originalSale.customerName,
-      status: 'issued',
       issuedBy,
-      issuedAt: new Date().toISOString(),
-      saftHash: fiscalStorage.generateDocumentHash(
-        previousHash,
-        new Date().toISOString().split('T')[0],
-        documentNumber,
-        total
-      ),
-      createdAt: new Date().toISOString(),
+      issuedByName: issuedBy,
+      restoreStock,
     };
 
-    fiscalStorage.saveCreditNote(creditNote);
-
-    // Restore stock via API
-    if (restoreStock) {
-      for (const item of items) {
-        try {
-          await api.transactions.createStockMovement({
-            productId: item.productId,
-            movementType: 'IN',
-            quantity: item.quantity,
-            referenceType: 'return',
-            referenceId: creditNote.id,
-            referenceNumber: documentNumber,
-            notes: `Nota de Crédito: ${reasonDescription}`,
-          });
-        } catch {
-          // Fallback: update stock via products API
-          await api.products.updateStock(item.productId, item.quantity);
-        }
-      }
+    const result = await api.fiscalDocuments.createCreditNote(payload);
+    if (result.error || !result.data) {
+      throw new Error(result.error || 'Failed to create credit note');
     }
 
-    refreshCreditNotes();
-    return creditNote;
-  }, [refreshCreditNotes]);
+    const note = result.data as CreditNote;
+    setCreditNotes((prev) => {
+      const rest = prev.filter((n) => n.id !== note.id);
+      return [note, ...rest];
+    });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(CREDIT_NOTES_CHANGED_EVENT, {
+        detail: { branchId: note.branchId },
+      }));
+    }
+    return note;
+  }, []);
 
-  const cancelCreditNote = useCallback((noteId: string) => {
-    const notes = fiscalStorage.getCreditNotes();
-    const note = notes.find(n => n.id === noteId);
+  const cancelCreditNote = useCallback(async (noteId: string) => {
+    const notes = creditNotes.length ? creditNotes : fiscalStorage.getCreditNotes();
+    const note = notes.find((n) => n.id === noteId);
     if (note && note.status === 'draft') {
       note.status = 'cancelled';
       fiscalStorage.saveCreditNote(note);
-      refreshCreditNotes();
+      await refreshCreditNotes();
     }
-  }, [refreshCreditNotes]);
+  }, [creditNotes, refreshCreditNotes]);
 
-  return { creditNotes, createCreditNote, cancelCreditNote, refreshCreditNotes };
+  return { creditNotes, createCreditNote, cancelCreditNote, refreshCreditNotes, loading };
 }
 
 // ==================== DEBIT NOTES ====================
 
 export function useDebitNotes(branchId?: string) {
   const [debitNotes, setDebitNotes] = useState<DebitNote[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const refreshDebitNotes = useCallback(() => {
+  const refreshDebitNotes = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await api.fiscalDocuments.listDebitNotes(branchId);
+      if (result.data) {
+        setDebitNotes(result.data as DebitNote[]);
+        setLoading(false);
+        return;
+      }
+    } catch {
+      /* fallback */
+    }
     setDebitNotes(fiscalStorage.getDebitNotes(branchId));
+    setLoading(false);
   }, [branchId]);
 
   useEffect(() => {
-    refreshDebitNotes();
+    void refreshDebitNotes();
   }, [refreshDebitNotes]);
 
   const createDebitNote = useCallback(async (
-    branchId: string,
+    branchIdParam: string,
     branchCode: string,
     originalSale: Sale | null,
     reason: DebitNote['reason'],
@@ -142,84 +152,74 @@ export function useDebitNotes(branchId?: string) {
     items: DebitNoteItem[],
     issuedBy: string,
     customerNif?: string,
-    customerName?: string
+    customerName?: string,
   ): Promise<DebitNote> => {
-    let branches: any[] = [];
-    try {
-      const response = await api.branches.list();
-      branches = response.data || [];
-    } catch {
-      const raw = localStorage.getItem('kwanzaerp_branches');
-      branches = raw ? JSON.parse(raw) : [];
-    }
-    const branch = branches.find((b: any) => b.id === branchId);
-    const previousHash = await fiscalStorage.getLastDocumentHash('debit');
-    const documentNumber = fiscalStorage.generateDebitNoteNumber(branchCode);
-    
-    const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
-    const taxAmount = items.reduce((sum, item) => sum + item.taxAmount, 0);
-    const total = subtotal + taxAmount;
-
-    const debitNote: DebitNote = {
-      id: `dn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      documentNumber,
-      branchId,
-      branchName: branch?.name || '',
+    const branchName = await resolveBranchName(branchIdParam);
+    const payload = {
+      branchId: branchIdParam,
+      branchCode,
+      branchName,
       originalInvoiceId: originalSale?.id,
-      originalInvoiceNumber: originalSale?.invoiceNumber,
       reason,
       reasonDescription,
       items,
-      subtotal,
-      taxAmount,
-      total,
+      issuedBy,
+      issuedByName: issuedBy,
       customerNif: customerNif || originalSale?.customerNif,
       customerName: customerName || originalSale?.customerName,
-      status: 'issued',
-      issuedBy,
-      issuedAt: new Date().toISOString(),
-      saftHash: fiscalStorage.generateDocumentHash(
-        previousHash,
-        new Date().toISOString().split('T')[0],
-        documentNumber,
-        total
-      ),
-      createdAt: new Date().toISOString(),
     };
 
-    fiscalStorage.saveDebitNote(debitNote);
-    refreshDebitNotes();
-    return debitNote;
-  }, [refreshDebitNotes]);
+    const result = await api.fiscalDocuments.createDebitNote(payload);
+    if (result.error || !result.data) {
+      throw new Error(result.error || 'Failed to create debit note');
+    }
 
-  const cancelDebitNote = useCallback((noteId: string) => {
-    const notes = fiscalStorage.getDebitNotes();
-    const note = notes.find(n => n.id === noteId);
+    const note = result.data as DebitNote;
+    setDebitNotes((prev) => [note, ...prev]);
+    return note;
+  }, []);
+
+  const cancelDebitNote = useCallback(async (noteId: string) => {
+    const notes = debitNotes.length ? debitNotes : fiscalStorage.getDebitNotes();
+    const note = notes.find((n) => n.id === noteId);
     if (note && note.status === 'draft') {
       note.status = 'cancelled';
       fiscalStorage.saveDebitNote(note);
-      refreshDebitNotes();
+      await refreshDebitNotes();
     }
-  }, [refreshDebitNotes]);
+  }, [debitNotes, refreshDebitNotes]);
 
-  return { debitNotes, createDebitNote, cancelDebitNote, refreshDebitNotes };
+  return { debitNotes, createDebitNote, cancelDebitNote, refreshDebitNotes, loading };
 }
 
 // ==================== TRANSPORT DOCUMENTS ====================
 
 export function useTransportDocuments(branchId?: string) {
   const [transportDocs, setTransportDocs] = useState<TransportDocument[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const refreshTransportDocs = useCallback(() => {
+  const refreshTransportDocs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await api.fiscalDocuments.listTransportDocuments(branchId);
+      if (result.data) {
+        setTransportDocs(result.data as TransportDocument[]);
+        setLoading(false);
+        return;
+      }
+    } catch {
+      /* fallback */
+    }
     setTransportDocs(fiscalStorage.getTransportDocuments(branchId));
+    setLoading(false);
   }, [branchId]);
 
   useEffect(() => {
-    refreshTransportDocs();
+    void refreshTransportDocs();
   }, [refreshTransportDocs]);
 
   const createTransportDocument = useCallback(async (
-    branchId: string,
+    branchIdParam: string,
     branchCode: string,
     type: TransportDocument['type'],
     originAddress: string,
@@ -241,77 +241,59 @@ export function useTransportDocuments(branchId?: string) {
       notes?: string;
       totalWeight?: number;
       totalVolume?: number;
-    }
+    },
   ): Promise<TransportDocument> => {
-    let branches: any[] = [];
-    try {
-      const response = await api.branches.list();
-      branches = response.data || [];
-    } catch {
-      const raw = localStorage.getItem('kwanzaerp_branches');
-      branches = raw ? JSON.parse(raw) : [];
-    }
-    const branch = branches.find((b: any) => b.id === branchId);
-    const previousHash = await fiscalStorage.getLastDocumentHash('transport');
-    const documentNumber = fiscalStorage.generateTransportDocNumber(branchCode);
-
-    const doc: TransportDocument = {
-      id: `gt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      documentNumber,
-      branchId,
-      branchName: branch?.name || '',
+    const branchName = await resolveBranchName(branchIdParam);
+    const payload = {
+      branchId: branchIdParam,
+      branchCode,
+      branchName,
       type,
       originAddress,
       originCity,
       destinationAddress,
       destinationCity,
-      destinationNif: options?.destinationNif,
-      destinationName: options?.destinationName,
-      transporterName: options?.transporterName,
-      transporterNif: options?.transporterNif,
-      vehiclePlate: options?.vehiclePlate,
       loadingDate,
       loadingTime,
       items,
-      totalWeight: options?.totalWeight,
-      totalVolume: options?.totalVolume,
-      status: 'issued',
-      relatedInvoiceId: options?.relatedInvoiceId,
-      relatedInvoiceNumber: options?.relatedInvoiceNumber,
-      notes: options?.notes,
       issuedBy,
-      issuedAt: new Date().toISOString(),
-      saftHash: fiscalStorage.generateDocumentHash(
-        previousHash,
-        loadingDate,
-        documentNumber,
-        items.reduce((sum, i) => sum + i.quantity, 0)
-      ),
-      createdAt: new Date().toISOString(),
+      issuedByName: issuedBy,
+      ...options,
     };
 
-    fiscalStorage.saveTransportDocument(doc);
-    refreshTransportDocs();
-    return doc;
-  }, [refreshTransportDocs]);
+    const result = await api.fiscalDocuments.createTransportDocument(payload);
+    if (result.error || !result.data) {
+      throw new Error(result.error || 'Failed to create transport document');
+    }
 
-  const updateTransportStatus = useCallback((
-    docId: string, 
-    status: TransportDocument['status']
+    const doc = result.data as TransportDocument;
+    setTransportDocs((prev) => [doc, ...prev]);
+    return doc;
+  }, []);
+
+  const updateTransportStatus = useCallback(async (
+    docId: string,
+    status: TransportDocument['status'],
   ) => {
+    const result = await api.fiscalDocuments.updateTransportStatus(docId, status);
+    if (result.data) {
+      setTransportDocs((prev) => prev.map((d) => (d.id === docId ? (result.data as TransportDocument) : d)));
+      return;
+    }
+    fiscalStorage.getTransportDocuments();
     const docs = fiscalStorage.getTransportDocuments();
-    const doc = docs.find(d => d.id === docId);
+    const doc = docs.find((d) => d.id === docId);
     if (doc) {
       doc.status = status;
       if (status === 'delivered') {
         doc.deliveredAt = new Date().toISOString();
       }
       fiscalStorage.saveTransportDocument(doc);
-      refreshTransportDocs();
+      await refreshTransportDocs();
     }
   }, [refreshTransportDocs]);
 
-  return { transportDocs, createTransportDocument, updateTransportStatus, refreshTransportDocs };
+  return { transportDocs, createTransportDocument, updateTransportStatus, refreshTransportDocs, loading };
 }
 
 // ==================== COMPANY INFO ====================
@@ -344,45 +326,68 @@ export function useSAFTExport() {
     periodStart: string,
     periodEnd: string,
     exportedBy: string,
-    branchId?: string
+    branchId?: string,
   ): Promise<SAFTExport> => {
-    let branches: any[] = [];
-    try {
-      const response = await api.branches.list();
-      branches = response.data || [];
-    } catch {
-      const raw = localStorage.getItem('kwanzaerp_branches');
-      branches = raw ? JSON.parse(raw) : [];
-    }
-    const branch = branchId ? branches.find((b: any) => b.id === branchId) : null;
-    const xml = await fiscalStorage.generateSAFTXML(periodStart, periodEnd, branchId);
+    const company = fiscalStorage.getCompanyInfo();
     const fileName = `SAFT_AO_${periodStart.replace(/-/g, '')}_${periodEnd.replace(/-/g, '')}.xml`;
 
-    // Get sales from API
+    await api.companySettings.save({ ...getCompanySettings(), ...company }).catch(() => {});
+
+    const response = await api.saft.generate({
+      startDate: periodStart,
+      endDate: periodEnd,
+      branchId,
+      company: { ...getCompanySettings(), ...company },
+    });
+
+    if (response.error) {
+      throw new Error(response.error);
+    }
+
+    const saft = response.data as Parameters<typeof exportSAFTToXML>[0] | undefined;
+    if (!saft?.AuditFile) {
+      throw new Error('Invalid SAF-T response from server');
+    }
+    const xml = exportSAFTToXML(saft);
+
     let allSales: Sale[] = [];
     try {
-      const response = await api.sales.list();
-      allSales = response.data || [];
+      const salesResponse = await api.sales.list();
+      allSales = salesResponse.data || [];
     } catch {
-      const raw = localStorage.getItem('kwanzaerp_sales');
-      allSales = raw ? JSON.parse(raw) : [];
+      allSales = [];
+    }
+
+    let creditNotesList: CreditNote[] = [];
+    let debitNotesList: DebitNote[] = [];
+    let transportList: TransportDocument[] = [];
+    try {
+      creditNotesList = (await api.fiscalDocuments.listCreditNotes(branchId)).data || [];
+      debitNotesList = (await api.fiscalDocuments.listDebitNotes(branchId)).data || [];
+      transportList = (await api.fiscalDocuments.listTransportDocuments(branchId)).data || [];
+    } catch {
+      creditNotesList = fiscalStorage.getCreditNotes(branchId);
+      debitNotesList = fiscalStorage.getDebitNotes(branchId);
+      transportList = fiscalStorage.getTransportDocuments(branchId);
     }
 
     const saftExport: SAFTExport = {
       id: `saft_${Date.now()}`,
       branchId: branchId || 'all',
-      branchName: branch?.name || 'Todas as Filiais',
+      branchName: branchId || 'Todas as Filiais',
       periodStart,
       periodEnd,
       exportType: 'custom',
-      company: fiscalStorage.getCompanyInfo(),
-      invoices: allSales.filter(s => {
-        const date = s.createdAt.split('T')[0];
+      company,
+      invoices: allSales.filter((s) => {
+        const raw = s.createdAt ?? (s as { created_at?: string }).created_at;
+        if (!raw) return false;
+        const date = String(raw).split('T')[0];
         return date >= periodStart && date <= periodEnd;
       }),
-      creditNotes: fiscalStorage.getCreditNotes(branchId),
-      debitNotes: fiscalStorage.getDebitNotes(branchId),
-      transportDocs: fiscalStorage.getTransportDocuments(branchId),
+      creditNotes: creditNotesList,
+      debitNotes: debitNotesList,
+      transportDocs: transportList,
       products: [],
       clients: [],
       exportedBy,

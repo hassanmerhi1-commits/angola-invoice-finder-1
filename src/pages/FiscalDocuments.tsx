@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales, useAuth, useProducts, usePurchaseOrders } from '@/hooks/useERP';
@@ -11,8 +11,9 @@ import {
 } from '@/hooks/useFiscalDocuments';
 import { useSupplierReturns } from '@/hooks/useSupplierReturns';
 import { SupplierReturnItem } from '@/lib/supplierReturns';
-import { Sale, CreditNoteItem, DebitNoteItem, TransportDocumentItem, Product, PurchaseOrder } from '@/types/erp';
+import { Sale, CreditNote, CreditNoteItem, DebitNoteItem, TransportDocumentItem, Product, PurchaseOrder } from '@/types/erp';
 import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
+import { api } from '@/lib/api/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,8 +39,11 @@ import {
   RotateCcw,
   Package,
   CheckCircle,
-  XCircle
+  XCircle,
+  Send,
 } from 'lucide-react';
+import { useAgtTransmit } from '@/hooks/useAgtTransmit';
+import { usePermissions } from '@/hooks/usePermissions';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useToast } from '@/hooks/use-toast';
@@ -52,11 +56,16 @@ export default function FiscalDocuments() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
   const { user } = useAuth();
-  const { currentBranch, apiBranchId } = useBranchScope();
+  const { hasPermission } = usePermissions(user?.id);
+  const canCreateCreditNote = hasPermission('credit_note_create');
+  const canSendAgt = hasPermission('agt_send');
+  const canExportSaft = hasPermission('saft_export');
+  const { currentBranch, apiBranchId, branches } = useBranchScope();
   const { sales } = useSales(apiBranchId);
   const { products } = useProducts(apiBranchId);
   const { orders } = usePurchaseOrders(apiBranchId);
-  const { creditNotes, createCreditNote } = useCreditNotes(apiBranchId);
+  const { creditNotes, createCreditNote, refreshCreditNotes } = useCreditNotes(apiBranchId);
+  const { transmit: transmitAgt, transmitting: agtTransmitting } = useAgtTransmit();
   const { debitNotes, createDebitNote } = useDebitNotes(apiBranchId);
   const { transportDocs, createTransportDocument, updateTransportStatus } = useTransportDocuments(apiBranchId);
   const { supplierReturns, createSupplierReturn, approveReturn, markAsShipped, completeReturn, cancelReturn } = useSupplierReturns(apiBranchId);
@@ -80,6 +89,7 @@ export default function FiscalDocuments() {
   const [creditDescription, setCreditDescription] = useState('');
   const [creditItems, setCreditItems] = useState<CreditNoteItem[]>([]);
   const [restoreStock, setRestoreStock] = useState(true);
+  const [viewCreditNote, setViewCreditNote] = useState<CreditNote | null>(null);
 
   const [debitReason, setDebitReason] = useState<'price_adjustment' | 'additional_charge' | 'interest' | 'other'>('price_adjustment');
   const [debitDescription, setDebitDescription] = useState('');
@@ -114,13 +124,76 @@ export default function FiscalDocuments() {
 
   const [editCompanyInfo, setEditCompanyInfo] = useState(companyInfo);
   const [searchTerm, setSearchTerm] = useState('');
+  const openCreditNoteFetchRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const st = location.state as { openSaft?: boolean } | null;
-    if (!st?.openSaft) return;
-    setSaftDialog(true);
-    navigate(location.pathname, { replace: true, state: {} });
-  }, [location.state, location.pathname, navigate]);
+    const st = location.state as {
+      openSaft?: boolean;
+      openCreditNoteForSaleId?: string;
+      openCreditNoteId?: string;
+      openCreditNoteCreate?: boolean;
+    } | null;
+    if (st?.openSaft) {
+      setSaftDialog(true);
+      navigate(location.pathname, { replace: true, state: {} });
+      return;
+    }
+    if (st?.openCreditNoteCreate) {
+      setSelectedSale(null);
+      setCreditItems([]);
+      setCreditReason('return');
+      setCreditDescription('');
+      setRestoreStock(true);
+      setCreditNoteDialog(true);
+      navigate(location.pathname, { replace: true, state: {} });
+      return;
+    }
+    if (st?.openCreditNoteForSaleId && sales.length) {
+      const sale = sales.find((s) => s.id === st.openCreditNoteForSaleId);
+      if (sale) {
+        setSelectedSale(sale);
+        setRestoreStock(true);
+        setCreditItems(sale.items.map((item) => ({
+          productId: item.productId,
+          productName: item.productName,
+          sku: item.sku,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          taxRate: item.taxRate,
+          taxAmount: item.taxAmount,
+          subtotal: item.subtotal,
+        })));
+        setCreditNoteDialog(true);
+      }
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, location.pathname, navigate, sales]);
+
+  useEffect(() => {
+    const st = location.state as {
+      openCreditNoteId?: string;
+      openCreditNoteNumber?: string;
+    } | null;
+    const openId = st?.openCreditNoteId;
+    const openNumber = st?.openCreditNoteNumber;
+    if (!openId && !openNumber) {
+      openCreditNoteFetchRef.current = null;
+      return;
+    }
+    const lookupKey = openId || openNumber || '';
+    const note = openId
+      ? creditNotes.find((n) => n.id === openId)
+      : creditNotes.find((n) => n.documentNumber === openNumber);
+    if (note) {
+      setViewCreditNote(note);
+      openCreditNoteFetchRef.current = null;
+      navigate(location.pathname, { replace: true, state: {} });
+      return;
+    }
+    if (openCreditNoteFetchRef.current === lookupKey) return;
+    openCreditNoteFetchRef.current = lookupKey;
+    void refreshCreditNotes();
+  }, [location.state, creditNotes, location.pathname, navigate, refreshCreditNotes]);
 
   // Received POs for supplier returns
   const receivedOrders = orders.filter(o => o.status === 'received' || o.status === 'partial');
@@ -140,51 +213,110 @@ export default function FiscalDocuments() {
     })));
   };
 
-  const handleCreateCreditNote = () => {
-    if (!selectedSale || !currentBranch || !user) return;
-    
-    createCreditNote(
-      currentBranch.id,
-      currentBranch.code,
-      selectedSale,
-      creditReason,
-      creditDescription,
-      creditItems,
-      user.id,
-      restoreStock
-    );
-
-    toast({
-      title: t.fiscalDocumentsUi.creditNoteCreatedTitle,
-      description: t.fiscalDocumentsUi.documentIssuedSuccess,
-    });
-
-    setCreditNoteDialog(false);
-    resetCreditForm();
+  const resolveSaleBranch = (sale: Sale) => {
+    const saleBranchId = sale.branchId || currentBranch?.id;
+    const saleBranch = branches.find((b) => b.id === saleBranchId) || currentBranch;
+    if (!saleBranchId || !saleBranch) return null;
+    return { id: saleBranchId, code: saleBranch.code, name: saleBranch.name };
   };
 
-  const handleCreateDebitNote = () => {
+  const handleCreateCreditNote = async () => {
+    if (!selectedSale || !user) return;
+    if (!canCreateCreditNote) {
+      toast({
+        variant: 'destructive',
+        title: t.common.error,
+        description: t.auditTrailUi.permissionDenied,
+      });
+      return;
+    }
+    const saleBranch = resolveSaleBranch(selectedSale);
+    if (!saleBranch) {
+      toast({
+        variant: 'destructive',
+        title: t.common.error,
+        description: t.fiscalDocumentsUi.documentIssuedSuccess,
+      });
+      return;
+    }
+
+    try {
+      const note = await createCreditNote(
+        saleBranch.id,
+        saleBranch.code,
+        selectedSale,
+        creditReason,
+        creditDescription,
+        creditItems,
+        user.id,
+        restoreStock,
+        saleBranch.name,
+      );
+      toast({
+        title: t.fiscalDocumentsUi.creditNoteCreatedTitle,
+        description: t.fiscalDocumentsUi.documentIssuedSuccess,
+      });
+      setCreditNoteDialog(false);
+      resetCreditForm();
+      setViewCreditNote(note);
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: t.common.error,
+        description: err instanceof Error ? err.message : t.fiscalDocumentsUi.documentIssuedSuccess,
+      });
+    }
+  };
+
+  const handleTransmitCreditNote = async (note: CreditNote) => {
+    try {
+      const data = await transmitAgt('credit_note', note.id, {
+        onSuccess: () => refreshCreditNotes(),
+      });
+      if (data?.agtCode || data?.agtStatus) {
+        setViewCreditNote((prev) => (prev?.id === note.id ? {
+          ...prev,
+          agtCode: data.agtCode ?? prev.agtCode,
+          agtStatus: (data.agtStatus as CreditNote['agtStatus']) ?? prev.agtStatus,
+        } : prev));
+      }
+      await refreshCreditNotes();
+      const res = await api.fiscalDocuments.listCreditNotes(apiBranchId);
+      const updated = (res.data || []).find((n: CreditNote) => n.id === note.id);
+      if (updated) setViewCreditNote(updated);
+    } catch {
+      /* toast handled in hook */
+    }
+  };
+
+  const handleCreateDebitNote = async () => {
     if (!currentBranch || !user) return;
-    
-    createDebitNote(
-      currentBranch.id,
-      currentBranch.code,
-      selectedSale,
-      debitReason,
-      debitDescription,
-      debitItems.filter(i => i.description && i.subtotal > 0),
-      user.id,
-      debitCustomerNif,
-      debitCustomerName
-    );
 
-    toast({
-      title: t.fiscalDocumentsUi.debitNoteCreatedTitle,
-      description: t.fiscalDocumentsUi.documentIssuedSuccess,
-    });
-
-    setDebitNoteDialog(false);
-    resetDebitForm();
+    try {
+      await createDebitNote(
+        currentBranch.id,
+        currentBranch.code,
+        selectedSale,
+        debitReason,
+        debitDescription,
+        debitItems.filter(i => i.description && i.subtotal > 0),
+        user.id,
+        debitCustomerNif,
+        debitCustomerName,
+      );
+      toast({
+        title: t.fiscalDocumentsUi.debitNoteCreatedTitle,
+        description: t.fiscalDocumentsUi.documentIssuedSuccess,
+      });
+      setDebitNoteDialog(false);
+      resetDebitForm();
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: t.common.error,
+        description: err instanceof Error ? err.message : t.fiscalDocumentsUi.documentIssuedSuccess,
+      });
+    }
   };
 
   const handleAddProductToTransport = (product: Product) => {
@@ -198,54 +330,69 @@ export default function FiscalDocuments() {
     }]);
   };
 
-  const handleCreateTransportDoc = () => {
+  const handleCreateTransportDoc = async () => {
     if (!currentBranch || !user || transportItems.length === 0) return;
-    
-    createTransportDocument(
-      currentBranch.id,
-      currentBranch.code,
-      transportType,
-      originAddress,
-      originCity,
-      destAddress,
-      destCity,
-      loadingDate,
-      loadingTime,
-      transportItems,
-      user.id,
-      {
-        destinationNif: destNif,
-        destinationName: destName,
-        vehiclePlate,
-        transporterName,
-        notes: transportNotes,
-      }
-    );
 
-    toast({
-      title: t.fiscalDocumentsUi.transportDocCreatedTitle,
-      description: t.fiscalDocumentsUi.documentIssuedSuccess,
-    });
+    try {
+      await createTransportDocument(
+        currentBranch.id,
+        currentBranch.code,
+        transportType,
+        originAddress,
+        originCity,
+        destAddress,
+        destCity,
+        loadingDate,
+        loadingTime,
+        transportItems,
+        user.id,
+        {
+          destinationNif: destNif,
+          destinationName: destName,
+          vehiclePlate,
+          transporterName,
+          notes: transportNotes,
+        },
+      );
 
-    setTransportDocDialog(false);
-    resetTransportForm();
+      toast({
+        title: t.fiscalDocumentsUi.transportDocCreatedTitle,
+        description: t.fiscalDocumentsUi.documentIssuedSuccess,
+      });
+
+      setTransportDocDialog(false);
+      resetTransportForm();
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: t.common.error,
+        description: err instanceof Error ? err.message : t.fiscalDocumentsUi.documentIssuedSuccess,
+      });
+    }
   };
 
-  const handleExportSAFT = () => {
+  const handleExportSAFT = async () => {
     if (!user) return;
-    
-    generateSAFT(saftStartDate, saftEndDate, user.id, currentBranch?.id);
-    
-    toast({
-      title: t.fiscalDocumentsUi.saftExportedTitle,
-      description: t.fiscalDocumentsUi.xmlDownloaded,
-    });
-    
-    setSaftDialog(false);
+
+    try {
+      await generateSAFT(saftStartDate, saftEndDate, user.id, currentBranch?.id);
+      toast({
+        title: t.fiscalDocumentsUi.saftExportedTitle,
+        description: t.fiscalDocumentsUi.xmlDownloaded,
+      });
+      setSaftDialog(false);
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: t.common.error,
+        description: err instanceof Error ? err.message : t.fiscalDocumentsUi.saftExportedTitle,
+      });
+    }
   };
 
   const handleSaveCompanyInfo = () => {
     saveCompanyInfo(editCompanyInfo);
+    api.companySettings.save(editCompanyInfo).catch(() => {});
     toast({
       title: t.fiscalDocumentsUi.companyInfoUpdatedTitle,
       description: t.fiscalDocumentsUi.companyInfoSavedSuccess,
@@ -417,10 +564,12 @@ export default function FiscalDocuments() {
             <Building2 />
             {fd.companyDataBtn}
           </Button>
+          {canExportSaft && (
           <Button variant="modern" size="lg" onClick={() => setSaftDialog(true)}>
             <Download />
             {fd.exportSaftBtn}
           </Button>
+          )}
         </div>
       </div>
 
@@ -521,10 +670,12 @@ export default function FiscalDocuments() {
                 <CardTitle>{fd.creditNotesTitle}</CardTitle>
                 <CardDescription>{fd.creditNotesDesc}</CardDescription>
               </div>
+              {canCreateCreditNote && (
               <Button variant="modern" size="lg" onClick={() => setCreditNoteDialog(true)}>
                 <Plus />
                 {fd.newCreditNote}
               </Button>
+              )}
             </CardHeader>
             <CardContent>
               {creditNotes.length === 0 ? (
@@ -533,7 +684,8 @@ export default function FiscalDocuments() {
                   <p>{fd.noCreditNotes}</p>
                 </div>
               ) : (
-                <Table>
+                <div className="overflow-x-auto">
+                <Table className="min-w-[960px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>{fd.colDocNumber}</TableHead>
@@ -542,16 +694,40 @@ export default function FiscalDocuments() {
                       <TableHead>{fd.colReason}</TableHead>
                       <TableHead>{fd.colCustomer}</TableHead>
                       <TableHead className="text-right">{fd.colTotal}</TableHead>
+                      <TableHead>{fd.colRestoreStock}</TableHead>
+                      <TableHead>AGT</TableHead>
                       <TableHead>{fd.colStatus}</TableHead>
+                      <TableHead className="text-right">{fd.colActions}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {creditNotes.map(note => (
-                      <TableRow key={note.id}>
-                        <TableCell className="font-medium">{note.documentNumber}</TableCell>
-                        <TableCell>{format(new Date(note.createdAt), 'dd/MM/yyyy HH:mm', { locale: dfLocale })}</TableCell>
-                        <TableCell>{note.originalInvoiceNumber}</TableCell>
-                        <TableCell>
+                      <TableRow
+                        key={note.id}
+                        className="hover:bg-muted/50"
+                      >
+                        <TableCell
+                          className="font-medium cursor-pointer"
+                          onClick={() => setViewCreditNote(note)}
+                        >
+                          {note.documentNumber}
+                        </TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => setViewCreditNote(note)}
+                        >
+                          {format(new Date(note.createdAt), 'dd/MM/yyyy HH:mm', { locale: dfLocale })}
+                        </TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => setViewCreditNote(note)}
+                        >
+                          {note.originalInvoiceNumber}
+                        </TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => setViewCreditNote(note)}
+                        >
                           <Badge variant="outline">
                             {note.reason === 'return' ? t.fiscalDocumentsUi.creditReasonReturn :
                              note.reason === 'discount' ? t.fiscalDocumentsUi.creditReasonDiscount :
@@ -559,17 +735,78 @@ export default function FiscalDocuments() {
                              t.fiscalDocumentsUi.other}
                           </Badge>
                         </TableCell>
-                        <TableCell>{note.customerName || t.fiscalDocumentsUi.finalConsumer}</TableCell>
-                        <TableCell className="text-right font-bold">{note.total.toLocaleString(uiLocale)} Kz</TableCell>
-                        <TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => setViewCreditNote(note)}
+                        >
+                          {note.customerName || t.fiscalDocumentsUi.finalConsumer}
+                        </TableCell>
+                        <TableCell
+                          className="text-right font-bold cursor-pointer"
+                          onClick={() => setViewCreditNote(note)}
+                        >
+                          {note.total.toLocaleString(uiLocale)} Kz
+                        </TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => setViewCreditNote(note)}
+                        >
+                          {note.restoreStock !== false ? (
+                            <Badge variant="outline" className="text-green-700 border-green-600">
+                              <RotateCcw className="w-3 h-3 mr-1" />
+                              {fd.restoreStockYes}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline">{fd.restoreStockNo}</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => setViewCreditNote(note)}
+                        >
+                          <Badge variant={note.agtStatus === 'validated' ? 'default' : 'outline'}>
+                            {note.agtStatus === 'validated' ? t.agtUi.agtValidatedLabel : (note.agtStatus || '—')}
+                          </Badge>
+                        </TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => setViewCreditNote(note)}
+                        >
                           <Badge variant={note.status === 'issued' ? 'default' : 'destructive'}>
                             {note.status === 'issued' ? t.fiscalDocumentsUi.statusIssued : t.fiscalDocumentsUi.statusCancelled}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setViewCreditNote(note)}
+                            >
+                              {fd.actionView}
+                            </Button>
+                            {canSendAgt && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1"
+                              disabled={agtTransmitting || note.agtStatus === 'validated'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleTransmitCreditNote(note);
+                              }}
+                            >
+                              <Send className="h-3 w-3" />
+                              {fd.actionSendAgt}
+                            </Button>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -837,14 +1074,160 @@ export default function FiscalDocuments() {
         </TabsContent>
       </Tabs>
 
+      {/* Credit Note Detail (read-only) */}
+      <Dialog open={!!viewCreditNote} onOpenChange={(open) => !open && setViewCreditNote(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="px-6 pt-6 pb-3">
+            <DialogTitle>{fd.creditNoteDetailTitle}</DialogTitle>
+            <DialogDescription>{fd.creditNoteImmutableHint}</DialogDescription>
+          </DialogHeader>
+
+          {viewCreditNote && (
+            <div className="px-6 pb-4 border-b bg-muted/40 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {canSendAgt && (
+                <Button
+                  className="gap-2"
+                  disabled={agtTransmitting || viewCreditNote.agtStatus === 'validated'}
+                  onClick={() => void handleTransmitCreditNote(viewCreditNote)}
+                >
+                  <Send className="h-4 w-4" />
+                  {viewCreditNote.agtStatus === 'validated' ? t.agtUi.agtValidatedLabel : fd.actionSendAgt}
+                </Button>
+                )}
+                {viewCreditNote.agtCode && (
+                  <Badge variant="default" className="font-mono">
+                    CUCE: {viewCreditNote.agtCode}
+                  </Badge>
+                )}
+                {viewCreditNote.agtStatus && (
+                  <Badge variant="outline">
+                    AGT: {viewCreditNote.agtStatus === 'validated' ? t.agtUi.agtValidatedLabel : viewCreditNote.agtStatus}
+                  </Badge>
+                )}
+              </div>
+              <div
+                className={`flex items-center gap-3 rounded-lg border p-3 text-sm ${
+                  viewCreditNote.restoreStock !== false
+                    ? 'border-green-500/40 bg-green-500/10'
+                    : 'border-muted bg-muted/30'
+                }`}
+              >
+                <RotateCcw className="h-5 w-5 shrink-0" />
+                <div className="flex-1">
+                  <p className="font-medium">{fd.colRestoreStock}</p>
+                  <p className="text-muted-foreground text-xs">
+                    {viewCreditNote.restoreStock !== false ? fd.stockWillBeRestored : fd.stockWillNotBeRestored}
+                  </p>
+                </div>
+                <Badge variant={viewCreditNote.restoreStock !== false ? 'default' : 'outline'}>
+                  {viewCreditNote.restoreStock !== false ? fd.restoreStockYes : fd.restoreStockNo}
+                </Badge>
+              </div>
+            </div>
+          )}
+
+          {viewCreditNote && (
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-muted-foreground">{fd.colDocNumber}</p>
+                  <p className="font-medium">{viewCreditNote.documentNumber}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">{fd.colOriginalInvoice}</p>
+                  <p className="font-medium">{viewCreditNote.originalInvoiceNumber}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">{fd.colTotal}</p>
+                  <p className="font-medium">{viewCreditNote.total.toLocaleString(uiLocale)} Kz</p>
+                </div>
+                {viewCreditNote.saftHash && (
+                  <div>
+                    <p className="text-muted-foreground">Hash</p>
+                    <p className="font-mono text-xs break-all">{viewCreditNote.saftHash}</p>
+                  </div>
+                )}
+              </div>
+              {viewCreditNote.reasonDescription && (
+                <div>
+                  <p className="text-muted-foreground">{t.common.description}</p>
+                  <p>{viewCreditNote.reasonDescription}</p>
+                </div>
+              )}
+              <div className="border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{fd.colProduct}</TableHead>
+                      <TableHead className="text-right">{fd.colQty}</TableHead>
+                      <TableHead className="text-right">{fd.colTotal}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {viewCreditNote.items.map((item, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell>{item.productName}</TableCell>
+                        <TableCell className="text-right">{item.quantity}</TableCell>
+                        <TableCell className="text-right">
+                          {(item.subtotal + item.taxAmount).toLocaleString(uiLocale)} Kz
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="px-6 py-4 border-t">
+            <Button variant="outline" onClick={() => setViewCreditNote(null)}>
+              {t.common.close}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Credit Note Dialog */}
       <Dialog open={creditNoteDialog} onOpenChange={setCreditNoteDialog}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="px-6 pt-6 pb-2">
             <DialogTitle>{fd.newCreditNoteTitle}</DialogTitle>
             <DialogDescription>{fd.newCreditNoteSubtitle}</DialogDescription>
           </DialogHeader>
 
+          <div className="px-6 pb-3 border-b bg-muted/40 space-y-2 shrink-0">
+            <Label className="text-sm font-semibold">{fd.restoreStockLabel}</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant={restoreStock ? 'default' : 'outline'}
+                className="gap-2 h-auto py-3"
+                onClick={() => setRestoreStock(true)}
+              >
+                <RotateCcw className="h-4 w-4" />
+                {fd.restoreStockYes}
+              </Button>
+              <Button
+                type="button"
+                variant={!restoreStock ? 'secondary' : 'outline'}
+                className="h-auto py-3"
+                onClick={() => setRestoreStock(false)}
+              >
+                {fd.restoreStockNo}
+              </Button>
+            </div>
+            <div
+              className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
+                restoreStock ? 'border-green-500/40 bg-green-500/10' : 'border-muted bg-muted/30'
+              }`}
+            >
+              <Package className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>{restoreStock ? fd.stockWillBeRestored : fd.stockWillNotBeRestored}</span>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-6 py-2 space-y-4">
           {!selectedSale ? (
             <div className="space-y-4">
               <div className="relative">
@@ -890,34 +1273,19 @@ export default function FiscalDocuments() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>{fd.reasonLabel}</Label>
-                  <Select value={creditReason} onValueChange={(v: any) => setCreditReason(v)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="return">{fd.creditReasonReturnFull}</SelectItem>
-                      <SelectItem value="discount">{fd.creditReasonDiscountFull}</SelectItem>
-                      <SelectItem value="error">{fd.creditReasonErrorFull}</SelectItem>
-                      <SelectItem value="other">{fd.other}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>{fd.restoreStockLabel}</Label>
-                  <Select value={restoreStock ? 'yes' : 'no'} onValueChange={(v) => setRestoreStock(v === 'yes')}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="yes">{fd.restoreStockYes}</SelectItem>
-                      <SelectItem value="no">{fd.restoreStockNo}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div className="space-y-2">
+                <Label>{fd.reasonLabel}</Label>
+                <Select value={creditReason} onValueChange={(v: any) => setCreditReason(v)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="return">{fd.creditReasonReturnFull}</SelectItem>
+                    <SelectItem value="discount">{fd.creditReasonDiscountFull}</SelectItem>
+                    <SelectItem value="error">{fd.creditReasonErrorFull}</SelectItem>
+                    <SelectItem value="other">{fd.other}</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-2">
@@ -975,8 +1343,9 @@ export default function FiscalDocuments() {
               </div>
             </div>
           )}
+          </div>
 
-          <DialogFooter>
+          <DialogFooter className="px-6 py-4 border-t">
             <Button variant="outline" onClick={() => { setCreditNoteDialog(false); resetCreditForm(); }}>
               {t.common.cancel}
             </Button>

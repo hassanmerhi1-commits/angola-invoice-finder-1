@@ -628,6 +628,9 @@ function mapSaleRow(s: any): Sale {
     customerName: s.customerName || s.customer_name || '',
     status: s.status || 'completed',
     saftHash: s.saftHash || s.agt_hash || s.saft_hash || '',
+    agtStatus: s.agtStatus || s.agt_status || undefined,
+    agtCode: s.agtCode || s.agt_code || undefined,
+    agtValidatedAt: s.agtValidatedAt || s.agt_validated_at || undefined,
     createdAt: s.createdAt || s.created_at || '',
   };
 }

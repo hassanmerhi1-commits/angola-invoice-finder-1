@@ -541,6 +541,15 @@ function ensureAppTablesAndColumns() {
   tryAlterAdd('products', 'version INTEGER NOT NULL DEFAULT 0');
   tryAlterAdd('products', "tax_code TEXT DEFAULT 'IVA5'");
   tryAlterAdd('users', 'username TEXT');
+  tryAlterAdd('sales', "fiscal_status TEXT DEFAULT 'issued'");
+  ensureFiscalDocumentsSchemaSqlite();
+  tryAlterAdd('credit_notes', 'restore_stock INTEGER NOT NULL DEFAULT 1');
+  tryAlterAdd('audit_log', 'metadata TEXT');
+  tryAlterAdd('audit_log', 'workstation_id TEXT');
+  tryAlterAdd('audit_log', 'ip_address TEXT');
+  ensureSigningSchemaSqlite();
+  ensureAgtConfigSchemaSqlite();
+  ensureCompanySettingsSchemaSqlite();
 
   ensureOrgHierarchyTables();
 
@@ -768,6 +777,241 @@ function maxPurchaseInvoiceSequenceForBranch(branchId, branchCode, yr) {
   return maxSeq;
 }
 
+function ensureCompanySettingsSchemaSqlite() {
+  if (!sqlite) return;
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS company_settings (
+      id TEXT PRIMARY KEY DEFAULT 'default',
+      settings_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  try {
+    sqlite.prepare(
+      `INSERT OR IGNORE INTO company_settings (id, settings_json) VALUES ('default', '{}')`,
+    ).run();
+  } catch (_) {}
+}
+
+function ensureAgtConfigSchemaSqlite() {
+  if (!sqlite) return;
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS agt_config (
+      id TEXT PRIMARY KEY DEFAULT 'default',
+      environment TEXT NOT NULL DEFAULT 'sandbox',
+      api_url TEXT,
+      api_key_encrypted TEXT,
+      status_url TEXT,
+      company_nif TEXT,
+      software_certificate_number TEXT,
+      simulate INTEGER NOT NULL DEFAULT 1,
+      auto_transmit INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS agt_transmissions (
+      id TEXT PRIMARY KEY,
+      invoice_id TEXT,
+      invoice_number TEXT NOT NULL,
+      transmission_type TEXT NOT NULL,
+      entity_type TEXT,
+      entity_id TEXT,
+      request_payload TEXT NOT NULL,
+      response_payload TEXT,
+      agt_code TEXT,
+      agt_status TEXT DEFAULT 'pending',
+      error_code TEXT,
+      error_message TEXT,
+      retry_count INTEGER DEFAULT 0,
+      transmitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+      validated_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agt_transmissions_entity ON agt_transmissions(entity_type, entity_id);
+    CREATE INDEX IF NOT EXISTS idx_agt_transmissions_status ON agt_transmissions(agt_status);
+  `);
+  try {
+    sqlite.prepare(
+      `INSERT OR IGNORE INTO agt_config (id, environment, simulate, auto_transmit) VALUES ('default', 'sandbox', 1, 1)`
+    ).run();
+  } catch (_) {}
+  tryAlterAdd('agt_transmissions', 'entity_type TEXT');
+  tryAlterAdd('agt_transmissions', 'entity_id TEXT');
+  tryAlterAdd('credit_notes', 'agt_validated_at TEXT');
+  tryAlterAdd('debit_notes', 'agt_validated_at TEXT');
+}
+
+function ensureSigningSchemaSqlite() {
+  if (!sqlite) return;
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS signing_keys (
+      id TEXT PRIMARY KEY,
+      key_alias TEXT NOT NULL UNIQUE,
+      key_type TEXT NOT NULL,
+      public_key_pem TEXT NOT NULL,
+      private_key_hash TEXT NOT NULL,
+      certificate_number TEXT,
+      subject_cn TEXT,
+      valid_from TEXT NOT NULL,
+      valid_until TEXT NOT NULL,
+      encrypted_passphrase TEXT,
+      pfx_storage_path TEXT,
+      is_active INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      revoked_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS invoice_signatures (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      invoice_id TEXT UNIQUE,
+      invoice_number TEXT NOT NULL,
+      signing_key_id TEXT,
+      signature_data TEXT,
+      signed_content_hash TEXT NOT NULL,
+      algorithm TEXT DEFAULT 'SHA-256',
+      signed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS fiscal_signatures (
+      id TEXT PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      document_number TEXT NOT NULL,
+      branch_id TEXT,
+      signing_key_id TEXT,
+      content_hash TEXT NOT NULL,
+      previous_hash TEXT,
+      signature_data TEXT,
+      algorithm TEXT NOT NULL DEFAULT 'SHA-256',
+      system_entry_date TEXT,
+      signed_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(entity_type, entity_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_fiscal_signatures_entity ON fiscal_signatures(entity_type, entity_id);
+  `);
+  tryAlterAdd('signing_keys', 'encrypted_passphrase TEXT');
+  tryAlterAdd('signing_keys', 'pfx_storage_path TEXT');
+  tryAlterAdd('signing_keys', 'subject_cn TEXT');
+  tryAlterAdd('fiscal_signatures', 'system_entry_date TEXT');
+}
+
+function ensureFiscalDocumentsSchemaSqlite() {
+  if (!sqlite) return;
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS credit_notes (
+      id TEXT PRIMARY KEY,
+      document_number TEXT NOT NULL UNIQUE,
+      branch_id TEXT,
+      branch_name TEXT DEFAULT '',
+      original_invoice_id TEXT,
+      original_invoice_number TEXT,
+      reason TEXT NOT NULL,
+      reason_description TEXT DEFAULT '',
+      subtotal REAL NOT NULL DEFAULT 0,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      customer_nif TEXT,
+      customer_name TEXT,
+      status TEXT NOT NULL DEFAULT 'issued',
+      restore_stock INTEGER NOT NULL DEFAULT 1,
+      saft_hash TEXT,
+      agt_status TEXT,
+      agt_code TEXT,
+      issued_by TEXT,
+      issued_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS credit_note_items (
+      id TEXT PRIMARY KEY,
+      credit_note_id TEXT NOT NULL,
+      product_id TEXT,
+      product_name TEXT NOT NULL,
+      sku TEXT,
+      quantity REAL NOT NULL,
+      unit_price REAL NOT NULL,
+      tax_rate REAL NOT NULL DEFAULT 0,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      subtotal REAL NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS debit_notes (
+      id TEXT PRIMARY KEY,
+      document_number TEXT NOT NULL UNIQUE,
+      branch_id TEXT,
+      branch_name TEXT DEFAULT '',
+      original_invoice_id TEXT,
+      original_invoice_number TEXT,
+      reason TEXT NOT NULL,
+      reason_description TEXT DEFAULT '',
+      subtotal REAL NOT NULL DEFAULT 0,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      customer_nif TEXT,
+      customer_name TEXT,
+      status TEXT NOT NULL DEFAULT 'issued',
+      saft_hash TEXT,
+      agt_status TEXT,
+      agt_code TEXT,
+      issued_by TEXT,
+      issued_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS debit_note_items (
+      id TEXT PRIMARY KEY,
+      debit_note_id TEXT NOT NULL,
+      description TEXT NOT NULL,
+      quantity REAL NOT NULL DEFAULT 1,
+      unit_price REAL NOT NULL,
+      tax_rate REAL NOT NULL DEFAULT 0,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      subtotal REAL NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS transport_documents (
+      id TEXT PRIMARY KEY,
+      document_number TEXT NOT NULL UNIQUE,
+      branch_id TEXT,
+      branch_name TEXT DEFAULT '',
+      doc_type TEXT NOT NULL,
+      origin_address TEXT,
+      origin_city TEXT,
+      destination_address TEXT,
+      destination_city TEXT,
+      destination_nif TEXT,
+      destination_name TEXT,
+      transporter_name TEXT,
+      transporter_nif TEXT,
+      vehicle_plate TEXT,
+      loading_date TEXT NOT NULL,
+      loading_time TEXT,
+      items_json TEXT NOT NULL DEFAULT '[]',
+      total_weight REAL,
+      total_volume REAL,
+      status TEXT NOT NULL DEFAULT 'issued',
+      related_invoice_id TEXT,
+      related_invoice_number TEXT,
+      notes TEXT,
+      saft_hash TEXT,
+      issued_by TEXT,
+      issued_at TEXT,
+      delivered_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_credit_note_items_note ON credit_note_items(credit_note_id);
+    CREATE INDEX IF NOT EXISTS idx_debit_note_items_note ON debit_note_items(debit_note_id);
+    CREATE INDEX IF NOT EXISTS idx_transport_documents_branch ON transport_documents(branch_id);
+  `);
+  try {
+    sqlite.prepare(
+      `UPDATE sales SET fiscal_status = 'issued' WHERE fiscal_status IS NULL OR fiscal_status = ''`
+    ).run();
+  } catch (_) {}
+}
+
 /** Seed document_sequences from existing rows (idempotent). */
 function seedDocumentSequencesSqlite() {
   if (!sqlite || !tableExists('document_sequences')) return;
@@ -821,6 +1065,32 @@ function seedDocumentSequencesSqlite() {
       const code = String(branch.code || 'SEDE').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'SEDE';
       const maxSeq = maxPurchaseInvoiceSequenceForBranch(branch.id, code, yr);
       insBranch.run(crypto.randomUUID(), yr, branch.id, maxSeq);
+    }
+    const insFiscal = sqlite.prepare(`
+      INSERT INTO document_sequences (id, document_type, prefix, fiscal_year, branch_id, current_number)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(document_type, fiscal_year, branch_id) DO UPDATE SET
+        current_number = MAX(document_sequences.current_number, excluded.current_number)
+    `);
+    const fiscalTypes = [
+      ['credit_note', 'NC', 'credit_notes'],
+      ['debit_note', 'ND', 'debit_notes'],
+      ['transport_document', 'GT', 'transport_documents'],
+    ];
+    for (const branch of branches) {
+      for (const [docType, prefix, table] of fiscalTypes) {
+        let n = 0;
+        if (tableExists(table)) {
+          try {
+            n = sqlite.prepare(
+              `SELECT COUNT(*) AS c FROM ${table} WHERE branch_id = ? AND created_at LIKE ?`
+            ).get(branch.id, `${yr}%`)?.c || 0;
+          } catch {
+            n = 0;
+          }
+        }
+        insFiscal.run(crypto.randomUUID(), docType, prefix, yr, branch.id, n);
+      }
     }
   } catch (err) {
     console.warn('[DB] seed purchase_invoice per branch:', err.message);

@@ -130,20 +130,44 @@ function buildPurchaseReceiveCostPlan(items, receivedQuantities, totalLandingCos
 // ==================== AUDIT LOGGING ====================
 
 async function auditLog(client, params) {
-  const { tableName, recordId, action, userId, userName, branchId, oldValues, newValues, description } = params;
+  const {
+    tableName, recordId, action, userId, userName, branchId,
+    oldValues, newValues, description, metadata, workstationId, ipAddress,
+  } = params;
   const savepointName = 'audit_log_insert';
   let savepointCreated = false;
   try {
     await client.query(`SAVEPOINT ${savepointName}`);
     savepointCreated = true;
-    await client.query(
-      `INSERT INTO audit_log (id, table_name, record_id, action, user_id, user_name, branch_id, old_values, new_values, description)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [randomUUID(), tableName, recordId, action, userId, userName, branchId,
-       oldValues ? JSON.stringify(oldValues) : null,
-       newValues ? JSON.stringify(newValues) : null,
-       description]
-    );
+    const auditId = randomUUID();
+    const baseParams = [
+      auditId, tableName, recordId, action, userId, userName, branchId,
+      oldValues ? JSON.stringify(oldValues) : null,
+      newValues ? JSON.stringify(newValues) : null,
+      description,
+    ];
+    try {
+      await client.query(
+        `INSERT INTO audit_log (
+          id, table_name, record_id, action, user_id, user_name, branch_id,
+          old_values, new_values, description, metadata, workstation_id, ip_address
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [
+          ...baseParams,
+          metadata ? JSON.stringify(metadata) : null,
+          workstationId || null,
+          ipAddress || null,
+        ],
+      );
+    } catch (extendedErr) {
+      await client.query(
+        `INSERT INTO audit_log (
+          id, table_name, record_id, action, user_id, user_name, branch_id,
+          old_values, new_values, description
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        baseParams,
+      );
+    }
     await client.query(`RELEASE SAVEPOINT ${savepointName}`);
   } catch (e) {
     if (savepointCreated) {
@@ -1486,15 +1510,27 @@ async function processSale(client, saleData) {
 
   // ── Step 3a: Insert sale header ──
   const saleId = randomUUID();
-  await client.query(
-    `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
-      subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
-      customer_nif, customer_name, status, client_request_id, due_date)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed',$15,$16)`,
-    [saleId, invoiceNumber, branchId, cashierId, cashierName,
-     subtotal, taxAmount, discount || 0, totalAmount,
-     paymentMethod, amountPaid, change, customerNif, customerName, clientReqId, saleDueDate]
-  );
+  const saleHeaderParams = [saleId, invoiceNumber, branchId, cashierId, cashierName,
+    subtotal, taxAmount, discount || 0, totalAmount,
+    paymentMethod, amountPaid, change, customerNif, customerName, clientReqId, saleDueDate];
+  try {
+    await client.query(
+      `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
+        subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
+        customer_nif, customer_name, status, fiscal_status, client_request_id, due_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed','issued',$15,$16)`,
+      saleHeaderParams,
+    );
+  } catch (insertErr) {
+    if (!/fiscal_status/i.test(insertErr.message || '')) throw insertErr;
+    await client.query(
+      `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
+        subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
+        customer_nif, customer_name, status, client_request_id, due_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed',$15,$16)`,
+      saleHeaderParams,
+    );
+  }
 
   // ── Step 3b: Insert sale_items + stock ──
   let totalCOGS = 0;

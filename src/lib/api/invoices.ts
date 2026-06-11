@@ -163,12 +163,27 @@ export async function createInvoice(
   };
 }
 
-// POST /api/agt/send
+// POST /api/agt/transmit
 export async function sendToAGT(invoiceId: string): Promise<AGTValidationResponse> {
-  if (window.electronAPI?.agt) {
-    return sendToAGTSimulated(invoiceId);
+  try {
+    const res = await api.agt.transmit({ entityType: 'sale', entityId: invoiceId });
+    if (res.error) {
+      return { status: 'error', agt_code: '', timestamp: new Date().toISOString(), error: res.error };
+    }
+    const data = res.data;
+    return {
+      status: data?.agtStatus === 'validated' ? 'validated' : 'pending',
+      agt_code: data?.agtCode || '',
+      timestamp: data?.validatedAt || new Date().toISOString(),
+    };
+  } catch (err) {
+    return {
+      status: 'error',
+      agt_code: '',
+      timestamp: new Date().toISOString(),
+      error: err instanceof Error ? err.message : 'AGT transmit failed',
+    };
   }
-  return sendToAGTSimulated(invoiceId);
 }
 
 async function sendToAGTSimulated(invoiceId: string): Promise<AGTValidationResponse> {

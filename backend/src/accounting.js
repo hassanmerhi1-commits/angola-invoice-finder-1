@@ -6,6 +6,9 @@ const { randomUUID } = require('crypto');
 const DOCUMENT_SEQUENCE_CONFIG = {
   invoice: { prefix: 'INV', perBranch: false },
   purchase_invoice: { prefix: 'FC', perBranch: true },
+  credit_note: { prefix: 'NC', perBranch: true },
+  debit_note: { prefix: 'ND', perBranch: true },
+  transport_document: { prefix: 'GT', perBranch: true },
   payment_receipt: { prefix: 'REC', perBranch: false },
   payment_out: { prefix: 'PAG', perBranch: false },
   purchase_order: { prefix: 'PO', perBranch: false },

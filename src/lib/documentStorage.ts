@@ -19,6 +19,8 @@ import {
   type BranchRef,
   type PurchaseInvoice,
 } from '@/lib/purchaseInvoiceStorage';
+import type { CreditNote } from '@/types/erp';
+import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutability';
 
 const STORAGE_KEY = 'kwanzaerp_documents';
 
@@ -75,6 +77,9 @@ function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
     createdByName: sale.cashierName || sale.cashier_name || '',
     createdAt,
     updatedAt: createdAt,
+    fiscalLocked: String(sale.fiscalStatus || sale.fiscal_status || 'issued') !== 'draft',
+    agtStatus: sale.agtStatus || sale.agt_status || undefined,
+    agtCode: sale.agtCode || sale.agt_code || undefined,
   };
 }
 
@@ -128,6 +133,62 @@ function mapPurchaseInvoiceToDocument(inv: PurchaseInvoice, branchName = ''): ER
     createdByName: inv.createdByName || '',
     createdAt: inv.createdAt || '',
     updatedAt: inv.updatedAt || inv.createdAt || '',
+  };
+}
+
+/** Fiscal credit notes (`credit_notes` table) — canonical source for nota_credito. */
+export function mapCreditNoteToDocument(
+  cn: CreditNote,
+  branchName = '',
+  finalConsumerLabel = 'Consumidor Final',
+): ERPDocument {
+  const issuedAt = cn.issuedAt || cn.createdAt || new Date().toISOString();
+  const issueDate = String(issuedAt).includes('T')
+    ? String(issuedAt).split('T')[0]
+    : String(issuedAt).slice(0, 10);
+  return {
+    id: cn.id,
+    documentType: 'nota_credito',
+    documentNumber: cn.documentNumber,
+    branchId: cn.branchId || '',
+    branchName: branchName || cn.branchName || '',
+    entityType: 'customer',
+    entityName: cn.customerName || finalConsumerLabel,
+    entityNif: cn.customerNif,
+    lines: cn.items.map((item, idx) => ({
+      id: `cn_${cn.id}_${idx}`,
+      productId: item.productId || '',
+      productSku: item.sku,
+      description: item.productName,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      discount: 0,
+      discountAmount: 0,
+      taxRate: item.taxRate,
+      taxAmount: item.taxAmount,
+      lineTotal: item.subtotal + item.taxAmount,
+    })),
+    subtotal: cn.subtotal,
+    totalDiscount: 0,
+    totalTax: cn.taxAmount,
+    total: cn.total,
+    currency: 'AOA',
+    amountPaid: 0,
+    amountDue: cn.total,
+    parentDocumentNumber: cn.originalInvoiceNumber,
+    status: cn.status === 'cancelled' ? 'cancelled' : 'confirmed',
+    issueDate,
+    issueTime: new Date(issuedAt).toLocaleTimeString('pt-AO', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }),
+    fiscalLocked: true,
+    agtStatus: cn.agtStatus as ERPDocument['agtStatus'],
+    agtCode: cn.agtCode,
+    createdBy: cn.issuedBy || '',
+    createdAt: cn.createdAt,
+    updatedAt: cn.createdAt,
   };
 }
 
@@ -225,31 +286,41 @@ export async function getNextSequence(type: DocumentType, branchId: string): Pro
   return docs.length + 1;
 }
 
+function assertDocumentMayBeSaved(existing: ERPDocument | undefined, doc: ERPDocument): ERPDocument {
+  if (!existing || !isFiscallyImmutable(existing)) {
+    return { ...doc, updatedAt: new Date().toISOString() };
+  }
+  if (allowsDueDateOnlyEdit(existing) && doc.dueDate !== existing.dueDate) {
+    return { ...existing, dueDate: doc.dueDate, updatedAt: new Date().toISOString() };
+  }
+  throw new Error('FISCAL_IMMUTABLE');
+}
+
 export async function saveDocument(doc: ERPDocument): Promise<ERPDocument> {
+  const existing = await getDocumentById(doc.id);
+  const nextDoc = assertDocumentMayBeSaved(existing, doc);
+
   if (isElectronMode()) {
-    const saved = await dbInsert('erp_documents', mapDocToDb(doc));
+    const saved = await dbInsert('erp_documents', mapDocToDb(nextDoc));
     if (saved) {
-      return doc;
+      return nextDoc;
     }
-    // In the SQLite/Express runtime, Electron IPC storage is intentionally disabled.
-    // Keep a renderer-local copy so document views and print flows still work.
     const docs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
-    const idx = docs.findIndex(d => d.id === doc.id);
-    const nextDoc = { ...doc, updatedAt: new Date().toISOString() };
+    const idx = docs.findIndex(d => d.id === nextDoc.id);
     if (idx >= 0) docs[idx] = nextDoc;
     else docs.push(nextDoc);
     lsSet(STORAGE_KEY, docs);
     return nextDoc;
   }
   const docs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
-  const idx = docs.findIndex(d => d.id === doc.id);
+  const idx = docs.findIndex(d => d.id === nextDoc.id);
   if (idx >= 0) {
-    docs[idx] = { ...doc, updatedAt: new Date().toISOString() };
+    docs[idx] = nextDoc;
   } else {
-    docs.push(doc);
+    docs.push(nextDoc);
   }
   lsSet(STORAGE_KEY, docs);
-  return doc;
+  return nextDoc;
 }
 
 export async function createDocument(
@@ -261,13 +332,16 @@ export async function createDocument(
   createdByName: string,
   data: Partial<ERPDocument>
 ): Promise<ERPDocument> {
+  if (type === 'nota_credito') {
+    throw new Error('Credit notes must be issued in Fiscal Documents (stock and AGT compliance).');
+  }
   const seq = await getNextSequence(type, branchId);
   const now = new Date().toISOString();
   
   const doc: ERPDocument = {
-    id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    id: data.id || `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     documentType: type,
-    documentNumber: generateDocumentNumber(type, branchCode, seq),
+    documentNumber: data.documentNumber || generateDocumentNumber(type, branchCode, seq),
     branchId,
     branchName,
     entityType: DOCUMENT_TYPE_CONFIG[type].entityType,
@@ -301,6 +375,13 @@ export async function createDocument(
     createdByName,
     createdAt: now,
     updatedAt: now,
+    fiscalLocked:
+      data.fiscalLocked === true
+      || type === 'fatura_venda' && (data.status === 'confirmed' || data.status === 'paid')
+      || (type === 'nota_credito' || type === 'nota_debito' || type === 'guia_remessa')
+        && (data.status === 'confirmed' || data.status === 'paid'),
+    agtStatus: data.agtStatus,
+    agtCode: data.agtCode,
   };
 
   return saveDocument(doc);
@@ -318,6 +399,11 @@ export async function convertDocument(
 
   const config = DOCUMENT_TYPE_CONFIG[source.documentType];
   if (!config.canConvertTo.includes(targetType)) return null;
+
+  // Credit notes must go through the fiscal API (stock + accounting + hash chain).
+  if (targetType === 'nota_credito' && source.documentType === 'fatura_venda') {
+    return null;
+  }
 
   const newDoc = await createDocument(
     targetType,

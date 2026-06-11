@@ -12,11 +12,33 @@ import { Separator } from '@/components/ui/separator';
 import {
   Shield, Search, FileText, User, Download, LogIn, LogOut, Edit,
   CheckCircle, XCircle, AlertTriangle, Printer, RefreshCw, ArrowRightLeft,
-  Eye, Trash2, RotateCcw, Package, DollarSign, Clock
+  Eye, Trash2, RotateCcw, Package, DollarSign, Clock, Send
 } from 'lucide-react';
-import { getAuditLog, auditLog as recordAudit, type AuditEntry } from '@/lib/auditService';
+import { api } from '@/lib/api/client';
+import { useAuth } from '@/hooks/useERP';
+import { usePermissions } from '@/hooks/usePermissions';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
+import { mapAuditLogRow, type AuditLogRow } from '@/lib/auditLogDisplay';
+
+export type AuditEntry = AuditLogRow & { workstationId?: string };
+
+function mapBackendAuditRow(row: Record<string, unknown>): AuditEntry {
+  const mapped = mapAuditLogRow(row);
+  return {
+    ...mapped,
+    workstationId: row.workstation_id ? String(row.workstation_id) : undefined,
+  };
+}
+
+async function loadAuditEntries(): Promise<AuditEntry[]> {
+  const res = await api.audit.list({ limit: 500 });
+  if (res.error) {
+    throw new Error(res.error);
+  }
+  const rows = Array.isArray(res.data) ? res.data : [];
+  return rows.map((row) => mapBackendAuditRow(row as Record<string, unknown>));
+}
 
 const ACTION_CONFIG: Record<string, { icon: typeof FileText; labelKey: string; color: string }> = {
   create: { icon: FileText, labelKey: 'actionCreate', color: 'text-green-600' },
@@ -30,6 +52,9 @@ const ACTION_CONFIG: Record<string, { icon: typeof FileText; labelKey: string; c
   export: { icon: Download, labelKey: 'actionExport', color: 'text-muted-foreground' },
   login: { icon: LogIn, labelKey: 'actionLogin', color: 'text-green-600' },
   logout: { icon: LogOut, labelKey: 'actionLogout', color: 'text-muted-foreground' },
+  issue: { icon: FileText, labelKey: 'actionCreate', color: 'text-green-600' },
+  agt_transmit: { icon: Send, labelKey: 'actionSendAgt', color: 'text-blue-600' },
+  saft_export: { icon: Download, labelKey: 'actionExport', color: 'text-muted-foreground' },
   restore: { icon: RotateCcw, labelKey: 'actionRestore', color: 'text-amber-600' },
   transfer: { icon: ArrowRightLeft, labelKey: 'actionTransfer', color: 'text-blue-600' },
 };
@@ -55,36 +80,13 @@ const MODULE_LABELS: Record<string, string> = {
   bank: 'moduleBank',
 };
 
-// Seed demo data if audit log is empty
-async function ensureDemoData() {
-  const existing = await getAuditLog();
-  if (existing.length > 0) return;
-
-  const demos: Omit<AuditEntry, 'id' | 'createdAt'>[] = [
-    { action: 'create', module: 'sales', description: 'Sale FT HQ/20260331/0001 created - 45,000 Kz', userName: 'Admin', userId: '1' },
-    { action: 'update', module: 'products', description: 'Product "Rice 25kg" - price changed from 3,500 to 3,800 Kz', userName: 'Admin', userId: '1' },
-    { action: 'approve', module: 'purchase_orders', description: 'PO-20260331-0003 approved - 1,200,000 Kz', userName: 'Director', userId: '2' },
-    { action: 'void', module: 'invoices', description: 'Invoice FT HQ/20260330/0012 voided - customer error', userName: 'Admin', userId: '1' },
-    { action: 'login', module: 'system', description: 'POS terminal login - Head Office branch', userName: 'Operador1', userId: '3' },
-    { action: 'create', module: 'stock', description: 'Stock adjustment: Cooking oil 5L - IN +50 units', userName: 'Admin', userId: '1' },
-    { action: 'create', module: 'payments', description: 'Receipt REC202603310001 - Customer ABC - 120,000 Kz', userName: 'Admin', userId: '1' },
-    { action: 'delete', module: 'products', description: 'Product "Test" removed from catalog', userName: 'Admin', userId: '1' },
-    { action: 'create', module: 'accounting', description: 'Journal entry VD202603310001 - Automatic sale', userName: 'System', userId: '' },
-    { action: 'status_change', module: 'accounting', description: 'Accounting period February 2026 closed', userName: 'Director', userId: '2' },
-    { action: 'export', module: 'fiscal', description: 'SAF-T file exported - period Q1 2026', userName: 'Admin', userId: '1' },
-    { action: 'create', module: 'hr', description: 'Employee Joao Silva added - Sales Dept.', userName: 'Admin', userId: '1' },
-    { action: 'transfer', module: 'stock', description: 'Transfer: 100x Rice 25kg - HQ → Viana branch', userName: 'Admin', userId: '1' },
-    { action: 'create', module: 'expenses', description: 'Expense recorded: Electricity - 85,000 Kz', userName: 'Admin', userId: '1' },
-    { action: 'update', module: 'bank', description: 'Bank reconciliation - BAI account 0040 - 15 movements', userName: 'Director', userId: '2' },
-  ];
-
-  for (const d of demos) {
-    await recordAudit(d.action, d.module, d.description, d.userName, d.userId);
-  }
-}
+// Seed demo data removed — audit trail reads from backend audit_log
 
 export default function AuditTrail() {
   const { t, language } = useTranslation();
+  const { user } = useAuth();
+  const { hasPermission } = usePermissions(user?.id);
+  const canViewAudit = hasPermission('reports_audit');
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -95,10 +97,26 @@ export default function AuditTrail() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
 
-  // Seed demo data and load on mount
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   useEffect(() => {
-    ensureDemoData().then(() => getAuditLog()).then(setAuditEntries);
-  }, [refreshKey]);
+    if (!canViewAudit) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    loadAuditEntries()
+      .then((entries) => {
+        setAuditEntries(entries);
+        setLoadError(null);
+      })
+      .catch((err: unknown) => {
+        setLoadError(err instanceof Error ? err.message : String(err));
+        setAuditEntries([]);
+      })
+      .finally(() => setLoading(false));
+  }, [refreshKey, canViewAudit]);
 
   const filtered = useMemo(() => {
     return auditEntries.filter(entry => {
@@ -143,7 +161,7 @@ export default function AuditTrail() {
   }, [filtered, uiLocale]);
 
   const exportAudit = () => {
-    const json = JSON.stringify(auditEntries, null, 2);
+    const json = JSON.stringify(filtered, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -151,10 +169,23 @@ export default function AuditTrail() {
     a.download = `audit_trail_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    recordAudit('export', 'system', t.auditTrailUi.auditExportedLog, 'Admin', '');
+    void api.audit.log({
+      action: 'export',
+      tableName: 'audit_log',
+      description: t.auditTrailUi.auditExportedLog,
+    });
     toast.success(t.auditTrailUi.auditExportedToast);
     setRefreshKey(k => k + 1);
   };
+
+  if (!canViewAudit) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8 text-muted-foreground">
+        <Shield className="w-12 h-12 mb-3 opacity-30" />
+        <p className="text-sm">{t.auditTrailUi.permissionDenied}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -242,7 +273,13 @@ export default function AuditTrail() {
 
       {/* Timeline Table */}
       <div className="flex-1 overflow-auto px-4 pb-4">
-        {groupedByDate.map(([date, entries]) => (
+        {loading && (
+          <div className="text-center py-12 text-muted-foreground text-sm">{t.auditTrailUi.refresh}…</div>
+        )}
+        {loadError && !loading && (
+          <div className="text-center py-8 text-destructive text-sm">{loadError}</div>
+        )}
+        {!loading && !loadError && groupedByDate.map(([date, entries]) => (
           <div key={date} className="mb-4">
             <div className="flex items-center gap-2 mb-1.5 sticky top-0 bg-background z-10 py-1">
               <Clock className="w-3.5 h-3.5 text-muted-foreground" />
@@ -301,7 +338,7 @@ export default function AuditTrail() {
           </div>
         ))}
 
-        {filtered.length === 0 && (
+        {!loading && filtered.length === 0 && (
           <div className="text-center py-12 text-muted-foreground">
             <Shield className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p className="text-sm">{t.auditTrailUi.empty}</p>

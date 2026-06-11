@@ -5,6 +5,7 @@ const { processSale } = require('../transactionEngine');
 const { peekSequenceNumber } = require('../accounting');
 const { enqueueSaleCreated } = require('../sync/outbox');
 const { signSaleInvoice } = require('../agt/signSale');
+const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -68,20 +69,44 @@ module.exports = function(broadcastTable) {
       if (!result.rows[0]) {
         return res.status(404).json({ error: 'Sale not found' });
       }
+      const row = result.rows[0];
+      await logFiscalEventFromReq(req, {
+        tableName: 'sales',
+        recordId: row.id,
+        action: 'print',
+        description: `Fatura ${row.invoice_number} impressa`,
+        newValues: { printedAt: row.printed_at },
+      });
       await broadcastTable('sales');
-      res.json(result.rows[0]);
+      res.json(row);
     } catch (error) {
       console.error('[SALES mark-printed]', error);
       res.status(500).json({ error: error.message || 'Failed to mark printed' });
     }
   });
 
-  // Update due date on an existing sale (and linked open item)
+  // Issued fiscal invoices are immutable — only due date may be adjusted.
   router.patch('/:id', async (req, res) => {
     try {
       const { dueDate } = req.body;
+      const extraKeys = Object.keys(req.body || {}).filter((k) => k !== 'dueDate');
+      if (extraKeys.length > 0) {
+        return res.status(403).json({
+          error: 'Issued invoices cannot be edited. Use a credit note or debit note to correct.',
+        });
+      }
       if (!dueDate) {
         return res.status(400).json({ error: 'dueDate is required' });
+      }
+      const existing = await db.query(
+        'SELECT id, fiscal_status FROM sales WHERE id = $1',
+        [req.params.id],
+      );
+      if (!existing.rows.length) {
+        return res.status(404).json({ error: 'Sale not found' });
+      }
+      if (String(existing.rows[0].fiscal_status || 'issued') === 'cancelled') {
+        return res.status(403).json({ error: 'Cancelled invoices cannot be modified' });
       }
       const due = String(dueDate).slice(0, 10);
       const result = await db.query(

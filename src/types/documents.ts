@@ -105,6 +105,9 @@ export interface ERPDocument {
   dueDate?: string;
   validUntil?: string;     // for proformas
   
+  // Issued fiscal documents cannot be edited (corrections via NC/ND only)
+  fiscalLocked?: boolean;
+
   // AGT compliance
   saftHash?: string;
   agtStatus?: 'pending' | 'validated' | 'rejected';

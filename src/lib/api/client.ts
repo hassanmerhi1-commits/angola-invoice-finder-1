@@ -1660,6 +1660,15 @@ export const api = {
       );
       return apiFetch<any[]>(`/audit/stats?days=${days || 30}`);
     },
+    log: (data: {
+      tableName?: string;
+      recordId?: string;
+      action: string;
+      description?: string;
+      metadata?: Record<string, unknown>;
+      oldValues?: Record<string, unknown>;
+      newValues?: Record<string, unknown>;
+    }) => apiFetch<any>('/audit', { method: 'POST', body: JSON.stringify(data) }),
   },
 
   // Budgets & Cost Centers
@@ -1753,36 +1762,89 @@ export const api = {
 
   // SAF-T AO
   saft: {
-    generate: (year?: number, startDate?: string, endDate?: string) => {
-      // SAF-T generation is complex — needs full data export, works same in both modes
-      if (isElectronMode()) {
-        return (async () => {
-          const sales = await ipcQuery<any>('SELECT * FROM sales ORDER BY created_at');
-          const products = await ipcQuery<any>('SELECT * FROM products ORDER BY name');
-          const clients = await ipcQuery<any>('SELECT * FROM clients ORDER BY name');
-          const suppliers = await ipcQuery<any>('SELECT * FROM suppliers ORDER BY name');
-          const journals = await ipcQuery<any>('SELECT * FROM journal_entries ORDER BY entry_date');
-          return { data: { sales: sales.data, products: products.data, clients: clients.data, suppliers: suppliers.data, journals: journals.data } };
-        })();
-      }
+    generate: (params?: {
+      year?: number;
+      startDate?: string;
+      endDate?: string;
+      branchId?: string;
+      includeVoided?: boolean;
+      company?: Record<string, unknown>;
+    }) => {
       const sp = new URLSearchParams();
-      if (year) sp.append('year', year.toString());
-      if (startDate) sp.append('startDate', startDate);
-      if (endDate) sp.append('endDate', endDate);
+      if (params?.year) sp.append('year', params.year.toString());
+      if (params?.startDate) sp.append('startDate', params.startDate);
+      if (params?.endDate) sp.append('endDate', params.endDate);
+      if (params?.branchId) sp.append('branchId', params.branchId);
+      if (params?.includeVoided) sp.append('includeVoided', 'true');
+      if (params?.company) {
+        return apiFetch<any>('/saft/generate', {
+          method: 'POST',
+          body: JSON.stringify({ ...params, company: params.company }),
+        });
+      }
       return apiFetch<any>(`/saft/generate?${sp}`);
     },
-    summary: (year?: number) => {
-      if (isElectronMode()) {
-        return ipcQuery<any>(
-          `SELECT 
-           (SELECT COUNT(*) FROM sales) as total_sales,
-           (SELECT COALESCE(SUM(total), 0) FROM sales) as total_revenue,
-           (SELECT COUNT(*) FROM products) as total_products,
-           (SELECT COUNT(*) FROM clients) as total_clients`
-        ).then(r => ({ data: r.data?.[0] }));
-      }
-      return apiFetch<any>(`/saft/summary?year=${year || new Date().getFullYear()}`);
+    preview: (params: {
+      startDate: string;
+      endDate: string;
+      branchId?: string;
+      includeVoided?: boolean;
+    }) => {
+      const sp = new URLSearchParams();
+      sp.append('startDate', params.startDate);
+      sp.append('endDate', params.endDate);
+      if (params.branchId) sp.append('branchId', params.branchId);
+      if (params.includeVoided) sp.append('includeVoided', 'true');
+      return apiFetch<any>(`/saft/preview?${sp}`);
     },
+    exportUrl: (params: {
+      startDate: string;
+      endDate: string;
+      branchId?: string;
+      includeVoided?: boolean;
+      format?: 'json' | 'xml';
+    }) => {
+      const sp = new URLSearchParams();
+      sp.append('startDate', params.startDate);
+      sp.append('endDate', params.endDate);
+      if (params.branchId) sp.append('branchId', params.branchId);
+      if (params.includeVoided) sp.append('includeVoided', 'true');
+      sp.append('format', params.format || 'xml');
+      return `${getApiUrl()}/api/saft/export?${sp}`;
+    },
+    export: (params: {
+      startDate: string;
+      endDate: string;
+      branchId?: string;
+      includeVoided?: boolean;
+      format?: 'json' | 'xml';
+      company?: Record<string, unknown>;
+    }) => {
+      const sp = new URLSearchParams();
+      sp.append('format', params.format || 'json');
+      return apiFetch<any>(`/saft/export?${sp}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          startDate: params.startDate,
+          endDate: params.endDate,
+          branchId: params.branchId,
+          includeVoided: params.includeVoided,
+          company: params.company,
+        }),
+      });
+    },
+    summary: (year?: number, branchId?: string) => {
+      const sp = new URLSearchParams();
+      sp.append('year', (year || new Date().getFullYear()).toString());
+      if (branchId) sp.append('branchId', branchId);
+      return apiFetch<any>(`/saft/summary?${sp}`);
+    },
+  },
+
+  companySettings: {
+    get: () => apiFetch<any>('/company-settings'),
+    save: (settings: Record<string, unknown>) =>
+      apiFetch<any>('/company-settings', { method: 'PUT', body: JSON.stringify(settings) }),
   },
 
   dailyBriefing: {
@@ -1944,10 +2006,22 @@ export const api = {
 
   // SAF-T XML
   saftXml: {
-    downloadUrl: (year?: number) => {
+    downloadUrl: (params?: {
+      year?: number;
+      startDate?: string;
+      endDate?: string;
+      branchId?: string;
+      includeVoided?: boolean;
+    }) => {
       const baseUrl = getApiUrl();
-      const sp = year ? `?year=${year}` : '';
-      return `${baseUrl}/api/saft-xml/download${sp}`;
+      const sp = new URLSearchParams();
+      if (params?.year) sp.append('year', params.year.toString());
+      if (params?.startDate) sp.append('startDate', params.startDate);
+      if (params?.endDate) sp.append('endDate', params.endDate);
+      if (params?.branchId) sp.append('branchId', params.branchId);
+      if (params?.includeVoided) sp.append('includeVoided', 'true');
+      const qs = sp.toString();
+      return `${baseUrl}/api/saft-xml/download${qs ? `?${qs}` : ''}`;
     },
   },
 
@@ -1991,6 +2065,117 @@ export const api = {
       await ensureBackendAuthToken();
       return apiFetch<any>(`/auth/users/${id}`, { method: 'DELETE' });
     },
+  },
+
+  agt: {
+    getConfig: () => apiFetch<{
+      environment: string;
+      apiUrl: string;
+      statusUrl: string;
+      companyNif: string;
+      softwareCertificateNumber: string;
+      simulate: boolean;
+      autoTransmit: boolean;
+      hasApiKey: boolean;
+    }>('/agt/config'),
+    saveConfig: (data: Record<string, unknown>) =>
+      apiFetch<any>('/agt/config', { method: 'PUT', body: JSON.stringify(data) }),
+    transmit: (data: { entityType: string; entityId: string; force?: boolean; documentNumber?: string; invoiceNumber?: string }) =>
+      apiFetch<{
+        success: boolean;
+        skipped?: boolean;
+        agtCode?: string;
+        agtStatus?: string;
+        validatedAt?: string;
+        error?: string;
+      }>('/agt/transmit', { method: 'POST', body: JSON.stringify(data) }),
+    getSaleStatus: (saleId: string, documentNumber?: string) => {
+      const qs = new URLSearchParams();
+      if (documentNumber) qs.set('documentNumber', documentNumber);
+      const q = qs.toString();
+      return apiFetch<any>(`/agt/status/${encodeURIComponent(saleId)}${q ? `?${q}` : ''}`);
+    },
+    getDocumentStatus: (entityType: string, entityId: string, documentNumber?: string) => {
+      const qs = new URLSearchParams();
+      if (documentNumber) qs.set('documentNumber', documentNumber);
+      const q = qs.toString();
+      return apiFetch<{
+        agtStatus?: string;
+        agtCode?: string;
+        agtValidatedAt?: string;
+        documentNumber?: string;
+      }>(`/agt/document-status/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}${q ? `?${q}` : ''}`);
+    },
+    listTransmissions: (params?: { status?: string; limit?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.status) qs.set('status', params.status);
+      if (params?.limit) qs.set('limit', String(params.limit));
+      const q = qs.toString();
+      return apiFetch<any[]>(`/agt/transmissions${q ? `?${q}` : ''}`);
+    },
+    retryTransmission: (transmissionId: string) =>
+      apiFetch<any>(`/agt/retry/${encodeURIComponent(transmissionId)}`, { method: 'POST' }),
+  },
+
+  signing: {
+    getStatus: () => apiFetch<{
+      mode: 'rsa' | 'hash-only';
+      activeKeyId: string | null;
+      activeKeyAlias: string | null;
+      certificates: Array<{
+        id: string;
+        alias: string;
+        keyType: string;
+        certificateNumber?: string;
+        subjectCn?: string;
+        validFrom: string;
+        validUntil: string;
+        isActive: boolean;
+      }>;
+    }>('/signing/status'),
+    uploadCertificate: (data: {
+      alias: string;
+      pfxBase64: string;
+      passphrase: string;
+      certificateNumber?: string;
+    }) =>
+      apiFetch<any>('/signing/certificates', { method: 'POST', body: JSON.stringify(data) }),
+    activateCertificate: (id: string) =>
+      apiFetch<{ success: boolean }>(`/signing/certificates/${encodeURIComponent(id)}/activate`, {
+        method: 'POST',
+      }),
+    deleteCertificate: (id: string) =>
+      apiFetch<{ success: boolean }>(`/signing/certificates/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
+    verifyDocument: (entityType: string, entityId: string) =>
+      apiFetch<any>(`/signing/verify/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`),
+  },
+
+  fiscalDocuments: {
+    listCreditNotes: (branchId?: string) => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/fiscal-documents/credit-notes${qs}`);
+    },
+    createCreditNote: (data: Record<string, unknown>) =>
+      apiFetch<any>('/fiscal-documents/credit-notes', { method: 'POST', body: JSON.stringify(data) }),
+    listDebitNotes: (branchId?: string) => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/fiscal-documents/debit-notes${qs}`);
+    },
+    createDebitNote: (data: Record<string, unknown>) =>
+      apiFetch<any>('/fiscal-documents/debit-notes', { method: 'POST', body: JSON.stringify(data) }),
+    listTransportDocuments: (branchId?: string) => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/fiscal-documents/transport-documents${qs}`);
+    },
+    createTransportDocument: (data: Record<string, unknown>) =>
+      apiFetch<any>('/fiscal-documents/transport-documents', { method: 'POST', body: JSON.stringify(data) }),
+    updateTransportStatus: (id: string, status: string) =>
+      apiFetch<any>(`/fiscal-documents/transport-documents/${encodeURIComponent(id)}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }),
   },
 
   supplierReturns: {

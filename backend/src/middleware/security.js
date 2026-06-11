@@ -81,7 +81,19 @@ function rateLimiter(windowMs = 60000, maxRequests = 200) {
     }
   }, windowMs);
 
+  function isLocalRequest(req) {
+    const ip = String(req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || '');
+    return ip === '127.0.0.1'
+      || ip === '::1'
+      || ip === '::ffff:127.0.0.1'
+      || ip.endsWith('127.0.0.1');
+  }
+
   return (req, res, next) => {
+    if (isLocalRequest(req) || req.path === '/api/health') {
+      return next();
+    }
+
     const ip = req.ip || req.connection.remoteAddress;
     const now = Date.now();
     const record = hits.get(ip);

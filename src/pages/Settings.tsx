@@ -31,6 +31,9 @@ import { DeploymentHealthCard } from '@/components/settings/DeploymentHealthCard
 import { DataConsistencyCard } from '@/components/settings/DataConsistencyCard';
 import { ChangePasswordCard } from '@/components/settings/ChangePasswordCard';
 import { InteractionSettingsCard } from '@/components/settings/InteractionSettingsCard';
+import { SigningSettingsCard } from '@/components/settings/SigningSettingsCard';
+import { AgtSettingsCard } from '@/components/settings/AgtSettingsCard';
+import { AgtTransmissionsCard } from '@/components/settings/AgtTransmissionsCard';
 import { DailyTodosSettingsCard } from '@/components/settings/DailyTodosSettingsCard';
 import type { UpdateStatus, SetupConfig } from '@/types/electron';
 
@@ -297,6 +300,9 @@ export default function Settings() {
       <ChangePasswordCard />
 
       <InteractionSettingsCard />
+      <SigningSettingsCard />
+      <AgtSettingsCard />
+      <AgtTransmissionsCard />
       <DailyTodosSettingsCard />
 
       <div className="grid gap-6 md:grid-cols-2">

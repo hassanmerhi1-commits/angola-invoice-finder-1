@@ -1,12 +1,14 @@
 // Audit Trail API Routes
 const express = require('express');
 const db = require('../db');
+const { requireAuth } = require('../middleware/requireAuth');
+const { requirePermission } = require('../middleware/requirePermission');
+const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
-  // Get audit log entries
-  router.get('/', async (req, res) => {
+  router.get('/', requireAuth, requirePermission('reports_audit'), async (req, res) => {
     try {
       const { tableName, recordId, userId, action, startDate, endDate, limit } = req.query;
       const params = [];
@@ -20,11 +22,11 @@ module.exports = function(broadcastTable) {
       if (endDate) { params.push(endDate); conditions.push(`created_at <= $${params.length}`); }
 
       const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-      const limitClause = `LIMIT ${parseInt(limit) || 100}`;
+      const limitClause = `LIMIT ${parseInt(limit, 10) || 500}`;
 
       const result = await db.query(
         `SELECT * FROM audit_log ${where} ORDER BY created_at DESC ${limitClause}`,
-        params
+        params,
       );
       res.json(result.rows);
     } catch (error) {
@@ -33,12 +35,11 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // Get audit history for a specific record
-  router.get('/record/:tableName/:recordId', async (req, res) => {
+  router.get('/record/:tableName/:recordId', requireAuth, requirePermission('reports_audit'), async (req, res) => {
     try {
       const result = await db.query(
         'SELECT * FROM audit_log WHERE table_name = $1 AND record_id = $2 ORDER BY created_at DESC',
-        [req.params.tableName, req.params.recordId]
+        [req.params.tableName, req.params.recordId],
       );
       res.json(result.rows);
     } catch (error) {
@@ -47,40 +48,43 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // Create audit entry (used internally and for manual logging)
-  router.post('/', async (req, res) => {
+  router.post('/', requireAuth, async (req, res) => {
     try {
-      const { tableName, recordId, action, userId, userName, branchId, oldValues, newValues, description, metadata } = req.body;
-      const result = await db.query(
-        `INSERT INTO audit_log (table_name, record_id, action, user_id, user_name, branch_id, old_values, new_values, description, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-        [tableName, recordId, action, userId, userName, branchId,
-         oldValues ? JSON.stringify(oldValues) : null,
-         newValues ? JSON.stringify(newValues) : null,
-         description, metadata ? JSON.stringify(metadata) : null]
-      );
-      res.status(201).json(result.rows[0]);
+      const { tableName, recordId, action, oldValues, newValues, description, metadata } = req.body;
+      const id = await logFiscalEventFromReq(req, {
+        tableName: tableName || 'system',
+        recordId,
+        action,
+        oldValues,
+        newValues,
+        description,
+        metadata,
+      });
+      if (!id) {
+        return res.status(500).json({ error: 'Failed to create audit entry' });
+      }
+      const result = await db.query('SELECT * FROM audit_log WHERE id = $1', [id]);
+      res.status(201).json(result.rows[0] || { id });
     } catch (error) {
       console.error('[AUDIT ERROR]', error);
       res.status(500).json({ error: 'Failed to create audit entry' });
     }
   });
 
-  // Audit stats
-  router.get('/stats', async (req, res) => {
+  router.get('/stats', requireAuth, requirePermission('reports_audit'), async (req, res) => {
     try {
-      const { days } = req.query;
-      const daysBack = parseInt(days) || 30;
+      const daysBack = parseInt(req.query.days, 10) || 30;
+      const dateFilter = db.engine === 'postgres'
+        ? `created_at >= NOW() - INTERVAL '${daysBack} days'`
+        : `datetime(created_at) >= datetime('now', '-${daysBack} days')`;
 
       const result = await db.query(
-        `SELECT 
-           action, table_name, COUNT(*) as count,
-           COUNT(DISTINCT user_id) as unique_users
-         FROM audit_log 
-         WHERE datetime(created_at) >= datetime('now', '-' || $1 || ' days')
+        `SELECT action, table_name, COUNT(*) as count,
+                COUNT(DISTINCT user_id) as unique_users
+         FROM audit_log
+         WHERE ${dateFilter}
          GROUP BY action, table_name
          ORDER BY count DESC`,
-        [String(daysBack)]
       );
       res.json(result.rows);
     } catch (error) {

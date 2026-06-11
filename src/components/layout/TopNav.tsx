@@ -169,6 +169,8 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { label: t.topNav.reports.stockMovement, icon: ArrowRightLeft, path: '/reports', state: { reportsTab: 'stock-movements' } },
         { label: t.topNav.reports.stockValuation, icon: DollarSign, path: '/reports', state: { reportsTab: 'stock-valuation' } },
         { label: t.topNav.reports.stockByBranch, icon: Building2, path: '/reports', state: { reportsTab: 'stock-valuation' } },
+        { label: 'separator' },
+        { label: t.topNav.reports.auditTrail, icon: Shield, path: '/audit-trail' },
       ],
     },
     {

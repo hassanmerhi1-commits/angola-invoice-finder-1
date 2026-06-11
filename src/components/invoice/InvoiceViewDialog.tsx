@@ -13,8 +13,11 @@ import {
   Download, 
   FileText, 
   Receipt,
-  FileOutput
+  FileOutput,
+  Send,
 } from 'lucide-react';
+import { useAgtTransmit } from '@/hooks/useAgtTransmit';
+import { SALES_CHANGED_EVENT } from '@/lib/storage';
 import { AGTQRCode } from './AGTQRCode';
 import { getInvoiceHash } from '@/lib/agtQRCode';
 import { printViaBrowser, getPrinterConfig } from '@/lib/thermalPrinter';
@@ -22,6 +25,9 @@ import { printA4Invoice } from '@/lib/a4Invoice';
 import { getCompanySettings } from '@/lib/companySettings';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
+import { isAgtValidated } from '@/lib/agtStatus';
+import { api } from '@/lib/api/client';
+import { useEffect, useState } from 'react';
 
 interface InvoiceViewDialogProps {
   open: boolean;
@@ -39,8 +45,40 @@ export function InvoiceViewDialog({
   const { t, language } = useTranslation();
   const iv = t.invoiceViewUi;
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const { transmit, transmitting } = useAgtTransmit();
+  const [agtStatus, setAgtStatus] = useState(sale?.agtStatus);
+  const [agtCode, setAgtCode] = useState(sale?.agtCode);
+
+  useEffect(() => {
+    setAgtStatus(sale?.agtStatus);
+    setAgtCode(sale?.agtCode);
+  }, [sale?.id, sale?.agtStatus, sale?.agtCode]);
+
+  useEffect(() => {
+    if (!open || !sale?.invoiceNumber) return;
+    let cancelled = false;
+    void api.agt.getDocumentStatus('sale', sale.id, sale.invoiceNumber).then((res) => {
+      if (cancelled || !res.data) return;
+      if (res.data.agtStatus) setAgtStatus(res.data.agtStatus as Sale['agtStatus']);
+      if (res.data.agtCode) setAgtCode(res.data.agtCode);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open, sale?.id, sale?.invoiceNumber]);
 
   if (!sale || !branch) return null;
+
+  const agtValidated = isAgtValidated(agtStatus);
+
+  const handleTransmitAgt = () => {
+    if (agtValidated) return;
+    void transmit('sale', sale.id, {
+      documentNumber: sale.invoiceNumber,
+      onSuccess: () => window.dispatchEvent(new Event(SALES_CHANGED_EVENT)),
+    }).then((data) => {
+      if (data?.agtStatus) setAgtStatus(data.agtStatus as Sale['agtStatus']);
+      if (data?.agtCode) setAgtCode(data.agtCode);
+    });
+  };
 
   const company = getCompanySettings();
 
@@ -77,9 +115,9 @@ export function InvoiceViewDialog({
   };
 
   const agtStatusLabel =
-    sale.agtStatus === 'validated'
+    agtValidated
       ? iv.agtValidated
-      : sale.agtStatus === 'rejected'
+      : agtStatus === 'rejected'
         ? iv.agtRejected
         : iv.agtPending;
 
@@ -231,11 +269,11 @@ export function InvoiceViewDialog({
                 <p>Hash: {getInvoiceHash(sale)}</p>
                 <p>{iv.docTypeFr}</p>
                 <p>{iv.agtCertifiedSoftware}</p>
-                {sale.agtCode && <p>CUCE: {sale.agtCode}</p>}
-                {sale.agtStatus && (
+                {agtCode && <p>CUCE: {agtCode}</p>}
+                {agtStatus && (
                   <p>
                     {iv.agtStatus}{' '}
-                    <Badge variant={sale.agtStatus === 'validated' ? 'default' : 'secondary'}>
+                    <Badge variant={agtValidated ? 'default' : 'secondary'}>
                       {agtStatusLabel}
                     </Badge>
                   </p>
@@ -251,6 +289,14 @@ export function InvoiceViewDialog({
         </div>
 
         <div className="space-y-2 pt-4">
+          <Button
+            className="w-full gap-2"
+            onClick={handleTransmitAgt}
+            disabled={transmitting || agtValidated}
+          >
+            <Send className="w-4 h-4" />
+            {agtValidated ? iv.agtValidated : iv.sendToAgt}
+          </Button>
           <div className="flex gap-2">
             <Button variant="outline" onClick={handlePrintA4} className="flex-1">
               <FileOutput className="w-4 h-4 mr-2" />

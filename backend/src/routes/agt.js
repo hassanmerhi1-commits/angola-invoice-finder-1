@@ -5,10 +5,37 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const { requireAuth } = require('../middleware/requireAuth');
+const { requirePermission } = require('../middleware/requirePermission');
+const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
+const { getAgtConfig, saveAgtConfig } = require('../agt/agtConfig');
+const {
+  transmitFiscalEntity,
+  retryTransmission,
+  getEntityAgtStatus,
+  ENTITY_MAP,
+} = require('../agt/agtTransmission');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
   const db = require('../db');
+
+  router.get('/config', async (_req, res) => {
+    try {
+      res.json(await getAgtConfig());
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  router.put('/config', requireAuth, requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const saved = await saveAgtConfig(req.body || {});
+      res.json(saved);
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
 
   // ==================== RSA SIGNING (Server-side backup) ====================
   
@@ -18,40 +45,21 @@ module.exports = function(broadcastTable) {
    */
   router.post('/sign', async (req, res) => {
     try {
-      const { invoiceId, invoiceNumber, date, total, previousHash } = req.body;
-
-      // Build canonical string for signing
-      const canonicalString = [
-        date,
-        new Date().toISOString(),
-        invoiceNumber,
-        total.toFixed(2),
-        previousHash || '0'
-      ].join(';');
-
-      // Calculate SHA-256 hash
-      const hash = crypto.createHash('sha256').update(canonicalString).digest('hex');
-      const shortHash = hash.substring(0, 4).toUpperCase();
-
-      // Store signature record
-      await db.query(
-        `INSERT INTO invoice_signatures (invoice_id, invoice_number, signed_content_hash, algorithm)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (invoice_id) DO UPDATE SET signed_content_hash = $3`,
-        [invoiceId, invoiceNumber, hash, 'SHA-256']
-      );
-
-      // Update sale with hash
-      await db.query(
-        `UPDATE sales SET saft_hash = $1 WHERE id = $2`,
-        [shortHash, invoiceId]
-      );
-
+      const { invoiceId } = req.body;
+      if (!invoiceId) {
+        return res.status(400).json({ error: 'invoiceId is required' });
+      }
+      const { signFiscalEntity } = require('../agt/fiscalSigning');
+      const result = await signFiscalEntity('sale', invoiceId);
+      if (!result) {
+        return res.status(404).json({ error: 'Sale not found' });
+      }
       res.json({
         success: true,
-        hash,
-        shortHash,
-        algorithm: 'SHA-256'
+        hash: result.contentHash,
+        shortHash: result.shortHash,
+        algorithm: result.algorithm,
+        signatureData: result.signatureData,
       });
     } catch (error) {
       console.error('[AGT] Sign error:', error);
@@ -62,86 +70,68 @@ module.exports = function(broadcastTable) {
   // ==================== AGT TRANSMISSION ====================
 
   /**
-   * Transmit invoice to AGT
-   * POST /api/agt/transmit
+   * Transmit fiscal document to AGT
+   * POST /api/agt/transmit  { entityType, entityId, invoiceId? }
    */
-  router.post('/transmit', async (req, res) => {
+  router.post('/transmit', requireAuth, requirePermission('agt_send'), async (req, res) => {
     try {
-      const { invoiceId } = req.body;
-
-      // Get invoice
-      const invoiceResult = await db.query(
-        'SELECT * FROM sales WHERE id = $1',
-        [invoiceId]
-      );
-
-      if (invoiceResult.rows.length === 0) {
-        return res.status(404).json({ error: 'Factura não encontrada' });
+      const entityType = req.body.entityType || (req.body.invoiceId ? 'sale' : null);
+      const entityId = req.body.entityId || req.body.invoiceId;
+      if (!entityType || !entityId) {
+        return res.status(400).json({ error: 'entityType and entityId are required' });
+      }
+      const kind = Object.keys(ENTITY_MAP).find((k) => ENTITY_MAP[k].entityType === entityType)
+        || (entityType === 'invoice' ? 'sale' : null);
+      if (!kind) {
+        return res.status(400).json({ error: `Unsupported entityType: ${entityType}` });
       }
 
-      const invoice = invoiceResult.rows[0];
+      const result = await transmitFiscalEntity(kind, entityId, {
+        force: !!req.body.force,
+        documentNumber: req.body.documentNumber || req.body.invoiceNumber,
+        invoiceNumber: req.body.invoiceNumber || req.body.documentNumber,
+      });
+      if (result.skipped) {
+        const meta = ENTITY_MAP[kind];
+        await logFiscalEventFromReq(req, {
+          tableName: meta.table || meta.entityType,
+          recordId: result.entityId || entityId,
+          action: 'agt_transmit',
+          description: `Documento já validado no AGT (${result.agtCode || result.agtStatus || 'ok'})`,
+          newValues: { agtCode: result.agtCode, agtStatus: result.agtStatus, skipped: true },
+        });
+        return res.json({ success: true, skipped: true, ...result });
+      }
 
-      // Build AGT payload
-      const payload = {
-        documentType: 'FT',
-        invoiceNumber: invoice.invoice_number,
-        date: invoice.created_at,
-        customerNif: invoice.customer_nif || '999999990',
-        customerName: invoice.customer_name || 'Consumidor Final',
-        subtotal: parseFloat(invoice.subtotal),
-        taxAmount: parseFloat(invoice.tax_amount),
-        total: parseFloat(invoice.total),
-        hash: invoice.saft_hash
-      };
-
-      // Record transmission attempt
-      const transmissionResult = await db.query(
-        `INSERT INTO agt_transmissions 
-         (invoice_id, invoice_number, transmission_type, request_payload, agt_status)
-         VALUES ($1, $2, 'invoice', $3, 'pending')
-         RETURNING id`,
-        [invoiceId, invoice.invoice_number, JSON.stringify(payload)]
-      );
-
-      const { transmitInvoice } = require('../agt/connector');
-      const agtResult = await transmitInvoice(payload);
-
-      await db.query(
-        `UPDATE agt_transmissions 
-         SET response_payload = $1, agt_code = $2, agt_status = $3, validated_at = $4
-         WHERE id = $5`,
-        [
-          JSON.stringify(agtResult.responsePayload),
-          agtResult.agtCode,
-          agtResult.agtStatus,
-          agtResult.validatedAt,
-          transmissionResult.rows[0].id
-        ]
-      );
-
-      await db.query(
-        `UPDATE sales 
-         SET agt_status = $1, agt_code = $2, agt_validated_at = $3
-         WHERE id = $4`,
-        [agtResult.agtStatus, agtResult.agtCode, agtResult.validatedAt, invoiceId]
-      );
-
-      // Log audit
+      const meta = ENTITY_MAP[kind];
       await logAudit(db, {
-        action: 'invoice_transmitted',
-        entityType: 'invoice',
-        entityId: invoiceId,
-        entityNumber: invoice.invoice_number,
-        details: { agtCode, validatedAt }
+        userId: req.user?.id,
+        userName: req.user?.name,
+        action: 'document_transmitted',
+        entityType: meta.entityType,
+        entityId,
+        entityNumber: result.responsePayload?.documentNumber,
+        details: { agtCode: result.agtCode, agtStatus: result.agtStatus },
       });
 
-      if (broadcastTable) broadcastTable('sales');
+      await logFiscalEventFromReq(req, {
+        tableName: meta.table || meta.entityType,
+        recordId: entityId,
+        action: 'agt_transmit',
+        description: `Documento enviado ao AGT (${result.agtCode || result.agtStatus || 'ok'})`,
+        newValues: { agtCode: result.agtCode, agtStatus: result.agtStatus, entityType: meta.entityType },
+      });
+
+      if (broadcastTable) {
+        broadcastTable(meta.table === 'sales' ? 'sales' : meta.table);
+      }
 
       res.json({
         success: true,
-        agtCode: agtResult.agtCode,
-        agtStatus: agtResult.agtStatus,
-        validatedAt: agtResult.validatedAt
+        transmissionId: result.transmissionId,
+        agtCode: result.agtCode,
+        agtStatus: result.agtStatus,
+        validatedAt: result.validatedAt,
       });
     } catch (error) {
       console.error('[AGT] Transmit error:', error);
@@ -149,25 +139,65 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  router.post('/transmit/:entityType/:entityId', requireAuth, requirePermission('agt_send'), async (req, res) => {
+    try {
+      const kind = Object.keys(ENTITY_MAP).find((k) => ENTITY_MAP[k].entityType === req.params.entityType);
+      if (!kind) return res.status(400).json({ error: 'Invalid entityType' });
+      const result = await transmitFiscalEntity(kind, req.params.entityId, { force: !!req.body?.force });
+      const meta = ENTITY_MAP[kind];
+      await logFiscalEventFromReq(req, {
+        tableName: meta.table || meta.entityType,
+        recordId: req.params.entityId,
+        action: 'agt_transmit',
+        description: `Documento enviado ao AGT (${result.agtCode || result.agtStatus || 'ok'})`,
+        newValues: { agtCode: result.agtCode, agtStatus: result.agtStatus, entityType: meta.entityType },
+      });
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  router.post('/retry/:transmissionId', requireAuth, requirePermission('agt_send'), async (req, res) => {
+    try {
+      const result = await retryTransmission(req.params.transmissionId);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   /**
-   * Check AGT status
-   * GET /api/agt/status/:invoiceId
+   * Check AGT status — sale by id (legacy) or /status/:entityType/:entityId
    */
   router.get('/status/:invoiceId', async (req, res) => {
     try {
-      const result = await db.query(
-        `SELECT agt_status, agt_code, agt_validated_at 
-         FROM sales WHERE id = $1`,
-        [req.params.invoiceId]
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ error: 'Factura não encontrada' });
-      }
-
-      res.json(result.rows[0]);
+      const status = await getEntityAgtStatus('sale', req.params.invoiceId, {
+        documentNumber: req.query.documentNumber || req.query.invoiceNumber,
+        invoiceNumber: req.query.invoiceNumber || req.query.documentNumber,
+      });
+      res.json({
+        agt_status: status.agtStatus,
+        agt_code: status.agtCode,
+        agt_validated_at: status.agtValidatedAt,
+        remote: status.remote,
+      });
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      res.status(404).json({ error: error.message });
+    }
+  });
+
+  router.get('/document-status/:entityType/:entityId', async (req, res) => {
+    try {
+      const kind = Object.keys(ENTITY_MAP).find((k) => ENTITY_MAP[k].entityType === req.params.entityType);
+      if (!kind) return res.status(400).json({ error: 'Invalid entityType' });
+      const status = await getEntityAgtStatus(kind, req.params.entityId, {
+        documentNumber: req.query.documentNumber || req.query.invoiceNumber,
+        invoiceNumber: req.query.invoiceNumber || req.query.documentNumber,
+      });
+      res.json(status);
+    } catch (error) {
+      res.status(404).json({ error: error.message });
     }
   });
 
@@ -304,7 +334,10 @@ module.exports = function(broadcastTable) {
       const { status, limit = 50 } = req.query;
 
       let query = `
-        SELECT t.*, s.invoice_number, s.total, s.customer_name
+        SELECT t.*,
+               COALESCE(t.invoice_number, s.invoice_number) AS document_number,
+               s.total AS sale_total,
+               s.customer_name
         FROM agt_transmissions t
         LEFT JOIN sales s ON t.invoice_id = s.id
       `;

@@ -21,10 +21,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { 
-  FileJson, 
-  FileCode, 
-  Download, 
+import {
+  FileJson,
+  FileCode,
+  Download,
   FileText,
   Building2,
   Calendar,
@@ -35,18 +35,20 @@ import {
   CheckCircle2,
   Loader2,
 } from 'lucide-react';
-import { useBranches, useSales, useProducts, useClients } from '@/hooks/useERP';
-import { 
-  generateSAFTAO, 
-  downloadSAFTFile, 
+import { useBranches } from '@/hooks/useERP';
+import {
+  downloadSAFTFile,
   getSAFTSummary,
   SAFTExportOptions,
   SAFTAO,
-  SAFTSummary 
+  SAFTSummary,
 } from '@/lib/saftAO';
 import { getCompanySettings } from '@/lib/companySettings';
+import { api } from '@/lib/api/client';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
+import { useAuth } from '@/hooks/useERP';
+import { usePermissions } from '@/hooks/usePermissions';
 
 interface SAFTExportDialogProps {
   open: boolean;
@@ -58,20 +60,19 @@ export function SAFTExportDialog({
   onOpenChange,
 }: SAFTExportDialogProps) {
   const { t } = useTranslation();
-  const { branches, currentBranch } = useBranches();
-  const { sales } = useSales();
-  const { products } = useProducts();
-  const { clients } = useClients();
-  
+  const { user } = useAuth();
+  const { hasPermission } = usePermissions(user?.id);
+  const canExportSaft = hasPermission('saft_export');
+  const { branches } = useBranches();
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedSAFT, setGeneratedSAFT] = useState<SAFTAO | null>(null);
   const [summary, setSummary] = useState<SAFTSummary | null>(null);
-  
-  // Get current month's date range as default
+
   const now = new Date();
   const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const lastOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  
+
   const [options, setOptions] = useState<SAFTExportOptions>({
     startDate: firstOfMonth.toISOString().split('T')[0],
     endDate: lastOfMonth.toISOString().split('T')[0],
@@ -79,66 +80,92 @@ export function SAFTExportDialog({
     includeVoided: false,
     format: 'json',
   });
-  
+
   const company = getCompanySettings();
-  
+
   const handleGenerate = async () => {
+    if (!canExportSaft) {
+      toast.error('You do not have permission to export SAF-T');
+      return;
+    }
     setIsGenerating(true);
-    
+
     try {
-      // Validate company settings
       if (!company.nif || company.nif === '5000000000') {
         toast.error(t.saftUi.companyNifRequired);
-        setIsGenerating(false);
         return;
       }
-      
-      const saft = generateSAFTAO(sales, products, clients, options);
+
+      await api.companySettings.save(company).catch(() => {});
+
+      const response = await api.saft.generate({
+        startDate: options.startDate,
+        endDate: options.endDate,
+        branchId: options.branchId,
+        includeVoided: options.includeVoided,
+        company,
+      });
+
+      if (response.error) {
+        throw new Error(response.error);
+      }
+
+      const saft = response.data as SAFTAO;
+      if (!saft?.AuditFile) {
+        throw new Error('Invalid SAF-T response from server');
+      }
+
       const saftSummary = getSAFTSummary(saft);
-      
       setGeneratedSAFT(saft);
       setSummary(saftSummary);
-      
       toast.success(t.saftUi.generated);
     } catch (error) {
       console.error('Error generating SAF-T:', error);
-      toast.error(t.saftUi.generateErrorPrefix.replace('{message}', (error as Error).message));
+      toast.error(
+        t.saftUi.generateErrorPrefix.replace('{message}', (error as Error).message),
+      );
     } finally {
       setIsGenerating(false);
     }
   };
-  
+
   const handleDownload = () => {
     if (!generatedSAFT) return;
-    
+
     try {
       downloadSAFTFile(generatedSAFT, options.format);
       toast.success(t.saftUi.downloaded.replace('{format}', options.format.toUpperCase()));
-    } catch (error) {
+    } catch {
       toast.error(t.saftUi.downloadError);
     }
   };
-  
+
   const handleDownloadXmlFromServer = async () => {
     try {
       setIsGenerating(true);
-      const { getApiUrl } = await import('@/lib/api/config');
-      const baseUrl = getApiUrl();
-      const sp = new URLSearchParams({ startDate: options.startDate, endDate: options.endDate });
-      
+      await api.companySettings.save(company).catch(() => {});
+
+      const url = api.saft.exportUrl({
+        startDate: options.startDate,
+        endDate: options.endDate,
+        branchId: options.branchId,
+        includeVoided: options.includeVoided,
+        format: 'xml',
+      });
+
       const a = document.createElement('a');
-      a.href = `${baseUrl}/api/saft-xml/download?${sp}`;
+      a.href = url;
       a.download = `SAFT-AO_${company.nif}_${options.startDate}_${options.endDate}.xml`;
       a.click();
-      
+
       toast.success(t.saftUi.xmlDownloadedServer);
-    } catch (error) {
+    } catch {
       toast.error(t.saftUi.serverUnavailableUseLocal);
     } finally {
       setIsGenerating(false);
     }
   };
-  
+
   const handleReset = () => {
     setGeneratedSAFT(null);
     setSummary(null);
@@ -159,7 +186,6 @@ export function SAFTExportDialog({
 
         {!generatedSAFT ? (
           <div className="space-y-6">
-            {/* Company Info Banner */}
             <Card className="bg-muted/50">
               <CardContent className="pt-4">
                 <div className="flex items-center gap-3">
@@ -172,7 +198,6 @@ export function SAFTExportDialog({
               </CardContent>
             </Card>
 
-            {/* Date Range */}
             <div className="space-y-3">
               <Label className="flex items-center gap-2">
                 <Calendar className="w-4 h-4" />
@@ -204,12 +229,11 @@ export function SAFTExportDialog({
               </div>
             </div>
 
-            {/* Branch Selection */}
             <div className="space-y-3">
               <Label>{t.saftUi.branch}</Label>
               <Select
                 value={options.branchId || 'all'}
-                onValueChange={(value) => 
+                onValueChange={(value) =>
                   setOptions({ ...options, branchId: value === 'all' ? undefined : value })
                 }
               >
@@ -218,7 +242,7 @@ export function SAFTExportDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{t.saftUi.allBranches}</SelectItem>
-                  {branches.map(branch => (
+                  {branches.map((branch) => (
                     <SelectItem key={branch.id} value={branch.id}>
                       {branch.name} ({branch.code})
                     </SelectItem>
@@ -227,12 +251,11 @@ export function SAFTExportDialog({
               </Select>
             </div>
 
-            {/* Options */}
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="includeVoided"
                 checked={options.includeVoided}
-                onCheckedChange={(checked) => 
+                onCheckedChange={(checked) =>
                   setOptions({ ...options, includeVoided: checked as boolean })
                 }
               />
@@ -243,12 +266,11 @@ export function SAFTExportDialog({
 
             <Separator />
 
-            {/* Format Selection */}
             <div className="space-y-3">
               <Label>{t.saftUi.fileFormat}</Label>
               <RadioGroup
                 value={options.format}
-                onValueChange={(value) => 
+                onValueChange={(value) =>
                   setOptions({ ...options, format: value as 'json' | 'xml' })
                 }
                 className="flex gap-4"
@@ -270,7 +292,6 @@ export function SAFTExportDialog({
               </RadioGroup>
             </div>
 
-            {/* Info Banner */}
             <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30">
               <CardContent className="pt-4">
                 <div className="flex items-start gap-3">
@@ -287,9 +308,8 @@ export function SAFTExportDialog({
               </CardContent>
             </Card>
 
-            {/* Generate Button */}
-            <Button 
-              onClick={handleGenerate} 
+            <Button
+              onClick={handleGenerate}
               disabled={isGenerating}
               className="w-full"
               size="lg"
@@ -309,7 +329,6 @@ export function SAFTExportDialog({
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Success Banner */}
             <Card className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30">
               <CardContent className="pt-4">
                 <div className="flex items-center gap-3">
@@ -326,7 +345,6 @@ export function SAFTExportDialog({
               </CardContent>
             </Card>
 
-            {/* Summary */}
             {summary && (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <Card>
@@ -342,9 +360,12 @@ export function SAFTExportDialog({
                   <CardContent className="pt-4">
                     <div className="flex items-center gap-2 text-muted-foreground mb-1">
                       <Receipt className="w-4 h-4" />
-                      <span className="text-xs">Facturas</span>
+                      <span className="text-xs">Documentos</span>
                     </div>
                     <p className="font-bold text-xl">{summary.totalInvoices}</p>
+                    <p className="text-xs text-muted-foreground">
+                      FT {summary.totalSalesInvoices} · NC {summary.totalCreditNotes} · ND {summary.totalDebitNotes}
+                    </p>
                   </CardContent>
                 </Card>
                 <Card>
@@ -388,7 +409,6 @@ export function SAFTExportDialog({
               </div>
             )}
 
-            {/* File Info */}
             <Card>
               <CardContent className="pt-4">
                 <div className="flex items-center justify-between">
@@ -412,16 +432,20 @@ export function SAFTExportDialog({
               </CardContent>
             </Card>
 
-            {/* Actions */}
             <div className="flex gap-2">
               <Button variant="outline" onClick={handleReset} className="flex-1">
                 Voltar
               </Button>
               <Button onClick={handleDownload} className="flex-1">
                 <Download className="w-4 h-4 mr-2" />
-                Descarregar Local
+                Descarregar
               </Button>
-              <Button variant="secondary" onClick={handleDownloadXmlFromServer} disabled={isGenerating} className="flex-1">
+              <Button
+                variant="secondary"
+                onClick={handleDownloadXmlFromServer}
+                disabled={isGenerating}
+                className="flex-1"
+              >
                 <FileCode className="w-4 h-4 mr-2" />
                 XML Servidor
               </Button>

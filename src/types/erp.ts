@@ -76,6 +76,9 @@ export interface Sale {
   dueDate?: string;
   status: 'completed' | 'voided' | 'pending';
   saftHash?: string; // For AGT compliance
+  agtStatus?: 'pending' | 'validated' | 'rejected' | 'submitted' | 'approved';
+  agtCode?: string;
+  agtValidatedAt?: string;
   agtStatus?: 'pending' | 'validated' | 'rejected';
   agtCode?: string;
   agtValidatedAt?: string;
@@ -313,6 +316,9 @@ export interface CreditNote {
   customerNif?: string;
   customerName?: string;
   status: 'draft' | 'issued' | 'cancelled';
+  restoreStock?: boolean;
+  agtStatus?: string;
+  agtCode?: string;
   issuedBy: string;
   issuedAt: string;
   saftHash?: string;

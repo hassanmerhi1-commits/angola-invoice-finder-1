@@ -99,6 +99,7 @@ const STORAGE_KEYS = {
 
 export const PRODUCTS_CHANGED_EVENT = 'kwanzaerp:products-changed';
 export const SALES_CHANGED_EVENT = 'kwanzaerp:sales-changed';
+export const CREDIT_NOTES_CHANGED_EVENT = 'kwanzaerp:credit-notes-changed';
 export const SUPPLIERS_CHANGED_EVENT = 'kwanzaerp:suppliers-changed';
 export const OPEN_ITEMS_CHANGED_EVENT = 'kwanzaerp:open-items-changed';
 export const STOCK_TRANSFERS_CHANGED_EVENT = 'kwanzaerp:stock-transfers-changed';

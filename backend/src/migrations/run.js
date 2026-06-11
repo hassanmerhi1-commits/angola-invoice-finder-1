@@ -115,6 +115,13 @@ const MIGRATIONS = [
   '029_hq_ingest_log.sql',
   '030_caixa_sync.sql',
   '031_purchase_invoice_freight.sql',
+  '032_fiscal_documents_phase1.sql',
+  '033_credit_note_restore_stock.sql',
+  '034_fiscal_signing_phase2.sql',
+  '035_agt_api_phase3.sql',
+  '036_company_settings_phase4.sql',
+  '037_fiscal_audit_phase5.sql',
+  '038_audit_log_actions_phase5.sql',
 ];
 
 /**
@@ -149,8 +156,9 @@ function splitSQL(sql) {
     // Statement ends with ; outside dollar-quoted blocks
     if (!inDollarQuote && trimmed.endsWith(';')) {
       const stmt = current.trim();
-      // Only add non-empty, non-comment-only statements
-      if (stmt && !stmt.match(/^(\s*--.*\n?)*$/)) {
+      const lines = stmt.split('\n').map((l) => l.trim()).filter(Boolean);
+      const commentOnly = lines.length > 0 && lines.every((l) => l.startsWith('--'));
+      if (stmt && !commentOnly) {
         statements.push(stmt);
       }
       current = '';
@@ -159,7 +167,9 @@ function splitSQL(sql) {
 
   // Catch any trailing statement without semicolon
   const remaining = current.trim();
-  if (remaining && !remaining.match(/^(\s*--.*\n?)*$/)) {
+  const remainingLines = remaining.split('\n').map((l) => l.trim()).filter(Boolean);
+  const remainingCommentOnly = remainingLines.length > 0 && remainingLines.every((l) => l.startsWith('--'));
+  if (remaining && !remainingCommentOnly) {
     statements.push(remaining);
   }
 

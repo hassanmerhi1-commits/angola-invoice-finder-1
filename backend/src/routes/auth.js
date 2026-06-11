@@ -7,6 +7,7 @@ const { JWT_SECRET } = require('../jwtSecret');
 const { requireAdmin } = require('../middleware/requireAdmin');
 const { requireAuth } = require('../middleware/requireAuth');
 const { loginRateLimiter } = require('../middleware/loginRateLimit');
+const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 const {
   hashPassword,
   upgradePasswordHashIfLegacy,
@@ -90,6 +91,16 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
       console.warn('[AUTH] branch assignment fix skipped:', branchErr?.message || branchErr);
     }
     const token = issueToken(user);
+
+    await logFiscalEventFromReq(req, {
+      tableName: 'users',
+      recordId: user.id,
+      action: 'login',
+      userId: user.id,
+      userName: user.name,
+      branchId: effectiveBranchId,
+      description: `Login: ${user.name || user.email}`,
+    });
 
     res.json({
       token,

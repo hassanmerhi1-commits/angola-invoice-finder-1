@@ -98,18 +98,35 @@ export function useAGTValidation() {
   ): Promise<AGTTransmissionResult> => {
     const { withRetry = true, keyAlias = 'default', passphrase = '' } = options;
 
-    // Check if running in Electron
-    if (!isElectron) {
-      // Fall back to simulated mode in browser
-      console.log('[AGT] Browser mode - using simulated transmission');
-      return simulatedTransmit(sale);
-    }
-
     setState(prev => ({ ...prev, isTransmitting: true, lastError: null }));
     toast.info(t.agtUi.signingAndTransmitting, { id: 'agt-transmit' });
 
     try {
-      // Step 1: Sign the invoice
+      const { api } = await import('@/lib/api/client');
+      const backendRes = await api.agt.transmit({ entityType: 'sale', entityId: sale.id });
+      if (!backendRes.error && backendRes.data) {
+        const data = backendRes.data;
+        if (data.agtStatus === 'validated' || data.agtStatus === 'approved') {
+          toast.success(
+            t.agtUi.invoiceValidated.replace('{code}', data.agtCode || ''),
+            { id: 'agt-transmit' },
+          );
+        } else if (!data.skipped) {
+          toast.info(t.agtUi.invoicePending, { id: 'agt-transmit' });
+        }
+        return {
+          success: true,
+          agtCode: data.agtCode,
+          agtStatus: (data.agtStatus as any) || 'validated',
+          validatedAt: data.validatedAt,
+        };
+      }
+
+      if (!isElectron) {
+        return simulatedTransmit(sale);
+      }
+
+      // Step 1: Sign the invoice (legacy Electron IPC fallback)
       const signResult = await window.electronAPI!.agt.signInvoice(
         {
           invoiceNumber: sale.invoiceNumber,
