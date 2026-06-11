@@ -346,13 +346,15 @@ const UPDATER_LATEST_YML_URL = `${UPDATER_GENERIC_FEED_URL}/latest.yml`;
 const UPDATER_CHECK_TIMEOUT_MS = 25000;
 const UPDATER_DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
 const UPDATER_HTTP_TIMEOUT_MS = 15000;
+const UPDATER_FILE_DOWNLOAD_IDLE_MS = 60000;
 
 let autoUpdater = createNoopAutoUpdater();
 let autoUpdaterLoaded = false;
 let autoUpdaterLoadError = null;
 let autoUpdaterEventsBound = false;
-/** Resolves updater:download IPC when download finishes, errors, or times out. */
-let pendingDownloadSettlement = null;
+/** Installer saved by direct HTTP download (used when electron-updater download is skipped). */
+let pendingHttpInstallerPath = null;
+let httpDownloadInProgress = false;
 
 function getRuntimeNodeModulesDir() {
   if (process.resourcesPath) {
@@ -387,10 +389,11 @@ function configureAutoUpdaterFeed() {
       }
     }
     autoUpdater.setFeedURL({
-      provider: 'generic',
-      url: UPDATER_GENERIC_FEED_URL,
+      provider: 'github',
+      owner: UPDATER_GITHUB_OWNER,
+      repo: UPDATER_GITHUB_REPO,
     });
-    console.log(`[AutoUpdater] Feed URL: ${UPDATER_GENERIC_FEED_URL}`);
+    console.log(`[AutoUpdater] Feed: github ${UPDATER_GITHUB_OWNER}/${UPDATER_GITHUB_REPO}`);
   } catch (err) {
     console.warn('[AutoUpdater] setFeedURL failed:', err?.message || err);
   }
@@ -421,20 +424,167 @@ function parseLatestYmlInstallerFile(text) {
   return urlMatch?.[1]?.trim() || null;
 }
 
-function settlePendingDownload(result) {
-  if (!pendingDownloadSettlement) return;
-  const settle = pendingDownloadSettlement;
-  pendingDownloadSettlement = null;
-  if (settle.timer) clearTimeout(settle.timer);
-  settle.resolve(result);
+function parseLatestYmlReleaseInfo(text) {
+  const version = parseLatestYmlVersion(text);
+  const file = parseLatestYmlInstallerFile(text);
+  const sha512 = String(text || '').match(/^sha512:\s*([^\s\r\n#]+)/m)?.[1]?.trim() || null;
+  const size = parseInt(String(text || '').match(/^size:\s*(\d+)/m)?.[1] || '0', 10) || 0;
+  return { version, file, sha512, size };
+}
+
+function buildReleaseAssetUrl(version, fileName) {
+  const tag = String(version || '').startsWith('v') ? String(version) : `v${version}`;
+  return `https://github.com/${UPDATER_GITHUB_OWNER}/${UPDATER_GITHUB_REPO}/releases/download/${tag}/${encodeURIComponent(fileName)}`;
+}
+
+function getUpdaterPendingDir() {
+  return path.join(app.getPath('cache'), 'nexor-erp-updater', 'pending');
+}
+
+function verifySha512File(filePath, expectedBase64) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha512');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => {
+      const actual = hash.digest('base64');
+      if (actual !== expectedBase64) {
+        reject(new Error('Downloaded installer failed integrity check'));
+        return;
+      }
+      resolve(true);
+    });
+    stream.on('error', reject);
+  });
+}
+
+function downloadFileWithRedirects(
+  url,
+  destPath,
+  {
+    onProgress,
+    expectedSize = 0,
+    redirectsLeft = 8,
+  } = {},
+) {
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const lib = parsed.protocol === 'https:' ? require('https') : http;
+    const req = lib.get(
+      parsed,
+      {
+        timeout: UPDATER_FILE_DOWNLOAD_IDLE_MS,
+        headers: {
+          'User-Agent': 'NEXOR-ERP-Updater',
+          Accept: 'application/octet-stream, application/*, */*',
+        },
+      },
+      (res) => {
+        const status = res.statusCode || 0;
+        if (status >= 300 && status < 400 && res.headers.location && redirectsLeft > 0) {
+          const nextUrl = new URL(res.headers.location, parsed).toString();
+          res.resume();
+          downloadFileWithRedirects(nextUrl, destPath, {
+            onProgress,
+            expectedSize,
+            redirectsLeft: redirectsLeft - 1,
+          }).then(resolve).catch(reject);
+          return;
+        }
+        if (status !== 200) {
+          res.resume();
+          reject(new Error(`HTTP ${status} downloading ${url}`));
+          return;
+        }
+        const total = parseInt(String(res.headers['content-length'] || expectedSize || 0), 10) || expectedSize || 0;
+        let received = 0;
+        const fileStream = fs.createWriteStream(destPath);
+        res.on('data', (chunk) => {
+          received += chunk.length;
+          if (typeof onProgress === 'function') {
+            const percent = total > 0 ? Math.min(99, (received / total) * 100) : 0;
+            onProgress(percent, received, total);
+          }
+        });
+        res.pipe(fileStream);
+        fileStream.on('finish', () => {
+          fileStream.close(() => {
+            if (typeof onProgress === 'function') {
+              onProgress(100, received, total || received);
+            }
+            resolve({ bytes: received, total: total || received });
+          });
+        });
+        res.on('error', reject);
+        fileStream.on('error', reject);
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error(`Timed out downloading ${url}`));
+    });
+  });
+}
+
+async function fetchLatestReleaseInfo() {
+  const text = await fetchTextWithRedirects(UPDATER_LATEST_YML_URL);
+  const releaseInfo = parseLatestYmlReleaseInfo(text);
+  if (!releaseInfo.version || !releaseInfo.file) {
+    throw new Error('Could not read installer info from latest.yml on GitHub');
+  }
+  return releaseInfo;
+}
+
+async function downloadUpdateViaHttp(releaseInfo) {
+  if (httpDownloadInProgress) {
+    return { success: false, error: 'A download is already in progress' };
+  }
+  httpDownloadInProgress = true;
+  sendUpdaterStatus({ status: 'downloading', progress: 0 });
+
+  const destDir = getUpdaterPendingDir();
+  fs.mkdirSync(destDir, { recursive: true });
+  const destPath = path.join(destDir, releaseInfo.file);
+  const downloadUrl = buildReleaseAssetUrl(releaseInfo.version, releaseInfo.file);
+
+  try {
+    console.log(`[AutoUpdater] HTTP download ${downloadUrl} -> ${destPath}`);
+    await downloadFileWithRedirects(downloadUrl, destPath, {
+      expectedSize: releaseInfo.size,
+      onProgress: (percent) => {
+        sendUpdaterStatus({ status: 'downloading', progress: Math.round(percent) });
+      },
+    });
+
+    if (releaseInfo.sha512) {
+      await verifySha512File(destPath, releaseInfo.sha512);
+    }
+
+    pendingHttpInstallerPath = destPath;
+    sendUpdaterStatus({ status: 'downloaded', version: releaseInfo.version });
+    return { success: true, version: releaseInfo.version, source: 'http' };
+  } catch (err) {
+    try {
+      if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+    } catch (_) {}
+    throw err;
+  } finally {
+    httpDownloadInProgress = false;
+  }
 }
 
 async function openLatestInstallerInBrowser() {
   try {
-    const text = await fetchTextWithRedirects(UPDATER_LATEST_YML_URL);
-    const file = parseLatestYmlInstallerFile(text);
-    if (!file) return { opened: false };
-    const url = `${UPDATER_GENERIC_FEED_URL}/${encodeURIComponent(file)}`;
+    const releaseInfo = await fetchLatestReleaseInfo();
+    if (!releaseInfo.file) return { opened: false };
+    const url = buildReleaseAssetUrl(releaseInfo.version, releaseInfo.file);
     shell.openExternal(url);
     return { opened: true, url };
   } catch (err) {
@@ -592,64 +742,31 @@ async function runUpdateCheck() {
 
 async function runUpdateDownload() {
   initAutoUpdater();
-  sendUpdaterStatus({ status: 'downloading', progress: 0 });
 
-  if (!autoUpdaterLoaded) {
-    const browser = await openLatestInstallerInBrowser();
-    const error = 'In-app updater is not available. Installer download opened in your browser.';
-    sendUpdaterStatus({ status: 'error', error });
-    return { success: false, error, openedBrowser: browser.opened, url: browser.url };
-  }
-
-  if (pendingDownloadSettlement) {
+  if (httpDownloadInProgress) {
     return { success: false, error: 'A download is already in progress' };
   }
 
   try {
-    await withTimeout(
-      autoUpdater.checkForUpdates(),
-      UPDATER_CHECK_TIMEOUT_MS,
-      'Pre-download update check',
-    );
-  } catch (preCheckErr) {
-    console.warn('[AutoUpdater] Pre-download check failed:', preCheckErr?.message || preCheckErr);
-  }
-
-  const downloadResult = await new Promise((resolve) => {
-    pendingDownloadSettlement = {
-      resolve,
-      timer: setTimeout(async () => {
-        const browser = await openLatestInstallerInBrowser();
-        const error =
-          'In-app download timed out. The installer was opened in your browser — run it to update.';
-        sendUpdaterStatus({ status: 'error', error });
-        settlePendingDownload({
-          success: false,
-          error,
-          openedBrowser: browser.opened,
-          url: browser.url,
-        });
-      }, UPDATER_DOWNLOAD_TIMEOUT_MS),
+    const releaseInfo = await fetchLatestReleaseInfo();
+    if (compareSemver(releaseInfo.version, app.getVersion()) <= 0) {
+      sendUpdaterStatus({ status: 'not-available' });
+      return { success: false, error: 'No update available' };
+    }
+    return await downloadUpdateViaHttp(releaseInfo);
+  } catch (err) {
+    const message = err?.message || String(err);
+    console.error('[AutoUpdater] HTTP download failed:', message);
+    const browser = await openLatestInstallerInBrowser();
+    const error = `${message}. Installer opened in your browser — run it to update.`;
+    sendUpdaterStatus({ status: 'error', error });
+    return {
+      success: false,
+      error,
+      openedBrowser: browser.opened,
+      url: browser.url,
     };
-
-    autoUpdater.downloadUpdate().catch(async (err) => {
-      if (!pendingDownloadSettlement) return;
-      const browser = await openLatestInstallerInBrowser();
-      const message = err?.message || String(err);
-      sendUpdaterStatus({
-        status: 'error',
-        error: `${message}. Installer opened in your browser.`,
-      });
-      settlePendingDownload({
-        success: false,
-        error: message,
-        openedBrowser: browser.opened,
-        url: browser.url,
-      });
-    });
-  });
-
-  return downloadResult;
+  }
 }
 
 function bindAutoUpdaterEvents() {
@@ -669,12 +786,10 @@ function bindAutoUpdaterEvents() {
   });
   autoUpdater.on('update-downloaded', (info) => {
     mainWindow?.webContents.send('updater:status', { status: 'downloaded', version: info.version });
-    settlePendingDownload({ success: true, version: info?.version });
   });
   autoUpdater.on('error', (err) => {
     const message = err?.message || String(err);
     mainWindow?.webContents.send('updater:status', { status: 'error', error: message });
-    settlePendingDownload({ success: false, error: message });
   });
 }
 
@@ -704,6 +819,8 @@ function initAutoUpdater() {
       autoUpdater = mod.autoUpdater;
       autoUpdater.autoDownload = false;
       autoUpdater.autoInstallOnAppQuit = true;
+      autoUpdater.disableDifferentialDownload = true;
+      autoUpdater.disableWebInstaller = true;
       autoUpdater.logger = console;
       configureAutoUpdaterFeed();
       bindAutoUpdaterEvents();
@@ -3403,15 +3520,27 @@ ipcMain.handle('updater:getDiagnostics', async () => {
     loadError: autoUpdaterLoadError,
     runtimeDepsPath: getRuntimeNodeModulesDir(),
     currentVersion: app.getVersion(),
-    feedUrl: UPDATER_GENERIC_FEED_URL,
+    feedProvider: 'github',
+    feedRepo: `${UPDATER_GITHUB_OWNER}/${UPDATER_GITHUB_REPO}`,
     latestYmlUrl: UPDATER_LATEST_YML_URL,
+    downloadMethod: 'http-direct',
+    pendingHttpInstaller: pendingHttpInstallerPath,
     remoteVersion,
     remoteCheckError,
     packaged: app.isPackaged,
   };
 });
 ipcMain.handle('updater:download', async () => runUpdateDownload());
-ipcMain.handle('updater:install', () => { autoUpdater.quitAndInstall(); return { success: true }; });
+ipcMain.handle('updater:install', () => {
+  if (pendingHttpInstallerPath && fs.existsSync(pendingHttpInstallerPath)) {
+    const { spawn } = require('child_process');
+    spawn(pendingHttpInstallerPath, ['--updated'], { detached: true, stdio: 'ignore' }).unref();
+    app.quit();
+    return { success: true, source: 'http' };
+  }
+  autoUpdater.quitAndInstall();
+  return { success: true, source: 'electron-updater' };
+});
 ipcMain.handle('updater:openReleasePage', () => {
   const url = `https://github.com/${UPDATER_GITHUB_OWNER}/${UPDATER_GITHUB_REPO}/releases/latest`;
   shell.openExternal(url);
