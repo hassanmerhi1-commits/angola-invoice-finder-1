@@ -203,7 +203,14 @@ export interface ElectronAPI {
 
   // Auto-updater
   updater: {
-    check: () => Promise<{ success: boolean; error?: string; isUpdateAvailable?: boolean; version?: string }>;
+    check: () => Promise<{
+      success: boolean;
+      error?: string;
+      isUpdateAvailable?: boolean;
+      alreadyDownloaded?: boolean;
+      version?: string;
+    }>;
+    getState: () => Promise<{ status: 'none' | 'downloaded'; version?: string }>;
     download: () => Promise<{
       success: boolean;
       error?: string;
@@ -295,7 +302,7 @@ export interface CompanyInfo {
 }
 
 export interface UpdateStatus {
-  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'installing' | 'error';
   version?: string;
   progress?: number;
   error?: string;

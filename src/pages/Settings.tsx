@@ -96,6 +96,12 @@ export default function Settings() {
         const version = typeof v === 'string' ? v : v?.version;
         setAppVersion(typeof version === 'string' ? version : '');
       });
+
+      void window.electronAPI?.updater.getState?.().then((state) => {
+        if (state?.status === 'downloaded' && state.version) {
+          setUpdateStatus({ status: 'downloaded', version: state.version });
+        }
+      });
       
       // Listen for update status changes
       const unsubscribe = window.electronAPI?.updater.onStatus((data) => {
@@ -189,7 +195,9 @@ export default function Settings() {
         setUpdateStatus({ status: 'error', error: result?.error || 'Failed to check for updates' });
         return;
       }
-      if (result.isUpdateAvailable && result.version) {
+      if (result.alreadyDownloaded && result.version) {
+        setUpdateStatus({ status: 'downloaded', version: result.version });
+      } else if (result.isUpdateAvailable && result.version) {
         setUpdateStatus({ status: 'available', version: result.version });
       } else {
         setUpdateStatus({ status: 'not-available' });
@@ -265,6 +273,8 @@ export default function Settings() {
         return <Badge variant="secondary" className="gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Downloading...</Badge>;
       case 'downloaded':
         return <Badge variant="default" className="gap-1 bg-green-600"><CheckCircle2 className="w-3 h-3" /> Ready to Install</Badge>;
+      case 'installing':
+        return <Badge variant="secondary" className="gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Installing...</Badge>;
       case 'error':
         return <Badge variant="destructive" className="gap-1"><AlertCircle className="w-3 h-3" /> Error</Badge>;
       default:

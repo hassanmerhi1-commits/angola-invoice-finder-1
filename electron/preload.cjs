@@ -137,6 +137,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     check: () => ipcRenderer.invoke('updater:check'),
     download: () => ipcRenderer.invoke('updater:download'),
     install: () => ipcRenderer.invoke('updater:install'),
+    getState: () => ipcRenderer.invoke('updater:getState'),
     getVersion: () => ipcRenderer.invoke('updater:getVersion'),
     onStatus: (callback) => {
       const handler = (_, data) => callback(data);

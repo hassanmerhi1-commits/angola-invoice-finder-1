@@ -352,19 +352,18 @@ const App = () => {
     if (!updater?.onStatus) return;
 
     let unsubscribed = false;
-    const lastKeyRef = { current: "" };
+    const UPDATE_TOAST_ID = "nexor-update";
 
     const notify = (s: UpdateStatus) => {
       if (unsubscribed) return;
 
-      // De-dupe repeated events, but allow progress updates to flow.
-      const key = `${s.status}:${(s as any).version ?? ""}`;
-      const isProgress = s.status === "downloading";
-      if (!isProgress && lastKeyRef.current === key) return;
-      if (!isProgress) lastKeyRef.current = key;
-
       if (s.status === "available") {
+        const dismissed = sessionStorage.getItem("nexor_update_dismissed");
+        if (dismissed === s.version) return;
+
+        toast.dismiss(UPDATE_TOAST_ID);
         toast("Update available", {
+          id: UPDATE_TOAST_ID,
           description: s.version ? `Version ${s.version} is ready to download.` : "A new version is ready to download.",
           duration: Infinity,
           action: {
@@ -375,11 +374,16 @@ const App = () => {
           },
           cancel: {
             label: "Later",
-            onClick: () => {},
+            onClick: () => {
+              if (s.version) sessionStorage.setItem("nexor_update_dismissed", s.version);
+              toast.dismiss(UPDATE_TOAST_ID);
+            },
           },
         });
       } else if (s.status === "downloaded") {
+        toast.dismiss(UPDATE_TOAST_ID);
         toast("Update ready to install", {
+          id: UPDATE_TOAST_ID,
           description: s.version ? `Version ${s.version} downloaded.` : "Update downloaded.",
           duration: Infinity,
           action: {
@@ -390,11 +394,12 @@ const App = () => {
           },
           cancel: {
             label: "Later",
-            onClick: () => {},
+            onClick: () => {
+              toast.dismiss(UPDATE_TOAST_ID);
+            },
           },
         });
       } else if (s.status === "error") {
-        // Keep errors short; the Settings screen shows full details.
         toast("Update check failed", {
           description: s.error || "Could not check for updates.",
         });
@@ -406,15 +411,8 @@ const App = () => {
       notify(data as UpdateStatus);
     });
 
-    // Extra safety: in case the main process doesn't check (or is delayed),
-    // kick a check once after first render. This is a no-op if a check is already running.
-    const t = setTimeout(() => {
-      void updater.check?.();
-    }, 6000);
-
     return () => {
       unsubscribed = true;
-      clearTimeout(t);
       if (typeof unsubscribe === "function") unsubscribe();
     };
   }, [isElectron]);

@@ -355,6 +355,61 @@ let autoUpdaterEventsBound = false;
 /** Installer saved by direct HTTP download (used when electron-updater download is skipped). */
 let pendingHttpInstallerPath = null;
 let httpDownloadInProgress = false;
+let installProgressWindow = null;
+let lastSentUpdaterStatusKey = '';
+
+function getPendingUpdateMetaPath() {
+  return path.join(app.getPath('userData'), 'pending-update.json');
+}
+
+function readPendingUpdateMeta() {
+  try {
+    return JSON.parse(fs.readFileSync(getPendingUpdateMetaPath(), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function writePendingUpdateMeta(meta) {
+  fs.mkdirSync(path.dirname(getPendingUpdateMetaPath()), { recursive: true });
+  fs.writeFileSync(getPendingUpdateMetaPath(), JSON.stringify(meta, null, 2), 'utf8');
+}
+
+function clearPendingUpdateMeta() {
+  try {
+    fs.unlinkSync(getPendingUpdateMetaPath());
+  } catch (_) {}
+}
+
+async function validatePendingUpdate(meta) {
+  if (!meta?.installerPath || !meta?.version) return null;
+  if (!fs.existsSync(meta.installerPath)) return null;
+  if (compareSemver(meta.version, app.getVersion()) <= 0) {
+    try {
+      fs.unlinkSync(meta.installerPath);
+    } catch (_) {}
+    clearPendingUpdateMeta();
+    return null;
+  }
+  if (meta.sha512) {
+    try {
+      await verifySha512File(meta.installerPath, meta.sha512);
+    } catch {
+      return null;
+    }
+  }
+  return meta;
+}
+
+async function restorePendingUpdate() {
+  const meta = await validatePendingUpdate(readPendingUpdateMeta());
+  if (!meta) {
+    pendingHttpInstallerPath = null;
+    return null;
+  }
+  pendingHttpInstallerPath = meta.installerPath;
+  return meta;
+}
 
 function getRuntimeNodeModulesDir() {
   if (process.resourcesPath) {
@@ -438,8 +493,38 @@ function buildReleaseAssetUrl(version, fileName) {
 }
 
 function getUpdaterPendingDir() {
-  // %TEMP% — downloaded .exe runs reliably here (Roaming cache can hit EACCES on spawn).
-  return path.join(app.getPath('temp'), 'nexor-erp-updater', 'pending');
+  return path.join(app.getPath('userData'), 'updates', 'pending');
+}
+
+function showInstallProgressWindow(version) {
+  if (installProgressWindow && !installProgressWindow.isDestroyed()) {
+    installProgressWindow.focus();
+    return;
+  }
+  installProgressWindow = new BrowserWindow({
+    width: 420,
+    height: 200,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    title: 'NEXOR ERP — Updating',
+    autoHideMenuBar: true,
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+  installProgressWindow.loadFile(path.join(__dirname, 'updater-install.html'), {
+    query: { version: version || '' },
+  });
+  installProgressWindow.on('closed', () => {
+    installProgressWindow = null;
+  });
+}
+
+function hideMainWindowForInstall() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.hide();
+  }
 }
 
 function unblockWindowsDownload(filePath) {
@@ -457,14 +542,58 @@ function unblockWindowsDownload(filePath) {
   }
 }
 
-async function launchDownloadedInstaller(installerPath) {
+async function launchDownloadedInstaller(installerPath, version) {
   unblockWindowsDownload(installerPath);
+  showInstallProgressWindow(version);
+  sendUpdaterStatus({ status: 'installing', version });
+  hideMainWindowForInstall();
 
-  // shell.openPath → ShellExecute on Windows; avoids Node spawn EACCES on downloaded .exe.
-  const shellError = await shell.openPath(installerPath);
-  if (shellError) {
-    throw new Error(shellError);
+  const argSets = [
+    ['/S', '--updated', '--force-run'],
+    ['--updated', '--force-run'],
+  ];
+
+  const trySpawn = (args) => new Promise((resolve, reject) => {
+    const { spawn } = require('child_process');
+    const child = spawn(installerPath, args, {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolve();
+    });
+  });
+
+  for (const args of argSets) {
+    try {
+      await trySpawn(args);
+      setTimeout(() => {
+        try {
+          app.quit();
+        } catch (_) {}
+      }, 2000);
+      return;
+    } catch (err) {
+      console.warn('[AutoUpdater] spawn failed:', args.join(' '), err?.message || err);
+    }
   }
+
+  await new Promise((resolve, reject) => {
+    const { exec } = require('child_process');
+    const escaped = installerPath.replace(/"/g, '\\"');
+    exec(`cmd.exe /c start "" "${escaped}" /S --updated --force-run`, { windowsHide: true }, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+  setTimeout(() => {
+    try {
+      app.quit();
+    } catch (_) {}
+  }, 2000);
 }
 
 function verifySha512File(filePath, expectedBase64) {
@@ -595,6 +724,12 @@ async function downloadUpdateViaHttp(releaseInfo) {
 
     unblockWindowsDownload(destPath);
     pendingHttpInstallerPath = destPath;
+    writePendingUpdateMeta({
+      version: releaseInfo.version,
+      installerPath: destPath,
+      sha512: releaseInfo.sha512,
+      downloadedAt: new Date().toISOString(),
+    });
     sendUpdaterStatus({ status: 'downloaded', version: releaseInfo.version });
     return { success: true, version: releaseInfo.version, source: 'http' };
   } catch (err) {
@@ -690,80 +825,43 @@ async function runUpdateCheck() {
   initAutoUpdater();
   sendUpdaterStatus({ status: 'checking' });
 
-  if (!autoUpdaterLoaded) {
-    try {
-      const httpResult = await checkLatestVersionViaHttp();
-      if (httpResult.isUpdateAvailable) {
-        sendUpdaterStatus({ status: 'available', version: httpResult.latest });
-        return {
-          success: true,
-          isUpdateAvailable: true,
-          version: httpResult.latest,
-          source: 'http',
-          warning: autoUpdaterLoadError,
-        };
-      }
+  try {
+    await restorePendingUpdate();
+    const httpResult = await checkLatestVersionViaHttp();
+
+    if (!httpResult.isUpdateAvailable) {
       sendUpdaterStatus({ status: 'not-available' });
       return {
         success: true,
         isUpdateAvailable: false,
         version: httpResult.latest,
         source: 'http',
-        warning: autoUpdaterLoadError,
       };
-    } catch (httpErr) {
-      const error = autoUpdaterLoadError
-        ? `Auto-updater failed to load: ${autoUpdaterLoadError}`
-        : (httpErr?.message || String(httpErr));
-      sendUpdaterStatus({ status: 'error', error });
-      return { success: false, error };
     }
-  }
 
-  try {
-    const result = await withTimeout(
-      autoUpdater.checkForUpdates(),
-      UPDATER_CHECK_TIMEOUT_MS,
-      'Update check',
-    );
-    if (result == null) {
-      throw new Error('Update check skipped (app not packaged for production).');
-    }
-    const version = result.updateInfo?.version || result.versionInfo?.version;
-    const available =
-      !!result.isUpdateAvailable
-      || (version && compareSemver(version, app.getVersion()) > 0);
-    if (available) {
-      sendUpdaterStatus({ status: 'available', version });
-      return { success: true, isUpdateAvailable: true, version };
-    }
-    sendUpdaterStatus({ status: 'not-available' });
-    return { success: true, isUpdateAvailable: false, version };
-  } catch (primaryErr) {
-    console.warn('[AutoUpdater] electron-updater check failed, trying HTTP fallback:', primaryErr?.message || primaryErr);
-    try {
-      const httpResult = await checkLatestVersionViaHttp();
-      if (httpResult.isUpdateAvailable) {
-        sendUpdaterStatus({ status: 'available', version: httpResult.latest });
-        return {
-          success: true,
-          isUpdateAvailable: true,
-          version: httpResult.latest,
-          source: 'http-fallback',
-        };
-      }
-      sendUpdaterStatus({ status: 'not-available' });
+    const pending = await restorePendingUpdate();
+    if (pending && pending.version === httpResult.latest) {
+      sendUpdaterStatus({ status: 'downloaded', version: httpResult.latest });
       return {
         success: true,
-        isUpdateAvailable: false,
+        isUpdateAvailable: true,
+        alreadyDownloaded: true,
         version: httpResult.latest,
-        source: 'http-fallback',
+        source: 'cached',
       };
-    } catch (httpErr) {
-      const error = `${primaryErr?.message || primaryErr} (HTTP fallback: ${httpErr?.message || httpErr})`;
-      sendUpdaterStatus({ status: 'error', error });
-      return { success: false, error };
     }
+
+    sendUpdaterStatus({ status: 'available', version: httpResult.latest });
+    return {
+      success: true,
+      isUpdateAvailable: true,
+      version: httpResult.latest,
+      source: 'http',
+    };
+  } catch (httpErr) {
+    const error = httpErr?.message || String(httpErr);
+    sendUpdaterStatus({ status: 'error', error });
+    return { success: false, error };
   }
 }
 
@@ -780,6 +878,15 @@ async function runUpdateDownload() {
       sendUpdaterStatus({ status: 'not-available' });
       return { success: false, error: 'No update available' };
     }
+
+    await restorePendingUpdate();
+    const cached = await validatePendingUpdate(readPendingUpdateMeta());
+    if (cached && cached.version === releaseInfo.version) {
+      pendingHttpInstallerPath = cached.installerPath;
+      sendUpdaterStatus({ status: 'downloaded', version: releaseInfo.version });
+      return { success: true, version: releaseInfo.version, source: 'cached' };
+    }
+
     return await downloadUpdateViaHttp(releaseInfo);
   } catch (err) {
     const message = err?.message || String(err);
@@ -799,24 +906,9 @@ async function runUpdateDownload() {
 function bindAutoUpdaterEvents() {
   if (autoUpdaterEventsBound || !autoUpdaterLoaded) return;
   autoUpdaterEventsBound = true;
-  autoUpdater.on('checking-for-update', () => {
-    mainWindow?.webContents.send('updater:status', { status: 'checking' });
-  });
-  autoUpdater.on('update-available', (info) => {
-    mainWindow?.webContents.send('updater:status', { status: 'available', version: info.version });
-  });
-  autoUpdater.on('update-not-available', () => {
-    mainWindow?.webContents.send('updater:status', { status: 'not-available' });
-  });
-  autoUpdater.on('download-progress', (progress) => {
-    mainWindow?.webContents.send('updater:status', { status: 'downloading', progress: progress.percent });
-  });
-  autoUpdater.on('update-downloaded', (info) => {
-    mainWindow?.webContents.send('updater:status', { status: 'downloaded', version: info.version });
-  });
+  // HTTP updater owns UI status; only log electron-updater errors here.
   autoUpdater.on('error', (err) => {
-    const message = err?.message || String(err);
-    mainWindow?.webContents.send('updater:status', { status: 'error', error: message });
+    console.warn('[AutoUpdater] electron-updater error:', err?.message || err);
   });
 }
 
@@ -3525,6 +3617,11 @@ ipcMain.handle('app:relaunch', () => { app.relaunch(); app.exit(0); });
 ipcMain.handle('app:version', () => app.getVersion());
 
 function sendUpdaterStatus(payload) {
+  if (payload.status !== 'downloading' || payload.progress === undefined) {
+    const key = `${payload.status}:${payload.version || ''}`;
+    if (lastSentUpdaterStatusKey === key) return;
+    lastSentUpdaterStatusKey = key;
+  }
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('updater:status', payload);
   }
@@ -3558,12 +3655,18 @@ ipcMain.handle('updater:getDiagnostics', async () => {
   };
 });
 ipcMain.handle('updater:download', async () => runUpdateDownload());
+ipcMain.handle('updater:getState', async () => {
+  const meta = await restorePendingUpdate();
+  if (!meta) return { status: 'none' };
+  return { status: 'downloaded', version: meta.version };
+});
 ipcMain.handle('updater:install', async () => {
+  await restorePendingUpdate();
   if (pendingHttpInstallerPath && fs.existsSync(pendingHttpInstallerPath)) {
+    const meta = readPendingUpdateMeta();
     try {
-      await launchDownloadedInstaller(pendingHttpInstallerPath);
-      setTimeout(() => app.quit(), 500);
-      return { success: true, source: 'http-shell' };
+      await launchDownloadedInstaller(pendingHttpInstallerPath, meta?.version);
+      return { success: true, source: 'http-installer' };
     } catch (err) {
       const message = err?.message || String(err);
       console.error('[AutoUpdater] install launch failed:', message);
