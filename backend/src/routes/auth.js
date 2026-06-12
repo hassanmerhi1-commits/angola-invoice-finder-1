@@ -39,11 +39,23 @@ function mapUserRow(user) {
   };
 }
 
+function isValidEmailDomain(domain) {
+  const d = String(domain || '').trim().toLowerCase();
+  return d.length > 0 && d.includes('.') && !/^\d+$/.test(d);
+}
+
 function normalizeUserIdentity(emailRaw, usernameRaw) {
   const emailIn = String(emailRaw || '').trim().toLowerCase();
   const userIn = String(usernameRaw || '').trim().toLowerCase();
-  const username = userIn || (emailIn.includes('@') ? emailIn.split('@')[0] : emailIn);
-  const email = emailIn.includes('@') ? emailIn : `${username}@kwanzaerp.ao`;
+  const localFromEmail = emailIn.includes('@') ? emailIn.split('@')[0] : emailIn;
+  const username = userIn || localFromEmail;
+  let email;
+  if (!emailIn.includes('@')) {
+    email = `${username}@kwanzaerp.ao`;
+  } else {
+    const domain = emailIn.split('@')[1] || '';
+    email = isValidEmailDomain(domain) ? emailIn : `${username}@kwanzaerp.ao`;
+  }
   return { email, username };
 }
 
@@ -184,7 +196,7 @@ router.post('/users', requireAdmin, async (req, res) => {
 
     await db.query(
       `INSERT INTO users (id, email, username, name, role, branch_id, password_hash, is_active, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [id, normalizedEmail, normalizedUsername, name, role, branchId || null, passwordHash],
     );
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales, useAuth, useProducts, usePurchaseOrders } from '@/hooks/useERP';
@@ -126,6 +126,27 @@ export default function FiscalDocuments() {
   const [searchTerm, setSearchTerm] = useState('');
   const openCreditNoteFetchRef = useRef<string | null>(null);
 
+  const notifyCreditNoteDenied = useCallback(() => {
+    toast({
+      variant: 'destructive',
+      title: t.common.error,
+      description: fd.creditNotePermissionDenied,
+    });
+  }, [toast, t.common.error, fd.creditNotePermissionDenied]);
+
+  const openCreditNoteCreateDialog = useCallback(() => {
+    if (!canCreateCreditNote) {
+      notifyCreditNoteDenied();
+      return;
+    }
+    setSelectedSale(null);
+    setCreditItems([]);
+    setCreditReason('return');
+    setCreditDescription('');
+    setRestoreStock(true);
+    setCreditNoteDialog(true);
+  }, [canCreateCreditNote, notifyCreditNoteDenied]);
+
   useEffect(() => {
     const st = location.state as {
       openSaft?: boolean;
@@ -139,16 +160,20 @@ export default function FiscalDocuments() {
       return;
     }
     if (st?.openCreditNoteCreate) {
-      setSelectedSale(null);
-      setCreditItems([]);
-      setCreditReason('return');
-      setCreditDescription('');
-      setRestoreStock(true);
-      setCreditNoteDialog(true);
       navigate(location.pathname, { replace: true, state: {} });
+      if (!canCreateCreditNote) {
+        notifyCreditNoteDenied();
+        return;
+      }
+      openCreditNoteCreateDialog();
       return;
     }
     if (st?.openCreditNoteForSaleId && sales.length) {
+      navigate(location.pathname, { replace: true, state: {} });
+      if (!canCreateCreditNote) {
+        notifyCreditNoteDenied();
+        return;
+      }
       const sale = sales.find((s) => s.id === st.openCreditNoteForSaleId);
       if (sale) {
         setSelectedSale(sale);
@@ -165,9 +190,16 @@ export default function FiscalDocuments() {
         })));
         setCreditNoteDialog(true);
       }
-      navigate(location.pathname, { replace: true, state: {} });
     }
-  }, [location.state, location.pathname, navigate, sales]);
+  }, [
+    location.state,
+    location.pathname,
+    navigate,
+    sales,
+    canCreateCreditNote,
+    notifyCreditNoteDenied,
+    openCreditNoteCreateDialog,
+  ]);
 
   useEffect(() => {
     const st = location.state as {
@@ -671,7 +703,7 @@ export default function FiscalDocuments() {
                 <CardDescription>{fd.creditNotesDesc}</CardDescription>
               </div>
               {canCreateCreditNote && (
-              <Button variant="modern" size="lg" onClick={() => setCreditNoteDialog(true)}>
+              <Button variant="modern" size="lg" onClick={openCreditNoteCreateDialog}>
                 <Plus />
                 {fd.newCreditNote}
               </Button>
@@ -1189,7 +1221,17 @@ export default function FiscalDocuments() {
       </Dialog>
 
       {/* Credit Note Dialog */}
-      <Dialog open={creditNoteDialog} onOpenChange={setCreditNoteDialog}>
+      <Dialog
+        open={creditNoteDialog && canCreateCreditNote}
+        onOpenChange={(open) => {
+          if (open && !canCreateCreditNote) {
+            notifyCreditNoteDenied();
+            return;
+          }
+          setCreditNoteDialog(open);
+          if (!open) resetCreditForm();
+        }}
+      >
         <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col p-0 gap-0">
           <DialogHeader className="px-6 pt-6 pb-2">
             <DialogTitle>{fd.newCreditNoteTitle}</DialogTitle>

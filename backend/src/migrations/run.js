@@ -125,6 +125,7 @@ const MIGRATIONS = [
   '037_fiscal_audit_phase5.sql',
   '038_audit_log_actions_phase5.sql',
   '039_app_meta_schema_version.sql',
+  '040_users_username.sql',
 ];
 
 /**

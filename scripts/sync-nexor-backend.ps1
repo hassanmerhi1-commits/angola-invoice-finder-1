@@ -42,28 +42,44 @@ function Sync-FullBackend($destRoot) {
     $nmRepo = Join-Path $repoBackend 'node_modules'
     $nmInstalled = 'C:\Program Files\NEXOR ERP\resources\backend\node_modules'
     $nmDest = Join-Path $destRoot 'node_modules'
-    if (Test-Path $nmRepo) {
-        if (-not (Test-Path $nmDest)) {
-            Write-Host '  Copying node_modules (first time, may take a minute)...' -ForegroundColor DarkGray
-            robocopy $nmRepo $nmDest /E /NFL /NDL /NJH /NJS /nc /ns /np /R:1 /W:1 | Out-Null
-            if ($LASTEXITCODE -gt 7) {
-                Write-Host '  node_modules copy failed' -ForegroundColor Red
-                return $false
-            }
+    $lockRepo = Join-Path $repoBackend 'package-lock.json'
+    $lockDest = Join-Path $destRoot 'package-lock.json'
+    $needsNodeModulesSync = -not (Test-Path $nmDest)
+    if (-not $needsNodeModulesSync -and (Test-Path $lockRepo) -and (Test-Path $lockDest)) {
+        $repoHash = (Get-FileHash $lockRepo -Algorithm SHA256).Hash
+        $destHash = (Get-FileHash $lockDest -Algorithm SHA256).Hash
+        if ($repoHash -ne $destHash) {
+            $needsNodeModulesSync = $true
+            Write-Host '  package-lock.json changed — refreshing node_modules...' -ForegroundColor DarkGray
         }
-    } elseif (Test-Path $nmInstalled) {
-        Write-Host '  Copying node_modules from installed NEXOR...' -ForegroundColor DarkGray
-        robocopy $nmInstalled $nmDest /E /NFL /NDL /NJH /NJS /nc /ns /np /R:1 /W:1 | Out-Null
-    } else {
-        Write-Host '  WARN: run "cd backend && npm install" in the repo first.' -ForegroundColor Yellow
-        return $false
+    }
+    if (-not $needsNodeModulesSync -and -not (Test-Path (Join-Path $nmDest 'node-forge'))) {
+        $needsNodeModulesSync = $true
+        Write-Host '  node_modules missing required packages — refreshing...' -ForegroundColor DarkGray
+    }
+
+    if ($needsNodeModulesSync) {
+        $nmSource = $null
+        if (Test-Path $nmRepo) { $nmSource = $nmRepo }
+        elseif (Test-Path $nmInstalled) { $nmSource = $nmInstalled }
+        if (-not $nmSource) {
+            Write-Host '  WARN: run "cd backend && npm install" in the repo first.' -ForegroundColor Yellow
+            return $false
+        }
+        Write-Host "  Copying node_modules from $nmSource (may take a minute)..." -ForegroundColor DarkGray
+        robocopy $nmSource $nmDest /E /MIR /NFL /NDL /NJH /NJS /nc /ns /np /R:1 /W:1 | Out-Null
+        if ($LASTEXITCODE -gt 7) {
+            Write-Host '  node_modules copy failed' -ForegroundColor Red
+            return $false
+        }
     }
 
     $checks = @(
         (Join-Path $destRoot 'src\lib\sqlDialect.js'),
         (Join-Path $destRoot 'src\lib\loginUserLookup.js'),
         (Join-Path $destRoot 'scripts\lib\integrityRunner.js'),
-        (Join-Path $destRoot 'node_modules\dotenv')
+        (Join-Path $destRoot 'node_modules\dotenv'),
+        (Join-Path $destRoot 'node_modules\node-forge')
     )
     foreach ($c in $checks) {
         if (-not (Test-Path $c)) {

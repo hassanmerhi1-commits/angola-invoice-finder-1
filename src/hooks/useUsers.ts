@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { User } from '@/types/erp';
 import { UserRole } from '@/lib/permissions';
 import { api } from '@/lib/api/client';
+import { isDemoMode } from '@/lib/api/config';
 
 function normalizeUser(row: Record<string, unknown>): User {
   const isActiveRaw = row.is_active ?? row.isActive;
@@ -94,6 +95,10 @@ export function useUsers() {
         throw new Error(response.error);
       }
 
+      if (!isDemoMode()) {
+        throw new Error('Failed to create user on server');
+      }
+
       const newUser: User = {
         id: `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         email: data.email,
@@ -121,6 +126,10 @@ export function useUsers() {
         return;
       }
 
+      if (!isDemoMode()) {
+        throw new Error(response.error || 'Failed to update user on server');
+      }
+
       const all = readLocalUsers();
       const idx = all.findIndex((u) => u.id === user.id);
       if (idx >= 0) all[idx] = user;
@@ -137,6 +146,10 @@ export function useUsers() {
       if (!response.error) {
         await refreshUsers();
         return;
+      }
+
+      if (!isDemoMode()) {
+        throw new Error(response.error || 'Failed to delete user on server');
       }
 
       const all = readLocalUsers().filter((u) => u.id !== userId);

@@ -144,6 +144,7 @@ export default function Invoices() {
   const { user } = useAuth();
   const { hasPermission } = usePermissions(user?.id);
   const canSendAgt = hasPermission('agt_send');
+  const canCreateCreditNote = hasPermission('credit_note_create');
   const { currentBranch, branches, isHeadOffice, listBranchId } = useBranchScope();
   const navigate = useNavigate();
   const location = useLocation();
@@ -277,8 +278,12 @@ export default function Invoices() {
   }, [location.state, location.pathname, navigate]);
 
   const openFiscalCreditNoteCreate = useCallback(() => {
+    if (!canCreateCreditNote) {
+      toast.error(t.fiscalDocumentsUi.creditNotePermissionDenied);
+      return;
+    }
     navigate('/fiscal-documents', { state: { openCreditNoteCreate: true } });
-  }, [navigate]);
+  }, [navigate, canCreateCreditNote, t]);
 
   const openNewDocumentForTab = useCallback(
     (tab?: InvoicesWorkspaceTab) => {
@@ -468,10 +473,16 @@ export default function Invoices() {
   }, [documents, openEditDocument, t, transmitAgt, refresh, canSendAgt]);
 
   const handleConvert = async (doc: ERPDocument, targetType: DocumentType) => {
-    if (targetType === 'nota_credito' && doc.documentType === 'fatura_venda') {
-      navigate('/fiscal-documents', { state: { openCreditNoteForSaleId: doc.id } });
-      toast.info(t.invoicesUi.creditNoteUseFiscalDocs);
-      return;
+    if (targetType === 'nota_credito') {
+      if (!canCreateCreditNote) {
+        toast.error(t.fiscalDocumentsUi.creditNotePermissionDenied);
+        return;
+      }
+      if (doc.documentType === 'fatura_venda') {
+        navigate('/fiscal-documents', { state: { openCreditNoteForSaleId: doc.id } });
+        toast.info(t.invoicesUi.creditNoteUseFiscalDocs);
+        return;
+      }
     }
     // Proforma → Sales invoice should open the form prefilled (draft),
     // not auto-create a confirmed invoice.
@@ -517,7 +528,9 @@ export default function Invoices() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
-            {(Object.keys(DOCUMENT_TYPE_CONFIG) as DocumentType[]).map((key) => {
+            {(Object.keys(DOCUMENT_TYPE_CONFIG) as DocumentType[])
+              .filter((key) => key !== 'nota_credito' || canCreateCreditNote)
+              .map((key) => {
               const cfg = DOCUMENT_TYPE_CONFIG[key];
               const typeLabels = t.documentFormUi.types as Record<DocumentType, { full: string; short: string }>;
               const label = typeLabels[key]?.full ?? cfg.label;
@@ -540,7 +553,9 @@ export default function Invoices() {
         </DropdownMenu>
 
         {/* Convert button */}
-        {selectedDoc && DOCUMENT_TYPE_CONFIG[selectedDoc.documentType].canConvertTo.length > 0 && selectedDoc.status !== 'converted' && (
+        {selectedDoc && DOCUMENT_TYPE_CONFIG[selectedDoc.documentType].canConvertTo
+          .filter((targetType) => targetType !== 'nota_credito' || canCreateCreditNote).length > 0
+          && selectedDoc.status !== 'converted' && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM}>
@@ -548,7 +563,9 @@ export default function Invoices() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              {DOCUMENT_TYPE_CONFIG[selectedDoc.documentType].canConvertTo.map(targetType => {
+              {DOCUMENT_TYPE_CONFIG[selectedDoc.documentType].canConvertTo
+                .filter((targetType) => targetType !== 'nota_credito' || canCreateCreditNote)
+                .map(targetType => {
                 const typeLabels = t.documentFormUi.types as Record<DocumentType, { full: string; short: string }>;
                 const convLabel = typeLabels[targetType]?.full ?? DOCUMENT_TYPE_CONFIG[targetType].label;
                 return (

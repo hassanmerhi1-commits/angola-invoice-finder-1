@@ -173,27 +173,29 @@ export default function UserManagement() {
       }
     }
     
-    // Update user role (and optional password) in storage
-    await updateUser({
-      ...selectedUser,
-      role: selectedRole,
-      ...(pwd ? { password: pwd } : {}),
-    });
-    
-    // Update in permissions system
-    assignRole(selectedUser.id, selectedRole);
-    
-    if (useCustomPerms) {
-      setCustomPermissions(selectedUser.id, customPerms);
+    try {
+      await updateUser({
+        ...selectedUser,
+        role: selectedRole,
+        ...(pwd ? { password: pwd } : {}),
+      });
+
+      assignRole(selectedUser.id, selectedRole);
+
+      if (useCustomPerms) {
+        setCustomPermissions(selectedUser.id, customPerms);
+      }
+
+      toast.success(
+        pwd ? t.userManagementUi.roleAndPasswordUpdated : t.userManagementUi.roleUpdated,
+        { description: selectedUser.name },
+      );
+      setEditPassword('');
+      setEditPasswordConfirm('');
+      setEditDialogOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update user');
     }
-    
-    toast.success(
-      pwd ? t.userManagementUi.roleAndPasswordUpdated : t.userManagementUi.roleUpdated,
-      { description: selectedUser.name },
-    );
-    setEditPassword('');
-    setEditPasswordConfirm('');
-    setEditDialogOpen(false);
   };
 
   const handleDeleteUser = async () => {

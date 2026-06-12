@@ -2268,6 +2268,7 @@ export const en = {
     createReturn: "Create return",
     newTransportShort: "New guide",
     itemsToReturnLabel: "Items to return (enter quantity)",
+    creditNotePermissionDenied: "You do not have permission to create credit notes",
     creditNoteCreatedTitle: "Credit note created",
     debitNoteCreatedTitle: "Debit note created",
     transportDocCreatedTitle: "Transport document created",

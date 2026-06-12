@@ -6,6 +6,7 @@ const { peekSequenceNumber } = require('../accounting');
 const { enqueueSaleCreated } = require('../sync/outbox');
 const { signSaleInvoice } = require('../agt/signSale');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
+const { requireAuth } = require('../middleware/requireAuth');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -59,10 +60,10 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.post('/:id/mark-printed', async (req, res) => {
+  router.post('/:id/mark-printed', requireAuth, async (req, res) => {
     try {
       const result = await db.query(
-        `UPDATE sales SET printed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        `UPDATE sales SET printed_at = CURRENT_TIMESTAMP
          WHERE id = $1 RETURNING id, invoice_number, printed_at`,
         [req.params.id],
       );
@@ -110,7 +111,7 @@ module.exports = function(broadcastTable) {
       }
       const due = String(dueDate).slice(0, 10);
       const result = await db.query(
-        `UPDATE sales SET due_date = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
+        `UPDATE sales SET due_date = $1 WHERE id = $2 RETURNING *`,
         [due, req.params.id],
       );
       if (result.rows.length === 0) {

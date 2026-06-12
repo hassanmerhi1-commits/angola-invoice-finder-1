@@ -2053,6 +2053,7 @@ export const api = {
       const body = {
         name: data.name,
         email: data.email,
+        username: data.username,
         role: data.role,
         branchId: data.branchId ?? data.branch_id,
         isActive: data.isActive ?? data.is_active,

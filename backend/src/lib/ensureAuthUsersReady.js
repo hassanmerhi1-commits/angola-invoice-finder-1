@@ -84,10 +84,17 @@ async function ensureAuthUsersReady() {
     }
 
     try {
-      await db.query(
-        `UPDATE users SET username = LOWER(substr(email, 1, instr(email, '@') - 1))
-         WHERE (username IS NULL OR username = '') AND email LIKE '%@%'`,
-      );
+      if (db.engine === 'postgres') {
+        await db.query(
+          `UPDATE users SET username = LOWER(SPLIT_PART(email, '@', 1))
+           WHERE (username IS NULL OR TRIM(COALESCE(username, '')) = '') AND email LIKE '%@%'`,
+        );
+      } else {
+        await db.query(
+          `UPDATE users SET username = LOWER(substr(email, 1, instr(email, '@') - 1))
+           WHERE (username IS NULL OR username = '') AND email LIKE '%@%'`,
+        );
+      }
     } catch (_) {}
   } catch (err) {
     console.warn('[AUTH] ensureAuthUsersReady skipped:', err.message);

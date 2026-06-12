@@ -2270,6 +2270,7 @@ export const pt: TranslationKeys = {
     createReturn: "Criar Devolução",
     newTransportShort: "Nova Guia",
     itemsToReturnLabel: "Itens a Devolver (introduza a quantidade)",
+    creditNotePermissionDenied: "Não tem permissão para criar notas de crédito",
     creditNoteCreatedTitle: "Nota de Crédito criada",
     debitNoteCreatedTitle: "Nota de Débito criada",
     transportDocCreatedTitle: "Guia de Transporte criada",

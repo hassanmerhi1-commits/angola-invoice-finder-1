@@ -2979,9 +2979,13 @@ function createWindow() {
   mainWindow.webContents.on('did-finish-load', injectBackendPort);
 
   const revealMainWindow = () => {
-    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isVisible()) return;
+    if (splashWindow) {
+      splashWindow.close();
+      splashWindow = null;
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isVisible()) return;
     console.warn('[Startup] Showing main window');
-    if (splashWindow) { splashWindow.close(); splashWindow = null; }
     mainWindow.show();
     mainWindow.focus();
   };

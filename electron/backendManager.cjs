@@ -217,6 +217,19 @@ function isViableBackendEntry(entryPath) {
   }
 }
 
+/** Read EXPECTED_SCHEMA_VERSION baked into a backend tree (pick newest among candidates). */
+function readBackendSchemaExpectation(entryPath) {
+  try {
+    const statusFile = path.join(resolveBackendCwd(entryPath), 'src', 'lib', 'deploymentStatus.js');
+    if (!fs.existsSync(statusFile)) return 0;
+    const text = fs.readFileSync(statusFile, 'utf8');
+    const match = text.match(/EXPECTED_SCHEMA_VERSION\s*=\s*(\d+)/);
+    return match ? Number(match[1]) : 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
 function resolveBackendEntry() {
   let appPath = null;
   try {
@@ -258,18 +271,45 @@ function resolveBackendEntry() {
       appPath ? path.join(appPath, 'backend', 'src', 'server.js') : null,
     ];
 
+  const viable = [];
   for (const p of candidates.filter(Boolean)) {
     try {
       if (fs.existsSync(p) && isViableBackendEntry(p)) {
-        console.log(`[BackendManager] using backend entry: ${p}`);
-        return p;
-      }
-      if (fs.existsSync(p)) {
+        viable.push(p);
+      } else if (fs.existsSync(p)) {
         console.warn(`[BackendManager] skipping incomplete backend at ${p}`);
       }
     } catch (_) {}
   }
-  return null;
+
+  if (viable.length === 0) return null;
+
+  let best = viable[0];
+  let bestSchema = readBackendSchemaExpectation(best);
+  for (let i = 1; i < viable.length; i++) {
+    const candidate = viable[i];
+    const schema = readBackendSchemaExpectation(candidate);
+    if (schema > bestSchema) {
+      best = candidate;
+      bestSchema = schema;
+    }
+  }
+
+  if (viable.length > 1) {
+    const skipped = viable.filter((p) => p !== best);
+    for (const p of skipped) {
+      const schema = readBackendSchemaExpectation(p);
+      if (schema < bestSchema) {
+        console.warn(
+          `[BackendManager] ignoring older backend at ${p} (schema ${schema}); `
+            + `using ${best} (schema ${bestSchema})`,
+        );
+      }
+    }
+  }
+
+  console.log(`[BackendManager] using backend entry: ${best} (schema ${bestSchema})`);
+  return best;
 }
 
 function resolveBackendCwd(entryPath) {
@@ -441,6 +481,14 @@ function shouldSpawnForMode(mode) {
 
 function noteSpawnNativeError(chunk) {
   const text = chunk.toString('utf8');
+  if (/Cannot find module/i.test(text)) {
+    lastSpawnNativeError =
+      'Backend dependencies are missing. Run scripts/sync-nexor-backend.ps1 from the repo, '
+      + 'or "npm install" in C:\\NEXOR ERP\\backend, then restart NEXOR.';
+    console.error(`[BackendManager] ${lastSpawnNativeError}`);
+    console.error('[BackendManager]', text.trim().split('\n').slice(0, 6).join('\n'));
+    return;
+  }
   if (!/NODE_MODULE_VERSION|ERR_DLOPEN_FAILED|better_sqlite3\.node/i.test(text)) return;
   lastSpawnNativeError =
     'SQLite native module (better-sqlite3) does not match this app\'s Electron version. '
@@ -568,11 +616,34 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
 }
 
 // Wait until OUR Express answers /api/health (must be SQLite unified — not some other server on the port).
-function waitForBackendReady(port, timeoutMs = 15000) {
+function waitForBackendReady(port, timeoutMs = 15000, proc = null) {
   const http = require('http');
   const start = Date.now();
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ready) => {
+      if (settled) return;
+      settled = true;
+      resolve(ready);
+    };
+
+    const onChildExit = (code, signal) => {
+      if (code === 0 && !signal) return;
+      const detail = lastSpawnNativeError || `backend exited code=${code} signal=${signal}`;
+      console.error(`[BackendManager] backend died before ready on port ${port}: ${detail}`);
+      finish(false);
+    };
+
+    if (proc) {
+      proc.once('exit', onChildExit);
+    }
+
     const tryOnce = () => {
+      if (settled) return;
+      if (proc && proc.exitCode != null) {
+        finish(false);
+        return;
+      }
       const req = http.get({ host: '127.0.0.1', port, path: '/api/health', timeout: 2000 }, (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -589,18 +660,18 @@ function waitForBackendReady(port, timeoutMs = 15000) {
             && payload.ok === true
             && payload.unified === true
             && (payload.engine === 'sqlite' || payload.engine === 'postgres');
-          if (ok) return resolve(true);
-          if (Date.now() - start > timeoutMs) return resolve(false);
+          if (ok) return finish(true);
+          if (Date.now() - start > timeoutMs) return finish(false);
           setTimeout(tryOnce, 400);
         });
       });
       req.on('error', () => {
-        if (Date.now() - start > timeoutMs) return resolve(false);
+        if (Date.now() - start > timeoutMs) return finish(false);
         setTimeout(tryOnce, 400);
       });
       req.on('timeout', () => {
         req.destroy();
-        if (Date.now() - start > timeoutMs) return resolve(false);
+        if (Date.now() - start > timeoutMs) return finish(false);
         setTimeout(tryOnce, 400);
       });
     };
@@ -678,7 +749,7 @@ async function startOnce(opts = {}) {
     boundPort = port;
 
     // eslint-disable-next-line no-await-in-loop
-    const ready = await waitForBackendReady(port, readyTimeout);
+    const ready = await waitForBackendReady(port, readyTimeout, proc);
     if (ready) {
       console.log(`[BackendManager] backend ready on http://127.0.0.1:${port}`);
       consecutiveFails = 0;

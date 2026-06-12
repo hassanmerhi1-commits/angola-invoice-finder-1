@@ -60,7 +60,7 @@ function broadcastTable(table, entityId = null) {
 
 const discoveryBroadcaster = new DiscoveryBroadcaster(PORT, {
   name: process.env.SERVER_NAME || 'NEXOR ERP Server',
-  version: '1.0.0',
+  version: APP_VERSION,
   branch: process.env.BRANCH_NAME || null,
 });
 
