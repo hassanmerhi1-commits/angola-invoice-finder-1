@@ -12,6 +12,10 @@ const MIGRATION_FILES = [
   '036_company_settings_phase4.sql',
   '037_fiscal_audit_phase5.sql',
   '038_audit_log_actions_phase5.sql',
+  '039_app_meta_schema_version.sql',
+  '040_users_username.sql',
+  '041_user_sessions_security.sql',
+  '042_simplified_invoice_fs.sql',
 ];
 
 function isCommentOnlySQL(stmt) {

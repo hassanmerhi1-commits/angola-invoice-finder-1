@@ -32,6 +32,7 @@ import {
 } from '@/lib/sellingPriceHints';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { useTranslation } from '@/i18n';
 
 // Helper: only use local demo storage in explicit demo mode.
 // In real web localhost/API mode, never silently revive stale browser data.

@@ -13,7 +13,7 @@
  *   Client: SERVIDOR or 10.0.0.5  (hostname/IP = client mode)
  */
 
-const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, dialog, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -348,7 +348,8 @@ const UPDATER_LATEST_YML_URL = `${UPDATER_GENERIC_FEED_URL}/latest.yml`;
 const UPDATER_CHECK_TIMEOUT_MS = 25000;
 const UPDATER_DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
 const UPDATER_HTTP_TIMEOUT_MS = 15000;
-const UPDATER_FILE_DOWNLOAD_IDLE_MS = 60000;
+const UPDATER_FILE_DOWNLOAD_IDLE_MS = 180000;
+const UPDATER_DOWNLOAD_MAX_ATTEMPTS = 4;
 
 let autoUpdater = createNoopAutoUpdater();
 let autoUpdaterLoaded = false;
@@ -615,6 +616,94 @@ function verifySha512File(filePath, expectedBase64) {
   });
 }
 
+function isRetriableDownloadError(err) {
+  const code = String(err?.code || '');
+  const msg = String(err?.message || err || '');
+  return (
+    ['ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN'].includes(code)
+    || /ECONNRESET|socket hang up|timed out|network/i.test(msg)
+  );
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function partialDownloadBytes(destPath) {
+  try {
+    if (!destPath || !fs.existsSync(destPath)) return 0;
+    const size = fs.statSync(destPath).size;
+    return Number.isFinite(size) && size > 0 ? size : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function downloadFileViaNet(url, destPath, { onProgress, expectedSize = 0, startByte = 0 } = {}) {
+  if (typeof net?.request !== 'function') {
+    return Promise.reject(new Error('Electron net module unavailable'));
+  }
+  return new Promise((resolve, reject) => {
+    let received = startByte;
+    const request = net.request({ method: 'GET', url });
+    request.setHeader('User-Agent', 'NEXOR-ERP-Updater');
+    request.setHeader('Accept', 'application/octet-stream, application/*, */*');
+    if (startByte > 0) request.setHeader('Range', `bytes=${startByte}-`);
+
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+
+    request.on('response', (response) => {
+      const status = response.statusCode || 0;
+      if (status === 416) {
+        fail(Object.assign(new Error('Partial download rejected by server'), { code: 'RANGE_RESET' }));
+        return;
+      }
+      if (status !== 200 && status !== 206) {
+        fail(new Error(`HTTP ${status} downloading ${url}`));
+        return;
+      }
+
+      const chunkLen = parseInt(String(response.headers['content-length'] || '0'), 10) || 0;
+      const total = status === 206 && chunkLen > 0
+        ? startByte + chunkLen
+        : (parseInt(String(response.headers['content-length'] || expectedSize || 0), 10) || expectedSize || 0);
+
+      const fileStream = fs.createWriteStream(destPath, { flags: startByte > 0 && status === 206 ? 'a' : 'w' });
+      response.on('data', (chunk) => {
+        received += chunk.length;
+        if (typeof onProgress === 'function') {
+          const denom = total > 0 ? total : (expectedSize || 0);
+          const percent = denom > 0 ? Math.min(99, (received / denom) * 100) : 0;
+          onProgress(percent, received, denom);
+        }
+      });
+      response.on('end', () => {
+        fileStream.end(() => {
+          if (settled) return;
+          settled = true;
+          if (typeof onProgress === 'function') {
+            onProgress(100, received, total || received);
+          }
+          resolve({ bytes: received, total: total || received });
+        });
+      });
+      response.on('error', (err) => {
+        try { fileStream.destroy(); } catch (_) {}
+        fail(err);
+      });
+      response.pipe(fileStream);
+      fileStream.on('error', fail);
+    });
+    request.on('error', fail);
+    request.end();
+  });
+}
+
 function downloadFileWithRedirects(
   url,
   destPath,
@@ -622,6 +711,7 @@ function downloadFileWithRedirects(
     onProgress,
     expectedSize = 0,
     redirectsLeft = 8,
+    startByte = 0,
   } = {},
 ) {
   return new Promise((resolve, reject) => {
@@ -633,14 +723,17 @@ function downloadFileWithRedirects(
       return;
     }
     const lib = parsed.protocol === 'https:' ? require('https') : http;
+    const headers = {
+      'User-Agent': 'NEXOR-ERP-Updater',
+      Accept: 'application/octet-stream, application/*, */*',
+    };
+    if (startByte > 0) headers.Range = `bytes=${startByte}-`;
+
     const req = lib.get(
       parsed,
       {
         timeout: UPDATER_FILE_DOWNLOAD_IDLE_MS,
-        headers: {
-          'User-Agent': 'NEXOR-ERP-Updater',
-          Accept: 'application/octet-stream, application/*, */*',
-        },
+        headers,
       },
       (res) => {
         const status = res.statusCode || 0;
@@ -651,22 +744,34 @@ function downloadFileWithRedirects(
             onProgress,
             expectedSize,
             redirectsLeft: redirectsLeft - 1,
+            startByte,
           }).then(resolve).catch(reject);
           return;
         }
-        if (status !== 200) {
+        if (status === 416) {
+          res.resume();
+          reject(Object.assign(new Error('Partial download rejected by server'), { code: 'RANGE_RESET' }));
+          return;
+        }
+        if (status !== 200 && status !== 206) {
           res.resume();
           reject(new Error(`HTTP ${status} downloading ${url}`));
           return;
         }
-        const total = parseInt(String(res.headers['content-length'] || expectedSize || 0), 10) || expectedSize || 0;
-        let received = 0;
-        const fileStream = fs.createWriteStream(destPath);
+        const chunkLen = parseInt(String(res.headers['content-length'] || '0'), 10) || 0;
+        const total = status === 206 && chunkLen > 0
+          ? startByte + chunkLen
+          : (parseInt(String(res.headers['content-length'] || expectedSize || 0), 10) || expectedSize || 0);
+        let received = startByte;
+        const fileStream = fs.createWriteStream(destPath, {
+          flags: startByte > 0 && status === 206 ? 'a' : 'w',
+        });
         res.on('data', (chunk) => {
           received += chunk.length;
           if (typeof onProgress === 'function') {
-            const percent = total > 0 ? Math.min(99, (received / total) * 100) : 0;
-            onProgress(percent, received, total);
+            const denom = total > 0 ? total : (expectedSize || 0);
+            const percent = denom > 0 ? Math.min(99, (received / denom) * 100) : 0;
+            onProgress(percent, received, denom);
           }
         });
         res.pipe(fileStream);
@@ -688,6 +793,40 @@ function downloadFileWithRedirects(
       reject(new Error(`Timed out downloading ${url}`));
     });
   });
+}
+
+async function downloadFileResilient(url, destPath, { onProgress, expectedSize = 0 } = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= UPDATER_DOWNLOAD_MAX_ATTEMPTS; attempt += 1) {
+    let startByte = partialDownloadBytes(destPath);
+    if (expectedSize > 0 && startByte >= expectedSize) {
+      try { fs.unlinkSync(destPath); } catch (_) {}
+      startByte = 0;
+    }
+
+    try {
+      if (attempt > 1) {
+        console.warn(`[AutoUpdater] Download retry ${attempt}/${UPDATER_DOWNLOAD_MAX_ATTEMPTS} from byte ${startByte}`);
+        await sleepMs(1500 * attempt);
+      }
+      try {
+        return await downloadFileViaNet(url, destPath, { onProgress, expectedSize, startByte });
+      } catch (netErr) {
+        console.warn('[AutoUpdater] net download failed, falling back to https:', netErr?.message || netErr);
+        return await downloadFileWithRedirects(url, destPath, { onProgress, expectedSize, startByte });
+      }
+    } catch (err) {
+      lastError = err;
+      if (err?.code === 'RANGE_RESET') {
+        try { fs.unlinkSync(destPath); } catch (_) {}
+        continue;
+      }
+      if (!isRetriableDownloadError(err) || attempt === UPDATER_DOWNLOAD_MAX_ATTEMPTS) {
+        throw err;
+      }
+    }
+  }
+  throw lastError || new Error('Download failed');
 }
 
 async function fetchLatestReleaseInfo() {
@@ -713,7 +852,7 @@ async function downloadUpdateViaHttp(releaseInfo) {
 
   try {
     console.log(`[AutoUpdater] HTTP download ${downloadUrl} -> ${destPath}`);
-    await downloadFileWithRedirects(downloadUrl, destPath, {
+    await downloadFileResilient(downloadUrl, destPath, {
       expectedSize: releaseInfo.size,
       onProgress: (percent) => {
         sendUpdaterStatus({ status: 'downloading', progress: Math.round(percent) });
@@ -894,7 +1033,12 @@ async function runUpdateDownload() {
     const message = err?.message || String(err);
     console.error('[AutoUpdater] HTTP download failed:', message);
     const browser = await openLatestInstallerInBrowser();
-    const error = `${message}. Installer opened in your browser — run it to update.`;
+    let installerHint = 'the installer (.exe)';
+    try {
+      const info = await fetchLatestReleaseInfo();
+      if (info?.file) installerHint = info.file;
+    } catch (_) {}
+    const error = `${message}. Download opened in your browser — run ${installerHint} from your Downloads folder, then restart NEXOR.`;
     sendUpdaterStatus({ status: 'error', error });
     return {
       success: false,
@@ -3548,11 +3692,14 @@ ipcMain.handle('print:html', async (_, html, options = {}) => {
     );
     await new Promise((resolve) => setTimeout(resolve, 600));
 
-    // Some Windows drivers only show the dialog when the print window exists (can stay behind main window)
-    printWin.showInactive();
+    const isSilent = !!options.silent;
+    if (!isSilent) {
+      // Some Windows drivers only show the dialog when the print window exists (can stay behind main window)
+      printWin.showInactive();
+    }
 
     await printWin.webContents.print({
-      silent: !!options.silent,
+      silent: isSilent,
       printBackground: true,
     });
     return { success: true };

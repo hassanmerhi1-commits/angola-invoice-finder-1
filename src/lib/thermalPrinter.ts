@@ -335,87 +335,16 @@ export async function printViaSerial(data: Uint8Array): Promise<boolean> {
 }
 
 // Print using browser's print dialog (fallback)
-export async function printViaBrowser(
+function buildReceiptCopyBody(
   sale: Sale,
   branch: Branch,
-  paperWidth: 58 | 80 = 80,
+  paperWidth: 58 | 80,
+  company: ReturnType<typeof getCompanySettings>,
+  qrCodeDataURL: string,
   copyLabel?: string,
-  options: { direct?: boolean } = {},
-): Promise<void> {
-  // Pre-generate QR code as data URL to avoid CDN delays
-  const { generateAGTQRCodeDataURL } = await import('./agtQRCode');
-  const qrCodeDataURL = await generateAGTQRCodeDataURL(sale, branch, { size: 100, margin: 1 });
-  
-  // Get company settings for NIF
-  const company = getCompanySettings();
-
-  const width = paperWidth === 80 ? '80mm' : '58mm';
-  
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Recibo - ${sale.invoiceNumber}</title>
-  <style>
-    @page {
-      size: ${width} auto;
-      margin: 0;
-    }
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    body {
-      font-family: 'Courier New', monospace;
-      font-size: 12px;
-      width: ${width};
-      padding: 5mm;
-      background: white;
-      color: black;
-    }
-    .center { text-align: center; }
-    .bold { font-weight: bold; }
-    .large { font-size: 14px; }
-    .small { font-size: 10px; }
-    .divider {
-      border-top: 1px dashed #000;
-      margin: 5px 0;
-    }
-    .double-divider {
-      border-top: 2px solid #000;
-      margin: 5px 0;
-    }
-    .row {
-      display: flex;
-      justify-content: space-between;
-      margin: 2px 0;
-    }
-    .item-name {
-      margin-top: 4px;
-    }
-    .item-details {
-      display: flex;
-      justify-content: space-between;
-      padding-left: 10px;
-      font-size: 11px;
-    }
-    .total-row {
-      font-size: 16px;
-      font-weight: bold;
-      margin: 5px 0;
-    }
-    .footer {
-      margin-top: 15px;
-      font-size: 10px;
-    }
-    @media print {
-      body { -webkit-print-color-adjust: exact; }
-    }
-  </style>
-</head>
-<body>
+): string {
+  return `
+  <div class="receipt-copy">
   ${copyLabel ? `<div class="center bold large" style="margin-bottom:6px;">*** ${copyLabel.toUpperCase()} ***</div>` : ''}
   ${company.logo ? `<div class="center" style="margin-bottom: 5px;"><img src="${company.logo}" alt="Logo" style="max-height: 40px; max-width: ${paperWidth === 80 ? '60' : '40'}mm; object-fit: contain;"></div>` : ''}
   <div class="center bold large">${company.tradeName || company.name || branch.name.toUpperCase()}</div>
@@ -481,7 +410,6 @@ export async function printViaBrowser(
   
   <div class="divider"></div>
   
-  <!-- AGT QR Code Section - Pre-rendered -->
   <div class="center" style="padding: 10px 0;">
     ${qrCodeDataURL ? `<img src="${qrCodeDataURL}" alt="QR Code AGT" style="width: 100px; height: 100px;">` : ''}
     <div style="font-size: 8px; margin-top: 5px; font-family: monospace;">
@@ -500,12 +428,109 @@ export async function printViaBrowser(
     <br>
     <div>Obrigado pela preferência!</div>
   </div>
+  </div>`;
+}
+
+async function buildReceiptBrowserHtml(
+  sale: Sale,
+  branch: Branch,
+  paperWidth: 58 | 80 = 80,
+  copyLabels: (string | undefined)[] = [undefined],
+): Promise<string> {
+  const { generateAGTQRCodeDataURL } = await import('./agtQRCode');
+  const qrCodeDataURL = await generateAGTQRCodeDataURL(sale, branch, { size: 100, margin: 1 });
+  const company = getCompanySettings();
+  const width = paperWidth === 80 ? '80mm' : '58mm';
+  const bodies = copyLabels.map((label) =>
+    buildReceiptCopyBody(sale, branch, paperWidth, company, qrCodeDataURL, label),
+  );
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Recibo - ${sale.invoiceNumber}</title>
+  <style>
+    @page {
+      size: ${width} auto;
+      margin: 0;
+    }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      width: ${width};
+      padding: 5mm;
+      background: white;
+      color: black;
+    }
+    .receipt-copy + .receipt-copy {
+      page-break-before: always;
+      break-before: page;
+    }
+    .center { text-align: center; }
+    .bold { font-weight: bold; }
+    .large { font-size: 14px; }
+    .small { font-size: 10px; }
+    .divider {
+      border-top: 1px dashed #000;
+      margin: 5px 0;
+    }
+    .double-divider {
+      border-top: 2px solid #000;
+      margin: 5px 0;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      margin: 2px 0;
+    }
+    .item-name {
+      margin-top: 4px;
+    }
+    .item-details {
+      display: flex;
+      justify-content: space-between;
+      padding-left: 10px;
+      font-size: 11px;
+    }
+    .total-row {
+      font-size: 16px;
+      font-weight: bold;
+      margin: 5px 0;
+    }
+    .footer {
+      margin-top: 15px;
+      font-size: 10px;
+    }
+    @media print {
+      body { -webkit-print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+  ${bodies.join('\n')}
 </body>
-</html>
-  `;
-  
+</html>`;
+}
+
+export async function printViaBrowser(
+  sale: Sale,
+  branch: Branch,
+  paperWidth: 58 | 80 = 80,
+  copyLabelOrLabels?: string | (string | undefined)[],
+  options: { direct?: boolean } = {},
+): Promise<void> {
+  const labels = Array.isArray(copyLabelOrLabels)
+    ? copyLabelOrLabels
+    : [copyLabelOrLabels];
+  const html = await buildReceiptBrowserHtml(sale, branch, paperWidth, labels);
   const { printHtml } = await import('./printHtml');
-  await printHtml(html, { direct: options.direct });
+  await printHtml(html, { direct: options.direct, silent: options.direct });
 }
 
 function normalizePrintReceiptOptions(
@@ -542,14 +567,14 @@ export async function printReceipt(
   const options = normalizePrintReceiptOptions(openDrawerOrOptions);
   const copies = Math.max(1, options.copies ?? 1);
   const copyLabels = options.copyLabels ?? [];
-  let lastMethod = 'browser';
+  const labels = Array.from({ length: copies }, (_, i) => copyLabels[i]);
 
-  for (let copyIndex = 0; copyIndex < copies; copyIndex++) {
-    const copyLabel = copyLabels[copyIndex];
-    const openDrawer = options.openDrawer === true && copyIndex === 0;
-
-    if (config.type === 'usb' && 'serial' in navigator) {
-      try {
+  if (config.type === 'usb' && 'serial' in navigator) {
+    try {
+      let serialOk = true;
+      for (let copyIndex = 0; copyIndex < copies; copyIndex++) {
+        const copyLabel = copyLabels[copyIndex];
+        const openDrawer = options.openDrawer === true && copyIndex === 0;
         let data = generateESCPOSReceipt(sale, branch, config, copyLabel);
 
         if (openDrawer) {
@@ -562,22 +587,23 @@ export async function printReceipt(
         }
 
         const success = await printViaSerial(data);
-        if (success) {
-          lastMethod = 'serial';
-          continue;
+        if (!success) {
+          serialOk = false;
+          break;
         }
-      } catch (error) {
-        console.warn('Serial printing failed, falling back to browser:', error);
       }
+      if (serialOk) {
+        return { success: true, method: 'serial' };
+      }
+    } catch (error) {
+      console.warn('Serial printing failed, falling back to browser:', error);
     }
-
-    await printViaBrowser(sale, branch, config.paperWidth, copyLabel, {
-      direct: options.direct ?? false,
-    });
-    lastMethod = 'browser';
   }
 
-  return { success: true, method: lastMethod };
+  await printViaBrowser(sale, branch, config.paperWidth, labels, {
+    direct: options.direct ?? false,
+  });
+  return { success: true, method: 'browser' };
 }
 
 // Open cash drawer only

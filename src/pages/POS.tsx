@@ -213,7 +213,6 @@ export default function POS() {
 
       setLastSale(sale);
       setCheckoutOpen(false);
-      setReceiptOpen(true);
       await refreshProducts();
       void refreshSales();
 
@@ -228,6 +227,8 @@ export default function POS() {
         console.warn('[POS] Auto thermal print failed:', printError);
         toast.error(t.receiptUi.autoPrintError);
       }
+
+      setReceiptOpen(true);
 
       if (paymentMethod === 'cash') {
         toast.info(t.posUi.saleCompleted, {

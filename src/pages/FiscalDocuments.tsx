@@ -13,6 +13,7 @@ import { useSupplierReturns } from '@/hooks/useSupplierReturns';
 import { SupplierReturnItem } from '@/lib/supplierReturns';
 import { Sale, CreditNote, CreditNoteItem, DebitNoteItem, TransportDocumentItem, Product, PurchaseOrder } from '@/types/erp';
 import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
+import { CreditNoteCreateDialog } from '@/components/fiscal/CreditNoteCreateDialog';
 import { api } from '@/lib/api/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,7 +33,6 @@ import {
   Truck, 
   Download, 
   Plus,
-  Search,
   Calendar,
   Building2,
   AlertCircle,
@@ -84,11 +84,10 @@ export default function FiscalDocuments() {
   const [companyDialog, setCompanyDialog] = useState(false);
 
   // Form states
+  // Debit note may optionally reference a sale
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
-  const [creditReason, setCreditReason] = useState<'return' | 'discount' | 'error' | 'other'>('return');
-  const [creditDescription, setCreditDescription] = useState('');
-  const [creditItems, setCreditItems] = useState<CreditNoteItem[]>([]);
-  const [restoreStock, setRestoreStock] = useState(true);
+  const [initialCreditSaleId, setInitialCreditSaleId] = useState<string | null>(null);
+  const [creditNoteSubmitting, setCreditNoteSubmitting] = useState(false);
   const [viewCreditNote, setViewCreditNote] = useState<CreditNote | null>(null);
 
   const [debitReason, setDebitReason] = useState<'price_adjustment' | 'additional_charge' | 'interest' | 'other'>('price_adjustment');
@@ -123,7 +122,6 @@ export default function FiscalDocuments() {
   const [saftEndDate, setSaftEndDate] = useState(new Date().toISOString().split('T')[0]);
 
   const [editCompanyInfo, setEditCompanyInfo] = useState(companyInfo);
-  const [searchTerm, setSearchTerm] = useState('');
   const openCreditNoteFetchRef = useRef<string | null>(null);
 
   const notifyCreditNoteDenied = useCallback(() => {
@@ -139,11 +137,7 @@ export default function FiscalDocuments() {
       notifyCreditNoteDenied();
       return;
     }
-    setSelectedSale(null);
-    setCreditItems([]);
-    setCreditReason('return');
-    setCreditDescription('');
-    setRestoreStock(true);
+    setInitialCreditSaleId(null);
     setCreditNoteDialog(true);
   }, [canCreateCreditNote, notifyCreditNoteDenied]);
 
@@ -176,18 +170,7 @@ export default function FiscalDocuments() {
       }
       const sale = sales.find((s) => s.id === st.openCreditNoteForSaleId);
       if (sale) {
-        setSelectedSale(sale);
-        setRestoreStock(true);
-        setCreditItems(sale.items.map((item) => ({
-          productId: item.productId,
-          productName: item.productName,
-          sku: item.sku,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          taxRate: item.taxRate,
-          taxAmount: item.taxAmount,
-          subtotal: item.subtotal,
-        })));
+        setInitialCreditSaleId(sale.id);
         setCreditNoteDialog(true);
       }
     }
@@ -230,21 +213,6 @@ export default function FiscalDocuments() {
   // Received POs for supplier returns
   const receivedOrders = orders.filter(o => o.status === 'received' || o.status === 'partial');
 
-  // Handlers
-  const handleSelectSaleForCredit = (sale: Sale) => {
-    setSelectedSale(sale);
-    setCreditItems(sale.items.map(item => ({
-      productId: item.productId,
-      productName: item.productName,
-      sku: item.sku,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      taxRate: item.taxRate,
-      taxAmount: item.taxAmount,
-      subtotal: item.subtotal,
-    })));
-  };
-
   const resolveSaleBranch = (sale: Sale) => {
     const saleBranchId = sale.branchId || currentBranch?.id;
     const saleBranch = branches.find((b) => b.id === saleBranchId) || currentBranch;
@@ -252,7 +220,14 @@ export default function FiscalDocuments() {
     return { id: saleBranchId, code: saleBranch.code, name: saleBranch.name };
   };
 
-  const handleCreateCreditNote = async () => {
+  const handleCreateCreditNote = async (payload: {
+    sale: Sale;
+    reason: CreditNote['reason'];
+    description: string;
+    items: CreditNoteItem[];
+    restoreStock: boolean;
+  }) => {
+    const { sale: selectedSale, reason: creditReason, description: creditDescription, items: creditItems, restoreStock } = payload;
     if (!selectedSale || !user) return;
     if (!canCreateCreditNote) {
       toast({
@@ -272,6 +247,7 @@ export default function FiscalDocuments() {
       return;
     }
 
+    setCreditNoteSubmitting(true);
     try {
       const note = await createCreditNote(
         saleBranch.id,
@@ -289,7 +265,7 @@ export default function FiscalDocuments() {
         description: t.fiscalDocumentsUi.documentIssuedSuccess,
       });
       setCreditNoteDialog(false);
-      resetCreditForm();
+      setInitialCreditSaleId(null);
       setViewCreditNote(note);
     } catch (err) {
       toast({
@@ -297,6 +273,9 @@ export default function FiscalDocuments() {
         title: t.common.error,
         description: err instanceof Error ? err.message : t.fiscalDocumentsUi.documentIssuedSuccess,
       });
+      throw err;
+    } finally {
+      setCreditNoteSubmitting(false);
     }
   };
 
@@ -430,14 +409,6 @@ export default function FiscalDocuments() {
       description: t.fiscalDocumentsUi.companyInfoSavedSuccess,
     });
     setCompanyDialog(false);
-  };
-
-  const resetCreditForm = () => {
-    setSelectedSale(null);
-    setCreditReason('return');
-    setCreditDescription('');
-    setCreditItems([]);
-    setRestoreStock(true);
   };
 
   const resetDebitForm = () => {
@@ -575,11 +546,6 @@ export default function FiscalDocuments() {
   const addDebitItem = () => {
     setDebitItems([...debitItems, { description: '', quantity: 1, unitPrice: 0, taxRate: DEFAULT_VAT_RATE, taxAmount: 0, subtotal: 0 }]);
   };
-
-  const filteredSales = sales.filter(s => 
-    s.invoiceNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.customerName?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   return (
     <div className="p-6 space-y-6">
@@ -1220,186 +1186,22 @@ export default function FiscalDocuments() {
         </DialogContent>
       </Dialog>
 
-      {/* Credit Note Dialog */}
-      <Dialog
+      <CreditNoteCreateDialog
         open={creditNoteDialog && canCreateCreditNote}
+        initialSaleId={initialCreditSaleId}
+        sales={sales}
+        creditNotes={creditNotes}
+        submitting={creditNoteSubmitting}
         onOpenChange={(open) => {
           if (open && !canCreateCreditNote) {
             notifyCreditNoteDenied();
             return;
           }
           setCreditNoteDialog(open);
-          if (!open) resetCreditForm();
+          if (!open) setInitialCreditSaleId(null);
         }}
-      >
-        <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col p-0 gap-0">
-          <DialogHeader className="px-6 pt-6 pb-2">
-            <DialogTitle>{fd.newCreditNoteTitle}</DialogTitle>
-            <DialogDescription>{fd.newCreditNoteSubtitle}</DialogDescription>
-          </DialogHeader>
-
-          <div className="px-6 pb-3 border-b bg-muted/40 space-y-2 shrink-0">
-            <Label className="text-sm font-semibold">{fd.restoreStockLabel}</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant={restoreStock ? 'default' : 'outline'}
-                className="gap-2 h-auto py-3"
-                onClick={() => setRestoreStock(true)}
-              >
-                <RotateCcw className="h-4 w-4" />
-                {fd.restoreStockYes}
-              </Button>
-              <Button
-                type="button"
-                variant={!restoreStock ? 'secondary' : 'outline'}
-                className="h-auto py-3"
-                onClick={() => setRestoreStock(false)}
-              >
-                {fd.restoreStockNo}
-              </Button>
-            </div>
-            <div
-              className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
-                restoreStock ? 'border-green-500/40 bg-green-500/10' : 'border-muted bg-muted/30'
-              }`}
-            >
-              <Package className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>{restoreStock ? fd.stockWillBeRestored : fd.stockWillNotBeRestored}</span>
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-6 py-2 space-y-4">
-          {!selectedSale ? (
-            <div className="space-y-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder={t.fiscalDocumentsUi.searchInvoicePlaceholder}
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-              <div className="max-h-64 overflow-y-auto border rounded-lg">
-                {filteredSales.map(sale => (
-                  <div 
-                    key={sale.id}
-                    className="p-3 border-b hover:bg-muted cursor-pointer"
-                    onClick={() => handleSelectSaleForCredit(sale)}
-                  >
-                    <div className="flex justify-between">
-                      <span className="font-medium">{sale.invoiceNumber}</span>
-                      <span>{sale.total.toLocaleString(uiLocale)} Kz</span>
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {sale.customerName || fd.finalConsumer} • {format(new Date(sale.createdAt), 'dd/MM/yyyy')}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="p-3 bg-muted rounded-lg">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <p className="font-medium">{fd.invoiceLabel} {selectedSale.invoiceNumber}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {selectedSale.customerName || t.fiscalDocumentsUi.finalConsumer} • {selectedSale.total.toLocaleString(uiLocale)} Kz
-                    </p>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={() => setSelectedSale(null)}>
-                    {fd.changeInvoice}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>{fd.reasonLabel}</Label>
-                <Select value={creditReason} onValueChange={(v: any) => setCreditReason(v)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="return">{fd.creditReasonReturnFull}</SelectItem>
-                    <SelectItem value="discount">{fd.creditReasonDiscountFull}</SelectItem>
-                    <SelectItem value="error">{fd.creditReasonErrorFull}</SelectItem>
-                    <SelectItem value="other">{fd.other}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>{t.common.description}</Label>
-                <Textarea 
-                  value={creditDescription}
-                  onChange={(e) => setCreditDescription(e.target.value)}
-                  placeholder={t.fiscalDocumentsUi.creditNoteReasonPlaceholder}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>{fd.itemsToCredit}</Label>
-                <div className="border rounded-lg">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{fd.colProduct}</TableHead>
-                        <TableHead className="text-right">{fd.colQty}</TableHead>
-                        <TableHead className="text-right">{fd.colPrice}</TableHead>
-                        <TableHead className="text-right">{fd.colTotal}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {creditItems.map((item, idx) => (
-                        <TableRow key={idx}>
-                          <TableCell>{item.productName}</TableCell>
-                          <TableCell className="text-right">
-                            <Input
-                              type="number"
-                              min="0"
-                              max={selectedSale.items.find(i => i.productId === item.productId)?.quantity || item.quantity}
-                              value={item.quantity}
-                              onChange={(e) => {
-                                const updated = [...creditItems];
-                                const qty = parseInt(e.target.value) || 0;
-                                updated[idx].quantity = qty;
-                                updated[idx].subtotal = qty * item.unitPrice;
-                                updated[idx].taxAmount = updated[idx].subtotal * (item.taxRate / 100);
-                                setCreditItems(updated);
-                              }}
-                              className="w-20 text-right"
-                            />
-                          </TableCell>
-                          <TableCell className="text-right">{item.unitPrice.toLocaleString(uiLocale)} Kz</TableCell>
-                          <TableCell className="text-right">{item.subtotal.toLocaleString(uiLocale)} Kz</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                <div className="text-right font-bold">
-                  {t.fiscalDocumentsUi.totalLabel} {creditItems.reduce((sum, i) => sum + i.subtotal + i.taxAmount, 0).toLocaleString(uiLocale)} Kz
-                </div>
-              </div>
-            </div>
-          )}
-          </div>
-
-          <DialogFooter className="px-6 py-4 border-t">
-            <Button variant="outline" onClick={() => { setCreditNoteDialog(false); resetCreditForm(); }}>
-              {t.common.cancel}
-            </Button>
-            <Button 
-              onClick={handleCreateCreditNote}
-              disabled={!selectedSale || creditItems.every(i => i.quantity === 0)}
-            >
-              {fd.issueCreditNote}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onSubmit={handleCreateCreditNote}
+      />
 
       {/* Debit Note Dialog */}
       <Dialog open={debitNoteDialog} onOpenChange={setDebitNoteDialog}>

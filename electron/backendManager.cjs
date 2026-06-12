@@ -284,6 +284,9 @@ function resolveBackendEntry() {
 
   if (viable.length === 0) return null;
 
+  const packagedPath = packagedBackend && fs.existsSync(packagedBackend) ? packagedBackend : null;
+  const installPath = installBackend && fs.existsSync(installBackend) ? installBackend : null;
+
   let best = viable[0];
   let bestSchema = readBackendSchemaExpectation(best);
   for (let i = 1; i < viable.length; i++) {
@@ -292,6 +295,13 @@ function resolveBackendEntry() {
     if (schema > bestSchema) {
       best = candidate;
       bestSchema = schema;
+    } else if (schema === bestSchema && !isDev) {
+      // Same schema: prefer backend bundled with the installer over stale C:\NEXOR ERP\backend sync.
+      const candidateIsPackaged = packagedPath && path.normalize(candidate) === path.normalize(packagedPath);
+      const bestIsInstallOnly = installPath && path.normalize(best) === path.normalize(installPath);
+      if (candidateIsPackaged && bestIsInstallOnly) {
+        best = candidate;
+      }
     }
   }
 

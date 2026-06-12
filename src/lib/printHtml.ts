@@ -105,6 +105,8 @@ function printViaIframe(html: string): Promise<void> {
 export type PrintHtmlOptions = {
   /** Skip the in-app preview dialog and open the system print dialog immediately. */
   direct?: boolean;
+  /** Electron only: print to default printer without showing the OS dialog. */
+  silent?: boolean;
 };
 
 export async function printHtml(html: string, options: PrintHtmlOptions = {}): Promise<void> {
@@ -112,6 +114,19 @@ export async function printHtml(html: string, options: PrintHtmlOptions = {}): P
     const action = await openPrintPreview(html);
     if (action === 'cancel') return;
   }
+
+  const electronPrint = window.electronAPI?.print?.html;
+  if (electronPrint) {
+    const useSilent = options.silent ?? !!options.direct;
+    const result = await electronPrint(html, { silent: useSilent });
+    if (result.success) return;
+    if (useSilent) {
+      console.warn('[printHtml] Silent print failed, falling back to print dialog:', result.error);
+    } else {
+      throw new Error(result.error || 'Print failed');
+    }
+  }
+
   await printViaIframe(html);
 }
 

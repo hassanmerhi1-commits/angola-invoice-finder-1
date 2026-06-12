@@ -53,9 +53,12 @@ function Sync-FullBackend($destRoot) {
             Write-Host '  package-lock.json changed — refreshing node_modules...' -ForegroundColor DarkGray
         }
     }
-    if (-not $needsNodeModulesSync -and -not (Test-Path (Join-Path $nmDest 'node-forge'))) {
-        $needsNodeModulesSync = $true
-        Write-Host '  node_modules missing required packages — refreshing...' -ForegroundColor DarkGray
+    foreach ($requiredPkg in @('node-forge', 'fast-xml-parser')) {
+        if ($needsNodeModulesSync) { break }
+        if (-not (Test-Path (Join-Path $nmDest $requiredPkg))) {
+            $needsNodeModulesSync = $true
+            Write-Host "  node_modules missing $requiredPkg - refreshing..." -ForegroundColor DarkGray
+        }
     }
 
     if ($needsNodeModulesSync) {
@@ -79,7 +82,8 @@ function Sync-FullBackend($destRoot) {
         (Join-Path $destRoot 'src\lib\loginUserLookup.js'),
         (Join-Path $destRoot 'scripts\lib\integrityRunner.js'),
         (Join-Path $destRoot 'node_modules\dotenv'),
-        (Join-Path $destRoot 'node_modules\node-forge')
+        (Join-Path $destRoot 'node_modules\node-forge'),
+        (Join-Path $destRoot 'node_modules\fast-xml-parser')
     )
     foreach ($c in $checks) {
         if (-not (Test-Path $c)) {
