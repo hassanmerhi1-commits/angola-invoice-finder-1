@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { JWT_SECRET } = require('../jwtSecret');
 const { getBearerToken } = require('./requireAdmin');
+const { touchSession } = require('../lib/sessionLog');
 
 /**
  * Requires a valid JWT and an active user row.
@@ -36,6 +37,10 @@ async function requireAuth(req, res, next) {
       role: user.role,
       branchId: user.branch_id,
     };
+    req.tokenJti = decoded.jti || null;
+    if (decoded.jti) {
+      touchSession(decoded.jti).catch(() => {});
+    }
     return next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });

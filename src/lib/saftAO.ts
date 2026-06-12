@@ -115,7 +115,7 @@ export interface SAFTInvoice {
   HashControl: string;
   Period: string;
   InvoiceDate: string;
-  InvoiceType: 'FT' | 'FR' | 'NC' | 'ND' | 'VD' | 'TV' | 'TD' | 'AA' | 'DA';
+  InvoiceType: 'FT' | 'FR' | 'FS' | 'NC' | 'ND' | 'VD' | 'TV' | 'TD' | 'AA' | 'DA';
   SpecialRegimes: {
     SelfBillingIndicator: '0' | '1';
     CashVATSchemeIndicator: '0' | '1';

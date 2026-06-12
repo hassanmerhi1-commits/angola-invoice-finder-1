@@ -23,6 +23,7 @@ import {
   dedupeProductsForDisplay,
 } from '@/lib/productDedupe';
 import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
+import { resolveSaleInvoiceType } from '@/lib/fiscalInvoiceType';
 import {
   applySellingPriceHintsToProducts,
   fetchSellingPriceHints,
@@ -31,7 +32,6 @@ import {
 } from '@/lib/sellingPriceHints';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useTranslation } from '@/i18n';
 
 // Helper: only use local demo storage in explicit demo mode.
 // In real web localhost/API mode, never silently revive stale browser data.
@@ -627,6 +627,7 @@ function mapSaleRow(s: any): Sale {
     customerNif: s.customerNif || s.customer_nif || '',
     customerName: s.customerName || s.customer_name || '',
     status: s.status || 'completed',
+    invoiceType: (s.invoiceType || s.invoice_type || 'FT').toUpperCase() as Sale['invoiceType'],
     saftHash: s.saftHash || s.agt_hash || s.saft_hash || '',
     agtStatus: s.agtStatus || s.agt_status || undefined,
     agtCode: s.agtCode || s.agt_code || undefined,
@@ -700,6 +701,12 @@ export function useSales(branchId?: string) {
     const taxAmount = saleItems.reduce((sum, item) => sum + item.taxAmount, 0);
     const total = subtotal + taxAmount;
 
+    const invoiceType = resolveSaleInvoiceType({
+      customerNif,
+      paymentMethod,
+      total,
+    });
+
     const cashierName = (() => {
       try {
         const u = JSON.parse(sessionStorage.getItem('kwanzaerp_current_user') || localStorage.getItem('kwanzaerp_current_user') || '{}');
@@ -709,7 +716,12 @@ export function useSales(branchId?: string) {
 
     let invoiceNumberHint = '';
     try {
-      const invoicePreview = await api.sales.generateInvoiceNumber(branchCode);
+      const invoicePreview = await api.sales.generateInvoiceNumber(branchCode, {
+        paymentMethod,
+        total,
+        customerNif,
+        invoiceType,
+      });
       invoiceNumberHint = invoicePreview.data?.invoiceNumber || '';
     } catch {
       /* offline-first: local engine assigns LOCAL-* invoice number */
@@ -721,6 +733,7 @@ export function useSales(branchId?: string) {
       cashierId,
       cashierName,
       invoiceNumber: invoiceNumberHint || undefined,
+      invoiceType,
       items: saleItems,
       subtotal,
       taxAmount,
@@ -755,6 +768,7 @@ export function useSales(branchId?: string) {
       customerNif,
       customerName,
       status: 'completed',
+      invoiceType: (apiResult.data.invoice_type || apiResult.data.invoiceType || invoiceType) as Sale['invoiceType'],
       createdAt: apiResult.data.created_at || new Date().toISOString(),
     };
 
@@ -1054,10 +1068,15 @@ export function useAuth() {
   }, []);
 
   const logout = useCallback(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('kwanza_auth_token') : null;
+    if (token && isJwtAuthToken(token)) {
+      void api.auth.logout().catch(() => {});
+    }
     clearElectronSessionAuthenticated();
     storage.clearLocalProductsCache();
     storage.setCurrentUser(null);
     setAuthToken(null);
+    clearAuthSessionCache();
     setAuthState({ user: null });
   }, []);
 

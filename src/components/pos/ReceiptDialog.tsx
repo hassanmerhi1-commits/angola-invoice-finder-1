@@ -94,7 +94,7 @@ export function ReceiptDialog({
       await printA4Invoice(sale, branch, {
         showBankDetails: true,
         showNotes: true,
-        documentType: 'FR',
+        documentType: (sale.invoiceType || 'FR') as 'FT' | 'FR' | 'FS',
       });
       toast.success(t.receiptUi.a4SentToPrint);
     } catch (error) {

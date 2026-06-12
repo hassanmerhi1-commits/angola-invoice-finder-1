@@ -15,6 +15,11 @@ const {
   getEntityAgtStatus,
   ENTITY_MAP,
 } = require('../agt/agtTransmission');
+const { voidFiscalInvoice } = require('../agt/voidFiscalInvoice');
+const {
+  runAgtReconcileCycle,
+  reconcileFailedTransmissions,
+} = require('../agt/agtReconcile');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -167,6 +172,26 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  router.post('/retry-failed', requireAuth, requirePermission('agt_send'), async (req, res) => {
+    try {
+      const limit = Math.min(Number(req.body?.limit) || 20, 50);
+      const result = await reconcileFailedTransmissions(limit);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  router.post('/reconcile', requireAuth, requirePermission('agt_send'), async (req, res) => {
+    try {
+      const limit = Math.min(Number(req.body?.limit) || 10, 30);
+      const result = await runAgtReconcileCycle({ limit });
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   /**
    * Check AGT status — sale by id (legacy) or /status/:entityType/:entityId
    */
@@ -203,52 +228,42 @@ module.exports = function(broadcastTable) {
 
   /**
    * Void invoice at AGT
-   * POST /api/agt/void
+   * POST /api/agt/void  { invoiceId, reason }
    */
-  router.post('/void', async (req, res) => {
+  router.post('/void', requireAuth, requirePermission('pos_void'), async (req, res) => {
     try {
       const { invoiceId, reason } = req.body;
-
-      // Get invoice
-      const invoiceResult = await db.query(
-        'SELECT * FROM sales WHERE id = $1',
-        [invoiceId]
-      );
-
-      if (invoiceResult.rows.length === 0) {
-        return res.status(404).json({ error: 'Factura não encontrada' });
+      if (!invoiceId) {
+        return res.status(400).json({ error: 'invoiceId is required' });
       }
 
-      const invoice = invoiceResult.rows[0];
-
-      // Record void transmission
-      await db.query(
-        `INSERT INTO agt_transmissions 
-         (invoice_id, invoice_number, transmission_type, request_payload, agt_status)
-         VALUES ($1, $2, 'void', $3, 'validated')`,
-        [invoiceId, invoice.invoice_number, JSON.stringify({ reason })]
-      );
-
-      // Update sale status
-      await db.query(
-        `UPDATE sales SET status = 'voided' WHERE id = $1`,
-        [invoiceId]
-      );
-
-      // Log audit
-      await logAudit(db, {
-        action: 'invoice_voided',
-        entityType: 'invoice',
-        entityId: invoiceId,
-        entityNumber: invoice.invoice_number,
-        details: { reason }
+      const result = await voidFiscalInvoice(invoiceId, {
+        reason,
+        userId: req.user?.id,
+        userName: req.user?.name,
       });
 
-      if (broadcastTable) broadcastTable('sales');
+      await logFiscalEventFromReq(req, {
+        tableName: 'sales',
+        recordId: invoiceId,
+        action: 'void',
+        description: `Factura ${result.invoiceNumber} anulada`,
+        newValues: {
+          reason,
+          agtStatus: result.agtStatus,
+          simulated: result.simulated,
+        },
+      });
 
-      res.json({ success: true });
+      if (broadcastTable) {
+        broadcastTable('sales');
+        broadcastTable('agt_transmissions');
+      }
+
+      res.json(result);
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      const status = /não encontrada/i.test(error.message) ? 404 : 400;
+      res.status(status).json({ error: error.message });
     }
   });
 
@@ -326,6 +341,61 @@ module.exports = function(broadcastTable) {
   });
 
   /**
+   * AGT transmission summary for a period
+   * GET /api/agt/transmissions-report
+   */
+  router.get('/transmissions-report', async (req, res) => {
+    try {
+      const year = req.query.year ? Number(req.query.year) : null;
+      const month = req.query.month ? Number(req.query.month) : null;
+      const params = [];
+      let where = 'WHERE 1=1';
+
+      if (year) {
+        params.push(year);
+        where += ` AND EXTRACT(YEAR FROM transmitted_at) = $${params.length}`;
+      }
+      if (month) {
+        params.push(month);
+        where += ` AND EXTRACT(MONTH FROM transmitted_at) = $${params.length}`;
+      }
+
+      const summaryRes = await db.query(
+        `SELECT
+           COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE LOWER(COALESCE(agt_status, '')) IN ('validated', 'approved'))::int AS validated,
+           COUNT(*) FILTER (WHERE LOWER(COALESCE(agt_status, '')) IN ('error', 'rejected'))::int AS failed,
+           COUNT(*) FILTER (WHERE LOWER(COALESCE(agt_status, '')) IN ('pending', 'submitted'))::int AS pending
+         FROM agt_transmissions
+         ${where}`,
+        params,
+      );
+
+      const byTypeRes = await db.query(
+        `SELECT
+           transmission_type,
+           LOWER(COALESCE(agt_status, 'pending')) AS agt_status,
+           COUNT(*)::int AS count
+         FROM agt_transmissions
+         ${where}
+         GROUP BY transmission_type, LOWER(COALESCE(agt_status, 'pending'))
+         ORDER BY transmission_type, agt_status`,
+        params,
+      );
+
+      res.json({
+        year,
+        month,
+        summary: summaryRes.rows[0] || { total: 0, validated: 0, failed: 0, pending: 0 },
+        byTypeStatus: byTypeRes.rows,
+      });
+    } catch (error) {
+      console.error('[AGT] transmissions-report error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
    * Get transmission history
    * GET /api/agt/transmissions
    */
@@ -343,12 +413,16 @@ module.exports = function(broadcastTable) {
       `;
       const params = [];
 
-      if (status) {
+      if (status === 'failed') {
+        query += ` WHERE t.agt_status IN ('error', 'rejected')`;
+      } else if (status === 'pending') {
+        query += ` WHERE t.agt_status IN ('pending', 'submitted')`;
+      } else if (status) {
         params.push(status);
         query += ` WHERE t.agt_status = $${params.length}`;
       }
 
-      params.push(parseInt(limit));
+      params.push(parseInt(limit, 10) || 50);
       query += ` ORDER BY t.transmitted_at DESC LIMIT $${params.length}`;
 
       const result = await db.query(query, params);

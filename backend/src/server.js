@@ -144,6 +144,8 @@ app.use('/api/exchange-rates', require('./routes/exchangeRates')(broadcastTable)
 app.use('/api/approvals', require('./routes/approvals')(broadcastTable));
 app.use('/api/audit', require('./routes/audit')(broadcastTable));
 app.use('/api/backup', require('./routes/backup')(broadcastTable));
+app.use('/api/security', require('./routes/security')());
+app.use('/api/certification', require('./routes/certification')());
 app.use('/api/consistency', require('./routes/consistency')(broadcastTable));
 app.use('/api/budgets', require('./routes/budgets')(broadcastTable));
 app.use('/api/daily-reports', require('./routes/dailyReports')(broadcastTable));

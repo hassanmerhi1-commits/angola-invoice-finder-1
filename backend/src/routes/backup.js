@@ -5,11 +5,14 @@ const fs = require('fs');
 const os = require('os');
 const db = require('../db');
 const { createPostgresBackup, restorePostgresBackup } = require('../lib/pgBackupCli');
+const { requireAuth } = require('../middleware/requireAuth');
+const { requirePermission } = require('../middleware/requirePermission');
 
 let restoreInProgress = false;
 
 module.exports = function backupRoutes() {
   const router = express.Router();
+  router.use(requireAuth);
 
   function resolveBackupDir() {
     const candidates = [
@@ -98,7 +101,7 @@ module.exports = function backupRoutes() {
   }
 
   // GET /api/backup/info
-  router.get('/info', async (_req, res) => {
+  router.get('/info', requirePermission('admin_backup', 'admin_settings'), async (_req, res) => {
     try {
       let databaseSize = null;
       if (db.engine === 'sqlite' && db.dbPath && fs.existsSync(db.dbPath)) {
@@ -119,7 +122,7 @@ module.exports = function backupRoutes() {
   });
 
   // GET /api/backup — list backups
-  router.get('/', async (_req, res) => {
+  router.get('/', requirePermission('admin_backup', 'admin_settings'), async (_req, res) => {
     try {
       res.json(listBackupFiles());
     } catch (error) {
@@ -128,7 +131,7 @@ module.exports = function backupRoutes() {
   });
 
   // POST /api/backup — create backup
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('admin_backup'), async (req, res) => {
     if (assertNotRestoring(res)) return;
     try {
       const timestamp = timestampSlug();
@@ -161,6 +164,7 @@ module.exports = function backupRoutes() {
   // POST /api/backup/restore/upload — body = raw .db / .sql file
   router.post(
     '/restore/upload',
+    requirePermission('admin_restore'),
     express.raw({ type: ['application/octet-stream', 'application/x-sqlite3', 'application/vnd.sqlite3', '*/*'], limit: '512mb' }),
     async (req, res) => {
       if (restoreInProgress) {
@@ -234,7 +238,7 @@ module.exports = function backupRoutes() {
   );
 
   // POST /api/backup/restore/:filename — restore from server backup folder
-  router.post('/restore/:filename', async (req, res) => {
+  router.post('/restore/:filename', requirePermission('admin_restore'), async (req, res) => {
     if (restoreInProgress) {
       return res.status(503).json({ error: 'Restore already in progress' });
     }
@@ -301,7 +305,7 @@ module.exports = function backupRoutes() {
   });
 
   // GET /api/backup/:filename — download
-  router.get('/:filename', async (req, res) => {
+  router.get('/:filename', requirePermission('admin_backup'), async (req, res) => {
     try {
       const safe = path.basename(req.params.filename);
       if (req.params.filename === 'info') {
@@ -318,7 +322,7 @@ module.exports = function backupRoutes() {
   });
 
   // DELETE /api/backup/:filename
-  router.delete('/:filename', async (req, res) => {
+  router.delete('/:filename', requirePermission('admin_backup'), async (req, res) => {
     try {
       const safe = path.basename(req.params.filename);
       if (!isSafeBackupFilename(safe)) {

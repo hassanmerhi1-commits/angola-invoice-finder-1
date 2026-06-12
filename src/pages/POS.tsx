@@ -25,7 +25,7 @@ import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 export default function POS() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { products = [], refreshProducts, applySoldQuantities, currentBranch } = usePosProducts();
+  const { products = [], loading: productsLoading, refreshProducts, applySoldQuantities, currentBranch, branchId } = usePosProducts();
   const { user } = useAuth();
   const { t } = useTranslation();
   const cart = useCart();
@@ -236,7 +236,8 @@ export default function POS() {
       }
     } catch (error) {
       console.error('Failed to complete sale:', error);
-      toast.error(t.posUi.completeSaleError);
+      const detail = error instanceof Error ? error.message : String(error);
+      toast.error(t.posUi.completeSaleError, { description: detail });
     }
   };
 
@@ -315,11 +316,19 @@ export default function POS() {
           </div>
         </div>
         <div className="flex-1 overflow-auto p-4">
-          <ProductGrid
-            products={products}
-            onProductSelect={(product) => cart.addItem(product)}
-            searchTerm={searchTerm}
-          />
+          {productsLoading && products.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t.common.loading}</p>
+          ) : !branchId ? (
+            <p className="text-sm text-muted-foreground">{t.posUi.selectBranchFirst}</p>
+          ) : products.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t.posUi.noProductsForBranch}</p>
+          ) : (
+            <ProductGrid
+              products={products}
+              onProductSelect={(product) => cart.addItem(product)}
+              searchTerm={searchTerm}
+            />
+          )}
         </div>
       </div>
 

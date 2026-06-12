@@ -12,12 +12,13 @@ export interface A4InvoiceOptions {
   showBankDetails?: boolean;
   showNotes?: boolean;
   copies?: number;
-  documentType?: 'FT' | 'FR' | 'NC' | 'ND' | 'OR'; // Factura, Factura-Recibo, Nota Crédito, Nota Débito, Orçamento
+  documentType?: 'FT' | 'FR' | 'FS' | 'NC' | 'ND' | 'OR'; // Factura, Factura-Recibo, Fatura Simplificada, ...
 }
 
 const documentTypeNames: Record<string, string> = {
   FT: 'FACTURA',
   FR: 'FACTURA-RECIBO',
+  FS: 'FACTURA SIMPLIFICADA',
   NC: 'NOTA DE CRÉDITO',
   ND: 'NOTA DE DÉBITO',
   OR: 'ORÇAMENTO',

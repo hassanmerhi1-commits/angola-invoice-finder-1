@@ -34,6 +34,8 @@ import { InteractionSettingsCard } from '@/components/settings/InteractionSettin
 import { SigningSettingsCard } from '@/components/settings/SigningSettingsCard';
 import { AgtSettingsCard } from '@/components/settings/AgtSettingsCard';
 import { AgtTransmissionsCard } from '@/components/settings/AgtTransmissionsCard';
+import { SecuritySettingsCard } from '@/components/settings/SecuritySettingsCard';
+import { CertificationReadinessCard } from '@/components/settings/CertificationReadinessCard';
 import { DailyTodosSettingsCard } from '@/components/settings/DailyTodosSettingsCard';
 import type { UpdateStatus, SetupConfig } from '@/types/electron';
 
@@ -303,6 +305,8 @@ export default function Settings() {
       <SigningSettingsCard />
       <AgtSettingsCard />
       <AgtTransmissionsCard />
+      <SecuritySettingsCard />
+      <CertificationReadinessCard />
       <DailyTodosSettingsCard />
 
       <div className="grid gap-6 md:grid-cols-2">

@@ -10,6 +10,8 @@ const { computeNextRetryAt, shouldMarkDead } = require('./retryPolicy');
 
 const EVENT_ENTITY_TYPE = {
   'sale.created': 'sale',
+  'credit_note.created': 'credit_note',
+  'debit_note.created': 'debit_note',
   'payment.created': 'payment',
   'journal.posted': 'journal_entry',
   'purchase_invoice.created': 'purchase_invoice',
@@ -231,6 +233,50 @@ async function enqueueSaleCreated(client, saleId, branchId, idempotencyKey) {
     idempotencyKey: idempotencyKey || `sale:${saleId}`,
     payload: snapshot,
     destinations: ['main', 'agt'],
+  });
+}
+
+async function buildCreditNoteSnapshot(client, noteId) {
+  const q = client?.query ? client.query.bind(client) : db.query.bind(db);
+  const noteRes = await q('SELECT * FROM credit_notes WHERE id = $1', [noteId]);
+  if (!noteRes.rows.length) return null;
+  const itemsRes = await q('SELECT * FROM credit_note_items WHERE credit_note_id = $1', [noteId]);
+  return { credit_note: noteRes.rows[0], items: itemsRes.rows };
+}
+
+async function buildDebitNoteSnapshot(client, noteId) {
+  const q = client?.query ? client.query.bind(client) : db.query.bind(db);
+  const noteRes = await q('SELECT * FROM debit_notes WHERE id = $1', [noteId]);
+  if (!noteRes.rows.length) return null;
+  const itemsRes = await q('SELECT * FROM debit_note_items WHERE debit_note_id = $1', [noteId]);
+  return { debit_note: noteRes.rows[0], items: itemsRes.rows };
+}
+
+async function enqueueCreditNoteCreated(client, noteId, branchId) {
+  const snapshot = await buildCreditNoteSnapshot(client, noteId);
+  if (!snapshot) return null;
+  return enqueueSyncEvent(client, {
+    type: 'credit_note.created',
+    entityId: noteId,
+    entityType: 'credit_note',
+    branchId,
+    idempotencyKey: `credit_note:${noteId}`,
+    payload: snapshot,
+    destinations: ['agt'],
+  });
+}
+
+async function enqueueDebitNoteCreated(client, noteId, branchId) {
+  const snapshot = await buildDebitNoteSnapshot(client, noteId);
+  if (!snapshot) return null;
+  return enqueueSyncEvent(client, {
+    type: 'debit_note.created',
+    entityId: noteId,
+    entityType: 'debit_note',
+    branchId,
+    idempotencyKey: `debit_note:${noteId}`,
+    payload: snapshot,
+    destinations: ['agt'],
   });
 }
 
@@ -530,6 +576,10 @@ async function resolveDeadLetterEvent(id, note = 'manually resolved') {
 module.exports = {
   enqueueSyncEvent,
   enqueueSaleCreated,
+  enqueueCreditNoteCreated,
+  enqueueDebitNoteCreated,
+  buildCreditNoteSnapshot,
+  buildDebitNoteSnapshot,
   enqueuePaymentCreated,
   enqueuePurchaseInvoiceCreated,
   enqueueStockMovementCreated,

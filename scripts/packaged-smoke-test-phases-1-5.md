@@ -3,7 +3,7 @@
 Quick end-to-end check on the **installed** app (not `npm run dev`).
 
 **Scope:** Fiscal foundation → signing → AGT → SAF-T → audit & permissions  
-**Target schema:** 37  
+**Target schema:** 37 (legacy — for full AGT cert use [agt-certification/demo-test-script.md](./agt-certification/demo-test-script.md), schema **42**)  
 **Suggested build:** `npm run electron:build` then install the `.exe`
 
 ---

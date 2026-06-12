@@ -66,8 +66,16 @@ export function SAFTExportDialog({
   const { branches } = useBranches();
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
   const [generatedSAFT, setGeneratedSAFT] = useState<SAFTAO | null>(null);
   const [summary, setSummary] = useState<SAFTSummary | null>(null);
+  const [validation, setValidation] = useState<{
+    ok: boolean;
+    issues: Array<{ level: string; code: string; message: string; xpath?: string }>;
+    errorCount: number;
+    warningCount: number;
+    engine: string;
+  } | null>(null);
 
   const now = new Date();
   const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -118,6 +126,29 @@ export function SAFTExportDialog({
       const saftSummary = getSAFTSummary(saft);
       setGeneratedSAFT(saft);
       setSummary(saftSummary);
+      setValidation(null);
+
+      setIsValidating(true);
+      try {
+        const valRes = await api.saft.validate({
+          startDate: options.startDate,
+          endDate: options.endDate,
+          branchId: options.branchId,
+          includeVoided: options.includeVoided,
+          company,
+        });
+        if (valRes.data) {
+          setValidation(valRes.data);
+          if (!valRes.data.ok) {
+            toast.error(t.saftUi.validationFailed);
+          }
+        }
+      } catch (valErr) {
+        console.warn('[SAFT] XSD validation skipped:', valErr);
+      } finally {
+        setIsValidating(false);
+      }
+
       toast.success(t.saftUi.generated);
     } catch (error) {
       console.error('Error generating SAF-T:', error);
@@ -169,6 +200,7 @@ export function SAFTExportDialog({
   const handleReset = () => {
     setGeneratedSAFT(null);
     setSummary(null);
+    setValidation(null);
   };
 
   return (
@@ -329,21 +361,53 @@ export function SAFTExportDialog({
           </div>
         ) : (
           <div className="space-y-6">
-            <Card className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30">
+            <Card className={validation?.ok === false ? 'border-destructive bg-destructive/5' : validation?.ok ? 'border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30' : 'border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30'}>
               <CardContent className="pt-4">
                 <div className="flex items-center gap-3">
-                  <CheckCircle2 className="w-8 h-8 text-green-600" />
+                  {isValidating ? (
+                    <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                  ) : validation?.ok === false ? (
+                    <AlertCircle className="w-8 h-8 text-destructive" />
+                  ) : (
+                    <CheckCircle2 className="w-8 h-8 text-green-600" />
+                  )}
                   <div>
-                    <p className="font-medium text-green-800 dark:text-green-200">
-                      SAF-T AO Gerado com Sucesso
+                    <p className="font-medium">
+                      {isValidating
+                        ? t.saftUi.validating
+                        : validation?.ok === false
+                          ? t.saftUi.validationFailed
+                          : validation?.ok
+                            ? t.saftUi.validationOk
+                            : 'SAF-T AO Gerado com Sucesso'}
                     </p>
-                    <p className="text-sm text-green-700 dark:text-green-300">
-                      Pronto para download e submissão à AGT
-                    </p>
+                    {validation && !isValidating && (
+                      <p className="text-sm text-muted-foreground">
+                        {t.saftUi.validationEngine.replace('{engine}', validation.engine)}
+                        {validation.warningCount > 0
+                          ? ` · ${t.saftUi.validationWarnings.replace('{count}', String(validation.warningCount))}`
+                          : ''}
+                      </p>
+                    )}
                   </div>
                 </div>
               </CardContent>
             </Card>
+
+            {validation && validation.issues.length > 0 && (
+              <Card className="border-destructive/50">
+                <CardContent className="pt-4 space-y-2 max-h-48 overflow-y-auto">
+                  {validation.issues.map((issue, idx) => (
+                    <div key={`${issue.code}-${idx}`} className="text-sm flex gap-2">
+                      <Badge variant={issue.level === 'error' ? 'destructive' : 'secondary'} className="shrink-0">
+                        {issue.level}
+                      </Badge>
+                      <span>{issue.message}</span>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
 
             {summary && (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -455,4 +519,6 @@ export function SAFTExportDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
 }

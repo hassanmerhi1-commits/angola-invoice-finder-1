@@ -101,6 +101,127 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  // Fiscal documents summary (FT, NC, ND, GT) for a period
+  router.get('/fiscal-documents-report', async (req, res) => {
+    try {
+      const year = req.query.year ? Number(req.query.year) : null;
+      const month = req.query.month ? Number(req.query.month) : null;
+
+      function periodClause(dateCol, params) {
+        let clause = '';
+        if (year) {
+          params.push(year);
+          clause += ` AND EXTRACT(YEAR FROM ${dateCol}) = $${params.length}`;
+        }
+        if (month) {
+          params.push(month);
+          clause += ` AND EXTRACT(MONTH FROM ${dateCol}) = $${params.length}`;
+        }
+        return clause;
+      }
+
+      async function queryDocType(docType, sql, dateCol) {
+        const params = [];
+        const period = periodClause(dateCol, params);
+        const result = await db.query(sql.replace('/*PERIOD*/', period), params);
+        const row = result.rows[0] || {};
+        return {
+          docType,
+          documentCount: Number(row.document_count || 0),
+          subtotal: Number(row.subtotal || 0),
+          taxAmount: Number(row.tax_amount || 0),
+          total: Number(row.total || 0),
+          agtValidatedCount: Number(row.agt_validated_count || 0),
+        };
+      }
+
+      async function querySalesByType(invoiceType, docType, dateCol) {
+        const params = [invoiceType];
+        const period = periodClause(dateCol, params);
+        const result = await db.query(
+          `SELECT COUNT(*)::int AS document_count,
+                  COALESCE(SUM(subtotal), 0)::float AS subtotal,
+                  COALESCE(SUM(tax_amount), 0)::float AS tax_amount,
+                  COALESCE(SUM(total), 0)::float AS total,
+                  COUNT(*) FILTER (
+                    WHERE LOWER(COALESCE(agt_status, '')) IN ('validated', 'approved', 'submitted')
+                  )::int AS agt_validated_count
+           FROM sales
+           WHERE COALESCE(fiscal_status, 'issued') = 'issued'
+             AND COALESCE(status, '') NOT IN ('draft', 'voided', 'cancelled')
+             AND UPPER(COALESCE(invoice_type, 'FT')) = $1
+             ${period}`,
+          params,
+        );
+        const row = result.rows[0] || {};
+        return {
+          docType,
+          documentCount: Number(row.document_count || 0),
+          subtotal: Number(row.subtotal || 0),
+          taxAmount: Number(row.tax_amount || 0),
+          total: Number(row.total || 0),
+          agtValidatedCount: Number(row.agt_validated_count || 0),
+        };
+      }
+
+      const lines = await Promise.all([
+        querySalesByType('FT', 'FT', 'created_at'),
+        querySalesByType('FR', 'FR', 'created_at'),
+        querySalesByType('FS', 'FS', 'created_at'),
+        queryDocType('NC', `
+          SELECT COUNT(*)::int AS document_count,
+                 COALESCE(SUM(subtotal), 0)::float AS subtotal,
+                 COALESCE(SUM(tax_amount), 0)::float AS tax_amount,
+                 COALESCE(SUM(total), 0)::float AS total,
+                 COUNT(*) FILTER (
+                   WHERE LOWER(COALESCE(agt_status, '')) IN ('validated', 'approved', 'submitted')
+                 )::int AS agt_validated_count
+          FROM credit_notes
+          WHERE status IN ('issued', 'transmitted')
+            /*PERIOD*/
+        `, 'COALESCE(issued_at, created_at)'),
+        queryDocType('ND', `
+          SELECT COUNT(*)::int AS document_count,
+                 COALESCE(SUM(subtotal), 0)::float AS subtotal,
+                 COALESCE(SUM(tax_amount), 0)::float AS tax_amount,
+                 COALESCE(SUM(total), 0)::float AS total,
+                 COUNT(*) FILTER (
+                   WHERE LOWER(COALESCE(agt_status, '')) IN ('validated', 'approved', 'submitted')
+                 )::int AS agt_validated_count
+          FROM debit_notes
+          WHERE status IN ('issued', 'transmitted')
+            /*PERIOD*/
+        `, 'COALESCE(issued_at, created_at)'),
+        queryDocType('GT', `
+          SELECT COUNT(*)::int AS document_count,
+                 0::float AS subtotal,
+                 0::float AS tax_amount,
+                 0::float AS total,
+                 0::int AS agt_validated_count
+          FROM transport_documents
+          WHERE status NOT IN ('draft', 'cancelled')
+            /*PERIOD*/
+        `, 'COALESCE(issued_at, created_at)'),
+      ]);
+
+      const totals = lines.reduce(
+        (acc, line) => ({
+          documentCount: acc.documentCount + line.documentCount,
+          subtotal: acc.subtotal + line.subtotal,
+          taxAmount: acc.taxAmount + line.taxAmount,
+          total: acc.total + line.total,
+          agtValidatedCount: acc.agtValidatedCount + line.agtValidatedCount,
+        }),
+        { documentCount: 0, subtotal: 0, taxAmount: 0, total: 0, agtValidatedCount: 0 },
+      );
+
+      res.json({ lines, totals, year, month });
+    } catch (error) {
+      console.error('[TAX ERROR]', error);
+      res.status(500).json({ error: 'Failed to generate fiscal documents report' });
+    }
+  });
+
   // Tax summary for a period
   router.get('/summary', async (req, res) => {
     try {

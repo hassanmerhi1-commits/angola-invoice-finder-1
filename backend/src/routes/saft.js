@@ -5,6 +5,7 @@ const { requirePermission } = require('../middleware/requirePermission');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 const { generateSaft, generateSaftPreview } = require('../saft/saftGenerator');
 const { saftToXml, buildSaftFilename } = require('../saft/saftXmlSerializer');
+const { validateSaftXml, resolveXsdPath } = require('../saft/saftXsdValidate');
 const { saveCompanySettings } = require('../agt/companySettings');
 
 module.exports = function saftRouter() {
@@ -27,9 +28,18 @@ module.exports = function saftRouter() {
     await logFiscalEventFromReq(req, {
       tableName: 'saft',
       action: 'saft_export',
-      description: `SAF-T export (${format}) ${period?.startDate || ''} – ${period?.endDate || ''}`.trim(),
+      description: `SAF-T export (${format}) ${period?.startDate || period?.start || ''} – ${period?.endDate || period?.end || ''}`.trim(),
       metadata: { format, period },
     });
+  }
+
+  async function exportWithValidation({ saft, company, period, format }) {
+    if (format !== 'xml') {
+      return { saft, company, period, validation: null };
+    }
+    const xml = saftToXml(saft);
+    const validation = await validateSaftXml(xml);
+    return { saft, company, period, xml, validation };
   }
 
   // Generate SAF-T AO JSON (backward compatible)
@@ -71,21 +81,23 @@ module.exports = function saftRouter() {
   router.get('/export', requireAuth, requirePermission('saft_export'), async (req, res) => {
     try {
       const format = (req.query.format || 'json').toLowerCase();
-      const { saft, company, period } = await generateSaft(parseOptions(req));
-      await auditSaftExport(req, period, format);
+      const generated = await generateSaft(parseOptions(req));
+      await auditSaftExport(req, generated.period, format);
 
       if (format === 'xml') {
-        const xml = saftToXml(saft);
-        const filename = buildSaftFilename(company, period, 'xml');
+        const { xml, validation } = await exportWithValidation({ ...generated, format });
+        const filename = buildSaftFilename(generated.company, generated.period, 'xml');
         res.setHeader('Content-Type', 'application/xml; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('X-SAFT-Validation-Ok', validation?.ok ? '1' : '0');
+        res.setHeader('X-SAFT-Validation-Errors', String(validation?.errorCount || 0));
         return res.send(xml);
       }
 
-      const filename = buildSaftFilename(company, period, 'json');
+      const filename = buildSaftFilename(generated.company, generated.period, 'json');
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.json(saft);
+      res.json(generated.saft);
     } catch (error) {
       console.error('[SAF-T ERROR]', error);
       res.status(500).json({ error: error.message || 'Failed to export SAF-T file' });
@@ -98,21 +110,42 @@ module.exports = function saftRouter() {
         await saveCompanySettings(req.body.company);
       }
       const format = (req.query.format || req.body?.format || 'json').toLowerCase();
-      const { saft, company, period } = await generateSaft(parseOptions(req));
-      await auditSaftExport(req, period, format);
+      const generated = await generateSaft(parseOptions(req));
+      await auditSaftExport(req, generated.period, format);
 
       if (format === 'xml') {
-        const xml = saftToXml(saft);
-        const filename = buildSaftFilename(company, period, 'xml');
-        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        return res.send(xml);
+        const { xml, validation } = await exportWithValidation({ ...generated, format });
+        return res.json({
+          xml,
+          filename: buildSaftFilename(generated.company, generated.period, 'xml'),
+          validation,
+        });
       }
 
-      res.json({ data: saft, filename: buildSaftFilename(company, period, 'json') });
+      res.json({ data: generated.saft, filename: buildSaftFilename(generated.company, generated.period, 'json') });
     } catch (error) {
       console.error('[SAF-T ERROR]', error);
       res.status(500).json({ error: error.message || 'Failed to export SAF-T file' });
+    }
+  });
+
+  router.post('/validate', requireAuth, requirePermission('saft_export'), async (req, res) => {
+    try {
+      if (req.body?.company) {
+        await saveCompanySettings(req.body.company);
+      }
+      const generated = await generateSaft(parseOptions(req));
+      const xml = saftToXml(generated.saft);
+      const validation = await validateSaftXml(xml);
+      res.json({
+        ...validation,
+        filename: buildSaftFilename(generated.company, generated.period, 'xml'),
+        xsdPath: resolveXsdPath(),
+        period: generated.period,
+      });
+    } catch (error) {
+      console.error('[SAF-T VALIDATE ERROR]', error);
+      res.status(500).json({ error: error.message || 'Failed to validate SAF-T XML' });
     }
   });
 

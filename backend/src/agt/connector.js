@@ -109,6 +109,26 @@ async function transmitDocument(payload, config) {
   };
 }
 
+async function transmitVoid(payload, config) {
+  if (shouldSimulate(config)) {
+    return {
+      agtCode: null,
+      agtStatus: 'voided',
+      responsePayload: {
+        status: 'voided',
+        simulated: true,
+        documentNumber: payload.documentNumber || payload.originalDocumentNumber,
+        reason: payload.reason,
+      },
+      validatedAt: new Date().toISOString(),
+    };
+  }
+
+  const url = resolveApiUrl(config).replace(/\/documents\/?$/, '/void');
+  const body = await httpPost(url, payload, config.apiKey);
+  return normalizeResponse({ ...body, status: body.status || 'voided' });
+}
+
 async function checkDocumentStatus(documentNumber, config) {
   if (shouldSimulate(config)) {
     return {
@@ -133,6 +153,7 @@ async function transmitInvoice(payload) {
 module.exports = {
   transmitDocument,
   transmitInvoice,
+  transmitVoid,
   checkDocumentStatus,
   shouldSimulate,
 };

@@ -75,6 +75,8 @@ export interface Sale {
   customerName?: string;
   dueDate?: string;
   status: 'completed' | 'voided' | 'pending';
+  /** AGT fiscal document type: FT, FR, or FS */
+  invoiceType?: 'FT' | 'FR' | 'FS';
   saftHash?: string; // For AGT compliance
   agtStatus?: 'pending' | 'validated' | 'rejected' | 'submitted' | 'approved';
   agtCode?: string;

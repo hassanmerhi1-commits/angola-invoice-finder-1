@@ -20,7 +20,7 @@ export interface AGTQRCodeData {
   nomeCliente?: string;      // Customer's name
   
   // Invoice Information
-  tipoDocumento: 'FT' | 'FR' | 'NC' | 'ND'; // FT=Fatura, FR=Fatura-Recibo, NC=Nota Crédito, ND=Nota Débito
+  tipoDocumento: 'FT' | 'FR' | 'FS' | 'NC' | 'ND'; // FT, FR, FS, NC, ND
   numeroDocumento: string;   // Invoice number
   dataEmissao: string;       // Issue date (YYYYMMDD)
   horaEmissao: string;       // Issue time (HHMMSS)
@@ -119,7 +119,7 @@ export function saleToAGTQRData(sale: Sale, branch?: Branch): AGTQRCodeData {
     nomeEmissor: branch?.name || companyInfo.nome,
     nifCliente: sale.customerNif,
     nomeCliente: sale.customerName,
-    tipoDocumento: 'FR', // Fatura-Recibo (most common for POS)
+    tipoDocumento: (sale.invoiceType || 'FR').toUpperCase() as AGTQRCodeData['tipoDocumento'],
     numeroDocumento: sale.invoiceNumber,
     dataEmissao: issueDate.toISOString().slice(0, 10).replace(/-/g, ''),
     horaEmissao: issueDate.toTimeString().slice(0, 8).replace(/:/g, ''),

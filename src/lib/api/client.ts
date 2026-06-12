@@ -587,6 +587,26 @@ export const api = {
         body: JSON.stringify({ currentPassword, newPassword }),
       });
     },
+    logout: async () => {
+      await ensureBackendAuthToken();
+      return apiFetch<{ success: boolean }>('/auth/logout', { method: 'POST' });
+    },
+  },
+
+  security: {
+    status: () => apiFetch<Record<string, unknown>>('/security/status'),
+    sessions: (params?: { activeOnly?: boolean; limit?: number; userId?: string }) => {
+      const qs = new URLSearchParams();
+      if (params?.activeOnly) qs.set('active', 'true');
+      if (params?.limit) qs.set('limit', String(params.limit));
+      if (params?.userId) qs.set('userId', params.userId);
+      const q = qs.toString();
+      return apiFetch<any[]>(`/security/sessions${q ? `?${q}` : ''}`);
+    },
+  },
+
+  certification: {
+    status: () => apiFetch<Record<string, unknown>>('/certification/status'),
   },
 
   // Branches — Electron + SQLite: IPC main store does not persist branches (only Express DB does).
@@ -881,8 +901,19 @@ export const api = {
       }
       return result;
     },
-    generateInvoiceNumber: (branchCode: string) => {
-      return apiFetch<{ invoiceNumber: string }>(`/sales/generate-invoice-number/${branchCode}`);
+    generateInvoiceNumber: (
+      branchCode: string,
+      params?: { paymentMethod?: string; total?: number; customerNif?: string; invoiceType?: string },
+    ) => {
+      const qs = new URLSearchParams();
+      if (params?.paymentMethod) qs.set('paymentMethod', params.paymentMethod);
+      if (params?.total != null) qs.set('total', String(params.total));
+      if (params?.customerNif) qs.set('customerNif', params.customerNif);
+      if (params?.invoiceType) qs.set('invoiceType', params.invoiceType);
+      const q = qs.toString();
+      return apiFetch<{ invoiceNumber: string; invoiceType?: string }>(
+        `/sales/generate-invoice-number/${encodeURIComponent(branchCode)}${q ? `?${q}` : ''}`,
+      );
     },
   },
 
@@ -1587,17 +1618,59 @@ export const api = {
     },
     ivaReport: (year?: number, month?: number) => {
       if (isElectronMode()) {
-        let sql = 'SELECT * FROM tax_summaries WHERE 1=1';
+        let sql = `SELECT direction, tax_code, tax_rate,
+                   SUM(total_base) AS total_base, SUM(total_tax) AS total_tax,
+                   COUNT(*) AS document_count
+                   FROM tax_summaries WHERE tax_code LIKE 'IVA%'`;
         const params: any[] = [];
         let idx = 1;
         if (year) { sql += ` AND period_year = $${idx++}`; params.push(year); }
         if (month) { sql += ` AND period_month = $${idx++}`; params.push(month); }
-        return ipcQuery<any>(sql, params).then(r => ({ data: r.data }));
+        sql += ' GROUP BY direction, tax_code, tax_rate ORDER BY direction, tax_rate';
+        return ipcQuery<any>(sql, params).then((r) => {
+          const lines = (r.data || []) as Array<{
+            direction: string;
+            tax_code: string;
+            tax_rate: number;
+            total_base: string | number;
+            total_tax: string | number;
+            document_count: string | number;
+          }>;
+          const outputTax = lines
+            .filter((row) => row.direction === 'output')
+            .reduce((sum, row) => sum + Number(row.total_tax || 0), 0);
+          const inputTax = lines
+            .filter((row) => row.direction === 'input')
+            .reduce((sum, row) => sum + Number(row.total_tax || 0), 0);
+          return { data: { lines, outputTax, inputTax, ivaPayable: outputTax - inputTax } };
+        });
       }
       const sp = new URLSearchParams();
       if (year) sp.append('year', year.toString());
       if (month) sp.append('month', month.toString());
       return apiFetch<any>(`/tax/iva-report?${sp}`);
+    },
+    fiscalDocumentsReport: (year?: number, month?: number) => {
+      const sp = new URLSearchParams();
+      if (year) sp.append('year', year.toString());
+      if (month) sp.append('month', month.toString());
+      return apiFetch<{
+        lines: Array<{
+          docType: string;
+          documentCount: number;
+          subtotal: number;
+          taxAmount: number;
+          total: number;
+          agtValidatedCount: number;
+        }>;
+        totals: {
+          documentCount: number;
+          subtotal: number;
+          taxAmount: number;
+          total: number;
+          agtValidatedCount: number;
+        };
+      }>(`/tax/fiscal-documents-report?${sp}`);
     },
     summary: (year?: number, month?: number) => {
       if (isElectronMode()) {
@@ -1839,6 +1912,27 @@ export const api = {
       if (branchId) sp.append('branchId', branchId);
       return apiFetch<any>(`/saft/summary?${sp}`);
     },
+    validate: (params: {
+      startDate: string;
+      endDate: string;
+      branchId?: string;
+      includeVoided?: boolean;
+      company?: Record<string, unknown>;
+    }) =>
+      apiFetch<{
+        ok: boolean;
+        issues: Array<{ level: string; code: string; message: string; xpath?: string }>;
+        errorCount: number;
+        warningCount: number;
+        engine: string;
+        schemaVersion?: string;
+        xsdPath?: string;
+        filename?: string;
+        period?: { start: string; end: string };
+      }>('/saft/validate', {
+        method: 'POST',
+        body: JSON.stringify(params),
+      }),
   },
 
   companySettings: {
@@ -2107,15 +2201,45 @@ export const api = {
         documentNumber?: string;
       }>(`/agt/document-status/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}${q ? `?${q}` : ''}`);
     },
-    listTransmissions: (params?: { status?: string; limit?: number }) => {
+    listTransmissions: (params?: { status?: 'failed' | 'pending' | string; limit?: number }) => {
       const qs = new URLSearchParams();
       if (params?.status) qs.set('status', params.status);
       if (params?.limit) qs.set('limit', String(params.limit));
       const q = qs.toString();
       return apiFetch<any[]>(`/agt/transmissions${q ? `?${q}` : ''}`);
     },
+    retryFailedTransmissions: (limit = 20) =>
+      apiFetch<{ success: boolean; retried: number; failed: number; scanned: number }>(
+        '/agt/retry-failed',
+        { method: 'POST', body: JSON.stringify({ limit }) },
+      ),
+    reconcile: (limit = 10) =>
+      apiFetch<{
+        success: boolean;
+        failed: { retried: number; failed: number; scanned: number };
+        pending: { polled: number; updated: number; skipped?: boolean };
+        backfill: { transmitted: number; failed: number; scanned: number; skipped?: boolean };
+      }>('/agt/reconcile', { method: 'POST', body: JSON.stringify({ limit }) }),
+    transmissionsReport: (year?: number, month?: number) => {
+      const sp = new URLSearchParams();
+      if (year) sp.append('year', year.toString());
+      if (month) sp.append('month', month.toString());
+      return apiFetch<{
+        summary: { total: number; validated: number; failed: number; pending: number };
+        byTypeStatus: Array<{ transmission_type: string; agt_status: string; count: number }>;
+      }>(`/agt/transmissions-report?${sp}`);
+    },
     retryTransmission: (transmissionId: string) =>
       apiFetch<any>(`/agt/retry/${encodeURIComponent(transmissionId)}`, { method: 'POST' }),
+    voidInvoice: (data: { invoiceId: string; reason: string }) =>
+      apiFetch<{
+        success: boolean;
+        invoiceId: string;
+        invoiceNumber: string;
+        agtStatus?: string;
+        simulated?: boolean;
+        error?: string;
+      }>('/agt/void', { method: 'POST', body: JSON.stringify(data) }),
   },
 
   signing: {

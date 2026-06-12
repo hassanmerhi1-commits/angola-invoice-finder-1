@@ -1,9 +1,12 @@
-const crypto = require('crypto');
+const { loadOrCreateJwtSecret } = require('./lib/nexorSecrets');
 
-const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
+const { value: JWT_SECRET, persistent } = loadOrCreateJwtSecret();
 
-if (!process.env.JWT_SECRET) {
-  console.warn('[AUTH] JWT_SECRET not set. Using ephemeral secret for this process.');
+if (!persistent && !process.env.JWT_SECRET) {
+  console.warn(
+    '[AUTH] JWT_SECRET not set — tokens invalidate when the backend restarts. '
+    + 'Set JWT_SECRET in database.env or allow jwt.secret under NEXOR data/secrets.',
+  );
 }
 
 module.exports = { JWT_SECRET };

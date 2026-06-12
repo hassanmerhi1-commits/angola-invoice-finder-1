@@ -9,6 +9,9 @@ const DOCUMENT_SEQUENCE_CONFIG = {
   credit_note: { prefix: 'NC', perBranch: true },
   debit_note: { prefix: 'ND', perBranch: true },
   transport_document: { prefix: 'GT', perBranch: true },
+  simplified_invoice: { prefix: 'FS', perBranch: true },
+  invoice_receipt: { prefix: 'FR', perBranch: true },
+  sales_invoice: { prefix: 'FT', perBranch: true },
   payment_receipt: { prefix: 'REC', perBranch: false },
   payment_out: { prefix: 'PAG', perBranch: false },
   purchase_order: { prefix: 'PO', perBranch: false },
@@ -157,6 +160,73 @@ async function peekSequenceNumber(client, documentType, prefix, scope = {}) {
   }
 }
 
+function isUniqueViolation(error) {
+  return error?.code === '23505' || /unique constraint|duplicate key/i.test(String(error?.message || ''));
+}
+
+/** Parse FT-SEDE-2026-00042 → 42 */
+function parsePerBranchSequenceNumber(invoiceNumber, prefix, branchCode, fiscalYear) {
+  const esc = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^${esc(prefix)}-${esc(branchCode)}-${fiscalYear}-(\\d+)$`, 'i');
+  const m = String(invoiceNumber || '').trim().match(re);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Align document_sequences with the highest invoice_number already in sales (post-migration / preview drift).
+ */
+async function bumpSequenceFromExistingSales(client, documentType, prefix, scope = {}) {
+  const cfg = resolveSequenceConfig(documentType);
+  if (!cfg.perBranch) return 0;
+  const normalizedScope = normalizeSequenceScope(documentType, scope);
+  const yr = new Date().getFullYear();
+  const likePattern = `${prefix}-${normalizedScope.branchCode}-${yr}-%`;
+  const result = await client.query(
+    'SELECT invoice_number FROM sales WHERE invoice_number ILIKE $1',
+    [likePattern],
+  );
+  let maxNum = 0;
+  for (const row of result.rows || []) {
+    const n = parsePerBranchSequenceNumber(
+      row.invoice_number,
+      prefix,
+      normalizedScope.branchCode,
+      yr,
+    );
+    if (n != null && n > maxNum) maxNum = n;
+  }
+  if (maxNum <= 0) return 0;
+
+  await client.query(
+    `INSERT INTO document_sequences (id, document_type, prefix, fiscal_year, branch_id, current_number)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (document_type, fiscal_year, branch_id)
+     DO UPDATE SET current_number = GREATEST(document_sequences.current_number, EXCLUDED.current_number)`,
+    [randomUUID(), documentType, prefix, yr, normalizedScope.branchId, maxNum],
+  );
+  return maxNum;
+}
+
+/**
+ * Atomically allocate a sale invoice number — never trust UI preview hints.
+ */
+async function allocateUniqueSaleInvoiceNumber(client, documentType, prefix, scope = {}) {
+  await bumpSequenceFromExistingSales(client, documentType, prefix, scope);
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const candidate = await generateSequenceNumber(client, documentType, prefix, scope);
+    const dup = await client.query(
+      'SELECT 1 FROM sales WHERE invoice_number = $1 LIMIT 1',
+      [candidate],
+    );
+    if (!dup.rows.length) return candidate;
+    console.warn(`[ACCOUNTING] Invoice number collision (${candidate}) — resyncing sequence`);
+    await bumpSequenceFromExistingSales(client, documentType, prefix, scope);
+  }
+  throw new Error('Não foi possível gerar número de fatura único. Verifique sequências em Definições ou contacte suporte.');
+}
+
 /**
  * Find account by code (e.g., '4.1.1' for Caixa Principal)
  */
@@ -263,6 +333,9 @@ module.exports = {
   findAccountByCode,
   generateSequenceNumber,
   peekSequenceNumber,
+  allocateUniqueSaleInvoiceNumber,
+  bumpSequenceFromExistingSales,
+  isUniqueViolation,
   normalizeUuid,
   normalizeBranchCode,
   normalizeSequenceScope,

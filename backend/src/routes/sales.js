@@ -134,8 +134,33 @@ module.exports = function(broadcastTable) {
   router.get('/generate-invoice-number/:branchCode', async (req, res) => {
     const client = await db.pool.connect();
     try {
-      const invoiceNumber = await peekSequenceNumber(client, 'invoice', 'INV');
-      res.json({ invoiceNumber });
+      const {
+        resolveSaleInvoiceType,
+        sequenceKeyForInvoiceType,
+        prefixForInvoiceType,
+      } = require('../lib/fiscalInvoiceType');
+      const { peekSequenceNumber, normalizeBranchCode, bumpSequenceFromExistingSales } = require('../accounting');
+
+      const branchCode = normalizeBranchCode(req.params.branchCode);
+      const branchRow = await client.query(
+        'SELECT id FROM branches WHERE UPPER(REPLACE(code, \' \', \'\')) = $1 OR id::text = $1 LIMIT 1',
+        [branchCode],
+      );
+      const branchId = branchRow.rows[0]?.id;
+      const invoiceType = resolveSaleInvoiceType({
+        customerNif: req.query.customerNif,
+        paymentMethod: req.query.paymentMethod || 'cash',
+        total: Number(req.query.total) || 0,
+        invoiceType: req.query.invoiceType,
+      });
+      const seqKey = sequenceKeyForInvoiceType(invoiceType);
+      const prefix = prefixForInvoiceType(invoiceType);
+      const scope = branchId ? { branchId, branchCode } : { branchCode };
+      if (branchId) {
+        await bumpSequenceFromExistingSales(client, seqKey, prefix, scope);
+      }
+      const invoiceNumber = await peekSequenceNumber(client, seqKey, prefix, scope);
+      res.json({ invoiceNumber, invoiceType });
     } catch (error) {
       console.error('[SALES ERROR]', error);
       res.status(500).json({ error: 'Failed to generate invoice number' });

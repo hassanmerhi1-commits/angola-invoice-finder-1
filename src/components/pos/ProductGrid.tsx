@@ -2,6 +2,7 @@ import { Product } from '@/types/erp';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Package } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 
 interface ProductGridProps {
   products: Product[];
@@ -10,6 +11,7 @@ interface ProductGridProps {
 }
 
 export function ProductGrid({ products, onProductSelect, searchTerm }: ProductGridProps) {
+  const { t } = useTranslation();
   const list = products ?? [];
   const filteredProducts = list.filter(product =>
     product.isActive &&
@@ -18,13 +20,14 @@ export function ProductGrid({ products, onProductSelect, searchTerm }: ProductGr
      product.barcode?.includes(searchTerm))
   );
 
-  const categories = [...new Set(filteredProducts.map(p => p.category))];
+  const inStock = filteredProducts.filter((p) => (Number(p.stock) || 0) > 0);
+  const categories = [...new Set(inStock.map(p => p.category))];
 
-  if (filteredProducts.length === 0) {
+  if (inStock.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+      <div className="flex flex-col items-center justify-center h-64 text-muted-foreground text-center px-4">
         <Package className="w-12 h-12 mb-2" />
-        <p>Nenhum produto encontrado</p>
+        <p>{filteredProducts.length > 0 ? t.pos.noStockProducts : t.posUi.productNotFound}</p>
       </div>
     );
   }
@@ -36,7 +39,7 @@ export function ProductGrid({ products, onProductSelect, searchTerm }: ProductGr
           <h3 className="text-sm font-medium text-muted-foreground mb-3">{category}</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {filteredProducts
-              .filter(p => p.category === category)
+              .filter(p => p.category === category && (Number(p.stock) || 0) > 0)
               .map(product => (
                 <Card
                   key={product.id}

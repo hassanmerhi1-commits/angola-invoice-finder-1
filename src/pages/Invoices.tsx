@@ -51,8 +51,10 @@ import { isFiscallyImmutable } from '@/lib/fiscalImmutability';
 import { DocumentFlowViewer } from '@/components/documents/DocumentFlowViewer';
 import { setContextMenuResolver } from '@/lib/contextMenuRegistry';
 import { useAgtTransmit } from '@/hooks/useAgtTransmit';
+import { useVoidInvoice } from '@/hooks/useVoidInvoice';
 import { usePermissions } from '@/hooks/usePermissions';
 import { isAgtValidated } from '@/lib/agtStatus';
+import { VoidInvoiceDialog } from '@/components/invoice/VoidInvoiceDialog';
 
 /** Prefer canonical sales row over stale local erp_documents mirror (doc_* ids). */
 function resolveCanonicalSaleDocument(doc: ERPDocument, all: ERPDocument[]): ERPDocument {
@@ -145,13 +147,16 @@ export default function Invoices() {
   const { hasPermission } = usePermissions(user?.id);
   const canSendAgt = hasPermission('agt_send');
   const canCreateCreditNote = hasPermission('credit_note_create');
+  const canVoidInvoice = hasPermission('pos_void');
   const { currentBranch, branches, isHeadOffice, listBranchId } = useBranchScope();
   const navigate = useNavigate();
   const location = useLocation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { transmit: transmitAgt } = useAgtTransmit();
+  const { voidInvoice, voiding } = useVoidInvoice();
 
   const [activeTab, setActiveTab] = useState<DocumentType | 'all'>('all');
+  const [voidTarget, setVoidTarget] = useState<ERPDocument | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -467,10 +472,22 @@ export default function Invoices() {
           },
         });
       }
+      if (
+        canVoidInvoice
+        && doc.documentType === 'fatura_venda'
+        && immutable
+        && doc.status !== 'cancelled'
+      ) {
+        items.push({
+          id: 'doc-void',
+          label: t.voidInvoiceUi.action,
+          onSelect: () => setVoidTarget(resolveCanonicalSaleDocument(doc, documents)),
+        });
+      }
       return items;
     });
     return () => setContextMenuResolver(null);
-  }, [documents, openEditDocument, t, transmitAgt, refresh, canSendAgt]);
+  }, [documents, openEditDocument, t, transmitAgt, refresh, canSendAgt, canVoidInvoice]);
 
   const handleConvert = async (doc: ERPDocument, targetType: DocumentType) => {
     if (targetType === 'nota_credito') {
@@ -752,38 +769,69 @@ export default function Invoices() {
                 {t.fiscalDocumentsUi.actionView}
               </Button>
             )}
-            {canSendAgt && selectedDoc.documentType === 'fatura_venda'
+            {selectedDoc.documentType === 'fatura_venda'
               && isFiscallyImmutable(selectedDoc)
-              && selectedDoc.status !== 'cancelled' && (() => {
-              const agtTarget = resolveCanonicalSaleDocument(selectedDoc, documents);
-              return isAgtValidated(agtTarget.agtStatus) ? (
-                <Badge variant="default" className="ml-auto h-6 text-[10px] px-2">
-                  {t.agtUi.agtValidatedLabel}
-                  {agtTarget.agtCode ? ` · ${agtTarget.agtCode}` : ''}
-                </Badge>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="ml-auto h-6 text-[10px] gap-1 px-2"
-                  onClick={() => {
-                    const target = agtTarget;
-                    void transmitAgt('sale', target.id, {
-                      documentNumber: target.documentNumber,
-                      onSuccess: () => refresh(),
-                    });
-                  }}
-                >
-                  <Send className="w-3 h-3" />
-                  {t.documentFormUi.sendToAgt}
-                </Button>
-              );
-            })()}
+              && selectedDoc.status !== 'cancelled' && (
+              <div className="ml-auto flex items-center gap-1">
+                {canVoidInvoice && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[10px] gap-1 px-2 text-destructive border-destructive/40"
+                    onClick={() => setVoidTarget(resolveCanonicalSaleDocument(selectedDoc, documents))}
+                  >
+                    <XCircle className="w-3 h-3" />
+                    {t.voidInvoiceUi.action}
+                  </Button>
+                )}
+                {canSendAgt && (() => {
+                  const agtTarget = resolveCanonicalSaleDocument(selectedDoc, documents);
+                  return isAgtValidated(agtTarget.agtStatus) ? (
+                    <Badge variant="default" className="h-6 text-[10px] px-2">
+                      {t.agtUi.agtValidatedLabel}
+                      {agtTarget.agtCode ? ` · ${agtTarget.agtCode}` : ''}
+                    </Badge>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="h-6 text-[10px] gap-1 px-2"
+                      onClick={() => {
+                        void transmitAgt('sale', agtTarget.id, {
+                          documentNumber: agtTarget.documentNumber,
+                          onSuccess: () => refresh(),
+                        });
+                      }}
+                    >
+                      <Send className="w-3 h-3" />
+                      {t.documentFormUi.sendToAgt}
+                    </Button>
+                  );
+                })()}
+              </div>
+            )}
           </div>
           {/* Document Flow Chain */}
           <DocumentFlowViewer nodes={buildFlowNodes(selectedDoc)} className="border-t bg-muted/20 px-3 py-1" />
         </div>
       )}
+
+      <VoidInvoiceDialog
+        open={!!voidTarget}
+        onOpenChange={(open) => { if (!open) setVoidTarget(null); }}
+        documentNumber={voidTarget?.documentNumber || ''}
+        saving={voiding}
+        onConfirm={async (reason) => {
+          if (!voidTarget) return;
+          await voidInvoice(voidTarget.id, reason, {
+            documentNumber: voidTarget.documentNumber,
+            onSuccess: () => {
+              setVoidTarget(null);
+              refresh();
+            },
+          });
+        }}
+      />
 
       {/* Document Form Dialog */}
       {formOpen && (

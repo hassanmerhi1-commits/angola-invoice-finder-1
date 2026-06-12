@@ -17,8 +17,8 @@ function signingDir() {
 }
 
 function encryptionKey() {
-  const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
-  return crypto.scryptSync(`${installDir}:nexor-signing-v1`, 'nexor-fiscal-salt', 32);
+  const { deriveKey } = require('../lib/nexorSecrets');
+  return deriveKey('signing', 'nexor-fiscal-salt');
 }
 
 function encryptSecret(plainText) {

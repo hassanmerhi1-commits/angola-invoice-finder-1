@@ -24,7 +24,7 @@ const {
   coalesceActiveNotZero,
   activeFlagWhere,
 } = require('./lib/sqlDialect');
-const { createJournalEntry, generateSequenceNumber, findAccountByCode } = require('./accounting');
+const { createJournalEntry, generateSequenceNumber, allocateUniqueSaleInvoiceNumber, isUniqueViolation, findAccountByCode } = require('./accounting');
 const {
   findProductBySkuAndBranch,
   isCatalogBranchScope,
@@ -900,6 +900,98 @@ async function ensureOpeningStockMovement(client, productId, warehouseId, create
   );
 }
 
+/**
+ * Available qty for POS / sales — matches inventory grid (SKU ledger at warehouse + legacy stock).
+ * Returns the product row id that should receive the OUT movement (filial row when applicable).
+ */
+async function getAvailableStockForSale(client, productId, warehouseId, createdByUuid = null) {
+  const wh = String(warehouseId || '').trim();
+  if (!productId || !wh) {
+    throw new Error('Produto ou filial inválido');
+  }
+
+  let pid = isUuid(productId) ? productId : await resolveStockProductId(client, productId, wh);
+
+  const mainBranchIds = await loadMainBranchIds(client);
+  const isFilialWh = !isCatalogBranchScope(wh, mainBranchIds);
+
+  const prodRes = await client.query(
+    `SELECT id, name, sku, stock, branch_id FROM products WHERE id = $1 FOR UPDATE`,
+    [pid],
+  );
+  if (prodRes.rows.length === 0) {
+    throw new Error(`Produto não encontrado: ${productId}`);
+  }
+  let prod = prodRes.rows[0];
+  const sku = String(prod.sku || '').trim();
+
+  if (isFilialWh && sku) {
+    const filialRow = await findProductBySkuAndBranch(client, sku, wh);
+    if (filialRow && String(filialRow.id) !== String(pid)) {
+      await client.query(`SELECT id, name, sku, stock, branch_id FROM products WHERE id = $1 FOR UPDATE`, [filialRow.id]);
+      pid = filialRow.id;
+      prod = filialRow;
+    }
+  }
+
+  await ensureOpeningStockMovement(client, pid, wh, createdByUuid);
+
+  const movProd = await client.query(
+    `SELECT COALESCE(SUM(
+       CASE WHEN movement_type = 'IN' THEN quantity WHEN movement_type = 'OUT' THEN -quantity ELSE 0 END
+     ), 0) AS s
+     FROM stock_movements WHERE product_id = $1 AND warehouse_id = $2`,
+    [pid, wh],
+  );
+  const movementStock = Math.max(0, parseFloat(movProd.rows[0]?.s || 0));
+
+  let skuMovement = movementStock;
+  if (sku) {
+    const skuKeyExpr = sqlMovementSkuKey('pm');
+    const skuMov = await client.query(
+      `SELECT CASE
+         WHEN COALESCE(SUM(
+           CASE WHEN sm.movement_type = 'IN' THEN sm.quantity WHEN sm.movement_type = 'OUT' THEN -sm.quantity ELSE 0 END
+         ), 0) < 0 THEN 0
+         ELSE COALESCE(SUM(
+           CASE WHEN sm.movement_type = 'IN' THEN sm.quantity WHEN sm.movement_type = 'OUT' THEN -sm.quantity ELSE 0 END
+         ), 0)
+       END AS s
+       FROM stock_movements sm
+       INNER JOIN products pm ON pm.id = sm.product_id
+       WHERE sm.warehouse_id = $1 AND ${skuKeyExpr} = LOWER(TRIM($2))`,
+      [wh, sku],
+    );
+    skuMovement = Math.max(0, parseFloat(skuMov.rows[0]?.s || 0));
+  }
+
+  let legacyStock = Math.max(0, parseFloat(prod.stock || 0));
+  if (sku) {
+    let legacySql = `
+      SELECT COALESCE(SUM(stock), 0) AS legacy_stock
+      FROM products
+      WHERE ${coalesceActiveNotZero(db, 'is_active')}
+        AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER(TRIM($1))`;
+    const params = [sku];
+    if (isFilialWh) {
+      params.push(wh);
+      legacySql += ` AND branch_id = $${params.length}`;
+    } else {
+      legacySql += ` AND (${emptyBranchIdClause(db, 'branch_id')}`;
+      for (const mid of mainBranchIds) {
+        params.push(mid);
+        legacySql += ` OR branch_id = $${params.length}`;
+      }
+      legacySql += ')';
+    }
+    const leg = await client.query(legacySql, params);
+    legacyStock = Math.max(legacyStock, parseFloat(leg.rows[0]?.legacy_stock || 0));
+  }
+
+  const available = Math.max(skuMovement, movementStock, legacyStock);
+  return { productId: pid, name: prod.name, available };
+}
+
 /** After movements, align products.stock with movement ledger for this SKU at this warehouse. */
 async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
   const skuKey = String(sku || '').trim().toLowerCase();
@@ -1424,7 +1516,7 @@ async function processSale(client, saleData) {
     paymentMethod, amountPaid, change,
     customerNif, customerName, clientId,
     clientRequestId, idempotencyKey,
-    dueDate,
+    dueDate, invoiceType: requestedInvoiceType,
   } = saleData;
   const clientReqId = clientRequestId || idempotencyKey || null;
 
@@ -1434,61 +1526,59 @@ async function processSale(client, saleData) {
   if (!items || items.length === 0) throw new Error('Venda deve ter pelo menos um item');
   const totalAmount = requirePositive(total, 'total');
 
-  let invoiceNumber = saleData.invoiceNumber || null;
   const today = new Date().toISOString().split('T')[0];
   const saleDueDate = dueDate ? String(dueDate).slice(0, 10) : today;
 
   // ── Step 0: Validate period ──
   await validatePeriod(client, today);
 
-  // ── Step 1: Generate invoice number (locked sequence) ──
-  if (!invoiceNumber) {
-    invoiceNumber = await generateSequenceNumber(client, 'invoice', 'INV');
-  } else {
-    const dup = await client.query(
-      'SELECT 1 FROM sales WHERE invoice_number = $1 LIMIT 1',
-      [invoiceNumber]
-    );
-    if (dup.rows.length > 0) {
-      invoiceNumber = await generateSequenceNumber(client, 'invoice', 'INV');
-    }
-  }
+  // ── Step 1: Resolve fiscal type (number allocated after validation, before insert) ──
+  const {
+    validateSaleInvoiceType,
+    sequenceKeyForInvoiceType,
+    prefixForInvoiceType,
+  } = require('./lib/fiscalInvoiceType');
+  const { normalizeBranchCode } = require('./accounting');
+
+  const invoiceType = validateSaleInvoiceType({
+    customerNif,
+    paymentMethod,
+    total: totalAmount,
+    invoiceType: requestedInvoiceType,
+  });
+
+  const branchCodeRow = await client.query('SELECT code FROM branches WHERE id = $1 LIMIT 1', [branchId]);
+  const branchCode = normalizeBranchCode(branchCodeRow.rows[0]?.code);
+  const seqKey = sequenceKeyForInvoiceType(invoiceType);
+  const seqPrefix = prefixForInvoiceType(invoiceType);
+  const seqScope = { branchId, branchCode };
 
   // ── Step 2: Resolve product IDs + Validate stock BEFORE any writes (FOR UPDATE) ──
   const resolvedItems = [];
+  const cashierUuid = normalizeUuid(cashierId);
   for (const item of items) {
     let pid = isUuid(item.productId) ? item.productId : null;
 
-    // Resolve non-UUID productIds (e.g. from imported products) by SKU/barcode
     if (!pid && (item.productId || item.sku)) {
       try {
         pid = await resolveStockProductId(client, item.productId || item.sku, branchId);
-      } catch (e) {
-        // Product not found — skip stock check but still record sale line
+      } catch {
         pid = null;
       }
     }
 
-    resolvedItems.push({ ...item, resolvedPid: pid });
-
-    if (!pid) continue;
-
-    await ensureOpeningStockMovement(client, pid, branchId, normalizeUuid(cashierId));
-
-    const stockCheck = await client.query(
-      `SELECT p.name, p.stock AS legacy_stock,
-              COALESCE((SELECT SUM(CASE WHEN movement_type = 'IN' THEN quantity ELSE -quantity END)
-                        FROM stock_movements WHERE product_id = p.id AND warehouse_id = $2), 0) AS movement_stock
-       FROM products p WHERE p.id = $1 FOR UPDATE`,
-      [pid, branchId]
-    );
-    if (stockCheck.rows.length === 0) throw new Error(`Produto não encontrado: ${item.productName || pid}`);
-
-    const row = stockCheck.rows[0];
-    const available = Math.max(parseFloat(row.movement_stock), parseFloat(row.legacy_stock || 0));
-    if (available + 0.0001 < Number(item.quantity)) {
-      throw new Error(`Stock insuficiente para ${row.name}. Disponível: ${available}, Solicitado: ${item.quantity}`);
+    let resolvedPid = pid;
+    if (pid) {
+      const stockInfo = await getAvailableStockForSale(client, pid, branchId, cashierUuid);
+      resolvedPid = stockInfo.productId;
+      if (stockInfo.available + 0.0001 < Number(item.quantity)) {
+        throw new Error(
+          `Stock insuficiente para ${stockInfo.name}. Disponível: ${stockInfo.available}, Solicitado: ${item.quantity}`,
+        );
+      }
     }
+
+    resolvedItems.push({ ...item, resolvedPid });
   }
 
   if (clientReqId) {
@@ -1508,28 +1598,48 @@ async function processSale(client, saleData) {
     }
   }
 
-  // ── Step 3a: Insert sale header ──
+  // ── Step 3a: Allocate invoice number + insert sale header ──
+  let invoiceNumber = await allocateUniqueSaleInvoiceNumber(client, seqKey, seqPrefix, seqScope);
   const saleId = randomUUID();
   const saleHeaderParams = [saleId, invoiceNumber, branchId, cashierId, cashierName,
     subtotal, taxAmount, discount || 0, totalAmount,
-    paymentMethod, amountPaid, change, customerNif, customerName, clientReqId, saleDueDate];
+    paymentMethod, amountPaid, change, customerNif, customerName, clientReqId, saleDueDate, invoiceType];
+
+  const insertSaleHeader = async (number) => {
+    const params = [...saleHeaderParams];
+    params[1] = number;
+    try {
+      await client.query(
+        `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
+          subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
+          customer_nif, customer_name, status, fiscal_status, client_request_id, due_date, invoice_type)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed','issued',$15,$16,$17)`,
+        params,
+      );
+    } catch (insertErr) {
+      if (isUniqueViolation(insertErr) && /invoice_number/i.test(insertErr.message || '')) {
+        throw insertErr;
+      }
+      if (!/fiscal_status|invoice_type/i.test(insertErr.message || '')) throw insertErr;
+      await client.query(
+        `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
+          subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
+          customer_nif, customer_name, status, client_request_id, due_date)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed',$15,$16)`,
+        params.slice(0, -1),
+      );
+    }
+  };
+
   try {
-    await client.query(
-      `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
-        subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
-        customer_nif, customer_name, status, fiscal_status, client_request_id, due_date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed','issued',$15,$16)`,
-      saleHeaderParams,
-    );
+    await insertSaleHeader(invoiceNumber);
   } catch (insertErr) {
-    if (!/fiscal_status/i.test(insertErr.message || '')) throw insertErr;
-    await client.query(
-      `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
-        subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
-        customer_nif, customer_name, status, client_request_id, due_date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed',$15,$16)`,
-      saleHeaderParams,
-    );
+    if (isUniqueViolation(insertErr) && /invoice_number/i.test(insertErr.message || '')) {
+      invoiceNumber = await allocateUniqueSaleInvoiceNumber(client, seqKey, seqPrefix, seqScope);
+      await insertSaleHeader(invoiceNumber);
+    } else {
+      throw insertErr;
+    }
   }
 
   // ── Step 3b: Insert sale_items + stock ──
@@ -1621,12 +1731,12 @@ async function processSale(client, saleData) {
   await auditLog(client, {
     tableName: 'sales', recordId: saleId, action: 'create',
     userId: cashierId, userName: cashierName, branchId,
-    newValues: { invoiceNumber, total: totalAmount, paymentMethod, items: items.length },
-    description: `Venda ${invoiceNumber} - ${totalAmount.toLocaleString()} AOA`,
+    newValues: { invoiceNumber, invoiceType, total: totalAmount, paymentMethod, items: items.length },
+    description: `Venda ${invoiceNumber} (${invoiceType}) - ${totalAmount.toLocaleString()} AOA`,
   });
 
-  console.log(`[TX ENGINE] Sale ${invoiceNumber} ✓`);
-  return { id: saleId, invoice_number: invoiceNumber, total: totalAmount, status: 'completed' };
+  console.log(`[TX ENGINE] Sale ${invoiceNumber} (${invoiceType}) ✓`);
+  return { id: saleId, invoice_number: invoiceNumber, invoice_type: invoiceType, total: totalAmount, status: 'completed' };
 }
 
 // ==================== CREATE PURCHASE ORDER ====================
@@ -2194,6 +2304,7 @@ module.exports = {
   // Stock
   recordStockMovement,
   ensureOpeningStockMovement,
+  getAvailableStockForSale,
   reconcileSkuStockAtWarehouse,
   resolveOrCloneProductForBranch,
   resolveStockEntryDirection,

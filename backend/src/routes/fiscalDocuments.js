@@ -10,6 +10,7 @@ const {
   processTransportDocument,
 } = require('../fiscalDocumentEngine');
 const { signFiscalDocument } = require('../agt/signFiscalDocument');
+const { enqueueCreditNoteCreated, enqueueDebitNoteCreated } = require('../sync/outbox');
 
 function parseJson(val, fallback = []) {
   if (val == null || val === '') return fallback;
@@ -177,6 +178,11 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
         branchId: req.body.branchId || req.user.branchId,
       };
       const note = await processCreditNote(client, body);
+      try {
+        await enqueueCreditNoteCreated(client, note.id, body.branchId);
+      } catch (enqueueErr) {
+        console.warn('[FISCAL] credit note AGT enqueue:', enqueueErr.message);
+      }
       await client.query('COMMIT');
       try {
         await signFiscalDocument('credit_notes', note.id, 'document_number', 'saft_hash');
@@ -267,6 +273,11 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
         branchId: req.body.branchId || req.user.branchId,
       };
       const note = await processDebitNote(client, body);
+      try {
+        await enqueueDebitNoteCreated(client, note.id, body.branchId);
+      } catch (enqueueErr) {
+        console.warn('[FISCAL] debit note AGT enqueue:', enqueueErr.message);
+      }
       await client.query('COMMIT');
       try {
         await signFiscalDocument('debit_notes', note.id, 'document_number', 'saft_hash');

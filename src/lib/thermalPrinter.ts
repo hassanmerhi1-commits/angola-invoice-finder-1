@@ -8,6 +8,7 @@ import { Sale, Branch } from '@/types/erp';
 import { buildAGTQRCodeString, saleToAGTQRData, getInvoiceHash } from './agtQRCode';
 import { getCompanySettings } from './companySettings';
 import { formatTaxLabel, taxRatesFromSaleItems } from './taxUtils';
+import { receiptDocTypeLabel } from './fiscalInvoiceType';
 
 // Printer configuration
 export interface PrinterConfig {
@@ -98,6 +99,7 @@ export function generateReceiptText(
   lines.push(divider);
   
   // Invoice info
+  lines.push(center(receiptDocTypeLabel(sale.invoiceType)));
   lines.push(center(sale.invoiceNumber));
   lines.push(center(new Date(sale.createdAt).toLocaleString('pt-AO')));
   lines.push(center('Caixa: ' + (sale.cashierName || sale.cashierId || 'N/A')));
@@ -233,6 +235,7 @@ export function generateESCPOSReceipt(
   
   // Invoice number
   addCommand(ESC_POS.BOLD_ON);
+  addText(receiptDocTypeLabel(sale.invoiceType) + '\n');
   addText(sale.invoiceNumber + '\n');
   addCommand(ESC_POS.BOLD_OFF);
   addText(new Date(sale.createdAt).toLocaleString('pt-AO') + '\n\n');

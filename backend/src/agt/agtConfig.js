@@ -7,8 +7,8 @@ const db = require('../db');
 const CONFIG_ID = 'default';
 
 function encryptionKey() {
-  const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
-  return crypto.scryptSync(`${installDir}:nexor-agt-v1`, 'nexor-agt-salt', 32);
+  const { deriveKey } = require('../lib/nexorSecrets');
+  return deriveKey('agt-api', 'nexor-agt-salt');
 }
 
 function encryptApiKey(plainText) {

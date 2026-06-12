@@ -13,6 +13,8 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Separator } from '@/components/ui/separator';
 import { Banknote, CreditCard, ArrowRightLeft, Check } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { resolveSaleInvoiceType, fiscalInvoiceTypeLabel } from '@/lib/fiscalInvoiceType';
+import { Badge } from '@/components/ui/badge';
 
 interface CheckoutDialogProps {
   open: boolean;
@@ -65,6 +67,12 @@ export function CheckoutDialog({
   const isValid =
     paymentMethod === 'cash' ? paidAmount >= total : total > 0;
 
+  const previewInvoiceType = resolveSaleInvoiceType({
+    customerNif: customerNif || undefined,
+    paymentMethod,
+    total,
+  });
+
   const handleComplete = () => {
     onCompleteSale(
       paymentMethod,
@@ -103,6 +111,12 @@ export function CheckoutDialog({
             <div className="flex justify-between text-xl font-bold">
               <span>{t.common.total}</span>
               <span className="text-primary">{total.toLocaleString(locale)} Kz</span>
+            </div>
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-xs text-muted-foreground">{t.checkoutUi.documentType}</span>
+              <Badge variant="outline">
+                {fiscalInvoiceTypeLabel(previewInvoiceType, t.posUi)}
+              </Badge>
             </div>
           </div>
 

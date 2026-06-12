@@ -81,6 +81,17 @@ async function resolveCompanyForSaft(override) {
   return merged;
 }
 
+function formatSoftwareValidationNumber(raw) {
+  const c = String(raw || '').trim();
+  if (!c || c === '0000' || c === '0') return '0';
+  if (SOFTWARE_VALIDATION_RE.test(c)) return c;
+  const m = c.match(/(\d+)\/AGT\/(\d{4})/i);
+  if (m) return `${m[1]}/AGT/${m[2]}`;
+  return '0';
+}
+
+const SOFTWARE_VALIDATION_RE = /^\d+\/AGT\/\d{4}$/;
+
 function companyToSaftHeader(company, period) {
   const { fiscalYear, start, end } = period;
   const nif = (company.nif || '').replace(/\D/g, '') || '0000000000';
@@ -104,7 +115,7 @@ function companyToSaftHeader(company, period) {
     DateCreated: new Date().toISOString().split('T')[0],
     TaxEntity: 'Global',
     ProductCompanyTaxID: nif,
-    SoftwareCertificateNumber: company.agtCertificateNumber || '0000',
+    SoftwareValidationNumber: formatSoftwareValidationNumber(company.agtCertificateNumber),
     ProductID: 'NEXOR ERP',
     ProductVersion: company.softwareVersion || readAppVersion(),
   };

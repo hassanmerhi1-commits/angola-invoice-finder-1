@@ -16,6 +16,7 @@ const {
 } = require('../lib/passwordAuth');
 const { findUserForLogin } = require('../lib/loginUserLookup');
 const { resolveAndPersistUserBranchId } = require('../middleware/branchScope');
+const { startSession, endSession } = require('../lib/sessionLog');
 
 const router = express.Router();
 
@@ -67,11 +68,13 @@ function normalizeLoginEmail(raw) {
 }
 
 function issueToken(user) {
-  return jwt.sign(
-    { userId: user.id, email: user.email, role: user.role },
+  const jti = crypto.randomUUID();
+  const token = jwt.sign(
+    { userId: user.id, email: user.email, role: user.role, jti },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN },
   );
+  return { token, jti };
 }
 
 // Login — public, rate-limited
@@ -91,6 +94,13 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
     const validPassword = await verifyPasswordWithDummyFallback(password, user?.password_hash);
 
     if (!user || !validPassword) {
+      await logFiscalEventFromReq(req, {
+        tableName: 'users',
+        action: 'login_failed',
+        userName: String(rawIdentifier).trim().slice(0, 120) || 'unknown',
+        description: 'Failed login attempt',
+        newValues: { identifier: String(rawIdentifier).trim().slice(0, 120) },
+      }).catch(() => {});
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -102,7 +112,14 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
     } catch (branchErr) {
       console.warn('[AUTH] branch assignment fix skipped:', branchErr?.message || branchErr);
     }
-    const token = issueToken(user);
+    const { token, jti } = issueToken(user);
+
+    await startSession(req, {
+      userId: user.id,
+      userName: user.name,
+      branchId: effectiveBranchId,
+      tokenJti: jti,
+    });
 
     await logFiscalEventFromReq(req, {
       tableName: 'users',
@@ -112,6 +129,7 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
       userName: user.name,
       branchId: effectiveBranchId,
       description: `Login: ${user.name || user.email}`,
+      newValues: { sessionJti: jti },
     });
 
     res.json({
@@ -124,6 +142,26 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
   } catch (error) {
     console.error('[AUTH ERROR]', error);
     res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// End session — requires JWT
+router.post('/logout', requireAuth, async (req, res) => {
+  try {
+    await endSession({ tokenJti: req.tokenJti, userId: req.user.id, reason: 'logout' });
+    await logFiscalEventFromReq(req, {
+      tableName: 'users',
+      recordId: req.user.id,
+      action: 'logout',
+      userId: req.user.id,
+      userName: req.user.name,
+      branchId: req.user.branchId,
+      description: `Logout: ${req.user.name || req.user.email}`,
+    });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[AUTH ERROR] logout:', error);
+    res.status(500).json({ error: 'Logout failed' });
   }
 });
 
@@ -204,6 +242,15 @@ router.post('/users', requireAdmin, async (req, res) => {
       'SELECT id, email, username, name, role, branch_id, is_active, created_at, updated_at FROM users WHERE id = $1',
       [id],
     );
+    await logFiscalEventFromReq(req, {
+      tableName: 'users',
+      recordId: id,
+      action: 'create',
+      userId: req.user?.id,
+      userName: req.user?.name,
+      description: `User created: ${name}`,
+      newValues: { email: normalizedEmail, role, branchId: branchId || null },
+    }).catch(() => {});
     res.status(201).json(mapUserRow(created.rows[0]));
   } catch (error) {
     console.error('[AUTH ERROR] create user:', error);
@@ -216,10 +263,14 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
     const { id } = req.params;
     const { email, name, role, branchId, isActive, password, username } = req.body;
 
-    const existing = await db.query('SELECT id FROM users WHERE id = $1', [id]);
-    if (existing.rows.length === 0) {
+    const existingRes = await db.query(
+      'SELECT id, email, username, name, role, branch_id, is_active FROM users WHERE id = $1',
+      [id],
+    );
+    if (existingRes.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
+    const before = existingRes.rows[0];
 
     let normalizedEmail = null;
     let normalizedUsername = null;
@@ -289,7 +340,29 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
       'SELECT id, email, username, name, role, branch_id, is_active, created_at, updated_at FROM users WHERE id = $1',
       [id],
     );
-    res.json(mapUserRow(updated.rows[0]));
+    const after = updated.rows[0];
+    await logFiscalEventFromReq(req, {
+      tableName: 'users',
+      recordId: id,
+      action: passwordHash ? 'password_reset' : 'update',
+      userId: req.user?.id,
+      userName: req.user?.name,
+      description: passwordHash
+        ? `Password reset for ${after.name || after.email}`
+        : `User updated: ${after.name || after.email}`,
+      oldValues: {
+        role: before.role,
+        isActive: before.is_active,
+        branchId: before.branch_id,
+      },
+      newValues: {
+        role: after.role,
+        isActive: after.is_active,
+        branchId: after.branch_id,
+        email: after.email,
+      },
+    }).catch(() => {});
+    res.json(mapUserRow(after));
   } catch (error) {
     console.error('[AUTH ERROR] update user:', error);
     res.status(500).json({ error: error.message || 'Failed to update user' });
@@ -325,6 +398,15 @@ router.post('/change-password', requireAuth, async (req, res) => {
       [passwordHash, req.user.id],
     );
 
+    await logFiscalEventFromReq(req, {
+      tableName: 'users',
+      recordId: req.user.id,
+      action: 'password_change',
+      userId: req.user.id,
+      userName: req.user.name,
+      description: 'User changed own password',
+    }).catch(() => {});
+
     res.json({ success: true });
   } catch (error) {
     console.error('[AUTH ERROR] change-password:', error);
@@ -342,6 +424,16 @@ router.delete('/users/:id', requireAdmin, async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
+    await endSession({ userId: id, reason: 'deactivated' });
+    await logFiscalEventFromReq(req, {
+      tableName: 'users',
+      recordId: id,
+      action: 'status_change',
+      userId: req.user?.id,
+      userName: req.user?.name,
+      description: `User deactivated: ${id}`,
+      newValues: { isActive: false },
+    }).catch(() => {});
     res.json({ success: true });
   } catch (error) {
     console.error('[AUTH ERROR] delete user:', error);

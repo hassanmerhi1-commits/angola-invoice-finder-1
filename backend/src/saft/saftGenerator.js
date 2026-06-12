@@ -14,8 +14,33 @@ function parsePeriod(params = {}) {
 
 function toDateOnly(value) {
   if (!value) return new Date().toISOString().split('T')[0];
+  if (value instanceof Date) {
+    return value.toISOString().split('T')[0];
+  }
   const s = String(value);
-  return s.includes('T') ? s.split('T')[0] : s.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    return s.slice(0, 10);
+  }
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+  return s.slice(0, 10);
+}
+
+function toSystemEntryDate(value) {
+  if (!value) return new Date().toISOString().slice(0, 19);
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 19);
+  }
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 19);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return `${s.slice(0, 10)}T00:00:00`;
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 19);
+  }
+  return new Date().toISOString().slice(0, 19);
 }
 
 function toPeriod(value) {
@@ -129,14 +154,26 @@ function mapSaleLine(item, sale, idx, amountField = 'CreditAmount') {
   return line;
 }
 
+function saftInvoiceTypeFromSale(sale) {
+  const t = String(sale.invoice_type || 'FT').toUpperCase();
+  if (t === 'FS') return 'FR';
+  if (INVOICE_TYPES.has(t)) return t;
+  return 'FT';
+}
+
+const INVOICE_TYPES = new Set([
+  'FT', 'FR', 'GF', 'FG', 'AC', 'AR', 'ND', 'NC', 'AF', 'TV', 'RP', 'RE', 'CS', 'LD', 'RA',
+]);
+
 function mapSaleToInvoice(sale, items) {
   const isVoided = sale.status !== 'completed';
+  const systemEntry = toSystemEntryDate(sale.created_at);
   return {
     InvoiceNo: sale.invoice_number,
     ATCUD: sale.atcud || '0',
     DocumentStatus: {
       InvoiceStatus: isVoided ? 'A' : 'N',
-      InvoiceStatusDate: sale.created_at,
+      InvoiceStatusDate: systemEntry,
       SourceID: sale.cashier_name || 'System',
       SourceBilling: 'P',
     },
@@ -144,10 +181,10 @@ function mapSaleToInvoice(sale, items) {
     HashControl: '1',
     Period: toPeriod(sale.created_at),
     InvoiceDate: toDateOnly(sale.created_at),
-    InvoiceType: 'FT',
+    InvoiceType: saftInvoiceTypeFromSale(sale),
     SpecialRegimes: { SelfBillingIndicator: '0', CashVATSchemeIndicator: '0', ThirdPartiesBillingIndicator: '0' },
     SourceID: sale.cashier_name || 'System',
-    SystemEntryDate: sale.created_at,
+    SystemEntryDate: systemEntry,
     CustomerID: sale.customer_nif || '999999990',
     Line: items.map((item, idx) => mapSaleLine(item, sale, idx, 'CreditAmount')),
     DocumentTotals: {
@@ -161,12 +198,13 @@ function mapSaleToInvoice(sale, items) {
 
 function mapCreditNoteToInvoice(note, items) {
   const docDate = note.issued_at || note.created_at;
+  const systemEntry = toSystemEntryDate(docDate);
   return {
     InvoiceNo: note.document_number,
     ATCUD: '0',
     DocumentStatus: {
       InvoiceStatus: note.status === 'cancelled' ? 'A' : 'N',
-      InvoiceStatusDate: docDate,
+      InvoiceStatusDate: systemEntry,
       SourceID: 'System',
       SourceBilling: 'P',
     },
@@ -177,7 +215,7 @@ function mapCreditNoteToInvoice(note, items) {
     InvoiceType: 'NC',
     SpecialRegimes: { SelfBillingIndicator: '0', CashVATSchemeIndicator: '0', ThirdPartiesBillingIndicator: '0' },
     SourceID: 'System',
-    SystemEntryDate: docDate,
+    SystemEntryDate: systemEntry,
     CustomerID: note.customer_nif || '999999990',
     Reference: note.original_invoice_number || '',
     Line: items.map((item, idx) => mapSaleLine(item, { created_at: docDate }, idx, 'DebitAmount')),
@@ -191,12 +229,13 @@ function mapCreditNoteToInvoice(note, items) {
 
 function mapDebitNoteToInvoice(note, items) {
   const docDate = note.issued_at || note.created_at;
+  const systemEntry = toSystemEntryDate(docDate);
   return {
     InvoiceNo: note.document_number,
     ATCUD: '0',
     DocumentStatus: {
       InvoiceStatus: note.status === 'cancelled' ? 'A' : 'N',
-      InvoiceStatusDate: docDate,
+      InvoiceStatusDate: systemEntry,
       SourceID: 'System',
       SourceBilling: 'P',
     },
@@ -207,7 +246,7 @@ function mapDebitNoteToInvoice(note, items) {
     InvoiceType: 'ND',
     SpecialRegimes: { SelfBillingIndicator: '0', CashVATSchemeIndicator: '0', ThirdPartiesBillingIndicator: '0' },
     SourceID: 'System',
-    SystemEntryDate: docDate,
+    SystemEntryDate: systemEntry,
     CustomerID: note.customer_nif || '999999990',
     Reference: note.original_invoice_number || '',
     Line: items.map((item, idx) => ({

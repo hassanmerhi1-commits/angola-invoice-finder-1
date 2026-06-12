@@ -82,10 +82,18 @@ async function loadItemsForDebitNote(noteId) {
   }));
 }
 
+function resolveDocType(meta, doc) {
+  if (meta.entityType === 'sale') {
+    const t = String(doc.invoice_type || 'FT').toUpperCase();
+    if (['FT', 'FR', 'FS'].includes(t)) return t;
+  }
+  return meta.docType;
+}
+
 function buildPayload(config, meta, doc, items, signature) {
   const issueDate = doc[meta.dateCol] || doc.created_at || new Date().toISOString();
   return {
-    documentType: meta.docType,
+    documentType: resolveDocType(meta, doc),
     documentNumber: doc[meta.numberCol],
     issueDate,
     emitterNif: config.companyNif || '',
