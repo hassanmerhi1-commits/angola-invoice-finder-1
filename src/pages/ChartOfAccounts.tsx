@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NEXOR_TAB_TRIGGER, NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
+import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import AccountLedgerDialog from '@/components/accounting/AccountLedgerDialog';
 
 // Category tabs
@@ -76,6 +77,19 @@ export default function ChartOfAccounts() {
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [ledgerAccount, setLedgerAccount] = useState<Account | null>(null);
   const [isLedgerOpen, setIsLedgerOpen] = useState(false);
+
+  useEffect(() => {
+    const onAll = () => {
+      setSelectedAccountId(null);
+      setSearchTerm('');
+      setIsDialogOpen(false);
+      setEditingAccount(null);
+      setIsLedgerOpen(false);
+      setLedgerAccount(null);
+    };
+    window.addEventListener(NEXOR_TOOLBAR.ALL, onAll);
+    return () => window.removeEventListener(NEXOR_TOOLBAR.ALL, onAll);
+  }, []);
 
   const openLedger = (account: Account) => {
     setLedgerAccount(account);

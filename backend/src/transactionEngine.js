@@ -914,7 +914,7 @@ async function ensureOpeningStockMovement(client, productId, warehouseId, create
       legacySql += ')';
     } else {
       params.push(wh);
-      legacySql += ` AND branch_id = $${params.length}`;
+      legacySql += ` AND (branch_id = $${params.length} OR ${emptyBranchIdClause(db, 'branch_id')})`;
     }
     const skuLegacy = await client.query(legacySql, params);
     legacy = Math.max(legacy, parseFloat(skuLegacy.rows[0]?.legacy_stock || 0));
@@ -1243,13 +1243,43 @@ async function recordStockMovement(client, params) {
 }
 
 /**
- * Get current stock for a product at a warehouse
+ * Get current stock for a product at a warehouse (SKU ledger at warehouse — matches inventory grid / POS).
  */
 async function getStock(productId, warehouseId) {
+  const resolvedWarehouseId = await resolveWarehouseId(db, warehouseId);
+  const wh = resolvedWarehouseId || warehouseId;
+
+  let pid = productId;
+  if (!isUuid(productId)) {
+    pid = await resolveStockProductId(db, productId, wh);
+  }
+
+  const skuRow = await db.query('SELECT sku FROM products WHERE id = $1', [pid]);
+  const sku = skuRow.rows[0]?.sku != null ? String(skuRow.rows[0].sku).trim() : '';
+
+  if (sku) {
+    const skuKeyExpr = sqlMovementSkuKey('pm');
+    const result = await db.query(
+      `SELECT CASE
+         WHEN COALESCE(SUM(
+           CASE WHEN sm.movement_type = 'IN' THEN sm.quantity WHEN sm.movement_type = 'OUT' THEN -sm.quantity ELSE 0 END
+         ), 0) < 0 THEN 0
+         ELSE COALESCE(SUM(
+           CASE WHEN sm.movement_type = 'IN' THEN sm.quantity WHEN sm.movement_type = 'OUT' THEN -sm.quantity ELSE 0 END
+         ), 0)
+       END AS stock
+       FROM stock_movements sm
+       INNER JOIN products pm ON pm.id = sm.product_id
+       WHERE sm.warehouse_id = $1 AND ${skuKeyExpr} = LOWER(TRIM($2))`,
+      [wh, sku],
+    );
+    return parseFloat(result.rows[0]?.stock || 0);
+  }
+
   const result = await db.query(
     `SELECT COALESCE(SUM(CASE WHEN movement_type = 'IN' THEN quantity ELSE -quantity END), 0) AS stock
      FROM stock_movements WHERE product_id = $1 AND warehouse_id = $2`,
-    [productId, warehouseId]
+    [pid, wh],
   );
   return parseFloat(result.rows[0]?.stock || 0);
 }

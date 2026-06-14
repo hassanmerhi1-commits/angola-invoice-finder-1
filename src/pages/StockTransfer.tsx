@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useTranslation } from '@/i18n';
 import { useProducts, useStockTransfers, useAuth } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowRightLeft, Plus, Package, Check, X, Truck, Clock, Search } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 
 const transferDialogFullscreen = cn(
   'fixed inset-0 left-0 top-0 z-50 flex h-screen w-screen max-w-none translate-x-0 translate-y-0',
@@ -81,6 +82,16 @@ export default function StockTransfer() {
   const [productSearch, setProductSearch] = useState('');
   const [receivedQuantities, setReceivedQuantities] = useState<Record<string, number>>({});
   const [receivedQtyDrafts, setReceivedQtyDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const onAll = () => {
+      setDialogOpen(false);
+      setReceiveDialogOpen(false);
+      setSelectedTransfer(null);
+    };
+    window.addEventListener(NEXOR_TOOLBAR.ALL, onAll);
+    return () => window.removeEventListener(NEXOR_TOOLBAR.ALL, onAll);
+  }, []);
 
   // Load products from the selected SOURCE branch
   const { products: sourceProducts } = useProducts(fromBranchId || undefined);

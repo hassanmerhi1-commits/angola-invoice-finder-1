@@ -577,8 +577,11 @@ export default function Inventory() {
       if (selectedProduct) handleOpenDialog(selectedProduct);
     };
     const onAll = () => {
+      setActiveTab('lista');
       setStockListFilter('all');
+      setListSearch('');
       setSelectedProduct(null);
+      setDialogOpen(false);
     };
     const onAdjustExit = () => setStockExitDialogOpen(true);
     const onEntry = () => setStockEntryDialogOpen(true);

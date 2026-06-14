@@ -393,6 +393,9 @@ export default function Invoices() {
     const onAll = () => {
       setSelectedDocId(null);
       setSearchTerm('');
+      setFormOpen(false);
+      setEditDoc(null);
+      setPrefillDoc(null);
     };
     const onPrint = () => {
       if (!selected) {

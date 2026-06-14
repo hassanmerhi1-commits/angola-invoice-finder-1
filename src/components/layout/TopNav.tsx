@@ -291,9 +291,14 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
             navigate('/pos', { state: NEXOR_POS_NEW_SALE_NAV_STATE });
           }
           return;
-        case 'all':
+        case 'all': {
+          const path = resolveAppPathname(location.pathname);
           dispatchToolbarEvent(NEXOR_TOOLBAR.ALL);
+          if (path === '/purchase-invoices/new' || path.endsWith('/new')) {
+            navigate(path.replace(/\/new\/?$/, '') || '/purchase-invoices', { replace: true });
+          }
           return;
+        }
         case 'delete':
           dispatchToolbarEvent(NEXOR_TOOLBAR.DELETE);
           return;

@@ -1978,40 +1978,6 @@ export default function PurchaseInvoices() {
   }, []);
 
   useEffect(() => {
-    if (mode !== 'list') return;
-
-    const selected = selectedListInvoiceId
-      ? invoices.find((i) => i.id === selectedListInvoiceId)
-      : undefined;
-
-    const onEdit = () => {
-      if (selected) {
-        void startEditInvoice(selected);
-      } else {
-        toast({
-          title: t.common.error,
-          description: t.purchaseInvoicesUi.selectInvoiceToEdit,
-          variant: 'destructive',
-        });
-      }
-    };
-    const onAll = () => setSelectedListInvoiceId(null);
-
-    const handlers: Record<string, () => void> = {
-      [NEXOR_TOOLBAR.EDIT]: onEdit,
-      [NEXOR_TOOLBAR.ALL]: onAll,
-    };
-    for (const [event, handler] of Object.entries(handlers)) {
-      window.addEventListener(event, handler);
-    }
-    return () => {
-      for (const [event, handler] of Object.entries(handlers)) {
-        window.removeEventListener(event, handler);
-      }
-    };
-  }, [mode, selectedListInvoiceId, invoices, startEditInvoice, toast, t]);
-
-  useEffect(() => {
     if (mode !== 'list' || listTab !== 'faturas') {
       setContextMenuResolver(null);
       return;
@@ -2076,6 +2042,48 @@ export default function PurchaseInvoices() {
     setMode("list");
     goToPurchaseListRoute();
   }, [goToPurchaseListRoute, resetCreateFormState]);
+
+  useEffect(() => {
+    const selected = mode === 'list' && selectedListInvoiceId
+      ? invoices.find((i) => i.id === selectedListInvoiceId)
+      : undefined;
+
+    const onEdit = () => {
+      if (mode !== 'list') return;
+      if (selected) {
+        void startEditInvoice(selected);
+      } else {
+        toast({
+          title: t.common.error,
+          description: t.purchaseInvoicesUi.selectInvoiceToEdit,
+          variant: 'destructive',
+        });
+      }
+    };
+    const onAll = () => {
+      setSelectedListInvoiceId(null);
+      setSearchTerm('');
+      setViewInvoice(null);
+      setActiveTab('fatura');
+      setListTab('faturas');
+      if (mode !== 'list') {
+        handleCloseCreate();
+      }
+    };
+
+    const handlers: Record<string, () => void> = {
+      [NEXOR_TOOLBAR.EDIT]: onEdit,
+      [NEXOR_TOOLBAR.ALL]: onAll,
+    };
+    for (const [event, handler] of Object.entries(handlers)) {
+      window.addEventListener(event, handler);
+    }
+    return () => {
+      for (const [event, handler] of Object.entries(handlers)) {
+        window.removeEventListener(event, handler);
+      }
+    };
+  }, [mode, selectedListInvoiceId, invoices, startEditInvoice, toast, t, handleCloseCreate]);
 
   const requestCloseCreate = useCallback(() => {
     if (savingPurchaseRef.current || savingPurchase) return;

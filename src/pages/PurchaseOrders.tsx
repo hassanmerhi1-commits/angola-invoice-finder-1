@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { navigateThenStartPurchaseCreate } from '@/lib/nexorPurchaseCreate';
+import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import { purchaseOrderNeedsApproval } from '@/lib/purchaseOrderApproval';
 import { Search, Plus, Eye, CheckCircle, Package, ShoppingCart, Trash2, Barcode, ScanLine, Truck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -123,6 +124,18 @@ export default function PurchaseOrders() {
     const openCreate = () => setCreateDialogOpen(true);
     window.addEventListener('nexor:purchase-orders-new', openCreate);
     return () => window.removeEventListener('nexor:purchase-orders-new', openCreate);
+  }, []);
+
+  useEffect(() => {
+    const onAll = () => {
+      setSelectedOrder(null);
+      setCreateDialogOpen(false);
+      setViewDialogOpen(false);
+      setReceiveDialogOpen(false);
+      setSearchTerm('');
+    };
+    window.addEventListener(NEXOR_TOOLBAR.ALL, onAll);
+    return () => window.removeEventListener(NEXOR_TOOLBAR.ALL, onAll);
   }, []);
 
   useEffect(() => {
