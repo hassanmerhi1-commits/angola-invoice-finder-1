@@ -7,6 +7,7 @@ import { useProForma, productToProFormaItem } from '@/hooks/useProForma';
 import { ProForma, ProFormaItem } from '@/types/proforma';
 import { Product, Client } from '@/types/erp';
 import { printProFormaA4 } from '@/lib/proformaA4';
+import { recordProformaPrint } from '@/lib/recordPrintAudit';
 import { proformaToErpDocumentPrefill } from '@/lib/proformaToDocument';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -236,6 +237,7 @@ export default function ProFormaPage() {
     if (!currentBranch) return;
     try {
       await printProFormaA4(proforma, currentBranch, language);
+      void recordProformaPrint(proforma, { format: 'a4', source: 'proforma' });
       toast.success(p.sentToPrint);
     } catch {
       toast.error(p.printError);

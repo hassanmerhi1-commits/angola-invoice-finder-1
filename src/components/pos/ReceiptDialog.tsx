@@ -19,6 +19,7 @@ import { PrinterSettingsDialog } from './PrinterSettingsDialog';
 import { AGTQRCode } from '@/components/invoice/AGTQRCode';
 import { getInvoiceHash } from '@/lib/agtQRCode';
 import { printA4Invoice } from '@/lib/a4Invoice';
+import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { getCompanySettings } from '@/lib/companySettings';
 import { toast } from 'sonner';
 import { formatTaxLabel, taxRatesFromSaleItems } from '@/lib/taxUtils';
@@ -63,6 +64,7 @@ export function ReceiptDialog({
       });
       
       if (result.success) {
+        void recordSalePrint(sale, { format: 'thermal', source: 'receipt_dialog' });
         toast.success(
           result.method === 'serial' 
             ? t.receiptUi.printThermalSent
@@ -96,6 +98,7 @@ export function ReceiptDialog({
         showNotes: true,
         documentType: (sale.invoiceType || 'FR') as 'FT' | 'FR' | 'FS',
       });
+      void recordSalePrint(sale, { format: 'a4', source: 'receipt_dialog' });
       toast.success(t.receiptUi.a4SentToPrint);
     } catch (error) {
       toast.error(t.receiptUi.a4PrintError);

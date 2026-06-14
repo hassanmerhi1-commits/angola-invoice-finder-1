@@ -23,7 +23,6 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
-import { markSalePrintedAfterPrint } from '@/lib/markSalePrinted';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
 import type { CreditNote } from '@/types/erp';
 import { api } from '@/lib/api/client';
@@ -147,6 +146,7 @@ export default function Invoices() {
   const { hasPermission } = usePermissions(user?.id);
   const canSendAgt = hasPermission('agt_send');
   const canCreateCreditNote = hasPermission('credit_note_create');
+  const canCreateDebitNote = hasPermission('debit_note_create');
   const canVoidInvoice = hasPermission('pos_void');
   const { currentBranch, branches, isHeadOffice, listBranchId } = useBranchScope();
   const navigate = useNavigate();
@@ -287,14 +287,28 @@ export default function Invoices() {
       toast.error(t.fiscalDocumentsUi.creditNotePermissionDenied);
       return;
     }
+    toast.info(t.invoicesUi.creditNoteUseFiscalDocs);
     navigate('/fiscal-documents', { state: { openCreditNoteCreate: true } });
   }, [navigate, canCreateCreditNote, t]);
+
+  const openFiscalDebitNoteCreate = useCallback(() => {
+    if (!canCreateDebitNote) {
+      toast.error(t.fiscalDocumentsUi.debitNotePermissionDenied);
+      return;
+    }
+    toast.info(t.invoicesUi.debitNoteUseFiscalDocs);
+    navigate('/fiscal-documents', { state: { openDebitNoteCreate: true } });
+  }, [navigate, canCreateDebitNote, t]);
 
   const openNewDocumentForTab = useCallback(
     (tab?: InvoicesWorkspaceTab) => {
       const resolved = tab ?? getInvoicesWorkspaceTab();
       if (resolved === 'nota_credito') {
         openFiscalCreditNoteCreate();
+        return;
+      }
+      if (resolved === 'nota_debito') {
+        openFiscalDebitNoteCreate();
         return;
       }
       const type = documentTypeForNewFromTab(resolved);
@@ -307,7 +321,7 @@ export default function Invoices() {
       setPrefillDoc(null);
       setFormOpen(true);
     },
-    [navigate, location.pathname, openFiscalCreditNoteCreate],
+    [navigate, location.pathname, openFiscalCreditNoteCreate, openFiscalDebitNoteCreate],
   );
 
   // TopNav toolbar "Novo" — match active document tab (read tab at click time)
@@ -385,8 +399,7 @@ export default function Invoices() {
         toast.info(t.topNav.file.printSelectDocument);
         return;
       }
-      void printDocument(selected)
-        .then(() => markSalePrintedAfterPrint(selected))
+      void printDocument(selected, { source: 'invoices' })
         .catch((err: unknown) => {
           const message = err instanceof Error ? err.message : String(err);
           toast.error(message || t.invoiceViewUi.printError);
@@ -444,8 +457,7 @@ export default function Invoices() {
           id: 'doc-print',
           label: t.interaction.printDocument,
           onSelect: () => {
-            void printDocument(doc)
-              .then(() => markSalePrintedAfterPrint(doc))
+            void printDocument(doc, { source: 'invoices' })
               .catch((err: unknown) => {
                 const message = err instanceof Error ? err.message : String(err);
                 toast.error(message || t.invoiceViewUi.printError);
@@ -498,6 +510,17 @@ export default function Invoices() {
       if (doc.documentType === 'fatura_venda') {
         navigate('/fiscal-documents', { state: { openCreditNoteForSaleId: doc.id } });
         toast.info(t.invoicesUi.creditNoteUseFiscalDocs);
+        return;
+      }
+    }
+    if (targetType === 'nota_debito') {
+      if (!canCreateDebitNote) {
+        toast.error(t.fiscalDocumentsUi.debitNotePermissionDenied);
+        return;
+      }
+      if (doc.documentType === 'fatura_venda') {
+        navigate('/fiscal-documents', { state: { openDebitNoteForSaleId: doc.id } });
+        toast.info(t.invoicesUi.debitNoteUseFiscalDocs);
         return;
       }
     }
@@ -557,6 +580,8 @@ export default function Invoices() {
                   navigateThenStartPurchaseCreate(navigate, location.pathname);
                 } else if (key === 'nota_credito') {
                   openFiscalCreditNoteCreate();
+                } else if (key === 'nota_debito') {
+                  openFiscalDebitNoteCreate();
                 } else {
                   openNewDocument(key);
                 }
@@ -600,8 +625,7 @@ export default function Invoices() {
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedDoc}
           onClick={() => {
             if (!selectedDoc) return;
-            void printDocument(selectedDoc)
-              .then(() => markSalePrintedAfterPrint(selectedDoc))
+            void printDocument(selectedDoc, { source: 'invoices' })
               .catch((err: unknown) => {
                 const message = err instanceof Error ? err.message : String(err);
                 toast.error(message || t.invoiceViewUi.printError);
@@ -665,6 +689,32 @@ export default function Invoices() {
 
         {/* Single content area for all tabs (same grid) */}
         <div className="flex-1 overflow-auto">
+          {activeTab === 'nota_credito' && (
+            <div className="flex items-center justify-between gap-3 border-b bg-amber-50/80 px-3 py-2 text-xs text-amber-950">
+              <span>{t.invoicesUi.fiscalDocsCreditNoteHint}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 shrink-0 text-xs"
+                onClick={() => navigate('/fiscal-documents')}
+              >
+                {t.invoicesUi.openFiscalDocuments}
+              </Button>
+            </div>
+          )}
+          {activeTab === 'nota_debito' && (
+            <div className="flex items-center justify-between gap-3 border-b bg-amber-50/80 px-3 py-2 text-xs text-amber-950">
+              <span>{t.invoicesUi.debitNoteUseFiscalDocs}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 shrink-0 text-xs"
+                onClick={() => navigate('/fiscal-documents', { state: { openDebitNoteCreate: true } })}
+              >
+                {t.invoicesUi.openFiscalDocuments}
+              </Button>
+            </div>
+          )}
           <table className="w-full text-xs">
             <thead className="bg-muted/60 border-b sticky top-0 z-10">
               <tr>

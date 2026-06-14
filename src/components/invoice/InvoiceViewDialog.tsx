@@ -22,6 +22,7 @@ import { AGTQRCode } from './AGTQRCode';
 import { getInvoiceHash } from '@/lib/agtQRCode';
 import { printViaBrowser, getPrinterConfig } from '@/lib/thermalPrinter';
 import { printA4Invoice } from '@/lib/a4Invoice';
+import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { getCompanySettings } from '@/lib/companySettings';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
@@ -85,6 +86,7 @@ export function InvoiceViewDialog({
   const handlePrintThermal = () => {
     const config = getPrinterConfig();
     printViaBrowser(sale, branch, config.paperWidth);
+    void recordSalePrint(sale, { format: 'thermal', source: 'invoice_view', reprint: true });
     toast.success(iv.thermalSent);
   };
 
@@ -95,6 +97,7 @@ export function InvoiceViewDialog({
         showNotes: true,
         documentType: 'FR',
       });
+      void recordSalePrint(sale, { format: 'a4', source: 'invoice_view', reprint: true });
       toast.success(iv.a4Sent);
     } catch (error) {
       toast.error(iv.printError);

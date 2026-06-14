@@ -13,7 +13,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { Plus, Trash2, Search, Save, Printer, X, Send } from 'lucide-react';
 import { printDocument } from '@/lib/documentPDF';
-import { markSalePrintedAfterPrint } from '@/lib/markSalePrinted';
 import { cn } from '@/lib/utils';
 import { DocumentType, DocumentLine, ERPDocument, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
 import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocument } from '@/lib/documentStorage';
@@ -318,8 +317,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       toast.error(t.documentFormUi.printNeedsLines);
       return;
     }
-    void printDocument(doc)
-      .then(() => markSalePrintedAfterPrint(doc))
+    void printDocument(doc, { source: 'document_form' })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
         toast.error(message || t.documentFormUi.printError);

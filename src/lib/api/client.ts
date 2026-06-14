@@ -821,8 +821,19 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ dueDate }),
       }),
-    markPrinted: (id: string) =>
-      apiFetch<any>(`/sales/${encodeURIComponent(id)}/mark-printed`, { method: 'POST' }),
+    markPrinted: (
+      id: string,
+      meta?: {
+        format?: string;
+        reprint?: boolean;
+        source?: string;
+        documentNumber?: string;
+      },
+    ) =>
+      apiFetch<any>(`/sales/${encodeURIComponent(id)}/mark-printed`, {
+        method: 'POST',
+        body: JSON.stringify(meta || {}),
+      }),
     create: async (data: any) => {
       const { newClientRequestId, enqueueOfflineSale, dispatchSalesChanged } = await import('@/lib/sync/offlineSales');
       const { isOfflineFirstEnabled, saveSaleLocally } = await import('@/lib/sync/offlineFirst');
@@ -1134,7 +1145,7 @@ export const api = {
           const transfersWithItems = await Promise.all(
             transfersResult.data.map(async (transfer: any) => {
               const itemsResult = await ipcQuery<any>(
-                'SELECT * FROM stock_transfer_items WHERE transfer_id = $1 ORDER BY created_at ASC NULLS LAST, id ASC',
+                'SELECT * FROM stock_transfer_items WHERE transfer_id = $1 ORDER BY id ASC',
                 [transfer.id],
               );
 

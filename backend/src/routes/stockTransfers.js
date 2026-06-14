@@ -3,6 +3,28 @@ const express = require('express');
 const db = require('../db');
 const { createStockTransfer, processTransferApprove, processTransferReceive } = require('../transactionEngine');
 
+function mapStockTransferError(error) {
+  const raw = error?.message || String(error);
+  if (/chk_products_stock_nonneg/i.test(raw)) {
+    return 'Stock insuficiente na filial de origem. Verifique o inventário e tente novamente.';
+  }
+  if (/stock insuficiente/i.test(raw)) {
+    return raw;
+  }
+  if (/warehouseId inválido/i.test(raw)) {
+    return 'Filial inválida para movimento de stock. Confirme as filiais de origem e destino.';
+  }
+  if (/conta contabilística não encontrada/i.test(raw)) {
+    return 'Plano de contas incompleto (conta 2.2 Mercadorias). Contacte o administrador.';
+  }
+  return raw || 'Operação de transferência falhou';
+}
+
+function stockTransferErrorStatus(message) {
+  if (/stock insuficiente|chk_products_stock_nonneg/i.test(message)) return 409;
+  return 500;
+}
+
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
@@ -39,7 +61,8 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[STOCK TRANSFERS ERROR]', error);
-      res.status(500).json({ error: error.message || 'Failed to create stock transfer' });
+      const errorMessage = mapStockTransferError(error);
+      res.status(stockTransferErrorStatus(errorMessage)).json({ error: errorMessage });
     } finally {
       client.release();
     }
@@ -62,7 +85,8 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[STOCK TRANSFERS ERROR]', error);
-      res.status(500).json({ error: error.message || 'Failed to approve transfer' });
+      const errorMessage = mapStockTransferError(error);
+      res.status(stockTransferErrorStatus(errorMessage)).json({ error: errorMessage });
     } finally {
       client.release();
     }
@@ -85,7 +109,8 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[STOCK TRANSFERS ERROR]', error);
-      res.status(500).json({ error: error.message || 'Failed to receive transfer' });
+      const errorMessage = mapStockTransferError(error);
+      res.status(stockTransferErrorStatus(errorMessage)).json({ error: errorMessage });
     } finally {
       client.release();
     }

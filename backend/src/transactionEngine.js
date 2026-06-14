@@ -262,6 +262,38 @@ async function ensureInventoryShrinkageAccount(client) {
   return '6.6.1';
 }
 
+async function ensureInventoryStockAccount(client) {
+  const existing = await findAccountByCode(client, INVENTORY_STOCK_ACCOUNT);
+  if (existing) return existing.code;
+
+  const parentResult = await client.query(
+    `SELECT id FROM chart_of_accounts WHERE code = '2' AND ${activeFlagWhere(db, 'is_active')} LIMIT 1`,
+  );
+  const parentId = parentResult.rows[0]?.id || null;
+
+  await client.query(
+    `INSERT INTO chart_of_accounts
+     (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active, opening_balance, current_balance)
+     VALUES ($1, $2, 'Mercadorias', 'asset', 'debit', $3, 2, false, true, 0, 0)
+     ON CONFLICT (code) DO NOTHING`,
+    [randomUUID(), INVENTORY_STOCK_ACCOUNT, parentId],
+  );
+
+  return INVENTORY_STOCK_ACCOUNT;
+}
+
+async function assertTransferStockAvailable(client, productId, warehouseId, quantity, productName, actorUuid) {
+  const stockInfo = await getAvailableStockForSale(client, productId, warehouseId, actorUuid);
+  const qty = Number(quantity);
+  if (stockInfo.available + 0.0001 < qty) {
+    throw new Error(
+      `Stock insuficiente para ${stockInfo.name || productName || 'produto'}. `
+      + `Disponível: ${stockInfo.available}, Solicitado: ${qty}`,
+    );
+  }
+  return stockInfo;
+}
+
 async function applyWeightedAverageCostAfterIn(client, productId, quantityIn, unitCostIn) {
   const qty = requirePositive(quantityIn, 'quantityIn');
   const unit = Math.max(0, parseFloat(unitCostIn) || 0);
@@ -1158,7 +1190,7 @@ async function recordStockMovement(client, params) {
       const legacyStockResult = await client.query(
         `SELECT COALESCE(SUM(stock), 0) AS legacy_stock
          FROM products
-         WHERE is_active = true
+         WHERE ${coalesceActiveNotZero(db, 'is_active')}
            AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
            AND (branch_id = $2 OR branch_id IS NULL)`,
         [sku, resolvedWarehouseId]
@@ -1187,17 +1219,24 @@ async function recordStockMovement(client, params) {
      referenceType, referenceUuid, referenceNumber || '', notes || '', createdByUuid]
   );
 
-  // Update denormalized products.stock on the movement row, then reconcile all SKU rows at this warehouse
-  const stockChange = normalizedMovementType === 'IN' ? qty : -qty;
-  await client.query(
-    'UPDATE products SET stock = stock + $1 WHERE id = $2',
-    [stockChange, resolvedProductId]
-  );
-
+  // Sync products.stock from movement ledger (never stock = stock - qty on a row that may still be 0).
   const skuForReconcile = await client.query('SELECT sku FROM products WHERE id = $1', [resolvedProductId]);
   const skuValue = skuForReconcile.rows[0]?.sku;
   if (skuValue) {
     await reconcileSkuStockAtWarehouse(client, skuValue, resolvedWarehouseId);
+  } else {
+    const sumResult = await client.query(
+      `SELECT COALESCE(SUM(
+         CASE WHEN movement_type = 'IN' THEN quantity WHEN movement_type = 'OUT' THEN -quantity ELSE 0 END
+       ), 0) AS total
+       FROM stock_movements WHERE product_id = $1 AND warehouse_id = $2`,
+      [resolvedProductId, resolvedWarehouseId],
+    );
+    const total = Math.max(0, parseFloat(sumResult.rows[0]?.total || 0));
+    await client.query(
+      `UPDATE products SET stock = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+      [total, resolvedProductId],
+    );
   }
 
   return { id: movementId, product_id: resolvedProductId, movement_type: normalizedMovementType, quantity: qty };
@@ -1977,6 +2016,18 @@ async function createStockTransfer(client, data) {
 
   const transferNumber = await generateSequenceNumber(client, 'stock_transfer', 'TRF');
   const transferId = randomUUID();
+  const actorUuid = normalizeUuid(requestedBy);
+
+  for (const item of items) {
+    await assertTransferStockAvailable(
+      client,
+      item.productId,
+      fromBranchId,
+      item.quantity,
+      item.productName,
+      actorUuid,
+    );
+  }
 
   await client.query(
     `INSERT INTO stock_transfers (id, transfer_number, from_branch_id, from_branch_name, to_branch_id, to_branch_name, requested_by, notes)
@@ -2002,7 +2053,7 @@ async function createStockTransfer(client, data) {
   console.log(`[TX ENGINE] Transfer ${transferNumber} created ✓`);
 
   const itemsResult = await client.query(
-    'SELECT * FROM stock_transfer_items WHERE transfer_id = $1 ORDER BY created_at ASC',
+    'SELECT * FROM stock_transfer_items WHERE transfer_id = $1 ORDER BY id ASC',
     [transferId],
   );
 
@@ -2032,10 +2083,21 @@ async function processTransferApprove(client, transferId, approvedBy) {
   }
 
   const itemsResult = await client.query('SELECT * FROM stock_transfer_items WHERE transfer_id = $1', [transferId]);
+  const approverUuid = normalizeUuid(approvedBy);
 
   for (const item of itemsResult.rows) {
+    const stockInfo = await assertTransferStockAvailable(
+      client,
+      item.product_id,
+      transfer.from_branch_id,
+      item.quantity,
+      item.product_name,
+      approverUuid,
+    );
+
     await recordStockMovement(client, {
-      productId: item.product_id, warehouseId: transfer.from_branch_id,
+      productId: stockInfo.productId,
+      warehouseId: transfer.from_branch_id,
       movementType: 'OUT', quantity: item.quantity, unitCost: 0,
       referenceType: 'transfer', referenceId: transferId,
       referenceNumber: transfer.transfer_number,
@@ -2119,6 +2181,7 @@ async function processTransferReceive(client, transferId, receivedQuantities, re
 
   // Journal entry for internal movement
   if (totalTransferValue > 0) {
+    await ensureInventoryStockAccount(client);
     await createJournalEntry(client, {
       description: `Transferência ${transfer.transfer_number}`,
       referenceType: 'transfer', referenceId: transferId,

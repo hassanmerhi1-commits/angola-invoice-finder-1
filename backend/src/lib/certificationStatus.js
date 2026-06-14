@@ -74,6 +74,8 @@ async function getCertificationStatus() {
   const signingRsa = signing.mode === 'rsa';
   const agtSimulate = agtConfig.simulate;
   const agtLiveReady = !agtSimulate && agtConfig.hasApiKey && Boolean(agtConfig.apiUrl);
+  /** Product build can ship with simulate ON — live AGT is a separate go-live step. */
+  const agtDeferred = agtSimulate;
 
   const phases = [
     {
@@ -112,18 +114,20 @@ async function getCertificationStatus() {
       id: 'phase_5',
       phase: 5,
       title: 'Electronic signature',
-      status: signingRsa ? 'ok' : 'warn',
+      status: signingRsa || agtDeferred ? 'ok' : 'warn',
       message: signingRsa
         ? `RSA-SHA256 active (${signing.activeKeyAlias || signing.activeKeyId})`
-        : 'Hash-only mode — upload PKCS#12 for full compliance',
+        : agtDeferred
+          ? 'Hash-only mode — OK for product build; PKCS#12 required only for AGT live'
+          : 'Hash-only mode — upload PKCS#12 for full compliance',
     },
     {
       id: 'phase_6',
       phase: 6,
       title: 'AGT e-invoicing',
-      status: agtSimulate ? 'warn' : (agtLiveReady ? 'ok' : 'blocker'),
-      message: agtSimulate
-        ? 'Simulate ON — OK for internal demo; disable for live AGT sandbox'
+      status: agtDeferred ? 'ok' : (agtLiveReady ? 'ok' : 'blocker'),
+      message: agtDeferred
+        ? 'Simulate ON — fiscal flow complete; live AGT deferred until certification'
         : agtLiveReady
           ? 'Live AGT configured (simulate off, API key set)'
           : 'Simulate OFF but API URL/key missing',
@@ -248,12 +252,15 @@ async function getCertificationStatus() {
     + checks.filter((c) => (c.level === 'warn' && !c.ok)).length;
 
   const readyForInternalReview = blockerCount === 0 && schemaOk;
+  const readyForProductRelease = readyForInternalReview && agtDeferred;
   const readyForAgtSubmission = readyForInternalReview && nifOk && softwareCertOk && signingRsa && agtLiveReady;
 
   return {
     ok: blockerCount === 0,
     readyForInternalReview,
+    readyForProductRelease,
     readyForAgtSubmission,
+    agtDeferred,
     appVersion: readAppVersion(),
     schemaVersion: schema.stored,
     schemaVersionExpected: EXPECTED_SCHEMA_VERSION,

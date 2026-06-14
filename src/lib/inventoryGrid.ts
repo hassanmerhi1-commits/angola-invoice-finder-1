@@ -8,7 +8,7 @@ import {
 } from '@/lib/productDedupe';
 import { writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
-const CACHE_PREFIX = 'nexor:inventory-grid:v12:';
+const CACHE_PREFIX = 'nexor:inventory-grid:v14:';
 
 /** Normalize stock from API row (movement ledger or products.stock). */
 export function readProductStock(row: Record<string, unknown> | Product): number {
@@ -146,8 +146,14 @@ function readOfflineInventoryGridFallback(
 export async function fetchInventoryGrid(opts: {
   branchId?: string;
   consolidated: boolean;
+  /** When true, always hit the network (branch switch). */
+  bypassCache?: boolean;
 }): Promise<Product[]> {
   const key = cacheKey(opts.branchId, opts.consolidated);
+  if (!opts.bypassCache) {
+    const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
+    if (cached?.length) return cached;
+  }
   try {
     const res = await api.products.inventoryGrid({
       branchId: opts.branchId,

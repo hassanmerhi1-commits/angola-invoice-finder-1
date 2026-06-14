@@ -7,6 +7,7 @@ import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { api } from '@/lib/api/client';
+import { recordPurchaseInvoicePrint } from '@/lib/recordPrintAudit';
 import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -1034,6 +1035,7 @@ function InvoiceViewDialog({
 
     const { printHtml } = await import('@/lib/printHtml');
     await printHtml(html);
+    void recordPurchaseInvoicePrint(invoice, { format: 'a4', source: 'purchase_invoice' });
   };
 
   return (

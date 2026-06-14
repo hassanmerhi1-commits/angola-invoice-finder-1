@@ -11,9 +11,9 @@ import {
 } from '@/hooks/useFiscalDocuments';
 import { useSupplierReturns } from '@/hooks/useSupplierReturns';
 import { SupplierReturnItem } from '@/lib/supplierReturns';
-import { Sale, CreditNote, CreditNoteItem, DebitNoteItem, TransportDocumentItem, Product, PurchaseOrder } from '@/types/erp';
-import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
+import { Sale, CreditNote, CreditNoteItem, DebitNote, DebitNoteItem, TransportDocumentItem, Product, PurchaseOrder } from '@/types/erp';
 import { CreditNoteCreateDialog } from '@/components/fiscal/CreditNoteCreateDialog';
+import { DebitNoteCreateDialog } from '@/components/fiscal/DebitNoteCreateDialog';
 import { api } from '@/lib/api/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -58,6 +58,7 @@ export default function FiscalDocuments() {
   const { user } = useAuth();
   const { hasPermission } = usePermissions(user?.id);
   const canCreateCreditNote = hasPermission('credit_note_create');
+  const canCreateDebitNote = hasPermission('debit_note_create');
   const canSendAgt = hasPermission('agt_send');
   const canExportSaft = hasPermission('saft_export');
   const { currentBranch, apiBranchId, branches } = useBranchScope();
@@ -66,7 +67,7 @@ export default function FiscalDocuments() {
   const { orders } = usePurchaseOrders(apiBranchId);
   const { creditNotes, createCreditNote, refreshCreditNotes } = useCreditNotes(apiBranchId);
   const { transmit: transmitAgt, transmitting: agtTransmitting } = useAgtTransmit();
-  const { debitNotes, createDebitNote } = useDebitNotes(apiBranchId);
+  const { debitNotes, createDebitNote, refreshDebitNotes } = useDebitNotes(apiBranchId);
   const { transportDocs, createTransportDocument, updateTransportStatus } = useTransportDocuments(apiBranchId);
   const { supplierReturns, createSupplierReturn, approveReturn, markAsShipped, completeReturn, cancelReturn } = useSupplierReturns(apiBranchId);
   const { companyInfo, saveCompanyInfo } = useCompanyInfo();
@@ -83,18 +84,12 @@ export default function FiscalDocuments() {
   const [saftDialog, setSaftDialog] = useState(false);
   const [companyDialog, setCompanyDialog] = useState(false);
 
-  // Form states
-  // Debit note may optionally reference a sale
-  const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [initialCreditSaleId, setInitialCreditSaleId] = useState<string | null>(null);
+  const [initialDebitSaleId, setInitialDebitSaleId] = useState<string | null>(null);
   const [creditNoteSubmitting, setCreditNoteSubmitting] = useState(false);
+  const [debitNoteSubmitting, setDebitNoteSubmitting] = useState(false);
   const [viewCreditNote, setViewCreditNote] = useState<CreditNote | null>(null);
-
-  const [debitReason, setDebitReason] = useState<'price_adjustment' | 'additional_charge' | 'interest' | 'other'>('price_adjustment');
-  const [debitDescription, setDebitDescription] = useState('');
-  const [debitItems, setDebitItems] = useState<DebitNoteItem[]>([{ description: '', quantity: 1, unitPrice: 0, taxRate: DEFAULT_VAT_RATE, taxAmount: 0, subtotal: 0 }]);
-  const [debitCustomerNif, setDebitCustomerNif] = useState('');
-  const [debitCustomerName, setDebitCustomerName] = useState('');
+  const [viewDebitNote, setViewDebitNote] = useState<DebitNote | null>(null);
 
   const [transportType, setTransportType] = useState<'delivery' | 'transfer' | 'return' | 'consignment'>('delivery');
   const [originAddress, setOriginAddress] = useState(currentBranch?.address || '');
@@ -141,16 +136,50 @@ export default function FiscalDocuments() {
     setCreditNoteDialog(true);
   }, [canCreateCreditNote, notifyCreditNoteDenied]);
 
+  const notifyDebitNoteDenied = useCallback(() => {
+    toast({
+      variant: 'destructive',
+      title: t.common.error,
+      description: fd.debitNotePermissionDenied,
+    });
+  }, [toast, t.common.error, fd.debitNotePermissionDenied]);
+
+  const openDebitNoteCreateDialog = useCallback(() => {
+    if (!canCreateDebitNote) {
+      notifyDebitNoteDenied();
+      return;
+    }
+    setInitialDebitSaleId(null);
+    setDebitNoteDialog(true);
+  }, [canCreateDebitNote, notifyDebitNoteDenied]);
+
   useEffect(() => {
     const st = location.state as {
       openSaft?: boolean;
       openCreditNoteForSaleId?: string;
       openCreditNoteId?: string;
       openCreditNoteCreate?: boolean;
+      openDebitNoteCreate?: boolean;
+      openDebitNoteForSaleId?: string;
     } | null;
     if (st?.openSaft) {
       setSaftDialog(true);
       navigate(location.pathname, { replace: true, state: {} });
+      return;
+    }
+    if (st?.openDebitNoteCreate) {
+      navigate(location.pathname, { replace: true, state: {} });
+      openDebitNoteCreateDialog();
+      return;
+    }
+    if (st?.openDebitNoteForSaleId && sales.length) {
+      navigate(location.pathname, { replace: true, state: {} });
+      if (!canCreateDebitNote) {
+        notifyDebitNoteDenied();
+        return;
+      }
+      setInitialDebitSaleId(st.openDebitNoteForSaleId);
+      setDebitNoteDialog(true);
       return;
     }
     if (st?.openCreditNoteCreate) {
@@ -180,8 +209,11 @@ export default function FiscalDocuments() {
     navigate,
     sales,
     canCreateCreditNote,
+    canCreateDebitNote,
     notifyCreditNoteDenied,
+    notifyDebitNoteDenied,
     openCreditNoteCreateDialog,
+    openDebitNoteCreateDialog,
   ]);
 
   useEffect(() => {
@@ -300,33 +332,63 @@ export default function FiscalDocuments() {
     }
   };
 
-  const handleCreateDebitNote = async () => {
+  const handleCreateDebitNote = async (payload: {
+    sale: Sale;
+    reason: DebitNote['reason'];
+    description: string;
+    items: DebitNoteItem[];
+  }) => {
     if (!currentBranch || !user) return;
 
+    setDebitNoteSubmitting(true);
     try {
       await createDebitNote(
         currentBranch.id,
         currentBranch.code,
-        selectedSale,
-        debitReason,
-        debitDescription,
-        debitItems.filter(i => i.description && i.subtotal > 0),
+        payload.sale,
+        payload.reason,
+        payload.description,
+        payload.items,
         user.id,
-        debitCustomerNif,
-        debitCustomerName,
+        payload.sale.customerNif,
+        payload.sale.customerName,
       );
       toast({
         title: t.fiscalDocumentsUi.debitNoteCreatedTitle,
         description: t.fiscalDocumentsUi.documentIssuedSuccess,
       });
       setDebitNoteDialog(false);
-      resetDebitForm();
+      setInitialDebitSaleId(null);
     } catch (err) {
       toast({
         variant: 'destructive',
         title: t.common.error,
         description: err instanceof Error ? err.message : t.fiscalDocumentsUi.documentIssuedSuccess,
       });
+      throw err;
+    } finally {
+      setDebitNoteSubmitting(false);
+    }
+  };
+
+  const handleTransmitDebitNote = async (note: DebitNote) => {
+    try {
+      const data = await transmitAgt('debit_note', note.id, {
+        onSuccess: () => refreshDebitNotes(),
+      });
+      if (data?.agtCode || data?.agtStatus) {
+        setViewDebitNote((prev) => (prev?.id === note.id ? {
+          ...prev,
+          agtCode: data.agtCode ?? prev.agtCode,
+          agtStatus: (data.agtStatus as DebitNote['agtStatus']) ?? prev.agtStatus,
+        } : prev));
+      }
+      await refreshDebitNotes();
+      const res = await api.fiscalDocuments.listDebitNotes(apiBranchId);
+      const updated = (res.data || []).find((n: DebitNote) => n.id === note.id);
+      if (updated) setViewDebitNote(updated);
+    } catch {
+      /* toast handled in hook */
     }
   };
 
@@ -409,15 +471,6 @@ export default function FiscalDocuments() {
       description: t.fiscalDocumentsUi.companyInfoSavedSuccess,
     });
     setCompanyDialog(false);
-  };
-
-  const resetDebitForm = () => {
-    setSelectedSale(null);
-    setDebitReason('price_adjustment');
-    setDebitDescription('');
-    setDebitItems([{ description: '', quantity: 1, unitPrice: 0, taxRate: DEFAULT_VAT_RATE, taxAmount: 0, subtotal: 0 }]);
-    setDebitCustomerNif('');
-    setDebitCustomerName('');
   };
 
   const resetTransportForm = () => {
@@ -528,23 +581,11 @@ export default function FiscalDocuments() {
     }
   };
 
-  const updateDebitItem = (index: number, field: keyof DebitNoteItem, value: string | number) => {
-    const updated = [...debitItems];
-    (updated[index] as any)[field] = value;
-    
-    if (field === 'quantity' || field === 'unitPrice' || field === 'taxRate') {
-      const qty = updated[index].quantity;
-      const price = updated[index].unitPrice;
-      const taxRate = updated[index].taxRate;
-      updated[index].subtotal = qty * price;
-      updated[index].taxAmount = updated[index].subtotal * (taxRate / 100);
-    }
-    
-    setDebitItems(updated);
-  };
-
-  const addDebitItem = () => {
-    setDebitItems([...debitItems, { description: '', quantity: 1, unitPrice: 0, taxRate: DEFAULT_VAT_RATE, taxAmount: 0, subtotal: 0 }]);
+  const getDebitReasonLabel = (reason: DebitNote['reason']) => {
+    if (reason === 'price_adjustment') return t.fiscalDocumentsUi.debitReasonPriceAdjustmentShort;
+    if (reason === 'additional_charge') return t.fiscalDocumentsUi.debitReasonAdditionalChargeShort;
+    if (reason === 'interest') return t.fiscalDocumentsUi.debitReasonInterestShort;
+    return t.fiscalDocumentsUi.other;
   };
 
   return (
@@ -818,7 +859,7 @@ export default function FiscalDocuments() {
                 <CardTitle>{fd.debitNotesTitle}</CardTitle>
                 <CardDescription>{fd.debitNotesDesc}</CardDescription>
               </div>
-              <Button variant="modern" size="lg" onClick={() => setDebitNoteDialog(true)}>
+              <Button variant="modern" size="lg" onClick={openDebitNoteCreateDialog}>
                 <Plus />
                 {fd.newDebitNote}
               </Button>
@@ -840,20 +881,18 @@ export default function FiscalDocuments() {
                       <TableHead>{fd.colCustomer}</TableHead>
                       <TableHead className="text-right">{fd.colTotal}</TableHead>
                       <TableHead>{fd.colStatus}</TableHead>
+                      <TableHead>{fd.colActions}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {debitNotes.map(note => (
                       <TableRow key={note.id}>
                         <TableCell className="font-medium">{note.documentNumber}</TableCell>
-                        <TableCell>{format(new Date(note.createdAt), 'dd/MM/yyyy HH:mm', { locale: pt })}</TableCell>
+                        <TableCell>{format(new Date(note.createdAt), 'dd/MM/yyyy HH:mm', { locale: dfLocale })}</TableCell>
                         <TableCell>{note.originalInvoiceNumber || '-'}</TableCell>
                         <TableCell>
                           <Badge variant="outline">
-                            {note.reason === 'price_adjustment' ? t.fiscalDocumentsUi.debitReasonPriceAdjustmentShort :
-                             note.reason === 'additional_charge' ? t.fiscalDocumentsUi.debitReasonAdditionalChargeShort :
-                             note.reason === 'interest' ? t.fiscalDocumentsUi.debitReasonInterestShort :
-                             t.fiscalDocumentsUi.other}
+                            {getDebitReasonLabel(note.reason)}
                           </Badge>
                         </TableCell>
                         <TableCell>{note.customerName || t.fiscalDocumentsUi.finalConsumer}</TableCell>
@@ -862,6 +901,11 @@ export default function FiscalDocuments() {
                           <Badge variant={note.status === 'issued' ? 'default' : 'destructive'}>
                             {note.status === 'issued' ? t.fiscalDocumentsUi.statusIssued : t.fiscalDocumentsUi.statusCancelled}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" onClick={() => setViewDebitNote(note)}>
+                            {fd.actionView}
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1203,109 +1247,126 @@ export default function FiscalDocuments() {
         onSubmit={handleCreateCreditNote}
       />
 
-      {/* Debit Note Dialog */}
-      <Dialog open={debitNoteDialog} onOpenChange={setDebitNoteDialog}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{t.fiscalDocumentsUi.newDebitNoteTitle}</DialogTitle>
-            <DialogDescription>{t.fiscalDocumentsUi.newDebitNoteSubtitle}</DialogDescription>
+      <DebitNoteCreateDialog
+        open={debitNoteDialog && canCreateDebitNote}
+        initialSaleId={initialDebitSaleId}
+        sales={sales}
+        debitNotes={debitNotes}
+        submitting={debitNoteSubmitting}
+        onOpenChange={(open) => {
+          if (open && !canCreateDebitNote) {
+            notifyDebitNoteDenied();
+            return;
+          }
+          setDebitNoteDialog(open);
+          if (!open) setInitialDebitSaleId(null);
+        }}
+        onSubmit={handleCreateDebitNote}
+      />
+
+      {/* Debit Note Detail (read-only) */}
+      <Dialog open={!!viewDebitNote} onOpenChange={(open) => !open && setViewDebitNote(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="px-6 pt-6 pb-3">
+            <DialogTitle>{fd.debitNoteDetailTitle}</DialogTitle>
+            <DialogDescription>{fd.debitNoteImmutableHint}</DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>{fd.customerNifLabel}</Label>
-                <Input 
-                  value={debitCustomerNif}
-                  onChange={(e) => setDebitCustomerNif(e.target.value)}
-                  placeholder="000000000"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>{t.common.name}</Label>
-                <Input 
-                  value={debitCustomerName}
-                  onChange={(e) => setDebitCustomerName(e.target.value)}
-                  placeholder={t.fiscalDocumentsUi.customerNamePlaceholder}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Motivo</Label>
-                <Select value={debitReason} onValueChange={(v: any) => setDebitReason(v)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="price_adjustment">{t.fiscalDocumentsUi.debitReasonPriceAdjustment}</SelectItem>
-                    <SelectItem value="additional_charge">{t.fiscalDocumentsUi.debitReasonAdditionalCharge}</SelectItem>
-                    <SelectItem value="interest">{fd.debitReasonInterest}</SelectItem>
-                    <SelectItem value="other">{fd.other}</SelectItem>
-                  </SelectContent>
-                </Select>
+          {viewDebitNote && (
+            <div className="px-6 pb-4 border-b bg-muted/40 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {canSendAgt && (
+                  <Button
+                    className="gap-2"
+                    disabled={agtTransmitting || viewDebitNote.agtStatus === 'validated'}
+                    onClick={() => void handleTransmitDebitNote(viewDebitNote)}
+                  >
+                    <Send className="h-4 w-4" />
+                    {viewDebitNote.agtStatus === 'validated' ? t.agtUi.agtValidatedLabel : fd.actionSendAgt}
+                  </Button>
+                )}
+                {viewDebitNote.agtCode && (
+                  <Badge variant="default" className="font-mono">
+                    CUCE: {viewDebitNote.agtCode}
+                  </Badge>
+                )}
+                {viewDebitNote.agtStatus && (
+                  <Badge variant="outline">
+                    AGT: {viewDebitNote.agtStatus === 'validated' ? t.agtUi.agtValidatedLabel : viewDebitNote.agtStatus}
+                  </Badge>
+                )}
               </div>
             </div>
+          )}
 
-            <div className="space-y-2">
-              <Label>{t.common.description}</Label>
-              <Textarea 
-                value={debitDescription}
-                onChange={(e) => setDebitDescription(e.target.value)}
-                placeholder={t.fiscalDocumentsUi.debitNoteReasonPlaceholder}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <Label>{fd.itemsLabel}</Label>
-                <Button variant="outline" size="sm" onClick={addDebitItem}>
-                  <Plus className="w-4 h-4 mr-1" /> {fd.addBtn}
-                </Button>
-              </div>
-              <div className="space-y-2">
-                {debitItems.map((item, idx) => (
-                  <div key={idx} className="grid grid-cols-5 gap-2 items-center">
-                    <Input
-                      placeholder={t.common.description}
-                      value={item.description}
-                      onChange={(e) => updateDebitItem(idx, 'description', e.target.value)}
-                      className="col-span-2"
-                    />
-                    <Input
-                      type="number"
-                      placeholder={fd.colQty}
-                      value={item.quantity}
-                      onChange={(e) => updateDebitItem(idx, 'quantity', parseFloat(e.target.value) || 0)}
-                    />
-                    <Input
-                      type="number"
-                      placeholder={t.fiscalDocumentsUi.pricePlaceholder}
-                      value={item.unitPrice}
-                      onChange={(e) => updateDebitItem(idx, 'unitPrice', parseFloat(e.target.value) || 0)}
-                    />
-                    <div className="text-right font-medium">
-                      {(item.subtotal + item.taxAmount).toLocaleString(uiLocale)} Kz
-                    </div>
+          {viewDebitNote && (
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-muted-foreground">{fd.colDocNumber}</p>
+                  <p className="font-medium">{viewDebitNote.documentNumber}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">{fd.colOriginalInvoice}</p>
+                  <p className="font-medium">{viewDebitNote.originalInvoiceNumber || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">{fd.colCustomer}</p>
+                  <p className="font-medium">{viewDebitNote.customerName || fd.finalConsumer}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">{fd.colReason}</p>
+                  <p className="font-medium">{getDebitReasonLabel(viewDebitNote.reason)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">{fd.colTotal}</p>
+                  <p className="font-medium">{viewDebitNote.total.toLocaleString(uiLocale)} Kz</p>
+                </div>
+                {viewDebitNote.saftHash && (
+                  <div>
+                    <p className="text-muted-foreground">Hash</p>
+                    <p className="font-mono text-xs break-all">{viewDebitNote.saftHash}</p>
                   </div>
-                ))}
+                )}
               </div>
-              <div className="text-right font-bold">
-                {t.fiscalDocumentsUi.totalLabel} {debitItems.reduce((sum, i) => sum + i.subtotal + i.taxAmount, 0).toLocaleString(uiLocale)} Kz
+              {viewDebitNote.reasonDescription && (
+                <div>
+                  <p className="text-muted-foreground">{t.common.description}</p>
+                  <p>{viewDebitNote.reasonDescription}</p>
+                </div>
+              )}
+              <div className="border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{fd.colProduct}</TableHead>
+                      <TableHead className="text-right">{fd.colQty}</TableHead>
+                      <TableHead className="text-right">{fd.colUnitPrice}</TableHead>
+                      <TableHead className="text-right">{fd.colTaxRate}</TableHead>
+                      <TableHead className="text-right">{fd.colTotal}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {viewDebitNote.items.map((item, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell>{item.description}</TableCell>
+                        <TableCell className="text-right">{item.quantity}</TableCell>
+                        <TableCell className="text-right">{item.unitPrice.toLocaleString(uiLocale)}</TableCell>
+                        <TableCell className="text-right">{item.taxRate}%</TableCell>
+                        <TableCell className="text-right">
+                          {(item.subtotal + item.taxAmount).toLocaleString(uiLocale)} Kz
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
             </div>
-          </div>
+          )}
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setDebitNoteDialog(false); resetDebitForm(); }}>
-              {t.common.cancel}
-            </Button>
-            <Button 
-              onClick={handleCreateDebitNote}
-              disabled={debitItems.every(i => !i.description || i.subtotal === 0)}
-            >
-              {fd.issueDebitNote}
+          <DialogFooter className="px-6 py-4 border-t">
+            <Button variant="outline" onClick={() => setViewDebitNote(null)}>
+              {t.common.close}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -355,6 +355,8 @@ export interface DebitNote {
   customerNif?: string;
   customerName?: string;
   status: 'draft' | 'issued' | 'cancelled';
+  agtStatus?: string;
+  agtCode?: string;
   issuedBy: string;
   issuedAt: string;
   saftHash?: string;

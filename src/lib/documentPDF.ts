@@ -4,11 +4,14 @@
 import { ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentLine } from '@/types/documents';
 import { getCompanySettings } from '@/lib/companySettings';
 import { printHtml } from '@/lib/printHtml';
+import { recordDocumentPrint, type PrintSource } from '@/lib/recordPrintAudit';
 
 interface PDFOptions {
   showQR?: boolean;
   showTerms?: boolean;
   copies?: number;
+  source?: PrintSource;
+  reprint?: boolean;
 }
 
 function formatCurrency(value: number): string {
@@ -400,8 +403,10 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
 
 // Open system print dialog for the document (Electron or browser)
 export async function printDocument(doc: ERPDocument, options: PDFOptions = {}) {
-  const html = generateDocumentHTML(doc, { showQR: true, ...options });
+  const { source = 'invoices', reprint, showQR, showTerms, copies } = options;
+  const html = generateDocumentHTML(doc, { showQR: showQR ?? true, showTerms, copies });
   await printHtml(html);
+  void recordDocumentPrint(doc, { format: 'a4', source, reprint });
 }
 
 // Download as HTML (can be opened and printed to PDF)

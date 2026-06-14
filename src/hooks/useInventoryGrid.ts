@@ -1,15 +1,12 @@
-import { useCallback, useEffect, useRef, useState, startTransition } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Product } from '@/types/erp';
 import {
   cacheKey,
   fetchInventoryGrid,
   invalidateInventoryGridCache,
-  isInventoryGridCacheFresh,
-  readInventoryGridCache,
-  readInventoryGridCacheStale,
   writeCache,
 } from '@/lib/inventoryGrid';
-import { readLanInventoryGrid, saveLanInventoryGrid } from '@/lib/lanCatalogCache';
+import { saveLanInventoryGrid } from '@/lib/lanCatalogCache';
 import { canonicalProductSku } from '@/lib/productDedupe';
 
 export function useInventoryGrid(opts: {
@@ -19,36 +16,28 @@ export function useInventoryGrid(opts: {
   enabled?: boolean;
 }) {
   const enabled = opts.enabled !== false;
-  const scopeKey = opts.consolidated ? 'hq' : String(opts.branchId || '').trim();
-  const initialCached = () => {
-    if (!enabled) return [];
-    return (
-      readInventoryGridCache(opts.branchId, opts.consolidated)
-      || readInventoryGridCacheStale(opts.branchId, opts.consolidated)
-      || readLanInventoryGrid(cacheKey(opts.branchId, opts.consolidated))
-      || []
-    );
-  };
-  const [rows, setRows] = useState<Product[]>(initialCached);
-  const [loading, setLoading] = useState(() => enabled && rows.length === 0);
+  const scopeKey = opts.consolidated ? 'hq' : String(opts.branchId || '').trim() || 'none';
+  const [rows, setRows] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(() => enabled);
   const generationRef = useRef(0);
 
   const refresh = useCallback(async () => {
     if (!enabled) return;
     invalidateInventoryGridCache(opts.branchId, opts.consolidated);
     const gen = ++generationRef.current;
-    if (rows.length === 0) setLoading(true);
+    setLoading(true);
     try {
       const fresh = await fetchInventoryGrid({
         branchId: opts.branchId,
         consolidated: opts.consolidated,
+        bypassCache: true,
       });
       if (gen !== generationRef.current) return;
-      startTransition(() => setRows(fresh));
+      setRows(fresh);
     } finally {
       if (gen === generationRef.current) setLoading(false);
     }
-  }, [enabled, opts.branchId, opts.consolidated, rows.length]);
+  }, [enabled, opts.branchId, opts.consolidated]);
 
   useEffect(() => {
     if (!enabled) {
@@ -56,45 +45,23 @@ export function useInventoryGrid(opts: {
       setLoading(false);
       return;
     }
-    const gen = ++generationRef.current;
-    const cached =
-      readInventoryGridCache(opts.branchId, opts.consolidated)
-      || readInventoryGridCacheStale(opts.branchId, opts.consolidated)
-      || readLanInventoryGrid(cacheKey(opts.branchId, opts.consolidated));
-    if (cached?.length) {
-      startTransition(() => setRows(cached));
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
 
-    const cacheFresh = isInventoryGridCacheFresh(opts.branchId, opts.consolidated);
-    if (cacheFresh) {
-      return () => {
-        generationRef.current++;
-      };
-    }
+    const gen = ++generationRef.current;
+    setRows([]);
+    setLoading(true);
 
     void (async () => {
       try {
         const fresh = await fetchInventoryGrid({
           branchId: opts.branchId,
           consolidated: opts.consolidated,
+          bypassCache: true,
         });
         if (gen !== generationRef.current) return;
-        startTransition(() => setRows(fresh));
+        setRows(fresh);
       } catch (err) {
         console.error('[useInventoryGrid] load failed:', err);
-        if (gen === generationRef.current) {
-          const offlineRows =
-            readInventoryGridCacheStale(opts.branchId, opts.consolidated)
-            || readLanInventoryGrid(cacheKey(opts.branchId, opts.consolidated));
-          if (offlineRows?.length) {
-            startTransition(() => setRows(offlineRows));
-          } else if (!cached?.length) {
-            setRows([]);
-          }
-        }
+        if (gen === generationRef.current) setRows([]);
       } finally {
         if (gen === generationRef.current) setLoading(false);
       }

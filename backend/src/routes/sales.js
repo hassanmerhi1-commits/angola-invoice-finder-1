@@ -54,7 +54,12 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[SALES ERROR]', error);
-      res.status(500).json({ error: error.message || 'Failed to create sale' });
+      const raw = error.message || 'Failed to create sale';
+      const errorMessage = /chk_products_stock_nonneg/i.test(raw)
+        ? 'Stock insuficiente para concluir a venda. Verifique o inventário nesta filial.'
+        : raw;
+      const status = /stock insuficiente/i.test(errorMessage) ? 409 : 500;
+      res.status(status).json({ error: errorMessage });
     } finally {
       client.release();
     }
@@ -62,6 +67,7 @@ module.exports = function(broadcastTable) {
 
   router.post('/:id/mark-printed', requireAuth, async (req, res) => {
     try {
+      const { format, reprint, source, documentNumber } = req.body || {};
       const result = await db.query(
         `UPDATE sales SET printed_at = CURRENT_TIMESTAMP
          WHERE id = $1 RETURNING id, invoice_number, printed_at`,
@@ -71,12 +77,25 @@ module.exports = function(broadcastTable) {
         return res.status(404).json({ error: 'Sale not found' });
       }
       const row = result.rows[0];
+      const formatLabel = format === 'thermal' ? 'térmica' : format === 'a4' ? 'A4' : 'documento';
+      const reprintSuffix = reprint ? ' (reimpressão)' : '';
       await logFiscalEventFromReq(req, {
         tableName: 'sales',
         recordId: row.id,
         action: 'print',
-        description: `Fatura ${row.invoice_number} impressa`,
-        newValues: { printedAt: row.printed_at },
+        description: `Fatura ${row.invoice_number} impressa (${formatLabel})${reprintSuffix}`,
+        metadata: {
+          format: format || null,
+          reprint: !!reprint,
+          source: source || null,
+          documentNumber: documentNumber || row.invoice_number,
+        },
+        newValues: {
+          printedAt: row.printed_at,
+          format: format || null,
+          reprint: !!reprint,
+          source: source || null,
+        },
       });
       await broadcastTable('sales');
       res.json(row);

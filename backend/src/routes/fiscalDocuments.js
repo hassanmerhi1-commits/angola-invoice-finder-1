@@ -85,6 +85,8 @@ function mapDebitNoteRow(row, items = []) {
     customerName: row.customer_name,
     status: row.status,
     saftHash: row.saft_hash,
+    agtStatus: row.agt_status,
+    agtCode: row.agt_code,
     issuedBy: row.issued_by,
     issuedAt: row.issued_at,
     createdAt: row.created_at,

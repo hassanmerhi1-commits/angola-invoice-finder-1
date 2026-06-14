@@ -33,7 +33,7 @@ import {
   Database, Calculator, Receipt, Factory, Import, UserCog,
   FolderOpen, BookOpen, Landmark, CreditCard, DollarSign,
   Shield, Wallet, PieChart, TrendingUp, Globe, Keyboard,
-  Monitor, Bell, ListTodo,
+  Monitor, Bell, ListTodo, ClipboardCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { ensureDayTodos, todayKey } from '@/lib/dailyTodos';
@@ -67,6 +67,11 @@ type ToolbarActionKey =
   | 'adjustEntry'
   | 'adjustExit'
   | 'minQty'
+  | 'countSheet'
+  | 'reconcile'
+  | 'import'
+  | 'labels'
+  | 'adjustStock'
   | 'salesInvoice'
   | 'receipt'
   | 'payment'
@@ -128,9 +133,10 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { label: t.topNav.invoicing.salesHistory, icon: Receipt, path: '/vendas' },
         { label: t.topNav.invoicing.invoices, icon: FileText, path: '/invoices' },
         { label: t.topNav.invoicing.proforma, icon: ClipboardList, path: '/proforma' },
+        { label: t.topNav.invoicing.fiscalDocuments, icon: FileCheck, path: '/fiscal-documents' },
         { label: 'separator' },
-        { label: t.topNav.invoicing.creditNote, icon: CreditCard, path: '/fiscal-documents' },
-        { label: t.topNav.invoicing.debitNote, icon: DollarSign, path: '/fiscal-documents' },
+        { label: t.topNav.invoicing.creditNote, icon: CreditCard, path: '/fiscal-documents', state: { openCreditNoteCreate: true } },
+        { label: t.topNav.invoicing.debitNote, icon: DollarSign, path: '/fiscal-documents', state: { openDebitNoteCreate: true } },
       ],
     },
     {
@@ -201,6 +207,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     { label: t.nav.suppliers, path: '/suppliers', icon: Truck },
     { label: t.nav.journals, path: '/journals', icon: Calendar },
     { label: t.nav.invoices, path: '/invoices', icon: FileText },
+    { label: t.nav.fiscalDocuments, path: '/fiscal-documents', icon: FileCheck },
     { label: t.nav.production, path: '/production', icon: Factory },
     { label: t.common.import, path: '/import', icon: Globe },
     { label: t.nav.hr, path: '/hr', icon: Users },
@@ -305,6 +312,44 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         case 'minQty':
           dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_MIN_QTY);
           return;
+        case 'countSheet':
+          if (path === '/inventory' || path.startsWith('/inventory/')) {
+            dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_COUNT_SHEET);
+          } else {
+            navigate('/inventory', { state: { openCountSheet: true } });
+          }
+          return;
+        case 'reconcile':
+          if (path === '/inventory' || path.startsWith('/inventory/')) {
+            dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_RECONCILE);
+          } else {
+            navigate('/inventory', { state: { openReconcile: true } });
+          }
+          return;
+        case 'import':
+          if (path === '/inventory' || path.startsWith('/inventory/')) {
+            dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_IMPORT);
+          } else {
+            navigate('/inventory');
+            window.setTimeout(() => dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_IMPORT), 150);
+          }
+          return;
+        case 'labels':
+          if (path === '/inventory' || path.startsWith('/inventory/')) {
+            dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_LABELS);
+          } else {
+            navigate('/inventory');
+            window.setTimeout(() => dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_LABELS), 150);
+          }
+          return;
+        case 'adjustStock':
+          if (path === '/inventory' || path.startsWith('/inventory/')) {
+            dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_ADJUST_STOCK);
+          } else {
+            navigate('/inventory');
+            window.setTimeout(() => dispatchToolbarEvent(NEXOR_TOOLBAR.INVENTORY_ADJUST_STOCK), 150);
+          }
+          return;
         case 'print':
           dispatchToolbarEvent(NEXOR_TOOLBAR.DOCUMENTS_PRINT);
           return;
@@ -346,13 +391,24 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       return base;
     }
 
-    if (p.includes('inventory') || p.includes('stock')) {
+    if (p === '/inventory' || p.startsWith('/inventory/')) {
       return [
         ...base,
         { actionKey: 'transfer', label: t.topNav.toolbar.transfer, icon: ArrowRightLeft },
         { actionKey: 'adjustEntry', label: t.topNav.toolbar.adjustEntry, icon: PackagePlus },
         { actionKey: 'adjustExit', label: t.topNav.toolbar.adjustExit, icon: PackageMinus },
         { actionKey: 'minQty', label: t.topNav.toolbar.minQty, icon: Filter },
+        { actionKey: 'countSheet', label: t.topNav.toolbar.countSheet, icon: ClipboardList },
+        { actionKey: 'reconcile', label: t.topNav.toolbar.reconcile, icon: ClipboardCheck },
+        { actionKey: 'import', label: t.topNav.toolbar.import, icon: Import },
+        { actionKey: 'labels', label: t.topNav.toolbar.labels, icon: Printer },
+        { actionKey: 'adjustStock', label: t.topNav.toolbar.adjustStock, icon: Calculator },
+      ];
+    }
+    if (p === '/stock-transfer' || p.startsWith('/stock-transfer/')) {
+      return [
+        ...base,
+        { actionKey: 'transfer', label: t.topNav.toolbar.transfer, icon: ArrowRightLeft },
       ];
     }
     if (p.includes('chart-of-accounts')) {

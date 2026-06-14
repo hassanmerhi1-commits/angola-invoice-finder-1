@@ -21,6 +21,7 @@ import { format } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
 import { printA4Invoice } from '@/lib/a4Invoice';
 import { printReceipt, getPrinterConfig } from '@/lib/thermalPrinter';
+import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { getCompanySettings } from '@/lib/companySettings';
 import { AGTQRCode } from '@/components/invoice/AGTQRCode';
 import { toast } from 'sonner';
@@ -93,6 +94,7 @@ export default function Vendas() {
     try {
       const config = getPrinterConfig();
       await printReceipt(sale, currentBranch, config, false);
+      void recordSalePrint(sale, { format: 'thermal', source: 'vendas', reprint: true });
       toast.success(t.vendasUi.thermalSent);
     } catch {
       toast.error(t.vendasUi.thermalPrintError);
@@ -103,6 +105,7 @@ export default function Vendas() {
     if (!currentBranch) return;
     try {
       await printA4Invoice(sale, currentBranch, { showBankDetails: true, documentType: 'FR' });
+      void recordSalePrint(sale, { format: 'a4', source: 'vendas', reprint: true });
       toast.success(t.vendasUi.a4Sent);
     } catch {
       toast.error(t.vendasUi.a4PrintError);

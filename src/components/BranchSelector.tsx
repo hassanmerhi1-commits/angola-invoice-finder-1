@@ -1,3 +1,4 @@
+import { Branch } from '@/types/erp';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import {
   Select,
@@ -19,6 +20,8 @@ interface BranchSelectorProps {
   includeAllBranches?: boolean;
   inventoryScopeId?: string;
   onInventoryScopeChange?: (scopeId: string) => void;
+  /** Pass full branch list (inventory should use allBranches, not visibleBranches). */
+  branchList?: Branch[];
 }
 
 export function BranchSelector({
@@ -27,17 +30,21 @@ export function BranchSelector({
   includeAllBranches = false,
   inventoryScopeId,
   onInventoryScopeChange,
+  branchList,
 }: BranchSelectorProps) {
   const {
-    branches,
+    branches: scopeBranches,
     currentBranch,
     scopeId: globalScopeId,
     canSwitchBranch,
     setOperatingScope,
   } = useBranchScope();
+  const branches = branchList?.length ? branchList : scopeBranches;
   const { t } = useTranslation();
 
-  const scopeId = includeAllBranches ? (inventoryScopeId ?? globalScopeId) : globalScopeId;
+  const scopeId = includeAllBranches
+    ? (inventoryScopeId != null && inventoryScopeId !== '' ? inventoryScopeId : globalScopeId)
+    : globalScopeId;
   const onScopeChange = includeAllBranches && onInventoryScopeChange
     ? onInventoryScopeChange
     : setOperatingScope;

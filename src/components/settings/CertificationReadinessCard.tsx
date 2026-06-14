@@ -21,7 +21,9 @@ type CertificationPhase = {
 type CertificationStatus = {
   ok: boolean;
   readyForInternalReview: boolean;
+  readyForProductRelease: boolean;
   readyForAgtSubmission: boolean;
+  agtDeferred?: boolean;
   appVersion: string;
   schemaVersion: number | null;
   schemaVersionExpected: number;
@@ -143,9 +145,9 @@ export function CertificationReadinessCard() {
         ) : status ? (
           <div className={refreshing ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
             <div className="flex flex-wrap gap-2 items-center">
-              {status.readyForAgtSubmission ? (
+              {status.readyForProductRelease ? (
                 <Badge variant="outline" className="text-green-700 border-green-300">
-                  {ui.readyForAgt}
+                  {ui.readyForProduct}
                 </Badge>
               ) : status.readyForInternalReview ? (
                 <Badge variant="outline" className="text-green-700 border-green-300">
@@ -153,6 +155,16 @@ export function CertificationReadinessCard() {
                 </Badge>
               ) : (
                 <Badge variant="destructive">{ui.needsWork}</Badge>
+              )}
+              {status.agtDeferred && !status.readyForAgtSubmission && (
+                <Badge variant="secondary" className="text-muted-foreground">
+                  {ui.agtLiveDeferred}
+                </Badge>
+              )}
+              {status.readyForAgtSubmission && (
+                <Badge variant="outline" className="text-green-700 border-green-300">
+                  {ui.readyForAgt}
+                </Badge>
               )}
               <span className="text-xs text-muted-foreground">
                 {ui.schemaVersion}: {status.schemaVersion ?? '—'} / {status.schemaVersionExpected}

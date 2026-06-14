@@ -1,24 +1,22 @@
 import { generateId } from '@/lib/utils';
 import { enrichProductSupplier } from '@/lib/productSupplierResolve';
 import {
-  applyCanonicalSkuAggregates,
-  buildCanonicalSkuAggregates,
-  canonicalProductSku,
-  dedupeProductsForDisplay,
+  buildSellingPriceBySku,
+  withSellingPriceFromMap,
 } from '@/lib/productDedupe';
 import {
   fetchSellingPriceHints,
   invalidateSellingPriceHintsCache,
-  mergeSellingPriceHintsIntoAggregates,
   readSellingPriceHintsSession,
 } from '@/lib/sellingPriceHints';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useProducts } from '@/hooks/useERP';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
-import { invalidateInventoryGridCache, readProductStock } from '@/lib/inventoryGrid';
+import { invalidateInventoryGridCache, invalidateInventoryGridCacheForBranches, readProductStock } from '@/lib/inventoryGrid';
 import { useInventoryBranchScope } from '@/hooks/useInventoryBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
+import { resolveBranchScopeDisplayLabel } from '@/lib/branchScopeDisplay';
 import { normalizeIsMain } from '@/lib/branchAccess';
 import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
@@ -139,14 +137,6 @@ export default function Inventory() {
     [branches],
   );
 
-  const catalogBranchIds = useMemo(
-    () => (allBranches.length > 0 ? allBranches : branches)
-      .filter((b) => normalizeIsMain(b.isMain))
-      .map((b) => b.id),
-    [allBranches, branches],
-  );
-
-  /** Main/sede catalog prices apply to every filial scope (not only the active warehouse id). */
   const catalogListBranchId = canSwitchBranch
     ? mainBranch?.id
     : (listBranchId ?? mainBranch?.id);
@@ -318,26 +308,23 @@ export default function Inventory() {
   );
 
   const priceAggregateSource = useMemo(() => {
+    if (!isHeadOffice) return inventoryRows;
     const rows = [...inventoryRows];
     for (const branchRows of Object.values(allBranchProducts)) {
       rows.push(...branchRows);
     }
     return rows;
-  }, [inventoryRows, allBranchProducts]);
+  }, [isHeadOffice, inventoryRows, allBranchProducts]);
 
-  const skuPriceAggregates = useMemo(() => {
-    const agg = buildCanonicalSkuAggregates(priceAggregateSource);
-    return mergeSellingPriceHintsIntoAggregates(agg, sellingPriceHints);
-  }, [priceAggregateSource, sellingPriceHints]);
+  const sellingPriceBySku = useMemo(
+    () => buildSellingPriceBySku(priceAggregateSource, sellingPriceHints),
+    [priceAggregateSource, sellingPriceHints],
+  );
 
-  const displayProducts = useMemo(() => {
-    const deduped = dedupeProductsForDisplay(inventoryRows, listBranchId, catalogBranchIds);
-    return deduped.map((p) => {
-      const key = canonicalProductSku(p.sku).toLowerCase();
-      const agg = key ? skuPriceAggregates.get(key) : undefined;
-      return agg ? applyCanonicalSkuAggregates(p, agg) : p;
-    });
-  }, [inventoryRows, listBranchId, catalogBranchIds, skuPriceAggregates]);
+  const displayProducts = useMemo(
+    () => inventoryRows.map((p) => withSellingPriceFromMap(p, sellingPriceBySku)),
+    [inventoryRows, sellingPriceBySku],
+  );
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [adjustmentBranchId, setAdjustmentBranchId] = useState('');
@@ -387,15 +374,11 @@ export default function Inventory() {
     return inventoryRows;
   }, [stockEntrySearchProducts, flatCatalog, inventoryRows]);
 
-  const skuAggregatesForView = skuPriceAggregates;
-
   const enrichedSelectedProduct = useMemo(() => {
     if (!selectedProduct) return null;
-    const key = canonicalProductSku(selectedProduct.sku).toLowerCase();
-    const agg = key ? skuAggregatesForView.get(key) : undefined;
-    const base = agg ? applyCanonicalSkuAggregates(selectedProduct, agg) : selectedProduct;
+    const base = withSellingPriceFromMap(selectedProduct, sellingPriceBySku);
     return enrichProductSupplier(base, flatCatalog);
-  }, [selectedProduct, skuAggregatesForView, flatCatalog]);
+  }, [selectedProduct, sellingPriceBySku, flatCatalog]);
 
   const dialogProduct = useMemo(() => {
     if (!enrichedSelectedProduct) return null;
@@ -405,11 +388,83 @@ export default function Inventory() {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [countSheetDialogOpen, setCountSheetDialogOpen] = useState(false);
   const [reconciliationDialogOpen, setReconciliationDialogOpen] = useState(false);
+  const [physicalCountBranchId, setPhysicalCountBranchId] = useState('');
+  const [physicalCountProducts, setPhysicalCountProducts] = useState<Product[]>([]);
+  const [physicalCountLoading, setPhysicalCountLoading] = useState(false);
   const [adjustmentDialogOpen, setAdjustmentDialogOpen] = useState(false);
   const [stockEntryDialogOpen, setStockEntryDialogOpen] = useState(false);
   const [stockExitDialogOpen, setStockExitDialogOpen] = useState(false);
   const [labelPrintDialogOpen, setLabelPrintDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('lista');
+
+  const branchList = allBranches.length > 0 ? allBranches : branches;
+
+  const physicalCountBranch = useMemo(
+    () => branchList.find((b) => b.id === physicalCountBranchId) || currentBranch,
+    [branchList, physicalCountBranchId, currentBranch],
+  );
+
+  const resolvePhysicalCountBranchId = useCallback(
+    () => listBranchId || currentBranch?.id || mainBranch?.id || '',
+    [listBranchId, currentBranch?.id, mainBranch?.id],
+  );
+
+  const openCountSheetDialog = useCallback(() => {
+    setPhysicalCountBranchId(resolvePhysicalCountBranchId());
+    setCountSheetDialogOpen(true);
+  }, [resolvePhysicalCountBranchId]);
+
+  const openReconciliationDialog = useCallback(() => {
+    setPhysicalCountBranchId(resolvePhysicalCountBranchId());
+    setReconciliationDialogOpen(true);
+  }, [resolvePhysicalCountBranchId]);
+
+  useEffect(() => {
+    if (!countSheetDialogOpen && !reconciliationDialogOpen) return;
+    const bid = physicalCountBranchId || resolvePhysicalCountBranchId();
+    if (!bid) {
+      setPhysicalCountProducts([]);
+      setPhysicalCountLoading(false);
+      return;
+    }
+    if (!isHeadOffice && bid === listBranchId) {
+      setPhysicalCountProducts(inventoryRows);
+      setPhysicalCountLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setPhysicalCountLoading(true);
+    void api.products.inventoryGrid({ branchId: bid }).then((result) => {
+      if (cancelled) return;
+      const rows = result.data?.rows;
+      if (rows && Array.isArray(rows)) {
+        setPhysicalCountProducts(rows.map(mapApiRowToProduct));
+      } else {
+        setPhysicalCountProducts(
+          inventoryRows.filter((p) => !p.branchId || p.branchId === bid),
+        );
+      }
+      setPhysicalCountLoading(false);
+    }).catch(() => {
+      if (cancelled) return;
+      setPhysicalCountProducts(inventoryRows);
+      setPhysicalCountLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    countSheetDialogOpen,
+    reconciliationDialogOpen,
+    physicalCountBranchId,
+    resolvePhysicalCountBranchId,
+    listBranchId,
+    isHeadOffice,
+    inventoryRows,
+    mapApiRowToProduct,
+  ]);
 
   useEffect(() => {
     if (!showDetailedQtyTab && activeTab === 'qtd-detalhada') {
@@ -422,6 +477,12 @@ export default function Inventory() {
       void loadPerBranchBreakdown();
     }
   }, [canSwitchBranch, loadPerBranchBreakdown, listBranchId, isHeadOffice]);
+
+  useEffect(() => {
+    setSelectedProduct(null);
+    const branchIds = (allBranches.length > 0 ? allBranches : branches).map((b) => b.id);
+    invalidateInventoryGridCacheForBranches(branchIds);
+  }, [inventoryScopeId, allBranches, branches]);
 
   useEffect(() => {
     if (showDetailedQtyTab) {
@@ -536,6 +597,17 @@ export default function Inventory() {
       toast.success(t.inventoryPageUi.exportedToExcel);
     };
 
+    const onCountSheet = () => openCountSheetDialog();
+    const onReconcile = () => openReconciliationDialog();
+    const onImport = () => setImportDialogOpen(true);
+    const onLabels = () => setLabelPrintDialogOpen(true);
+    const onAdjustStock = () => {
+      const bid = listBranchId || currentBranch?.id || '';
+      setAdjustmentBranchId(bid);
+      if (canSwitchBranch) void loadPerBranchBreakdown();
+      setAdjustmentDialogOpen(true);
+    };
+
     const map: Record<string, () => void> = {
       [NEXOR_TOOLBAR.DELETE]: onDelete,
       [NEXOR_TOOLBAR.EDIT]: onEdit,
@@ -543,6 +615,11 @@ export default function Inventory() {
       [NEXOR_TOOLBAR.INVENTORY_ADJUST_EXIT]: onAdjustExit,
       [NEXOR_TOOLBAR.INVENTORY_ENTRY]: onEntry,
       [NEXOR_TOOLBAR.INVENTORY_MIN_QTY]: onMinQty,
+      [NEXOR_TOOLBAR.INVENTORY_COUNT_SHEET]: onCountSheet,
+      [NEXOR_TOOLBAR.INVENTORY_RECONCILE]: onReconcile,
+      [NEXOR_TOOLBAR.INVENTORY_IMPORT]: onImport,
+      [NEXOR_TOOLBAR.INVENTORY_LABELS]: onLabels,
+      [NEXOR_TOOLBAR.INVENTORY_ADJUST_STOCK]: onAdjustStock,
       [NEXOR_TOOLBAR.FILTER]: onFilter,
       [NEXOR_TOOLBAR.EXCEL]: onExcel,
     };
@@ -555,7 +632,18 @@ export default function Inventory() {
         window.removeEventListener(event, handler);
       }
     };
-  }, [selectedProduct, attemptDeleteProduct, gridProducts, t]);
+  }, [
+    selectedProduct,
+    attemptDeleteProduct,
+    gridProducts,
+    t,
+    openCountSheetDialog,
+    openReconciliationDialog,
+    listBranchId,
+    currentBranch?.id,
+    canSwitchBranch,
+    loadPerBranchBreakdown,
+  ]);
 
   useEffect(() => {
     setContextMenuResolver((target) => {
@@ -584,12 +672,26 @@ export default function Inventory() {
 
   // TopNav toolbar "Novo"
   useEffect(() => {
-    const st = location.state as { nexorToolbarNewProduct?: boolean } | null;
+    const st = location.state as {
+      nexorToolbarNewProduct?: boolean;
+      openCountSheet?: boolean;
+      openReconcile?: boolean;
+    } | null;
+    if (st?.openCountSheet) {
+      openCountSheetDialog();
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
+    if (st?.openReconcile) {
+      openReconciliationDialog();
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
     if (!st?.nexorToolbarNewProduct) return;
     setSelectedProduct(null);
     setDialogOpen(true);
     navigate('.', { replace: true, state: {} });
-  }, [location.state, navigate]);
+  }, [location.state, navigate, openCountSheetDialog, openReconciliationDialog, location.pathname]);
 
   const handleSaveProduct = async (product: Product & { preserveStock?: boolean }) => {
     const targetBranchId =
@@ -1068,9 +1170,25 @@ export default function Inventory() {
           <BranchSelector
             compact
             includeAllBranches
+            branchList={allBranches.length > 0 ? allBranches : branches}
             inventoryScopeId={inventoryScopeId}
             onInventoryScopeChange={setInventoryScope}
           />
+        )}
+        {canSwitchBranch && inventoryBranch && (
+          <span
+            className="text-[10px] text-muted-foreground truncate max-w-[9rem] shrink-0"
+            title={resolveBranchScopeDisplayLabel(
+              canSwitchBranch,
+              inventoryScopeId,
+              inventoryBranch,
+              t.branchUi.allBranches,
+            )}
+          >
+            {isHeadOffice
+              ? t.inventoryGridUi.totalQty
+              : formatBranchDisplayName(inventoryBranch)}
+          </span>
         )}
         {canSwitchBranch && <div className="w-px h-5 bg-border mx-1" />}
         <div className="relative shrink-0 w-[min(100%,16rem)]">
@@ -1146,11 +1264,11 @@ export default function Inventory() {
           <Download className="w-3 h-3" />
           {t.common.export}
         </Button>
-        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => setCountSheetDialogOpen(true)}>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={openCountSheetDialog}>
           <ClipboardList className="w-3 h-3" />
           {t.inventoryPageUi.countSheet}
         </Button>
-        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => setReconciliationDialogOpen(true)}>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={openReconciliationDialog}>
           <ClipboardCheck className="w-3 h-3" />
           {t.inventoryPageUi.reconcile}
         </Button>
@@ -1281,6 +1399,7 @@ export default function Inventory() {
             <p className="text-center py-16 text-muted-foreground">{t.common.loading}</p>
           ) : (
             <AdvancedDataGrid 
+              key={isHeadOffice ? 'hq' : (listBranchId || 'none')}
               products={gridProducts}
               onSelectProduct={handleSelectProduct}
               onDoubleClickProduct={handleDoubleClickProduct}
@@ -1499,18 +1618,27 @@ export default function Inventory() {
       <InventoryCountSheetDialog
         open={countSheetDialogOpen}
         onOpenChange={setCountSheetDialogOpen}
-        products={inventoryRows}
-        branch={currentBranch}
-        categories={[...new Set(inventoryRows.map(p => p.category).filter(Boolean))]}
+        products={physicalCountProducts}
+        branch={physicalCountBranch}
+        categories={[...new Set(physicalCountProducts.map((p) => p.category).filter(Boolean))]}
+        branches={branchList}
+        branchId={physicalCountBranchId}
+        onBranchIdChange={setPhysicalCountBranchId}
+        branchRequired={isHeadOffice}
+        loading={physicalCountLoading}
+        onContinueToReconcile={() => {
+          setCountSheetDialogOpen(false);
+          setReconciliationDialogOpen(true);
+        }}
       />
 
       {/* Inventory Reconciliation Dialog */}
       <InventoryReconciliationDialog
         open={reconciliationDialogOpen}
         onOpenChange={setReconciliationDialogOpen}
-        products={inventoryRows}
-        branch={currentBranch}
-        categories={[...new Set(inventoryRows.map(p => p.category).filter(Boolean))]}
+        products={physicalCountProducts}
+        branch={physicalCountBranch}
+        categories={[...new Set(physicalCountProducts.map((p) => p.category).filter(Boolean))]}
         onReconcile={(adjustments) => {
           const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
           
