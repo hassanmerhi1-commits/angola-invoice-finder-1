@@ -24,7 +24,7 @@ test.describe('NEXOR ERP smoke', () => {
     await loginAsAdmin(page);
 
     const routes: Array<{ path: string; marker: RegExp }> = [
-      { path: '/chart-of-accounts', marker: /new account|account no\./i },
+      { path: '/chart-of-accounts', marker: /new|account no\./i },
       { path: '/inventory', marker: /inventory|stock|product/i },
       { path: '/invoices', marker: /invoice|document/i },
       { path: '/purchase-invoices', marker: /purchase|supplier|invoice/i },
@@ -45,7 +45,7 @@ test.describe('NEXOR ERP smoke', () => {
   test('chart of accounts shows English UI when language is English', async ({ page }) => {
     await loginAsAdmin(page);
     await visitRoute(page, '/chart-of-accounts');
-    await expect(page.getByRole('button', { name: /new account/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'New', exact: true })).toBeVisible();
     await expect(page.getByText('Customers', { exact: true })).toBeVisible();
     await expect(page.getByText('Account no.', { exact: true })).toBeVisible();
   });

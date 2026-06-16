@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { loginAsAdmin, primeBrowserStorage, dismissBlockingDialogs } from '../helpers/auth';
+import { openChartNewAccountDialog } from '../helpers/chartOfAccounts';
 import {
   fetchChartOfAccounts,
   fetchJournalEntries,
@@ -25,7 +26,7 @@ test.describe('Chart of accounts + journal E2E', () => {
     await page.goto('/chart-of-accounts');
     await dismissBlockingDialogs(page);
 
-    await page.getByRole('button', { name: /new account/i }).click();
+    await openChartNewAccountDialog(page);
     const coaDialog = page.getByRole('dialog', { name: /new account/i });
     await expect(coaDialog).toBeVisible();
     await coaDialog.getByPlaceholder('e.g., 4.1.1').fill(accountCode);

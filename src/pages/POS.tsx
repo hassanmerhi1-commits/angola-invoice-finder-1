@@ -291,6 +291,8 @@ export default function POS() {
       await refreshProducts();
       void refreshSales();
 
+      setReceiptOpen(true);
+
       try {
         const printResult = await printPosThermalReceipts(sale, currentBranch, {
           openDrawer: paymentMethod === 'cash',
@@ -302,7 +304,6 @@ export default function POS() {
           toast.error(t.receiptUi.printerSetupRequired, {
             description: t.receiptUi.printerSetupRequiredDesc,
           });
-          setPrinterSettingsOpen(true);
         } else {
           toast.error(t.receiptUi.autoPrintError);
         }
@@ -310,8 +311,6 @@ export default function POS() {
         console.warn('[POS] Auto thermal print failed:', printError);
         toast.error(t.receiptUi.autoPrintError);
       }
-
-      setReceiptOpen(true);
 
       if (paymentMethod === 'cash') {
         toast.info(t.posUi.saleCompleted, {

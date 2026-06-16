@@ -23,6 +23,16 @@ export async function primeBrowserStorage(page: Page) {
         days: {},
       }),
     );
+    // Skip POS printer-setup dialog in browser e2e (no Electron silent print).
+    localStorage.setItem(
+      'kwanza_printer_config',
+      JSON.stringify({
+        type: 'windows',
+        deviceName: 'E2E Test Printer',
+        paperWidth: 80,
+        posAutoPrint: true,
+      }),
+    );
   }, { today: todayKey(), apiBase: E2E_BACKEND_URL });
 }
 
