@@ -175,7 +175,12 @@ export interface ElectronAPI {
   print: {
     html: (
       html: string,
-      options?: { silent?: boolean; deviceName?: string; pageWidthMm?: number },
+      options?: {
+        silent?: boolean;
+        deviceName?: string;
+        pageWidthMm?: number;
+        allowDialogFallback?: boolean;
+      },
     ) => Promise<{ success: boolean; error?: string }>;
     listPrinters: () => Promise<{
       printers: Array<{ name: string; isDefault: boolean; status?: number; description?: string }>;

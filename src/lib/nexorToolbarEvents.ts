@@ -19,12 +19,20 @@ export const NEXOR_TOOLBAR = {
   FISCAL_SAFT: 'nexor:fiscal-saft',
   POS_CHECKOUT: 'nexor:pos-checkout',
   POS_VOID: 'nexor:pos-void',
+  CHART_NEW_CLIENT: 'nexor:chart-new-client',
+  CHART_NEW_ACCOUNT: 'nexor:chart-new-account',
+  /** Unified Chart of Accounts new menu — detail: { action: ChartNewAction } */
+  CHART_NEW: 'nexor:chart-new',
 } as const;
 
 export type NexorToolbarEvent = (typeof NEXOR_TOOLBAR)[keyof typeof NEXOR_TOOLBAR];
 
 export function dispatchToolbarEvent(name: NexorToolbarEvent) {
   window.dispatchEvent(new CustomEvent(name));
+}
+
+export function dispatchChartNew(action: import('./chartOfAccountsNewActions').ChartNewAction) {
+  window.dispatchEvent(new CustomEvent(NEXOR_TOOLBAR.CHART_NEW, { detail: { action } }));
 }
 
 export const NEXOR_SUPPLIERS_NEW = 'nexor:suppliers-new';

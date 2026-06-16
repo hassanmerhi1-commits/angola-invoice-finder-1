@@ -75,10 +75,17 @@ export function PrinterSettingsDialog({
   }, [open]);
 
   const handleSave = () => {
-    savePrinterConfig(config);
+    savePrinterConfig({ ...config, posAutoPrint: !!config.deviceName?.trim() });
     localStorage.setItem('kwanza_auto_open_drawer', autoOpenDrawer.toString());
     toast.success(t.printerUi.saved);
     onOpenChange(false);
+  };
+
+  const handlePrinterSelect = (deviceName: string) => {
+    const next = { ...config, deviceName, posAutoPrint: true };
+    setConfig(next);
+    savePrinterConfig(next);
+    toast.success(t.printerUi.printerSelected);
   };
 
   const handleTestPrint = async () => {
@@ -125,6 +132,7 @@ body { font-family: 'Courier New', monospace; text-align: center; width: ${width
             silent: !!config.deviceName,
             deviceName: config.deviceName,
             pageWidthMm: config.paperWidth,
+            allowDialogFallback: !config.deviceName,
           });
           if (!result.success) {
             throw new Error(result.error || 'Print failed');
@@ -216,7 +224,7 @@ body { font-family: 'Courier New', monospace; text-align: center; width: ${width
                 <p className="text-xs text-muted-foreground">{t.printerUi.windowsPrinterDesc}</p>
                 <Select
                   value={config.deviceName || undefined}
-                  onValueChange={(v) => setConfig({ ...config, deviceName: v })}
+                  onValueChange={handlePrinterSelect}
                   disabled={loadingPrinters}
                 >
                   <SelectTrigger>
@@ -241,6 +249,11 @@ body { font-family: 'Courier New', monospace; text-align: center; width: ${width
                     <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                     <span>{t.printerUi.selectPrinterHint}</span>
                   </div>
+                )}
+                {config.deviceName && (
+                  <p className="text-xs text-green-700 dark:text-green-400">
+                    {t.printerUi.autoPrintEnabled}
+                  </p>
                 )}
               </div>
             </>

@@ -111,6 +111,8 @@ export type PrintHtmlOptions = {
   deviceName?: string;
   /** Thermal receipt width in mm (58 or 80). */
   pageWidthMm?: 58 | 80;
+  /** Electron only: if false, never open the Windows print dialog on silent failure (POS auto-print). */
+  allowDialogFallback?: boolean;
 };
 
 export async function printHtml(html: string, options: PrintHtmlOptions = {}): Promise<void> {
@@ -123,20 +125,23 @@ export async function printHtml(html: string, options: PrintHtmlOptions = {}): P
   if (electronPrint) {
     const deviceName = options.deviceName?.trim() || '';
     const wantSilent = options.silent ?? (!!options.direct && !!deviceName);
+    const allowDialogFallback = options.allowDialogFallback !== false;
     const printOpts = {
       silent: wantSilent,
       deviceName: deviceName || undefined,
       pageWidthMm: options.pageWidthMm,
+      allowDialogFallback: wantSilent ? allowDialogFallback : true,
     };
 
     let result = await electronPrint(html, printOpts);
     if (result.success) return;
 
-    if (wantSilent) {
+    if (wantSilent && allowDialogFallback) {
       console.warn('[printHtml] Silent print failed, retrying with print dialog:', result.error);
       result = await electronPrint(html, {
         silent: false,
         pageWidthMm: options.pageWidthMm,
+        allowDialogFallback: true,
       });
       if (result.success) return;
     }

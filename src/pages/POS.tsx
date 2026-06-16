@@ -16,6 +16,7 @@ import { findPosProductByCode, filterPosProductsBySearch } from '@/lib/posProduc
 import { Cart } from '@/components/pos/Cart';
 import { CheckoutDialog } from '@/components/pos/CheckoutDialog';
 import { ReceiptDialog } from '@/components/pos/ReceiptDialog';
+import { PrinterSettingsDialog } from '@/components/pos/PrinterSettingsDialog';
 import { BranchSelector } from '@/components/BranchSelector';
 import { Search, ScanBarcode, Keyboard, ShoppingCart, FileText } from 'lucide-react';
 import { PosEndOfDayReportDialog } from '@/components/pos/PosEndOfDayReportDialog';
@@ -39,6 +40,7 @@ export default function POS() {
   const [focusCartQtyProductId, setFocusCartQtyProductId] = useState<string | null>(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [printerSettingsOpen, setPrinterSettingsOpen] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
   const [endOfDayOpen, setEndOfDayOpen] = useState(false);
@@ -296,6 +298,11 @@ export default function POS() {
         if (printResult.success) {
           void recordSalePrint(sale, { format: 'thermal', source: 'pos' });
           toast.success(t.receiptUi.autoPrintSuccess);
+        } else if (printResult.needsPrinterSetup) {
+          toast.error(t.receiptUi.printerSetupRequired, {
+            description: t.receiptUi.printerSetupRequiredDesc,
+          });
+          setPrinterSettingsOpen(true);
         } else {
           toast.error(t.receiptUi.autoPrintError);
         }
@@ -462,6 +469,11 @@ export default function POS() {
         sale={lastSale}
         branch={currentBranch}
         onNewSale={handleNewSale}
+      />
+
+      <PrinterSettingsDialog
+        open={printerSettingsOpen}
+        onOpenChange={setPrinterSettingsOpen}
       />
 
       <PosEndOfDayReportDialog

@@ -15,7 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import {
-  Plus, Search, Edit2, Trash2, RefreshCw,
+  Search, Edit2, Trash2, RefreshCw,
   FileText, Receipt, CreditCard, Banknote,
   ChevronRight, ChevronDown, Printer, Download, Eye
 } from 'lucide-react';
@@ -23,6 +23,10 @@ import { cn } from '@/lib/utils';
 import { NEXOR_TAB_TRIGGER, NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import AccountLedgerDialog from '@/components/accounting/AccountLedgerDialog';
+import { ChartOfAccountsNewMenu } from '@/components/accounting/ChartOfAccountsNewMenu';
+import { ClientFormDialog } from '@/components/clients/ClientFormDialog';
+import { SupplierFormDialog } from '@/components/suppliers/SupplierFormDialog';
+import { chartNewActionTab, type ChartNewAction } from '@/lib/chartOfAccountsNewActions';
 
 // Category tabs
 const CATEGORY_TABS = [
@@ -78,6 +82,18 @@ export default function ChartOfAccounts() {
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [ledgerAccount, setLedgerAccount] = useState<Account | null>(null);
   const [isLedgerOpen, setIsLedgerOpen] = useState(false);
+  const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
+  const [isSupplierDialogOpen, setIsSupplierDialogOpen] = useState(false);
+
+  const openNewClientDialog = () => {
+    setActiveTab('clientes');
+    setIsClientDialogOpen(true);
+  };
+
+  const openNewSupplierDialog = () => {
+    setActiveTab('fornecedores');
+    setIsSupplierDialogOpen(true);
+  };
 
   useEffect(() => {
     const onAll = () => {
@@ -87,6 +103,8 @@ export default function ChartOfAccounts() {
       setEditingAccount(null);
       setIsLedgerOpen(false);
       setLedgerAccount(null);
+      setIsClientDialogOpen(false);
+      setIsSupplierDialogOpen(false);
     };
     window.addEventListener(NEXOR_TOOLBAR.ALL, onAll);
     return () => window.removeEventListener(NEXOR_TOOLBAR.ALL, onAll);
@@ -151,7 +169,11 @@ export default function ChartOfAccounts() {
   const expandAll = () => setExpandedIds(new Set(accounts.filter(a => a.is_header).map(a => a.id)));
   const collapseAll = () => setExpandedIds(new Set());
 
-  const openCreateDialog = () => {
+  const openCreateDialog = (tabOverride?: string) => {
+    const tabKey = tabOverride ?? activeTab;
+    if (tabOverride) {
+      setActiveTab(tabOverride);
+    }
     setEditingAccount(null);
 
     const emptyForm = {
@@ -180,12 +202,13 @@ export default function ChartOfAccounts() {
       };
     };
 
-    const selectedMatchesCurrentTab = selectedAccount ? currentTabConfig.filter(selectedAccount) : false;
+    const tabConfig = CATEGORY_TABS.find((tab) => tab.key === tabKey) || CATEGORY_TABS[CATEGORY_TABS.length - 1];
+    const selectedMatchesCurrentTab = selectedAccount ? tabConfig.filter(selectedAccount) : false;
 
     if (selectedAccount && selectedMatchesCurrentTab) {
       applyParentDefaults(selectedAccount);
     } else {
-      const tabDefault = TAB_ACCOUNT_DEFAULTS[activeTab];
+      const tabDefault = TAB_ACCOUNT_DEFAULTS[tabKey];
       if (tabDefault) {
         nextForm = {
           ...nextForm,
@@ -206,6 +229,27 @@ export default function ChartOfAccounts() {
     setFormData(nextForm);
     setIsDialogOpen(true);
   };
+
+  useEffect(() => {
+    const onChartNew = (event: Event) => {
+      const action = (event as CustomEvent<{ action?: ChartNewAction }>).detail?.action;
+      if (!action) return;
+      if (action === 'client') {
+        openNewClientDialog();
+        return;
+      }
+      if (action === 'supplier') {
+        openNewSupplierDialog();
+        return;
+      }
+      const tab = chartNewActionTab(action);
+      if (tab) {
+        openCreateDialog(tab);
+      }
+    };
+    window.addEventListener(NEXOR_TOOLBAR.CHART_NEW, onChartNew);
+    return () => window.removeEventListener(NEXOR_TOOLBAR.CHART_NEW, onChartNew);
+  });
 
   const openEditDialog = (account: Account) => {
     setEditingAccount(account);
@@ -266,9 +310,7 @@ export default function ChartOfAccounts() {
     <div className="flex flex-col h-full bg-background">
       {/* Action Toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b flex-wrap">
-        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={openCreateDialog}>
-          <Plus className="w-3 h-3" /> {t.chartOfAccountsUi.newAccount}
-        </Button>
+        <ChartOfAccountsNewMenu buttonClassName={NEXOR_TOOLBAR_BTN_SM} />
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccountInCurrentTab} onClick={() => selectedAccountInCurrentTab && openEditDialog(selectedAccountInCurrentTab)}>
           <Edit2 className="w-3 h-3" /> {t.common.edit}
         </Button>
@@ -470,6 +512,8 @@ export default function ChartOfAccounts() {
 
       {/* Account Ledger Dialog */}
       <AccountLedgerDialog account={ledgerAccount} open={isLedgerOpen} onOpenChange={setIsLedgerOpen} />
+      <ClientFormDialog open={isClientDialogOpen} onOpenChange={setIsClientDialogOpen} />
+      <SupplierFormDialog open={isSupplierDialogOpen} onOpenChange={setIsSupplierDialogOpen} />
     </div>
   );
 }

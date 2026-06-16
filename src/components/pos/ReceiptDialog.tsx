@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { Sale, Branch } from '@/types/erp';
 import {
   Dialog,
@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { Printer, Settings, Check, FileOutput } from 'lucide-react';
+import { Printer, Settings, Check, FileOutput, ChevronUp, ChevronDown } from 'lucide-react';
 import {
   printReceipt,
   getPrinterConfig,
@@ -43,12 +43,20 @@ export function ReceiptDialog({
 }: ReceiptDialogProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
+  const receiptScrollRef = useRef<HTMLDivElement>(null);
   const company = getCompanySettings();
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const taxLabel = sale
     ? formatTaxLabel(taxRatesFromSaleItems(sale.items), t.pos.tax)
     : t.pos.tax;
+
+  const scrollReceipt = useCallback((direction: 'up' | 'down') => {
+    const el = receiptScrollRef.current;
+    if (!el) return;
+    const step = Math.max(120, Math.round(el.clientHeight * 0.65));
+    el.scrollBy({ top: direction === 'up' ? -step : step, behavior: 'smooth' });
+  }, []);
 
   if (!sale || !branch) return null;
 
@@ -119,16 +127,21 @@ export function ReceiptDialog({
         onOpenChange={setSettingsOpen} 
       />
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
+      <DialogContent className="max-w-sm max-h-[90vh] flex flex-col gap-3 overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2 text-green-600">
             <Check className="w-5 h-5" />
               {t.receiptUi.saleCompleted}
           </DialogTitle>
         </DialogHeader>
 
-        {/* Receipt Preview */}
-        <div className="bg-white text-black rounded-lg p-4 font-mono text-xs space-y-2 print:block">
+        {/* Receipt Preview — scrollable with up/down controls */}
+        <div className="relative flex-1 min-h-0">
+          <div
+            ref={receiptScrollRef}
+            className="max-h-[min(52vh,28rem)] overflow-y-auto overflow-x-hidden rounded-lg border bg-white pr-10 scroll-smooth"
+          >
+            <div className="text-black p-4 font-mono text-xs space-y-2 print:block">
           <div className="text-center space-y-1">
             {company.logo && (
               <div className="flex justify-center mb-2">
@@ -262,10 +275,34 @@ export function ReceiptDialog({
             <p>{t.receiptUi.agtCertified}</p>
             <p>{company.footerText || t.receiptUi.thanksDefault}</p>
           </div>
+            </div>
+          </div>
+          <div className="absolute right-1 top-1/2 z-10 flex -translate-y-1/2 flex-col gap-1 print:hidden">
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              className="h-8 w-8 shadow-sm"
+              aria-label={t.receiptUi.scrollUp}
+              onClick={() => scrollReceipt('up')}
+            >
+              <ChevronUp className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              className="h-8 w-8 shadow-sm"
+              aria-label={t.receiptUi.scrollDown}
+              onClick={() => scrollReceipt('down')}
+            >
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         {/* Actions */}
-        <div className="space-y-2 print:hidden">
+        <div className="space-y-2 print:hidden shrink-0">
           <div className="grid grid-cols-2 gap-2">
             <Button
               variant="outline"

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useClients } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { Client } from '@/types/erp';
@@ -84,6 +84,12 @@ export default function Clients() {
     }
     setDialogOpen(true);
   };
+
+  useEffect(() => {
+    const onNewClient = () => handleOpenDialog();
+    window.addEventListener('nexor:clients-new', onNewClient);
+    return () => window.removeEventListener('nexor:clients-new', onNewClient);
+  }, []);
 
   const handleSave = async () => {
     const name = formData.name.trim();

@@ -352,6 +352,10 @@ export const pt: TranslationKeys = {
     thanksDefault: "Obrigado pela preferência!",
     autoPrintSuccess: "Recibo enviado para a impressora (original + via cliente)",
     autoPrintError: "Impressão automática falhou — use o botão Térmica no ecrã do recibo",
+    scrollUp: "Rolar recibo para cima",
+    scrollDown: "Rolar recibo para baixo",
+    printerSetupRequired: "Selecione a impressora térmica para impressão automática",
+    printerSetupRequiredDesc: "Escolha a impressora térmica Windows abaixo — as vendas passam a imprimir automaticamente.",
   },
 
   printerUi: {
@@ -379,7 +383,9 @@ export const pt: TranslationKeys = {
     loadingPrinters: "A carregar impressoras…",
     noPrintersFound: "Nenhuma impressora encontrada",
     defaultPrinter: "predefinida",
-    selectPrinterHint: "Sem impressora selecionada, cada venda abre a caixa de diálogo de impressão do Windows.",
+    selectPrinterHint: "Seleccione a impressora térmica uma vez — fica guardada e usada na impressão automática de cada venda.",
+    printerSelected: "Impressora guardada — o POS imprime automaticamente após cada venda",
+    autoPrintEnabled: "Impressão automática activa para esta impressora",
     test: "Testar",
     save: "Salvar",
   },
@@ -4793,6 +4799,16 @@ export const pt: TranslationKeys = {
     tabAll: "Todos",
 
     newAccount: "Nova Conta",
+    newMenu: "Novo",
+    newCustomerAccount: "Nova conta de cliente",
+    newSupplierAccount: "Nova conta de fornecedor",
+    newCashAccount: "Nova conta de caixa",
+    newBankAccount: "Nova conta bancária",
+    newAssetAccount: "Nova conta de ativo",
+    newRevenueAccount: "Nova conta de recebimento",
+    newExpenseAccount: "Nova conta de custo",
+    newEmployeeAccount: "Nova conta de funcionário",
+    newEquityAccount: "Nova conta de capital",
 
     salesInvoice: "Fatura de Venda",
     receipt: "Recibo",

@@ -418,7 +418,9 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     }
     if (p.includes('chart-of-accounts')) {
       return [
-        ...base,
+        { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen },
+        { actionKey: 'delete', label: t.topNav.toolbar.delete, icon: Trash2 },
+        { actionKey: 'edit', label: t.topNav.toolbar.edit, icon: Pencil },
         { actionKey: 'salesInvoice', label: t.topNav.toolbar.salesInvoice, icon: FileText },
         { actionKey: 'receipt', label: t.topNav.toolbar.receipt, icon: Receipt },
         { actionKey: 'payment', label: t.topNav.toolbar.payment, icon: DollarSign },

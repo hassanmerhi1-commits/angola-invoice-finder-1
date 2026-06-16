@@ -3672,27 +3672,48 @@ ipcMain.handle('window:closeCurrent', (event) => {
 
 // Print support — load HTML via document.write (data: URLs break on large invoices)
 function electronPrintWebContents(webContents, options = {}) {
-  return new Promise((resolve) => {
-    const pageWidthMm = Number(options.pageWidthMm) || 80;
-    webContents.print(
-      {
-        silent: !!options.silent,
-        printBackground: true,
-        deviceName: options.deviceName || undefined,
-        margins: { marginType: 'none' },
-        pageSize: {
-          width: Math.round(pageWidthMm * 1000),
-          height: 297000,
-        },
+  const pageWidthMm = Number(options.pageWidthMm) || 80;
+  const deviceName = options.deviceName ? String(options.deviceName).trim() : '';
+  const attempts = [
+    {
+      silent: !!options.silent,
+      printBackground: true,
+      deviceName: deviceName || undefined,
+      margins: { marginType: 'none' },
+      pageSize: {
+        width: Math.round(pageWidthMm * 1000),
+        height: 297000,
       },
-      (success, failureReason) => {
-        if (!success) {
-          resolve({ success: false, error: failureReason || 'Print failed' });
+    },
+  ];
+  if (options.silent && deviceName) {
+    attempts.push({
+      silent: true,
+      printBackground: true,
+      deviceName,
+      margins: { marginType: 'none' },
+    });
+  }
+
+  return new Promise((resolve) => {
+    const tryNext = (index) => {
+      if (index >= attempts.length) {
+        resolve({ success: false, error: 'Print failed' });
+        return;
+      }
+      webContents.print(attempts[index], (success, failureReason) => {
+        if (success) {
+          resolve({ success: true });
           return;
         }
-        resolve({ success: true });
-      },
-    );
+        if (index < attempts.length - 1) {
+          tryNext(index + 1);
+          return;
+        }
+        resolve({ success: false, error: failureReason || 'Print failed' });
+      });
+    };
+    tryNext(0);
   });
 }
 
@@ -3749,7 +3770,8 @@ ipcMain.handle('print:html', async (_, html, options = {}) => {
       pageWidthMm: options.pageWidthMm,
     });
 
-    if (!result.success && isSilent) {
+    const allowDialogFallback = options.allowDialogFallback !== false;
+    if (!result.success && isSilent && allowDialogFallback) {
       printWin.showInactive();
       result = await electronPrintWebContents(printWin.webContents, {
         silent: false,

@@ -350,6 +350,10 @@ export const en = {
     thanksDefault: "Thank you for your preference!",
     autoPrintSuccess: "Receipt sent to printer (original + customer copy)",
     autoPrintError: "Auto-print failed — use Thermal button on receipt screen",
+    scrollUp: "Scroll receipt up",
+    scrollDown: "Scroll receipt down",
+    printerSetupRequired: "Select a thermal printer for auto-print",
+    printerSetupRequiredDesc: "Choose your Windows thermal printer below — sales will print automatically after that.",
   },
 
   printerUi: {
@@ -377,7 +381,9 @@ export const en = {
     loadingPrinters: "Loading printers…",
     noPrintersFound: "No printers found",
     defaultPrinter: "default",
-    selectPrinterHint: "Without a selected printer, each sale opens the Windows print dialog.",
+    selectPrinterHint: "Select your thermal printer once — it is saved and used for silent auto-print on every sale.",
+    printerSelected: "Printer saved — POS will auto-print after each sale",
+    autoPrintEnabled: "Auto-print enabled for this printer",
     test: "Test",
     save: "Save",
   },
@@ -4790,6 +4796,16 @@ export const en = {
     tabAll: "All",
 
     newAccount: "New account",
+    newMenu: "New",
+    newCustomerAccount: "New customer account",
+    newSupplierAccount: "New supplier account",
+    newCashAccount: "New cash account",
+    newBankAccount: "New bank account",
+    newAssetAccount: "New asset account",
+    newRevenueAccount: "New revenue account",
+    newExpenseAccount: "New expense account",
+    newEmployeeAccount: "New employee account",
+    newEquityAccount: "New equity account",
 
     salesInvoice: "Sales invoice",
     receipt: "Receipt",

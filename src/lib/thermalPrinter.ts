@@ -17,6 +17,8 @@ export interface PrinterConfig {
   characterWidth: number; // characters per line
   /** Windows printer name (Electron). Required for silent POS auto-print. */
   deviceName?: string;
+  /** When true (default once deviceName is saved), POS prints silently after each sale. */
+  posAutoPrint?: boolean;
   ip?: string;
   port?: number;
   serialPort?: string;
@@ -188,6 +190,8 @@ export type PrintReceiptOptions = {
   copyLabels?: string[];
   /** Skip preview and print immediately (POS auto-print). */
   direct?: boolean;
+  /** Electron: open Windows print dialog if silent print fails (off for POS auto-print). */
+  allowDialogFallback?: boolean;
 };
 
 export function generateESCPOSReceipt(
@@ -530,7 +534,7 @@ export async function printViaBrowser(
   branch: Branch,
   paperWidth: 58 | 80 = 80,
   copyLabelOrLabels?: string | (string | undefined)[],
-  options: { direct?: boolean; deviceName?: string } = {},
+  options: { direct?: boolean; deviceName?: string; allowDialogFallback?: boolean } = {},
 ): Promise<void> {
   const labels = Array.isArray(copyLabelOrLabels)
     ? copyLabelOrLabels
@@ -538,12 +542,14 @@ export async function printViaBrowser(
   const html = await buildReceiptBrowserHtml(sale, branch, paperWidth, labels);
   const config = getPrinterConfig();
   const deviceName = options.deviceName ?? config.deviceName;
+  const useSilent = !!(options.direct && deviceName?.trim());
   const { printHtml } = await import('./printHtml');
   await printHtml(html, {
     direct: options.direct,
-    silent: !!(options.direct && deviceName),
+    silent: useSilent,
     deviceName,
     pageWidthMm: paperWidth,
+    allowDialogFallback: options.allowDialogFallback ?? !useSilent,
   });
 }
 
@@ -561,13 +567,18 @@ export async function printPosThermalReceipts(
   sale: Sale,
   branch: Branch,
   options: { openDrawer?: boolean } = {},
-): Promise<{ success: boolean; method: string }> {
+): Promise<{ success: boolean; method: string; needsPrinterSetup?: boolean }> {
   const config = getPrinterConfig();
+  const deviceName = config.deviceName?.trim();
+  if (!deviceName) {
+    return { success: false, method: 'browser', needsPrinterSetup: true };
+  }
   return printReceipt(sale, branch, config, {
     openDrawer: options.openDrawer ?? false,
     copies: POS_RECEIPT_COPY_LABELS.length,
     copyLabels: [...POS_RECEIPT_COPY_LABELS],
     direct: true,
+    allowDialogFallback: false,
   });
 }
 
@@ -618,6 +629,7 @@ export async function printReceipt(
     await printViaBrowser(sale, branch, config.paperWidth, labels, {
       direct: options.direct ?? false,
       deviceName: config.deviceName,
+      allowDialogFallback: options.allowDialogFallback,
     });
     return { success: true, method: 'browser' };
   } catch (error) {
@@ -667,5 +679,12 @@ export function getPrinterConfig(): PrinterConfig {
 
 // Save printer configuration
 export function savePrinterConfig(config: PrinterConfig): void {
-  localStorage.setItem('kwanza_printer_config', JSON.stringify(config));
+  const normalized: PrinterConfig = {
+    ...config,
+    posAutoPrint: config.deviceName?.trim() ? (config.posAutoPrint ?? true) : config.posAutoPrint,
+  };
+  localStorage.setItem('kwanza_printer_config', JSON.stringify(normalized));
+  if (normalized.deviceName?.trim()) {
+    localStorage.setItem('kwanza_printer_configured', 'true');
+  }
 }
