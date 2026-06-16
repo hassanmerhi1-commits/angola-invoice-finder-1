@@ -243,6 +243,32 @@ function shouldTryIpcAfterApiFailure(apiResult: ApiResponse<any>): boolean {
 /** @deprecated alias */
 const shouldTrySupplierIpcAfterApiFailure = shouldTryIpcAfterApiFailure;
 
+function normalizeApiErrorMessage(payload: unknown, status?: number): string {
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const obj = payload as Record<string, unknown>;
+    if (typeof obj.error === 'string' && obj.error.trim()) return obj.error.trim();
+    if (typeof obj.message === 'string' && obj.message.trim()) return obj.message.trim();
+    if (Array.isArray(obj.errors) && obj.errors.length) {
+      return obj.errors.map((e) => String(e)).join('; ');
+    }
+  }
+  if (typeof payload !== 'string') {
+    return status ? `HTTP ${status}` : 'Network error';
+  }
+  const text = payload.trim();
+  const expressMatch = text.match(/Cannot (?:POST|GET|PUT|PATCH|DELETE) (\/api\/[^\s<]+)/i);
+  if (expressMatch) {
+    return `Backend outdated — missing ${expressMatch[1]}. Update NEXOR to v1.0.74+ on the server PC, then fully restart the app.`;
+  }
+  if (text.startsWith('<!DOCTYPE') || text.startsWith('<html')) {
+    if (status === 404) {
+      return 'API endpoint not found (HTTP 404). Update NEXOR to v1.0.74+ on the server PC and restart the app.';
+    }
+    return status ? `Server error (HTTP ${status}). Restart NEXOR ERP on the server PC.` : 'Server error. Restart NEXOR ERP on the server PC.';
+  }
+  return text.length > 280 ? `${text.slice(0, 280)}…` : text;
+}
+
 // ==================== HTTP FALLBACK (web preview/demo) ====================
 async function apiFetch<T>(
   endpoint: string,
@@ -287,8 +313,10 @@ async function apiFetch<T>(
     const errorMessage =
       r.error
       || (typeof errPayload?.error === 'string' ? errPayload.error : null)
-      || (typeof r.text === 'string' && r.text ? r.text.slice(0, 200) : null)
-      || (r.status ? `HTTP ${r.status}` : 'Network error');
+      || normalizeApiErrorMessage(
+        typeof r.text === 'string' && r.text ? r.text : errPayload,
+        r.status,
+      );
     return { error: errorMessage };
   }
 
@@ -301,11 +329,7 @@ async function apiFetch<T>(
       : await response.text().catch(() => '');
 
     if (!response.ok) {
-      const errorMessage = typeof payload === 'string'
-        ? payload
-        : payload?.error || (Array.isArray(payload?.errors) ? payload.errors.join('; ') : payload?.message);
-
-      return { error: errorMessage || `HTTP ${response.status}` };
+      return { error: normalizeApiErrorMessage(payload, response.status) };
     }
 
     return { data: payload as T };
@@ -325,10 +349,7 @@ async function apiFetch<T>(
           ? await retryResponse.json().catch(() => null)
           : await retryResponse.text().catch(() => '');
         if (!retryResponse.ok) {
-          const retryErrorMessage = typeof retryPayload === 'string'
-            ? retryPayload
-            : retryPayload?.error || (Array.isArray(retryPayload?.errors) ? retryPayload.errors.join('; ') : retryPayload?.message);
-          return { error: retryErrorMessage || `HTTP ${retryResponse.status}` };
+          return { error: normalizeApiErrorMessage(retryPayload, retryResponse.status) };
         }
         return { data: retryPayload as T };
       } catch {
@@ -349,10 +370,7 @@ async function apiFetch<T>(
                 ? await retryResponse.json().catch(() => null)
                 : await retryResponse.text().catch(() => '');
               if (!retryResponse.ok) {
-                const retryErrorMessage = typeof retryPayload === 'string'
-                  ? retryPayload
-                  : retryPayload?.error || (Array.isArray(retryPayload?.errors) ? retryPayload.errors.join('; ') : retryPayload?.message);
-                return { error: retryErrorMessage || `HTTP ${retryResponse.status}` };
+                return { error: normalizeApiErrorMessage(retryPayload, retryResponse.status) };
               }
               return { data: retryPayload as T };
             }

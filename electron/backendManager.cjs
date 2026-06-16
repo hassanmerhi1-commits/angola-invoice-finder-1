@@ -230,6 +230,45 @@ function readBackendSchemaExpectation(entryPath) {
   }
 }
 
+/** Feature markers — higher score = newer backend (independent of shell app version). */
+function readBackendFeatureScore(entryPath) {
+  try {
+    const cwd = resolveBackendCwd(entryPath);
+    let score = 0;
+    if (fs.existsSync(path.join(cwd, 'src', 'lib', 'certificationDemoProfile.js'))) score += 100;
+    const certRoute = path.join(cwd, 'src', 'routes', 'certification.js');
+    if (fs.existsSync(certRoute)) {
+      const text = fs.readFileSync(certRoute, 'utf8');
+      if (text.includes('apply-demo-profile')) score += 50;
+      if (text.includes('applyCertificationDemoProfile')) score += 25;
+    }
+    return score;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function compareBackendCandidates(a, b, packagedPath, installPath) {
+  const schemaA = readBackendSchemaExpectation(a);
+  const schemaB = readBackendSchemaExpectation(b);
+  if (schemaA !== schemaB) return schemaB - schemaA;
+
+  const featureA = readBackendFeatureScore(a);
+  const featureB = readBackendFeatureScore(b);
+  if (featureA !== featureB) return featureB - featureA;
+
+  if (!process.env.ELECTRON_DEV && process.env.NODE_ENV !== 'development') {
+    const aIsPackaged = packagedPath && path.normalize(a) === path.normalize(packagedPath);
+    const bIsPackaged = packagedPath && path.normalize(b) === path.normalize(packagedPath);
+    const aIsInstall = installPath && path.normalize(a) === path.normalize(installPath);
+    const bIsInstall = installPath && path.normalize(b) === path.normalize(installPath);
+    if (aIsPackaged && bIsInstall) return -1;
+    if (bIsPackaged && aIsInstall) return 1;
+  }
+
+  return 0;
+}
+
 function resolveBackendEntry() {
   let appPath = null;
   try {
@@ -251,8 +290,7 @@ function resolveBackendEntry() {
     ? path.join(process.resourcesPath, 'app.asar.unpacked', 'backend', 'src', 'server.js')
     : null;
 
-  // Dev: repo backend first (avoids broken partial C:\NEXOR ERP\backend copies).
-  // Release: patched install dir, then packaged resources.
+  // Release: packaged installer backend first (matches UI version), then C:\NEXOR ERP sync overlay.
   const candidates = isDev
     ? [
       entryOverride || null,
@@ -264,8 +302,8 @@ function resolveBackendEntry() {
     ]
     : [
       entryOverride || null,
-      installBackend,
       packagedBackend,
+      installBackend,
       unpackedBackend,
       repoBackend,
       appPath ? path.join(appPath, 'backend', 'src', 'server.js') : null,
@@ -288,20 +326,10 @@ function resolveBackendEntry() {
   const installPath = installBackend && fs.existsSync(installBackend) ? installBackend : null;
 
   let best = viable[0];
-  let bestSchema = readBackendSchemaExpectation(best);
   for (let i = 1; i < viable.length; i++) {
     const candidate = viable[i];
-    const schema = readBackendSchemaExpectation(candidate);
-    if (schema > bestSchema) {
+    if (compareBackendCandidates(best, candidate, packagedPath, installPath) > 0) {
       best = candidate;
-      bestSchema = schema;
-    } else if (schema === bestSchema && !isDev) {
-      // Same schema: prefer backend bundled with the installer over stale C:\NEXOR ERP\backend sync.
-      const candidateIsPackaged = packagedPath && path.normalize(candidate) === path.normalize(packagedPath);
-      const bestIsInstallOnly = installPath && path.normalize(best) === path.normalize(installPath);
-      if (candidateIsPackaged && bestIsInstallOnly) {
-        best = candidate;
-      }
     }
   }
 
@@ -309,16 +337,17 @@ function resolveBackendEntry() {
     const skipped = viable.filter((p) => p !== best);
     for (const p of skipped) {
       const schema = readBackendSchemaExpectation(p);
-      if (schema < bestSchema) {
+      const features = readBackendFeatureScore(p);
+      if (schema < readBackendSchemaExpectation(best) || features < readBackendFeatureScore(best)) {
         console.warn(
-          `[BackendManager] ignoring older backend at ${p} (schema ${schema}); `
-            + `using ${best} (schema ${bestSchema})`,
+          `[BackendManager] ignoring older backend at ${p} (schema ${schema}, features ${features}); `
+            + `using ${best} (schema ${readBackendSchemaExpectation(best)}, features ${readBackendFeatureScore(best)})`,
         );
       }
     }
   }
 
-  console.log(`[BackendManager] using backend entry: ${best} (schema ${bestSchema})`);
+  console.log(`[BackendManager] using backend entry: ${best} (schema ${readBackendSchemaExpectation(best)}, features ${readBackendFeatureScore(best)})`);
   return best;
 }
 
@@ -563,6 +592,7 @@ function spawnBackend(entryPath, port, sqlitePathOverride = null) {
   if (nexorAppVersion) {
     env.NEXOR_APP_VERSION = nexorAppVersion;
   }
+  env.NEXOR_BACKEND_ENTRY = entryPath;
 
   if (usePostgres) {
     env.DATABASE_URL = dbMode.databaseUrl;

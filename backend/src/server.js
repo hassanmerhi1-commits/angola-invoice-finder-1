@@ -81,6 +81,11 @@ app.get(/^\/app(?:\/.*)?$/, (req, res) => {
 /** Fast ping for Electron health monitor — avoid heavy queries while SQLite is busy. */
 app.get('/api/health', async (req, res) => {
   const lite = req.query.lite === '1' || req.query.lite === 'true';
+  const fs = require('fs');
+  const path = require('path');
+  const hasCertificationDemoProfile = fs.existsSync(
+    path.join(__dirname, 'lib', 'certificationDemoProfile.js'),
+  );
   try {
     const row = await db.query(db.engine === 'postgres' ? 'SELECT NOW() AS now' : "SELECT datetime('now') AS now");
     const schema = await readSchemaVersionFromDb(db);
@@ -90,6 +95,11 @@ app.get('/api/health', async (req, res) => {
       time: row.rows[0]?.now,
       unified: true,
       appVersion: APP_VERSION,
+      shellVersion: process.env.NEXOR_APP_VERSION || null,
+      backendEntry: process.env.NEXOR_BACKEND_ENTRY || null,
+      features: {
+        certificationDemoProfile: hasCertificationDemoProfile,
+      },
       schemaVersion: schema.stored,
       schemaVersionExpected: EXPECTED_SCHEMA_VERSION,
       dbPath: db.engine === 'sqlite' ? db.dbPath : undefined,

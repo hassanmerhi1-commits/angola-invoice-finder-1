@@ -80,6 +80,7 @@ function Sync-FullBackend($destRoot) {
     $checks = @(
         (Join-Path $destRoot 'src\lib\sqlDialect.js'),
         (Join-Path $destRoot 'src\lib\loginUserLookup.js'),
+        (Join-Path $destRoot 'src\lib\certificationDemoProfile.js'),
         (Join-Path $destRoot 'scripts\lib\integrityRunner.js'),
         (Join-Path $destRoot 'node_modules\dotenv'),
         (Join-Path $destRoot 'node_modules\node-forge'),
