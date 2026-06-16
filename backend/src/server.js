@@ -41,7 +41,7 @@ const db = require('./db');
 const { lanCors, securityHeaders, rateLimiter } = require('./middleware/security');
 const { DiscoveryBroadcaster } = require('./discovery');
 
-const { readAppVersion, EXPECTED_SCHEMA_VERSION, recordAppMetaForDb } = require('./lib/deploymentStatus');
+const { readAppVersion, EXPECTED_SCHEMA_VERSION, recordAppMetaForDb, readSchemaVersionFromDb } = require('./lib/deploymentStatus');
 
 const PORT = Number(process.env.PORT) || 3000;
 const APP_VERSION = readAppVersion();
@@ -83,12 +83,14 @@ app.get('/api/health', async (req, res) => {
   const lite = req.query.lite === '1' || req.query.lite === 'true';
   try {
     const row = await db.query(db.engine === 'postgres' ? 'SELECT NOW() AS now' : "SELECT datetime('now') AS now");
+    const schema = await readSchemaVersionFromDb(db);
     const payload = {
       ok: true,
       engine: db.engine || 'sqlite',
       time: row.rows[0]?.now,
       unified: true,
       appVersion: APP_VERSION,
+      schemaVersion: schema.stored,
       schemaVersionExpected: EXPECTED_SCHEMA_VERSION,
       dbPath: db.engine === 'sqlite' ? db.dbPath : undefined,
     };
@@ -134,6 +136,7 @@ app.use('/api/purchase-invoices', require('./routes/purchaseInvoices')(broadcast
 app.use('/api/proformas', require('./routes/proformas')(broadcastTable));
 app.use('/api/supplier-returns', require('./routes/supplierReturns')(broadcastTable));
 app.use('/api/stock-transfers', require('./routes/stockTransfers')(broadcastTable));
+app.use('/api/import-orders', require('./routes/importOrders')(broadcastTable));
 app.use('/api/journal-entries', require('./routes/journalEntries')(broadcastTable));
 app.use('/api/chart-of-accounts', require('./routes/chartOfAccounts')(broadcastTable));
 app.use('/api/dashboard', require('./routes/dashboard')(broadcastTable));

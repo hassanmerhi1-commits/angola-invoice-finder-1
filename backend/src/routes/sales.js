@@ -155,6 +155,7 @@ module.exports = function(broadcastTable) {
     try {
       const {
         resolveSaleInvoiceType,
+        normalizeCustomerNif,
         sequenceKeyForInvoiceType,
         prefixForInvoiceType,
       } = require('../lib/fiscalInvoiceType');
@@ -167,10 +168,9 @@ module.exports = function(broadcastTable) {
       );
       const branchId = branchRow.rows[0]?.id;
       const invoiceType = resolveSaleInvoiceType({
-        customerNif: req.query.customerNif,
+        customerNif: normalizeCustomerNif(req.query.customerNif),
         paymentMethod: req.query.paymentMethod || 'cash',
         total: Number(req.query.total) || 0,
-        invoiceType: req.query.invoiceType,
       });
       const seqKey = sequenceKeyForInvoiceType(invoiceType);
       const prefix = prefixForInvoiceType(invoiceType);

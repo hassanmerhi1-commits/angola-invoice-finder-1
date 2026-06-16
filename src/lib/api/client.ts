@@ -607,6 +607,11 @@ export const api = {
 
   certification: {
     status: () => apiFetch<Record<string, unknown>>('/certification/status'),
+    applyDemoProfile: (options?: { generateTestCertificate?: boolean }) =>
+      apiFetch<Record<string, unknown>>('/certification/apply-demo-profile', {
+        method: 'POST',
+        body: JSON.stringify(options ?? {}),
+      }),
   },
 
   // Branches — Electron + SQLite: IPC main store does not persist branches (only Express DB does).
@@ -1173,6 +1178,19 @@ export const api = {
     cancel: (id: string, cancelledBy: string) => {
       return apiFetch<any>(`/stock-transfers/${id}/cancel`, { method: 'POST', body: JSON.stringify({ cancelledBy }) });
     },
+  },
+
+  importOrders: {
+    list: (branchId?: string) => {
+      const endpoint = `/import-orders${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`;
+      return apiFetch<any[]>(endpoint);
+    },
+    get: (id: string) => apiFetch<any>(`/import-orders/${id}`),
+    create: (data: any) => apiFetch<any>('/import-orders', { method: 'POST', body: JSON.stringify(data) }),
+    updateStatus: (id: string, status: string) =>
+      apiFetch<any>(`/import-orders/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) }),
+    receive: (id: string, data: { receivedBy: string; branchId?: string; warehouseId?: string }) =>
+      apiFetch<any>(`/import-orders/${id}/receive`, { method: 'POST', body: JSON.stringify(data) }),
   },
 
   // Purchase Orders
@@ -1764,6 +1782,10 @@ export const api = {
     createCostCenter: (data: any) => {
       if (isElectronMode()) return ipcInsert('cost_centers', { id: generateId(), ...data });
       return apiFetch<any>('/budgets/cost-centers', { method: 'POST', body: JSON.stringify(data) });
+    },
+    updateCostCenter: (id: string, data: any) => {
+      if (isElectronMode()) return ipcUpdate('cost_centers', id, data);
+      return apiFetch<any>(`/budgets/cost-centers/${id}`, { method: 'PUT', body: JSON.stringify(data) });
     },
     list: (params?: { year?: number; month?: number; costCenterId?: string }) => {
       if (isElectronMode()) return ipcQuery<any>('SELECT * FROM budgets ORDER BY year DESC, month DESC');

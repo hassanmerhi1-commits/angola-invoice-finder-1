@@ -105,8 +105,12 @@ function printViaIframe(html: string): Promise<void> {
 export type PrintHtmlOptions = {
   /** Skip the in-app preview dialog and open the system print dialog immediately. */
   direct?: boolean;
-  /** Electron only: print to default printer without showing the OS dialog. */
+  /** Electron only: print without showing the OS dialog (requires deviceName). */
   silent?: boolean;
+  /** Electron only: target printer by Windows device name. */
+  deviceName?: string;
+  /** Thermal receipt width in mm (58 or 80). */
+  pageWidthMm?: 58 | 80;
 };
 
 export async function printHtml(html: string, options: PrintHtmlOptions = {}): Promise<void> {
@@ -117,14 +121,27 @@ export async function printHtml(html: string, options: PrintHtmlOptions = {}): P
 
   const electronPrint = window.electronAPI?.print?.html;
   if (electronPrint) {
-    const useSilent = options.silent ?? !!options.direct;
-    const result = await electronPrint(html, { silent: useSilent });
+    const deviceName = options.deviceName?.trim() || '';
+    const wantSilent = options.silent ?? (!!options.direct && !!deviceName);
+    const printOpts = {
+      silent: wantSilent,
+      deviceName: deviceName || undefined,
+      pageWidthMm: options.pageWidthMm,
+    };
+
+    let result = await electronPrint(html, printOpts);
     if (result.success) return;
-    if (useSilent) {
-      console.warn('[printHtml] Silent print failed, falling back to print dialog:', result.error);
-    } else {
-      throw new Error(result.error || 'Print failed');
+
+    if (wantSilent) {
+      console.warn('[printHtml] Silent print failed, retrying with print dialog:', result.error);
+      result = await electronPrint(html, {
+        silent: false,
+        pageWidthMm: options.pageWidthMm,
+      });
+      if (result.success) return;
     }
+
+    throw new Error(result.error || 'Print failed');
   }
 
   await printViaIframe(html);

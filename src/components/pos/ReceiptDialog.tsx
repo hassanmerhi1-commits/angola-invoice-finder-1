@@ -22,6 +22,7 @@ import { printA4Invoice } from '@/lib/a4Invoice';
 import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { getCompanySettings } from '@/lib/companySettings';
 import { toast } from 'sonner';
+import { resolveSaleDocumentType } from '@/lib/fiscalInvoiceType';
 import { formatTaxLabel, taxRatesFromSaleItems } from '@/lib/taxUtils';
 import { useTranslation } from '@/i18n';
 
@@ -70,6 +71,8 @@ export function ReceiptDialog({
             ? t.receiptUi.printThermalSent
             : t.receiptUi.printWindowOpened
         );
+      } else {
+        toast.error(t.receiptUi.printError);
       }
     } catch (error) {
       toast.error(`${t.receiptUi.printError}: ${(error as Error).message}`);
@@ -96,7 +99,10 @@ export function ReceiptDialog({
       await printA4Invoice(sale, branch, {
         showBankDetails: true,
         showNotes: true,
-        documentType: (sale.invoiceType || 'FR') as 'FT' | 'FR' | 'FS',
+        documentType: resolveSaleDocumentType({
+          invoiceType: sale.invoiceType,
+          invoiceNumber: sale.invoiceNumber,
+        }),
       });
       void recordSalePrint(sale, { format: 'a4', source: 'receipt_dialog' });
       toast.success(t.receiptUi.a4SentToPrint);

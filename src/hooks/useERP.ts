@@ -23,7 +23,7 @@ import {
   dedupeProductsForDisplay,
 } from '@/lib/productDedupe';
 import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
-import { resolveSaleInvoiceType } from '@/lib/fiscalInvoiceType';
+import { normalizeCustomerNif, resolveSaleDocumentType, resolveSaleInvoiceType } from '@/lib/fiscalInvoiceType';
 import {
   applySellingPriceHintsToProducts,
   fetchSellingPriceHints,
@@ -33,6 +33,7 @@ import {
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
+import { validateNIF } from '@/lib/companySettings';
 
 // Helper: only use local demo storage in explicit demo mode.
 // In real web localhost/API mode, never silently revive stale browser data.
@@ -628,7 +629,10 @@ function mapSaleRow(s: any): Sale {
     customerNif: s.customerNif || s.customer_nif || '',
     customerName: s.customerName || s.customer_name || '',
     status: s.status || 'completed',
-    invoiceType: (s.invoiceType || s.invoice_type || 'FT').toUpperCase() as Sale['invoiceType'],
+    invoiceType: resolveSaleDocumentType({
+      invoiceType: s.invoiceType || s.invoice_type,
+      invoiceNumber: s.invoiceNumber || s.invoice_number,
+    }),
     saftHash: s.saftHash || s.agt_hash || s.saft_hash || '',
     agtStatus: s.agtStatus || s.agt_status || undefined,
     agtCode: s.agtCode || s.agt_code || undefined,
@@ -702,8 +706,10 @@ export function useSales(branchId?: string) {
     const taxAmount = saleItems.reduce((sum, item) => sum + item.taxAmount, 0);
     const total = subtotal + taxAmount;
 
+    const normalizedCustomerNif = customerNif ? normalizeCustomerNif(customerNif) : undefined;
+
     const invoiceType = resolveSaleInvoiceType({
-      customerNif,
+      customerNif: normalizedCustomerNif,
       paymentMethod,
       total,
     });
@@ -720,7 +726,7 @@ export function useSales(branchId?: string) {
       const invoicePreview = await api.sales.generateInvoiceNumber(branchCode, {
         paymentMethod,
         total,
-        customerNif,
+        customerNif: normalizedCustomerNif,
         invoiceType,
       });
       invoiceNumberHint = invoicePreview.data?.invoiceNumber || '';
@@ -734,7 +740,6 @@ export function useSales(branchId?: string) {
       cashierId,
       cashierName,
       invoiceNumber: invoiceNumberHint || undefined,
-      invoiceType,
       items: saleItems,
       subtotal,
       taxAmount,
@@ -743,7 +748,7 @@ export function useSales(branchId?: string) {
       paymentMethod,
       amountPaid,
       change: amountPaid - total,
-      customerNif,
+      customerNif: normalizedCustomerNif,
       customerName,
     });
 
@@ -766,10 +771,13 @@ export function useSales(branchId?: string) {
       paymentMethod,
       amountPaid,
       change: amountPaid - total,
-      customerNif,
+      customerNif: normalizedCustomerNif,
       customerName,
       status: 'completed',
-      invoiceType: (apiResult.data.invoice_type || apiResult.data.invoiceType || invoiceType) as Sale['invoiceType'],
+      invoiceType: resolveSaleDocumentType({
+        invoiceType: apiResult.data.invoice_type || apiResult.data.invoiceType || invoiceType,
+        invoiceNumber: apiResult.data.invoice_number || apiResult.data.invoiceNumber || invoiceNumberHint,
+      }),
       createdAt: apiResult.data.created_at || new Date().toISOString(),
     };
 
@@ -1254,8 +1262,15 @@ export function useClients() {
   useEffect(() => { refreshClients(); }, [refreshClients]);
 
   const saveClient = useCallback(async (client: Client) => {
-    const result = await api.clients.update(client.id, client);
-    if (!result.data) await storage.saveClient(client);
+    const name = String(client.name || '').trim();
+    const nif = String(client.nif || '').replace(/\s/g, '').trim();
+    if (!name) throw new Error('Name is required');
+    if (!nif) throw new Error('NIF is required');
+    if (!validateNIF(nif)) throw new Error('NIF must have 10 digits');
+
+    const payload = { ...client, name, nif };
+    const result = await api.clients.update(client.id, payload);
+    if (!result.data) await storage.saveClient(payload);
     await refreshClients();
   }, [refreshClients]);
 
@@ -1266,7 +1281,14 @@ export function useClients() {
   }, [refreshClients]);
 
   const createClient = useCallback(async (data: Omit<Client, 'id' | 'createdAt' | 'updatedAt'>): Promise<Client> => {
-    const result = await api.clients.create(data);
+    const name = String(data.name || '').trim();
+    const nif = String(data.nif || '').replace(/\s/g, '').trim();
+    if (!name) throw new Error('Name is required');
+    if (!nif) throw new Error('NIF is required');
+    if (!validateNIF(nif)) throw new Error('NIF must have 10 digits');
+
+    const payload = { ...data, name, nif };
+    const result = await api.clients.create(payload);
     const row = result.data as Record<string, unknown> | undefined;
     const apiOk =
       row != null &&
@@ -1278,7 +1300,7 @@ export function useClients() {
       return mapClientApiRow(row);
     }
     const client: Client = {
-      ...data,
+      ...payload,
       id: `client_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1758,4 +1780,179 @@ export function useDataSync() {
   }, []);
 
   return { exportData, downloadSyncPackage };
+}
+
+// ============================================
+// IMPORT ORDERS
+// ============================================
+
+export interface ImportOrderItem {
+  id: string;
+  productId?: string;
+  description: string;
+  hsCode?: string;
+  quantity: number;
+  unit: string;
+  unitPriceForeign: number;
+  unitPriceAOA: number;
+  totalForeign: number;
+  totalAOA: number;
+  landedCostPerUnit: number;
+  receivedQuantity?: number;
+}
+
+export interface ImportOrder {
+  id: string;
+  orderNumber: string;
+  supplierId?: string;
+  supplierName: string;
+  supplierCountry: string;
+  transportMode: 'sea' | 'air' | 'land';
+  incoterm: 'FOB' | 'CIF' | 'EXW' | 'DDP' | 'CFR';
+  portOfOrigin: string;
+  portOfDestination: string;
+  currency: 'USD' | 'EUR' | 'CNY';
+  exchangeRate: number;
+  fobValue: number;
+  fobValueAOA: number;
+  freightCost: number;
+  insuranceCost: number;
+  cifValue: number;
+  customsDeclarationNumber?: string;
+  customsDutyRate: number;
+  customsDutyAmount: number;
+  otherTaxes: number;
+  totalCustoms: number;
+  portCharges: number;
+  transportLocal: number;
+  otherCosts: number;
+  totalLandedCost: number;
+  costPerUnit: number;
+  totalQuantity: number;
+  items: ImportOrderItem[];
+  status: 'draft' | 'ordered' | 'shipped' | 'in_customs' | 'cleared' | 'received' | 'cancelled';
+  orderDate?: string;
+  shippingDate?: string;
+  arrivalDate?: string;
+  customsClearanceDate?: string;
+  receivedDate?: string;
+  branchId?: string;
+  notes?: string;
+  createdBy?: string;
+  createdAt?: string;
+}
+
+function mapImportOrder(row: any): ImportOrder {
+  return {
+    id: String(row.id),
+    orderNumber: row.orderNumber || row.order_number,
+    supplierId: row.supplierId || row.supplier_id,
+    supplierName: row.supplierName || row.supplier_name || '',
+    supplierCountry: row.supplierCountry || row.supplier_country || '',
+    transportMode: row.transportMode || row.transport_mode || 'sea',
+    incoterm: row.incoterm || 'FOB',
+    portOfOrigin: row.portOfOrigin || row.port_of_origin || '',
+    portOfDestination: row.portOfDestination || row.port_of_destination || '',
+    currency: row.currency || 'USD',
+    exchangeRate: Number(row.exchangeRate ?? row.exchange_rate ?? 1),
+    fobValue: Number(row.fobValue ?? row.fob_value ?? 0),
+    fobValueAOA: Number(row.fobValueAOA ?? row.fob_value_aoa ?? 0),
+    freightCost: Number(row.freightCost ?? row.freight_cost ?? 0),
+    insuranceCost: Number(row.insuranceCost ?? row.insurance_cost ?? 0),
+    cifValue: Number(row.cifValue ?? row.cif_value ?? 0),
+    customsDeclarationNumber: row.customsDeclarationNumber || row.customs_declaration_number,
+    customsDutyRate: Number(row.customsDutyRate ?? row.customs_duty_rate ?? 0),
+    customsDutyAmount: Number(row.customsDutyAmount ?? row.customs_duty_amount ?? 0),
+    otherTaxes: Number(row.otherTaxes ?? row.other_taxes ?? 0),
+    totalCustoms: Number(row.totalCustoms ?? row.total_customs ?? 0),
+    portCharges: Number(row.portCharges ?? row.port_charges ?? 0),
+    transportLocal: Number(row.transportLocal ?? row.transport_local ?? 0),
+    otherCosts: Number(row.otherCosts ?? row.other_costs ?? 0),
+    totalLandedCost: Number(row.totalLandedCost ?? row.total_landed_cost ?? 0),
+    costPerUnit: Number(row.costPerUnit ?? row.cost_per_unit ?? 0),
+    totalQuantity: Number(row.totalQuantity ?? row.total_quantity ?? 0),
+    items: Array.isArray(row.items) ? row.items.map((it: any) => ({
+      id: String(it.id),
+      productId: it.productId || it.product_id,
+      description: it.description || '',
+      hsCode: it.hsCode || it.hs_code,
+      quantity: Number(it.quantity || 0),
+      unit: it.unit || 'un',
+      unitPriceForeign: Number(it.unitPriceForeign ?? it.unit_price_foreign ?? 0),
+      unitPriceAOA: Number(it.unitPriceAOA ?? it.unit_price_aoa ?? 0),
+      totalForeign: Number(it.totalForeign ?? it.total_foreign ?? 0),
+      totalAOA: Number(it.totalAOA ?? it.total_aoa ?? 0),
+      landedCostPerUnit: Number(it.landedCostPerUnit ?? it.landed_cost_per_unit ?? 0),
+      receivedQuantity: Number(it.receivedQuantity ?? it.received_quantity ?? 0),
+    })) : [],
+    status: row.status || 'draft',
+    orderDate: row.orderDate || row.order_date,
+    shippingDate: row.shippingDate || row.shipping_date,
+    arrivalDate: row.arrivalDate || row.arrival_date,
+    customsClearanceDate: row.customsClearanceDate || row.customs_clearance_date,
+    receivedDate: row.receivedDate || row.received_date,
+    branchId: row.branchId || row.branch_id,
+    notes: row.notes,
+    createdBy: row.createdBy || row.created_by,
+    createdAt: row.createdAt || row.created_at,
+  };
+}
+
+export function useImportOrders(branchId?: string) {
+  const { t } = useTranslation();
+  const [orders, setOrders] = useState<ImportOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const refreshOrders = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await api.importOrders.list(branchId);
+      setOrders(Array.isArray(result.data) ? result.data.map(mapImportOrder) : []);
+    } catch (error) {
+      console.error('[IMPORT ORDERS] Failed to load:', error);
+      setOrders([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [branchId]);
+
+  useEffect(() => { void refreshOrders(); }, [refreshOrders]);
+
+  const createOrder = useCallback(async (payload: Record<string, unknown>) => {
+    const result = await api.importOrders.create(payload);
+    if (!result.data) throw new Error(result.error || t.importsUi.importCreated);
+    await refreshOrders();
+    return mapImportOrder(result.data);
+  }, [refreshOrders, t.importsUi.importCreated]);
+
+  const updateStatus = useCallback(async (id: string, status: ImportOrder['status']) => {
+    const result = await api.importOrders.updateStatus(id, status);
+    if (!result.data) throw new Error(result.error || t.importsUi.statusUpdated);
+    await refreshOrders();
+    return mapImportOrder(result.data);
+  }, [refreshOrders, t.importsUi.statusUpdated]);
+
+  const receiveOrder = useCallback(async (id: string, receivedBy: string, warehouseBranchId?: string) => {
+    const result = await api.importOrders.receive(id, {
+      receivedBy,
+      branchId: warehouseBranchId,
+    });
+    if (!result.data) throw new Error(result.error || t.importsUi.statusReceived);
+    await refreshOrders();
+    if ((result.data as { stockMovementIds?: string[] }).stockMovementIds?.length) {
+      window.dispatchEvent(new CustomEvent(storage.PRODUCTS_CHANGED_EVENT, {
+        detail: { branchId: warehouseBranchId || 'all' },
+      }));
+    }
+    return mapImportOrder(result.data);
+  }, [refreshOrders, t.importsUi.statusReceived]);
+
+  return {
+    orders,
+    loading,
+    refreshOrders,
+    createOrder,
+    updateStatus,
+    receiveOrder,
+  };
 }

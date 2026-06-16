@@ -223,6 +223,7 @@ export default function Settings() {
       case 'fiscal':
         return (
           <div className="space-y-6">
+            <CertificationReadinessCard />
             <CompanySettingsLauncherCard />
             <SigningSettingsCard />
             <AgtSettingsCard />
@@ -233,7 +234,6 @@ export default function Settings() {
         return (
           <div className="space-y-6">
             <SecuritySettingsCard />
-            <CertificationReadinessCard />
           </div>
         );
       case 'system':

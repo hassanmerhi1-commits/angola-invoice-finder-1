@@ -1,6 +1,7 @@
 /**
  * Apply phase 1–5 schema patches at startup (PostgreSQL + safety net for SQLite).
  */
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -126,11 +127,63 @@ async function ensureCreditNoteRestoreStockColumn(db) {
 
 const SQLITE_CRITICAL_ALTERS = [
   "ALTER TABLE sales ADD COLUMN fiscal_status TEXT DEFAULT 'issued'",
+  "ALTER TABLE sales ADD COLUMN invoice_type TEXT NOT NULL DEFAULT 'FT'",
   'ALTER TABLE credit_notes ADD COLUMN restore_stock INTEGER NOT NULL DEFAULT 1',
   'ALTER TABLE audit_log ADD COLUMN metadata TEXT',
   'ALTER TABLE audit_log ADD COLUMN workstation_id TEXT',
   'ALTER TABLE audit_log ADD COLUMN ip_address TEXT',
 ];
+
+function ensureUserSessionsSqlite(db) {
+  if (!db.sqlite) return;
+  db.sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      user_id TEXT NOT NULL,
+      token_jti TEXT NOT NULL UNIQUE,
+      ip_address TEXT,
+      workstation_id TEXT,
+      user_agent TEXT,
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+      ended_at TEXT,
+      end_reason TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_user_sessions_active ON user_sessions(ended_at);
+  `);
+}
+
+function ensureFiscalInvoiceSequencesSqlite(db) {
+  if (!db.sqlite || !db.sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='document_sequences' LIMIT 1").get()) {
+    return;
+  }
+  const yr = new Date().getFullYear();
+  const ins = db.sqlite.prepare(`
+    INSERT INTO document_sequences (id, document_type, prefix, fiscal_year, branch_id, current_number)
+    VALUES (?, ?, ?, ?, ?, 0)
+    ON CONFLICT(document_type, fiscal_year, branch_id) DO NOTHING
+  `);
+  const fiscalTypes = [
+    ['simplified_invoice', 'FS'],
+    ['invoice_receipt', 'FR'],
+    ['sales_invoice', 'FT'],
+  ];
+  try {
+    const branches = db.sqlite.prepare('SELECT id FROM branches WHERE is_active = 1 OR is_active IS NULL').all();
+    for (const branch of branches) {
+      for (const [docType, prefix] of fiscalTypes) {
+        ins.run(crypto.randomUUID(), docType, prefix, yr, branch.id);
+      }
+    }
+    for (const [docType, prefix] of fiscalTypes) {
+      ins.run(crypto.randomUUID(), docType, prefix, yr, '');
+    }
+  } catch (err) {
+    console.warn('[SCHEMA] fiscal invoice sequences:', err.message);
+  }
+}
 
 async function ensurePhaseSchema(db) {
   const migrationsDir = path.join(__dirname, '../migrations');
@@ -169,6 +222,8 @@ async function ensurePhaseSchema(db) {
         db.sqlite.exec(sql);
       } catch (_) {}
     }
+    ensureUserSessionsSqlite(db);
+    ensureFiscalInvoiceSequencesSqlite(db);
     try {
       db.sqlite.exec(
         `UPDATE sales SET fiscal_status = 'issued'

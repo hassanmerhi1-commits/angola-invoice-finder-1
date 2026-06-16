@@ -15,6 +15,8 @@ export interface PrinterConfig {
   type: 'usb' | 'serial' | 'network' | 'browser';
   paperWidth: 58 | 80; // mm
   characterWidth: number; // characters per line
+  /** Windows printer name (Electron). Required for silent POS auto-print. */
+  deviceName?: string;
   ip?: string;
   port?: number;
   serialPort?: string;
@@ -99,7 +101,7 @@ export function generateReceiptText(
   lines.push(divider);
   
   // Invoice info
-  lines.push(center(receiptDocTypeLabel(sale.invoiceType)));
+  lines.push(center(receiptDocTypeLabel(sale.invoiceType, sale.invoiceNumber)));
   lines.push(center(sale.invoiceNumber));
   lines.push(center(new Date(sale.createdAt).toLocaleString('pt-AO')));
   lines.push(center('Caixa: ' + (sale.cashierName || sale.cashierId || 'N/A')));
@@ -235,7 +237,7 @@ export function generateESCPOSReceipt(
   
   // Invoice number
   addCommand(ESC_POS.BOLD_ON);
-  addText(receiptDocTypeLabel(sale.invoiceType) + '\n');
+  addText(receiptDocTypeLabel(sale.invoiceType, sale.invoiceNumber) + '\n');
   addText(sale.invoiceNumber + '\n');
   addCommand(ESC_POS.BOLD_OFF);
   addText(new Date(sale.createdAt).toLocaleString('pt-AO') + '\n\n');
@@ -437,8 +439,13 @@ async function buildReceiptBrowserHtml(
   paperWidth: 58 | 80 = 80,
   copyLabels: (string | undefined)[] = [undefined],
 ): Promise<string> {
-  const { generateAGTQRCodeDataURL } = await import('./agtQRCode');
-  const qrCodeDataURL = await generateAGTQRCodeDataURL(sale, branch, { size: 100, margin: 1 });
+  let qrCodeDataURL = '';
+  try {
+    const { generateAGTQRCodeDataURL } = await import('./agtQRCode');
+    qrCodeDataURL = await generateAGTQRCodeDataURL(sale, branch, { size: 100, margin: 1 });
+  } catch (error) {
+    console.warn('[thermal] QR code skipped for print:', error);
+  }
   const company = getCompanySettings();
   const width = paperWidth === 80 ? '80mm' : '58mm';
   const bodies = copyLabels.map((label) =>
@@ -523,14 +530,21 @@ export async function printViaBrowser(
   branch: Branch,
   paperWidth: 58 | 80 = 80,
   copyLabelOrLabels?: string | (string | undefined)[],
-  options: { direct?: boolean } = {},
+  options: { direct?: boolean; deviceName?: string } = {},
 ): Promise<void> {
   const labels = Array.isArray(copyLabelOrLabels)
     ? copyLabelOrLabels
     : [copyLabelOrLabels];
   const html = await buildReceiptBrowserHtml(sale, branch, paperWidth, labels);
+  const config = getPrinterConfig();
+  const deviceName = options.deviceName ?? config.deviceName;
   const { printHtml } = await import('./printHtml');
-  await printHtml(html, { direct: options.direct, silent: options.direct });
+  await printHtml(html, {
+    direct: options.direct,
+    silent: !!(options.direct && deviceName),
+    deviceName,
+    pageWidthMm: paperWidth,
+  });
 }
 
 function normalizePrintReceiptOptions(
@@ -600,10 +614,16 @@ export async function printReceipt(
     }
   }
 
-  await printViaBrowser(sale, branch, config.paperWidth, labels, {
-    direct: options.direct ?? false,
-  });
-  return { success: true, method: 'browser' };
+  try {
+    await printViaBrowser(sale, branch, config.paperWidth, labels, {
+      direct: options.direct ?? false,
+      deviceName: config.deviceName,
+    });
+    return { success: true, method: 'browser' };
+  } catch (error) {
+    console.error('Browser print failed:', error);
+    return { success: false, method: 'browser' };
+  }
 }
 
 // Open cash drawer only

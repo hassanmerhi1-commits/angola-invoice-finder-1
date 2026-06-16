@@ -444,6 +444,8 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             customerName: (entityName || finalConsumerName) || undefined,
             clientId: entityId || undefined,
             dueDate: dueDate || undefined,
+            parentProformaId: prefillFrom?.documentType === 'proforma' ? prefillFrom.id : undefined,
+            parentProformaNumber: prefillFrom?.documentType === 'proforma' ? prefillFrom.documentNumber : undefined,
           });
 
           if (!saleResult.data) {
@@ -529,6 +531,15 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             }
           );
           onSaved?.(doc);
+          if (documentType === 'proforma') {
+            void api.audit.log({
+              tableName: 'proformas',
+              recordId: doc.id,
+              action: 'create',
+              description: `Proforma ${doc.documentNumber} criada`,
+              metadata: { documentKind: 'OR', documentNumber: doc.documentNumber },
+            }).catch(() => {});
+          }
           toast.success(
             t.documentFormUi.documentCreatedToast
               .replace('{short}', typeUi.short)

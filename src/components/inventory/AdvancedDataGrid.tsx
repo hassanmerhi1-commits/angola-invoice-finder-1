@@ -127,8 +127,8 @@ export function AdvancedDataGrid({
 
   const calculateProfitMargin = (product: Product): number => {
     const cost = product.avgCost || product.lastCost || product.firstCost || product.cost || 0;
-    if (cost <= 0 || product.price <= 0) return 0;
-    return ((product.price - cost) / cost) * 100;
+    if (product.price <= 0) return 0;
+    return ((product.price - cost) / product.price) * 100;
   };
 
   const getCellRawValue = (product: Product, key: string): { str: string; num: number } => {

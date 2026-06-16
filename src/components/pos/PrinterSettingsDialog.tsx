@@ -11,10 +11,16 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { 
   Printer, 
   Usb, 
-  Globe, 
   Monitor,
   Check,
   AlertCircle
@@ -41,12 +47,30 @@ export function PrinterSettingsDialog({
   const [config, setConfig] = useState<PrinterConfig>(DEFAULT_PRINTER_CONFIG);
   const [hasSerialSupport, setHasSerialSupport] = useState(false);
   const [autoOpenDrawer, setAutoOpenDrawer] = useState(true);
+  const [isElectron, setIsElectron] = useState(false);
+  const [printers, setPrinters] = useState<Array<{ name: string; isDefault: boolean }>>([]);
+  const [loadingPrinters, setLoadingPrinters] = useState(false);
 
   useEffect(() => {
     if (open) {
       setConfig(getPrinterConfig());
       setHasSerialSupport('serial' in navigator);
       setAutoOpenDrawer(localStorage.getItem('kwanza_auto_open_drawer') !== 'false');
+      const electron = !!window.electronAPI?.print?.listPrinters;
+      setIsElectron(electron);
+      if (electron) {
+        setLoadingPrinters(true);
+        void window.electronAPI!.print.listPrinters()
+          .then((result) => {
+            setPrinters(result.printers || []);
+            const saved = getPrinterConfig();
+            if (!saved.deviceName && result.defaultPrinter) {
+              setConfig((prev) => ({ ...prev, deviceName: result.defaultPrinter || undefined }));
+            }
+          })
+          .catch(() => setPrinters([]))
+          .finally(() => setLoadingPrinters(false));
+      }
     }
   }, [open]);
 
@@ -70,7 +94,7 @@ export function PrinterSettingsDialog({
           '\x1B@' + // Initialize
           '\x1Ba\x01' + // Center
           'TESTE DE IMPRESSAO\n' +
-          'KWANZA ERP\n' +
+          'NEXOR ERP\n' +
           '------------------------\n' +
           'Impressora configurada!\n\n\n' +
           '\x1DVA' // Cut
@@ -81,30 +105,40 @@ export function PrinterSettingsDialog({
         writer.releaseLock();
         await port.close();
         
-        toast.success('Teste enviado para a impressora');
+        toast.success(t.printerUi.testSent);
       } else {
-        // Browser print test
-        const printWindow = window.open('', '_blank', 'width=400,height=300');
-        if (printWindow) {
-          printWindow.document.write(`
-            <html>
-            <head>
-              <style>
-                body { font-family: monospace; text-align: center; padding: 20px; }
-              </style>
-            </head>
-            <body>
-              <h2>TESTE DE IMPRESSÃO</h2>
-              <p>KWANZA ERP</p>
-              <hr>
-              <p>Impressora configurada!</p>
-            </body>
-            </html>
-          `);
-          printWindow.document.close();
-          printWindow.print();
+        const width = config.paperWidth === 80 ? '80mm' : '58mm';
+        const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+@page { size: ${width} auto; margin: 0; }
+body { font-family: 'Courier New', monospace; text-align: center; width: ${width}; padding: 5mm; margin: 0; }
+</style></head><body>
+<h2>TESTE DE IMPRESSÃO</h2>
+<p>NEXOR ERP</p>
+<hr>
+<p>Impressora configurada!</p>
+</body></html>`;
+
+        const electronPrint = window.electronAPI?.print?.html;
+        if (electronPrint) {
+          const result = await electronPrint(html, {
+            silent: !!config.deviceName,
+            deviceName: config.deviceName,
+            pageWidthMm: config.paperWidth,
+          });
+          if (!result.success) {
+            throw new Error(result.error || 'Print failed');
+          }
+          toast.success(t.printerUi.testSent);
+        } else {
+          const printWindow = window.open('', '_blank', 'width=400,height=300');
+          if (printWindow) {
+            printWindow.document.write(html);
+            printWindow.document.close();
+            printWindow.print();
+          }
+          toast.success(t.printerUi.testWindowOpened);
         }
-        toast.success(t.printerUi.testWindowOpened);
       }
     } catch (error) {
       toast.error(t.printerUi.testError.replace('{message}', (error as Error).message));
@@ -173,6 +207,44 @@ export function PrinterSettingsDialog({
               </div>
             )}
           </div>
+
+          {config.type === 'browser' && isElectron && (
+            <>
+              <Separator />
+              <div className="space-y-3">
+                <Label>{t.printerUi.windowsPrinter}</Label>
+                <p className="text-xs text-muted-foreground">{t.printerUi.windowsPrinterDesc}</p>
+                <Select
+                  value={config.deviceName || undefined}
+                  onValueChange={(v) => setConfig({ ...config, deviceName: v })}
+                  disabled={loadingPrinters}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={loadingPrinters ? t.printerUi.loadingPrinters : t.printerUi.selectPrinter} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {printers.length === 0 ? (
+                      <SelectItem value="__none__" disabled>
+                        {t.printerUi.noPrintersFound}
+                      </SelectItem>
+                    ) : (
+                      printers.map((p) => (
+                        <SelectItem key={p.name} value={p.name}>
+                          {p.name}{p.isDefault ? ` (${t.printerUi.defaultPrinter})` : ''}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+                {!config.deviceName && (
+                  <div className="flex items-start gap-2 p-3 bg-blue-500/10 rounded-lg text-sm text-blue-800 dark:text-blue-200">
+                    <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <span>{t.printerUi.selectPrinterHint}</span>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
           <Separator />
 

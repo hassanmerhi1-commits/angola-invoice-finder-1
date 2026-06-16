@@ -29,8 +29,9 @@ Extended walkthrough for **schema 42**. Run on the **packaged NEXOR ERP** instal
 
 | Step | Action | Expected | Pass |
 |------|--------|----------|------|
-| 1.1 | POS: sale ≤ 100,000 AOA | Document type **FS** (badge) | ☐ |
-| 1.2 | POS: sale > 100,000 AOA | **FT** (or FR if configured) | ☐ |
+| 1.1 | POS: sale ≤ 100,000 AOA **inc. VAT**, **cash/card**, **NIF left empty** | Document type **FS** (badge + `FS-…` number) | ☐ |
+| 1.2 | POS: sale > 100,000 AOA, same (final consumer, cash/card) | **FR** (paid at till above FS limit) | ☐ |
+| 1.2b | POS: sale > 100,000 AOA, **transfer** payment, NIF empty | **FT** (invoice, payment not at issue) | ☐ |
 | 1.3 | Open issued FT | Immutable fields locked | ☐ |
 | 1.4 | Create proforma → convert to FT | New FT number, audit entry | ☐ |
 | 1.5 | Issue NC against FT | Stock restored if applicable | ☐ |

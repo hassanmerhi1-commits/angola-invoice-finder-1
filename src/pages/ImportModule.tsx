@@ -1,14 +1,14 @@
 // NEXOR ERP - Import/Export (Importação) Module
 // Customs, shipping, landed cost, forex
 
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useBranchContext } from '@/contexts/BranchContext';
-import { useAuth } from '@/hooks/useERP';
+import { useAuth, useImportOrders, type ImportOrder } from '@/hooks/useERP';
 import { useTranslation } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -16,101 +16,26 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import {
-  Plus, Search, Edit2, RefreshCw, Globe, Ship, Plane,
+  Plus, Search, RefreshCw, Globe, Ship, Plane,
   FileText, DollarSign, Package, Truck, CheckCircle, Clock,
-  ArrowRight, Calculator
+  ArrowRight, Calculator,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
-
-interface ImportOrder {
-  id: string;
-  orderNumber: string;      // IMP-20260328-001
-  supplierId?: string;
-  supplierName: string;
-  supplierCountry: string;
-  
-  // Shipment
-  transportMode: 'sea' | 'air' | 'land';
-  incoterm: 'FOB' | 'CIF' | 'EXW' | 'DDP' | 'CFR';
-  portOfOrigin: string;
-  portOfDestination: string;
-  
-  // Values
-  currency: 'USD' | 'EUR' | 'CNY';
-  exchangeRate: number;
-  fobValue: number;            // in foreign currency
-  fobValueAOA: number;
-  freightCost: number;
-  insuranceCost: number;
-  cifValue: number;
-  
-  // Customs
-  customsDeclarationNumber?: string;
-  customsDutyRate: number;     // %
-  customsDutyAmount: number;
-  otherTaxes: number;
-  totalCustoms: number;
-  
-  // Landed cost
-  portCharges: number;
-  transportLocal: number;
-  otherCosts: number;
-  totalLandedCost: number;
-  costPerUnit: number;
-  
-  // Items
-  items: ImportItem[];
-  totalQuantity: number;
-  
-  // Status
-  status: 'draft' | 'ordered' | 'shipped' | 'in_customs' | 'cleared' | 'received' | 'cancelled';
-  
-  // Dates
-  orderDate: string;
-  shippingDate?: string;
-  arrivalDate?: string;
-  customsClearanceDate?: string;
-  receivedDate?: string;
-  
-  branchId: string;
-  notes?: string;
-  createdBy: string;
-  createdAt: string;
-}
-
-interface ImportItem {
-  id: string;
-  productId?: string;
-  description: string;
-  hsCode?: string;           // Harmonized System code
-  quantity: number;
-  unit: string;
-  unitPriceForeign: number;
-  unitPriceAOA: number;
-  totalForeign: number;
-  totalAOA: number;
-  landedCostPerUnit: number;
-}
-
-const STORAGE_KEY = 'kwanzaerp_imports';
-function getStored(): ImportOrder[] {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
-}
-function setStored(data: ImportOrder[]) { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
 
 export default function ImportModule() {
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const { orders, loading, refreshOrders, createOrder, updateStatus, receiveOrder } = useImportOrders(currentBranch?.id);
+
   const [activeTab, setActiveTab] = useState('importacoes');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
   const [formOpen, setFormOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  // Form
   const [form, setForm] = useState({
     supplierName: '', supplierCountry: '', transportMode: 'sea' as ImportOrder['transportMode'],
     incoterm: 'FOB' as ImportOrder['incoterm'], portOfOrigin: '', portOfDestination: 'Luanda',
@@ -119,9 +44,6 @@ export default function ImportModule() {
     customsDutyRate: 10, portCharges: 0, transportLocal: 0, otherCosts: 0,
     notes: '',
   });
-
-  const refresh = () => setRefreshKey(k => k + 1);
-  const orders = useMemo(() => getStored().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [refreshKey]);
 
   const filteredOrders = useMemo(() => {
     if (!searchTerm) return orders;
@@ -137,73 +59,50 @@ export default function ImportModule() {
     totalValue: orders.reduce((s, o) => s + o.totalLandedCost, 0),
   }), [orders]);
 
-  const createOrder = () => {
+  const createImport = async () => {
     if (!form.supplierName) { toast.error(t.importsUi.supplierRequired); return; }
-    const all = getStored();
-    const seq = all.length + 1;
-    const now = new Date();
-
-    const fobAOA = form.fobValue * form.exchangeRate;
-    const cifValue = form.fobValue + form.freightCost + form.insuranceCost;
-    const cifAOA = cifValue * form.exchangeRate;
-    const customsDuty = cifAOA * (form.customsDutyRate / 100);
-    const totalCustoms = customsDuty;
-    const totalLanded = cifAOA + totalCustoms + form.portCharges + form.transportLocal + form.otherCosts;
-
-    const order: ImportOrder = {
-      id: `imp_${Date.now()}`,
-      orderNumber: `IMP-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(seq).padStart(3, '0')}`,
-      supplierName: form.supplierName,
-      supplierCountry: form.supplierCountry,
-      transportMode: form.transportMode,
-      incoterm: form.incoterm,
-      portOfOrigin: form.portOfOrigin,
-      portOfDestination: form.portOfDestination,
-      currency: form.currency,
-      exchangeRate: form.exchangeRate,
-      fobValue: form.fobValue,
-      fobValueAOA: fobAOA,
-      freightCost: form.freightCost,
-      insuranceCost: form.insuranceCost,
-      cifValue,
-      customsDutyRate: form.customsDutyRate,
-      customsDutyAmount: customsDuty,
-      otherTaxes: 0,
-      totalCustoms,
-      portCharges: form.portCharges,
-      transportLocal: form.transportLocal,
-      otherCosts: form.otherCosts,
-      totalLandedCost: totalLanded,
-      costPerUnit: 0,
-      items: [],
-      totalQuantity: 0,
-      status: 'draft',
-      orderDate: now.toISOString(),
-      branchId: currentBranch?.id || '',
-      notes: form.notes,
-      createdBy: user?.id || '',
-      createdAt: now.toISOString(),
-    };
-    all.push(order);
-    setStored(all);
-    toast.success(t.importsUi.importCreated.replace('{number}', order.orderNumber));
-    setFormOpen(false);
-    refresh();
+    setSaving(true);
+    try {
+      const order = await createOrder({
+        supplierName: form.supplierName,
+        supplierCountry: form.supplierCountry,
+        transportMode: form.transportMode,
+        incoterm: form.incoterm,
+        portOfOrigin: form.portOfOrigin,
+        portOfDestination: form.portOfDestination,
+        currency: form.currency,
+        exchangeRate: form.exchangeRate,
+        fobValue: form.fobValue,
+        freightCost: form.freightCost,
+        insuranceCost: form.insuranceCost,
+        customsDutyRate: form.customsDutyRate,
+        portCharges: form.portCharges,
+        transportLocal: form.transportLocal,
+        otherCosts: form.otherCosts,
+        notes: form.notes,
+        branchId: currentBranch?.id,
+        createdBy: user?.id,
+      });
+      toast.success(t.importsUi.importCreated.replace('{number}', order.orderNumber));
+      setFormOpen(false);
+      setSelectedId(order.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t.importsUi.importCreated);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const updateStatus = (id: string, status: ImportOrder['status']) => {
-    const all = getStored();
-    const idx = all.findIndex(o => o.id === id);
-    if (idx >= 0) {
-      all[idx].status = status;
-      const now = new Date().toISOString();
-      if (status === 'shipped') all[idx].shippingDate = now;
-      if (status === 'in_customs') all[idx].arrivalDate = now;
-      if (status === 'cleared') all[idx].customsClearanceDate = now;
-      if (status === 'received') all[idx].receivedDate = now;
-      setStored(all);
-      refresh();
+  const advanceStatus = async (order: ImportOrder, status: ImportOrder['status']) => {
+    try {
+      if (status === 'received') {
+        await receiveOrder(order.id, user?.id || '', currentBranch?.id);
+      } else {
+        await updateStatus(order.id, status);
+      }
       toast.success(t.importsUi.statusUpdated);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t.importsUi.statusUpdated);
     }
   };
 
@@ -217,43 +116,43 @@ export default function ImportModule() {
         <h1 className="text-lg font-bold">{t.importsUi.moduleTitle}</h1>
         <p className="text-xs text-muted-foreground">{t.importsUi.moduleSubtitle}</p>
       </div>
-      {/* Toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b flex-wrap">
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setFormOpen(true)}>
           <Plus className="w-3 h-3" /> {t.importsUi.newImport}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
-        {/* Status progression */}
         {selectedOrder && selectedOrder.status !== 'received' && selectedOrder.status !== 'cancelled' && (
           <>
             {selectedOrder.status === 'draft' && (
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => updateStatus(selectedOrder.id, 'ordered')}>
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => void advanceStatus(selectedOrder, 'ordered')}>
                 <ArrowRight className="w-3 h-3" /> {t.importsUi.statusOrdered}
               </Button>
             )}
             {selectedOrder.status === 'ordered' && (
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => updateStatus(selectedOrder.id, 'shipped')}>
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => void advanceStatus(selectedOrder, 'shipped')}>
                 <Ship className="w-3 h-3" /> {t.importsUi.statusShipped}
               </Button>
             )}
             {selectedOrder.status === 'shipped' && (
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => updateStatus(selectedOrder.id, 'in_customs')}>
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => void advanceStatus(selectedOrder, 'in_customs')}>
                 <Globe className="w-3 h-3" /> {t.importsUi.statusInCustoms}
               </Button>
             )}
             {selectedOrder.status === 'in_customs' && (
-              <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => updateStatus(selectedOrder.id, 'cleared')}>
+              <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => void advanceStatus(selectedOrder, 'cleared')}>
                 <CheckCircle className="w-3 h-3" /> {t.importsUi.statusCleared}
               </Button>
             )}
             {selectedOrder.status === 'cleared' && (
-              <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => updateStatus(selectedOrder.id, 'received')}>
+              <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => void advanceStatus(selectedOrder, 'received')}>
                 <Package className="w-3 h-3" /> {t.importsUi.statusReceived}
               </Button>
             )}
           </>
         )}
-        <Button variant="outline" size="icon" className="h-7 w-7" onClick={refresh}><RefreshCw className="w-3 h-3" /></Button>
+        <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => void refreshOrders()} disabled={loading}>
+          <RefreshCw className={cn('w-3 h-3', loading && 'animate-spin')} />
+        </Button>
         <div className="flex-1" />
         <div className="flex items-center gap-2 text-[10px] mr-2">
           <Badge variant="outline" className="gap-1"><Globe className="w-3 h-3" /> {summary.total}</Badge>
@@ -266,7 +165,6 @@ export default function ImportModule() {
         </div>
       </div>
 
-      {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0">
           {[
@@ -329,7 +227,7 @@ export default function ImportModule() {
               })}
             </tbody>
           </table>
-          {filteredOrders.length === 0 && (
+          {filteredOrders.length === 0 && !loading && (
             <div className="text-center py-12 text-muted-foreground text-sm">
               <Globe className="w-12 h-12 mx-auto mb-3 opacity-30" />
               <p>{t.importsUi.noImports}</p>
@@ -348,7 +246,6 @@ export default function ImportModule() {
         ))}
       </Tabs>
 
-      {/* Selected info bar */}
       {selectedOrder && (
         <div className="h-7 bg-primary/10 border-t flex items-center px-3 text-[10px] gap-4">
           <span className="font-bold">{selectedOrder.orderNumber}</span>
@@ -359,7 +256,6 @@ export default function ImportModule() {
         </div>
       )}
 
-      {/* New Import Dialog */}
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{t.importsUi.newImportTitle}</DialogTitle></DialogHeader>
@@ -370,7 +266,7 @@ export default function ImportModule() {
               <div className="space-y-1"><Label className="text-xs">{t.importsUi.country}</Label>
                 <Input value={form.supplierCountry} onChange={e => setForm(p => ({ ...p, supplierCountry: e.target.value }))} placeholder={t.importsUi.countryPlaceholder} className="h-8 text-xs" /></div>
               <div className="space-y-1"><Label className="text-xs">{t.importsUi.transportMode}</Label>
-                <Select value={form.transportMode} onValueChange={v => setForm(p => ({ ...p, transportMode: v as any }))}>
+                <Select value={form.transportMode} onValueChange={v => setForm(p => ({ ...p, transportMode: v as ImportOrder['transportMode'] }))}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="sea">{t.importsUi.transportSea}</SelectItem>
@@ -381,14 +277,14 @@ export default function ImportModule() {
             </div>
             <div className="grid grid-cols-4 gap-3">
               <div className="space-y-1"><Label className="text-xs">{t.importsUi.currency}</Label>
-                <Select value={form.currency} onValueChange={v => setForm(p => ({ ...p, currency: v as any }))}>
+                <Select value={form.currency} onValueChange={v => setForm(p => ({ ...p, currency: v as ImportOrder['currency'] }))}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="USD">USD</SelectItem><SelectItem value="EUR">EUR</SelectItem><SelectItem value="CNY">CNY</SelectItem></SelectContent>
                 </Select></div>
               <div className="space-y-1"><Label className="text-xs">{t.importsUi.exchangeRate}</Label>
                 <Input type="number" value={form.exchangeRate} onChange={e => setForm(p => ({ ...p, exchangeRate: Number(e.target.value) }))} className="h-8 text-xs" /></div>
               <div className="space-y-1"><Label className="text-xs">{t.importsUi.incoterm}</Label>
-                <Select value={form.incoterm} onValueChange={v => setForm(p => ({ ...p, incoterm: v as any }))}>
+                <Select value={form.incoterm} onValueChange={v => setForm(p => ({ ...p, incoterm: v as ImportOrder['incoterm'] }))}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="FOB">FOB</SelectItem><SelectItem value="CIF">CIF</SelectItem><SelectItem value="EXW">EXW</SelectItem><SelectItem value="DDP">DDP</SelectItem></SelectContent>
                 </Select></div>
@@ -411,7 +307,6 @@ export default function ImportModule() {
               <div className="space-y-1"><Label className="text-xs">{t.importsUi.otherCosts} (Kz)</Label>
                 <Input type="number" value={form.otherCosts} onChange={e => setForm(p => ({ ...p, otherCosts: Number(e.target.value) }))} className="h-8 text-xs" /></div>
             </div>
-            {/* Auto-calculated summary */}
             <div className="bg-muted/30 rounded p-3 text-xs space-y-1 border">
               <div className="flex justify-between"><span>{t.importsUi.cifForeignLabel.replace('{currency}', form.currency)}:</span><span className="font-mono">{(form.fobValue + form.freightCost + form.insuranceCost).toLocaleString(uiLocale)}</span></div>
               <div className="flex justify-between"><span>{t.importsUi.cifKzLabel}:</span><span className="font-mono">{((form.fobValue + form.freightCost + form.insuranceCost) * form.exchangeRate).toLocaleString(uiLocale)}</span></div>
@@ -423,7 +318,9 @@ export default function ImportModule() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>{t.common.cancel}</Button>
-            <Button onClick={createOrder}>{t.importsUi.createImport}</Button>
+            <Button onClick={() => void createImport()} disabled={saving}>
+              {saving ? t.common.saving : t.importsUi.createImport}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

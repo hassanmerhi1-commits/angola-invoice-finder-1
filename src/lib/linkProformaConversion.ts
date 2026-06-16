@@ -1,6 +1,7 @@
 import type { DocumentType, ERPDocument } from '@/types/documents';
 import { saveDocument } from '@/lib/documentStorage';
 import { getProFormaById, saveProForma } from '@/lib/proforma';
+import { api } from '@/lib/api/client';
 
 /** Mark source proforma as converted after a sales invoice is confirmed. */
 export async function linkProformaAfterInvoiceConfirm(
@@ -20,6 +21,23 @@ export async function linkProformaAfterInvoiceConfirm(
       convertedAt: now,
       updatedAt: now,
     });
+    try {
+      await api.audit.log({
+        tableName: 'proformas',
+        recordId: prefill.id,
+        action: 'convert',
+        description: `Proforma ${prefill.documentNumber} convertida em fatura ${invoice.documentNumber}`,
+        metadata: {
+          documentKind: 'OR',
+          proformaNumber: prefill.documentNumber,
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.documentNumber,
+          invoiceType: invoice.documentType,
+        },
+      });
+    } catch {
+      /* backend PUT may already log conversion */
+    }
     return;
   }
 

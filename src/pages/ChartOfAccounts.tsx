@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useTranslation } from '@/i18n';
+import { useTranslation, type TranslationKeys } from '@/i18n';
 import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
-import { Account, AccountType, AccountFormData, accountTypeLabels, getDefaultNature } from '@/types/accounting';
+import { Account, AccountType, AccountFormData, getDefaultNature } from '@/types/accounting';
+import { resolveAccountDisplayName, resolveAccountTypeLabel } from '@/lib/chartOfAccountsDisplay';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -114,12 +115,15 @@ export default function ChartOfAccounts() {
   const filteredAccounts = useMemo(() => {
     return accounts.filter(a => {
       const matchesTab = currentTabConfig.filter(a);
-      const matchesSearch = !searchTerm || 
-        a.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        a.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const displayName = resolveAccountDisplayName(a, language, t);
+      const q = searchTerm.toLowerCase();
+      const matchesSearch = !searchTerm ||
+        a.code.toLowerCase().includes(q) ||
+        a.name.toLowerCase().includes(q) ||
+        displayName.toLowerCase().includes(q);
       return matchesTab && matchesSearch;
     });
-  }, [accounts, activeTab, searchTerm, currentTabConfig]);
+  }, [accounts, activeTab, searchTerm, currentTabConfig, language, t]);
 
   const rootAccounts = filteredAccounts.filter(a => !a.parent_id || !filteredAccounts.find(p => p.id === a.parent_id));
 
@@ -220,7 +224,7 @@ export default function ChartOfAccounts() {
   };
 
   const handleDelete = async (account: Account) => {
-    if (!confirm(t.chartOfAccountsUi.deleteConfirm.replace('{name}', account.name))) return;
+    if (!confirm(t.chartOfAccountsUi.deleteConfirm.replace('{name}', resolveAccountDisplayName(account, language, t)))) return;
     try {
       await deleteAccount(account.id);
       toast.success(t.chartOfAccountsUi.deleted);
@@ -351,6 +355,8 @@ export default function ChartOfAccounts() {
                   onViewLedger={openLedger}
                   selectedId={selectedAccountId}
                   allAccounts={filteredAccounts}
+                  language={language}
+                  t={t}
                 />
               ))}
             </tbody>
@@ -376,8 +382,8 @@ export default function ChartOfAccounts() {
       {/* Selected account info bar */}
       {selectedAccount && (
         <div className="h-6 bg-primary/10 border-t flex items-center px-3 text-[10px] gap-4">
-          <span className="font-bold">{selectedAccount.code} - {selectedAccount.name}</span>
-          <span>{t.chartOfAccountsUi.typeLabel}: {accountTypeLabels[selectedAccount.account_type].pt}</span>
+          <span className="font-bold">{selectedAccount.code} - {resolveAccountDisplayName(selectedAccount, language, t)}</span>
+          <span>{t.chartOfAccountsUi.typeLabel}: {resolveAccountTypeLabel(selectedAccount.account_type, t)}</span>
           <span>{t.chartOfAccountsUi.balanceLabel}: {Number(selectedAccount.current_balance).toLocaleString(uiLocale)} Kz</span>
         </div>
       )}
@@ -438,7 +444,7 @@ export default function ChartOfAccounts() {
                     .map(a => (
                       <SelectItem key={a.id} value={a.id}>
                         <span className="font-mono text-muted-foreground mr-2">{a.code}</span>
-                        {a.name}
+                        {resolveAccountDisplayName(a, language, t)}
                       </SelectItem>
                     ))}
                 </SelectContent>
@@ -479,11 +485,13 @@ interface AccountTreeRowProps {
   onViewLedger: (account: Account) => void;
   selectedId: string | null;
   allAccounts: Account[];
+  language: 'en' | 'pt';
+  t: TranslationKeys;
 }
 
-function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDoubleClick, onViewLedger, selectedId, allAccounts }: AccountTreeRowProps) {
-  const { language } = useTranslation();
+function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDoubleClick, onViewLedger, selectedId, allAccounts, language, t }: AccountTreeRowProps) {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const displayName = resolveAccountDisplayName(account, language, t);
   const isExpanded = expandedIds.has(account.id);
   const children = allAccounts.filter(a => a.parent_id === account.id);
   const hasChildren = children.length > 0;
@@ -518,7 +526,7 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
             <span className="font-mono text-muted-foreground">{account.code}</span>
           </div>
         </td>
-        <td className="px-3 py-1.5">{account.name}</td>
+        <td className="px-3 py-1.5">{displayName}</td>
         <td className="px-3 py-1.5 text-center text-muted-foreground">AOA</td>
         <td className="px-3 py-1.5 text-right font-mono">
           {balance >= 0 ? `${balance.toLocaleString(uiLocale)}` : ''}
@@ -542,6 +550,8 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
           onViewLedger={onViewLedger}
           selectedId={selectedId}
           allAccounts={allAccounts}
+          language={language}
+          t={t}
         />
       ))}
     </>

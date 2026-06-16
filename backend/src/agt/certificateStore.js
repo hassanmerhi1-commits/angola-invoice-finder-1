@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const forge = require('node-forge');
 const { randomUUID } = require('crypto');
 const db = require('../db');
+const { isTruthySql } = require('../lib/sqlDialect');
 
 function signingDir() {
   const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
@@ -133,21 +134,34 @@ async function importCertificate({ alias, pfxBase64, passphrase, certificateNumb
   };
 }
 
+async function findCertificateByAlias(alias) {
+  const trimmed = String(alias || '').trim();
+  if (!trimmed) return null;
+  const res = await db.query(
+    `SELECT id, key_alias, key_type, certificate_number, subject_cn, valid_from, valid_until,
+            pfx_storage_path, is_active
+     FROM signing_keys WHERE key_alias = $1 LIMIT 1`,
+    [trimmed],
+  ).catch(() => ({ rows: [] }));
+  return res.rows[0] || null;
+}
+
 async function activateCertificate(keyId) {
   const res = await db.query('SELECT id FROM signing_keys WHERE id = $1', [keyId]);
   if (!res.rows.length) throw new Error('Certificado não encontrado');
-  await db.query('UPDATE signing_keys SET is_active = $1 WHERE is_active = true OR is_active = 1', [false]);
+  await db.query(`UPDATE signing_keys SET is_active = $1 WHERE ${isTruthySql(db, 'is_active')}`, [false]);
   await db.query('UPDATE signing_keys SET is_active = $1 WHERE id = $2', [true, keyId]);
   return { success: true };
 }
 
-async function deleteCertificate(keyId) {
+async function deleteCertificate(keyId, options = {}) {
+  const { force = false } = options;
   const res = await db.query(
     'SELECT pfx_storage_path, is_active FROM signing_keys WHERE id = $1',
     [keyId],
   );
   if (!res.rows.length) throw new Error('Certificado não encontrado');
-  if (res.rows[0].is_active === true || res.rows[0].is_active === 1) {
+  if (!force && (res.rows[0].is_active === true || res.rows[0].is_active === 1)) {
     throw new Error('Não pode remover o certificado activo');
   }
   const pfxPath = res.rows[0].pfx_storage_path;
@@ -162,7 +176,7 @@ async function loadActiveSigningMaterial() {
   const res = await db.query(
     `SELECT id, key_alias, public_key_pem, encrypted_passphrase, pfx_storage_path, valid_until
      FROM signing_keys
-     WHERE (is_active = true OR is_active = 1)
+     WHERE ${isTruthySql(db, 'is_active')}
      ORDER BY created_at DESC
      LIMIT 1`,
   ).catch(() => ({ rows: [] }));
@@ -191,10 +205,35 @@ async function loadActiveSigningMaterial() {
   };
 }
 
+/** Self-signed PKCS#12 for internal AGT certification demos (not valid for live AGT). */
+function generateDemoPkcs12({ commonName = 'NEXOR ERP Demo', passphrase = 'nexor-demo' } = {}) {
+  const keys = forge.pki.rsa.generateKeyPair(2048);
+  const cert = forge.pki.createCertificate();
+  cert.publicKey = keys.publicKey;
+  cert.serialNumber = '01';
+  cert.validity.notBefore = new Date();
+  cert.validity.notAfter = new Date();
+  cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 2);
+  const attrs = [{ name: 'commonName', value: commonName }];
+  cert.setSubject(attrs);
+  cert.setIssuer(attrs);
+  cert.sign(keys.privateKey, forge.md.sha256.create());
+  const p12Asn1 = forge.pkcs12.toPkcs12Asn1(
+    keys.privateKey,
+    [cert],
+    passphrase,
+    { algorithm: '3des' },
+  );
+  const p12Der = forge.asn1.toDer(p12Asn1).getBytes();
+  return Buffer.from(p12Der, 'binary');
+}
+
 module.exports = {
   importCertificate,
+  findCertificateByAlias,
   activateCertificate,
   deleteCertificate,
   loadActiveSigningMaterial,
   parsePkcs12,
+  generateDemoPkcs12,
 };

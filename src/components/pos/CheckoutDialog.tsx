@@ -13,7 +13,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Separator } from '@/components/ui/separator';
 import { Banknote, CreditCard, ArrowRightLeft, Check } from 'lucide-react';
 import { useTranslation } from '@/i18n';
-import { resolveSaleInvoiceType, fiscalInvoiceTypeLabel } from '@/lib/fiscalInvoiceType';
+import { resolveSaleInvoiceType, normalizeCustomerNif, fiscalInvoiceTypeLabel, fsMaxAmount } from '@/lib/fiscalInvoiceType';
 import { Badge } from '@/components/ui/badge';
 
 interface CheckoutDialogProps {
@@ -67,8 +67,9 @@ export function CheckoutDialog({
   const isValid =
     paymentMethod === 'cash' ? paidAmount >= total : total > 0;
 
+  const normalizedCustomerNif = normalizeCustomerNif(customerNif);
   const previewInvoiceType = resolveSaleInvoiceType({
-    customerNif: customerNif || undefined,
+    customerNif: normalizedCustomerNif || undefined,
     paymentMethod,
     total,
   });
@@ -77,7 +78,7 @@ export function CheckoutDialog({
     onCompleteSale(
       paymentMethod,
       paidAmount,
-      customerNif || undefined,
+      normalizedCustomerNif || undefined,
       customerName || undefined,
     );
   };
@@ -118,6 +119,9 @@ export function CheckoutDialog({
                 {fiscalInvoiceTypeLabel(previewInvoiceType, t.posUi)}
               </Badge>
             </div>
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              {t.checkoutUi.documentTypeHint.replace('{max}', fsMaxAmount().toLocaleString(locale))}
+            </p>
           </div>
 
           {/* Payment Method */}

@@ -28,8 +28,12 @@ async function tableHasColumn(table, column) {
       );
       return res.rows.length > 0;
     }
+    if (db.sqlite) {
+      const cols = db.sqlite.pragma(`table_info(${table})`);
+      return Array.isArray(cols) && cols.some((c) => c.name === column);
+    }
     const res = await db.query(
-      `SELECT 1 FROM pragma_table_info('${table.replace(/'/g, "''")}') WHERE name = ? LIMIT 1`,
+      `SELECT 1 FROM pragma_table_info('${table.replace(/'/g, "''")}') WHERE name = $1 LIMIT 1`,
       [column],
     ).catch(() => ({ rows: [] }));
     return res.rows.length > 0;

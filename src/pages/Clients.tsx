@@ -15,6 +15,11 @@ import { useToast } from '@/hooks/use-toast';
 import { exportClientsToExcel, parseClientsFromExcel, validateImportedClients, downloadClientImportTemplate, ExcelClient } from '@/lib/excel';
 import { ExcelImportDialog } from '@/components/import/ExcelImportDialog';
 import { useTranslation } from '@/i18n';
+import { validateNIF } from '@/lib/companySettings';
+
+function normalizeClientNif(nif: string): string {
+  return nif.replace(/\s/g, '').trim();
+}
 
 export default function Clients() {
   const { t, language } = useTranslation();
@@ -81,7 +86,10 @@ export default function Clients() {
   };
 
   const handleSave = async () => {
-    if (!formData.name || !formData.nif) {
+    const name = formData.name.trim();
+    const nif = normalizeClientNif(formData.nif);
+
+    if (!name) {
       toast({
         title: t.clientsUi.toastErrorTitle,
         description: t.clientsUi.nameAndNifRequired,
@@ -90,22 +98,36 @@ export default function Clients() {
       return;
     }
 
-    // Validate NIF format (basic validation)
-    if (formData.nif.length < 9) {
+    if (!nif) {
       toast({
         title: t.clientsUi.toastErrorTitle,
-        description: t.clientsUi.invalidNif,
+        description: t.clientsUi.nifRequired,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!validateNIF(nif)) {
+      toast({
+        title: t.clientsUi.toastErrorTitle,
+        description: t.clientsUi.nifInvalid10Digits,
         variant: 'destructive',
       });
       return;
     }
 
     try {
+      const payload = {
+        ...formData,
+        name,
+        nif,
+        creditLimit: parseFloat(formData.creditLimit) || 0,
+      };
+
       if (selectedClient) {
         await saveClient({
           ...selectedClient,
-          ...formData,
-          creditLimit: parseFloat(formData.creditLimit) || 0,
+          ...payload,
         });
         toast({
           title: t.clientsUi.updatedTitle,
@@ -113,8 +135,7 @@ export default function Clients() {
         });
       } else {
         await createClient({
-          ...formData,
-          creditLimit: parseFloat(formData.creditLimit) || 0,
+          ...payload,
           currentBalance: 0,
           isActive: true,
         });
@@ -216,6 +237,8 @@ export default function Clients() {
     { key: 'email', label: t.common.email },
     { key: 'cidade', label: t.clientsUi.cityLabel },
   ];
+
+  const canSaveClient = formData.name.trim().length > 0 && validateNIF(normalizeClientNif(formData.nif));
 
   // Only main office can manage clients
   if (!isMainOffice) {
@@ -388,6 +411,7 @@ export default function Clients() {
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder={t.clientsUi.namePlaceholder}
+                  required
                 />
               </div>
               <div className="space-y-2">
@@ -397,6 +421,9 @@ export default function Clients() {
                   value={formData.nif}
                   onChange={(e) => setFormData({ ...formData, nif: e.target.value })}
                   placeholder={t.clientsUi.nifPlaceholder}
+                  required
+                  inputMode="numeric"
+                  maxLength={14}
                 />
               </div>
               <div className="space-y-2">
@@ -452,7 +479,7 @@ export default function Clients() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {t.common.cancel}
             </Button>
-            <Button onClick={handleSave}>
+            <Button onClick={handleSave} disabled={!canSaveClient}>
               {selectedClient ? t.common.saveChanges : t.clientsUi.registerClient}
             </Button>
           </DialogFooter>

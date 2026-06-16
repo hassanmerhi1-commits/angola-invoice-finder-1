@@ -164,6 +164,7 @@ function ensureOrgHierarchyTables() {
   tryAlterAdd('sales', 'due_date TEXT');
   tryAlterAdd('sales', 'printed_at TEXT');
   tryAlterAdd('sales', 'client_id TEXT');
+  tryAlterAdd('sales', "invoice_type TEXT NOT NULL DEFAULT 'FT'");
 
   try {
     sqlite.prepare(`UPDATE branches SET node_role = 'main' WHERE is_main = 1 AND (node_role IS NULL OR node_role = 'shop')`).run();
@@ -484,19 +485,78 @@ function ensureAppTablesAndColumns() {
       code TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
       is_active INTEGER DEFAULT 1,
+      description TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS budgets (
       id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
       cost_center_id TEXT NOT NULL,
-      account_code TEXT NOT NULL,
+      account_code TEXT NOT NULL DEFAULT '__total__',
       period_year INTEGER NOT NULL,
       period_month INTEGER NOT NULL,
       budget_amount REAL DEFAULT 0,
       actual_amount REAL DEFAULT 0,
       notes TEXT,
       UNIQUE(cost_center_id, account_code, period_year, period_month)
+    );
+
+    CREATE TABLE IF NOT EXISTS import_orders (
+      id TEXT PRIMARY KEY,
+      order_number TEXT NOT NULL UNIQUE,
+      supplier_id TEXT,
+      supplier_name TEXT NOT NULL,
+      supplier_country TEXT DEFAULT '',
+      transport_mode TEXT DEFAULT 'sea',
+      incoterm TEXT DEFAULT 'FOB',
+      port_of_origin TEXT DEFAULT '',
+      port_of_destination TEXT DEFAULT '',
+      currency TEXT DEFAULT 'USD',
+      exchange_rate REAL NOT NULL DEFAULT 1,
+      fob_value REAL NOT NULL DEFAULT 0,
+      fob_value_aoa REAL NOT NULL DEFAULT 0,
+      freight_cost REAL NOT NULL DEFAULT 0,
+      insurance_cost REAL NOT NULL DEFAULT 0,
+      cif_value REAL NOT NULL DEFAULT 0,
+      customs_declaration_number TEXT,
+      customs_duty_rate REAL NOT NULL DEFAULT 0,
+      customs_duty_amount REAL NOT NULL DEFAULT 0,
+      other_taxes REAL NOT NULL DEFAULT 0,
+      total_customs REAL NOT NULL DEFAULT 0,
+      port_charges REAL NOT NULL DEFAULT 0,
+      transport_local REAL NOT NULL DEFAULT 0,
+      other_costs REAL NOT NULL DEFAULT 0,
+      total_landed_cost REAL NOT NULL DEFAULT 0,
+      cost_per_unit REAL NOT NULL DEFAULT 0,
+      total_quantity REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'draft',
+      order_date TEXT,
+      shipping_date TEXT,
+      arrival_date TEXT,
+      customs_clearance_date TEXT,
+      received_date TEXT,
+      branch_id TEXT,
+      notes TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS import_order_items (
+      id TEXT PRIMARY KEY,
+      import_order_id TEXT NOT NULL,
+      product_id TEXT,
+      description TEXT DEFAULT '',
+      hs_code TEXT,
+      quantity REAL NOT NULL DEFAULT 0,
+      unit TEXT DEFAULT 'un',
+      unit_price_foreign REAL NOT NULL DEFAULT 0,
+      unit_price_aoa REAL NOT NULL DEFAULT 0,
+      total_foreign REAL NOT NULL DEFAULT 0,
+      total_aoa REAL NOT NULL DEFAULT 0,
+      landed_cost_per_unit REAL NOT NULL DEFAULT 0,
+      received_quantity REAL NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
 
@@ -1032,6 +1092,7 @@ function seedDocumentSequencesSqlite() {
     ['payment_out', 'PAG', () => countTableYear('payments', "payment_type = 'payment'")],
     ['purchase_order', 'PO', () => countTableYear('purchase_orders')],
     ['stock_transfer', 'TRF', () => countTableYear('stock_transfers')],
+    ['import_order', 'IMP', () => countTableYear('import_orders')],
     ['journal', 'JE', () => countTableYear('journal_entries')],
   ];
 

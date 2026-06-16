@@ -1586,6 +1586,7 @@ async function processSale(client, saleData) {
     customerNif, customerName, clientId,
     clientRequestId, idempotencyKey,
     dueDate, invoiceType: requestedInvoiceType,
+    parentProformaNumber, parentProformaId,
   } = saleData;
   const clientReqId = clientRequestId || idempotencyKey || null;
 
@@ -1604,16 +1605,17 @@ async function processSale(client, saleData) {
   // ── Step 1: Resolve fiscal type (number allocated after validation, before insert) ──
   const {
     validateSaleInvoiceType,
+    normalizeCustomerNif,
     sequenceKeyForInvoiceType,
     prefixForInvoiceType,
   } = require('./lib/fiscalInvoiceType');
+  const normalizedCustomerNif = normalizeCustomerNif(customerNif);
   const { normalizeBranchCode } = require('./accounting');
 
   const invoiceType = validateSaleInvoiceType({
-    customerNif,
+    customerNif: normalizedCustomerNif,
     paymentMethod,
     total: totalAmount,
-    invoiceType: requestedInvoiceType,
   });
 
   const branchCodeRow = await client.query('SELECT code FROM branches WHERE id = $1 LIMIT 1', [branchId]);
@@ -1672,7 +1674,7 @@ async function processSale(client, saleData) {
   const saleId = randomUUID();
   const saleHeaderParams = [saleId, invoiceNumber, branchId, cashierId, cashierName,
     subtotal, taxAmount, discount || 0, totalAmount,
-    paymentMethod, amountPaid, change, customerNif, customerName, clientReqId, saleDueDate, invoiceType];
+    paymentMethod, amountPaid, change, normalizedCustomerNif || null, customerName, clientReqId, saleDueDate, invoiceType];
 
   const insertSaleHeader = async (number) => {
     const params = [...saleHeaderParams];
@@ -1797,11 +1799,22 @@ async function processSale(client, saleData) {
   } catch (e) { console.warn('[TX] Tax summary skipped:', e.message); }
 
   // ── Step 6: Audit ──
+  const proformaNote = parentProformaNumber
+    ? ` — conversão de Proforma ${String(parentProformaNumber).trim()}`
+    : '';
   await auditLog(client, {
     tableName: 'sales', recordId: saleId, action: 'create',
     userId: cashierId, userName: cashierName, branchId,
-    newValues: { invoiceNumber, invoiceType, total: totalAmount, paymentMethod, items: items.length },
-    description: `Venda ${invoiceNumber} (${invoiceType}) - ${totalAmount.toLocaleString()} AOA`,
+    newValues: {
+      invoiceNumber,
+      invoiceType,
+      total: totalAmount,
+      paymentMethod,
+      items: items.length,
+      parentProformaId: parentProformaId || null,
+      parentProformaNumber: parentProformaNumber || null,
+    },
+    description: `Venda ${invoiceNumber} (${invoiceType})${proformaNote} - ${totalAmount.toLocaleString()} AOA`,
   });
 
   console.log(`[TX ENGINE] Sale ${invoiceNumber} (${invoiceType}) ✓`);

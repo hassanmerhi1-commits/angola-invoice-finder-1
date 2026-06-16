@@ -427,8 +427,11 @@ export function validateImportedClients(clients: ExcelClient[]): {
     }
     if (!client.nif) {
       rowErrors.push('NIF é obrigatório');
-    } else if (client.nif.length < 9) {
-      rowErrors.push('NIF deve ter pelo menos 9 caracteres');
+    } else {
+      const cleaned = client.nif.replace(/\D/g, '');
+      if (cleaned.length !== 10) {
+        rowErrors.push('NIF deve ter 10 dígitos');
+      }
     }
 
     if (rowErrors.length > 0) {

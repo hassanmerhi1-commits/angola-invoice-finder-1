@@ -186,8 +186,8 @@ export function ProductFormDialog({
     e.currentTarget.blur();
   };
 
-  const margin = formData.price > 0 && formData.cost > 0
-    ? (((formData.price - formData.cost) / formData.cost) * 100).toFixed(1)
+  const margin = formData.price > 0
+    ? (((formData.price - formData.cost) / formData.price) * 100).toFixed(1)
     : '0';
 
   return (

@@ -2,6 +2,8 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
+const { requireAuth } = require('../middleware/requireAuth');
+const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 
 function newId() {
   return crypto.randomUUID();
@@ -134,10 +136,31 @@ async function replaceItems(client, proformaId, items, branchId) {
   }
 }
 
+function proformaAuditLabel(number) {
+  const n = String(number || '').trim();
+  return n || 'sem número';
+}
+
+async function auditProformaEvent(req, { recordId, action, description, newValues, oldValues, metadata }) {
+  try {
+    await logFiscalEventFromReq(req, {
+      tableName: 'proformas',
+      recordId,
+      action,
+      description,
+      newValues,
+      oldValues,
+      metadata: { documentKind: 'OR', ...metadata },
+    });
+  } catch (err) {
+    console.warn('[PROFORMAS] audit:', err.message);
+  }
+}
+
 module.exports = function proformasRoutes(broadcastTable) {
   const router = express.Router();
 
-  router.get('/', async (req, res) => {
+  router.get('/', requireAuth, async (req, res) => {
     try {
       const branchId = req.query.branchId ? String(req.query.branchId).trim() : '';
       let query = 'SELECT * FROM proformas';
@@ -160,7 +183,7 @@ module.exports = function proformasRoutes(broadcastTable) {
     }
   });
 
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', requireAuth, async (req, res) => {
     try {
       const result = await db.query('SELECT * FROM proformas WHERE id = $1 LIMIT 1', [req.params.id]);
       if (!result.rows.length) {
@@ -174,7 +197,7 @@ module.exports = function proformasRoutes(broadcastTable) {
     }
   });
 
-  router.post('/', async (req, res) => {
+  router.post('/', requireAuth, async (req, res) => {
     const client = await db.pool.connect();
     try {
       const header = bodyToHeader(req.body);
@@ -227,6 +250,17 @@ module.exports = function proformasRoutes(broadcastTable) {
         (await db.query('SELECT * FROM proformas WHERE id = $1', [header.id])).rows[0],
         itemsLoaded,
       );
+      await auditProformaEvent(req, {
+        recordId: header.id,
+        action: 'create',
+        description: `Proforma ${proformaAuditLabel(saved.documentNumber)} criada`,
+        newValues: {
+          documentNumber: saved.documentNumber,
+          status: saved.status,
+          total: saved.total,
+          customerName: saved.customerName,
+        },
+      });
       await broadcastTable('proformas');
       res.status(201).json(saved);
     } catch (error) {
@@ -238,7 +272,7 @@ module.exports = function proformasRoutes(broadcastTable) {
     }
   });
 
-  router.put('/:id', async (req, res) => {
+  router.put('/:id', requireAuth, async (req, res) => {
     const client = await db.pool.connect();
     try {
       const id = req.params.id;
@@ -308,6 +342,22 @@ module.exports = function proformasRoutes(broadcastTable) {
       await client.query('COMMIT');
       const itemsLoaded = await loadItemsForProforma(id);
       const saved = mapProformaRow(updated.rows[0], itemsLoaded);
+      const convertedTo = saved.convertedToInvoiceNumber;
+      const auditAction = saved.status === 'converted' && convertedTo ? 'convert' : 'update';
+      const auditDescription = auditAction === 'convert'
+        ? `Proforma ${proformaAuditLabel(saved.documentNumber)} convertida em fatura ${convertedTo}`
+        : `Proforma ${proformaAuditLabel(saved.documentNumber)} actualizada (${saved.status})`;
+      await auditProformaEvent(req, {
+        recordId: id,
+        action: auditAction,
+        description: auditDescription,
+        newValues: {
+          documentNumber: saved.documentNumber,
+          status: saved.status,
+          total: saved.total,
+          convertedToInvoiceNumber: convertedTo || null,
+        },
+      });
       await broadcastTable('proformas');
       res.json(saved);
     } catch (error) {
@@ -319,8 +369,15 @@ module.exports = function proformasRoutes(broadcastTable) {
     }
   });
 
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', requireAuth, async (req, res) => {
     try {
+      const existing = await db.query(
+        'SELECT id, proforma_number FROM proformas WHERE id = $1 AND status != $2 LIMIT 1',
+        [req.params.id, 'converted'],
+      );
+      if (!existing.rows.length) {
+        return res.status(404).json({ error: 'Pro forma not found or already converted' });
+      }
       const result = await db.query(
         `DELETE FROM proformas WHERE id = $1 AND status != 'converted' RETURNING id`,
         [req.params.id],
@@ -328,6 +385,11 @@ module.exports = function proformasRoutes(broadcastTable) {
       if (!result.rows.length) {
         return res.status(404).json({ error: 'Pro forma not found or already converted' });
       }
+      await auditProformaEvent(req, {
+        recordId: req.params.id,
+        action: 'delete',
+        description: `Proforma ${proformaAuditLabel(existing.rows[0].proforma_number)} eliminada`,
+      });
       await broadcastTable('proformas');
       res.json({ success: true });
     } catch (error) {

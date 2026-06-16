@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from '@/components/ui/table';
@@ -14,56 +14,49 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  PieChart, Plus, Edit, Target, TrendingUp, AlertTriangle
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
+  PieChart, Plus, Edit, Target, TrendingUp, AlertTriangle, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
+import { useBudgets, type CostCenterRow } from '@/hooks/useBudgets';
 
-// Demo data
-const DEMO_COST_CENTERS = [
-  { id: '1', code: 'ADM', name_key: 'demoAdmin', desc_key: 'demoAdminDesc', is_active: true },
-  { id: '2', code: 'COM', name_key: 'demoCommercial', desc_key: 'demoCommercialDesc', is_active: true },
-  { id: '3', code: 'LOG', name_key: 'demoLogistics', desc_key: 'demoLogisticsDesc', is_active: true },
-  { id: '4', code: 'PRD', name_key: 'demoProduction', desc_key: 'demoProductionDesc', is_active: true },
-  { id: '5', code: 'TI', name_key: 'demoTechnology', desc_key: 'demoTechnologyDesc', is_active: true },
-];
-
-const DEMO_BUDGETS = [
-  { id: '1', cost_center_code: 'ADM', cost_center_name_key: 'demoAdmin', period_month: 3, budget_amount: 500000, actual_amount: 420000, utilization_pct: 84 },
-  { id: '2', cost_center_code: 'COM', cost_center_name_key: 'demoCommercial', period_month: 3, budget_amount: 800000, actual_amount: 750000, utilization_pct: 93.8 },
-  { id: '3', cost_center_code: 'LOG', cost_center_name_key: 'demoLogistics', period_month: 3, budget_amount: 1200000, actual_amount: 980000, utilization_pct: 81.7 },
-  { id: '4', cost_center_code: 'PRD', cost_center_name_key: 'demoProduction', period_month: 3, budget_amount: 2000000, actual_amount: 2150000, utilization_pct: 107.5 },
-  { id: '5', cost_center_code: 'TI', cost_center_name_key: 'demoTechnology', period_month: 3, budget_amount: 300000, actual_amount: 180000, utilization_pct: 60 },
-];
+const now = new Date();
 
 export default function BudgetControl() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
 
   const [activeTab, setActiveTab] = useState('budgets');
-  const costCenters = useMemo(() => (
-    DEMO_COST_CENTERS.map((cc) => ({
-      ...cc,
-      name: t.budgetControlUi[cc.name_key as keyof typeof t.budgetControlUi] as string,
-      description: t.budgetControlUi[cc.desc_key as keyof typeof t.budgetControlUi] as string,
-    }))
-  ), [t]);
+  const [periodYear, setPeriodYear] = useState(now.getFullYear());
+  const [periodMonth, setPeriodMonth] = useState(now.getMonth() + 1);
 
-  const budgets = useMemo(() => (
-    DEMO_BUDGETS.map((b) => ({
-      ...b,
-      cost_center_name: t.budgetControlUi[b.cost_center_name_key as keyof typeof t.budgetControlUi] as string,
-    }))
-  ), [t]);
+  const {
+    costCenters,
+    budgets,
+    loading,
+    refresh,
+    createCostCenter,
+    updateCostCenter,
+    saveBudget,
+  } = useBudgets(periodYear, periodMonth);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [centerDialogOpen, setCenterDialogOpen] = useState(false);
-  const [editingCenter, setEditingCenter] = useState<(typeof costCenters)[0] | null>(null);
+  const [editingCenter, setEditingCenter] = useState<CostCenterRow | null>(null);
   const [centerForm, setCenterForm] = useState({ code: '', name: '', description: '' });
+  const [budgetForm, setBudgetForm] = useState({
+    costCenterId: '',
+    budgetAmount: '',
+    notes: '',
+  });
+  const [saving, setSaving] = useState(false);
 
-  const totalBudget = budgets.reduce((s, b) => s + b.budget_amount, 0);
-  const totalActual = budgets.reduce((s, b) => s + b.actual_amount, 0);
-  const overBudgetCount = budgets.filter(b => b.utilization_pct > 100).length;
+  const totalBudget = budgets.reduce((s, b) => s + (b.budgetAmount ?? 0), 0);
+  const totalActual = budgets.reduce((s, b) => s + (b.actualAmount ?? 0), 0);
+  const overBudgetCount = budgets.filter(b => (b.utilizationPct ?? 0) > 100).length;
 
   const getUtilizationColor = (pct: number) => {
     if (pct > 100) return 'text-destructive';
@@ -79,10 +72,70 @@ export default function BudgetControl() {
   };
 
   const monthLabel = useMemo(() => {
-    const d = new Date(2026, 2, 1); // March 2026
+    const d = new Date(periodYear, periodMonth - 1, 1);
     const label = d.toLocaleDateString(uiLocale, { month: 'long', year: 'numeric' });
     return label.slice(0, 1).toUpperCase() + label.slice(1);
-  }, [uiLocale]);
+  }, [periodYear, periodMonth, uiLocale]);
+
+  const handleSaveBudget = async () => {
+    if (!budgetForm.costCenterId) {
+      toast.error(t.budgetControlUi.selectCenterPlaceholder);
+      return;
+    }
+    const amount = Number(budgetForm.budgetAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error(t.budgetControlUi.budgetAmountLabel);
+      return;
+    }
+    setSaving(true);
+    try {
+      await saveBudget({
+        costCenterId: budgetForm.costCenterId,
+        periodYear,
+        periodMonth,
+        budgetAmount: amount,
+        notes: budgetForm.notes,
+      });
+      toast.success(t.budgetControlUi.budgetSet);
+      setDialogOpen(false);
+      setBudgetForm({ costCenterId: '', budgetAmount: '', notes: '' });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t.budgetControlUi.budgetSet);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveCenter = async () => {
+    if (!centerForm.code.trim() || !centerForm.name.trim()) {
+      toast.error(t.budgetControlUi.colName);
+      return;
+    }
+    setSaving(true);
+    try {
+      if (editingCenter) {
+        await updateCostCenter(editingCenter.id, {
+          name: centerForm.name.trim(),
+          description: centerForm.description.trim(),
+        });
+        toast.success(t.common.saveChanges);
+      } else {
+        await createCostCenter({
+          code: centerForm.code.trim().toUpperCase(),
+          name: centerForm.name.trim(),
+          description: centerForm.description.trim(),
+        });
+        toast.success(t.budgetControlUi.newCenter);
+      }
+      setCenterDialogOpen(false);
+      setEditingCenter(null);
+      setCenterForm({ code: '', name: '', description: '' });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t.common.error);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -95,10 +148,13 @@ export default function BudgetControl() {
             </h1>
             <p className="text-sm text-muted-foreground">{t.budgetControlUi.subtitle}</p>
           </div>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void refresh()} disabled={loading}>
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            {t.common.refresh}
+          </Button>
         </div>
       </div>
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-4 gap-3 p-4">
         <Card>
           <CardContent className="py-3 px-4">
@@ -145,41 +201,65 @@ export default function BudgetControl() {
         <TabsContent value="budgets" className="flex-1 p-4 overflow-auto">
           <Card>
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
                 <CardTitle className="text-base">{monthLabel}</CardTitle>
-                <Button size="sm" className="gap-1.5" onClick={() => setDialogOpen(true)}>
-                  <Plus className="w-3.5 h-3.5" /> {t.budgetControlUi.setBudget}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    className="h-8 w-24 text-xs"
+                    value={periodYear}
+                    onChange={(e) => setPeriodYear(Number(e.target.value) || periodYear)}
+                  />
+                  <Input
+                    type="number"
+                    className="h-8 w-16 text-xs"
+                    min={1}
+                    max={12}
+                    value={periodMonth}
+                    onChange={(e) => setPeriodMonth(Math.min(12, Math.max(1, Number(e.target.value) || 1)))}
+                  />
+                  <Button size="sm" className="gap-1.5" onClick={() => setDialogOpen(true)}>
+                    <Plus className="w-3.5 h-3.5" /> {t.budgetControlUi.setBudget}
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              {budgets.map(budget => (
-                <div key={budget.id} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="font-mono text-xs">{budget.cost_center_code}</Badge>
-                      <span className="font-medium text-sm">{budget.cost_center_name}</span>
-                      {budget.utilization_pct > 100 && (
-                        <AlertTriangle className="w-4 h-4 text-destructive" />
-                      )}
+              {budgets.length === 0 && !loading && (
+                <p className="text-sm text-muted-foreground text-center py-8">{t.budgetControlUi.selectCenterPlaceholder}</p>
+              )}
+              {budgets.map(budget => {
+                const pct = budget.utilizationPct ?? 0;
+                const actual = budget.actualAmount ?? 0;
+                const planned = budget.budgetAmount ?? 0;
+                return (
+                  <div key={budget.id} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="font-mono text-xs">{budget.costCenterCode}</Badge>
+                        <span className="font-medium text-sm">{budget.costCenterName}</span>
+                        {pct > 100 && (
+                          <AlertTriangle className="w-4 h-4 text-destructive" />
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 text-sm">
+                        <span className="text-muted-foreground">
+                          {actual.toLocaleString(uiLocale)} / {planned.toLocaleString(uiLocale)} Kz
+                        </span>
+                        <span className={`font-bold min-w-[50px] text-right ${getUtilizationColor(pct)}`}>
+                          {pct}%
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-4 text-sm">
-                      <span className="text-muted-foreground">
-                        {budget.actual_amount.toLocaleString(uiLocale)} / {budget.budget_amount.toLocaleString(uiLocale)} Kz
-                      </span>
-                      <span className={`font-bold min-w-[50px] text-right ${getUtilizationColor(budget.utilization_pct)}`}>
-                        {budget.utilization_pct}%
-                      </span>
+                    <div className="h-2 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${getProgressColor(pct)}`}
+                        style={{ width: `${Math.min(pct, 100)}%` }}
+                      />
                     </div>
                   </div>
-                  <div className="h-2 bg-muted rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${getProgressColor(budget.utilization_pct)}`}
-                      style={{ width: `${Math.min(budget.utilization_pct, 100)}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </CardContent>
           </Card>
         </TabsContent>
@@ -214,16 +294,16 @@ export default function BudgetControl() {
                     <TableRow key={cc.id}>
                       <TableCell className="font-mono font-medium">{cc.code}</TableCell>
                       <TableCell className="font-medium">{cc.name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{cc.description}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{cc.description || '—'}</TableCell>
                       <TableCell className="text-center">
-                        <Badge variant={cc.is_active ? 'default' : 'secondary'}>
-                          {cc.is_active ? t.common.active : t.common.inactive}
+                        <Badge variant={cc.isActive !== false ? 'default' : 'secondary'}>
+                          {cc.isActive !== false ? t.common.active : t.common.inactive}
                         </Badge>
                       </TableCell>
                       <TableCell>
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
                           setEditingCenter(cc);
-                          setCenterForm({ code: cc.code, name: cc.name, description: cc.description });
+                          setCenterForm({ code: cc.code, name: cc.name, description: cc.description || '' });
                           setCenterDialogOpen(true);
                         }}>
                           <Edit className="w-3.5 h-3.5" />
@@ -238,7 +318,6 @@ export default function BudgetControl() {
         </TabsContent>
       </Tabs>
 
-      {/* Budget Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -247,33 +326,47 @@ export default function BudgetControl() {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>{t.budgetControlUi.costCenterLabel}</Label>
-              <Input placeholder={t.budgetControlUi.selectCenterPlaceholder} />
+              <Select value={budgetForm.costCenterId} onValueChange={(v) => setBudgetForm((f) => ({ ...f, costCenterId: v }))}>
+                <SelectTrigger><SelectValue placeholder={t.budgetControlUi.selectCenterPlaceholder} /></SelectTrigger>
+                <SelectContent>
+                  {costCenters.filter((cc) => cc.isActive !== false).map((cc) => (
+                    <SelectItem key={cc.id} value={cc.id}>{cc.code} — {cc.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>{t.budgetControlUi.yearLabel}</Label>
-                <Input type="number" defaultValue={2026} />
+                <Input type="number" value={periodYear} readOnly className="bg-muted" />
               </div>
               <div className="space-y-2">
                 <Label>{t.budgetControlUi.monthLabel}</Label>
-                <Input type="number" defaultValue={3} min={1} max={12} />
+                <Input type="number" value={periodMonth} readOnly className="bg-muted" />
               </div>
             </div>
             <div className="space-y-2">
               <Label>{t.budgetControlUi.budgetAmountLabel}</Label>
-              <Input type="number" placeholder="0.00" />
+              <Input
+                type="number"
+                placeholder="0.00"
+                value={budgetForm.budgetAmount}
+                onChange={(e) => setBudgetForm((f) => ({ ...f, budgetAmount: e.target.value }))}
+              />
             </div>
             <div className="space-y-2">
               <Label>{t.budgetControlUi.notesLabel}</Label>
-              <Textarea placeholder={t.budgetControlUi.notesPlaceholder} />
+              <Textarea
+                placeholder={t.budgetControlUi.notesPlaceholder}
+                value={budgetForm.notes}
+                onChange={(e) => setBudgetForm((f) => ({ ...f, notes: e.target.value }))}
+              />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>{t.common.cancel}</Button>
-            <Button
-              onClick={() => { setDialogOpen(false); toast.success(t.budgetControlUi.budgetSet); }}
-            >
-              {t.common.save}
+            <Button onClick={() => void handleSaveBudget()} disabled={saving}>
+              {saving ? t.common.saving : t.common.save}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -287,7 +380,11 @@ export default function BudgetControl() {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>{t.budgetControlUi.colCode}</Label>
-              <Input value={centerForm.code} onChange={(e) => setCenterForm((f) => ({ ...f, code: e.target.value }))} />
+              <Input
+                value={centerForm.code}
+                onChange={(e) => setCenterForm((f) => ({ ...f, code: e.target.value }))}
+                disabled={!!editingCenter}
+              />
             </div>
             <div className="space-y-2">
               <Label>{t.budgetControlUi.colName}</Label>
@@ -300,10 +397,9 @@ export default function BudgetControl() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCenterDialogOpen(false)}>{t.common.cancel}</Button>
-            <Button onClick={() => {
-              setCenterDialogOpen(false);
-              toast.success(editingCenter ? t.common.saveChanges : t.budgetControlUi.newCenter);
-            }}>{t.common.save}</Button>
+            <Button onClick={() => void handleSaveCenter()} disabled={saving}>
+              {saving ? t.common.saving : t.common.save}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

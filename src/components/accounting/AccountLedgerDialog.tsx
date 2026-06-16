@@ -8,6 +8,7 @@ import { api } from '@/lib/api/client';
 import { Account } from '@/types/accounting';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
+import { resolveAccountDisplayName, resolveAccountTypeLabel } from '@/lib/chartOfAccountsDisplay';
 
 interface LedgerEntry {
   id: string;
@@ -115,8 +116,10 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             <span className="font-mono text-muted-foreground">{account?.code}</span>
-            <span>{account?.name}</span>
-            <Badge variant="outline" className="text-[10px]">{account?.account_type}</Badge>
+            <span>{account ? resolveAccountDisplayName(account, language, t) : ''}</span>
+            <Badge variant="outline" className="text-[10px]">
+              {account ? resolveAccountTypeLabel(account.account_type, t) : ''}
+            </Badge>
           </DialogTitle>
         </DialogHeader>
 

@@ -3671,15 +3671,60 @@ ipcMain.handle('window:closeCurrent', (event) => {
 });
 
 // Print support — load HTML via document.write (data: URLs break on large invoices)
+function electronPrintWebContents(webContents, options = {}) {
+  return new Promise((resolve) => {
+    const pageWidthMm = Number(options.pageWidthMm) || 80;
+    webContents.print(
+      {
+        silent: !!options.silent,
+        printBackground: true,
+        deviceName: options.deviceName || undefined,
+        margins: { marginType: 'none' },
+        pageSize: {
+          width: Math.round(pageWidthMm * 1000),
+          height: 297000,
+        },
+      },
+      (success, failureReason) => {
+        if (!success) {
+          resolve({ success: false, error: failureReason || 'Print failed' });
+          return;
+        }
+        resolve({ success: true });
+      },
+    );
+  });
+}
+
+ipcMain.handle('print:listPrinters', async () => {
+  try {
+    const wc = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
+    if (!wc) {
+      return { printers: [], defaultPrinter: null };
+    }
+    const printers = await wc.getPrintersAsync();
+    const defaultPrinter = printers.find((p) => p.isDefault)?.name || null;
+    return {
+      printers: printers.map((p) => ({
+        name: p.name,
+        isDefault: !!p.isDefault,
+        status: p.status,
+        description: p.description,
+      })),
+      defaultPrinter,
+    };
+  } catch (e) {
+    return { printers: [], defaultPrinter: null, error: e?.message || String(e) };
+  }
+});
+
 ipcMain.handle('print:html', async (_, html, options = {}) => {
   let printWin;
   try {
     printWin = new BrowserWindow({
       show: false,
-      width: 900,
-      height: 1100,
-      parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
-      modal: !!(mainWindow && !mainWindow.isDestroyed()),
+      width: 400,
+      height: 1200,
       webPreferences: { nodeIntegration: false, contextIsolation: true },
     });
     await printWin.loadURL('about:blank');
@@ -3690,19 +3735,29 @@ ipcMain.handle('print:html', async (_, html, options = {}) => {
         document.close();
       })()`
     );
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await new Promise((resolve) => setTimeout(resolve, 800));
 
     const isSilent = !!options.silent;
+    const deviceName = options.deviceName ? String(options.deviceName).trim() : '';
     if (!isSilent) {
-      // Some Windows drivers only show the dialog when the print window exists (can stay behind main window)
       printWin.showInactive();
     }
 
-    await printWin.webContents.print({
+    let result = await electronPrintWebContents(printWin.webContents, {
       silent: isSilent,
-      printBackground: true,
+      deviceName: deviceName || undefined,
+      pageWidthMm: options.pageWidthMm,
     });
-    return { success: true };
+
+    if (!result.success && isSilent) {
+      printWin.showInactive();
+      result = await electronPrintWebContents(printWin.webContents, {
+        silent: false,
+        pageWidthMm: options.pageWidthMm,
+      });
+    }
+
+    return result;
   } catch (e) {
     return { success: false, error: e?.message || String(e) };
   } finally {

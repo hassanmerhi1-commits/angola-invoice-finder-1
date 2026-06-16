@@ -29,7 +29,7 @@ const TABLE_BY_DOC_TYPE: Partial<Record<DocumentType, string>> = {
 };
 
 const DOC_LABEL_PT: Record<DocumentType, string> = {
-  proforma: 'Orçamento',
+  proforma: 'Proforma',
   fatura_venda: 'Fatura',
   fatura_compra: 'Fatura de compra',
   recibo: 'Recibo',
@@ -129,7 +129,7 @@ export async function recordProformaPrint(
       tableName: 'proformas',
       recordId: proforma.id,
       action: 'print',
-      description: `Orçamento ${proforma.documentNumber || proforma.id} impresso`,
+      description: `Proforma ${proforma.documentNumber || proforma.id} impressa`,
       metadata: {
         format,
         reprint: opts.reprint ?? false,

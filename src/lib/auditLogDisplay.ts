@@ -1,5 +1,6 @@
 export const AUDIT_TABLE_MODULE_MAP: Record<string, string> = {
   sales: 'invoices',
+  proformas: 'fiscal',
   credit_notes: 'fiscal',
   debit_notes: 'fiscal',
   transport_documents: 'fiscal',

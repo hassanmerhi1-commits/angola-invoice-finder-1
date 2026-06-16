@@ -8,9 +8,18 @@ function fsMaxAmount() {
   return Number.isFinite(n) && n > 0 ? n : 100000;
 }
 
+/** Trim and treat consumidor final placeholders as empty (POS optional NIF field). */
+function normalizeCustomerNif(customerNif) {
+  const raw = String(customerNif || '').trim();
+  if (!raw) return '';
+  const upper = raw.toUpperCase();
+  if (FINAL_CONSUMER_NIFS.has(raw) || FINAL_CONSUMER_NIFS.has(upper)) return '';
+  if (upper === 'CF' || upper === 'CONSUMIDOR_FINAL' || upper === 'CONSUMIDOR FINAL') return '';
+  return raw;
+}
+
 function isFinalConsumer(customerNif) {
-  const n = String(customerNif || '').trim();
-  return !n || FINAL_CONSUMER_NIFS.has(n);
+  return !normalizeCustomerNif(customerNif);
 }
 
 function isPaidAtIssue(paymentMethod) {
@@ -21,14 +30,15 @@ function isPaidAtIssue(paymentMethod) {
  * Resolve AGT document type for a sale.
  * @returns {'FT'|'FR'|'FS'}
  */
-function resolveSaleInvoiceType({ customerNif, paymentMethod, total, invoiceType }) {
+function resolveSaleInvoiceType({ customerNif, paymentMethod, total, invoiceType, trustExplicit = false }) {
   const explicit = String(invoiceType || '').trim().toUpperCase();
-  if (['FT', 'FR', 'FS'].includes(explicit)) return explicit;
+  if (trustExplicit && ['FT', 'FR', 'FS'].includes(explicit)) return explicit;
 
+  const nif = normalizeCustomerNif(customerNif);
   const amount = Number(total) || 0;
   const paidNow = isPaidAtIssue(paymentMethod);
 
-  if (!isFinalConsumer(customerNif)) {
+  if (!isFinalConsumer(nif)) {
     return paidNow ? 'FR' : 'FT';
   }
 
@@ -52,8 +62,14 @@ function prefixForInvoiceType(invoiceType) {
   return String(invoiceType || 'FT').toUpperCase();
 }
 
-function validateSaleInvoiceType({ invoiceType, customerNif, paymentMethod, total }) {
-  const type = resolveSaleInvoiceType({ customerNif, paymentMethod, total, invoiceType });
+function validateSaleInvoiceType({ invoiceType, customerNif, paymentMethod, total, trustExplicit = false }) {
+  const type = resolveSaleInvoiceType({
+    customerNif,
+    paymentMethod,
+    total,
+    invoiceType,
+    trustExplicit,
+  });
   if (type === 'FS' && Number(total) > fsMaxAmount()) {
     throw new Error(
       `Fatura simplificada (FS) limitada a ${fsMaxAmount().toLocaleString('pt-AO')} AOA. `
@@ -66,6 +82,7 @@ function validateSaleInvoiceType({ invoiceType, customerNif, paymentMethod, tota
 module.exports = {
   FINAL_CONSUMER_NIFS,
   fsMaxAmount,
+  normalizeCustomerNif,
   isFinalConsumer,
   resolveSaleInvoiceType,
   sequenceKeyForInvoiceType,

@@ -173,7 +173,15 @@ export interface ElectronAPI {
 
   // Printing
   print: {
-    html: (html: string, options?: { silent?: boolean }) => Promise<{ success: boolean; error?: string }>;
+    html: (
+      html: string,
+      options?: { silent?: boolean; deviceName?: string; pageWidthMm?: number },
+    ) => Promise<{ success: boolean; error?: string }>;
+    listPrinters: () => Promise<{
+      printers: Array<{ name: string; isDefault: boolean; status?: number; description?: string }>;
+      defaultPrinter: string | null;
+      error?: string;
+    }>;
   };
 
   // Auto-spawned Express backend (Option A, phases 1–6)

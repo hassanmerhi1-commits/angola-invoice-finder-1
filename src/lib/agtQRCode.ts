@@ -8,6 +8,7 @@
 import QRCode from 'qrcode';
 import { Sale, Branch } from '@/types/erp';
 import { getCompanySettings } from './companySettings';
+import { resolveSaleDocumentType } from './fiscalInvoiceType';
 
 // AGT QR Code Data Structure
 export interface AGTQRCodeData {
@@ -119,7 +120,10 @@ export function saleToAGTQRData(sale: Sale, branch?: Branch): AGTQRCodeData {
     nomeEmissor: branch?.name || companyInfo.nome,
     nifCliente: sale.customerNif,
     nomeCliente: sale.customerName,
-    tipoDocumento: (sale.invoiceType || 'FR').toUpperCase() as AGTQRCodeData['tipoDocumento'],
+    tipoDocumento: resolveSaleDocumentType({
+      invoiceType: sale.invoiceType,
+      invoiceNumber: sale.invoiceNumber,
+    }),
     numeroDocumento: sale.invoiceNumber,
     dataEmissao: issueDate.toISOString().slice(0, 10).replace(/-/g, ''),
     horaEmissao: issueDate.toTimeString().slice(0, 8).replace(/:/g, ''),

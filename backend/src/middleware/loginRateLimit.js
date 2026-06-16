@@ -12,6 +12,10 @@ function loginRateLimiter(windowMs = 15 * 60 * 1000, maxAttempts = 10) {
   }, windowMs);
 
   return (req, res, next) => {
+    if (process.env.NODE_ENV === 'test' || process.env.E2E_DISABLE_LOGIN_RATE_LIMIT === '1') {
+      return next();
+    }
+
     const ip = req.ip || req.connection?.remoteAddress || 'unknown';
     const now = Date.now();
     const record = hits.get(ip);

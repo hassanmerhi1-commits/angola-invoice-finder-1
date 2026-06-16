@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Loader2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { usePermissions } from '@/hooks/usePermissions';
 import { api, ensureBackendAuthToken } from '@/lib/api/client';
+import { saveCompanySettings } from '@/lib/companySettings';
 
 type PhaseStatus = 'ok' | 'warn' | 'blocker';
 
@@ -35,6 +37,21 @@ type CertificationStatus = {
   checkedAt: string;
 };
 
+type DemoProfileResult = {
+  ok?: boolean;
+  demo?: {
+    nif: string;
+    softwareValidationNumber: string;
+    companyName: string;
+    agtSimulate: boolean;
+    testCertificateAlias: string;
+    testCertificatePassphrase: string;
+    demoScriptPath: string;
+  };
+  steps?: { id: string; ok: boolean; message: string }[];
+  certification?: CertificationStatus;
+};
+
 function formatWhen(value?: string | null) {
   if (!value) return '—';
   try {
@@ -47,14 +64,17 @@ function formatWhen(value?: string | null) {
 export function CertificationReadinessCard() {
   const { t } = useTranslation();
   const ui = t.certificationSettingsUi;
+  const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, hasPermission } = usePermissions(user?.id);
   const canView = isAdmin || hasPermission('admin_settings');
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [applyingDemo, setApplyingDemo] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<CertificationStatus | null>(null);
+  const [demoResult, setDemoResult] = useState<DemoProfileResult['demo'] | null>(null);
 
   const refresh = useCallback(async () => {
     if (!canView) return;
@@ -84,6 +104,47 @@ export function CertificationReadinessCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initial load only
   }, [canView]);
 
+  const applyDemoProfile = async () => {
+    setApplyingDemo(true);
+    setError(null);
+    try {
+      await ensureBackendAuthToken();
+      const res = await api.certification.applyDemoProfile({ generateTestCertificate: true });
+      if (res.error) throw new Error(res.error);
+
+      const data = res.data as DemoProfileResult;
+      if (data.demo) {
+        setDemoResult(data.demo);
+        saveCompanySettings({
+          name: data.demo.companyName,
+          tradeName: data.demo.companyName,
+          nif: data.demo.nif,
+          agtCertificateNumber: data.demo.softwareValidationNumber,
+        });
+      }
+      if (data.certification) {
+        setStatus(data.certification);
+      } else {
+        await refresh();
+      }
+
+      toast({
+        title: ui.applyDemoSuccess,
+        description: ui.demoNextStep,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(ui.applyDemoFailed.replace('{error}', message));
+      toast({
+        variant: 'destructive',
+        title: t.common.error,
+        description: message,
+      });
+    } finally {
+      setApplyingDemo(false);
+    }
+  };
+
   if (!canView) return null;
 
   const phaseBadge = (phaseStatus: PhaseStatus) => {
@@ -111,7 +172,7 @@ export function CertificationReadinessCard() {
     );
   };
 
-  const busy = loading || refreshing;
+  const busy = loading || refreshing || applyingDemo;
 
   return (
     <Card>
@@ -123,16 +184,45 @@ export function CertificationReadinessCard() {
           </CardTitle>
           <CardDescription>{ui.description}</CardDescription>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
-          {busy ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4 mr-2" />
-          )}
-          {refreshing ? t.common.updating : ui.refresh}
-        </Button>
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Button variant="default" size="sm" onClick={() => void applyDemoProfile()} disabled={busy}>
+            {applyingDemo ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4 mr-2" />
+            )}
+            {applyingDemo ? ui.applyingDemo : ui.applyDemoButton}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
+            {refreshing ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            {refreshing ? t.common.updating : ui.refresh}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-6">
+        <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
+          <p className="text-sm font-medium">{ui.applyDemoTitle}</p>
+          <p className="text-sm text-muted-foreground">{ui.applyDemoDescription}</p>
+        </div>
+
+        {demoResult && (
+          <div className="rounded-lg border border-green-300/60 bg-green-50/50 dark:bg-green-950/20 p-4 space-y-2 text-sm">
+            <p className="font-medium text-green-800 dark:text-green-300">{ui.demoValuesTitle}</p>
+            <div className="grid gap-1 sm:grid-cols-2 text-muted-foreground">
+              <span>{ui.demoNif}: <strong className="text-foreground font-mono">{demoResult.nif}</strong></span>
+              <span>{ui.demoValidation}: <strong className="text-foreground font-mono">{demoResult.softwareValidationNumber}</strong></span>
+              <span>{ui.demoCertAlias}: <strong className="text-foreground">{demoResult.testCertificateAlias}</strong></span>
+              <span>{ui.demoCertPassphrase}: <strong className="text-foreground font-mono">{demoResult.testCertificatePassphrase}</strong></span>
+              <span>{ui.demoAgtMode}: <strong className="text-foreground">{ui.demoAgtSimulate}</strong></span>
+            </div>
+            <p className="text-xs text-muted-foreground pt-1">{ui.demoNextStep}</p>
+          </div>
+        )}
+
         {error && (
           <p className="text-sm text-destructive flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0" />

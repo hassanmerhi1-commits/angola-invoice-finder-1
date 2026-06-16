@@ -106,6 +106,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Printing
   print: {
     html: (html, options) => ipcRenderer.invoke('print:html', html, options),
+    listPrinters: () => ipcRenderer.invoke('print:listPrinters'),
   },
 
   // PDF export (Electron-only)

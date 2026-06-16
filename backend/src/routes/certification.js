@@ -5,6 +5,7 @@ const express = require('express');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
 const { getCertificationStatus } = require('../lib/certificationStatus');
+const { applyCertificationDemoProfile } = require('../lib/certificationDemoProfile');
 
 module.exports = function certificationRoutes() {
   const router = express.Router();
@@ -15,6 +16,17 @@ module.exports = function certificationRoutes() {
     } catch (error) {
       console.error('[CERTIFICATION] status:', error);
       res.status(500).json({ error: error.message || 'Failed to load certification status' });
+    }
+  });
+
+  router.post('/apply-demo-profile', requireAuth, requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const generateTestCertificate = req.body?.generateTestCertificate !== false;
+      const result = await applyCertificationDemoProfile({ generateTestCertificate });
+      res.json(result);
+    } catch (error) {
+      console.error('[CERTIFICATION] apply-demo-profile:', error);
+      res.status(500).json({ error: error.message || 'Failed to apply certification demo profile' });
     }
   });
 

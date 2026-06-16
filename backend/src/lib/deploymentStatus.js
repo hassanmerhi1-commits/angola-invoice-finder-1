@@ -342,6 +342,7 @@ async function recordAppMetaForDb(db, appVersion) {
 module.exports = {
   EXPECTED_SCHEMA_VERSION,
   readAppVersion,
+  readSchemaVersionFromDb,
   buildDeploymentStatus,
   recordAppMeta,
   recordAppMetaForDb,

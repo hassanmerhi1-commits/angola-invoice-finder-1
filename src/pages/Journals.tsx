@@ -312,6 +312,7 @@ const JOURNALS_AUDIT_ACTION_LABELS: Record<string, string> = {
   agt_transmit: 'actionSendAgt',
   saft_export: 'actionExport',
   void: 'actionVoid',
+  convert: 'actionConvert',
 };
 
 function JournalsAuditPanel() {
