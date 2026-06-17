@@ -51,13 +51,14 @@ test.describe('Chart of accounts + journal E2E', () => {
 
     const accountInputs = journalDialog.getByPlaceholder('e.g., 451');
     await accountInputs.nth(0).fill(accountCode);
-    await journalDialog.getByRole('button', { name: new RegExp(accountCode) }).click();
+    await journalDialog.getByRole('button', { name: new RegExp(`^${accountCode}\\s`) }).click();
 
     const debitInputs = journalDialog.locator('input[type="number"]');
     await debitInputs.nth(0).fill(String(amount));
 
     await accountInputs.nth(1).fill('451');
-    await journalDialog.getByRole('button', { name: /451/ }).click();
+    // Anchor to the code so we don't also match 3451 (IVA dedutível).
+    await journalDialog.getByRole('button', { name: /^451\s/ }).click();
 
     await journalDialog.getByRole('button', { name: /auto balance/i }).click();
     await journalDialog.getByRole('button', { name: /^post$/i }).click();
