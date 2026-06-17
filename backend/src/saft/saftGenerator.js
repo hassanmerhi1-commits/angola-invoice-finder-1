@@ -78,7 +78,7 @@ async function loadMasterFiles() {
   return {
     Customer: customers.rows.map((c) => ({
       CustomerID: c.id,
-      AccountID: '3.1.1',
+      AccountID: '311',
       CustomerTaxID: c.nif || '999999990',
       CompanyName: c.name,
       BillingAddress: {
@@ -92,7 +92,7 @@ async function loadMasterFiles() {
     })),
     Supplier: suppliers.rows.map((s) => ({
       SupplierID: s.id,
-      AccountID: '3.2.1',
+      AccountID: '321',
       SupplierTaxID: s.nif || '999999990',
       CompanyName: s.name,
       BillingAddress: {

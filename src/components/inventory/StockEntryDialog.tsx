@@ -224,7 +224,7 @@ const emptyForm = () => ({
   freightCost: 0,
   otherCosts: 0,
   otherCostsDescription: '',
-  freightSourceAccount: '4.1.1',
+  freightSourceAccount: '451',
   freightSourceName: 'Caixa',
 });
 

@@ -655,14 +655,14 @@ function buildPurchaseInvoiceJournalLines({
   const nextId = (suffix: string) => `${documentId}_${suffix}_${++autoIndex}`;
 
   const wht = roundMoney(withholdingAmount || 0);
-  const whtAcc = (withholdingAccountCode || '3.4.1').trim() || '3.4.1';
+  const whtAcc = (withholdingAccountCode || '343').trim() || '343';
   const isTax = roundMoney(stampAmount || 0);
-  const isAcc = (stampAccountCode || '3.5.1').trim() || '3.5.1';
+  const isAcc = (stampAccountCode || '349').trim() || '349';
 
   if (subtotal > 0) {
     postedLines.push({
       id: nextId('purchase'),
-      accountCode: purchaseAccountCode || '2.1.1',
+      accountCode: purchaseAccountCode || '212',
       accountName: 'Compra de Mercadorias',
       currency,
       note: `Mercadoria - FC ${invoiceNumber}`,
@@ -675,7 +675,7 @@ function buildPurchaseInvoiceJournalLines({
   if (isTax > 0) {
     postedLines.push({
       id: nextId('stamp_debit'),
-      accountCode: purchaseAccountCode || '2.1.1',
+      accountCode: purchaseAccountCode || '212',
       accountName: 'Compra de Mercadorias',
       currency,
       note: `Imposto de Selo - FC ${invoiceNumber}`,
@@ -687,7 +687,7 @@ function buildPurchaseInvoiceJournalLines({
   if (landingCosts > 0) {
     postedLines.push({
       id: nextId('freight_debit'),
-      accountCode: '6.2.6',
+      accountCode: '752',
       accountName: labelFreightLine,
       currency,
       note: `Frete / Transporte - FC ${invoiceNumber}`,
@@ -699,7 +699,7 @@ function buildPurchaseInvoiceJournalLines({
   if (ivaTotal > 0) {
     postedLines.push({
       id: nextId('iva'),
-      accountCode: ivaAccountCode || '3.3.1',
+      accountCode: ivaAccountCode || '3451',
       accountName: labelDeductibleVat,
       currency,
       note: `IVA - FC ${invoiceNumber}`,
@@ -1310,7 +1310,7 @@ export default function PurchaseInvoices() {
   // Freight / Transport cost
   const [freightCost, setFreightCost] = useState(0);
   const [freightOtherCosts, setFreightOtherCosts] = useState(0);
-  const [freightSourceAccount, setFreightSourceAccount] = useState('4.1.1'); // default Cash
+  const [freightSourceAccount, setFreightSourceAccount] = useState('451'); // default Cash
   const [freightSourceName, setFreightSourceName] = useState('Cash');
 
   const numberingBranchId = useMemo(() => {
@@ -1523,8 +1523,8 @@ export default function PurchaseInvoices() {
       warehouseId: wid,
       warehouseName: wname,
       priceType: 'last_price',
-      purchaseAccountCode: '2.1.1',
-      ivaAccountCode: '3.3.1',
+      purchaseAccountCode: '212',
+      ivaAccountCode: '3451',
       transactionType: 'ALL',
       currencyRate: 1,
       taxRate2: 0,
@@ -1549,7 +1549,7 @@ export default function PurchaseInvoices() {
     setJournalLines([]);
     setFreightCost(0);
     setFreightOtherCosts(0);
-    setFreightSourceAccount('4.1.1');
+    setFreightSourceAccount('451');
     setFreightSourceName('Caixa');
     setFillFromPoId('');
     setActiveTab('fatura');
@@ -1580,8 +1580,8 @@ export default function PurchaseInvoices() {
       warehouseId: full.warehouseId,
       warehouseName: full.warehouseName,
       priceType: full.priceType || 'last_price',
-      purchaseAccountCode: full.purchaseAccountCode || '2.1.1',
-      ivaAccountCode: full.ivaAccountCode || '3.3.1',
+      purchaseAccountCode: full.purchaseAccountCode || '212',
+      ivaAccountCode: full.ivaAccountCode || '3451',
       transactionType: full.transactionType || 'ALL',
       currencyRate: full.currencyRate ?? 1,
       taxRate2: full.taxRate2 ?? 0,
@@ -2139,8 +2139,8 @@ export default function PurchaseInvoices() {
     documentId: 'preview',
     invoiceNumber: nextFcPreview || form.supplierInvoiceNo || form.ref || t.purchaseInvoicesUi.previewInvoiceNumber,
     currency: form.currency || 'KZ',
-    purchaseAccountCode: form.purchaseAccountCode || '2.1.1',
-    ivaAccountCode: form.ivaAccountCode || '3.3.1',
+    purchaseAccountCode: form.purchaseAccountCode || '212',
+    ivaAccountCode: form.ivaAccountCode || '3451',
     supplierAccountCode: form.supplierAccountCode || '',
     supplierName: form.supplierName || 'Fornecedor',
     subtotal: totals.subtotal,
@@ -2422,8 +2422,8 @@ export default function PurchaseInvoices() {
         warehouseName: resolvedWarehouseName,
         priceType: form.priceType || 'last_price',
         address: form.address,
-        purchaseAccountCode: form.purchaseAccountCode || '2.1.1',
-        ivaAccountCode: form.ivaAccountCode || '3.3.1',
+        purchaseAccountCode: form.purchaseAccountCode || '212',
+        ivaAccountCode: form.ivaAccountCode || '3451',
         transactionType: form.transactionType || 'ALL',
         currencyRate: form.currencyRate || 1,
         taxRate2: Number(form.taxRate2 || 0),
@@ -2449,8 +2449,8 @@ export default function PurchaseInvoices() {
         documentId: updatedInvoice.id,
         invoiceNumber: updatedInvoice.invoiceNumber,
         currency: updatedInvoice.currency,
-        purchaseAccountCode: updatedInvoice.purchaseAccountCode || '2.1.1',
-        ivaAccountCode: updatedInvoice.ivaAccountCode || '3.3.1',
+        purchaseAccountCode: updatedInvoice.purchaseAccountCode || '212',
+        ivaAccountCode: updatedInvoice.ivaAccountCode || '3451',
         supplierAccountCode: updatedInvoice.supplierAccountCode,
         supplierName: updatedInvoice.supplierName,
         subtotal: updatedInvoice.subtotal,
@@ -2521,8 +2521,8 @@ export default function PurchaseInvoices() {
       warehouseName: resolvedWarehouseName,
       priceType: form.priceType || 'last_price',
       address: form.address,
-      purchaseAccountCode: form.purchaseAccountCode || '2.1.1',
-      ivaAccountCode: form.ivaAccountCode || '3.3.1',
+      purchaseAccountCode: form.purchaseAccountCode || '212',
+      ivaAccountCode: form.ivaAccountCode || '3451',
       transactionType: form.transactionType || 'ALL',
       currencyRate: form.currencyRate || 1,
       // Angola: Retenção na Fonte (%)
@@ -2556,8 +2556,8 @@ export default function PurchaseInvoices() {
       documentId: invoice.id,
       invoiceNumber: invoice.invoiceNumber,
       currency: invoice.currency,
-      purchaseAccountCode: invoice.purchaseAccountCode || '2.1.1',
-      ivaAccountCode: invoice.ivaAccountCode || '3.3.1',
+      purchaseAccountCode: invoice.purchaseAccountCode || '212',
+      ivaAccountCode: invoice.ivaAccountCode || '3451',
       supplierAccountCode: invoice.supplierAccountCode,
       supplierName: invoice.supplierName,
       subtotal: invoice.subtotal,

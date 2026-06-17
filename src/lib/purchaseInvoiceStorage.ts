@@ -645,7 +645,7 @@ export function generateAutoJournalLines(invoice: PurchaseInvoice): PurchaseInvo
   if (invoice.subtotal > 0) {
     lines.push({
       id: `jl_${Date.now()}_1`,
-      accountCode: invoice.purchaseAccountCode || '2.1.1',
+      accountCode: invoice.purchaseAccountCode || '212',
       accountName: 'Compra de Mercadorias',
       currency: invoice.currency,
       note: `FC ${invoice.invoiceNumber} - ${invoice.supplierName}`,
@@ -657,7 +657,7 @@ export function generateAutoJournalLines(invoice: PurchaseInvoice): PurchaseInvo
   if (invoice.ivaTotal > 0) {
     lines.push({
       id: `jl_${Date.now()}_2`,
-      accountCode: invoice.ivaAccountCode || '3.3.1',
+      accountCode: invoice.ivaAccountCode || '3451',
       accountName: 'IVA Dedutível',
       currency: invoice.currency,
       note: `IVA - FC ${invoice.invoiceNumber}`,
@@ -720,10 +720,10 @@ export function resolvePurchaseInvoiceFreight(inv: Pick<PurchaseInvoice, 'freigh
 
   const journal = Array.isArray(inv.journalLines) ? inv.journalLines : [];
   const landingFromJournal = journal
-    .filter((line) => String(line.accountCode || '').trim() === '6.2.6')
+    .filter((line) => String(line.accountCode || '').trim() === '752')
     .reduce((sum, line) => sum + Number(line.debit || 0), 0);
   const freightCredit = journal.find(
-    (line) => Number(line.credit || 0) > 0 && String(line.accountCode || '').trim() !== '3.2.1',
+    (line) => Number(line.credit || 0) > 0 && String(line.accountCode || '').trim() !== '321',
   );
 
   return {
@@ -766,8 +766,8 @@ function mapPIFromDb(row: any): PurchaseInvoice {
     warehouseName: row.warehouse_name || row.warehouseName || row.branch_name || row.branchName || '',
     priceType: row.price_type || 'last_price',
     address: row.address,
-    purchaseAccountCode: row.purchase_account_code || '2.1.1',
-    ivaAccountCode: row.iva_account_code || '3.3.1',
+    purchaseAccountCode: row.purchase_account_code || '212',
+    ivaAccountCode: row.iva_account_code || '3451',
     transactionType: row.transaction_type || 'ALL',
     currencyRate: Number(row.currency_rate || 1),
     taxRate2: Number(row.tax_rate_2 || 0),
@@ -882,8 +882,8 @@ function mapPIFromDocumentDb(row: any): PurchaseInvoice {
     warehouseName: docWhName,
     priceType: 'manual',
     address: row.entity_address || '',
-    purchaseAccountCode: lines[0]?.accountCode || '2.1.1',
-    ivaAccountCode: '3.3.1',
+    purchaseAccountCode: lines[0]?.accountCode || '212',
+    ivaAccountCode: '3451',
     transactionType: 'ALL',
     currencyRate: 1,
     taxRate2: 0,

@@ -34,6 +34,32 @@ const {
 } = require('./lib/productSkuResolve');
 const { randomUUID } = require('crypto');
 
+// ==================== PGC (novo com IVA) POSTING ACCOUNT CODES ====================
+// Angola Plano Geral de Contabilidade with no-dot numbering (main 11 → first sub 111).
+// Central map so the chart-of-accounts renumbering stays in a single place.
+const ACC = {
+  CLIENTS_PARENT: '31',
+  CLIENTS_CURRENT: '311', // Clientes - correntes (default/parent for client sub-accounts)
+  SUPPLIERS_PARENT: '32',
+  SUPPLIERS_CURRENT: '321', // Fornecedores - correntes (default/parent for supplier sub-accounts)
+  IVA_DEDUCTIBLE: '3451', // Estado > IVA dedutível (input VAT)
+  IVA_LIQUIDATED: '3452', // Estado > IVA liquidado (output VAT)
+  CASH: '451', // Caixa (Fundo fixo) — default cash leaf
+  CASH_PARENT: '45', // Caixa
+  BANK: '431', // Depósitos à ordem - Moeda nacional
+  BANK_PARENT: '43', // Depósitos à ordem
+  SALES: '613', // Vendas - Mercadorias
+  OTHER_INCOME: '638', // Outros proveitos e ganhos operacionais
+  REVALUATION_RESERVE: '561', // Reservas de reavaliação
+  PURCHASES_MERCHANDISE: '212', // Compras - Mercadorias
+  INVENTORY_STOCK: '261', // Mercadorias em armazém
+  COGS: '711', // Custo das mercadorias vendidas
+  COGS_PARENT: '71', // Custo das existências vendidas
+  FREIGHT_ON_PURCHASES: '752', // Fornecimentos e serviços de terceiros
+  FREIGHT_PARENT: '75', // Outros custos e perdas operacionais
+  INVENTORY_SHRINKAGE: '758', // Outros custos e perdas operacionais
+};
+
 // ==================== HELPERS ====================
 
 function isUuid(value) {
@@ -185,8 +211,8 @@ async function auditLog(client, params) {
 // ==================== ENTITY ACCOUNT LOOKUP ====================
 
 async function getEntityAccountCode(client, entityType, entityId, entityName) {
-  const prefix = entityType === 'supplier' ? '3.2.' : '3.1.';
-  const fallback = entityType === 'supplier' ? '3.2.1' : '3.1.1';
+  const prefix = entityType === 'supplier' ? ACC.SUPPLIERS_CURRENT : ACC.CLIENTS_CURRENT;
+  const fallback = entityType === 'supplier' ? ACC.SUPPLIERS_CURRENT : ACC.CLIENTS_CURRENT;
 
   if (!entityId && !entityName) return fallback;
 
@@ -214,52 +240,54 @@ async function getEntityAccountCode(client, entityType, entityId, entityName) {
   return fallback;
 }
 
-const INVENTORY_MERCHANDISE_ACCOUNT = '2.1.1';
-const INVENTORY_STOCK_ACCOUNT = '2.2';
+const INVENTORY_MERCHANDISE_ACCOUNT = ACC.PURCHASES_MERCHANDISE;
+const INVENTORY_STOCK_ACCOUNT = ACC.INVENTORY_STOCK;
 
 async function ensureFreightExpenseAccount(client) {
-  const existing = await findAccountByCode(client, '6.2.6');
+  const existing = await findAccountByCode(client, ACC.FREIGHT_ON_PURCHASES);
   if (existing) return existing.code;
 
   const parentResult = await client.query(
-    `SELECT id FROM chart_of_accounts WHERE code = '6.2' AND is_active = true LIMIT 1`
+    `SELECT id FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
+    [ACC.FREIGHT_PARENT]
   );
 
   if (parentResult.rows.length === 0) {
-    throw new Error('Conta 6.2 não encontrada para lançar frete');
+    throw new Error(`Conta ${ACC.FREIGHT_PARENT} não encontrada para lançar frete`);
   }
 
   await client.query(
     `INSERT INTO chart_of_accounts
      (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active, opening_balance, current_balance)
-     VALUES ($1, '6.2.6', 'Transporte sobre Compras', 'expense', 'debit', $2, 3, false, true, 0, 0)
+     VALUES ($1, $2, 'Fornecimentos e serviços de terceiros', 'expense', 'debit', $3, 2, false, true, 0, 0)
      ON CONFLICT (code) DO NOTHING`,
-    [randomUUID(), parentResult.rows[0].id]
+    [randomUUID(), ACC.FREIGHT_ON_PURCHASES, parentResult.rows[0].id]
   );
 
-  return '6.2.6';
+  return ACC.FREIGHT_ON_PURCHASES;
 }
 
 async function ensureInventoryShrinkageAccount(client) {
-  const existing = await findAccountByCode(client, '6.6.1');
+  const existing = await findAccountByCode(client, ACC.INVENTORY_SHRINKAGE);
   if (existing) return existing.code;
 
   const parentResult = await client.query(
-    `SELECT id FROM chart_of_accounts WHERE code = '6' AND is_active = true LIMIT 1`
+    `SELECT id FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
+    [ACC.FREIGHT_PARENT]
   );
   if (parentResult.rows.length === 0) {
-    return '6.1';
+    return ACC.COGS;
   }
 
   await client.query(
     `INSERT INTO chart_of_accounts
      (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active, opening_balance, current_balance)
-     VALUES ($1, '6.6.1', 'Perdas e Quebras de Inventário', 'expense', 'debit', $2, 3, false, true, 0, 0)
+     VALUES ($1, $2, 'Perdas e Quebras de Inventário', 'expense', 'debit', $3, 2, false, true, 0, 0)
      ON CONFLICT (code) DO NOTHING`,
-    [randomUUID(), parentResult.rows[0].id]
+    [randomUUID(), ACC.INVENTORY_SHRINKAGE, parentResult.rows[0].id]
   );
 
-  return '6.6.1';
+  return ACC.INVENTORY_SHRINKAGE;
 }
 
 async function ensureInventoryStockAccount(client) {
@@ -267,7 +295,7 @@ async function ensureInventoryStockAccount(client) {
   if (existing) return existing.code;
 
   const parentResult = await client.query(
-    `SELECT id FROM chart_of_accounts WHERE code = '2' AND ${activeFlagWhere(db, 'is_active')} LIMIT 1`,
+    `SELECT id FROM chart_of_accounts WHERE code = '26' AND ${activeFlagWhere(db, 'is_active')} LIMIT 1`,
   );
   const parentId = parentResult.rows[0]?.id || null;
 
@@ -425,14 +453,14 @@ function buildStockAdjustmentJournalLines(direction, referenceType, totalValue, 
     : amount;
 
   if (direction === 'IN') {
-    let creditAccount = '7.4';
+    let creditAccount = ACC.OTHER_INCOME;
     let creditDesc = 'Contrapartida entrada inventário';
 
     if (ref === 'initial') {
-      creditAccount = '5.3';
+      creditAccount = ACC.REVALUATION_RESERVE;
       creditDesc = 'Existências iniciais';
     } else if (ref === 'purchase') {
-      creditAccount = '3.2.1';
+      creditAccount = ACC.SUPPLIERS_CURRENT;
       creditDesc = 'Fornecedores (entrada directa — preferir FC)';
     } else if (ref === 'transfer' || ref === 'transfer_in') {
       return [
@@ -473,7 +501,7 @@ function buildStockAdjustmentJournalLines(direction, referenceType, totalValue, 
     if (splitFreight) {
       lines.push(
         {
-          accountCode: '6.2.6',
+          accountCode: ACC.FREIGHT_ON_PURCHASES,
           description: `Frete / transporte ${docLabel}`,
           debit: landingCosts,
           credit: 0,
@@ -504,7 +532,7 @@ function buildStockAdjustmentJournalLines(direction, referenceType, totalValue, 
     ];
   }
 
-  const shrinkageAccount = '6.6.1';
+  const shrinkageAccount = ACC.INVENTORY_SHRINKAGE;
   let expenseDesc = 'Saída inventário';
   if (ref === 'damage' || ref === 'expired' || ref === 'loss') {
     expenseDesc = 'Perdas / avarias inventário';
@@ -624,10 +652,10 @@ async function processStockAdjustment(client, data) {
   );
 
   if (journalLines.length > 0) {
-    if (journalLines.some((l) => l.accountCode === '6.6.1')) {
+    if (journalLines.some((l) => l.accountCode === ACC.INVENTORY_SHRINKAGE)) {
       await ensureInventoryShrinkageAccount(client);
     }
-    if (journalLines.some((l) => l.accountCode === '6.2.6')) {
+    if (journalLines.some((l) => l.accountCode === ACC.FREIGHT_ON_PURCHASES)) {
       await ensureFreightExpenseAccount(client);
     }
 
@@ -1745,23 +1773,23 @@ async function processSale(client, saleData) {
   }
 
   // ── Step 4: Journal entries (balanced) ──
-  let cashAccountCode = '4.1.1';
+  let cashAccountCode = ACC.CASH;
   if (paymentMethod === 'cash') {
     const caixaResult = await client.query(
-      `SELECT code FROM chart_of_accounts WHERE code LIKE '4.1.%' AND level = 3 AND is_header = false
-       AND branch_id = $1 AND is_active = true LIMIT 1`, [branchId]
+      `SELECT code FROM chart_of_accounts WHERE code LIKE $1 AND is_header = false
+       AND branch_id = $2 AND is_active = true LIMIT 1`, [ACC.CASH_PARENT + '%', branchId]
     );
     if (caixaResult.rows.length > 0) cashAccountCode = caixaResult.rows[0].code;
   } else {
-    cashAccountCode = '4.2.1';
+    cashAccountCode = ACC.BANK;
   }
 
   const revenueLines = [
     { accountCode: cashAccountCode, description: `Venda ${invoiceNumber}`, debit: parseFloat(total), credit: 0 },
-    { accountCode: '7.1.1', description: `Receita ${invoiceNumber}`, debit: 0, credit: parseFloat(subtotal) },
+    { accountCode: ACC.SALES, description: `Receita ${invoiceNumber}`, debit: 0, credit: parseFloat(subtotal) },
   ];
   if (parseFloat(taxAmount) > 0) {
-    revenueLines.push({ accountCode: '3.3.1', description: `IVA ${invoiceNumber}`, debit: 0, credit: parseFloat(taxAmount) });
+    revenueLines.push({ accountCode: ACC.IVA_LIQUIDATED, description: `IVA ${invoiceNumber}`, debit: 0, credit: parseFloat(taxAmount) });
   }
 
   await createJournalEntry(client, {
@@ -1774,8 +1802,8 @@ async function processSale(client, saleData) {
       description: `CMV - ${invoiceNumber}`, referenceType: 'sale', referenceId: saleId,
       branchId, createdBy: cashierId,
       lines: [
-        { accountCode: '6.1', description: 'Custo Mercadorias Vendidas', debit: totalCOGS, credit: 0 },
-        { accountCode: '2.2', description: 'Saída Mercadorias', debit: 0, credit: totalCOGS },
+        { accountCode: ACC.COGS, description: 'Custo Mercadorias Vendidas', debit: totalCOGS, credit: 0 },
+        { accountCode: ACC.INVENTORY_STOCK, description: 'Saída Mercadorias', debit: 0, credit: totalCOGS },
       ],
     });
   }
@@ -2010,13 +2038,13 @@ async function processPurchaseReceive(client, orderId, receivedQuantities, recei
   const freightExpenseAccountCode = totalLandingCosts > 0 ? await ensureFreightExpenseAccount(client) : null;
 
   const journalLines = [
-    { accountCode: '2.1.1', description: `Mercadoria ${order.order_number}`, debit: subtotal, credit: 0 },
+    { accountCode: ACC.PURCHASES_MERCHANDISE, description: `Mercadoria ${order.order_number}`, debit: subtotal, credit: 0 },
   ];
   if (totalLandingCosts > 0 && freightExpenseAccountCode) {
     journalLines.push({ accountCode: freightExpenseAccountCode, description: `Frete ${order.order_number}`, debit: totalLandingCosts, credit: 0 });
   }
   if (taxAmount > 0) {
-    journalLines.push({ accountCode: '3.3.1', description: `IVA compra ${order.order_number}`, debit: taxAmount, credit: 0 });
+    journalLines.push({ accountCode: ACC.IVA_DEDUCTIBLE, description: `IVA compra ${order.order_number}`, debit: taxAmount, credit: 0 });
   }
   journalLines.push({ accountCode: supplierAccountCode, description: `Fornecedor ${order.supplier_name}`, debit: 0, credit: subtotal + totalLandingCosts + taxAmount });
 
@@ -2230,8 +2258,8 @@ async function processTransferReceive(client, transferId, receivedQuantities, re
       referenceType: 'transfer', referenceId: transferId,
       branchId: transfer.from_branch_id, createdBy: receivedBy,
       lines: [
-        { accountCode: '2.2', description: `Entrada ${transfer.to_branch_name}`, debit: totalTransferValue, credit: 0 },
-        { accountCode: '2.2', description: `Saída ${transfer.from_branch_name}`, debit: 0, credit: totalTransferValue },
+        { accountCode: ACC.INVENTORY_STOCK, description: `Entrada ${transfer.to_branch_name}`, debit: totalTransferValue, credit: 0 },
+        { accountCode: ACC.INVENTORY_STOCK, description: `Saída ${transfer.from_branch_name}`, debit: 0, credit: totalTransferValue },
       ],
     });
   }
@@ -2366,14 +2394,14 @@ async function processPayment(client, paymentData) {
   }
 
   // Journal entry — prefer bank account for non-cash; fall back to caixa if bank not in COA
-  let cashAccountCode = paymentMethod === 'cash' ? '4.1.1' : '4.2.1';
+  let cashAccountCode = paymentMethod === 'cash' ? ACC.CASH : ACC.BANK;
   const preferredCash = await findAccountByCode(client, cashAccountCode);
   if (!preferredCash) {
-    const caixa = await findAccountByCode(client, '4.1.1');
+    const caixa = await findAccountByCode(client, ACC.CASH);
     if (!caixa) {
-      throw new Error(`Conta de tesouraria não encontrada no plano de contas (${cashAccountCode} / 4.1.1)`);
+      throw new Error(`Conta de tesouraria não encontrada no plano de contas (${cashAccountCode} / ${ACC.CASH})`);
     }
-    cashAccountCode = '4.1.1';
+    cashAccountCode = ACC.CASH;
   }
   const entityAccountCode = await getEntityAccountCode(client, entityType, entityId, entityName);
 

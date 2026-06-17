@@ -95,10 +95,10 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
     const total = roundMoney(sale.total);
     const paymentMethod = sale.payment_method || 'cash';
 
-    let cashAccountCode = paymentMethod === 'cash' ? '4.1.1' : '4.2.1';
+    let cashAccountCode = paymentMethod === 'cash' ? '451' : '431';
     if (paymentMethod === 'cash' && branchId) {
       const caixaResult = await client.query(
-        `SELECT code FROM chart_of_accounts WHERE code LIKE '4.1.%' AND level = 3 AND is_header = false
+        `SELECT code FROM chart_of_accounts WHERE code LIKE '45%' AND is_header = false
          AND branch_id = $1 AND is_active = true LIMIT 1`,
         [branchId],
       );
@@ -107,11 +107,11 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
 
     const reverseLines = [
       { accountCode: cashAccountCode, description: `Anulação ${invoiceNumber}`, debit: 0, credit: total },
-      { accountCode: '7.1.1', description: `Anulação receita ${invoiceNumber}`, debit: subtotal, credit: 0 },
+      { accountCode: '613', description: `Anulação receita ${invoiceNumber}`, debit: subtotal, credit: 0 },
     ];
     if (taxAmount > 0) {
       reverseLines.push({
-        accountCode: '3.3.1',
+        accountCode: '3452',
         description: `Anulação IVA ${invoiceNumber}`,
         debit: taxAmount,
         credit: 0,
@@ -135,8 +135,8 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
         branchId,
         createdBy: voidBy,
         lines: [
-          { accountCode: '2.2', description: 'Entrada mercadorias', debit: totalCOGS, credit: 0 },
-          { accountCode: '6.1', description: 'CMV reverso', debit: 0, credit: totalCOGS },
+          { accountCode: '261', description: 'Entrada mercadorias', debit: totalCOGS, credit: 0 },
+          { accountCode: '711', description: 'CMV reverso', debit: 0, credit: totalCOGS },
         ],
       });
     }

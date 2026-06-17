@@ -128,6 +128,7 @@ const MIGRATIONS = [
   '040_users_username.sql',
   '041_user_sessions_security.sql',
   '042_simplified_invoice_fs.sql',
+  '045_pgc_novo_com_iva.sql',
 ];
 
 /**

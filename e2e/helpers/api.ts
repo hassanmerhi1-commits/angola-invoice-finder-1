@@ -195,7 +195,7 @@ export async function seedSupplier(
     auth,
     supplierId: supplier.id,
     supplierName: supplier.name,
-    accountCode: supplier._accountCode || '3.2.1',
+    accountCode: supplier._accountCode || '321',
     nif: supplier.nif || nif,
   };
 }
@@ -274,8 +274,8 @@ export async function createPurchaseInvoiceApi(
         ivaAmount: ivaTotal,
       }],
       journalLines: [
-        { accountCode: '2.1.1', accountName: 'Mercadorias', debit: subtotal, credit: 0 },
-        { accountCode: '3.3.1', accountName: 'IVA Dedutível', debit: ivaTotal, credit: 0 },
+        { accountCode: '212', accountName: 'Mercadorias', debit: subtotal, credit: 0 },
+        { accountCode: '3451', accountName: 'IVA Dedutível', debit: ivaTotal, credit: 0 },
         { accountCode: supplier.accountCode, accountName: supplier.supplierName, debit: 0, credit: total },
       ],
     },

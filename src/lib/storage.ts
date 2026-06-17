@@ -517,9 +517,9 @@ export async function saveSale(sale: Sale): Promise<void> {
         warehouseId: sale.branchId,
       })),
       journalLines: [
-        { accountCode: sale.paymentMethod === 'cash' ? '4.1.1' : '4.2.1', debit: sale.total, credit: 0 },
-        { accountCode: '7.1.1', debit: 0, credit: sale.subtotal },
-        ...(sale.taxAmount > 0 ? [{ accountCode: '3.3.1', debit: 0, credit: sale.taxAmount }] : []),
+        { accountCode: sale.paymentMethod === 'cash' ? '451' : '431', debit: sale.total, credit: 0 },
+        { accountCode: '613', debit: 0, credit: sale.subtotal },
+        ...(sale.taxAmount > 0 ? [{ accountCode: '3452', debit: 0, credit: sale.taxAmount }] : []),
       ],
       ...(sale.paymentMethod !== 'cash' && sale.customerName ? {
         openItem: {
@@ -580,9 +580,9 @@ export async function saveSale(sale: Sale): Promise<void> {
 
     // Double-entry journal
     journalLines: [
-      { accountCode: sale.paymentMethod === 'cash' ? '4.1.1' : '4.2.1', debit: sale.total, credit: 0 },
-      { accountCode: '7.1.1', debit: 0, credit: sale.subtotal },
-      ...(sale.taxAmount > 0 ? [{ accountCode: '3.3.1', debit: 0, credit: sale.taxAmount }] : []),
+      { accountCode: sale.paymentMethod === 'cash' ? '451' : '431', debit: sale.total, credit: 0 },
+      { accountCode: '613', debit: 0, credit: sale.subtotal },
+      ...(sale.taxAmount > 0 ? [{ accountCode: '3452', debit: 0, credit: sale.taxAmount }] : []),
     ],
 
     // Open item for credit sales
@@ -1003,9 +1003,9 @@ export async function processPurchaseOrderReceive(
     stockEntries,
     priceUpdates,
     journalLines: [
-      { accountCode: '2.1.1', debit: order.subtotal + (order.freightCost || 0), credit: 0 },
-      ...(order.taxAmount > 0 ? [{ accountCode: '3.3.1', debit: order.taxAmount, credit: 0 }] : []),
-      { accountCode: '3.2.1', debit: 0, credit: totalWithTax },
+      { accountCode: '212', debit: order.subtotal + (order.freightCost || 0), credit: 0 },
+      ...(order.taxAmount > 0 ? [{ accountCode: '3451', debit: order.taxAmount, credit: 0 }] : []),
+      { accountCode: '321', debit: 0, credit: totalWithTax },
     ],
     entityBalanceUpdate: {
       entityType: 'supplier',

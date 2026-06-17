@@ -103,7 +103,7 @@ function resolvePurchaseInvoiceLandingCosts(inv) {
 
   const journal = Array.isArray(inv.journalLines) ? inv.journalLines : [];
   const fromJournal = journal
-    .filter((line) => String(line.accountCode || line.account_code || '').trim() === '6.2.6')
+    .filter((line) => String(line.accountCode || line.account_code || '').trim() === '752')
     .reduce((sum, line) => sum + Number(line.debit || 0), 0);
   return roundMoney(fromJournal);
 }

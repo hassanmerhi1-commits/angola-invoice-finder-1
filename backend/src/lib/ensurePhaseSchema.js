@@ -185,6 +185,78 @@ function ensureFiscalInvoiceSequencesSqlite(db) {
   }
 }
 
+/**
+ * Apply the Angola PGC (novo com IVA) chart of accounts ONCE per database.
+ * Fresh installs already get it from the seed; this brings EXISTING databases
+ * up to the new chart automatically at startup, just like a normal migration.
+ * Guarded by an app_meta flag so the destructive replace never re-runs and
+ * wipes dynamically-created sub-accounts (suppliers/clients/branch caixas).
+ */
+async function ensurePgcChartOfAccounts(db) {
+  const FLAG = 'pgc_novo_com_iva_applied';
+
+  // Ensure the app_meta key/value store exists (engine-aware DDL).
+  try {
+    if (db.engine === 'postgres') {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS app_meta (
+          key VARCHAR(64) PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+    } else if (db.sqlite) {
+      db.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS app_meta (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    }
+  } catch (err) {
+    console.warn('[SCHEMA] app_meta ensure (pgc):', err.message);
+  }
+
+  // One-time guard.
+  try {
+    const existing = await db.query('SELECT value FROM app_meta WHERE key = $1', [FLAG]);
+    if (existing.rows && existing.rows.length) return;
+  } catch (_) {
+    /* table unreadable — fall through and attempt to apply */
+  }
+
+  if (typeof db.resetChartOfAccountsToPgc !== 'function') return;
+
+  try {
+    const result = await db.resetChartOfAccountsToPgc();
+    console.log(`[SCHEMA] Angola PGC (novo com IVA) applied — ${result.active} active accounts`);
+  } catch (err) {
+    // Leave the flag unset so it retries on the next boot.
+    console.warn('[SCHEMA] PGC chart apply failed (will retry next boot):', err.message);
+    return;
+  }
+
+  try {
+    if (db.engine === 'postgres') {
+      await db.query(
+        `INSERT INTO app_meta (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+        [FLAG, '1'],
+      );
+    } else if (db.sqlite) {
+      db.sqlite
+        .prepare(
+          `INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, datetime('now'))
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+        )
+        .run(FLAG, '1');
+    }
+  } catch (err) {
+    console.warn('[SCHEMA] PGC flag write failed:', err.message);
+  }
+}
+
 async function ensurePhaseSchema(db) {
   const migrationsDir = path.join(__dirname, '../migrations');
 
@@ -212,6 +284,7 @@ async function ensurePhaseSchema(db) {
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureAuditLogActions(db);
+    await ensurePgcChartOfAccounts(db);
     console.log('[SCHEMA] PostgreSQL phase migrations applied');
     return;
   }
@@ -232,12 +305,14 @@ async function ensurePhaseSchema(db) {
       );
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
+    await ensurePgcChartOfAccounts(db);
     console.log('[SCHEMA] SQLite phase column patches applied');
   }
 }
 
 module.exports = {
   ensurePhaseSchema,
+  ensurePgcChartOfAccounts,
   ensureDocumentSequencesBranchScope,
   ensureCreditNoteRestoreStockColumn,
   ensureAuditLogActions,

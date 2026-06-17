@@ -14,10 +14,11 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
+import { api } from '@/lib/api/client';
 import {
   Search, Edit2, Trash2, RefreshCw,
   FileText, Receipt, CreditCard, Banknote,
-  ChevronRight, ChevronDown, Printer, Download, Eye
+  ChevronRight, ChevronDown, Printer, Download, Eye, RotateCcw
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NEXOR_TAB_TRIGGER, NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
@@ -29,15 +30,18 @@ import { SupplierFormDialog } from '@/components/suppliers/SupplierFormDialog';
 import { chartNewActionTab, type ChartNewAction } from '@/lib/chartOfAccountsNewActions';
 
 // Category tabs
+// Angola PGC (novo com IVA) — no-dot numbering. Tabs map to PGC class/main codes:
+// 31 Clientes, 32 Fornecedores, 45 Caixa, 42/43/44 Depósitos, 36/72 Pessoal,
+// class 6 Proveitos (revenue), class 7 Custos (expense), class 5 Capital.
 const CATEGORY_TABS = [
-  { key: 'clientes', labelKey: 'tabCustomers', filter: (a: Account) => a.code.startsWith('3.1') || a.code.startsWith('31') },
-  { key: 'fornecedores', labelKey: 'tabSuppliers', filter: (a: Account) => a.code.startsWith('3.2') || a.code.startsWith('32') },
-  { key: 'caixa', labelKey: 'tabCash', filter: (a: Account) => a.code.startsWith('4.1') || a.code.startsWith('41') },
-  { key: 'bancos', labelKey: 'tabBanks', filter: (a: Account) => a.code.startsWith('4.2') || a.code.startsWith('42') },
+  { key: 'clientes', labelKey: 'tabCustomers', filter: (a: Account) => a.code.startsWith('31') },
+  { key: 'fornecedores', labelKey: 'tabSuppliers', filter: (a: Account) => a.code.startsWith('32') },
+  { key: 'caixa', labelKey: 'tabCash', filter: (a: Account) => a.code.startsWith('45') },
+  { key: 'bancos', labelKey: 'tabBanks', filter: (a: Account) => a.code.startsWith('42') || a.code.startsWith('43') || a.code.startsWith('44') },
   { key: 'ativos', labelKey: 'tabAssets', filter: (a: Account) => a.account_type === 'asset' },
   { key: 'recebimentos', labelKey: 'tabRevenue', filter: (a: Account) => a.account_type === 'revenue' },
   { key: 'custos', labelKey: 'tabExpenses', filter: (a: Account) => a.account_type === 'expense' },
-  { key: 'funcionarios', labelKey: 'tabEmployees', filter: (a: Account) => a.code.startsWith('6.3') || a.code.startsWith('63') || a.code.startsWith('3.4') || a.code.startsWith('34') },
+  { key: 'funcionarios', labelKey: 'tabEmployees', filter: (a: Account) => a.code.startsWith('36') || a.code.startsWith('72') },
   { key: 'capital', labelKey: 'tabEquity', filter: (a: Account) => a.account_type === 'equity' },
   { key: 'todos', labelKey: 'tabAll', filter: () => true },
 ] as const;
@@ -45,26 +49,26 @@ const CATEGORY_TABS = [
 const ROOT_ACCOUNT_VALUE = '__root__';
 
 const TAB_ACCOUNT_DEFAULTS: Record<string, { accountType: AccountType; preferredParentCodes: string[] }> = {
-  clientes: { accountType: 'asset', preferredParentCodes: ['3.1', '3'] },
-  fornecedores: { accountType: 'liability', preferredParentCodes: ['3.2', '3'] },
-  caixa: { accountType: 'asset', preferredParentCodes: ['4.1', '4'] },
-  bancos: { accountType: 'asset', preferredParentCodes: ['4.2', '4'] },
-  ativos: { accountType: 'asset', preferredParentCodes: ['1', '2'] },
-  recebimentos: { accountType: 'revenue', preferredParentCodes: ['7.1', '7'] },
-  custos: { accountType: 'expense', preferredParentCodes: ['6.1', '6'] },
-  funcionarios: { accountType: 'expense', preferredParentCodes: ['6.3', '3.4'] },
-  capital: { accountType: 'equity', preferredParentCodes: ['5'] },
+  clientes: { accountType: 'asset', preferredParentCodes: ['311', '31'] },
+  fornecedores: { accountType: 'liability', preferredParentCodes: ['321', '32'] },
+  caixa: { accountType: 'asset', preferredParentCodes: ['45'] },
+  bancos: { accountType: 'asset', preferredParentCodes: ['43', '42', '44'] },
+  ativos: { accountType: 'asset', preferredParentCodes: ['11', '21', '26'] },
+  recebimentos: { accountType: 'revenue', preferredParentCodes: ['61', '62'] },
+  custos: { accountType: 'expense', preferredParentCodes: ['71', '75'] },
+  funcionarios: { accountType: 'expense', preferredParentCodes: ['72', '36'] },
+  capital: { accountType: 'equity', preferredParentCodes: ['51', '55'] },
 };
 
+// No-dot child codes: a child of "31" becomes "311", "312", … (next free numeric suffix).
 const buildSuggestedChildCode = (parentCode: string, siblingCodes: string[]) => {
-  const prefix = `${parentCode}.`;
   const nextIndex = siblingCodes.reduce((max, code) => {
-    if (!code.startsWith(prefix)) return max;
-    const firstSegment = code.slice(prefix.length).split('.')[0];
-    const parsed = Number(firstSegment);
+    if (!code.startsWith(parentCode) || code.length <= parentCode.length) return max;
+    const segment = code.slice(parentCode.length);
+    const parsed = Number(segment);
     return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
   }, 0) + 1;
-  return `${parentCode}.${nextIndex}`;
+  return `${parentCode}${nextIndex}`;
 };
 
 export default function ChartOfAccounts() {
@@ -303,6 +307,22 @@ export default function ChartOfAccounts() {
     setFormData(prev => ({ ...prev, account_type: type, account_nature: getDefaultNature(type) }));
   };
 
+  const [isReseeding, setIsReseeding] = useState(false);
+  const handleResetToPgc = async () => {
+    if (!window.confirm(t.chartOfAccountsUi.resetPgcConfirm)) return;
+    setIsReseeding(true);
+    try {
+      const response = await api.chartOfAccounts.reseed();
+      if (response.error) throw new Error(response.error);
+      await refetch();
+      toast.success(t.chartOfAccountsUi.resetPgcSuccess);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t.chartOfAccountsUi.resetPgcError);
+    } finally {
+      setIsReseeding(false);
+    }
+  };
+
   const selectedAccount = accounts.find(a => a.id === selectedAccountId);
   const selectedAccountInCurrentTab = selectedAccount && currentTabConfig.filter(selectedAccount) ? selectedAccount : null;
 
@@ -343,6 +363,9 @@ export default function ChartOfAccounts() {
         <div className="w-px h-5 bg-border mx-1" />
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={expandAll}>{t.chartOfAccountsUi.expand}</Button>
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={collapseAll}>{t.chartOfAccountsUi.collapse}</Button>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={handleResetToPgc} disabled={isReseeding} title={t.chartOfAccountsUi.resetPgcTooltip}>
+          <RotateCcw className={cn('w-3 h-3', isReseeding && 'animate-spin')} /> {t.chartOfAccountsUi.resetPgc}
+        </Button>
         <Button variant="outline" size="icon" className="h-7 w-7" onClick={refetch}><RefreshCw className="w-3 h-3" /></Button>
         <div className="flex-1" />
         <div className="relative">

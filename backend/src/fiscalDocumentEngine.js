@@ -193,13 +193,13 @@ async function processCreditNote(client, data) {
   }
 
   const journalLines = [
-    { accountCode: '7.1.1', description: `NC ${documentNumber}`, debit: subtotal, credit: 0 },
+    { accountCode: '613', description: `NC ${documentNumber}`, debit: subtotal, credit: 0 },
   ];
   if (taxAmount > 0) {
-    journalLines.push({ accountCode: '3.3.1', description: `IVA NC ${documentNumber}`, debit: taxAmount, credit: 0 });
+    journalLines.push({ accountCode: '3452', description: `IVA NC ${documentNumber}`, debit: taxAmount, credit: 0 });
   }
   journalLines.push({
-    accountCode: sale.payment_method === 'cash' ? '4.1.1' : '4.2.1',
+    accountCode: sale.payment_method === 'cash' ? '451' : '431',
     description: `NC ${documentNumber}`,
     debit: 0,
     credit: total,
@@ -222,8 +222,8 @@ async function processCreditNote(client, data) {
       branchId,
       createdBy: issuedBy,
       lines: [
-        { accountCode: '2.2', description: 'Entrada mercadorias', debit: totalCOGS, credit: 0 },
-        { accountCode: '6.1', description: 'CMV reverso', debit: 0, credit: totalCOGS },
+        { accountCode: '261', description: 'Entrada mercadorias', debit: totalCOGS, credit: 0 },
+        { accountCode: '711', description: 'CMV reverso', debit: 0, credit: totalCOGS },
       ],
     });
   }
@@ -374,15 +374,15 @@ async function processDebitNote(client, data) {
 
   const journalLines = [
     {
-      accountCode: '4.2.1',
+      accountCode: '431',
       description: `ND ${documentNumber}`,
       debit: total,
       credit: 0,
     },
-    { accountCode: '7.1.1', description: `ND ${documentNumber}`, debit: 0, credit: subtotal },
+    { accountCode: '613', description: `ND ${documentNumber}`, debit: 0, credit: subtotal },
   ];
   if (taxAmount > 0) {
-    journalLines.push({ accountCode: '3.3.1', description: `IVA ND ${documentNumber}`, debit: 0, credit: taxAmount });
+    journalLines.push({ accountCode: '3452', description: `IVA ND ${documentNumber}`, debit: 0, credit: taxAmount });
   }
 
   await createJournalEntry(client, {

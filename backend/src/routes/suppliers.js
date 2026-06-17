@@ -3,8 +3,12 @@ const express = require('express');
 const db = require('../db');
 const { openItemDebitAmountCase } = require('../lib/sqlDialect');
 
+// Angola PGC (novo com IVA): Fornecedores - correntes is account 321; supplier
+// sub-accounts are created as its children (321001, 321002, …).
+const SUPPLIER_PARENT_CODE = '321';
+
 /**
- * Auto-create a 3.2.XXX sub-account in chart_of_accounts for a supplier.
+ * Auto-create a 321XXX sub-account in chart_of_accounts for a supplier.
  * Idempotent — skips if an account with the same name already exists.
  */
 async function ensureSupplierSubAccount(client, supplierName, supplierNif) {
@@ -16,8 +20,8 @@ async function ensureSupplierSubAccount(client, supplierName, supplierNif) {
     ? await client.query(
         `SELECT code
          FROM chart_of_accounts
-         WHERE code LIKE '3.2.%'
-           AND level = 3
+         WHERE code LIKE '${SUPPLIER_PARENT_CODE}%'
+           AND level >= 3
            AND is_header = false
            AND (
              lower(name) = lower($1)
@@ -29,8 +33,8 @@ async function ensureSupplierSubAccount(client, supplierName, supplierNif) {
     : await client.query(
         `SELECT code
          FROM chart_of_accounts
-         WHERE code LIKE '3.2.%'
-           AND level = 3
+         WHERE code LIKE '${SUPPLIER_PARENT_CODE}%'
+           AND level >= 3
            AND is_header = false
            AND lower(name) = lower($1)
          LIMIT 1`,
@@ -38,22 +42,22 @@ async function ensureSupplierSubAccount(client, supplierName, supplierNif) {
       );
   if (existing.rows.length > 0) return existing.rows[0].code;
 
-  // Find parent 3.2
+  // Find parent 321 (Fornecedores - correntes)
   const parent = await client.query(
-    `SELECT id FROM chart_of_accounts WHERE code = '3.2' AND is_active = true LIMIT 1`
+    `SELECT id FROM chart_of_accounts WHERE code = '${SUPPLIER_PARENT_CODE}' AND is_active = true LIMIT 1`
   );
   if (parent.rows.length === 0) {
-    console.warn('[SUPPLIERS] Parent account 3.2 (Fornecedores) not found — skipping sub-account');
+    console.warn('[SUPPLIERS] Parent account 321 (Fornecedores - correntes) not found — skipping sub-account');
     return null;
   }
   const parentId = parent.rows[0].id;
 
   // Next sequence
   const seqResult = await client.query(
-    `SELECT COUNT(*) as count FROM chart_of_accounts WHERE code LIKE '3.2.%' AND level = 3 AND is_header = false`
+    `SELECT COUNT(*) as count FROM chart_of_accounts WHERE code LIKE '${SUPPLIER_PARENT_CODE}%' AND level >= 3 AND is_header = false`
   );
   const nextSeq = parseInt(seqResult.rows[0].count) + 1;
-  const code = `3.2.${nextSeq.toString().padStart(3, '0')}`;
+  const code = `${SUPPLIER_PARENT_CODE}${nextSeq.toString().padStart(3, '0')}`;
 
   await client.query(
     `INSERT INTO chart_of_accounts

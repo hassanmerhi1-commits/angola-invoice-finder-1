@@ -35,6 +35,7 @@ export default function POS() {
   const { completeSale, sales, refreshSales } = useSales(currentBranch?.id);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [pendingQty, setPendingQty] = useState('1');
   const [searchHighlightIndex, setSearchHighlightIndex] = useState(-1);
   const [selectedCartProductId, setSelectedCartProductId] = useState<string | null>(null);
   const [focusCartQtyProductId, setFocusCartQtyProductId] = useState<string | null>(null);
@@ -45,6 +46,7 @@ export default function POS() {
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
   const [endOfDayOpen, setEndOfDayOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const qtyInputRef = useRef<HTMLInputElement>(null);
 
   const navigableSearchResults = useMemo(
     () => filterPosProductsBySearch(products, searchTerm),
@@ -66,14 +68,24 @@ export default function POS() {
     setSearchHighlightIndex(-1);
   }, []);
 
+  const focusQty = useCallback(() => {
+    qtyInputRef.current?.focus();
+    qtyInputRef.current?.select();
+  }, []);
+
   const addProductToCart = useCallback(
     (product: Product) => {
-      cart.addItem(product);
+      const parsedQty = parseFloat(pendingQty);
+      const qty = Number.isFinite(parsedQty) && parsedQty > 0 ? parsedQty : 1;
+      cart.addItem(product, qty);
       setSelectedCartProductId(product.id);
-      setFocusCartQtyProductId(product.id);
+      // Keep focus on the POS qty box for the next product instead of grabbing
+      // focus into the cart line (which would send Tab to the checkout button).
       toast.success(t.posUi.itemAdded.replace('{name}', product.name));
+      setPendingQty('1');
+      setTimeout(focusQty, 0);
     },
-    [cart, t.posUi],
+    [cart, pendingQty, focusQty, t.posUi],
   );
 
   const handleSearchSubmit = useCallback(() => {
@@ -102,7 +114,20 @@ export default function POS() {
         handleSearchSubmit();
         return;
       }
-      if (navigableSearchResults.length === 0) return;
+      // Tab (forward) loops back to the qty box to start the next product.
+      if (e.key === 'Tab' && !e.shiftKey) {
+        e.preventDefault();
+        focusQty();
+        return;
+      }
+      if (navigableSearchResults.length === 0) {
+        // Nothing to navigate — Arrow Down jumps to the qty box.
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          focusQty();
+        }
+        return;
+      }
 
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -118,7 +143,7 @@ export default function POS() {
         });
       }
     },
-    [handleSearchSubmit, navigableSearchResults],
+    [handleSearchSubmit, navigableSearchResults, focusQty],
   );
 
   const handleSelectCartLine = useCallback((productId: string) => {
@@ -379,24 +404,44 @@ export default function POS() {
           onProductSelect={(product) => {
             addProductToCart(product);
             clearSearch();
-            focusSearch();
           }}
         />
       )}
 
       {/* Bottom: search + tools */}
       <div className="shrink-0 p-3 border-t bg-background space-y-2">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <div className="flex items-center gap-2">
           <Input
-            ref={searchInputRef}
-            placeholder={t.posUi.searchAndAdd}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            className="pl-10 h-11"
-            autoComplete="off"
+            ref={qtyInputRef}
+            type="number"
+            min={1}
+            step="any"
+            inputMode="decimal"
+            value={pendingQty}
+            onChange={(e) => setPendingQty(e.target.value)}
+            onFocus={(e) => e.currentTarget.select()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                focusSearch();
+              }
+            }}
+            className="h-11 w-16 text-center shrink-0"
+            title={t.common.quantity}
+            aria-label={t.common.quantity}
           />
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              ref={searchInputRef}
+              placeholder={t.posUi.searchAndAdd}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              className="pl-10 h-11"
+              autoComplete="off"
+            />
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <BranchSelector compact />

@@ -73,33 +73,33 @@ async function resolveSequenceScopeForRequest(client, documentType, branchId) {
 
 async function ensureFreightExpenseAccount(client) {
   const existing = await client.query(
-    `SELECT id FROM chart_of_accounts WHERE code = '6.2.6' AND is_active = true LIMIT 1`
+    `SELECT id FROM chart_of_accounts WHERE code = '752' AND is_active = true LIMIT 1`
   );
 
   if (existing.rows.length > 0) return;
 
   const parentResult = await client.query(
-    `SELECT id FROM chart_of_accounts WHERE code = '6.2' AND is_active = true LIMIT 1`
+    `SELECT id FROM chart_of_accounts WHERE code = '75' AND is_active = true LIMIT 1`
   );
 
   if (parentResult.rows.length === 0) {
-    throw new Error('Conta 6.2 não encontrada para lançar frete');
+    throw new Error('Conta 75 não encontrada para lançar frete');
   }
 
   await client.query(
     `INSERT INTO chart_of_accounts
      (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active, opening_balance, current_balance)
-     VALUES ($1, '6.2.6', 'Transporte sobre Compras', 'expense', 'debit', $2, 3, false, true, 0, 0)
+     VALUES ($1, '752', 'Fornecimentos e serviços de terceiros', 'expense', 'debit', $2, 2, false, true, 0, 0)
      ON CONFLICT (code) DO NOTHING`,
     [randomUUID(), parentResult.rows[0].id]
   );
 }
 
 async function ensureJournalLineAccounts(client, journalLines = [], entityBalanceUpdate = null, openItem = null) {
+  // Angola PGC (novo com IVA): dynamic sub-accounts live under 321 (suppliers) and 311 (clients).
   const configs = [
-    { pattern: /^3\.2\.\d+$/i, parentCode: '3.2', accountType: 'liability', accountNature: 'credit' },
-    { pattern: /^3\.3\.\d+$/i, parentCode: '3.3', accountType: 'liability', accountNature: 'debit' },
-    { pattern: /^2\.1\.\d+$/i, parentCode: '2.1', accountType: 'asset', accountNature: 'debit' },
+    { pattern: /^321\d+$/i, parentCode: '321', accountType: 'liability', accountNature: 'credit' },
+    { pattern: /^311\d+$/i, parentCode: '311', accountType: 'asset', accountNature: 'debit' },
   ];
 
   for (const line of journalLines) {
@@ -142,14 +142,14 @@ async function ensureJournalLineAccounts(client, journalLines = [], entityBalanc
 }
 
 async function ensureSupplierJournalAccounts(client, journalLines = [], entityBalanceUpdate = null, openItem = null) {
-  const supplierLines = journalLines.filter((line) => /^3\.2\.\d+$/i.test(String(line.accountCode || '').trim()));
+  const supplierLines = journalLines.filter((line) => /^321\d+$/i.test(String(line.accountCode || '').trim()));
   if (supplierLines.length === 0) return;
 
   const parent = await client.query(
-    `SELECT id FROM chart_of_accounts WHERE code = '3.2' AND is_active = true LIMIT 1`
+    `SELECT id FROM chart_of_accounts WHERE code = '321' AND is_active = true LIMIT 1`
   );
   if (parent.rows.length === 0) {
-    throw new Error('Conta 3.2 não encontrada para lançar fornecedor');
+    throw new Error('Conta 321 não encontrada para lançar fornecedor');
   }
 
   const parentId = parent.rows[0].id;

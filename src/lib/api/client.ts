@@ -444,7 +444,7 @@ async function ensureSupplierSubAccountElectron(supplierName: string, supplierNi
   try {
     const existing = await ipcQuery<any>(
       `SELECT code FROM chart_of_accounts
-       WHERE code LIKE '3.2.%' AND level = 3 AND is_header = false
+       WHERE code LIKE '321%' AND level >= 3 AND is_header = false
          AND (name = $1 OR ($2 IS NOT NULL AND $2 != '' AND description LIKE '%' || $2 || '%'))
        ORDER BY code
        LIMIT 1`,
@@ -456,7 +456,7 @@ async function ensureSupplierSubAccountElectron(supplierName: string, supplierNi
     }
 
     const parent = await ipcQuery<any>(
-      `SELECT id FROM chart_of_accounts WHERE code = '3.2' AND is_active = true LIMIT 1`
+      `SELECT id FROM chart_of_accounts WHERE code = '321' AND is_active = true LIMIT 1`
     );
 
     const parentId = parent.data?.[0]?.id;
@@ -465,11 +465,11 @@ async function ensureSupplierSubAccountElectron(supplierName: string, supplierNi
     const seqResult = await ipcQuery<any>(
       `SELECT COUNT(*)::int AS count
        FROM chart_of_accounts
-       WHERE code LIKE '3.2.%' AND level = 3 AND is_header = false`
+       WHERE code LIKE '321%' AND level >= 3 AND is_header = false`
     );
 
     const nextSeq = Number(seqResult.data?.[0]?.count || 0) + 1;
-    const code = `3.2.${String(nextSeq).padStart(3, '0')}`;
+    const code = `321${String(nextSeq).padStart(3, '0')}`;
 
     const insertResult = await ipcInsert('chart_of_accounts', {
       id: generateId(),
@@ -1389,6 +1389,10 @@ export const api = {
       if (isElectronMode()) return ipcDelete('chart_of_accounts', id);
       return apiFetch<any>(`/chart-of-accounts/${id}`, { method: 'DELETE' });
     },
+    reseed: () => apiFetch<{ success: boolean; active: number; seeded: number }>(
+      '/chart-of-accounts/reseed',
+      { method: 'POST' },
+    ),
     getLedger: async (id: string, startDate?: string, endDate?: string) => {
       const p = new URLSearchParams();
       if (startDate) p.append('start_date', startDate);

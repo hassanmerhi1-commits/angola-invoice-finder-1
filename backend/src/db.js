@@ -621,14 +621,14 @@ function ensureAppTablesAndColumns() {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     [
-      ['IVA14', 'IVA Normal', 14, 'IVA', '3.3.2', '3.3.1', 'Taxa normal de IVA em Angola'],
-      ['IVA0', 'IVA Zero', 0, 'IVA', '3.3.2', '3.3.1', 'Taxa zero de IVA'],
+      ['IVA14', 'IVA Normal', 14, 'IVA', '3452', '3451', 'Taxa normal de IVA em Angola'],
+      ['IVA0', 'IVA Zero', 0, 'IVA', '3452', '3451', 'Taxa zero de IVA'],
       ['ISENTO', 'Isento de IVA', 0, 'IVA', null, null, 'Operacoes isentas de IVA'],
-      ['IVA5', 'IVA Reduzida', 5, 'IVA', '3.3.2', '3.3.1', 'Taxa reduzida de IVA'],
-      ['IVA7', 'IVA Intermedia', 7, 'IVA', '3.3.2', '3.3.1', 'Taxa intermedia de IVA'],
-      ['RET3.5', 'Retencao na Fonte 3.5%', 3.5, 'RETENCAO', '3.4.1', '3.4.1', 'Retencao na fonte de rendimentos'],
-      ['RET6.5', 'Retencao na Fonte 6.5%', 6.5, 'RETENCAO', '3.4.1', '3.4.1', 'Retencao na fonte de servicos'],
-      ['IS', 'Imposto de Selo', 0.1, 'IS', '3.5.1', '3.5.1', 'Imposto de selo'],
+      ['IVA5', 'IVA Reduzida', 5, 'IVA', '3452', '3451', 'Taxa reduzida de IVA'],
+      ['IVA7', 'IVA Intermedia', 7, 'IVA', '3452', '3451', 'Taxa intermedia de IVA'],
+      ['RET3.5', 'Retencao na Fonte 3.5%', 3.5, 'RETENCAO', '343', '343', 'Retencao na fonte de rendimentos'],
+      ['RET6.5', 'Retencao na Fonte 6.5%', 6.5, 'RETENCAO', '343', '343', 'Retencao na fonte de servicos'],
+      ['IS', 'Imposto de Selo', 0.1, 'IS', '349', '349', 'Imposto de selo'],
     ].forEach((row) => insertTaxCode.run(...row));
   }
 
@@ -1293,43 +1293,14 @@ function repairMisboundProductColumns() {
   }
 }
 
+// Angola PGC (novo com IVA) — generated from the official chart spreadsheet.
+const { PGC_ACCOUNTS } = require('./lib/pgcChartOfAccounts');
+
+const coaIdForCode = (code) => `coa-${String(code).replace(/[^A-Za-z0-9]/g, '-')}`;
+
 function seedDefaultChartOfAccounts() {
   if (!sqlite) return;
 
-  const accounts = [
-    ['1', 'Meios Fixos e Investimentos', 'asset', 'debit', 1, 1, null],
-    ['2', 'Existências', 'asset', 'debit', 1, 1, null],
-    ['2.1', 'Compras', 'asset', 'debit', 2, 1, '2'],
-    ['2.1.1', 'Mercadorias', 'asset', 'debit', 3, 0, '2.1'],
-    ['2.2', 'Mercadorias', 'asset', 'debit', 2, 0, '2'],
-    ['3', 'Terceiros', 'asset', 'debit', 1, 1, null],
-    ['3.1', 'Clientes', 'asset', 'debit', 2, 0, '3'],
-    ['3.1.1', 'Clientes c/c', 'asset', 'debit', 3, 0, '3.1'],
-    ['3.2', 'Fornecedores', 'liability', 'credit', 2, 0, '3'],
-    ['3.2.1', 'Fornecedores c/c', 'liability', 'credit', 3, 0, '3.2'],
-    ['3.3', 'Estado e Outros Entes Públicos', 'liability', 'credit', 2, 1, '3'],
-    ['3.3.1', 'IVA Dedutível', 'liability', 'debit', 3, 0, '3.3'],
-    ['3.3.2', 'IVA Liquidado', 'liability', 'credit', 3, 0, '3.3'],
-    ['3.4', 'Pessoal', 'liability', 'credit', 2, 1, '3'],
-    ['3.4.1', 'Retenção na Fonte a Pagar', 'liability', 'credit', 3, 0, '3.4'],
-    ['3.5', 'Outros Impostos', 'liability', 'credit', 2, 1, '3'],
-    ['3.5.1', 'Imposto de Selo a Pagar', 'liability', 'credit', 3, 0, '3.5'],
-    ['4', 'Meios Monetários', 'asset', 'debit', 1, 1, null],
-    ['4.1', 'Caixa', 'asset', 'debit', 2, 0, '4'],
-    ['4.1.1', 'Caixa Principal', 'asset', 'debit', 3, 0, '4.1'],
-    ['4.2', 'Depósitos à Ordem', 'asset', 'debit', 2, 0, '4'],
-    ['4.2.1', 'Banco Principal', 'asset', 'debit', 3, 0, '4.2'],
-    ['5', 'Capital Próprio', 'equity', 'credit', 1, 1, null],
-    ['6', 'Gastos e Perdas', 'expense', 'debit', 1, 1, null],
-    ['6.1', 'Custo das Mercadorias Vendidas', 'expense', 'debit', 2, 0, '6'],
-    ['6.2', 'Fornecimentos e Serviços Externos', 'expense', 'debit', 2, 1, '6'],
-    ['6.2.6', 'Transporte sobre Compras', 'expense', 'debit', 3, 0, '6.2'],
-    ['7', 'Rendimentos e Ganhos', 'revenue', 'credit', 1, 1, null],
-    ['7.1', 'Vendas', 'revenue', 'credit', 2, 0, '7'],
-    ['7.1.1', 'Vendas de Mercadorias', 'revenue', 'credit', 3, 0, '7.1'],
-  ];
-
-  const idForCode = (code) => `coa-${String(code).replace(/[^A-Za-z0-9]/g, '-')}`;
   const insert = sqlite.prepare(`
     INSERT OR IGNORE INTO chart_of_accounts
       (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
@@ -1337,9 +1308,19 @@ function seedDefaultChartOfAccounts() {
   `);
   const updateParent = sqlite.prepare('UPDATE chart_of_accounts SET parent_id = ? WHERE code = ?');
 
-  for (const [code, name, type, nature, level, isHeader, parentCode] of accounts) {
-    insert.run(idForCode(code), code, name, type, nature, parentCode ? idForCode(parentCode) : null, level, isHeader);
-    if (parentCode) updateParent.run(idForCode(parentCode), code);
+  // PGC_ACCOUNTS is sorted by code so parents are always inserted before children.
+  for (const a of PGC_ACCOUNTS) {
+    insert.run(
+      coaIdForCode(a.code),
+      a.code,
+      a.name,
+      a.account_type,
+      a.account_nature,
+      a.parent_code ? coaIdForCode(a.parent_code) : null,
+      a.level,
+      a.is_header ? 1 : 0,
+    );
+    if (a.parent_code) updateParent.run(coaIdForCode(a.parent_code), a.code);
   }
 
   sqlite.exec(`
@@ -1349,6 +1330,76 @@ function seedDefaultChartOfAccounts() {
       WHERE child.parent_id = chart_of_accounts.id AND child.is_active = 1
     )
   `);
+}
+
+/**
+ * Replace the entire chart of accounts with the Angola PGC (novo com IVA).
+ * Engine-agnostic (works on SQLite and PostgreSQL through `query`).
+ *
+ * Strategy (non-destructive to posted journals):
+ *   1. Deactivate every existing account so anything outside the PGC disappears.
+ *   2. Upsert each PGC account as active (parents first — PGC_ACCOUNTS is sorted by code).
+ *   3. Best-effort hard-delete the leftover deactivated accounts that carry no journal lines.
+ *   4. Recompute children_count.
+ */
+async function resetChartOfAccountsToPgc() {
+  // 1. Deactivate every existing account so anything outside the PGC disappears.
+  await query('UPDATE chart_of_accounts SET is_active = false');
+
+  // 2. Upsert each PGC account as active. New rows get a real UUID so the same
+  //    code path works on PostgreSQL (uuid id column) and SQLite (text id).
+  //    parent_id is wired in a second pass to avoid ordering / FK issues.
+  for (const a of PGC_ACCOUNTS) {
+    const updated = await query(
+      `UPDATE chart_of_accounts
+         SET name = $1, account_type = $2, account_nature = $3,
+             level = $4, is_header = $5, is_active = true
+       WHERE code = $6`,
+      [a.name, a.account_type, a.account_nature, a.level, !!a.is_header, a.code],
+    );
+    if (!updated.rowCount) {
+      await query(
+        `INSERT INTO chart_of_accounts
+           (id, code, name, account_type, account_nature, level, is_header, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
+        [crypto.randomUUID(), a.code, a.name, a.account_type, a.account_nature, a.level, !!a.is_header],
+      );
+    }
+  }
+
+  // 3. Wire parent_id by code (codes are unique; engine-agnostic).
+  const idRows = await query('SELECT id, code FROM chart_of_accounts WHERE is_active = true');
+  const idByCode = new Map((idRows.rows || []).map((r) => [r.code, r.id]));
+  for (const a of PGC_ACCOUNTS) {
+    const parentId = a.parent_code ? (idByCode.get(a.parent_code) ?? null) : null;
+    await query('UPDATE chart_of_accounts SET parent_id = $1 WHERE code = $2', [parentId, a.code]);
+  }
+
+  const pgcCodes = PGC_ACCOUNTS.map((a) => a.code);
+  const placeholders = pgcCodes.map((_, i) => `$${i + 1}`).join(', ');
+  try {
+    await query(
+      `DELETE FROM chart_of_accounts
+        WHERE is_active = false
+          AND code NOT IN (${placeholders})
+          AND id NOT IN (SELECT account_id FROM journal_entry_lines)
+          AND id NOT IN (SELECT parent_id FROM chart_of_accounts WHERE parent_id IS NOT NULL)`,
+      pgcCodes,
+    );
+  } catch (e) {
+    console.warn('[DB] Chart reseed cleanup skipped:', e.message);
+  }
+
+  await query(`
+    UPDATE chart_of_accounts
+    SET children_count = (
+      SELECT COUNT(*) FROM chart_of_accounts child
+      WHERE child.parent_id = chart_of_accounts.id AND child.is_active = true
+    )
+  `);
+
+  const counts = await query('SELECT COUNT(*) AS total FROM chart_of_accounts WHERE is_active = true');
+  return { active: Number(counts.rows?.[0]?.total || 0), seeded: PGC_ACCOUNTS.length };
 }
 
 function bootstrapSchemaAndSeed() {
@@ -1548,8 +1599,8 @@ function bootstrapSchemaAndSeed() {
       warehouse_name TEXT DEFAULT '',
       price_type TEXT DEFAULT 'last_price',
       address TEXT DEFAULT '',
-      purchase_account_code TEXT DEFAULT '2.1.1',
-      iva_account_code TEXT DEFAULT '3.3.1',
+      purchase_account_code TEXT DEFAULT '212',
+      iva_account_code TEXT DEFAULT '3451',
       transaction_type TEXT DEFAULT 'ALL',
       currency_rate REAL NOT NULL DEFAULT 1,
       tax_rate_2 REAL NOT NULL DEFAULT 0,
@@ -1853,4 +1904,5 @@ module.exports = {
   closeSqliteConnection,
   reopenSqliteConnection,
   openSqliteConnection,
+  resetChartOfAccountsToPgc,
 };

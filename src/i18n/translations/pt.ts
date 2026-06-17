@@ -3864,7 +3864,7 @@ export const pt: TranslationKeys = {
     line: "Linha",
     account: "Conta",
     accountName: "Nome da Conta",
-    accountCodeExample: "Ex: 4.1.1",
+    accountCodeExample: "Ex: 451",
     searchAccountPlaceholder: "Pesquisar conta...",
     noAccountsFound: "Nenhuma conta encontrada",
     lineDescriptionPlaceholder: "Descrição...",
@@ -4818,6 +4818,11 @@ export const pt: TranslationKeys = {
 
     expand: "Expandir",
     collapse: "Recolher",
+    resetPgc: "Repor PGC",
+    resetPgcTooltip: "Substituir o plano pelo PGC oficial de Angola (novo com IVA)",
+    resetPgcConfirm: "Isto substitui todo o plano de contas pelo PGC de Angola (novo com IVA). As contas que não constam do PGC são removidas (as que não têm lançamentos são eliminadas; as restantes são desativadas). Continuar?",
+    resetPgcSuccess: "Plano de contas reposto para o PGC de Angola.",
+    resetPgcError: "Falha ao repor o plano de contas.",
 
     searchPlaceholder: "Pesquisar conta...",
 
@@ -4838,7 +4843,7 @@ export const pt: TranslationKeys = {
     newTitle: "Nova Conta",
 
     codeLabel: "Código *",
-    codePlaceholder: "ex: 4.1.1",
+    codePlaceholder: "ex: 451",
     typeRequiredLabel: "Tipo *",
     typeAsset: "Activo",
     typeLiability: "Passivo",

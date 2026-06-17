@@ -408,9 +408,9 @@ export function PurchaseReturnsTab({
       };
 
       // Reverse accounting — debit supplier (reduce payable), credit purchase account + IVA
-      const purchaseAccountCode = selectedInvoice.purchaseAccountCode || '2.1.1';
-      const ivaAccountCode = selectedInvoice.ivaAccountCode || '3.3.1';
-      const supplierAccountCode = selectedInvoice.supplierAccountCode || '3.2.1';
+      const purchaseAccountCode = selectedInvoice.purchaseAccountCode || '212';
+      const ivaAccountCode = selectedInvoice.ivaAccountCode || '3451';
+      const supplierAccountCode = selectedInvoice.supplierAccountCode || '321';
 
       const txPayload: Parameters<typeof processTransaction>[0] = {
           transactionType: 'credit_note',

@@ -3861,7 +3861,7 @@ export const en = {
     line: "Line",
     account: "Account",
     accountName: "Account name",
-    accountCodeExample: "e.g., 4.1.1",
+    accountCodeExample: "e.g., 451",
     searchAccountPlaceholder: "Search account...",
     noAccountsFound: "No accounts found",
     lineDescriptionPlaceholder: "Description...",
@@ -4815,6 +4815,11 @@ export const en = {
 
     expand: "Expand",
     collapse: "Collapse",
+    resetPgc: "Reset PGC",
+    resetPgcTooltip: "Replace the chart with the official Angola PGC (novo com IVA)",
+    resetPgcConfirm: "This replaces the entire chart of accounts with the Angola PGC (novo com IVA). Accounts not in the PGC are removed (those without postings are deleted; the rest are deactivated). Continue?",
+    resetPgcSuccess: "Chart of accounts reset to the Angola PGC.",
+    resetPgcError: "Failed to reset the chart of accounts.",
 
     searchPlaceholder: "Search account...",
 
@@ -4835,7 +4840,7 @@ export const en = {
     newTitle: "New account",
 
     codeLabel: "Code *",
-    codePlaceholder: "e.g., 4.1.1",
+    codePlaceholder: "e.g., 451",
     typeRequiredLabel: "Type *",
     typeAsset: "Asset",
     typeLiability: "Liability",
@@ -4844,7 +4849,7 @@ export const en = {
     typeExpense: "Expense",
 
     nameLabel: "Name *",
-    namePlaceholder: "e.g., Main Cash",
+    namePlaceholder: "e.g., Caixa",
     parentAccountLabel: "Parent account",
     rootPlaceholder: "None (root account)",
     rootOption: "None (root account)",

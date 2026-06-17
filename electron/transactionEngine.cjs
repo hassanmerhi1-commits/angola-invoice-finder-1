@@ -174,8 +174,8 @@ async function createJournalEntry(client, params) {
 }
 
 async function getEntityAccountCode(client, entityType, entityId, entityName) {
-  const prefix = entityType === 'supplier' ? '3.2.' : '3.1.';
-  const fallback = entityType === 'supplier' ? '3.2.1' : '3.1.1';
+  const prefix = entityType === 'supplier' ? '321' : '311';
+  const fallback = entityType === 'supplier' ? '321' : '311';
   if (!entityId && !entityName) return fallback;
   try {
     if (entityName) {
@@ -197,26 +197,26 @@ async function getEntityAccountCode(client, entityType, entityId, entityName) {
 }
 
 async function ensureFreightExpenseAccount(client) {
-  const existing = await findAccountByCode(client, '6.2.6');
+  const existing = await findAccountByCode(client, '752');
   if (existing) return existing.code;
 
   const parentResult = await client.query(
-    `SELECT id FROM chart_of_accounts WHERE code = '6.2' AND is_active = true LIMIT 1`
+    `SELECT id FROM chart_of_accounts WHERE code = '75' AND is_active = true LIMIT 1`
   );
 
   if (parentResult.rows.length === 0) {
-    throw new Error('Conta 6.2 não encontrada para lançar frete');
+    throw new Error('Conta 75 não encontrada para lançar frete');
   }
 
   await client.query(
     `INSERT INTO chart_of_accounts
      (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active, opening_balance, current_balance)
-     VALUES ($1, '6.2.6', 'Transporte sobre Compras', 'expense', 'debit', $2, 3, false, true, 0, 0)
+     VALUES ($1, '752', 'Transporte sobre Compras', 'expense', 'debit', $2, 2, false, true, 0, 0)
      ON CONFLICT (code) DO NOTHING`,
     [randomUUID(), parentResult.rows[0].id]
   );
 
-  return '6.2.6';
+  return '752';
 }
 
 async function createOpenItem(client, params) {
@@ -325,13 +325,13 @@ async function processPurchaseReceive(client, pool, orderId, receivedQuantities,
   const freightExpenseAccountCode = totalLandingCosts > 0 ? await ensureFreightExpenseAccount(client) : null;
 
   const journalLines = [
-    { accountCode: '2.1.1', description: `Mercadoria ${order.order_number}`, debit: subtotal, credit: 0 },
+    { accountCode: '212', description: `Mercadoria ${order.order_number}`, debit: subtotal, credit: 0 },
   ];
   if (totalLandingCosts > 0 && freightExpenseAccountCode) {
     journalLines.push({ accountCode: freightExpenseAccountCode, description: `Frete ${order.order_number}`, debit: totalLandingCosts, credit: 0 });
   }
   if (taxAmount > 0) {
-    journalLines.push({ accountCode: '3.3.1', description: `IVA compra ${order.order_number}`, debit: taxAmount, credit: 0 });
+    journalLines.push({ accountCode: '3451', description: `IVA compra ${order.order_number}`, debit: taxAmount, credit: 0 });
   }
   journalLines.push({ accountCode: supplierAccountCode, description: `Fornecedor ${order.supplier_name}`, debit: 0, credit: subtotal + totalLandingCosts + taxAmount });
 

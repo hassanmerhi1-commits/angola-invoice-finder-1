@@ -228,7 +228,7 @@ async function allocateUniqueSaleInvoiceNumber(client, documentType, prefix, sco
 }
 
 /**
- * Find account by code (e.g., '4.1.1' for Caixa Principal)
+ * Find account by code (e.g., '451' for Caixa)
  */
 async function findAccountByCode(client, code) {
   const result = await client.query(

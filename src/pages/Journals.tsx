@@ -195,9 +195,9 @@ function useJournalEntries(
             isPosted: true,
             createdBy: sale.cashierName || ui.systemUser,
             lines: [
-              { id: `${id}_1`, accountCode: '4.1.1', accountName: 'Caixa', description: 'Recebimento', debit: sale.total || 0, credit: 0 },
-              { id: `${id}_2`, accountCode: '7.1.1', accountName: ui.salesOfMerchandise, description: sale.invoiceNumber || '', debit: 0, credit: (sale.subtotal || sale.total || 0) },
-              ...(sale.taxAmount ? [{ id: `${id}_3`, accountCode: '2.4.3', accountName: 'IVA a Pagar', description: 'IVA', debit: 0, credit: sale.taxAmount }] : []),
+              { id: `${id}_1`, accountCode: '451', accountName: 'Caixa', description: 'Recebimento', debit: sale.total || 0, credit: 0 },
+              { id: `${id}_2`, accountCode: '613', accountName: ui.salesOfMerchandise, description: sale.invoiceNumber || '', debit: 0, credit: (sale.subtotal || sale.total || 0) },
+              ...(sale.taxAmount ? [{ id: `${id}_3`, accountCode: '3452', accountName: 'IVA Liquidado', description: 'IVA', debit: 0, credit: sale.taxAmount }] : []),
             ],
           });
         }

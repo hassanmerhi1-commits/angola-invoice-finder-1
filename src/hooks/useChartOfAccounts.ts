@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/client';
 import { Account, AccountFormData, TrialBalanceRow, BalanceSheetAccountRow, AccountType } from '@/types/accounting';
 import { ensureBranchCaixaAccounts } from '@/lib/chartOfAccountsEngine';
+import { PGC_ACCOUNTS } from '@/lib/pgcChartOfAccounts';
 import { useTranslation } from '@/i18n';
 
 const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts';
@@ -16,51 +17,21 @@ const isOfflineError = (error: unknown): boolean => {
 
 const sortAccountsByCode = (items: Account[]) => [...items].sort((a, b) => a.code.localeCompare(b.code));
 
-const createSeedChartOfAccounts = (t: any): Account[] => {
+// Build the local fallback chart from the Angola PGC (novo com IVA) dataset.
+// (The `t` argument is kept for signature compatibility; PGC names are canonical Portuguese.)
+const createSeedChartOfAccounts = (_t?: any): Account[] => {
   const timestamp = nowIso();
-  const seedRows: Array<{
-    code: string;
-    name: string;
-    account_type: AccountType;
-    account_nature: 'debit' | 'credit';
-    level: number;
-    is_header: boolean;
-    parent_code?: string;
-  }> = [
-    { code: '1', name: t.chartOfAccountsSeed.fixedAssetsAndInvestments, account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
-    { code: '2', name: t.chartOfAccountsSeed.inventories, account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
-    { code: '2.1', name: t.chartOfAccountsSeed.purchaseOfGoods, account_type: 'asset', account_nature: 'debit', level: 2, is_header: false, parent_code: '2' },
-    { code: '2.2', name: t.chartOfAccountsSeed.goods, account_type: 'asset', account_nature: 'debit', level: 2, is_header: false, parent_code: '2' },
-    { code: '3', name: t.chartOfAccountsSeed.thirdParties, account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
-    { code: '3.1', name: t.chartOfAccountsSeed.customers, account_type: 'asset', account_nature: 'debit', level: 2, is_header: true, parent_code: '3' },
-    { code: '3.2', name: t.chartOfAccountsSeed.suppliers, account_type: 'liability', account_nature: 'credit', level: 2, is_header: true, parent_code: '3' },
-    { code: '3.3', name: t.chartOfAccountsSeed.vat, account_type: 'liability', account_nature: 'credit', level: 2, is_header: true, parent_code: '3' },
-    { code: '3.3.1', name: t.chartOfAccountsSeed.vatDeductible, account_type: 'liability', account_nature: 'debit', level: 3, is_header: false, parent_code: '3.3' },
-    { code: '3.3.2', name: t.chartOfAccountsSeed.vatPayable, account_type: 'liability', account_nature: 'credit', level: 3, is_header: false, parent_code: '3.3' },
-    { code: '3.4', name: t.chartOfAccountsSeed.staff, account_type: 'liability', account_nature: 'credit', level: 2, is_header: true, parent_code: '3' },
-    { code: '4', name: t.chartOfAccountsSeed.monetaryFunds, account_type: 'asset', account_nature: 'debit', level: 1, is_header: true },
-    { code: '4.1', name: t.chartOfAccountsSeed.cash, account_type: 'asset', account_nature: 'debit', level: 2, is_header: true, parent_code: '4' },
-    { code: '4.1.1', name: t.chartOfAccountsSeed.mainCash, account_type: 'asset', account_nature: 'debit', level: 3, is_header: false, parent_code: '4.1' },
-    { code: '4.2', name: t.chartOfAccountsSeed.demandDeposits, account_type: 'asset', account_nature: 'debit', level: 2, is_header: true, parent_code: '4' },
-    { code: '5', name: t.chartOfAccountsSeed.equity, account_type: 'equity', account_nature: 'credit', level: 1, is_header: true },
-    { code: '6', name: t.chartOfAccountsSeed.expensesAndLosses, account_type: 'expense', account_nature: 'debit', level: 1, is_header: true },
-    { code: '6.1', name: t.chartOfAccountsSeed.costOfGoodsSold, account_type: 'expense', account_nature: 'debit', level: 2, is_header: false, parent_code: '6' },
-    { code: '6.3', name: t.chartOfAccountsSeed.staffExpenses, account_type: 'expense', account_nature: 'debit', level: 2, is_header: true, parent_code: '6' },
-    { code: '7', name: t.chartOfAccountsSeed.incomeAndGains, account_type: 'revenue', account_nature: 'credit', level: 1, is_header: true },
-    { code: '7.1', name: t.chartOfAccountsSeed.sales, account_type: 'revenue', account_nature: 'credit', level: 2, is_header: false, parent_code: '7' },
-  ];
-
   const idByCode = new Map<string, string>();
 
-  const seeded = seedRows.map(row => {
-    const id = `local-coa-${row.code.replace(/\./g, '-')}`;
+  const seeded = PGC_ACCOUNTS.map(row => {
+    const id = `local-coa-${row.code}`;
     idByCode.set(row.code, id);
     return {
       id,
       code: row.code,
       name: row.name,
       description: null,
-      account_type: row.account_type,
+      account_type: row.account_type as AccountType,
       account_nature: row.account_nature,
       parent_id: null,
       parent_name: null,

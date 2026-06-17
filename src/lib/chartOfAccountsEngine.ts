@@ -96,13 +96,15 @@ async function tryLoadAccountsFromApi(): Promise<Account[] | null> {
 
 function ensureEssentialAccounts(accounts: Account[]): Account[] {
   const now = new Date().toISOString();
+  // Angola PGC (novo com IVA) posting anchors (no-dot numbering).
   const required: Array<{ code: string; name: string; type: AccountType; nature: 'debit' | 'credit'; level: number; is_header: boolean; parent_code: string }> = [
-    { code: '2.1', name: 'Compra de Mercadorias', type: 'asset', nature: 'debit', level: 2, is_header: false, parent_code: '2' },
-    { code: '2.2', name: 'Mercadorias', type: 'asset', nature: 'debit', level: 2, is_header: false, parent_code: '2' },
-    { code: '3.3', name: 'IVA', type: 'liability', nature: 'credit', level: 2, is_header: true, parent_code: '3' },
-    { code: '3.3.1', name: 'IVA Dedutível', type: 'liability', nature: 'debit', level: 3, is_header: false, parent_code: '3.3' },
-    { code: '3.3.2', name: 'IVA Liquidado', type: 'liability', nature: 'credit', level: 3, is_header: false, parent_code: '3.3' },
-    { code: '4.1.1', name: 'Caixa Principal', type: 'asset', nature: 'debit', level: 3, is_header: false, parent_code: '4.1' },
+    { code: '212', name: 'Compras - Mercadorias', type: 'asset', nature: 'debit', level: 2, is_header: false, parent_code: '21' },
+    { code: '261', name: 'Mercadorias em armazém', type: 'asset', nature: 'debit', level: 2, is_header: false, parent_code: '26' },
+    { code: '345', name: 'IVA', type: 'liability', nature: 'credit', level: 2, is_header: true, parent_code: '34' },
+    { code: '3451', name: 'IVA dedutível', type: 'liability', nature: 'debit', level: 3, is_header: false, parent_code: '345' },
+    { code: '3452', name: 'IVA liquidado', type: 'liability', nature: 'credit', level: 3, is_header: false, parent_code: '345' },
+    { code: '451', name: 'Caixa', type: 'asset', nature: 'debit', level: 2, is_header: false, parent_code: '45' },
+    { code: '711', name: 'Custo das mercadorias vendidas', type: 'expense', nature: 'debit', level: 2, is_header: false, parent_code: '71' },
   ];
   
   let changed = false;
@@ -140,8 +142,8 @@ function ensureEssentialAccounts(accounts: Account[]): Account[] {
 // ============= BRANCH CAIXA ACCOUNT =============
 
 /**
- * Ensure each branch has a sub-account under 4.1 (Caixa).
- * Creates accounts like 4.1.1 Caixa - Sede, 4.1.2 Caixa - Luanda, etc.
+ * Ensure each branch has a sub-account under 45 (Caixa).
+ * Creates accounts like 454 Caixa - Sede, 455 Caixa - Luanda, etc.
  * Call this on app init / when branches are loaded.
  */
 export async function ensureBranchCaixaAccounts(branches: { id: string; name: string }[]): Promise<void> {
@@ -154,9 +156,9 @@ export async function ensureBranchCaixaAccounts(branches: { id: string; name: st
     accounts = loadAccountsLocal();
   }
 
-  const parent = accounts.find(a => a.code === '4.1');
+  const parent = accounts.find(a => a.code === '45');
   if (!parent) {
-    console.warn('[CoA Engine] Parent account 4.1 (Caixa) not found');
+    console.warn('[CoA Engine] Parent account 45 (Caixa) not found');
     return;
   }
 
@@ -166,18 +168,18 @@ export async function ensureBranchCaixaAccounts(branches: { id: string; name: st
   for (const branch of branches) {
     // Check if this branch already has a caixa account
     const existing = accounts.find(a =>
-      a.code.startsWith('4.1.') &&
-      a.level >= 3 &&
+      a.code.startsWith('45') &&
+      a.level >= 2 &&
       !a.is_header &&
       (a.branch_id === branch.id || a.name.includes(branch.name))
     );
 
     if (existing) continue;
 
-    // Find next sequence
-    const children = accounts.filter(a => a.code.startsWith('4.1.') && a.level === 3 && !a.is_header);
-    const nextSeq = children.length + 1;
-    const code = `4.1.${nextSeq.toString().padStart(1, '0')}`;
+    // Find next sequence among Caixa sub-accounts (451, 452, 453 are reserved by the PGC)
+    const children = accounts.filter(a => a.code.startsWith('45') && a.code.length === 3 && a.level === 2 && !a.is_header);
+    const nextSeq = Math.max(3, children.length) + 1;
+    const code = `45${nextSeq.toString()}`;
 
     const newAccount: Account = {
       id: `local-coa-caixa-${branch.id}`,
@@ -188,8 +190,8 @@ export async function ensureBranchCaixaAccounts(branches: { id: string; name: st
       account_nature: 'debit',
       parent_id: parent.id,
       parent_name: parent.name,
-      parent_code: '4.1',
-      level: 3,
+      parent_code: '45',
+      level: 2,
       is_header: false,
       is_active: true,
       opening_balance: 0,
@@ -235,7 +237,8 @@ export async function ensureSupplierAccount(supplierId: string, supplierName: st
       // Search with flexible matching (case-insensitive, trimmed)
       const normalizedName = supplierName.trim().toLowerCase();
       const existing = accounts.find(a =>
-        a.code.startsWith('3.2.') &&
+        a.code.startsWith('321') &&
+        a.code.length > 3 &&
         !a.is_header &&
         a.is_active !== false &&
         (
@@ -250,11 +253,11 @@ export async function ensureSupplierAccount(supplierId: string, supplierName: st
       }
 
       // Not found — create via API (with proper UUID id)
-      const parent = accounts.find(a => a.code === '3.2');
+      const parent = accounts.find(a => a.code === '321');
       if (parent) {
-        const children = accounts.filter(a => a.code.startsWith('3.2.') && a.level === 3 && !a.is_header);
+        const children = accounts.filter(a => a.code.startsWith('321') && a.code.length > 3 && !a.is_header);
         const nextSeq = children.length + 1;
-        const code = `3.2.${nextSeq.toString().padStart(3, '0')}`;
+        const code = `321${nextSeq.toString().padStart(3, '0')}`;
 
         const newAccount: Account = {
           id: generateId(), // MUST be a valid UUID for the backend
@@ -265,7 +268,7 @@ export async function ensureSupplierAccount(supplierId: string, supplierName: st
           account_nature: 'credit',
           parent_id: parent.id,
           parent_name: parent.name,
-          parent_code: '3.2',
+          parent_code: '321',
           level: 3,
           is_header: false,
           is_active: true,
@@ -295,7 +298,8 @@ export async function ensureSupplierAccount(supplierId: string, supplierName: st
   const localAccounts = loadAccountsLocal();
   const normalizedName = supplierName.trim().toLowerCase();
   const localExisting = localAccounts.find(a =>
-    a.code.startsWith('3.2.') &&
+    a.code.startsWith('321') &&
+    a.code.length > 3 &&
     !a.is_header &&
     (
       a.name?.trim().toLowerCase() === normalizedName ||
@@ -305,10 +309,10 @@ export async function ensureSupplierAccount(supplierId: string, supplierName: st
   if (localExisting) return localExisting.code;
 
   // Create locally as last resort
-  const parent = localAccounts.find(a => a.code === '3.2');
-  const children = localAccounts.filter(a => a.code.startsWith('3.2.') && a.level === 3 && !a.is_header);
+  const parent = localAccounts.find(a => a.code === '321');
+  const children = localAccounts.filter(a => a.code.startsWith('321') && a.code.length > 3 && !a.is_header);
   const nextSeq = children.length + 1;
-  const code = `3.2.${nextSeq.toString().padStart(3, '0')}`;
+  const code = `321${nextSeq.toString().padStart(3, '0')}`;
 
   const now = new Date().toISOString();
   localAccounts.push({
@@ -320,7 +324,7 @@ export async function ensureSupplierAccount(supplierId: string, supplierName: st
     account_nature: 'credit',
     parent_id: parent?.id || null,
     parent_name: parent?.name || null,
-    parent_code: '3.2',
+    parent_code: '321',
     level: 3,
     is_header: false,
     is_active: true,
@@ -351,20 +355,20 @@ export async function ensureClientAccount(clientId: string, clientName: string, 
   }
   
   const existing = accounts.find(a => 
-    a.code.startsWith('3.1.') && 
-    a.level >= 3 && 
+    a.code.startsWith('311') && 
+    a.code.length > 3 && 
     !a.is_header &&
     (a.name === clientName || (clientNif && a.description?.includes(clientNif)))
   );
   
   if (existing) return existing.code;
   
-  const parent = accounts.find(a => a.code === '3.1');
-  if (!parent) return '3.1.001';
+  const parent = accounts.find(a => a.code === '311');
+  if (!parent) return '311001';
   
-  const children = accounts.filter(a => a.code.startsWith('3.1.') && a.level === 3 && !a.is_header);
+  const children = accounts.filter(a => a.code.startsWith('311') && a.code.length > 3 && !a.is_header);
   const nextSeq = children.length + 1;
-  const code = `3.1.${nextSeq.toString().padStart(3, '0')}`;
+  const code = `311${nextSeq.toString().padStart(3, '0')}`;
   
   const now = new Date().toISOString();
   const newAccount: Account = {
@@ -376,7 +380,7 @@ export async function ensureClientAccount(clientId: string, clientName: string, 
     account_nature: 'debit',
     parent_id: parent.id,
     parent_name: parent.name,
-    parent_code: '3.1',
+    parent_code: '311',
     level: 3,
     is_header: false,
     is_active: true,
