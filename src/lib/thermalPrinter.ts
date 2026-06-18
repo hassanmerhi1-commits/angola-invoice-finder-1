@@ -6,8 +6,8 @@
 
 import { Sale, Branch } from '@/types/erp';
 import { buildAGTQRCodeString, saleToAGTQRData, getInvoiceHash } from './agtQRCode';
-import { getCompanySettings } from './companySettings';
-import { formatTaxLabel, taxRatesFromSaleItems } from './taxUtils';
+import { getCompanySettings, softwareValidationLine } from './companySettings';
+import { taxBreakdownFromItems, IVA_EXEMPTION_REASON } from './taxUtils';
 import { receiptDocTypeLabel } from './fiscalInvoiceType';
 
 // Printer configuration
@@ -82,6 +82,23 @@ export function generateReceiptText(
     const pad = Math.floor((width - text.length) / 2);
     return ' '.repeat(Math.max(0, pad)) + text;
   };
+
+  // Wrap a long string to the paper width and center each resulting line.
+  const wrapCenter = (text: string, max: number): string[] => {
+    const words = text.split(' ');
+    const out: string[] = [];
+    let current = '';
+    for (const word of words) {
+      if ((current + (current ? ' ' : '') + word).length > max) {
+        if (current) out.push(center(current));
+        current = word;
+      } else {
+        current = current ? `${current} ${word}` : word;
+      }
+    }
+    if (current) out.push(center(current));
+    return out;
+  };
   
   const leftRight = (left: string, right: string) => {
     const spaces = width - left.length - right.length;
@@ -126,7 +143,13 @@ export function generateReceiptText(
   
   // Totals
   lines.push(leftRight('Subtotal:', formatMoney(sale.subtotal)));
-  lines.push(leftRight(`${formatTaxLabel(taxRatesFromSaleItems(sale.items))}:`, formatMoney(sale.taxAmount)));
+  for (const row of taxBreakdownFromItems(sale.items)) {
+    lines.push(leftRight(`Base IVA ${row.rate}%:`, formatMoney(row.base)));
+    lines.push(leftRight(`IVA ${row.rate}%:`, formatMoney(row.tax)));
+    if (row.rate === 0) {
+      lines.push(IVA_EXEMPTION_REASON);
+    }
+  }
   lines.push(doubleDivider);
   lines.push(leftRight('TOTAL:', formatMoney(sale.total)));
   lines.push(doubleDivider);
@@ -172,8 +195,11 @@ export function generateReceiptText(
   lines.push(divider);
   lines.push(center('Documento processado por'));
   lines.push(center(company.tradeName || company.name || 'NEXOR ERP'));
+  for (const ln of wrapCenter(softwareValidationLine(company), width)) {
+    lines.push(ln);
+  }
   lines.push('');
-  lines.push(center('Obrigado pela preferencia!'));
+  lines.push(center(company.footerText || 'Obrigado pela preferencia!'));
   lines.push('');
   lines.push('');
   lines.push('');
@@ -244,7 +270,8 @@ export function generateESCPOSReceipt(
   addText(receiptDocTypeLabel(sale.invoiceType, sale.invoiceNumber) + '\n');
   addText(sale.invoiceNumber + '\n');
   addCommand(ESC_POS.BOLD_OFF);
-  addText(new Date(sale.createdAt).toLocaleString('pt-AO') + '\n\n');
+  addText(new Date(sale.createdAt).toLocaleString('pt-AO') + '\n');
+  addText('Caixa: ' + (sale.cashierName || sale.cashierId || 'N/A') + '\n\n');
   
   addCommand(ESC_POS.ALIGN_LEFT);
   addText('-'.repeat(config.characterWidth) + '\n');
@@ -267,7 +294,13 @@ export function generateESCPOSReceipt(
   };
   
   addText(formatLine('Subtotal:', sale.subtotal.toLocaleString('pt-AO') + ' Kz'));
-  addText(formatLine(`${formatTaxLabel(taxRatesFromSaleItems(sale.items))}:`, sale.taxAmount.toLocaleString('pt-AO') + ' Kz'));
+  for (const row of taxBreakdownFromItems(sale.items)) {
+    addText(formatLine(`Base IVA ${row.rate}%:`, row.base.toLocaleString('pt-AO') + ' Kz'));
+    addText(formatLine(`IVA ${row.rate}%:`, row.tax.toLocaleString('pt-AO') + ' Kz'));
+    if (row.rate === 0) {
+      addText(IVA_EXEMPTION_REASON + '\n');
+    }
+  }
   
   addCommand(ESC_POS.BOLD_ON);
   addCommand(ESC_POS.DOUBLE_HEIGHT_ON);
@@ -306,8 +339,9 @@ export function generateESCPOSReceipt(
   addText('\n');
   addCommand(ESC_POS.ALIGN_CENTER);
   addText('Documento processado por\n');
-  addText((company.tradeName || company.name || 'NEXOR ERP') + '\n\n');
-  addText('Obrigado pela preferencia!\n');
+  addText((company.tradeName || company.name || 'NEXOR ERP') + '\n');
+  addText(softwareValidationLine(company) + '\n\n');
+  addText((company.footerText || 'Obrigado pela preferencia!') + '\n');
   
   // Feed and cut
   addCommand(ESC_POS.FEED_LINES(4));
@@ -362,6 +396,7 @@ function buildReceiptCopyBody(
   
   <div class="center bold">${sale.invoiceNumber}</div>
   <div class="center small">${new Date(sale.createdAt).toLocaleString('pt-AO')}</div>
+  <div class="center small">Caixa: ${sale.cashierName || sale.cashierId || 'N/A'}</div>
   
   <div class="divider"></div>
   
@@ -379,10 +414,17 @@ function buildReceiptCopyBody(
     <span>Subtotal:</span>
     <span>${sale.subtotal.toLocaleString('pt-AO')} Kz</span>
   </div>
-  <div class="row">
-    <span>${formatTaxLabel(taxRatesFromSaleItems(sale.items))}:</span>
-    <span>${sale.taxAmount.toLocaleString('pt-AO')} Kz</span>
+  ${taxBreakdownFromItems(sale.items).map(row => `
+  <div class="row small">
+    <span>Base IVA ${row.rate}%:</span>
+    <span>${row.base.toLocaleString('pt-AO')} Kz</span>
   </div>
+  <div class="row">
+    <span>IVA ${row.rate}%:</span>
+    <span>${row.tax.toLocaleString('pt-AO')} Kz</span>
+  </div>
+  ${row.rate === 0 ? `<div class="small">${IVA_EXEMPTION_REASON}</div>` : ''}
+  `).join('')}
   
   <div class="double-divider"></div>
   
@@ -422,17 +464,16 @@ function buildReceiptCopyBody(
       Hash: ${getInvoiceHash(sale)}
     </div>
     <div style="font-size: 7px; color: #666; margin-top: 3px;">
-      Documento processado por programa certificado AGT
+      ${softwareValidationLine(company)}
     </div>
   </div>
   
   <div class="divider"></div>
   
   <div class="footer center">
-    <div>Software: ${company.tradeName || company.name || 'NEXOR ERP'}</div>
-    <div style="font-size: 9px;">Certificado AGT</div>
+    <div>${company.tradeName || company.name || 'NEXOR ERP'}</div>
     <br>
-    <div>Obrigado pela preferência!</div>
+    <div>${company.footerText || 'Obrigado pela preferência!'}</div>
   </div>
   </div>`;
 }
@@ -452,6 +493,12 @@ async function buildReceiptBrowserHtml(
   }
   const company = getCompanySettings();
   const width = paperWidth === 80 ? '80mm' : '58mm';
+  // Narrower 58mm paper needs smaller type and tighter margins to avoid clipping.
+  const baseFont = paperWidth === 80 ? 12 : 10;
+  const largeFont = paperWidth === 80 ? 14 : 11;
+  const totalFont = paperWidth === 80 ? 15 : 12;
+  const smallFont = paperWidth === 80 ? 10 : 9;
+  const pad = paperWidth === 80 ? 3 : 2;
   const bodies = copyLabels.map((label) =>
     buildReceiptCopyBody(sale, branch, paperWidth, company, qrCodeDataURL, label),
   );
@@ -473,11 +520,15 @@ async function buildReceiptBrowserHtml(
     }
     body {
       font-family: 'Courier New', monospace;
-      font-size: 12px;
+      font-size: ${baseFont}px;
+      line-height: 1.25;
       width: ${width};
-      padding: 5mm;
+      max-width: ${width};
+      padding: ${pad}mm;
       background: white;
       color: black;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
     }
     .receipt-copy + .receipt-copy {
       page-break-before: always;
@@ -485,32 +536,38 @@ async function buildReceiptBrowserHtml(
     }
     .center { text-align: center; }
     .bold { font-weight: bold; }
-    .large { font-size: 14px; }
-    .small { font-size: 10px; }
+    .large { font-size: ${largeFont}px; }
+    .small { font-size: ${smallFont}px; }
     .divider {
       border-top: 1px dashed #000;
-      margin: 5px 0;
+      margin: 4px 0;
     }
     .double-divider {
       border-top: 2px solid #000;
-      margin: 5px 0;
+      margin: 4px 0;
     }
     .row {
       display: flex;
       justify-content: space-between;
+      gap: 6px;
       margin: 2px 0;
     }
+    .row span:first-child { overflow-wrap: anywhere; }
+    .row span:last-child { white-space: nowrap; text-align: right; }
     .item-name {
       margin-top: 4px;
+      overflow-wrap: anywhere;
     }
     .item-details {
       display: flex;
       justify-content: space-between;
-      padding-left: 10px;
-      font-size: 11px;
+      gap: 6px;
+      padding-left: 8px;
+      font-size: ${smallFont + 1}px;
     }
+    .item-details span:last-child { white-space: nowrap; }
     .total-row {
-      font-size: 16px;
+      font-size: ${totalFont}px;
       font-weight: bold;
       margin: 5px 0;
     }

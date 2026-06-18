@@ -343,6 +343,8 @@ export const pt: TranslationKeys = {
     received: "Recebido",
     customerNif: "NIF Cliente",
     customer: "Cliente",
+    cashier: "Caixa",
+    taxableBase: "Base",
     processedBy: "Documento processado por {name}",
     agtCertified: "Software certificado AGT",
     printing: "Imprimindo...",

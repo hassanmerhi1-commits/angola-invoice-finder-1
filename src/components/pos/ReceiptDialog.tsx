@@ -23,7 +23,8 @@ import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { getCompanySettings } from '@/lib/companySettings';
 import { toast } from 'sonner';
 import { resolveSaleDocumentType } from '@/lib/fiscalInvoiceType';
-import { formatTaxLabel, taxRatesFromSaleItems } from '@/lib/taxUtils';
+import { taxBreakdownFromItems, IVA_EXEMPTION_REASON } from '@/lib/taxUtils';
+import { softwareValidationLine } from '@/lib/companySettings';
 import { useTranslation } from '@/i18n';
 
 interface ReceiptDialogProps {
@@ -47,9 +48,7 @@ export function ReceiptDialog({
   const company = getCompanySettings();
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const taxLabel = sale
-    ? formatTaxLabel(taxRatesFromSaleItems(sale.items), t.pos.tax)
-    : t.pos.tax;
+  const taxBreakdown = sale ? taxBreakdownFromItems(sale.items) : [];
 
   const scrollReceipt = useCallback((direction: 'up' | 'down') => {
     const el = receiptScrollRef.current;
@@ -161,6 +160,7 @@ export function ReceiptDialog({
           <div className="text-center">
             <p className="font-bold">{sale.invoiceNumber}</p>
             <p>{new Date(sale.createdAt).toLocaleString(locale)}</p>
+            <p>{t.receiptUi.cashier}: {sale.cashierName || sale.cashierId || 'N/A'}</p>
           </div>
 
           <Separator className="border-dashed" />
@@ -187,10 +187,21 @@ export function ReceiptDialog({
               <span>{t.common.subtotal}</span>
               <span>{sale.subtotal.toLocaleString(locale)} Kz</span>
             </div>
-            <div className="flex justify-between">
-              <span>{taxLabel}</span>
-              <span>{sale.taxAmount.toLocaleString(locale)} Kz</span>
-            </div>
+            {taxBreakdown.map((row) => (
+              <div key={row.rate}>
+                <div className="flex justify-between text-[10px] text-gray-600">
+                  <span>{t.receiptUi.taxableBase} {row.rate}%</span>
+                  <span>{row.base.toLocaleString(locale)} Kz</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>{t.pos.tax} {row.rate}%</span>
+                  <span>{row.tax.toLocaleString(locale)} Kz</span>
+                </div>
+                {row.rate === 0 && (
+                  <p className="text-[10px] text-gray-500">{IVA_EXEMPTION_REASON}</p>
+                )}
+              </div>
+            ))}
             <div className="flex justify-between font-bold text-sm">
               <span>TOTAL</span>
               <span>{sale.total.toLocaleString(locale)} Kz</span>
@@ -272,7 +283,7 @@ export function ReceiptDialog({
 
           <div className="text-center text-[10px] space-y-1">
             <p>{t.receiptUi.processedBy.replace('{name}', company.tradeName || company.name)}</p>
-            <p>{t.receiptUi.agtCertified}</p>
+            <p>{softwareValidationLine(company)}</p>
             <p>{company.footerText || t.receiptUi.thanksDefault}</p>
           </div>
             </div>

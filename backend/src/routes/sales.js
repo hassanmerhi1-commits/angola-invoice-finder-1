@@ -47,10 +47,20 @@ module.exports = function(broadcastTable) {
       }
       await enqueueSaleCreated(client, sale.id, req.body.branchId, idemKey);
       await client.query('COMMIT');
-      signSaleInvoice(sale.id).catch((e) => console.warn('[AGT SIGN]', e.message));
+      // Sign the invoice and surface the fiscal hash on the response so the POS
+      // receipt prints the genuine AGT signature (not a placeholder). Signing runs
+      // after COMMIT; failures must not fail the sale, so they are swallowed here.
+      let saftHash = null;
+      try {
+        await signSaleInvoice(sale.id);
+        const signed = await db.query('SELECT saft_hash FROM sales WHERE id = $1', [sale.id]);
+        saftHash = signed.rows[0]?.saft_hash || null;
+      } catch (e) {
+        console.warn('[AGT SIGN]', e.message);
+      }
       await broadcastTable('sales');
       await broadcastTable('products');
-      res.status(201).json({ ...sale, items: req.body.items });
+      res.status(201).json({ ...sale, items: req.body.items, saft_hash: saftHash });
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[SALES ERROR]', error);

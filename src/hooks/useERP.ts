@@ -778,6 +778,8 @@ export function useSales(branchId?: string) {
         invoiceType: apiResult.data.invoice_type || apiResult.data.invoiceType || invoiceType,
         invoiceNumber: apiResult.data.invoice_number || apiResult.data.invoiceNumber || invoiceNumberHint,
       }),
+      saftHash: apiResult.data.saft_hash || apiResult.data.saftHash || undefined,
+      agtCode: apiResult.data.agt_code || apiResult.data.agtCode || undefined,
       createdAt: apiResult.data.created_at || new Date().toISOString(),
     };
 

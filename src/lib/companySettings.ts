@@ -140,6 +140,19 @@ export function fileToBase64(file: File): Promise<string> {
   });
 }
 
+/**
+ * AGT-mandated software-validation phrase printed on every fiscal document, e.g.
+ * "Processado por programa validado n.º 123/AGT/2025". Uses the company's AGT
+ * certificate/validation number when available.
+ */
+export function softwareValidationLine(settings?: Pick<CompanySettings, 'agtCertificateNumber'>): string {
+  const number = (settings?.agtCertificateNumber || getCompanySettings().agtCertificateNumber || '').trim();
+  if (!number) {
+    return 'Processado por programa validado pela AGT';
+  }
+  return `Processado por programa validado n.º ${number}`;
+}
+
 // Validate NIF format (Angola uses 10-digit NIFs)
 export function validateNIF(nif: string): boolean {
   const cleaned = nif.replace(/\D/g, '');

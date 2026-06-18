@@ -26,3 +26,37 @@ export function formatTaxLabel(rates: number[], taxWord = 'IVA'): string {
 export function taxRatesFromSaleItems(items: Array<{ taxRate?: number }>): number[] {
   return items.map((item) => normalizeTaxRate(item.taxRate, Number.NaN)).filter((r) => Number.isFinite(r));
 }
+
+export interface TaxBreakdownRow {
+  rate: number;
+  base: number;
+  tax: number;
+}
+
+/**
+ * AGT requires a per-rate IVA summary on fiscal receipts: for every distinct
+ * rate, the taxable base (incidência) and the IVA amount. Groups sale items by
+ * their tax rate and aggregates net base and tax.
+ */
+export function taxBreakdownFromItems(
+  items: Array<{ taxRate?: number; subtotal?: number; taxAmount?: number }>,
+): TaxBreakdownRow[] {
+  const byRate = new Map<number, TaxBreakdownRow>();
+  for (const item of items) {
+    const rate = normalizeTaxRate(item.taxRate);
+    const base = Number(item.subtotal || 0);
+    const tax = Number(
+      item.taxAmount !== undefined && item.taxAmount !== null
+        ? item.taxAmount
+        : (base * rate) / 100,
+    );
+    const row = byRate.get(rate) || { rate, base: 0, tax: 0 };
+    row.base += base;
+    row.tax += tax;
+    byRate.set(rate, row);
+  }
+  return [...byRate.values()].sort((a, b) => a.rate - b.rate);
+}
+
+/** AGT legal exemption reason shown for 0% (exempt) lines. */
+export const IVA_EXEMPTION_REASON = 'Isento Artigo 12.º do CIVA';

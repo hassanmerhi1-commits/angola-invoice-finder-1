@@ -322,6 +322,21 @@ function resolveBackendEntry() {
 
   if (viable.length === 0) return null;
 
+  // In development the working tree is the source of truth. An installed sync
+  // overlay (e.g. C:\NEXOR ERP\backend) can advertise an equal/higher schema or
+  // feature score and silently shadow local edits — which makes code changes
+  // appear to have no effect. Always prefer the repo backend in dev unless an
+  // explicit NEXOR_BACKEND_ENTRY override is set.
+  if (isDev && !entryOverride) {
+    const repoViable = viable.find(
+      (p) => path.normalize(p) === path.normalize(repoBackend),
+    );
+    if (repoViable) {
+      console.log(`[BackendManager] dev mode: using repo backend ${repoViable}`);
+      return repoViable;
+    }
+  }
+
   const packagedPath = packagedBackend && fs.existsSync(packagedBackend) ? packagedBackend : null;
   const installPath = installBackend && fs.existsSync(installBackend) ? installBackend : null;
 

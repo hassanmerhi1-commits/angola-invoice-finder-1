@@ -341,6 +341,8 @@ export const en = {
     received: "Received",
     customerNif: "Customer NIF",
     customer: "Customer",
+    cashier: "Cashier",
+    taxableBase: "Base",
     processedBy: "Document processed by {name}",
     agtCertified: "AGT certified software",
     printing: "Printing...",
