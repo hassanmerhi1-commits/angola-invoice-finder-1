@@ -270,6 +270,21 @@ export default function ChartOfAccounts() {
       }
     }
 
+    // Customer/supplier tabs always create an entity ledger account, which needs a NIF.
+    // Make sure we land on the entity-registry parent (e.g. 321/311) so the NIF field shows
+    // immediately on open — falling back from a group like 32 to 321 when needed.
+    const tabDefaultForEntity = TAB_ACCOUNT_DEFAULTS[tabKey];
+    const wantsEntityRegistry = !!tabDefaultForEntity && isEntityRegistryParent(tabDefaultForEntity.preferredParentCodes[0]);
+    if (!nextForm.is_header && wantsEntityRegistry) {
+      const resolvedParent = accounts.find(a => a.id === nextForm.parent_id);
+      if (!resolvedParent || !isEntityRegistryParent(resolvedParent.code)) {
+        const entityParent = tabDefaultForEntity.preferredParentCodes
+          .map(code => accounts.find(a => a.code === code && a.is_active !== false))
+          .find(p => p && isEntityRegistryParent(p.code));
+        if (entityParent) applyParentDefaults(entityParent);
+      }
+    }
+
     // No parent resolved → this is a new top-level (parent) account. Auto-fill the next
     // sequential root code so the user can create it without a manual code collision.
     if (!nextForm.parent_id && !nextForm.code) {
