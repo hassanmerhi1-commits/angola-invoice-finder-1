@@ -328,7 +328,10 @@ export default function ChartOfAccounts() {
         openNewClientDialog();
         return;
       }
-      if (action === 'supplier') {
+      // Both "New supplier" and "New supplier account" use the same supplier interface,
+      // which captures email/phone/address and saves the supplier to the supplier list
+      // (while also creating its chart-of-accounts ledger entry).
+      if (action === 'supplier' || action === 'account:fornecedores') {
         openNewSupplierDialog();
         return;
       }
@@ -792,7 +795,7 @@ export default function ChartOfAccounts() {
       {/* Account Ledger Dialog */}
       <AccountLedgerDialog account={ledgerAccount} open={isLedgerOpen} onOpenChange={setIsLedgerOpen} />
       <ClientFormDialog open={isClientDialogOpen} onOpenChange={setIsClientDialogOpen} />
-      <SupplierFormDialog open={isSupplierDialogOpen} onOpenChange={setIsSupplierDialogOpen} />
+      <SupplierFormDialog open={isSupplierDialogOpen} onOpenChange={setIsSupplierDialogOpen} onSaved={() => refetch()} />
     </div>
   );
 }
