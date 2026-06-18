@@ -1474,7 +1474,7 @@ export function useSuppliers() {
       try {
         const accountCode = (result.data as { _accountCode?: string })._accountCode;
         if (!accountCode) {
-          await ensureSupplierAccount(mapped.id, mapped.name, mapped.nif);
+          await ensureSupplierAccount(mapped.id, mapped.name, mapped.nif, (data as { accountParentCode?: string }).accountParentCode);
         }
       } catch (e) {
         console.warn('[ERP] ensureSupplierAccount after create skipped:', e);
@@ -1513,7 +1513,7 @@ export function useSuppliers() {
       updatedAt: new Date().toISOString(),
     };
     storage.saveSupplierLocalFallback(supplier);
-    await ensureSupplierAccount(supplier.id, supplier.name, supplier.nif);
+    await ensureSupplierAccount(supplier.id, supplier.name, supplier.nif, (data as { accountParentCode?: string }).accountParentCode);
     await refreshSuppliers();
     notifySuppliersChanged();
     return supplier;

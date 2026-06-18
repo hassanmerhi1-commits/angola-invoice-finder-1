@@ -12,6 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Printer } from 'lucide-react';
+import { printHtml } from '@/lib/printHtml';
+import { toast } from 'sonner';
 
 interface ShelfLabelPrintDialogProps {
   open: boolean;
@@ -34,13 +36,16 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
   const [showBasePrice, setShowBasePrice] = useState(true);
   const [copies, setCopies] = useState(1);
 
-  const handlePrint = () => {
+  const [printing, setPrinting] = useState(false);
+
+  const handlePrint = async () => {
+    if (products.length === 0) {
+      toast.error('Nenhum produto seleccionado para etiquetas.');
+      return;
+    }
     const size = LABEL_SIZES[labelSize];
     const labelWidthMM = size.width;
     const labelHeightMM = size.height;
-    
-    const printWindow = window.open('', '_blank', 'width=800,height=600');
-    if (!printWindow) return;
 
     const labelsHtml = products.flatMap(product => {
       const taxRate = product.taxRate || 0;
@@ -64,10 +69,11 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
       return labels;
     }).join('');
 
-    printWindow.document.write(`
+    const html = `
       <!DOCTYPE html>
       <html>
       <head>
+        <meta charset="utf-8">
         <title>Etiquetas de Prateleira</title>
         <style>
           @page { margin: 5mm; }
@@ -79,6 +85,8 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
             gap: 2mm;
           }
           .label {
+            width: ${labelWidthMM}mm;
+            height: ${labelHeightMM}mm;
             border: 0.5pt dashed #999;
             padding: 2mm;
             display: flex;
@@ -129,11 +137,20 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
       </head>
       <body>
         <div class="labels-grid">${labelsHtml}</div>
-        <script>window.onload = function() { window.print(); }</script>
       </body>
       </html>
-    `);
-    printWindow.document.close();
+    `;
+
+    setPrinting(true);
+    try {
+      await printHtml(html);
+      onOpenChange(false);
+    } catch (error) {
+      console.error('[labels] print error:', error);
+      toast.error('Falha ao imprimir etiquetas.');
+    } finally {
+      setPrinting(false);
+    }
   };
 
   return (
@@ -230,12 +247,12 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={printing}>
               Cancelar
             </Button>
-            <Button size="sm" onClick={handlePrint}>
+            <Button size="sm" onClick={handlePrint} disabled={printing || products.length === 0}>
               <Printer className="w-4 h-4 mr-1" />
-              Imprimir
+              {printing ? 'A imprimir...' : 'Imprimir'}
             </Button>
           </div>
         </div>

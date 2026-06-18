@@ -18,7 +18,7 @@ import { api } from '@/lib/api/client';
 import {
   Search, Edit2, Trash2, RefreshCw,
   FileText, Receipt, CreditCard, Banknote,
-  ChevronRight, ChevronDown, Printer, Download, Eye, RotateCcw
+  ChevronRight, ChevronDown, Printer, Download, Eye, RotateCcw, Plus
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NEXOR_TAB_TRIGGER, NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
@@ -60,15 +60,45 @@ const TAB_ACCOUNT_DEFAULTS: Record<string, { accountType: AccountType; preferred
   capital: { accountType: 'equity', preferredParentCodes: ['51', '55'] },
 };
 
+// Customer (31x) and supplier (32x) ledger registries use fixed 8-digit codes for the
+// actual customer/supplier entries (e.g. a supplier under 321 becomes 32100001; under a
+// deeper sub like 3211 it becomes 32110001). Intermediate grouping sub-accounts (headers)
+// keep compact codes (321 -> 3211 -> 32111) so you can nest sub under sub.
+const ENTITY_ACCOUNT_CODE_LENGTH = 8;
+const isEntityRegistryParent = (code: string) =>
+  /^3[12]/.test(code) && code.length >= 3 && code.length < ENTITY_ACCOUNT_CODE_LENGTH;
+
 // No-dot child codes: a child of "31" becomes "311", "312", … (next free numeric suffix).
-const buildSuggestedChildCode = (parentCode: string, siblingCodes: string[]) => {
+// Leaf entries under an entity registry are zero-padded to an 8-digit code; headers stay compact.
+const buildSuggestedChildCode = (parentCode: string, siblingCodes: string[], isHeader = false) => {
+  const entityParent = isEntityRegistryParent(parentCode);
   const nextIndex = siblingCodes.reduce((max, code) => {
     if (!code.startsWith(parentCode) || code.length <= parentCode.length) return max;
+    // Under a customer/supplier registry parent, header sub-accounts (compact, e.g. 3211) and
+    // leaf entity accounts (8-digit, e.g. 32100001) are numbered independently — so only count
+    // the siblings of the same kind we're creating.
+    if (entityParent) {
+      const isLeaf = code.length === ENTITY_ACCOUNT_CODE_LENGTH;
+      if (isHeader ? isLeaf : !isLeaf) return max;
+    }
     const segment = code.slice(parentCode.length);
     const parsed = Number(segment);
     return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
   }, 0) + 1;
+  if (!isHeader && entityParent) {
+    return `${parentCode}${String(nextIndex).padStart(ENTITY_ACCOUNT_CODE_LENGTH - parentCode.length, '0')}`;
+  }
   return `${parentCode}${nextIndex}`;
+};
+
+// Next free top-level (root / no-parent) account code. Increments by 1 from the highest
+// existing root code so each new parent account gets a unique, sequential number.
+const buildSuggestedRootCode = (rootCodes: string[]) => {
+  const maxCode = rootCodes.reduce((max, code) => {
+    const parsed = Number(code);
+    return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+  }, 0);
+  return String(maxCode + 1);
 };
 
 export default function ChartOfAccounts() {
@@ -88,6 +118,11 @@ export default function ChartOfAccounts() {
   const [isLedgerOpen, setIsLedgerOpen] = useState(false);
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
   const [isSupplierDialogOpen, setIsSupplierDialogOpen] = useState(false);
+  // Inline "+" quick-create of a parent/sub header account from inside the account dialog.
+  const [isAddingInlineParent, setIsAddingInlineParent] = useState(false);
+  const [inlineParentCode, setInlineParentCode] = useState('');
+  const [inlineParentName, setInlineParentName] = useState('');
+  const [creatingInlineParent, setCreatingInlineParent] = useState(false);
 
   const openNewClientDialog = () => {
     setActiveTab('clientes');
@@ -123,6 +158,7 @@ export default function ChartOfAccounts() {
     code: '',
     name: '',
     description: '',
+    nif: '',
     account_type: 'asset' as AccountType,
     account_nature: 'debit' as 'debit' | 'credit',
     parent_id: '',
@@ -179,11 +215,15 @@ export default function ChartOfAccounts() {
       setActiveTab(tabOverride);
     }
     setEditingAccount(null);
+    setIsAddingInlineParent(false);
+    setInlineParentName('');
+    setInlineParentCode('');
 
     const emptyForm = {
       code: '',
       name: '',
       description: '',
+      nif: '',
       account_type: 'asset' as AccountType,
       account_nature: 'debit' as 'debit' | 'credit',
       parent_id: '',
@@ -200,7 +240,7 @@ export default function ChartOfAccounts() {
         ...nextForm,
         parent_id: parent.id,
         level: parent.level + 1,
-        code: buildSuggestedChildCode(parent.code, children.map(c => c.code)),
+        code: buildSuggestedChildCode(parent.code, children.map(c => c.code), nextForm.is_header),
         account_type: parent.account_type,
         account_nature: parent.account_nature,
       };
@@ -230,7 +270,38 @@ export default function ChartOfAccounts() {
       }
     }
 
+    // No parent resolved → this is a new top-level (parent) account. Auto-fill the next
+    // sequential root code so the user can create it without a manual code collision.
+    if (!nextForm.parent_id && !nextForm.code) {
+      const rootCodes = accounts.filter(a => !a.parent_id).map(a => a.code);
+      nextForm = { ...nextForm, level: 1, code: buildSuggestedRootCode(rootCodes) };
+    }
+
     setFormData(nextForm);
+    setIsDialogOpen(true);
+  };
+
+  // Open the dialog to create a brand-new top-level (parent) account: no parent, level 1,
+  // header by default, with the next sequential root code auto-filled.
+  const openCreateParentDialog = () => {
+    setSelectedAccountId(null);
+    setEditingAccount(null);
+    setIsAddingInlineParent(false);
+    setInlineParentName('');
+    setInlineParentCode('');
+    const rootCodes = accounts.filter(a => !a.parent_id).map(a => a.code);
+    setFormData({
+      code: buildSuggestedRootCode(rootCodes),
+      name: '',
+      description: '',
+      nif: '',
+      account_type: 'asset',
+      account_nature: 'debit',
+      parent_id: '',
+      level: 1,
+      is_header: true,
+      opening_balance: 0,
+    });
     setIsDialogOpen(true);
   };
 
@@ -246,6 +317,10 @@ export default function ChartOfAccounts() {
         openNewSupplierDialog();
         return;
       }
+      if (action === 'account:parent') {
+        openCreateParentDialog();
+        return;
+      }
       const tab = chartNewActionTab(action);
       if (tab) {
         openCreateDialog(tab);
@@ -257,10 +332,15 @@ export default function ChartOfAccounts() {
 
   const openEditDialog = (account: Account) => {
     setEditingAccount(account);
+    setIsAddingInlineParent(false);
+    setInlineParentName('');
+    setInlineParentCode('');
+    const nifMatch = (account.description || '').match(/NIF:\s*([^\s]+)/i);
     setFormData({
       code: account.code,
       name: account.name,
       description: account.description || '',
+      nif: nifMatch ? nifMatch[1] : '',
       account_type: account.account_type,
       account_nature: account.account_nature,
       parent_id: account.parent_id || '',
@@ -286,13 +366,28 @@ export default function ChartOfAccounts() {
       toast.error(t.chartOfAccountsUi.codeAndNameRequired);
       return;
     }
+
+    // Customer (31x) / supplier (32x) ledger accounts must carry a NIF (stored in description).
+    const submitParent = accounts.find(a => a.id === formData.parent_id);
+    const isEntityRegistry = !formData.is_header && !!submitParent && isEntityRegistryParent(submitParent.code);
+    if (isEntityRegistry && !formData.nif.trim()) {
+      toast.error(t.clientsUi.nifRequired);
+      return;
+    }
+
+    const { nif, ...rest } = formData;
+    const description = isEntityRegistry
+      ? `NIF: ${nif.trim()}${rest.description && !/NIF:/i.test(rest.description) ? ` — ${rest.description}` : ''}`
+      : rest.description;
+    const payload = { ...rest, description, parent_id: formData.parent_id || null };
+
     setIsSubmitting(true);
     try {
       if (editingAccount) {
-        await updateAccount(editingAccount.id, { ...formData, parent_id: formData.parent_id || null });
+        await updateAccount(editingAccount.id, payload);
         toast.success(t.chartOfAccountsUi.updated);
       } else {
-        await createAccount({ ...formData, parent_id: formData.parent_id || null });
+        await createAccount(payload);
         toast.success(t.chartOfAccountsUi.created);
       }
       setIsDialogOpen(false);
@@ -305,6 +400,64 @@ export default function ChartOfAccounts() {
 
   const handleTypeChange = (type: AccountType) => {
     setFormData(prev => ({ ...prev, account_type: type, account_nature: getDefaultNature(type) }));
+  };
+
+  // Suggested code for a new header created inline under the currently selected parent.
+  const inlineParentSuggestedCode = (() => {
+    const parent = accounts.find(a => a.id === formData.parent_id);
+    if (!parent) return buildSuggestedRootCode(accounts.filter(a => !a.parent_id).map(a => a.code));
+    const children = accounts.filter(a => a.parent_id === parent.id && a.is_active !== false);
+    return buildSuggestedChildCode(parent.code, children.map(c => c.code), true);
+  })();
+
+  // Open the inline "+" form pre-filled with the suggested compact header code (editable).
+  const startInlineParent = () => {
+    setInlineParentCode(inlineParentSuggestedCode);
+    setInlineParentName('');
+    setIsAddingInlineParent(true);
+  };
+
+  // Inline "+" : create a new header (sub/parent) account under the currently selected parent
+  // using the code + name the user entered, then auto-select it as the parent of the account
+  // being created (whose leaf code becomes 8-digit, e.g. 3211 -> 32110001).
+  const handleCreateInlineParent = async () => {
+    const name = inlineParentName.trim();
+    const code = inlineParentCode.trim();
+    if (!name || !code) return;
+    if (accounts.some(a => a.code === code && a.is_active !== false)) {
+      toast.error(`${code} — ${t.chartOfAccountsUi.saveError}`);
+      return;
+    }
+    const parent = accounts.find(a => a.id === formData.parent_id) || null;
+    setCreatingInlineParent(true);
+    try {
+      const created = await createAccount({
+        code,
+        name,
+        account_type: parent ? parent.account_type : formData.account_type,
+        account_nature: parent ? parent.account_nature : formData.account_nature,
+        parent_id: parent ? parent.id : null,
+        level: parent ? parent.level + 1 : 1,
+        is_header: true,
+        opening_balance: 0,
+      });
+      setFormData(prev => ({
+        ...prev,
+        parent_id: created.id,
+        level: (created.level ?? 1) + 1,
+        code: buildSuggestedChildCode(created.code, [], prev.is_header),
+        account_type: created.account_type,
+        account_nature: created.account_nature,
+      }));
+      setInlineParentName('');
+      setInlineParentCode('');
+      setIsAddingInlineParent(false);
+      toast.success(`${code} — ${name}`);
+    } catch (error: any) {
+      toast.error(error?.message || t.chartOfAccountsUi.saveError);
+    } finally {
+      setCreatingInlineParent(false);
+    }
   };
 
   const [isReseeding, setIsReseeding] = useState(false);
@@ -325,6 +478,10 @@ export default function ChartOfAccounts() {
 
   const selectedAccount = accounts.find(a => a.id === selectedAccountId);
   const selectedAccountInCurrentTab = selectedAccount && currentTabConfig.filter(selectedAccount) ? selectedAccount : null;
+
+  // Whether the open dialog is creating/editing a customer/supplier ledger account (needs a NIF).
+  const dialogParent = accounts.find(a => a.id === formData.parent_id);
+  const dialogIsEntityRegistry = !formData.is_header && !!dialogParent && isEntityRegistryParent(dialogParent.code);
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -454,66 +611,138 @@ export default function ChartOfAccounts() {
       )}
 
       {/* Create/Edit Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      <Dialog open={isDialogOpen} onOpenChange={(open) => { setIsDialogOpen(open); if (!open) { setIsAddingInlineParent(false); setInlineParentName(''); setInlineParentCode(''); } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{editingAccount ? t.chartOfAccountsUi.editTitle : t.chartOfAccountsUi.newTitle}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className={cn('grid gap-4', dialogIsEntityRegistry ? 'grid-cols-1' : 'grid-cols-2')}>
               <div className="space-y-2">
                 <Label>{t.chartOfAccountsUi.codeLabel}</Label>
                 <Input value={formData.code} onChange={e => setFormData(prev => ({ ...prev, code: e.target.value }))} placeholder={t.chartOfAccountsUi.codePlaceholder} />
               </div>
-              <div className="space-y-2">
-                <Label>{t.chartOfAccountsUi.typeRequiredLabel}</Label>
-                <Select value={formData.account_type} onValueChange={v => handleTypeChange(v as AccountType)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="asset">{t.chartOfAccountsUi.typeAsset}</SelectItem>
-                    <SelectItem value="liability">{t.chartOfAccountsUi.typeLiability}</SelectItem>
-                    <SelectItem value="equity">{t.chartOfAccountsUi.typeEquity}</SelectItem>
-                    <SelectItem value="revenue">{t.chartOfAccountsUi.typeRevenue}</SelectItem>
-                    <SelectItem value="expense">{t.chartOfAccountsUi.typeExpense}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {/* Supplier/client ledger accounts always inherit type from their parent (liability/asset),
+                  so the type selector is hidden — it's not needed when creating those entities. */}
+              {!dialogIsEntityRegistry && (
+                <div className="space-y-2">
+                  <Label>{t.chartOfAccountsUi.typeRequiredLabel}</Label>
+                  <Select value={formData.account_type} onValueChange={v => handleTypeChange(v as AccountType)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="asset">{t.chartOfAccountsUi.typeAsset}</SelectItem>
+                      <SelectItem value="liability">{t.chartOfAccountsUi.typeLiability}</SelectItem>
+                      <SelectItem value="equity">{t.chartOfAccountsUi.typeEquity}</SelectItem>
+                      <SelectItem value="revenue">{t.chartOfAccountsUi.typeRevenue}</SelectItem>
+                      <SelectItem value="expense">{t.chartOfAccountsUi.typeExpense}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <Label>{t.chartOfAccountsUi.nameLabel}</Label>
               <Input value={formData.name} onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))} placeholder={t.chartOfAccountsUi.namePlaceholder} />
             </div>
+            {dialogIsEntityRegistry && (
+              <div className="space-y-2">
+                <Label>{t.clientsUi.nifLabel}</Label>
+                <Input
+                  value={formData.nif}
+                  onChange={e => setFormData(prev => ({ ...prev, nif: e.target.value }))}
+                  placeholder="NIF"
+                  required
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <Label>{t.common.description}</Label>
               <Textarea value={formData.description} onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))} rows={2} />
             </div>
             <div className="space-y-2">
               <Label>{t.chartOfAccountsUi.parentAccountLabel}</Label>
-              <Select value={formData.parent_id || ROOT_ACCOUNT_VALUE} onValueChange={v => {
-                const parentId = v === ROOT_ACCOUNT_VALUE ? '' : v;
-                const parent = accounts.find(a => a.id === parentId);
-                setFormData(prev => ({
-                  ...prev,
-                  parent_id: parentId,
-                  level: parent ? parent.level + 1 : 1,
-                  account_type: parent ? parent.account_type : prev.account_type,
-                  account_nature: parent ? parent.account_nature : prev.account_nature,
-                }));
-              }}>
-                <SelectTrigger><SelectValue placeholder={t.chartOfAccountsUi.rootPlaceholder} /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ROOT_ACCOUNT_VALUE}>{t.chartOfAccountsUi.rootOption}</SelectItem>
-                  {accounts
-                    .filter(a => a.is_active !== false && (!editingAccount || a.id !== editingAccount.id))
-                    .sort((a, b) => a.code.localeCompare(b.code))
-                    .map(a => (
-                      <SelectItem key={a.id} value={a.id}>
-                        <span className="font-mono text-muted-foreground mr-2">{a.code}</span>
-                        {resolveAccountDisplayName(a, language, t)}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+              {isAddingInlineParent ? (
+                <div className="space-y-2 rounded-md border p-2">
+                  <p className="text-xs text-muted-foreground">{t.chartOfAccountsUi.newParentAccount}</p>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      autoFocus
+                      className="w-28 font-mono"
+                      value={inlineParentCode}
+                      placeholder={t.chartOfAccountsUi.codeLabel}
+                      onChange={e => setInlineParentCode(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { e.preventDefault(); void handleCreateInlineParent(); }
+                        if (e.key === 'Escape') { setIsAddingInlineParent(false); }
+                      }}
+                    />
+                    <Input
+                      value={inlineParentName}
+                      placeholder={t.chartOfAccountsUi.nameLabel}
+                      onChange={e => setInlineParentName(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { e.preventDefault(); void handleCreateInlineParent(); }
+                        if (e.key === 'Escape') { setIsAddingInlineParent(false); }
+                      }}
+                    />
+                    <Button type="button" size="sm" onClick={() => void handleCreateInlineParent()} disabled={creatingInlineParent || !inlineParentName.trim() || !inlineParentCode.trim()}>
+                      {t.common.save}
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => setIsAddingInlineParent(false)} disabled={creatingInlineParent}>
+                      {t.common.cancel}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <Select value={formData.parent_id || ROOT_ACCOUNT_VALUE} onValueChange={v => {
+                      const parentId = v === ROOT_ACCOUNT_VALUE ? '' : v;
+                      const parent = accounts.find(a => a.id === parentId);
+                      setFormData(prev => {
+                        if (!parent) {
+                          const rootCodes = accounts.filter(a => !a.parent_id).map(a => a.code);
+                          return {
+                            ...prev,
+                            parent_id: '',
+                            level: 1,
+                            code: editingAccount ? prev.code : buildSuggestedRootCode(rootCodes),
+                          };
+                        }
+                        const children = accounts.filter(a => a.parent_id === parent.id && a.is_active !== false);
+                        return {
+                          ...prev,
+                          parent_id: parentId,
+                          level: parent.level + 1,
+                          code: editingAccount ? prev.code : buildSuggestedChildCode(parent.code, children.map(c => c.code), prev.is_header),
+                          account_type: parent.account_type,
+                          account_nature: parent.account_nature,
+                        };
+                      });
+                    }}>
+                      <SelectTrigger><SelectValue placeholder={t.chartOfAccountsUi.rootPlaceholder} /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ROOT_ACCOUNT_VALUE}>{t.chartOfAccountsUi.rootOption}</SelectItem>
+                        {accounts
+                          .filter(a => a.is_active !== false && (!editingAccount || a.id !== editingAccount.id))
+                          .sort((a, b) => a.code.localeCompare(b.code))
+                          .map(a => (
+                            <SelectItem key={a.id} value={a.id}>
+                              <span className="font-mono text-muted-foreground mr-2">{a.code}</span>
+                              {resolveAccountDisplayName(a, language, t)}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {!editingAccount && (
+                    <Button type="button" size="icon" variant="outline" className="h-9 w-9 shrink-0" title={t.chartOfAccountsUi.newParentAccount}
+                      onClick={startInlineParent}>
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -521,7 +750,19 @@ export default function ChartOfAccounts() {
                 <Input type="number" value={formData.opening_balance} onChange={e => setFormData(prev => ({ ...prev, opening_balance: Number(e.target.value) }))} />
               </div>
               <div className="flex items-center gap-2 pt-8">
-                <Checkbox id="is_header" checked={formData.is_header} onCheckedChange={checked => setFormData(prev => ({ ...prev, is_header: !!checked }))} />
+                <Checkbox id="is_header" checked={formData.is_header} onCheckedChange={checked => setFormData(prev => {
+                  const isHeader = !!checked;
+                  const parent = accounts.find(a => a.id === prev.parent_id);
+                  if (editingAccount || !parent) {
+                    return { ...prev, is_header: isHeader };
+                  }
+                  const children = accounts.filter(a => a.parent_id === parent.id && a.is_active !== false);
+                  return {
+                    ...prev,
+                    is_header: isHeader,
+                    code: buildSuggestedChildCode(parent.code, children.map(c => c.code), isHeader),
+                  };
+                })} />
                 <Label htmlFor="is_header" className="text-sm">{t.chartOfAccountsUi.headerAccountLabel}</Label>
               </div>
             </div>

@@ -4802,6 +4802,7 @@ export const pt: TranslationKeys = {
     tabAll: "Todos",
 
     newAccount: "Nova Conta",
+    newParentAccount: "Nova conta principal",
     newMenu: "Novo",
     newCustomerAccount: "Nova conta de cliente",
     newSupplierAccount: "Nova conta de fornecedor",

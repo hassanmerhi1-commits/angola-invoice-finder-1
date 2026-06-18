@@ -223,21 +223,50 @@ export async function ensureBranchCaixaAccounts(branches: { id: string; name: st
 
 // ============= SUPPLIER ACCOUNT =============
 
+// Supplier accounts live under the Fornecedores group (32); default parent 321.
+// Auto codes are 8 digits (e.g. 32100001).
+const SUPPLIER_GROUP_CODE = '32';
+const DEFAULT_SUPPLIER_PARENT_CODE = '321';
+const ENTITY_ACCOUNT_CODE_LENGTH = 8;
+
+// Next free 8-digit code under a parent (parent "321" -> "32100001").
+function nextEntityAccountCode(parentCode: string, accounts: Account[]): string {
+  const suffixLen = ENTITY_ACCOUNT_CODE_LENGTH - parentCode.length;
+  const maxSeq = accounts.reduce((max, a) => {
+    const c = a.code || '';
+    if (!c.startsWith(parentCode) || c.length <= parentCode.length || a.is_header) return max;
+    const parsed = Number(c.slice(parentCode.length));
+    return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+  }, 0);
+  return `${parentCode}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
+}
+
+function resolveSupplierParentCode(accounts: Account[], parentCode?: string): string {
+  let code = (parentCode || '').trim() || DEFAULT_SUPPLIER_PARENT_CODE;
+  if (!code.startsWith(SUPPLIER_GROUP_CODE)) code = DEFAULT_SUPPLIER_PARENT_CODE;
+  const exists = accounts.some(a => a.code === code && a.is_active !== false);
+  return exists ? code : DEFAULT_SUPPLIER_PARENT_CODE;
+}
+
 /**
- * Ensure a supplier has a sub-account under 3.2 (Fornecedores).
- * Returns the proper account code (e.g., "3.2.001").
- * Now async — tries API first, then localStorage.
+ * Ensure a supplier has a sub-account under the Fornecedores group (32).
+ * parentCode lets the caller choose the 32x sub-account to file under (default 321).
+ * Returns an 8-digit account code (e.g., "32100001"). Tries API first, then localStorage.
  */
-export async function ensureSupplierAccount(supplierId: string, supplierName: string, supplierNif?: string): Promise<string> {
+export async function ensureSupplierAccount(
+  supplierId: string,
+  supplierName: string,
+  supplierNif?: string,
+  parentCode?: string,
+): Promise<string> {
   // ALWAYS try to load from the backend API first — it's the source of truth
-  // The backend supplier route auto-creates 3.2.XXX accounts when suppliers are created
   try {
     const accounts = await tryLoadAccountsFromApi();
     if (accounts && accounts.length > 0) {
-      // Search with flexible matching (case-insensitive, trimmed)
+      // Search across the whole supplier group (case-insensitive, trimmed) to avoid duplicates
       const normalizedName = supplierName.trim().toLowerCase();
       const existing = accounts.find(a =>
-        a.code.startsWith('321') &&
+        a.code.startsWith(SUPPLIER_GROUP_CODE) &&
         a.code.length > 3 &&
         !a.is_header &&
         a.is_active !== false &&
@@ -252,12 +281,11 @@ export async function ensureSupplierAccount(supplierId: string, supplierName: st
         return existing.code;
       }
 
-      // Not found — create via API (with proper UUID id)
-      const parent = accounts.find(a => a.code === '321');
+      // Not found — create via API (with proper UUID id) under the chosen parent
+      const resolvedParentCode = resolveSupplierParentCode(accounts, parentCode);
+      const parent = accounts.find(a => a.code === resolvedParentCode);
       if (parent) {
-        const children = accounts.filter(a => a.code.startsWith('321') && a.code.length > 3 && !a.is_header);
-        const nextSeq = children.length + 1;
-        const code = `321${nextSeq.toString().padStart(3, '0')}`;
+        const code = nextEntityAccountCode(resolvedParentCode, accounts);
 
         const newAccount: Account = {
           id: generateId(), // MUST be a valid UUID for the backend
@@ -268,8 +296,8 @@ export async function ensureSupplierAccount(supplierId: string, supplierName: st
           account_nature: 'credit',
           parent_id: parent.id,
           parent_name: parent.name,
-          parent_code: '321',
-          level: 3,
+          parent_code: resolvedParentCode,
+          level: (parent.level ?? 2) + 1,
           is_header: false,
           is_active: true,
           opening_balance: 0,
@@ -298,7 +326,7 @@ export async function ensureSupplierAccount(supplierId: string, supplierName: st
   const localAccounts = loadAccountsLocal();
   const normalizedName = supplierName.trim().toLowerCase();
   const localExisting = localAccounts.find(a =>
-    a.code.startsWith('321') &&
+    a.code.startsWith(SUPPLIER_GROUP_CODE) &&
     a.code.length > 3 &&
     !a.is_header &&
     (
@@ -309,10 +337,9 @@ export async function ensureSupplierAccount(supplierId: string, supplierName: st
   if (localExisting) return localExisting.code;
 
   // Create locally as last resort
-  const parent = localAccounts.find(a => a.code === '321');
-  const children = localAccounts.filter(a => a.code.startsWith('321') && a.code.length > 3 && !a.is_header);
-  const nextSeq = children.length + 1;
-  const code = `321${nextSeq.toString().padStart(3, '0')}`;
+  const resolvedParentCode = resolveSupplierParentCode(localAccounts, parentCode);
+  const parent = localAccounts.find(a => a.code === resolvedParentCode);
+  const code = nextEntityAccountCode(resolvedParentCode, localAccounts);
 
   const now = new Date().toISOString();
   localAccounts.push({
@@ -324,8 +351,8 @@ export async function ensureSupplierAccount(supplierId: string, supplierName: st
     account_nature: 'credit',
     parent_id: parent?.id || null,
     parent_name: parent?.name || null,
-    parent_code: '321',
-    level: 3,
+    parent_code: resolvedParentCode,
+    level: (parent?.level ?? 2) + 1,
     is_header: false,
     is_active: true,
     opening_balance: 0,

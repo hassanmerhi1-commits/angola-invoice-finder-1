@@ -11,6 +11,16 @@ import { BranchProvider } from "@/contexts/BranchContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PrintPreviewHost } from "@/components/print/PrintPreviewHost";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { UpdateStatus } from "@/types/electron";
 import Login from "./pages/Login";
 import Setup from "./pages/Setup";
@@ -336,6 +346,15 @@ const App = () => {
     ? '/app'
     : undefined;
 
+  const [updateReadyVersion, setUpdateReadyVersion] = React.useState<string | null>(null);
+  const [updateDialogOpen, setUpdateDialogOpen] = React.useState(false);
+  const [installingUpdate, setInstallingUpdate] = React.useState(false);
+
+  const handleInstallUpdate = React.useCallback(() => {
+    setInstallingUpdate(true);
+    void window.electronAPI?.updater?.install?.();
+  }, []);
+
   React.useEffect(() => {
     if (!isElectron) return;
     const api = (window as any).electronAPI;
@@ -382,23 +401,8 @@ const App = () => {
         });
       } else if (s.status === "downloaded") {
         toast.dismiss(UPDATE_TOAST_ID);
-        toast("Update ready to install", {
-          id: UPDATE_TOAST_ID,
-          description: s.version ? `Version ${s.version} downloaded.` : "Update downloaded.",
-          duration: Infinity,
-          action: {
-            label: "Install & restart",
-            onClick: () => {
-              void updater.install?.();
-            },
-          },
-          cancel: {
-            label: "Later",
-            onClick: () => {
-              toast.dismiss(UPDATE_TOAST_ID);
-            },
-          },
-        });
+        setUpdateReadyVersion(s.version ?? null);
+        setUpdateDialogOpen(true);
       } else if (s.status === "error") {
         toast("Update check failed", {
           description: s.error || "Could not check for updates.",
@@ -427,6 +431,36 @@ const App = () => {
               <Sonner />
               <PrintPreviewHost />
               <LanguageKeyedRouter isElectron={isElectron} browserBasename={browserBasename} />
+              <AlertDialog
+                open={updateDialogOpen}
+                onOpenChange={(open) => {
+                  if (!installingUpdate) setUpdateDialogOpen(open);
+                }}
+              >
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Update ready to install</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {updateReadyVersion
+                        ? `Version ${updateReadyVersion} has finished downloading.`
+                        : "The update has finished downloading."}{" "}
+                      The app will restart to apply the update.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={installingUpdate}>Later</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handleInstallUpdate();
+                      }}
+                      disabled={installingUpdate}
+                    >
+                      {installingUpdate ? "Installing…" : "Install & restart"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </TooltipProvider>
           </BranchProvider>
         </ErrorBoundary>

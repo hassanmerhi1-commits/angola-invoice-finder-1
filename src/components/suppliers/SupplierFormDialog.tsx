@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Supplier } from '@/types/erp';
 import { useSuppliers } from '@/hooks/useERP';
+import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,6 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
+import { Plus } from 'lucide-react';
 
 const PAYMENT_TERMS = [
   { value: 'immediate', labelKey: 'immediate' },
@@ -28,6 +30,10 @@ const PAYMENT_TERMS = [
   { value: '60_days', labelKey: 'days60' },
   { value: '90_days', labelKey: 'days90' },
 ] as const;
+
+const SUPPLIER_GROUP_CODE = '32';
+const DEFAULT_SUPPLIER_PARENT_CODE = '321';
+const ENTITY_ACCOUNT_CODE_LENGTH = 8;
 
 const EMPTY_FORM = {
   name: '',
@@ -41,6 +47,7 @@ const EMPTY_FORM = {
   paymentTerms: 'immediate' as Supplier['paymentTerms'],
   isActive: true,
   notes: '',
+  accountParentCode: DEFAULT_SUPPLIER_PARENT_CODE,
 };
 
 type SupplierFormDialogProps = {
@@ -59,8 +66,81 @@ export function SupplierFormDialog({
   const { t } = useTranslation();
   const { toast } = useToast();
   const { createSupplier, saveSupplier, refreshSuppliers } = useSuppliers();
+  const { accounts, createAccount, refetch: refetchAccounts } = useChartOfAccounts();
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [isAddingSub, setIsAddingSub] = useState(false);
+  const [newSubName, setNewSubName] = useState('');
+  const [creatingSub, setCreatingSub] = useState(false);
+  // Where the new parent/sub account will be created (the group 32 = a new top-level parent).
+  const [newSubParentCode, setNewSubParentCode] = useState(SUPPLIER_GROUP_CODE);
+
+  // Any non-leaf account under the Fornecedores group (32) can be a parent — at any depth
+  // (321, then 3211 under it, etc.). Supplier leaf accounts are 8 digits and are excluded.
+  const supplierParentOptions = useMemo(() => {
+    const opts = accounts.filter(
+      (a) =>
+        a.is_active !== false &&
+        a.code.startsWith(SUPPLIER_GROUP_CODE) &&
+        a.code.length < ENTITY_ACCOUNT_CODE_LENGTH,
+    );
+    return opts.sort((a, b) => a.code.localeCompare(b.code));
+  }, [accounts]);
+
+  // Next compact code under the chosen base (group 32 -> 323 = new top parent; 321 -> 3211).
+  const newSubBaseCode = newSubParentCode?.trim() || SUPPLIER_GROUP_CODE;
+
+  const nextSubAccountCode = useMemo(() => {
+    const used = new Set(accounts.map((a) => a.code));
+    let n = 1;
+    while (used.has(`${newSubBaseCode}${n}`)) n += 1;
+    return `${newSubBaseCode}${n}`;
+  }, [accounts, newSubBaseCode]);
+
+  const startAddingSub = () => {
+    // Default the new account's parent to the group (creates a new top-level parent), or to
+    // the currently selected sub if one is chosen.
+    setNewSubParentCode(formData.accountParentCode?.trim() || SUPPLIER_GROUP_CODE);
+    setNewSubName('');
+    setIsAddingSub(true);
+  };
+
+  const handleCreateSubAccount = async () => {
+    const name = newSubName.trim();
+    if (!name) return;
+    setCreatingSub(true);
+    try {
+      const parent = accounts.find((a) => a.code === newSubBaseCode)
+        || accounts.find((a) => a.code === SUPPLIER_GROUP_CODE);
+      const code = nextSubAccountCode;
+      await createAccount({
+        code,
+        name,
+        account_type: 'liability',
+        account_nature: 'credit',
+        parent_id: parent?.id || null,
+        level: (parent?.level ?? 1) + 1,
+        is_header: true,
+        opening_balance: 0,
+      });
+      await refetchAccounts();
+      setFormData((prev) => ({ ...prev, accountParentCode: code }));
+      setNewSubName('');
+      setIsAddingSub(false);
+      toast({
+        title: t.common.success,
+        description: `${code} — ${name}`,
+      });
+    } catch (error: unknown) {
+      toast({
+        title: t.common.error,
+        description: error instanceof Error ? error.message : t.suppliersUi.saveFailed,
+        variant: 'destructive',
+      });
+    } finally {
+      setCreatingSub(false);
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -77,6 +157,7 @@ export function SupplierFormDialog({
         paymentTerms: supplier.paymentTerms,
         isActive: supplier.isActive,
         notes: supplier.notes || '',
+        accountParentCode: DEFAULT_SUPPLIER_PARENT_CODE,
       });
     } else {
       setFormData(EMPTY_FORM);
@@ -198,6 +279,92 @@ export function SupplierFormDialog({
               </SelectContent>
             </Select>
           </div>
+          {!supplier && (
+            <div className="col-span-2 space-y-2">
+              <Label>{t.chartOfAccountsUi.parentAccountLabel}</Label>
+              {isAddingSub ? (
+                <div className="space-y-2 rounded-md border p-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">{t.chartOfAccountsUi.parentAccountLabel}</Label>
+                    <Select value={newSubParentCode} onValueChange={setNewSubParentCode}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {supplierParentOptions.map((acc) => (
+                          <SelectItem key={acc.code} value={acc.code}>
+                            {acc.code} — {acc.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      autoFocus
+                      value={newSubName}
+                      placeholder={`${nextSubAccountCode} — ${t.chartOfAccountsUi.accountNameLabel}`}
+                      onChange={(e) => setNewSubName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void handleCreateSubAccount();
+                        }
+                        if (e.key === 'Escape') {
+                          setIsAddingSub(false);
+                          setNewSubName('');
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => void handleCreateSubAccount()}
+                      disabled={creatingSub || !newSubName.trim()}
+                    >
+                      {t.common.save}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setIsAddingSub(false);
+                        setNewSubName('');
+                      }}
+                      disabled={creatingSub}
+                    >
+                      {t.common.cancel}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <Select
+                      value={formData.accountParentCode}
+                      onValueChange={(v) => setFormData({ ...formData, accountParentCode: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {supplierParentOptions.map((acc) => (
+                          <SelectItem key={acc.code} value={acc.code}>
+                            {acc.code} — {acc.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" onClick={startAddingSub}>
+                    <Plus className="w-4 h-4 mr-1" />
+                    {t.common.new}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
           <div className="col-span-2 space-y-2">
             <Label htmlFor="coa-supplier-address">{t.common.address}</Label>
             <Input

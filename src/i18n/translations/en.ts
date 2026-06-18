@@ -4799,6 +4799,7 @@ export const en = {
     tabAll: "All",
 
     newAccount: "New account",
+    newParentAccount: "New parent account",
     newMenu: "New",
     newCustomerAccount: "New customer account",
     newSupplierAccount: "New supplier account",

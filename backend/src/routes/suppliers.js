@@ -3,24 +3,45 @@ const express = require('express');
 const db = require('../db');
 const { openItemDebitAmountCase } = require('../lib/sqlDialect');
 
-// Angola PGC (novo com IVA): Fornecedores - correntes is account 321; supplier
-// sub-accounts are created as its children (321001, 321002, …).
+// Angola PGC (novo com IVA): Fornecedores group is account 32; supplier
+// sub-accounts default to 321 (Fornecedores - correntes) but can be created
+// under any chosen 32x parent. Auto codes are 8 digits (e.g. 32100001).
+const SUPPLIER_GROUP_CODE = '32';
 const SUPPLIER_PARENT_CODE = '321';
+const ENTITY_ACCOUNT_CODE_LENGTH = 8;
+
+// Build the next free 8-digit code under a parent (parent "321" -> "32100001").
+function nextEntityAccountCode(parentCode, existingCodes) {
+  const suffixLen = ENTITY_ACCOUNT_CODE_LENGTH - parentCode.length;
+  const maxSeq = existingCodes.reduce((max, code) => {
+    if (!code || !code.startsWith(parentCode) || code.length <= parentCode.length) return max;
+    const parsed = Number(code.slice(parentCode.length));
+    return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+  }, 0);
+  return `${parentCode}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
+}
 
 /**
- * Auto-create a 321XXX sub-account in chart_of_accounts for a supplier.
- * Idempotent — skips if an account with the same name already exists.
+ * Auto-create an 8-digit sub-account in chart_of_accounts for a supplier.
+ * Idempotent — skips if an account with the same name/NIF already exists.
+ * parentCode lets the caller choose which 32x sub-account to file under (default 321).
  */
-async function ensureSupplierSubAccount(client, supplierName, supplierNif) {
+async function ensureSupplierSubAccount(client, supplierName, supplierNif, parentCode) {
   const normalizedName = cleanText(supplierName);
   const normalizedNif = normalizeSupplierNif(supplierNif);
 
-  // Check if already exists
+  // Validate the requested parent (must be an active account in the 32 group); else fall back to 321.
+  let resolvedParentCode = cleanText(parentCode) || SUPPLIER_PARENT_CODE;
+  if (!resolvedParentCode.startsWith(SUPPLIER_GROUP_CODE)) {
+    resolvedParentCode = SUPPLIER_PARENT_CODE;
+  }
+
+  // Check if already exists anywhere in the supplier group (avoid duplicates regardless of chosen parent)
   const existing = normalizedNif
     ? await client.query(
         `SELECT code
          FROM chart_of_accounts
-         WHERE code LIKE '${SUPPLIER_PARENT_CODE}%'
+         WHERE code LIKE '${SUPPLIER_GROUP_CODE}%'
            AND level >= 3
            AND is_header = false
            AND (
@@ -33,7 +54,7 @@ async function ensureSupplierSubAccount(client, supplierName, supplierNif) {
     : await client.query(
         `SELECT code
          FROM chart_of_accounts
-         WHERE code LIKE '${SUPPLIER_PARENT_CODE}%'
+         WHERE code LIKE '${SUPPLIER_GROUP_CODE}%'
            AND level >= 3
            AND is_header = false
            AND lower(name) = lower($1)
@@ -42,29 +63,37 @@ async function ensureSupplierSubAccount(client, supplierName, supplierNif) {
       );
   if (existing.rows.length > 0) return existing.rows[0].code;
 
-  // Find parent 321 (Fornecedores - correntes)
-  const parent = await client.query(
-    `SELECT id FROM chart_of_accounts WHERE code = '${SUPPLIER_PARENT_CODE}' AND is_active = true LIMIT 1`
+  // Find the chosen parent account
+  let parent = await client.query(
+    `SELECT id, level FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
+    [resolvedParentCode]
   );
+  if (parent.rows.length === 0 && resolvedParentCode !== SUPPLIER_PARENT_CODE) {
+    resolvedParentCode = SUPPLIER_PARENT_CODE;
+    parent = await client.query(
+      `SELECT id, level FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
+      [resolvedParentCode]
+    );
+  }
   if (parent.rows.length === 0) {
-    console.warn('[SUPPLIERS] Parent account 321 (Fornecedores - correntes) not found — skipping sub-account');
+    console.warn(`[SUPPLIERS] Parent account ${resolvedParentCode} not found — skipping sub-account`);
     return null;
   }
   const parentId = parent.rows[0].id;
+  const childLevel = (parseInt(parent.rows[0].level, 10) || 2) + 1;
 
-  // Next sequence
+  // Next 8-digit code under the chosen parent
   const seqResult = await client.query(
-    `SELECT COUNT(*) as count FROM chart_of_accounts WHERE code LIKE '${SUPPLIER_PARENT_CODE}%' AND level >= 3 AND is_header = false`
+    `SELECT code FROM chart_of_accounts WHERE code LIKE '${resolvedParentCode}%' AND is_header = false`
   );
-  const nextSeq = parseInt(seqResult.rows[0].count) + 1;
-  const code = `${SUPPLIER_PARENT_CODE}${nextSeq.toString().padStart(3, '0')}`;
+  const code = nextEntityAccountCode(resolvedParentCode, seqResult.rows.map((r) => r.code));
 
   await client.query(
     `INSERT INTO chart_of_accounts
      (code, name, description, account_type, account_nature, parent_id, level, is_header, opening_balance, current_balance)
-     VALUES ($1, $2, $3, 'liability', 'credit', $4, 3, false, 0, 0)
+     VALUES ($1, $2, $3, 'liability', 'credit', $4, $5, false, 0, 0)
      ON CONFLICT (code) DO NOTHING`,
-    [code, normalizedName, normalizedNif ? `NIF: ${normalizedNif}` : '', parentId]
+    [code, normalizedName, normalizedNif ? `NIF: ${normalizedNif}` : '', parentId, childLevel]
   );
 
   // Update parent children_count
@@ -115,11 +144,19 @@ module.exports = function(broadcastTable) {
   });
 
   router.post('/', async (req, res) => {
+    // Validate before opening a transaction so we can return a clean 400.
+    if (!cleanText(req.body?.name)) {
+      return res.status(400).json({ error: 'Nome do fornecedor é obrigatório' });
+    }
+    if (!normalizeSupplierNif(req.body?.nif)) {
+      return res.status(400).json({ error: 'NIF do fornecedor é obrigatório' });
+    }
+
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
 
-      const { name, nif, email, phone, address, city, country, contactPerson, paymentTerms, notes } = req.body;
+      const { name, nif, email, phone, address, city, country, contactPerson, paymentTerms, notes, accountParentCode } = req.body;
       const normalizedName = cleanText(name);
       const normalizedNif = normalizeSupplierNif(nif);
       if (!normalizedName) {
@@ -136,7 +173,7 @@ module.exports = function(broadcastTable) {
       // Auto-create 3.2.XXX sub-account (non-fatal — supplier row must still commit)
       let accountCode = null;
       try {
-        accountCode = await ensureSupplierSubAccount(client, normalizedName, normalizedNif);
+        accountCode = await ensureSupplierSubAccount(client, normalizedName, normalizedNif, accountParentCode);
       } catch (subErr) {
         console.warn('[SUPPLIERS] Sub-account creation skipped:', subErr.message);
       }

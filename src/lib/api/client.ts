@@ -438,13 +438,22 @@ function mapProductPayloadForElectron(data: any) {
   };
 }
 
-async function ensureSupplierSubAccountElectron(supplierName: string, supplierNif?: string): Promise<string | null> {
+async function ensureSupplierSubAccountElectron(
+  supplierName: string,
+  supplierNif?: string,
+  parentCode?: string,
+): Promise<string | null> {
   if (!isElectronMode() || !supplierName) return null;
 
+  const ENTITY_ACCOUNT_CODE_LENGTH = 8;
+  const SUPPLIER_GROUP_CODE = '32';
+  const DEFAULT_SUPPLIER_PARENT_CODE = '321';
+
   try {
+    // Avoid duplicates anywhere in the supplier group, regardless of chosen parent
     const existing = await ipcQuery<any>(
       `SELECT code FROM chart_of_accounts
-       WHERE code LIKE '321%' AND level >= 3 AND is_header = false
+       WHERE code LIKE '32%' AND level >= 3 AND is_header = false
          AND (name = $1 OR ($2 IS NOT NULL AND $2 != '' AND description LIKE '%' || $2 || '%'))
        ORDER BY code
        LIMIT 1`,
@@ -455,21 +464,39 @@ async function ensureSupplierSubAccountElectron(supplierName: string, supplierNi
       return existing.data[0].code;
     }
 
-    const parent = await ipcQuery<any>(
-      `SELECT id FROM chart_of_accounts WHERE code = '321' AND is_active = true LIMIT 1`
+    let resolvedParentCode = (parentCode || '').trim() || DEFAULT_SUPPLIER_PARENT_CODE;
+    if (!resolvedParentCode.startsWith(SUPPLIER_GROUP_CODE)) {
+      resolvedParentCode = DEFAULT_SUPPLIER_PARENT_CODE;
+    }
+
+    let parent = await ipcQuery<any>(
+      `SELECT id, level FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
+      [resolvedParentCode]
     );
+    if (!parent.data?.[0]?.id && resolvedParentCode !== DEFAULT_SUPPLIER_PARENT_CODE) {
+      resolvedParentCode = DEFAULT_SUPPLIER_PARENT_CODE;
+      parent = await ipcQuery<any>(
+        `SELECT id, level FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
+        [resolvedParentCode]
+      );
+    }
 
     const parentId = parent.data?.[0]?.id;
     if (!parentId) return null;
+    const childLevel = (Number(parent.data?.[0]?.level) || 2) + 1;
 
-    const seqResult = await ipcQuery<any>(
-      `SELECT COUNT(*)::int AS count
-       FROM chart_of_accounts
-       WHERE code LIKE '321%' AND level >= 3 AND is_header = false`
+    const siblings = await ipcQuery<any>(
+      `SELECT code FROM chart_of_accounts WHERE code LIKE $1 AND is_header = false`,
+      [`${resolvedParentCode}%`]
     );
-
-    const nextSeq = Number(seqResult.data?.[0]?.count || 0) + 1;
-    const code = `321${String(nextSeq).padStart(3, '0')}`;
+    const suffixLen = ENTITY_ACCOUNT_CODE_LENGTH - resolvedParentCode.length;
+    const maxSeq = (siblings.data || []).reduce((max: number, row: any) => {
+      const c = String(row.code || '');
+      if (!c.startsWith(resolvedParentCode) || c.length <= resolvedParentCode.length) return max;
+      const parsed = Number(c.slice(resolvedParentCode.length));
+      return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+    }, 0);
+    const code = `${resolvedParentCode}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
 
     const insertResult = await ipcInsert('chart_of_accounts', {
       id: generateId(),
@@ -479,7 +506,7 @@ async function ensureSupplierSubAccountElectron(supplierName: string, supplierNi
       account_type: 'liability',
       account_nature: 'credit',
       parent_id: parentId,
-      level: 3,
+      level: childLevel,
       is_header: false,
       is_active: true,
       opening_balance: 0,
@@ -961,17 +988,26 @@ export const api = {
       }
       return apiFetch<any[]>('/clients');
     },
-    create: (data: any) => {
+    // HTTP-first (authoritative + broadcasts sync); fall back to direct IPC only if the
+    // embedded HTTP backend is unavailable — avoids "Database not connected" on installs
+    // where the direct IPC pool isn't open.
+    create: async (data: any) => {
+      const apiResult = await apiFetch<any>('/clients', { method: 'POST', body: JSON.stringify(data) });
+      if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       if (isElectronMode()) return ipcInsert('clients', { id: generateId(), ...data, created_at: new Date().toISOString() });
-      return apiFetch<any>('/clients', { method: 'POST', body: JSON.stringify(data) });
+      return apiResult;
     },
-    update: (id: string, data: any) => {
+    update: async (id: string, data: any) => {
+      const apiResult = await apiFetch<any>(`/clients/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+      if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       if (isElectronMode()) return ipcUpdate('clients', id, data);
-      return apiFetch<any>(`/clients/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+      return apiResult;
     },
-    delete: (id: string) => {
+    delete: async (id: string) => {
+      const apiResult = await apiFetch<any>(`/clients/${id}`, { method: 'DELETE' });
+      if (!apiResult.error) return apiResult;
       if (isElectronMode()) return ipcDelete('clients', id);
-      return apiFetch<any>(`/clients/${id}`, { method: 'DELETE' });
+      return apiResult;
     },
   },
 
@@ -1026,7 +1062,7 @@ export const api = {
         const payload = mapSupplierPayloadForElectron(data);
         const result = await ipcInsert('suppliers', payload);
         if (result.data) {
-          await ensureSupplierSubAccountElectron(payload.name, payload.nif);
+          await ensureSupplierSubAccountElectron(payload.name, payload.nif, data?.accountParentCode);
         }
         return result;
       }
@@ -1089,7 +1125,7 @@ export const api = {
         delete payload.id;
         const result = await ipcUpdate('suppliers', id, payload);
         if (result.data) {
-          await ensureSupplierSubAccountElectron(data.name || payload.name, data.nif || payload.nif);
+          await ensureSupplierSubAccountElectron(data.name || payload.name, data.nif || payload.nif, data?.accountParentCode);
         }
         return result;
       }
@@ -1377,17 +1413,28 @@ export const api = {
       }
       return apiResult;
     },
-    create: (data: any) => {
-      if (isElectronMode()) return ipcInsert('chart_of_accounts', { id: generateId(), ...data, is_active: true, current_balance: 0, created_at: new Date().toISOString() });
-      return apiFetch<any>('/chart-of-accounts', { method: 'POST', body: JSON.stringify(data) });
+    // Write ops prefer the HTTP backend (authoritative + broadcasts sync); fall back to
+    // direct IPC only if the embedded HTTP backend is unavailable. This avoids the
+    // "Database not connected" error on installs where the direct IPC pool isn't open.
+    create: async (data: any) => {
+      const apiResult = await apiFetch<any>('/chart-of-accounts', { method: 'POST', body: JSON.stringify(data) });
+      if (apiResult.data !== undefined && !apiResult.error) return apiResult;
+      if (isElectronMode()) {
+        return ipcInsert('chart_of_accounts', { id: generateId(), ...data, is_active: true, current_balance: 0, created_at: new Date().toISOString() });
+      }
+      return apiResult;
     },
-    update: (id: string, data: any) => {
+    update: async (id: string, data: any) => {
+      const apiResult = await apiFetch<any>(`/chart-of-accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+      if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       if (isElectronMode()) return ipcUpdate('chart_of_accounts', id, data);
-      return apiFetch<any>(`/chart-of-accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+      return apiResult;
     },
-    delete: (id: string) => {
+    delete: async (id: string) => {
+      const apiResult = await apiFetch<any>(`/chart-of-accounts/${id}`, { method: 'DELETE' });
+      if (!apiResult.error) return apiResult;
       if (isElectronMode()) return ipcDelete('chart_of_accounts', id);
-      return apiFetch<any>(`/chart-of-accounts/${id}`, { method: 'DELETE' });
+      return apiResult;
     },
     reseed: () => apiFetch<{ success: boolean; active: number; seeded: number }>(
       '/chart-of-accounts/reseed',

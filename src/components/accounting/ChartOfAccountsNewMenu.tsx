@@ -11,6 +11,7 @@ import {
   UserCog,
   Scale,
   List,
+  FolderPlus,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,7 @@ const ENTITY_ICONS: Record<string, LucideIcon> = {
 };
 
 const ACCOUNT_TAB_ICONS: Record<string, LucideIcon> = {
+  parent: FolderPlus,
   clientes: Users,
   fornecedores: Truck,
   caixa: Wallet,
@@ -48,6 +50,7 @@ const ACCOUNT_TAB_ICONS: Record<string, LucideIcon> = {
 };
 
 const ACCOUNT_LABEL_KEYS: Record<string, keyof ReturnType<typeof useTranslation>['t']['chartOfAccountsUi']> = {
+  parent: 'newParentAccount',
   clientes: 'newCustomerAccount',
   fornecedores: 'newSupplierAccount',
   caixa: 'newCashAccount',

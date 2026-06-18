@@ -2,6 +2,7 @@
 export type ChartNewAction =
   | 'client'
   | 'supplier'
+  | 'account:parent'
   | 'account:clientes'
   | 'account:fornecedores'
   | 'account:caixa'
@@ -16,6 +17,7 @@ export type ChartNewAction =
 export const CHART_NEW_ENTITY_ACTIONS: ChartNewAction[] = ['client', 'supplier'];
 
 export const CHART_NEW_ACCOUNT_ACTIONS: ChartNewAction[] = [
+  'account:parent',
   'account:clientes',
   'account:fornecedores',
   'account:caixa',
