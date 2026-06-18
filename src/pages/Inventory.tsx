@@ -30,7 +30,6 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   FileText, 
-  Plus, 
   Filter, 
   BarChart3, 
   Eye, 
@@ -38,14 +37,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  Upload,
   ArrowRightLeft,
-  ClipboardList,
-  ClipboardCheck,
-  Printer,
-  Calculator,
-  PackagePlus,
-  PackageMinus,
   Building2,
   Search,
 } from 'lucide-react';
@@ -1218,42 +1210,11 @@ export default function Inventory() {
           />
         </div>
         <div className="w-px h-5 bg-border mx-1 shrink-0" />
-        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => handleOpenDialog()}>
-          <Plus className="w-3 h-3" />
-          {t.common.new}
-        </Button>
-        <div className="w-px h-5 bg-border mx-1" />
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => {
           setStockListFilter((prev) => prev === 'all' ? 'qtyGt0' : prev === 'qtyGt0' ? 'qtyLt0' : 'all');
         }}>
           <Filter className="w-3 h-3" />
           {t.common.filters}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className={NEXOR_TOOLBAR_BTN_SM}
-          disabled={!warehouseId}
-          title={!warehouseId ? t.stockEntryUi.branchRequiredDesc : undefined}
-          onClick={() => setStockEntryDialogOpen(true)}
-        >
-          <PackagePlus className="w-3 h-3" />
-          {t.inventoryPageUi.adjustEntry}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className={NEXOR_TOOLBAR_BTN_SM}
-          disabled={!warehouseId}
-          title={!warehouseId ? t.stockExitUi.branchRequiredDesc : undefined}
-          onClick={() => setStockExitDialogOpen(true)}
-        >
-          <PackageMinus className="w-3 h-3" />
-          {t.inventoryPageUi.adjustExit}
-        </Button>
-        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => setImportDialogOpen(true)}>
-          <Upload className="w-3 h-3" />
-          {t.common.import}
         </Button>
         <Button
           variant="outline"
@@ -1266,38 +1227,6 @@ export default function Inventory() {
         >
           <Download className="w-3 h-3" />
           {t.common.export}
-        </Button>
-        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={openCountSheetDialog}>
-          <ClipboardList className="w-3 h-3" />
-          {t.inventoryPageUi.countSheet}
-        </Button>
-        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={openReconciliationDialog}>
-          <ClipboardCheck className="w-3 h-3" />
-          {t.inventoryPageUi.reconcile}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className={NEXOR_TOOLBAR_BTN_SM}
-          onClick={() => {
-            const bid = listBranchId || currentBranch?.id || '';
-            setAdjustmentBranchId(bid);
-            if (canSwitchBranch) void loadPerBranchBreakdown();
-            setAdjustmentDialogOpen(true);
-          }}
-        >
-          <Calculator className="w-3 h-3" />
-          {t.inventoryPageUi.adjustStock}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className={NEXOR_TOOLBAR_BTN_SM}
-          onClick={() => setLabelPrintDialogOpen(true)}
-          disabled={!selectedProduct && displayProducts.length === 0}
-        >
-          <Printer className="w-3 h-3" />
-          {t.inventoryPageUi.labels}
         </Button>
 
         <div className="flex-1" />

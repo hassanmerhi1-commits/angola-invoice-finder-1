@@ -347,6 +347,7 @@ export const en = {
     agtCertified: "AGT certified software",
     printing: "Printing...",
     thermal: "Thermal",
+    reprintThermal: "Reprint (Thermal)",
     newSale: "New sale",
     printerSettings: "Printer settings",
     thanksDefault: "Thank you for your preference!",

@@ -349,6 +349,7 @@ export const pt: TranslationKeys = {
     agtCertified: "Software certificado AGT",
     printing: "Imprimindo...",
     thermal: "Térmico",
+    reprintThermal: "Reimprimir (Térmico)",
     newSale: "Nova Venda",
     printerSettings: "Config. Impressora",
     thanksDefault: "Obrigado pela preferência!",

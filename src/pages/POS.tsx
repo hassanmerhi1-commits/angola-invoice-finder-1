@@ -1,7 +1,12 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useCart, useSales, useAuth } from '@/hooks/useERP';
-import { printPosThermalReceipts } from '@/lib/thermalPrinter';
+import {
+  printPosThermalReceipts,
+  printReceipt,
+  getPrinterConfig,
+  POS_RECEIPT_COPY_LABELS,
+} from '@/lib/thermalPrinter';
 import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { usePosProducts } from '@/hooks/usePosProducts';
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
@@ -326,9 +331,22 @@ export default function POS() {
           void recordSalePrint(sale, { format: 'thermal', source: 'pos' });
           toast.success(t.receiptUi.autoPrintSuccess);
         } else if (printResult.needsPrinterSetup) {
-          toast.error(t.receiptUi.printerSetupRequired, {
-            description: t.receiptUi.printerSetupRequiredDesc,
+          // No silent printer configured — still print automatically by opening
+          // the thermal receipt in the browser/OS print dialog (no A4, no manual click).
+          const fallback = await printReceipt(sale, currentBranch, getPrinterConfig(), {
+            openDrawer: paymentMethod === 'cash',
+            copies: POS_RECEIPT_COPY_LABELS.length,
+            copyLabels: [...POS_RECEIPT_COPY_LABELS],
+            allowDialogFallback: true,
           });
+          if (fallback.success) {
+            void recordSalePrint(sale, { format: 'thermal', source: 'pos' });
+            toast.success(t.receiptUi.autoPrintSuccess);
+          } else {
+            toast.error(t.receiptUi.printerSetupRequired, {
+              description: t.receiptUi.printerSetupRequiredDesc,
+            });
+          }
         } else {
           toast.error(t.receiptUi.autoPrintError);
         }

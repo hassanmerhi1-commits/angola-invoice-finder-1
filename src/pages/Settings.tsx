@@ -283,7 +283,7 @@ export default function Settings() {
         <p className="text-muted-foreground">{t.settingsPage.subtitle}</p>
       </div>
 
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-stretch">
         <SettingsSectionNav active={activeSection} onChange={setActiveSection} />
 
         <div className="min-w-0 flex-1">

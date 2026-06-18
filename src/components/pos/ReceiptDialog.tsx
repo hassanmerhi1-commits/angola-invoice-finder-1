@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { Printer, Settings, Check, FileOutput, ChevronUp, ChevronDown } from 'lucide-react';
+import { Printer, Settings, Check, ChevronUp, ChevronDown } from 'lucide-react';
 import {
   printReceipt,
   getPrinterConfig,
@@ -17,12 +17,9 @@ import {
 } from '@/lib/thermalPrinter';
 import { PrinterSettingsDialog } from './PrinterSettingsDialog';
 import { AGTQRCode } from '@/components/invoice/AGTQRCode';
-import { getInvoiceHash } from '@/lib/agtQRCode';
-import { printA4Invoice } from '@/lib/a4Invoice';
 import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { getCompanySettings } from '@/lib/companySettings';
 import { toast } from 'sonner';
-import { resolveSaleDocumentType } from '@/lib/fiscalInvoiceType';
 import { taxBreakdownFromItems, IVA_EXEMPTION_REASON } from '@/lib/taxUtils';
 import { softwareValidationLine } from '@/lib/companySettings';
 import { useTranslation } from '@/i18n';
@@ -98,24 +95,6 @@ export function ReceiptDialog({
       }
     } catch (error) {
       toast.error(t.receiptUi.cashDrawerError);
-    }
-  };
-
-  const handlePrintA4 = async () => {
-    try {
-      await printA4Invoice(sale, branch, {
-        showBankDetails: true,
-        showNotes: true,
-        documentType: resolveSaleDocumentType({
-          invoiceType: sale.invoiceType,
-          invoiceNumber: sale.invoiceNumber,
-        }),
-      });
-      void recordSalePrint(sale, { format: 'a4', source: 'receipt_dialog' });
-      toast.success(t.receiptUi.a4SentToPrint);
-    } catch (error) {
-      toast.error(t.receiptUi.a4PrintError);
-      console.error('A4 print error:', error);
     }
   };
 
@@ -314,20 +293,15 @@ export function ReceiptDialog({
 
         {/* Actions */}
         <div className="space-y-2 print:hidden shrink-0">
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="outline"
-              onClick={handlePrint}
-              disabled={isPrinting}
-            >
-              <Printer className="w-4 h-4 mr-2" />
-              {isPrinting ? t.receiptUi.printing : t.receiptUi.thermal}
-            </Button>
-            <Button variant="outline" onClick={handlePrintA4}>
-              <FileOutput className="w-4 h-4 mr-2" />
-              A4
-            </Button>
-          </div>
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={handlePrint}
+            disabled={isPrinting}
+          >
+            <Printer className="w-4 h-4 mr-2" />
+            {isPrinting ? t.receiptUi.printing : t.receiptUi.reprintThermal}
+          </Button>
 
           <Button className="w-full" onClick={onNewSale}>
             {t.receiptUi.newSale}

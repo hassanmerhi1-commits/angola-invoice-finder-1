@@ -459,11 +459,11 @@ function buildReceiptCopyBody(
   <div class="divider"></div>
   
   <div class="center" style="padding: 10px 0;">
-    ${qrCodeDataURL ? `<img src="${qrCodeDataURL}" alt="QR Code AGT" style="width: 100px; height: 100px;">` : ''}
+    ${qrCodeDataURL ? `<img class="qr" src="${qrCodeDataURL}" alt="QR Code AGT" style="width: 100px; height: 100px;">` : ''}
     <div style="font-size: 8px; margin-top: 5px; font-family: monospace;">
       Hash: ${getInvoiceHash(sale)}
     </div>
-    <div style="font-size: 7px; color: #666; margin-top: 3px;">
+    <div style="font-size: 7px; color: #000; margin-top: 3px;">
       ${softwareValidationLine(company)}
     </div>
   </div>
@@ -517,16 +517,24 @@ async function buildReceiptBrowserHtml(
       margin: 0;
       padding: 0;
       box-sizing: border-box;
+      color: #000;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    html, body {
+      background: #fff;
     }
     body {
       font-family: 'Courier New', monospace;
       font-size: ${baseFont}px;
+      /* Heavier weight + no anti-aliasing keeps text dark and sharp on heat-based thermal heads (avoids faded, A4-style greys). */
+      font-weight: 700;
+      -webkit-font-smoothing: none;
       line-height: 1.25;
       width: ${width};
       max-width: ${width};
       padding: ${pad}mm;
-      background: white;
-      color: black;
+      color: #000;
       word-wrap: break-word;
       overflow-wrap: anywhere;
     }
@@ -543,7 +551,7 @@ async function buildReceiptBrowserHtml(
       margin: 4px 0;
     }
     .double-divider {
-      border-top: 2px solid #000;
+      border-top: 3px solid #000;
       margin: 4px 0;
     }
     .row {
@@ -576,7 +584,12 @@ async function buildReceiptBrowserHtml(
       font-size: 10px;
     }
     @media print {
-      body { -webkit-print-color-adjust: exact; }
+      html, body, * {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+        color: #000 !important;
+      }
+      .qr { filter: grayscale(100%) contrast(1000%); image-rendering: pixelated; }
     }
   </style>
 </head>
