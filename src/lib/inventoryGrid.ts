@@ -8,7 +8,7 @@ import {
 } from '@/lib/productDedupe';
 import { writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
-const CACHE_PREFIX = 'nexor:inventory-grid:v14:';
+const CACHE_PREFIX = 'nexor:inventory-grid:v15:';
 
 /** Normalize stock from API row (movement ledger or products.stock). */
 export function readProductStock(row: Record<string, unknown> | Product): number {
@@ -113,6 +113,9 @@ export function mapInventoryGridRows(rows: any[]): Product[] {
       barcode: p.barcode ?? '',
       category: p.category ?? 'GERAL',
       price: Number(p.price) || 0,
+      price2: p.price2 != null ? Number(p.price2) : p.price_2 != null ? Number(p.price_2) : undefined,
+      price3: p.price3 != null ? Number(p.price3) : p.price_3 != null ? Number(p.price_3) : undefined,
+      price4: p.price4 != null ? Number(p.price4) : p.price_4 != null ? Number(p.price_4) : undefined,
       cost: Number(p.cost) || 0,
       firstCost: Number(p.first_cost ?? p.firstCost ?? p.cost) || 0,
       lastCost: Number(p.last_cost ?? p.lastCost ?? p.cost) || 0,

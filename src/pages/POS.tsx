@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useCart, useSales, useAuth } from '@/hooks/useERP';
+import { useCart, useSales, useAuth, useClients } from '@/hooks/useERP';
+import { effectiveUnitPrice, clientPricing, normalizePriceLevel } from '@/lib/pricing';
 import {
   printPosThermalReceipts,
   printReceipt,
@@ -16,6 +17,8 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
 import { PosProductSearchList } from '@/components/pos/PosProductSearchList';
 import { findPosProductByCode, filterPosProductsBySearch } from '@/lib/posProductSearch';
 import { Cart } from '@/components/pos/Cart';
@@ -38,6 +41,43 @@ export default function POS() {
   const { t } = useTranslation();
   const cart = useCart();
   const { completeSale, sales, refreshSales } = useSales(currentBranch?.id);
+  const { clients } = useClients();
+
+  const [priceLevel, setPriceLevel] = useState(1);
+  const [selectedClientId, setSelectedClientId] = useState<string>('');
+  const selectedClient = useMemo(
+    () => clients.find((c) => c.id === selectedClientId) ?? null,
+    [clients, selectedClientId],
+  );
+  const adjustmentPct = clientPricing(selectedClient).adjustmentPct;
+
+  // Effective ex-VAT unit price for the active price level + client % adjustment.
+  const priceFor = useCallback(
+    (product: Product) => effectiveUnitPrice(product, priceLevel, adjustmentPct),
+    [priceLevel, adjustmentPct],
+  );
+
+  // Cart stores a product clone whose `price` is already the effective selling price.
+  const toPricedProduct = useCallback(
+    (product: Product): Product => ({ ...product, price: priceFor(product) }),
+    [priceFor],
+  );
+
+  // Adopt the client's default price level when a client is selected.
+  useEffect(() => {
+    if (selectedClient) setPriceLevel(normalizePriceLevel(selectedClient.defaultPriceLevel ?? 1));
+  }, [selectedClient]);
+
+  // Reprice existing cart lines when the price level or client adjustment changes.
+  useEffect(() => {
+    for (const item of cart.items) {
+      const original = products.find((p) => p.id === item.product.id);
+      if (!original) continue;
+      const next = priceFor(original);
+      if (next !== item.product.price) cart.repriceItem(item.product.id, next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priceLevel, adjustmentPct]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [pendingQty, setPendingQty] = useState('1');
@@ -82,7 +122,7 @@ export default function POS() {
     (product: Product) => {
       const parsedQty = parseFloat(pendingQty);
       const qty = Number.isFinite(parsedQty) && parsedQty > 0 ? parsedQty : 1;
-      cart.addItem(product, qty);
+      cart.addItem(toPricedProduct(product), qty);
       setSelectedCartProductId(product.id);
       // Keep focus on the POS qty box for the next product instead of grabbing
       // focus into the cart line (which would send Tab to the checkout button).
@@ -90,7 +130,7 @@ export default function POS() {
       setPendingQty('1');
       setTimeout(focusQty, 0);
     },
-    [cart, pendingQty, focusQty, t.posUi],
+    [cart, pendingQty, focusQty, t.posUi, toPricedProduct],
   );
 
   const handleSearchSubmit = useCallback(() => {
@@ -160,7 +200,7 @@ export default function POS() {
     (barcode: string) => {
       const product = findPosProductByCode(products, barcode);
       if (product) {
-        cart.addItem(product);
+        cart.addItem(toPricedProduct(product));
         setSelectedCartProductId(product.id);
         setFocusCartQtyProductId(product.id);
         setLastScannedBarcode(barcode);
@@ -174,7 +214,7 @@ export default function POS() {
         });
       }
     },
-    [products, cart, t.posUi],
+    [products, cart, t.posUi, toPricedProduct],
   );
 
   useBarcodeScanner({ onScan: handleBarcodeScan });
@@ -205,6 +245,8 @@ export default function POS() {
     setSearchHighlightIndex(-1);
     setSelectedCartProductId(null);
     setFocusCartQtyProductId(null);
+    setSelectedClientId('');
+    setPriceLevel(1);
   }, [cart]);
 
   useEffect(() => {
@@ -463,6 +505,43 @@ export default function POS() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <BranchSelector compact />
+          <div className="flex items-center gap-1.5">
+            <Label className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">{t.posUi.clientLabel}</Label>
+            <Select
+              value={selectedClientId || 'none'}
+              onValueChange={(v) => setSelectedClientId(v === 'none' ? '' : v)}
+            >
+              <SelectTrigger className="h-9 w-[170px] text-xs">
+                <SelectValue placeholder={t.posUi.walkInCustomer} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">{t.posUi.walkInCustomer}</SelectItem>
+                {clients.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Label className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">{t.posUi.priceLabel}</Label>
+            <Select value={String(priceLevel)} onValueChange={(v) => setPriceLevel(Number(v))}>
+              <SelectTrigger className="h-9 w-[120px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[1, 2, 3, 4].map((n) => (
+                  <SelectItem key={n} value={String(n)}>
+                    {t.posUi.priceLevelOption.replace('{n}', String(n))}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {adjustmentPct !== 0 && (
+              <Badge variant="secondary" className="shrink-0">
+                {adjustmentPct > 0 ? '+' : ''}{adjustmentPct}%
+              </Badge>
+            )}
+          </div>
           <Button
             type="button"
             variant="outline"
@@ -522,6 +601,8 @@ export default function POS() {
         items={cart.items}
         total={cart.total}
         taxAmount={cart.taxAmount}
+        defaultCustomerNif={selectedClient?.nif}
+        defaultCustomerName={selectedClient?.name}
         onCompleteSale={handleCompleteSale}
       />
 

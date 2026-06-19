@@ -13,6 +13,12 @@ function validateClientNif(nif) {
   return null;
 }
 
+/** Price level must be 1..4; default to 1 for anything else. */
+function clampPriceLevel(value) {
+  const n = Math.trunc(Number(value));
+  return n >= 1 && n <= 4 ? n : 1;
+}
+
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
@@ -30,7 +36,7 @@ module.exports = function(broadcastTable) {
   // Create client
   router.post('/', async (req, res) => {
     try {
-      const { name, nif, email, phone, address, city, country, creditLimit, currentBalance } = req.body;
+      const { name, nif, email, phone, address, city, country, creditLimit, currentBalance, defaultPriceLevel, priceAdjustmentPct } = req.body;
 
       if (!String(name || '').trim()) {
         return res.status(400).json({ error: 'Name is required' });
@@ -40,12 +46,14 @@ module.exports = function(broadcastTable) {
         return res.status(400).json({ error: nifError });
       }
       const normalizedNif = normalizeNif(nif);
-      
+      const priceLevel = clampPriceLevel(defaultPriceLevel);
+      const adjustment = Number(priceAdjustmentPct) || 0;
+
       const result = await db.query(
-        `INSERT INTO clients (name, nif, email, phone, address, city, country, credit_limit, current_balance)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO clients (name, nif, email, phone, address, city, country, credit_limit, current_balance, default_price_level, price_adjustment_pct)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *`,
-        [name.trim(), normalizedNif, email, phone, address, city, country || 'Angola', creditLimit || 0, currentBalance || 0]
+        [name.trim(), normalizedNif, email, phone, address, city, country || 'Angola', creditLimit || 0, currentBalance || 0, priceLevel, adjustment]
       );
       
       await broadcastTable('clients');
@@ -60,7 +68,7 @@ module.exports = function(broadcastTable) {
   router.put('/:id', async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, nif, email, phone, address, city, country, creditLimit, currentBalance, isActive } = req.body;
+      const { name, nif, email, phone, address, city, country, creditLimit, currentBalance, isActive, defaultPriceLevel, priceAdjustmentPct } = req.body;
 
       if (!String(name || '').trim()) {
         return res.status(400).json({ error: 'Name is required' });
@@ -70,14 +78,17 @@ module.exports = function(broadcastTable) {
         return res.status(400).json({ error: nifError });
       }
       const normalizedNif = normalizeNif(nif);
-      
+      const priceLevel = clampPriceLevel(defaultPriceLevel);
+      const adjustment = Number(priceAdjustmentPct) || 0;
+
       const result = await db.query(
         `UPDATE clients 
          SET name = $1, nif = $2, email = $3, phone = $4, address = $5, city = $6, 
-             country = $7, credit_limit = $8, current_balance = $9, is_active = $10, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $11
+             country = $7, credit_limit = $8, current_balance = $9, is_active = $10,
+             default_price_level = $11, price_adjustment_pct = $12, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $13
          RETURNING *`,
-        [name.trim(), normalizedNif, email, phone, address, city, country, creditLimit, currentBalance, isActive, id]
+        [name.trim(), normalizedNif, email, phone, address, city, country, creditLimit, currentBalance, isActive, priceLevel, adjustment, id]
       );
       
       await broadcastTable('clients');

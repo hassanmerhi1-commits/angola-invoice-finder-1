@@ -271,6 +271,10 @@ export const en = {
 
   posUi: {
     scannerReady: "Scanner Ready",
+    clientLabel: "Client",
+    walkInCustomer: "Walk-in customer",
+    priceLabel: "Price",
+    priceLevelOption: "Price {n}",
     keyboardShortcuts: "Keyboard shortcuts",
     checkoutShortcut: "Checkout",
     clearCartShortcut: "Clear cart",
@@ -1125,6 +1129,9 @@ export const en = {
     print: "Print",
     printNeedsLines: "Add at least one line before printing.",
     printError: "Failed to print document",
+    priceLevelLabel: "Price level",
+    priceLevelOption: "Price level {n}",
+    clientAdjustmentNote: "Client adjustment {pct}% applied",
     customer: "Customer",
     supplier: "Supplier",
     nif: "Tax ID",
@@ -4928,6 +4935,10 @@ export const en = {
     nifPlaceholder: "Tax number",
     addressPlaceholder: "Full address",
     creditLimitLabel: "Credit limit (Kz)",
+    defaultPriceLevelLabel: "Default price level",
+    priceLevelOption: "Price level {n}",
+    priceAdjustmentLabel: "Price adjustment (%)",
+    priceAdjustmentHint: "Signed %: positive adds a surcharge, negative gives a discount. Applied automatically in POS and sales invoices.",
 
     registerClient: "Register client",
 

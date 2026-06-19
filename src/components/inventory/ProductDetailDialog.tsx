@@ -219,7 +219,15 @@ export function ProductDetailDialog({
   const formInitKeyRef = useRef('');
   const apiHydratedIdRef = useRef<string | null>(null);
   const forceCloseRef = useRef(false);
+  /** Mirrors the latest committed formData so effects can read it without re-running on every keystroke. */
+  const formDataRef = useRef<Record<string, any> | null>(null);
   const [discardCloseOpen, setDiscardCloseOpen] = useState(false);
+  /**
+   * Per-tier percentage over Price 1, used as a UI helper: Price N = Price 1 x (1 + pct/100).
+   * Only set while the user drives a tier from its % field; cleared when they type an exact
+   * price into the box. Not persisted — on reopen the % is derived from the stored prices.
+   */
+  const [tierPct, setTierPct] = useState<{ 2?: number; 3?: number; 4?: number }>({});
 
   const [formData, setFormData] = useState({
     id: '',
@@ -312,6 +320,7 @@ export function ProductDetailDialog({
     const initKey = effectiveProduct?.id || 'new';
     if (formInitKeyRef.current === initKey) return;
     formInitKeyRef.current = initKey;
+    setTierPct({});
 
     if (effectiveProduct) {
       const next = buildFormFromProduct(effectiveProduct);
@@ -359,17 +368,28 @@ export function ProductDetailDialog({
     scopeBranchId,
   ]);
 
-  // Apply API row once per open (before user edits) — do not re-run when suppliers list loads.
+  // Keep a ref mirror of the latest committed form so the hydration effect can read it without
+  // re-running on every keystroke. Defined before the hydration effect so it flushes first.
   useEffect(() => {
-    if (!open || !loadedProduct?.id || formInitKeyRef.current !== loadedProduct.id) return;
+    formDataRef.current = formData;
+  }, [formData]);
+
+  // Apply API row once per open (before user edits) — do not re-run when suppliers list loads.
+  // Side effects (ref mutations) are kept OUT of the setState updater so this stays correct under
+  // React StrictMode, which double-invokes state updater functions in development.
+  useEffect(() => {
+    if (!open || !loadedProduct?.id) return;
+    if (formInitKeyRef.current !== loadedProduct.id) return;
     if (apiHydratedIdRef.current === loadedProduct.id) return;
-    setFormData((current) => {
-      if (formSnapshotRef.current !== JSON.stringify(current)) return current;
-      apiHydratedIdRef.current = loadedProduct.id;
-      const next = buildFormFromProduct(loadedProduct);
-      formSnapshotRef.current = JSON.stringify(next);
-      return next;
-    });
+    // Only overwrite the form if the user hasn't edited it since it was initialized.
+    const current = formDataRef.current;
+    if (current != null && formSnapshotRef.current !== JSON.stringify(current)) return;
+    const next = buildFormFromProduct(loadedProduct);
+    apiHydratedIdRef.current = loadedProduct.id;
+    formSnapshotRef.current = JSON.stringify(next);
+    formDataRef.current = next;
+    setTierPct({});
+    setFormData(next);
   }, [loadedProduct, open, buildFormFromProduct]);
 
   const set = (field: string, value: any) => setFormData(prev => ({ ...prev, [field]: value }));
@@ -406,12 +426,22 @@ export function ProductDetailDialog({
     [onOpenChange, requestClose],
   );
 
+  // Changing Price 1 re-derives any tier that is currently driven by a % over Price 1.
   const updatePrice = (newPrice: number) => {
-    setFormData((prev) => ({
-      ...prev,
-      price: newPrice,
-      priceIVA: +(newPrice * (1 + prev.iva / 100)).toFixed(2),
-    }));
+    setFormData((prev) => {
+      const next: typeof prev = {
+        ...prev,
+        price: newPrice,
+        priceIVA: +(newPrice * (1 + prev.iva / 100)).toFixed(2),
+      };
+      ([2, 3, 4] as const).forEach((lvl) => {
+        const pct = tierPct[lvl];
+        if (pct != null) {
+          (next as any)[`price${lvl}`] = +(newPrice * (1 + pct / 100)).toFixed(2);
+        }
+      });
+      return next;
+    });
   };
 
   const updatePriceFromIVA = (newPriceIVA: number) => {
@@ -433,6 +463,53 @@ export function ProductDetailDialog({
   const margin = formData.price > 0 && formData.cost > 0
     ? (((formData.price - formData.cost) / formData.cost) * 100).toFixed(2)
     : '0.00';
+
+  // Price 1 markup is over cost (base margin). Tiers 2/3/4 are a % over Price 1.
+  const markupOverCost = (priceVal: number) =>
+    formData.cost > 0 && priceVal > 0
+      ? +(((priceVal - formData.cost) / formData.cost) * 100).toFixed(2)
+      : 0;
+  const pctOverPrice1 = (priceVal: number) =>
+    formData.price > 0 && priceVal > 0
+      ? +(((priceVal - formData.price) / formData.price) * 100).toFixed(2)
+      : 0;
+
+  // Value shown in each "%" field.
+  const markupForLevel = (level: 1 | 2 | 3 | 4) => {
+    if (level === 1) return markupOverCost(formData.price);
+    const stored = tierPct[level];
+    if (stored != null) return stored;
+    const priceVal = (formData as any)[`price${level}`] as number;
+    return pctOverPrice1(priceVal);
+  };
+
+  // Editing a "%" field: level 1 derives Price 1 from cost; tiers derive from Price 1.
+  const updateMarkupForLevel = (level: 1 | 2 | 3 | 4, markupPct: number) => {
+    if (level === 1) {
+      const newPrice = +(formData.cost * (1 + (markupPct || 0) / 100)).toFixed(2);
+      setFormData((prev) => ({
+        ...prev,
+        price: newPrice,
+        priceIVA: +(newPrice * (1 + prev.iva / 100)).toFixed(2),
+      }));
+      return;
+    }
+    const newPrice = +(formData.price * (1 + (markupPct || 0) / 100)).toFixed(2);
+    setTierPct((prev) => ({ ...prev, [level]: markupPct }));
+    const key = `price${level}` as 'price2' | 'price3' | 'price4';
+    setFormData((prev) => ({ ...prev, [key]: newPrice }));
+  };
+
+  // Typing an exact value into a tier price box overrides its %.
+  const setTierPrice = (level: 2 | 3 | 4, value: number) => {
+    setTierPct((prev) => {
+      const nextPct = { ...prev };
+      delete nextPct[level];
+      return nextPct;
+    });
+    const key = `price${level}` as 'price2' | 'price3' | 'price4';
+    setFormData((prev) => ({ ...prev, [key]: value }));
+  };
 
   const [saving, setSaving] = useState(false);
 
@@ -638,19 +715,31 @@ export function ProductDetailDialog({
                 <Row label={t.productDetailUi.price1IncVat}>
                   <NumericInput value={formData.priceIVA} onValueChange={updatePriceFromIVA} className="h-7 text-xs font-medium" />
                 </Row>
+                <Row label="Markup 1 % (cost)">
+                  <NumericInput value={markupForLevel(1)} onValueChange={(v) => updateMarkupForLevel(1, v)} className="h-7 text-xs" />
+                </Row>
                 <div className="border-t border-dashed my-1" />
                 <Row label={t.productDetailUi.price2ExVat}>
-                  <NumericInput value={formData.price2} onValueChange={(v) => set('price2', v)} className="h-7 text-xs" />
+                  <NumericInput value={formData.price2} onValueChange={(v) => setTierPrice(2, v)} className="h-7 text-xs" />
                 </Row>
                 <ReadOnlyRow label={t.productDetailUi.price2IncVat} value={(formData.price2 * (1 + formData.iva / 100)).toFixed(2)} />
+                <Row label="% over Price 1">
+                  <NumericInput value={markupForLevel(2)} onValueChange={(v) => updateMarkupForLevel(2, v)} className="h-7 text-xs" />
+                </Row>
                 <Row label={t.productDetailUi.price3ExVat}>
-                  <NumericInput value={formData.price3} onValueChange={(v) => set('price3', v)} className="h-7 text-xs" />
+                  <NumericInput value={formData.price3} onValueChange={(v) => setTierPrice(3, v)} className="h-7 text-xs" />
                 </Row>
                 <ReadOnlyRow label={t.productDetailUi.price3IncVat} value={(formData.price3 * (1 + formData.iva / 100)).toFixed(2)} />
+                <Row label="% over Price 1">
+                  <NumericInput value={markupForLevel(3)} onValueChange={(v) => updateMarkupForLevel(3, v)} className="h-7 text-xs" />
+                </Row>
                 <Row label={t.productDetailUi.price4ExVat}>
-                  <NumericInput value={formData.price4} onValueChange={(v) => set('price4', v)} className="h-7 text-xs" />
+                  <NumericInput value={formData.price4} onValueChange={(v) => setTierPrice(4, v)} className="h-7 text-xs" />
                 </Row>
                 <ReadOnlyRow label={t.productDetailUi.price4IncVat} value={(formData.price4 * (1 + formData.iva / 100)).toFixed(2)} />
+                <Row label="% over Price 1">
+                  <NumericInput value={markupForLevel(4)} onValueChange={(v) => updateMarkupForLevel(4, v)} className="h-7 text-xs" />
+                </Row>
 
                 <h4 className="text-[11px] font-semibold border-b pb-1 mb-1 pt-2">{t.productDetailUi.costAkzTitle}</h4>
                 <Row label={t.productDetailUi.currentCost}>

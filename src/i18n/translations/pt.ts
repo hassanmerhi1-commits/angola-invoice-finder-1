@@ -273,6 +273,10 @@ export const pt: TranslationKeys = {
 
   posUi: {
     scannerReady: "Scanner Pronto",
+    clientLabel: "Cliente",
+    walkInCustomer: "Consumidor final",
+    priceLabel: "Preço",
+    priceLevelOption: "Preço {n}",
     keyboardShortcuts: "Atalhos de Teclado",
     checkoutShortcut: "Finalizar venda",
     clearCartShortcut: "Limpar carrinho",
@@ -1127,6 +1131,9 @@ export const pt: TranslationKeys = {
     print: "Imprimir",
     printNeedsLines: "Adicione pelo menos uma linha antes de imprimir.",
     printError: "Erro ao imprimir documento",
+    priceLevelLabel: "Nível de preço",
+    priceLevelOption: "Nível de preço {n}",
+    clientAdjustmentNote: "Ajuste de cliente {pct}% aplicado",
     customer: "Cliente",
     supplier: "Fornecedor",
     nif: "NIF",
@@ -4931,6 +4938,10 @@ export const pt: TranslationKeys = {
     nifPlaceholder: "Número fiscal",
     addressPlaceholder: "Endereço completo",
     creditLimitLabel: "Limite de Crédito (Kz)",
+    defaultPriceLevelLabel: "Nível de preço padrão",
+    priceLevelOption: "Nível de preço {n}",
+    priceAdjustmentLabel: "Ajuste de preço (%)",
+    priceAdjustmentHint: "% com sinal: positivo acrescenta, negativo aplica desconto. Aplicado automaticamente no POS e nas faturas de venda.",
 
     registerClient: "Registar Cliente",
 

@@ -144,6 +144,10 @@ export interface Client {
   country: string;
   creditLimit: number;
   currentBalance: number;
+  /** Which product price level (1-4) to use by default for this client. */
+  defaultPriceLevel?: number;
+  /** Signed % applied to the selling price: positive = surcharge, negative = discount. */
+  priceAdjustmentPct?: number;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

@@ -461,7 +461,10 @@ function sqlGridStockExpr(alias = 'p', warehouseBranchParam = '$1') {
 
 /** Row-level PVP for grid SQL — cross-SKU hints applied after query via enrichRowsWithSellingPrices. */
 function sqlGridRowPriceExpr(alias = 'p') {
-  return sqlScalarMax(db, `COALESCE(${alias}.price, 0)`, `COALESCE(${alias}.price2, 0)`);
+  // Price 1 is the authoritative base price (entered manually). Do NOT blend it with
+  // price2 — POS/sales select a tier by level, and returning MAX(price, price2) here
+  // made level 1 (and any empty tier that falls back to `price`) resolve to price2.
+  return `COALESCE(${alias}.price, 0)`;
 }
 
 /** Best selling price for this SKU across catalog + filial rows (fixes Qtd > 0 filial-only rows). */
@@ -514,6 +517,9 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             p.barcode,
             p.category,
             ${rowPrice} AS price,
+            p.price2,
+            p.price3,
+            p.price4,
             p.cost,
             p.first_cost,
             p.last_cost,
@@ -540,6 +546,9 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             p.barcode,
             p.category,
             ${rowPrice} AS price,
+            p.price2,
+            p.price3,
+            p.price4,
             p.cost,
             p.first_cost,
             p.last_cost,
@@ -570,6 +579,9 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             p.barcode,
             p.category,
             ${rowPrice} AS price,
+            p.price2,
+            p.price3,
+            p.price4,
             p.cost,
             p.first_cost,
             p.last_cost,
@@ -659,7 +671,8 @@ async function listProductsForBranchFast(branchKey) {
       : "''";
   const params = [branchKey, ...mainBranchIds];
   const catalogBranchClause = catalogBranchScopeClause(db, 'p', mainIn);
-  const rowPrice = sqlScalarMax(db, 'COALESCE(p.price, 0)', 'COALESCE(p.price2, 0)');
+  // Price 1 is the authoritative base; never blend with price2 (see sqlGridRowPriceExpr).
+  const rowPrice = 'COALESCE(p.price, 0)';
   const branchStock = `CASE WHEN p.branch_id = $1 THEN COALESCE(p.stock, 0) ELSE 0 END`;
 
   const listSelect = `
@@ -839,13 +852,16 @@ function invalidatePurchaseSupplierCache() {
 function enrichInventoryGridSellingPrices(rows, priceBySku) {
   if (!priceBySku?.size) return rows;
   return rows.map((row) => {
+    // Price 1 is the authoritative base price entered on the product. Only SEED it from the
+    // selling-price hint when it is missing (zero); never RAISE a real price1, otherwise
+    // POS/sales price-level selection (level 1 = price1) would resolve to a blended value.
+    const cur = Number(row.price) || 0;
+    if (cur > 0) return row;
     const key = canonicalSkuString(row.sku).toLowerCase();
     if (!key) return row;
     const hint = Number(priceBySku.get(key) || 0);
-    const current = Math.max(Number(row.price) || 0, Number(row.price2) || 0);
-    const best = Math.max(current, hint);
-    if (best <= current) return row;
-    return { ...row, price: best };
+    if (hint <= 0) return row;
+    return { ...row, price: hint };
   });
 }
 
@@ -1205,7 +1221,7 @@ module.exports = function(broadcastTable) {
        FROM products
        WHERE LOWER(TRIM(COALESCE(sku, ''))) = LOWER(TRIM($1))
          AND (
-           (supplier_id IS NOT NULL AND TRIM(COALESCE(supplier_id, '')) != '')
+           (supplier_id IS NOT NULL AND TRIM(COALESCE(CAST(supplier_id AS TEXT), '')) != '')
            OR (supplier_name IS NOT NULL AND TRIM(COALESCE(supplier_name, '')) != '')
          )
        ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
@@ -1270,7 +1286,12 @@ module.exports = function(broadcastTable) {
       if (!result.rows[0]) {
         return res.status(404).json({ error: 'Product not found' });
       }
-      const row = await enrichProductSupplierFromSku(result.rows[0]);
+      let row = result.rows[0];
+      try {
+        row = await enrichProductSupplierFromSku(row);
+      } catch (enrichErr) {
+        console.warn('[PRODUCTS GET/:id] supplier enrichment skipped:', enrichErr.message);
+      }
       res.json(row);
     } catch (error) {
       console.error('[PRODUCTS GET/:id ERROR]', error);
@@ -1317,7 +1338,10 @@ module.exports = function(broadcastTable) {
             : skuTrim;
         const result = await db.query(
           `UPDATE products
-           SET name = $1, sku = $2, barcode = $3, category = $4, price = $5, price2 = $6, price3 = $7, price4 = $8,
+           SET name = $1, sku = $2, barcode = $3, category = $4, price = $5,
+               price2 = COALESCE($6, price2),
+               price3 = COALESCE($7, price3),
+               price4 = COALESCE($8, price4),
                cost = $9, stock = COALESCE($10, stock), unit = $11, tax_rate = $12, is_active = $13,
                branch_id = $14,
                supplier_id = $15, supplier_name = $16,
@@ -1326,7 +1350,10 @@ module.exports = function(broadcastTable) {
            WHERE id = $17
            RETURNING *`,
           [
-            name, canonicalSku, barcode, category, price, price2 || 0, price3 || 0, price4 || 0,
+            name, canonicalSku, barcode, category, price,
+            Number(price2) > 0 ? Number(price2) : null,
+            Number(price3) > 0 ? Number(price3) : null,
+            Number(price4) > 0 ? Number(price4) : null,
             c, stock ?? null, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, activeValue,
             storedBranchId,
             sanitizeUuid(supplierId), supplierName || null,
@@ -1358,7 +1385,10 @@ module.exports = function(broadcastTable) {
         if (!conflict?.id) throw insertErr;
         result = await db.query(
           `UPDATE products
-           SET name = $1, sku = $2, barcode = $3, category = $4, price = $5, price2 = $6, price3 = $7, price4 = $8,
+           SET name = $1, sku = $2, barcode = $3, category = $4, price = $5,
+               price2 = COALESCE($6, price2),
+               price3 = COALESCE($7, price3),
+               price4 = COALESCE($8, price4),
                cost = $9, stock = COALESCE($10, stock), unit = $11, tax_rate = $12, is_active = $13,
                branch_id = $14,
                supplier_id = $15, supplier_name = $16,
@@ -1367,7 +1397,10 @@ module.exports = function(broadcastTable) {
            WHERE id = $17
            RETURNING *`,
           [
-            name, skuTrim, barcode, category, price, price2 || 0, price3 || 0, price4 || 0,
+            name, skuTrim, barcode, category, price,
+            Number(price2) > 0 ? Number(price2) : null,
+            Number(price3) > 0 ? Number(price3) : null,
+            Number(price4) > 0 ? Number(price4) : null,
             c, stock ?? null, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, activeValue,
             storedBranchId,
             sanitizeUuid(supplierId), supplierName || null,
@@ -1420,9 +1453,12 @@ module.exports = function(broadcastTable) {
       const mergedBarcode = barcode != null ? barcode : existing.barcode;
       const mergedCategory = category != null && category !== '' ? category : existing.category;
       const mergedPrice = price != null && price !== '' ? price : existing.price;
-      const mergedPrice2 = price2 != null && price2 !== '' ? price2 : existing.price2;
-      const mergedPrice3 = price3 != null && price3 !== '' ? price3 : existing.price3;
-      const mergedPrice4 = price4 != null && price4 !== '' ? price4 : existing.price4;
+      // Price tiers 2-4: only overwrite when a positive value is supplied. A 0/blank means
+      // "tier not set" for this request, so keep the stored value instead of wiping it
+      // (purchase/stock/physical-count updates send these as 0).
+      const mergedPrice2 = price2 != null && price2 !== '' && Number(price2) > 0 ? Number(price2) : existing.price2;
+      const mergedPrice3 = price3 != null && price3 !== '' && Number(price3) > 0 ? Number(price3) : existing.price3;
+      const mergedPrice4 = price4 != null && price4 !== '' && Number(price4) > 0 ? Number(price4) : existing.price4;
       const mergedCost = cost != null && cost !== '' ? cost : existing.cost;
       const mergedStock = stock != null && stock !== '' ? stock : existing.stock;
       const mergedUnit = unit != null && unit !== '' ? unit : existing.unit;
@@ -1495,12 +1531,23 @@ module.exports = function(broadcastTable) {
           );
         }
         if (price != null && price !== '') {
+          // Propagate the price tiers to every branch row sharing this SKU, but never
+          // overwrite an existing tier with 0/blank: routine updates (purchases, stock
+          // adjustments, physical counts) send price2-4 = 0 and would otherwise wipe them.
+          // Pass null (not 0) for "no value" so COALESCE keeps the stored tier. Do NOT use
+          // a `$n > 0` test: PostgreSQL infers such a param as integer and rejects decimal
+          // tiers (e.g. 739.98) with "invalid input syntax for type integer".
+          const skuTier = (v) => (Number(v) > 0 ? Number(v) : null);
           await db.query(
             `UPDATE products
-             SET price = $1, price2 = $2, price3 = $3, price4 = $4, updated_at = CURRENT_TIMESTAMP
+             SET price = $1,
+                 price2 = COALESCE($2, price2),
+                 price3 = COALESCE($3, price3),
+                 price4 = COALESCE($4, price4),
+                 updated_at = CURRENT_TIMESTAMP
              WHERE ${coalesceActiveNotZero(db, 'is_active')}
                AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($5)`,
-            [Number(price), Number(price2) || 0, Number(price3) || 0, Number(price4) || 0, skuKey]
+            [Number(price), skuTier(price2), skuTier(price3), skuTier(price4), skuKey]
           );
         }
         const costVal = cost != null && cost !== '' ? Number(cost) : null;

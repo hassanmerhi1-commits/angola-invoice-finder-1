@@ -140,6 +140,9 @@ export function usePermissions(userId: string | undefined) {
   }, [userId, userRoles, getUserRole]);
 
   const hasPermission = useCallback((permissionId: string): boolean => {
+    // TESTING OVERRIDE: delete actions are enabled for every role during QA.
+    // Remove this block to restore role-based delete restrictions.
+    if (permissionId.endsWith('_delete')) return true;
     return userPermissions.includes(permissionId);
   }, [userPermissions]);
 

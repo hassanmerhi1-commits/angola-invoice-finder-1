@@ -250,7 +250,7 @@ async function processTransactionBody(client, body) {
         for (const pu of priceUpdates) {
           const targetProductId = stockProductIdByLine.get(pu.productId) || pu.productId;
           const prodResult = await client.query(
-            'SELECT stock, cost FROM products WHERE id = $1 FOR UPDATE',
+            'SELECT stock, cost, price, price2, price3, price4 FROM products WHERE id = $1 FOR UPDATE',
             [targetProductId]
           );
           if (prodResult.rows.length > 0) {
@@ -294,15 +294,20 @@ async function processTransactionBody(client, body) {
             const selling = pu.sellingPrice != null && pu.sellingPrice !== ''
               ? Number(pu.sellingPrice)
               : null;
-            const shouldApplySelling =
-              selling != null && !Number.isNaN(selling) && selling > 0
-              && (applySellingPrice || selling > 0);
-            if (shouldApplySelling) {
+            const explicitSelling =
+              selling != null && !Number.isNaN(selling) && selling > 0 ? selling : null;
+
+            // Selling prices are entered manually on the product screen and are NOT
+            // auto-derived from cost. A new purchase only updates the weighted-average
+            // COST (above); it never recomputes Price 1-4. The single exception is an
+            // explicit selling price supplied on the purchase, which sets Price 1 only
+            // (tiers 2-4 follow their per-tier % over Price 1 and are left untouched).
+            if (explicitSelling != null) {
               await client.query(
                 `UPDATE products
                  SET price = $1, updated_at = CURRENT_TIMESTAMP
                  WHERE id = $2`,
-                [selling, targetProductId],
+                [explicitSelling, targetProductId],
               );
               if (skuKey) {
                 await client.query(
@@ -310,11 +315,12 @@ async function processTransactionBody(client, body) {
                    SET price = $1, updated_at = CURRENT_TIMESTAMP
                    WHERE ${coalesceActiveNotZero(db, 'is_active')}
                      AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)`,
-                  [selling, skuKey],
+                  [explicitSelling, skuKey],
                 );
               }
               console.log(
-                `[TX API] selling price ${transactionType} ${documentNumber}: product=${targetProductId} price=${selling}`,
+                `[TX API] explicit selling price ${transactionType} ${documentNumber}: ` +
+                `product=${targetProductId} p1=${explicitSelling}`,
               );
             }
 

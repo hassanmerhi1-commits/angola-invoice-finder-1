@@ -22,6 +22,8 @@ interface CheckoutDialogProps {
   items: CartItem[];
   total: number;
   taxAmount: number;
+  defaultCustomerNif?: string;
+  defaultCustomerName?: string;
   onCompleteSale: (
     paymentMethod: Sale['paymentMethod'],
     amountPaid: number,
@@ -36,6 +38,8 @@ export function CheckoutDialog({
   items,
   total,
   taxAmount,
+  defaultCustomerNif,
+  defaultCustomerName,
   onCompleteSale,
 }: CheckoutDialogProps) {
   const { t, language } = useTranslation();
@@ -49,10 +53,10 @@ export function CheckoutDialog({
     if (open) {
       setPaymentMethod('cash');
       setAmountPaid(total.toString());
-      setCustomerNif('');
-      setCustomerName('');
+      setCustomerNif(defaultCustomerNif || '');
+      setCustomerName(defaultCustomerName || '');
     }
-  }, [open, total]);
+  }, [open, total, defaultCustomerNif, defaultCustomerName]);
 
   const handlePaymentMethodChange = (value: Sale['paymentMethod']) => {
     setPaymentMethod(value);

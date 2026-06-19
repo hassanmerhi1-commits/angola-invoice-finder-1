@@ -93,6 +93,44 @@ async function ensureDocumentSequencesBranchScope(db) {
   }
 }
 
+/** Per-client pricing controls (migration 046): default price level + signed % adjustment. */
+async function ensureClientPricingColumns(db) {
+  if (db.engine === 'postgres') {
+    for (const stmt of [
+      'ALTER TABLE clients ADD COLUMN IF NOT EXISTS default_price_level INTEGER DEFAULT 1',
+      'ALTER TABLE clients ADD COLUMN IF NOT EXISTS price_adjustment_pct NUMERIC(7,2) DEFAULT 0',
+    ]) {
+      try {
+        await db.query(stmt);
+      } catch (err) {
+        if (err.code !== '42701') console.warn('[SCHEMA] clients pricing column:', err.message);
+      }
+    }
+    return;
+  }
+
+  if (db.sqlite) {
+    let cols = [];
+    try {
+      cols = db.sqlite.pragma('table_info(clients)');
+    } catch (_) {
+      return;
+    }
+    if (!cols.length) return;
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has('default_price_level')) {
+      try {
+        db.sqlite.exec('ALTER TABLE clients ADD COLUMN default_price_level INTEGER DEFAULT 1');
+      } catch (_) {}
+    }
+    if (!names.has('price_adjustment_pct')) {
+      try {
+        db.sqlite.exec('ALTER TABLE clients ADD COLUMN price_adjustment_pct REAL DEFAULT 0');
+      } catch (_) {}
+    }
+  }
+}
+
 async function ensureCreditNoteRestoreStockColumn(db) {
   if (db.engine === 'postgres') {
     const check = await db.query(
@@ -283,6 +321,7 @@ async function ensurePhaseSchema(db) {
       );
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
+    await ensureClientPricingColumns(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
     console.log('[SCHEMA] PostgreSQL phase migrations applied');
@@ -305,6 +344,7 @@ async function ensurePhaseSchema(db) {
       );
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
+    await ensureClientPricingColumns(db);
     await ensurePgcChartOfAccounts(db);
     console.log('[SCHEMA] SQLite phase column patches applied');
   }
@@ -315,5 +355,6 @@ module.exports = {
   ensurePgcChartOfAccounts,
   ensureDocumentSequencesBranchScope,
   ensureCreditNoteRestoreStockColumn,
+  ensureClientPricingColumns,
   ensureAuditLogActions,
 };

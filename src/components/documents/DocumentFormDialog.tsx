@@ -19,6 +19,7 @@ import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocum
 import { linkProformaAfterInvoiceConfirm } from '@/lib/linkProformaConversion';
 import { useProducts, useAuth, useClients, useSuppliers } from '@/hooks/useERP';
 import type { Client, Supplier, OpenItem } from '@/types/erp';
+import { effectiveUnitPrice, clientPricing, normalizePriceLevel } from '@/lib/pricing';
 import { signedOpenItemBalance } from '@/lib/openItems';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { api } from '@/lib/api/client';
@@ -78,6 +79,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const [lines, setLines] = useState<DocumentLine[]>([]);
   const [productSearch, setProductSearch] = useState('');
   const [entityPickerOpen, setEntityPickerOpen] = useState(false);
+  const [priceLevel, setPriceLevel] = useState(1);
   const [activeLineTab, setActiveLineTab] = useState('linhas');
   const { transmit: transmitAgt, transmitting: agtTransmitting } = useAgtTransmit();
   const [agtStatus, setAgtStatus] = useState<string | undefined>();
@@ -103,7 +105,10 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         setPaymentMethod(source.paymentMethod || 'cash');
         setAmountPaid(source.amountPaid || 0);
         setLines(source.lines.map(l => ({ ...l })));
+        const sourceClient = clients.find((c) => c.id === source.entityId) as Client | undefined;
+        setPriceLevel(normalizePriceLevel(sourceClient?.defaultPriceLevel ?? 1));
       } else {
+        setPriceLevel(1);
         setEntityId('');
         setEntityName('');
         setEntityNif('');
@@ -118,6 +123,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       }
       setEntityPickerOpen(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editDocument, prefillFrom, documentType]);
 
   // Fresh AGT status from server (list rows may be stale local mirrors).
@@ -148,6 +154,15 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       .slice(0, 25);
   }, [entityDirectory, entityName]);
 
+  // Pricing context for customer documents: selected client's default price level
+  // and signed % adjustment applied automatically to product-linked lines.
+  const selectedClientForPricing = useMemo<Client | null>(() => {
+    if (config.entityType !== 'customer') return null;
+    return (clients.find((c) => c.id === entityId) as Client | undefined) ?? null;
+  }, [config.entityType, clients, entityId]);
+  const adjustmentPct = clientPricing(selectedClientForPricing).adjustmentPct;
+  const showPricingControls = config.entityType === 'customer' && !contentLocked;
+
   const selectEntity = (entity: Client | Supplier) => {
     setEntityId(entity.id);
     setEntityName(entity.name);
@@ -155,7 +170,29 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     setEntityAddress(entity.address || '');
     setEntityPhone(entity.phone || '');
     setEntityPickerOpen(false);
+    if (config.entityType === 'customer') {
+      setPriceLevel(normalizePriceLevel((entity as Client).defaultPriceLevel ?? 1));
+    }
   };
+
+  // Reprice product-linked lines when the price level or client adjustment changes.
+  useEffect(() => {
+    if (config.entityType !== 'customer' || contentLocked) return;
+    setLines((prev) => {
+      let changed = false;
+      const next = prev.map((line) => {
+        if (!line.productId) return line;
+        const product = products.find((p) => p.id === line.productId);
+        if (!product) return line;
+        const unitPrice = effectiveUnitPrice(product, priceLevel, adjustmentPct);
+        if (unitPrice === line.unitPrice) return line;
+        changed = true;
+        return calculateLineTotals({ ...line, unitPrice });
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priceLevel, adjustmentPct]);
 
   const [entityOpenItemsLoading, setEntityOpenItemsLoading] = useState(false);
   const [entityOpenItems, setEntityOpenItems] = useState<OpenItem[]>([]);
@@ -234,12 +271,17 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
   const addLine = (productId?: string) => {
     const product = productId ? products.find(p => p.id === productId) : null;
+    const unitPrice = product
+      ? (config.entityType === 'customer'
+          ? effectiveUnitPrice(product, priceLevel, adjustmentPct)
+          : product.price || 0)
+      : 0;
     const newLine = calculateLineTotals({
       description: product ? product.name : '',
       productId: product?.id,
       productSku: product?.sku,
       quantity: 1,
-      unitPrice: product?.price || 0,
+      unitPrice,
       discount: 0,
       taxRate: product?.taxRate ?? DEFAULT_VAT_RATE,
     });
@@ -385,24 +427,13 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         // For confirmed fatura_venda, route through the backend transaction engine
         // so stock is decremented and journal entries (including branch Caixa) are created
         if (documentType === 'fatura_venda' && status === 'confirmed') {
-          const insufficientStock = lines
-            .map(line => {
-              if (!line.productId) return null;
-              const product = products.find(p => p.id === line.productId);
-              if (!product) return null;
-              return line.quantity > product.stock
-                ? t.documentFormUi.stockLineDetail
-                    .replace('{name}', line.description)
-                    .replace('{available}', String(product.stock))
-                    .replace('{requested}', String(line.quantity))
-                : null;
-            })
-            .filter(Boolean);
-
-          if (insufficientStock.length > 0) {
-            throw new Error(`${t.documentFormUi.stockInsufficientPrefix} ${insufficientStock.join('; ')}`);
-          }
-
+          // Stock availability is validated authoritatively by the backend transaction
+          // engine, which is SKU- and warehouse-aware (sums the movement ledger across all
+          // branch rows + legacy product.stock). We intentionally do NOT pre-check against
+          // the branch-scoped light-list `product.stock` here: that value is 0 for items
+          // whose stock lives on a catalog/other-branch row or only in the movement ledger,
+          // which produced false "quantity is zero" blocks. Any real shortage is reported by
+          // the backend below and surfaced via insufficientStockToCompleteSaleInvoice.
           const saleItems = lines.map(l => ({
             productId: l.productId || `manual-${l.description}`,
             productName: l.description,
@@ -720,6 +751,31 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               <Input value={entityPhone} onChange={e => setEntityPhone(e.target.value)} className="h-8 text-xs" />
             </div>
           </div>
+
+          {showPricingControls && (
+            <div className="flex items-end gap-3 flex-wrap">
+              <div className="space-y-1">
+                <Label className="text-xs">{t.documentFormUi.priceLevelLabel}</Label>
+                <Select value={String(priceLevel)} onValueChange={(v) => setPriceLevel(Number(v))}>
+                  <SelectTrigger className="h-8 w-[150px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[1, 2, 3, 4].map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {t.documentFormUi.priceLevelOption.replace('{n}', String(n))}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {adjustmentPct !== 0 && (
+                <span className="text-xs text-muted-foreground pb-2">
+                  {t.documentFormUi.clientAdjustmentNote.replace('{pct}', `${adjustmentPct > 0 ? '+' : ''}${adjustmentPct}`)}
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Pending receipts / open items for selected customer */}
           {documentType === 'fatura_venda' && config.entityType === 'customer' && entityId && (

@@ -82,9 +82,13 @@ export function withSellingPriceFromMap(
 ): Product {
   const key = canonicalProductSku(product.sku).toLowerCase();
   if (!key) return product;
-  const best = priceBySku.get(key) ?? 0;
   const cur = Number(product.price) || 0;
-  if (best <= cur) return product;
+  // Price 1 is the authoritative base price entered on the product. Only SEED it from the
+  // SKU/hint map when it is missing (zero) — never RAISE a real price1, otherwise POS/sales
+  // price-level selection (level 1 = price1) would resolve to a blended/higher value.
+  if (cur > 0) return product;
+  const best = priceBySku.get(key) ?? 0;
+  if (best <= 0) return product;
   return { ...product, price: best };
 }
 

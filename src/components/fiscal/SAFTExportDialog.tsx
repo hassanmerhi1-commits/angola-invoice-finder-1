@@ -520,5 +520,3 @@ export function SAFTExportDialog({
     </Dialog>
   );
 }
-
-}

@@ -585,6 +585,21 @@ export function useCart() {
     ));
   }, []);
 
+  // Override the effective unit price of a line (used when the POS price level or
+  // selected client changes). The cart stores an effective price on the product
+  // clone, so all downstream math (subtotal, checkout) keeps working unchanged.
+  const repriceItem = useCallback((productId: string, unitPrice: number) => {
+    setItems(prev => prev.map(item =>
+      item.product.id === productId
+        ? {
+            ...item,
+            product: { ...item.product, price: unitPrice },
+            subtotal: item.quantity * unitPrice * (1 - item.discount / 100),
+          }
+        : item
+    ));
+  }, []);
+
   const removeItem = useCallback((productId: string) => {
     setItems(prev => prev.filter(item => item.product.id !== productId));
   }, []);
@@ -595,7 +610,7 @@ export function useCart() {
   const taxAmount = items.reduce((sum, item) => sum + item.subtotal * (item.product.taxRate / 100), 0);
   const total = subtotal + taxAmount;
 
-  return { items, addItem, updateQuantity, setItemDiscount, removeItem, clearCart, subtotal, taxAmount, total };
+  return { items, addItem, updateQuantity, setItemDiscount, repriceItem, removeItem, clearCart, subtotal, taxAmount, total };
 }
 
 // ============================================
@@ -1214,6 +1229,11 @@ function mapClientApiRow(c: any): Client {
     country: c.country || 'Angola',
     creditLimit: Number(c.creditLimit ?? c.credit_limit ?? 0),
     currentBalance: Number(c.currentBalance ?? c.current_balance ?? 0),
+    defaultPriceLevel: (() => {
+      const lvl = Math.trunc(Number(c.defaultPriceLevel ?? c.default_price_level ?? 1));
+      return lvl >= 1 && lvl <= 4 ? lvl : 1;
+    })(),
+    priceAdjustmentPct: Number(c.priceAdjustmentPct ?? c.price_adjustment_pct ?? 0),
     isActive: c.isActive ?? c.is_active ?? true,
     createdAt: c.createdAt ?? c.created_at ?? new Date().toISOString(),
     updatedAt: c.updatedAt ?? c.updated_at ?? new Date().toISOString(),

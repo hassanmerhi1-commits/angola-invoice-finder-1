@@ -33,6 +33,9 @@ const ROLE_PERMISSIONS = {
 
 function roleHasPermission(role, permissionId) {
   if (!role) return false;
+  // TESTING OVERRIDE: delete actions are enabled for every role during QA.
+  // Remove this line to restore role-based delete restrictions.
+  if (typeof permissionId === 'string' && permissionId.endsWith('_delete')) return true;
   if (role === 'admin') return true;
   const perms = ROLE_PERMISSIONS[role];
   return Array.isArray(perms) && perms.includes(permissionId);

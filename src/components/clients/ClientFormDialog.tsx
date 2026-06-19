@@ -5,6 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -29,6 +36,8 @@ const EMPTY_FORM = {
   city: '',
   country: 'Angola',
   creditLimit: '0',
+  defaultPriceLevel: '1',
+  priceAdjustmentPct: '0',
 };
 
 type ClientFormDialogProps = {
@@ -62,6 +71,8 @@ export function ClientFormDialog({
         city: client.city || '',
         country: client.country,
         creditLimit: client.creditLimit.toString(),
+        defaultPriceLevel: String(client.defaultPriceLevel ?? 1),
+        priceAdjustmentPct: String(client.priceAdjustmentPct ?? 0),
       });
     } else {
       setFormData(EMPTY_FORM);
@@ -103,11 +114,14 @@ export function ClientFormDialog({
 
     setSaving(true);
     try {
+      const levelNum = Math.trunc(Number(formData.defaultPriceLevel));
       const payload = {
         ...formData,
         name,
         nif,
         creditLimit: parseFloat(formData.creditLimit) || 0,
+        defaultPriceLevel: levelNum >= 1 && levelNum <= 4 ? levelNum : 1,
+        priceAdjustmentPct: parseFloat(formData.priceAdjustmentPct) || 0,
       };
 
       let saved: Client;
@@ -223,6 +237,35 @@ export function ClientFormDialog({
                 onChange={(e) => setFormData({ ...formData, creditLimit: e.target.value })}
                 placeholder="0"
               />
+            </div>
+            <div className="space-y-2">
+              <Label>{t.clientsUi.defaultPriceLevelLabel}</Label>
+              <Select
+                value={formData.defaultPriceLevel}
+                onValueChange={(v) => setFormData({ ...formData, defaultPriceLevel: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">{t.clientsUi.priceLevelOption.replace('{n}', '1')}</SelectItem>
+                  <SelectItem value="2">{t.clientsUi.priceLevelOption.replace('{n}', '2')}</SelectItem>
+                  <SelectItem value="3">{t.clientsUi.priceLevelOption.replace('{n}', '3')}</SelectItem>
+                  <SelectItem value="4">{t.clientsUi.priceLevelOption.replace('{n}', '4')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="col-span-2 space-y-2">
+              <Label htmlFor="coa-client-price-adj">{t.clientsUi.priceAdjustmentLabel}</Label>
+              <Input
+                id="coa-client-price-adj"
+                type="number"
+                step="0.01"
+                value={formData.priceAdjustmentPct}
+                onChange={(e) => setFormData({ ...formData, priceAdjustmentPct: e.target.value })}
+                placeholder="0"
+              />
+              <p className="text-[11px] text-muted-foreground">{t.clientsUi.priceAdjustmentHint}</p>
             </div>
           </div>
         </div>
