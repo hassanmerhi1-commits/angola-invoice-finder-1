@@ -48,6 +48,9 @@ function classifyLoginError(message: string): LoginErrorKind {
 export interface ApiResponse<T> {
   data?: T;
   error?: string;
+  /** HTTP status of the backend response. Undefined means the backend was never reached
+   *  (network/connection failure) — only then is a direct-IPC fallback appropriate. */
+  status?: number;
 }
 
 // ==================== MODE DETECTION ====================
@@ -229,6 +232,9 @@ async function ipcDelete(table: string, id: string): Promise<ApiResponse<any>> {
 /** If HTTP reached the API but returned 4xx/5xx, do not fall back to IPC (masks real errors and often hits “Express unreachable”). */
 function shouldTryIpcAfterApiFailure(apiResult: ApiResponse<any>): boolean {
   if (apiResult.data != null) return false;
+  // The backend actually responded (any HTTP status) → trust its error instead of masking
+  // it with a direct-IPC "Database not connected" fallback.
+  if (typeof apiResult.status === 'number') return false;
   const err = (apiResult.error || '').trim();
   if (!err) return true;
   if (/^HTTP \d{3}/.test(err)) return false;
@@ -307,7 +313,7 @@ async function apiFetch<T>(
       timeoutMs: 25000,
     });
     if (r.ok) {
-      return { data: r.json as T };
+      return { data: r.json as T, status: r.status };
     }
     const errPayload = r.json as Record<string, unknown> | null;
     const errorMessage =
@@ -317,7 +323,7 @@ async function apiFetch<T>(
         typeof r.text === 'string' && r.text ? r.text : errPayload,
         r.status,
       );
-    return { error: errorMessage };
+    return { error: errorMessage, status: r.status };
   }
 
   try {
@@ -329,10 +335,10 @@ async function apiFetch<T>(
       : await response.text().catch(() => '');
 
     if (!response.ok) {
-      return { error: normalizeApiErrorMessage(payload, response.status) };
+      return { error: normalizeApiErrorMessage(payload, response.status), status: response.status };
     }
 
-    return { data: payload as T };
+    return { data: payload as T, status: response.status };
   } catch (error) {
     // Electron: drop stale cached base, re-resolve via IPC + port scan, retry once.
     const isElectron = typeof window !== 'undefined' && !!window.electronAPI?.isElectron;
@@ -349,9 +355,9 @@ async function apiFetch<T>(
           ? await retryResponse.json().catch(() => null)
           : await retryResponse.text().catch(() => '');
         if (!retryResponse.ok) {
-          return { error: normalizeApiErrorMessage(retryPayload, retryResponse.status) };
+          return { error: normalizeApiErrorMessage(retryPayload, retryResponse.status), status: retryResponse.status };
         }
-        return { data: retryPayload as T };
+        return { data: retryPayload as T, status: retryResponse.status };
       } catch {
         /* fall through */
       }
@@ -370,9 +376,9 @@ async function apiFetch<T>(
                 ? await retryResponse.json().catch(() => null)
                 : await retryResponse.text().catch(() => '');
               if (!retryResponse.ok) {
-                return { error: normalizeApiErrorMessage(retryPayload, retryResponse.status) };
+                return { error: normalizeApiErrorMessage(retryPayload, retryResponse.status), status: retryResponse.status };
               }
-              return { data: retryPayload as T };
+              return { data: retryPayload as T, status: retryResponse.status };
             }
           }
         }
@@ -758,6 +764,11 @@ export const api = {
     },
     sellingPrices: () =>
       apiFetch<Record<string, number>>('/products/selling-prices'),
+    bulkTierPricing: (pcts: { price2Pct?: number | null; price3Pct?: number | null; price4Pct?: number | null }) =>
+      apiFetch<{ success: boolean; updated: number }>('/products/bulk-tier-pricing', {
+        method: 'POST',
+        body: JSON.stringify(pcts),
+      }),
     repairFilialStock: (branchId: string) =>
       apiFetch<{ success: boolean; rows: any[]; count: number; repair?: unknown; dbPath?: string }>(
         `/products/repair-filial-stock?branchId=${encodeURIComponent(branchId)}`,
@@ -994,19 +1005,19 @@ export const api = {
     create: async (data: any) => {
       const apiResult = await apiFetch<any>('/clients', { method: 'POST', body: JSON.stringify(data) });
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
-      if (isElectronMode()) return ipcInsert('clients', { id: generateId(), ...data, created_at: new Date().toISOString() });
+      if (isElectronMode() && shouldTryIpcAfterApiFailure(apiResult)) return ipcInsert('clients', { id: generateId(), ...data, created_at: new Date().toISOString() });
       return apiResult;
     },
     update: async (id: string, data: any) => {
       const apiResult = await apiFetch<any>(`/clients/${id}`, { method: 'PUT', body: JSON.stringify(data) });
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
-      if (isElectronMode()) return ipcUpdate('clients', id, data);
+      if (isElectronMode() && shouldTryIpcAfterApiFailure(apiResult)) return ipcUpdate('clients', id, data);
       return apiResult;
     },
     delete: async (id: string) => {
       const apiResult = await apiFetch<any>(`/clients/${id}`, { method: 'DELETE' });
       if (!apiResult.error) return apiResult;
-      if (isElectronMode()) return ipcDelete('clients', id);
+      if (isElectronMode() && shouldTryIpcAfterApiFailure(apiResult)) return ipcDelete('clients', id);
       return apiResult;
     },
   },
@@ -1419,7 +1430,7 @@ export const api = {
     create: async (data: any) => {
       const apiResult = await apiFetch<any>('/chart-of-accounts', { method: 'POST', body: JSON.stringify(data) });
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
-      if (isElectronMode()) {
+      if (isElectronMode() && shouldTryIpcAfterApiFailure(apiResult)) {
         return ipcInsert('chart_of_accounts', { id: generateId(), ...data, is_active: true, current_balance: 0, created_at: new Date().toISOString() });
       }
       return apiResult;
@@ -1427,13 +1438,13 @@ export const api = {
     update: async (id: string, data: any) => {
       const apiResult = await apiFetch<any>(`/chart-of-accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) });
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
-      if (isElectronMode()) return ipcUpdate('chart_of_accounts', id, data);
+      if (isElectronMode() && shouldTryIpcAfterApiFailure(apiResult)) return ipcUpdate('chart_of_accounts', id, data);
       return apiResult;
     },
     delete: async (id: string) => {
       const apiResult = await apiFetch<any>(`/chart-of-accounts/${id}`, { method: 'DELETE' });
       if (!apiResult.error) return apiResult;
-      if (isElectronMode()) return ipcDelete('chart_of_accounts', id);
+      if (isElectronMode() && shouldTryIpcAfterApiFailure(apiResult)) return ipcDelete('chart_of_accounts', id);
       return apiResult;
     },
     reseed: () => apiFetch<{ success: boolean; active: number; seeded: number }>(

@@ -11,4 +11,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clients' AND column_name='price_adjustment_pct') THEN
     ALTER TABLE clients ADD COLUMN price_adjustment_pct NUMERIC(7,2) DEFAULT 0;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clients' AND column_name='payment_terms_days') THEN
+    ALTER TABLE clients ADD COLUMN payment_terms_days INTEGER DEFAULT 0;
+  END IF;
 END $$;

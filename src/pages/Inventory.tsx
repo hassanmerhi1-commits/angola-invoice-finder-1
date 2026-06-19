@@ -40,9 +40,11 @@ import {
   ArrowRightLeft,
   Building2,
   Search,
+  Percent,
 } from 'lucide-react';
 import { AdvancedDataGrid } from '@/components/inventory/AdvancedDataGrid';
 import { ShelfLabelPrintDialog } from '@/components/inventory/ShelfLabelPrintDialog';
+import { BulkTierPricingDialog } from '@/components/inventory/BulkTierPricingDialog';
 import { ProductDetailDialog } from '@/components/inventory/ProductDetailDialog';
 import { BranchStockDetail } from '@/components/inventory/BranchStockDetail';
 import {
@@ -387,6 +389,7 @@ export default function Inventory() {
   const [stockEntryDialogOpen, setStockEntryDialogOpen] = useState(false);
   const [stockExitDialogOpen, setStockExitDialogOpen] = useState(false);
   const [labelPrintDialogOpen, setLabelPrintDialogOpen] = useState(false);
+  const [bulkTierDialogOpen, setBulkTierDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('lista');
 
   const branchList = allBranches.length > 0 ? allBranches : branches;
@@ -1228,6 +1231,16 @@ export default function Inventory() {
           <Download className="w-3 h-3" />
           {t.common.export}
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className={NEXOR_TOOLBAR_BTN_SM}
+          onClick={() => setBulkTierDialogOpen(true)}
+          title={t.inventoryPageUi.tierPricing.title}
+        >
+          <Percent className="w-3 h-3" />
+          {t.inventoryPageUi.tierPricing.button}
+        </Button>
 
         <div className="flex-1" />
 
@@ -1653,6 +1666,17 @@ export default function Inventory() {
         warehouseId={warehouseId}
         initialProduct={selectedProduct}
         onApplyExit={handleApplyStockExit}
+      />
+
+      {/* Bulk tier pricing (Price 2/3/4 = Price 1 x % across all products) */}
+      <BulkTierPricingDialog
+        open={bulkTierDialogOpen}
+        onOpenChange={setBulkTierDialogOpen}
+        onApplied={() => {
+          window.dispatchEvent(new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: {} }));
+          void reloadInventoryList();
+          if (canSwitchBranch) void loadPerBranchBreakdown();
+        }}
       />
 
       {/* Shelf Label Print Dialog */}

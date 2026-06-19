@@ -171,7 +171,16 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     setEntityPhone(entity.phone || '');
     setEntityPickerOpen(false);
     if (config.entityType === 'customer') {
-      setPriceLevel(normalizePriceLevel((entity as Client).defaultPriceLevel ?? 1));
+      const client = entity as Client;
+      setPriceLevel(normalizePriceLevel(client.defaultPriceLevel ?? 1));
+      // Default the due date from the client's payment terms (days to pay). The
+      // user can still override the date manually. Proformas use "valid until".
+      const days = Math.trunc(Number(client.paymentTermsDays ?? 0));
+      if (days > 0 && documentType !== 'proforma') {
+        const due = new Date();
+        due.setDate(due.getDate() + days);
+        setDueDate(due.toISOString().split('T')[0]);
+      }
     }
   };
 

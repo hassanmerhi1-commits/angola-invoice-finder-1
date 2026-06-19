@@ -5,27 +5,21 @@ import { Client } from '@/types/erp';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Users, Plus, Search, Edit, Trash2, Building, FileSpreadsheet, Upload } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { exportClientsToExcel, parseClientsFromExcel, validateImportedClients, downloadClientImportTemplate, ExcelClient } from '@/lib/excel';
 import { ExcelImportDialog } from '@/components/import/ExcelImportDialog';
+import { ClientFormDialog } from '@/components/clients/ClientFormDialog';
 import { useTranslation } from '@/i18n';
-import { validateNIF } from '@/lib/companySettings';
-
-function normalizeClientNif(nif: string): string {
-  return nif.replace(/\s/g, '').trim();
-}
 
 export default function Clients() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { currentBranch } = useBranchContext();
-  const { clients, createClient, saveClient, deleteClient } = useClients();
+  const { clients, createClient, saveClient, deleteClient, refreshClients } = useClients();
   const { toast } = useToast();
   
   const [searchTerm, setSearchTerm] = useState('');
@@ -33,16 +27,6 @@ export default function Clients() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    nif: '',
-    email: '',
-    phone: '',
-    address: '',
-    city: '',
-    country: 'Angola',
-    creditLimit: '0',
-  });
 
   const isMainOffice = currentBranch?.isMain;
 
@@ -52,36 +36,11 @@ export default function Clients() {
     client.email?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const resetForm = () => {
-    setFormData({
-      name: '',
-      nif: '',
-      email: '',
-      phone: '',
-      address: '',
-      city: '',
-      country: 'Angola',
-      creditLimit: '0',
-    });
-    setSelectedClient(null);
-  };
-
+  // Both the "New client" button here and the "New customer account" entry in the
+  // Chart of Accounts open the same shared ClientFormDialog (contact details,
+  // pricing, and payment terms in one place).
   const handleOpenDialog = (client?: Client) => {
-    if (client) {
-      setSelectedClient(client);
-      setFormData({
-        name: client.name,
-        nif: client.nif,
-        email: client.email || '',
-        phone: client.phone || '',
-        address: client.address || '',
-        city: client.city || '',
-        country: client.country,
-        creditLimit: client.creditLimit.toString(),
-      });
-    } else {
-      resetForm();
-    }
+    setSelectedClient(client ?? null);
     setDialogOpen(true);
   };
 
@@ -90,78 +49,6 @@ export default function Clients() {
     window.addEventListener('nexor:clients-new', onNewClient);
     return () => window.removeEventListener('nexor:clients-new', onNewClient);
   }, []);
-
-  const handleSave = async () => {
-    const name = formData.name.trim();
-    const nif = normalizeClientNif(formData.nif);
-
-    if (!name) {
-      toast({
-        title: t.clientsUi.toastErrorTitle,
-        description: t.clientsUi.nameAndNifRequired,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (!nif) {
-      toast({
-        title: t.clientsUi.toastErrorTitle,
-        description: t.clientsUi.nifRequired,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (!validateNIF(nif)) {
-      toast({
-        title: t.clientsUi.toastErrorTitle,
-        description: t.clientsUi.nifInvalid10Digits,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    try {
-      const payload = {
-        ...formData,
-        name,
-        nif,
-        creditLimit: parseFloat(formData.creditLimit) || 0,
-      };
-
-      if (selectedClient) {
-        await saveClient({
-          ...selectedClient,
-          ...payload,
-        });
-        toast({
-          title: t.clientsUi.updatedTitle,
-          description: t.clientsUi.updatedDesc.replace('{name}', formData.name),
-        });
-      } else {
-        await createClient({
-          ...payload,
-          currentBalance: 0,
-          isActive: true,
-        });
-        toast({
-          title: t.clientsUi.createdTitle,
-          description: t.clientsUi.createdDesc.replace('{name}', formData.name),
-        });
-      }
-
-      setDialogOpen(false);
-      resetForm();
-    } catch (e) {
-      console.error('[Clients] save failed', e);
-      toast({
-        title: t.clientsUi.toastErrorTitle,
-        description: t.clientsUi.saveOrCreateFailed,
-        variant: 'destructive',
-      });
-    }
-  };
 
   const handleDelete = () => {
     if (selectedClient) {
@@ -243,8 +130,6 @@ export default function Clients() {
     { key: 'email', label: t.common.email },
     { key: 'cidade', label: t.clientsUi.cityLabel },
   ];
-
-  const canSaveClient = formData.name.trim().length > 0 && validateNIF(normalizeClientNif(formData.nif));
 
   // Only main office can manage clients
   if (!isMainOffice) {
@@ -399,98 +284,13 @@ export default function Clients() {
         </CardContent>
       </Card>
 
-      {/* Client Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{selectedClient ? t.clientsUi.editTitle : t.clientsUi.newTitle}</DialogTitle>
-            <DialogDescription>
-              {selectedClient ? t.clientsUi.editSubtitle : t.clientsUi.newSubtitle}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2 space-y-2">
-                <Label htmlFor="name">{t.clientsUi.nameLabel}</Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder={t.clientsUi.namePlaceholder}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="nif">{t.clientsUi.nifLabel}</Label>
-                <Input
-                  id="nif"
-                  value={formData.nif}
-                  onChange={(e) => setFormData({ ...formData, nif: e.target.value })}
-                  placeholder={t.clientsUi.nifPlaceholder}
-                  required
-                  inputMode="numeric"
-                  maxLength={14}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">{t.common.phone}</Label>
-                <Input
-                  id="phone"
-                  value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  placeholder="+244 9XX XXX XXX"
-                />
-              </div>
-              <div className="col-span-2 space-y-2">
-                <Label htmlFor="email">{t.common.email}</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  placeholder="email@exemplo.com"
-                />
-              </div>
-              <div className="col-span-2 space-y-2">
-                <Label htmlFor="address">{t.common.address}</Label>
-                <Input
-                  id="address"
-                  value={formData.address}
-                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                  placeholder={t.clientsUi.addressPlaceholder}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="city">{t.clientsUi.cityLabel}</Label>
-                <Input
-                  id="city"
-                  value={formData.city}
-                  onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                  placeholder="Luanda"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="creditLimit">{t.clientsUi.creditLimitLabel}</Label>
-                <Input
-                  id="creditLimit"
-                  type="number"
-                  value={formData.creditLimit}
-                  onChange={(e) => setFormData({ ...formData, creditLimit: e.target.value })}
-                  placeholder="0"
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
-              {t.common.cancel}
-            </Button>
-            <Button onClick={handleSave} disabled={!canSaveClient}>
-              {selectedClient ? t.common.saveChanges : t.clientsUi.registerClient}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Shared client form (also used by the Chart of Accounts "New customer account") */}
+      <ClientFormDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        client={selectedClient}
+        onSaved={() => { void refreshClients(); }}
+      />
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

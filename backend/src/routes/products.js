@@ -1119,6 +1119,54 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  /**
+   * Bulk-apply tier pricing across the whole catalog: Price N = Price 1 x (1 + pct/100).
+   * Overwrites price2/3/4 for every active product that has a Price 1 > 0 (products with
+   * no base price are skipped so we never zero-out their tiers). Only tiers whose percentage
+   * is supplied are touched. One-time action (no stored rule).
+   */
+  router.post('/bulk-tier-pricing', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const parsePct = (v) => {
+        if (v == null || v === '') return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : NaN;
+      };
+      const pcts = {
+        price2: parsePct(body.price2Pct),
+        price3: parsePct(body.price3Pct),
+        price4: parsePct(body.price4Pct),
+      };
+      if (Object.values(pcts).some((n) => Number.isNaN(n))) {
+        return res.status(400).json({ error: 'Percentages must be numbers' });
+      }
+      const sets = [];
+      const params = [];
+      let idx = 1;
+      for (const [col, pct] of Object.entries(pcts)) {
+        if (pct == null) continue;
+        // Round in SQL; CAST keeps Postgres happy (ROUND(double, int) does not exist there).
+        sets.push(`${col} = ROUND(CAST(price * $${idx} AS numeric), 2)`);
+        params.push(1 + pct / 100);
+        idx += 1;
+      }
+      if (sets.length === 0) {
+        return res.status(400).json({ error: 'Provide at least one of price2Pct, price3Pct, price4Pct' });
+      }
+      const sql = `UPDATE products
+                   SET ${sets.join(', ')}, updated_at = CURRENT_TIMESTAMP
+                   WHERE price > 0 AND ${coalesceActiveNotZero(db, 'is_active')}`;
+      const result = await db.query(sql, params);
+      await broadcastTable('products');
+      console.log(`[PRODUCTS bulk-tier-pricing] updated=${result.rowCount} pcts=${JSON.stringify(pcts)}`);
+      res.json({ success: true, updated: result.rowCount || 0 });
+    } catch (error) {
+      console.error('[PRODUCTS bulk-tier-pricing]', error);
+      res.status(500).json({ error: error.message || 'Bulk tier pricing failed' });
+    }
+  });
+
   /** Best PVP per SKU (catalog + all filials + purchase PVP1) — for POS and single-branch inventory. */
   router.get('/selling-prices', async (req, res) => {
     try {

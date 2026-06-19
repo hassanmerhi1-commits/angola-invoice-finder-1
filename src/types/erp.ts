@@ -148,6 +148,8 @@ export interface Client {
   defaultPriceLevel?: number;
   /** Signed % applied to the selling price: positive = surcharge, negative = discount. */
   priceAdjustmentPct?: number;
+  /** Days the client has to settle what they owe (0 = due immediately / on receipt). */
+  paymentTermsDays?: number;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

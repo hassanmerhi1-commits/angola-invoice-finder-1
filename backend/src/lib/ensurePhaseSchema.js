@@ -93,12 +93,14 @@ async function ensureDocumentSequencesBranchScope(db) {
   }
 }
 
-/** Per-client pricing controls (migration 046): default price level + signed % adjustment. */
+/** Per-client pricing controls (migration 046): default price level + signed % adjustment
+ *  + payment terms in days (how long the client has to settle what they owe). */
 async function ensureClientPricingColumns(db) {
   if (db.engine === 'postgres') {
     for (const stmt of [
       'ALTER TABLE clients ADD COLUMN IF NOT EXISTS default_price_level INTEGER DEFAULT 1',
       'ALTER TABLE clients ADD COLUMN IF NOT EXISTS price_adjustment_pct NUMERIC(7,2) DEFAULT 0',
+      'ALTER TABLE clients ADD COLUMN IF NOT EXISTS payment_terms_days INTEGER DEFAULT 0',
     ]) {
       try {
         await db.query(stmt);
@@ -126,6 +128,11 @@ async function ensureClientPricingColumns(db) {
     if (!names.has('price_adjustment_pct')) {
       try {
         db.sqlite.exec('ALTER TABLE clients ADD COLUMN price_adjustment_pct REAL DEFAULT 0');
+      } catch (_) {}
+    }
+    if (!names.has('payment_terms_days')) {
+      try {
+        db.sqlite.exec('ALTER TABLE clients ADD COLUMN payment_terms_days INTEGER DEFAULT 0');
       } catch (_) {}
     }
   }

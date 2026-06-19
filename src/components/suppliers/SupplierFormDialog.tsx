@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
+import { nextEntityAccountCode } from '@/lib/entityAccounts';
 import { Plus } from 'lucide-react';
 
 const PAYMENT_TERMS = [
@@ -96,6 +97,12 @@ export function SupplierFormDialog({
     while (used.has(`${newSubBaseCode}${n}`)) n += 1;
     return `${newSubBaseCode}${n}`;
   }, [accounts, newSubBaseCode]);
+
+  // The 8-digit account number that will be assigned on save, under the chosen parent.
+  const previewAccountNumber = useMemo(
+    () => nextEntityAccountCode(formData.accountParentCode, accounts),
+    [formData.accountParentCode, accounts],
+  );
 
   const startAddingSub = () => {
     // Default the new account's parent to the group (creates a new top-level parent), or to
@@ -189,11 +196,15 @@ export function SupplierFormDialog({
           description: t.suppliersUi.supplierUpdatedDesc.replace('{name}', formData.name),
         });
       } else {
+        const assignedCode = previewAccountNumber;
         saved = await createSupplier({ ...formData, balance: 0 });
         toast({
           title: t.suppliersUi.supplierCreatedTitle,
-          description: t.suppliersUi.supplierCreatedDesc.replace('{name}', formData.name),
+          description: assignedCode
+            ? `${t.suppliersUi.supplierCreatedDesc.replace('{name}', formData.name)} (${assignedCode})`
+            : t.suppliersUi.supplierCreatedDesc.replace('{name}', formData.name),
         });
+        void refetchAccounts();
       }
       await refreshSuppliers();
       onSaved?.(saved);
@@ -281,6 +292,11 @@ export function SupplierFormDialog({
           </div>
           {!supplier && (
             <div className="col-span-2 space-y-2">
+              <div className="flex items-center justify-between rounded-md border p-2 bg-muted/30">
+                <Label className="m-0">{t.chartOfAccountsUi.accountNumberLabel}</Label>
+                <span className="font-mono text-sm font-semibold">{previewAccountNumber || '—'}</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground">{t.chartOfAccountsUi.accountNumberAutoHint}</p>
               <Label>{t.chartOfAccountsUi.parentAccountLabel}</Label>
               {isAddingSub ? (
                 <div className="space-y-2 rounded-md border p-2">

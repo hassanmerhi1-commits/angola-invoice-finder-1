@@ -272,10 +272,18 @@ if (!gotSingleInstanceLock) {
   process.exit(0);
 }
 app.on('second-instance', () => {
-  if (typeof mainWindow !== 'undefined' && mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+  // Launching the .exe again opens an ADDITIONAL window (its own login session)
+  // backed by the same shared backend/database, rather than just focusing the first.
+  try {
+    if (!app.isReady()) return;
+    createSecondaryWindow();
+  } catch (e) {
+    console.error('[second-instance] failed to open new window:', e?.message || e);
+    if (typeof mainWindow !== 'undefined' && mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
   }
 });
 
@@ -1299,6 +1307,38 @@ if (!fs.existsSync(IP_FILE_PATH)) {
 
 // ============= GLOBALS =============
 let mainWindow = null;
+/** Counter for ephemeral, isolated sessions so each extra window can hold its own login. */
+let secondaryWindowSeq = 0;
+
+/**
+ * Broadcast a renderer message to every open app window (main + extra login windows),
+ * skipping the splash and any transient child windows. Keeps all windows live for
+ * real-time data sync / backend status.
+ */
+function sendToAllWindows(channel, payload) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win || win.isDestroyed()) continue;
+    if (win === splashWindow) continue;
+    try {
+      win.webContents.send(channel, payload);
+    } catch (_) { /* renderer may be reloading */ }
+  }
+}
+
+/** Inject the embedded backend port into every window so getApiUrl() resolves in all of them. */
+function injectBackendPortToAllWindows() {
+  const p = backendManager.getPort();
+  if (typeof p !== 'number' || p <= 0 || p >= 65536) return;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win || win.isDestroyed() || win === splashWindow) continue;
+    win.webContents
+      .executeJavaScript(
+        `window.__KWANZA_BACKEND_PORT__ = ${p}; try { window.dispatchEvent(new Event('nexor:backend-port')); } catch (_) {}`,
+        true,
+      )
+      .catch(() => {});
+  }
+}
 let splashWindow = null;
 let purchaseInvoiceWindow = null;
 let purchaseProductPickerWindow = null;
@@ -2070,7 +2110,7 @@ async function broadcastTableData(table, companyId = null) {
       }
     });
   }
-  mainWindow?.webContents.send('erp:sync', { table, rows, companyId });
+  sendToAllWindows('erp:sync', { table, rows, companyId });
 }
 
 function broadcastUpdate(table, action, id, companyId = null) {
@@ -2094,18 +2134,18 @@ function connectToServer() {
     wsClient.on('open', () => {
       console.log(`✅ Connected to ERP server: ${serverAddress}`);
       if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
-      try { mainWindow?.webContents.send('erp:updated', { table: 'all', action: 'connected' }); } catch (e) {}
+      try { sendToAllWindows('erp:updated', { table: 'all', action: 'connected' }); } catch (e) {}
     });
 
     wsClient.on('message', (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
         if (msg.type === 'db-sync') {
-          mainWindow?.webContents.send('erp:sync', { table: msg.table, rows: msg.rows, companyId: msg.companyId });
+          sendToAllWindows('erp:sync', { table: msg.table, rows: msg.rows, companyId: msg.companyId });
           return;
         }
         if (msg.type === 'db-updated') {
-          mainWindow?.webContents.send('erp:updated', msg);
+          sendToAllWindows('erp:updated', msg);
         }
       } catch (err) {}
     });
@@ -2205,9 +2245,7 @@ function startSyncOutboxWorker() {
       const r = await syncOutbox.flushToServer(apiBase);
       if (r.flushed > 0) {
         console.log(`[SYNC OUTBOX] Flushed ${r.flushed} event(s)`);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('sync:outbox-flushed', r);
-        }
+        sendToAllWindows('sync:outbox-flushed', r);
       }
     } catch (e) {
       console.warn('[SYNC OUTBOX]', e.message);
@@ -3099,7 +3137,11 @@ function createWindow() {
       { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
       { type: 'separator' }, { role: 'togglefullscreen' }
     ]},
-    { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }] }
+    { label: 'Window', submenu: [
+      { label: 'New Login Window', accelerator: 'CmdOrCtrl+N', click: () => createSecondaryWindow() },
+      { type: 'separator' },
+      { role: 'minimize' }, { role: 'close' }
+    ]}
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
@@ -3149,6 +3191,52 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
+/**
+ * Open an additional app window that shares the same embedded backend + database but has
+ * its own isolated session, so a different user/branch can be logged in at the same time.
+ * Closing this window only closes the window (it does not quit the app).
+ */
+function createSecondaryWindow() {
+  // Ephemeral, unique session partition → independent login/storage per window.
+  const partition = `nexor-login-${++secondaryWindowSeq}-${Date.now()}`;
+  const win = new BrowserWindow({
+    width: 1400, height: 900, minWidth: 1024, minHeight: 768,
+    icon: path.join(__dirname, '../public/icon.png'),
+    title: 'NEXOR ERP',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.cjs'),
+      partition,
+    },
+    autoHideMenuBar: false,
+    show: false,
+  });
+
+  const isDev = process.env.NODE_ENV === 'development' || process.env.ELECTRON_DEV === 'true';
+  loadRendererRoute(win, '/');
+  if (isDev) win.webContents.openDevTools();
+
+  const inject = () => {
+    const port = backendManager.getPort();
+    if (port == null || win.isDestroyed()) return;
+    win.webContents
+      .executeJavaScript(
+        `window.__KWANZA_BACKEND_PORT__ = ${port}; try { window.dispatchEvent(new Event('nexor:backend-port')); } catch (_) {}`,
+        true,
+      )
+      .catch(() => {});
+  };
+  win.webContents.on('dom-ready', inject);
+  win.webContents.on('did-finish-load', inject);
+
+  win.once('ready-to-show', () => { if (!win.isDestroyed()) { win.show(); win.focus(); } });
+  // Safety reveal if the renderer stalls before ready-to-show.
+  setTimeout(() => { if (!win.isDestroyed() && !win.isVisible()) win.show(); }, isDev ? 10000 : 20000);
+
+  return win;
+}
+
 // ============= APP LIFECYCLE =============
 app.whenReady().then(async () => {
   loadUiLanguageFromDisk();
@@ -3180,18 +3268,8 @@ app.whenReady().then(async () => {
   // Single status channel; payload shape: { state, detail?, port?, mode?, code?, fails?, attempts?, ts }
   backendManager.setStatusListener((status) => {
     backendPort = backendManager.getPort();
-    try {
-      mainWindow?.webContents.send('backend:status', status);
-    } catch (_) { /* renderer may be reloading */ }
-    const p = backendManager.getPort();
-    if (mainWindow && !mainWindow.isDestroyed() && typeof p === 'number' && p > 0 && p < 65536) {
-      mainWindow.webContents
-        .executeJavaScript(
-          `window.__KWANZA_BACKEND_PORT__ = ${p}; try { window.dispatchEvent(new Event('nexor:backend-port')); } catch (_) {}`,
-          true
-        )
-        .catch(() => {});
-    }
+    sendToAllWindows('backend:status', status);
+    injectBackendPortToAllWindows();
   });
 
   // Start Express before loading the UI so the first /api calls are not ECONNREFUSED.
@@ -3337,7 +3415,7 @@ ipcMain.handle('company:setActive', async (_, companyId) => {
     for (const table of ERP_TABLES) {
       try {
         const rows = await dbGetAll(table);
-        mainWindow?.webContents.send('erp:sync', { table, rows, companyId });
+        sendToAllWindows('erp:sync', { table, rows, companyId });
       } catch (e) {}
     }
     return { success: true };
@@ -3858,9 +3936,7 @@ function sendUpdaterStatus(payload) {
     if (lastSentUpdaterStatusKey === key) return;
     lastSentUpdaterStatusKey = key;
   }
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('updater:status', payload);
-  }
+  sendToAllWindows('updater:status', payload);
 }
 
 // Auto-updater

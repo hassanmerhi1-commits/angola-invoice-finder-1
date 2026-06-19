@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation, type TranslationKeys } from '@/i18n';
 import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
@@ -114,6 +114,9 @@ export default function ChartOfAccounts() {
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  // Always-current handlers for the global TopNav toolbar Delete/Edit buttons (avoids stale closures).
+  const deleteSelectedRef = useRef<() => void>(() => {});
+  const editSelectedRef = useRef<() => void>(() => {});
   const [ledgerAccount, setLedgerAccount] = useState<Account | null>(null);
   const [isLedgerOpen, setIsLedgerOpen] = useState(false);
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
@@ -147,6 +150,18 @@ export default function ChartOfAccounts() {
     };
     window.addEventListener(NEXOR_TOOLBAR.ALL, onAll);
     return () => window.removeEventListener(NEXOR_TOOLBAR.ALL, onAll);
+  }, []);
+
+  // Wire the global TopNav toolbar Delete/Edit buttons to the selected account.
+  useEffect(() => {
+    const onDelete = () => deleteSelectedRef.current?.();
+    const onEdit = () => editSelectedRef.current?.();
+    window.addEventListener(NEXOR_TOOLBAR.DELETE, onDelete);
+    window.addEventListener(NEXOR_TOOLBAR.EDIT, onEdit);
+    return () => {
+      window.removeEventListener(NEXOR_TOOLBAR.DELETE, onDelete);
+      window.removeEventListener(NEXOR_TOOLBAR.EDIT, onEdit);
+    };
   }, []);
 
   const openLedger = (account: Account) => {
@@ -324,7 +339,10 @@ export default function ChartOfAccounts() {
     const onChartNew = (event: Event) => {
       const action = (event as CustomEvent<{ action?: ChartNewAction }>).detail?.action;
       if (!action) return;
-      if (action === 'client') {
+      // Both "New client" and "New customer account" use the same client interface,
+      // which captures contact details, pricing, and payment terms while also creating
+      // the client's chart-of-accounts ledger entry.
+      if (action === 'client' || action === 'account:clientes') {
         openNewClientDialog();
         return;
       }
@@ -497,6 +515,14 @@ export default function ChartOfAccounts() {
   const selectedAccount = accounts.find(a => a.id === selectedAccountId);
   const selectedAccountInCurrentTab = selectedAccount && currentTabConfig.filter(selectedAccount) ? selectedAccount : null;
 
+  // Keep the toolbar refs pointing at the latest selection + handlers.
+  deleteSelectedRef.current = () => {
+    if (selectedAccountInCurrentTab) void handleDelete(selectedAccountInCurrentTab);
+  };
+  editSelectedRef.current = () => {
+    if (selectedAccountInCurrentTab) openEditDialog(selectedAccountInCurrentTab);
+  };
+
   // Whether the open dialog is creating/editing a customer/supplier ledger account (needs a NIF).
   const dialogParent = accounts.find(a => a.id === formData.parent_id);
   const dialogIsEntityRegistry = !formData.is_header && !!dialogParent && isEntityRegistryParent(dialogParent.code);
@@ -509,7 +535,7 @@ export default function ChartOfAccounts() {
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccountInCurrentTab} onClick={() => selectedAccountInCurrentTab && openEditDialog(selectedAccountInCurrentTab)}>
           <Edit2 className="w-3 h-3" /> {t.common.edit}
         </Button>
-        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccountInCurrentTab || selectedAccountInCurrentTab.is_header}
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccountInCurrentTab}
           onClick={() => selectedAccountInCurrentTab && handleDelete(selectedAccountInCurrentTab)}>
           <Trash2 className="w-3 h-3" /> {t.common.delete}
         </Button>
@@ -794,7 +820,7 @@ export default function ChartOfAccounts() {
 
       {/* Account Ledger Dialog */}
       <AccountLedgerDialog account={ledgerAccount} open={isLedgerOpen} onOpenChange={setIsLedgerOpen} />
-      <ClientFormDialog open={isClientDialogOpen} onOpenChange={setIsClientDialogOpen} />
+      <ClientFormDialog open={isClientDialogOpen} onOpenChange={setIsClientDialogOpen} onSaved={() => refetch()} />
       <SupplierFormDialog open={isSupplierDialogOpen} onOpenChange={setIsSupplierDialogOpen} onSaved={() => refetch()} />
     </div>
   );

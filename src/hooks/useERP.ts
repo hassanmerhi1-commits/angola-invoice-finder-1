@@ -1234,6 +1234,10 @@ function mapClientApiRow(c: any): Client {
       return lvl >= 1 && lvl <= 4 ? lvl : 1;
     })(),
     priceAdjustmentPct: Number(c.priceAdjustmentPct ?? c.price_adjustment_pct ?? 0),
+    paymentTermsDays: (() => {
+      const d = Math.trunc(Number(c.paymentTermsDays ?? c.payment_terms_days ?? 0));
+      return Number.isFinite(d) && d > 0 ? d : 0;
+    })(),
     isActive: c.isActive ?? c.is_active ?? true,
     createdAt: c.createdAt ?? c.created_at ?? new Date().toISOString(),
     updatedAt: c.updatedAt ?? c.updated_at ?? new Date().toISOString(),
@@ -1281,7 +1285,20 @@ export function useClients() {
     );
   }, []);
 
+  const notifyClientsChanged = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent(storage.CLIENTS_CHANGED_EVENT, { detail: {} }));
+  }, []);
+
   useEffect(() => { refreshClients(); }, [refreshClients]);
+
+  // Keep every useClients instance (Clients page, Chart of Accounts dialog, POS, …)
+  // in sync when a client is created/updated/deleted from anywhere.
+  useEffect(() => {
+    const onClientsChanged = () => { void refreshClients(); };
+    window.addEventListener(storage.CLIENTS_CHANGED_EVENT, onClientsChanged);
+    return () => window.removeEventListener(storage.CLIENTS_CHANGED_EVENT, onClientsChanged);
+  }, [refreshClients]);
 
   const saveClient = useCallback(async (client: Client) => {
     const name = String(client.name || '').trim();
@@ -1294,13 +1311,15 @@ export function useClients() {
     const result = await api.clients.update(client.id, payload);
     if (!result.data) await storage.saveClient(payload);
     await refreshClients();
-  }, [refreshClients]);
+    notifyClientsChanged();
+  }, [refreshClients, notifyClientsChanged]);
 
   const deleteClient = useCallback(async (clientId: string) => {
     const result = await api.clients.delete(clientId);
     if (!result.data) await storage.deleteClient(clientId);
     await refreshClients();
-  }, [refreshClients]);
+    notifyClientsChanged();
+  }, [refreshClients, notifyClientsChanged]);
 
   const createClient = useCallback(async (data: Omit<Client, 'id' | 'createdAt' | 'updatedAt'>): Promise<Client> => {
     const name = String(data.name || '').trim();
@@ -1319,6 +1338,7 @@ export function useClients() {
         typeof (row as { name?: unknown }).name === 'string');
     if (apiOk) {
       await refreshClients();
+      notifyClientsChanged();
       return mapClientApiRow(row);
     }
     const client: Client = {
@@ -1329,8 +1349,9 @@ export function useClients() {
     };
     await storage.saveClient(client);
     await refreshClients();
+    notifyClientsChanged();
     return client;
-  }, [refreshClients]);
+  }, [refreshClients, notifyClientsChanged]);
 
   return { clients, saveClient, deleteClient, createClient, refreshClients };
 }
