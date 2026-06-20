@@ -544,6 +544,17 @@ export default function Inventory() {
     });
   }, [displayProducts, stockListFilter, listSearch]);
 
+  // While searching, auto-select the top matching product so every tab (Detailed Qty,
+  // Statement, Chart, …) shows its info without the user having to click the row first.
+  // Keeps the current selection if it still matches the search; otherwise picks the first hit.
+  useEffect(() => {
+    if (!listSearch.trim()) return;
+    if (gridProducts.length === 0) return;
+    setSelectedProduct((prev) =>
+      prev && gridProducts.some((p) => p.id === prev.id) ? prev : gridProducts[0],
+    );
+  }, [listSearch, gridProducts]);
+
   const navigateProduct = useCallback((direction: -1 | 1) => {
     if (!gridProducts.length) return;
     const currentIndex = selectedProduct

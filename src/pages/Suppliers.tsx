@@ -18,23 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
+import { SupplierFormDialog } from '@/components/suppliers/SupplierFormDialog';
 import { Search, Plus, Edit, Trash2, Truck, Phone, Mail, FileSpreadsheet, Upload, ArrowLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -58,33 +42,18 @@ const PAYMENT_TERMS = [
   { value: '90_days', labelKey: 'days90' },
 ] as const;
 
-const initialFormData = {
-  name: '',
-  nif: '',
-  email: '',
-  phone: '',
-  address: '',
-  city: '',
-  country: 'Angola',
-  contactPerson: '',
-  paymentTerms: 'immediate' as Supplier['paymentTerms'],
-  isActive: true,
-  notes: '',
-};
-
 export default function Suppliers() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const { suppliers, saveSupplier, deleteSupplier, createSupplier, refreshSuppliers } = useSuppliers();
+  const { suppliers, deleteSupplier, refreshSuppliers } = useSuppliers();
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
-  const [formData, setFormData] = useState(initialFormData);
 
   const filteredSuppliers = suppliers.filter(supplier =>
     supplier.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -92,26 +61,10 @@ export default function Suppliers() {
     supplier.contactPerson?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // The Suppliers tab and the Chart of Accounts both open the same SupplierFormDialog
+  // (contact details, payment terms, ledger account number + parent picker).
   const handleOpenDialog = (supplier?: Supplier) => {
-    if (supplier) {
-      setSelectedSupplier(supplier);
-      setFormData({
-        name: supplier.name,
-        nif: supplier.nif,
-        email: supplier.email || '',
-        phone: supplier.phone || '',
-        address: supplier.address || '',
-        city: supplier.city || '',
-        country: supplier.country,
-        contactPerson: supplier.contactPerson || '',
-        paymentTerms: supplier.paymentTerms,
-        isActive: supplier.isActive,
-        notes: supplier.notes || '',
-      });
-    } else {
-      setSelectedSupplier(null);
-      setFormData(initialFormData);
-    }
+    setSelectedSupplier(supplier ?? null);
     setDialogOpen(true);
   };
 
@@ -119,7 +72,6 @@ export default function Suppliers() {
   useEffect(() => {
     const openNew = () => {
       setSelectedSupplier(null);
-      setFormData(initialFormData);
       setDialogOpen(true);
     };
 
@@ -158,50 +110,6 @@ export default function Suppliers() {
       }
     };
   }, [selectedSupplier, deleteSupplier, t]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!formData.name.trim() || !formData.nif.trim()) {
-      toast({
-        title: t.common.error,
-        description: t.suppliersUi.nameAndNifRequired,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    try {
-      if (selectedSupplier) {
-        await saveSupplier({
-          ...selectedSupplier,
-          ...formData,
-          updatedAt: new Date().toISOString(),
-        });
-        toast({
-          title: t.suppliersUi.supplierUpdatedTitle,
-          description: t.suppliersUi.supplierUpdatedDesc.replace('{name}', formData.name),
-        });
-      } else {
-        await createSupplier({ ...formData, balance: 0 });
-        toast({
-          title: t.suppliersUi.supplierCreatedTitle,
-          description: t.suppliersUi.supplierCreatedDesc.replace('{name}', formData.name),
-        });
-      }
-
-      await refreshSuppliers();
-      setDialogOpen(false);
-      setSelectedSupplier(null);
-      setFormData(initialFormData);
-    } catch (error: any) {
-      toast({
-        title: t.common.error,
-        description: error?.message || t.suppliersUi.saveFailed,
-        variant: 'destructive',
-      });
-    }
-  };
 
   const handleDelete = () => {
     if (selectedSupplier) {
@@ -486,150 +394,13 @@ export default function Suppliers() {
         </CardContent>
       </Card>
 
-      {/* Form Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              {selectedSupplier ? t.suppliersUi.editSupplierTitle : t.suppliersUi.newSupplierTitle}
-            </DialogTitle>
-          </DialogHeader>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <Label htmlFor="name">{t.suppliersUi.companyNameLabel}</Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder={t.suppliersUi.namePlaceholder}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="nif">{t.suppliersUi.colNif} *</Label>
-                <Input
-                  id="nif"
-                  value={formData.nif}
-                  onChange={(e) => setFormData({ ...formData, nif: e.target.value })}
-                  placeholder={t.suppliersUi.nifPlaceholder}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="contactPerson">{t.suppliersUi.contactPersonLabel}</Label>
-                <Input
-                  id="contactPerson"
-                  value={formData.contactPerson}
-                  onChange={(e) => setFormData({ ...formData, contactPerson: e.target.value })}
-                  placeholder={t.suppliersUi.contactPersonPlaceholder}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="phone">{t.common.phone}</Label>
-                <Input
-                  id="phone"
-                  value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  placeholder={t.suppliersUi.phonePlaceholder}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="email">{t.common.email}</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  placeholder={t.suppliersUi.emailPlaceholder}
-                />
-              </div>
-
-              <div className="col-span-2">
-                <Label htmlFor="address">{t.common.address}</Label>
-                <Input
-                  id="address"
-                  value={formData.address}
-                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                  placeholder={t.suppliersUi.addressPlaceholder}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="city">{t.suppliersUi.cityLabel}</Label>
-                <Input
-                  id="city"
-                  value={formData.city}
-                  onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                  placeholder={t.suppliersUi.cityPlaceholder}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="country">{t.suppliersUi.countryLabel}</Label>
-                <Input
-                  id="country"
-                  value={formData.country}
-                  onChange={(e) => setFormData({ ...formData, country: e.target.value })}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="paymentTerms">{t.suppliersUi.paymentTermsLabel}</Label>
-                <Select
-                  value={formData.paymentTerms}
-                  onValueChange={(value: Supplier['paymentTerms']) =>
-                    setFormData({ ...formData, paymentTerms: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PAYMENT_TERMS.map((term) => (
-                      <SelectItem key={term.value} value={term.value}>
-                        {t.suppliersUi.paymentTerms[term.labelKey as keyof typeof t.suppliersUi.paymentTerms] as string}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex items-center gap-3 pt-6">
-                <Switch
-                  id="isActive"
-                  checked={formData.isActive}
-                  onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
-                />
-                <Label htmlFor="isActive">{t.suppliersUi.activeSupplierLabel}</Label>
-              </div>
-
-              <div className="col-span-2">
-                <Label htmlFor="notes">{t.common.notes}</Label>
-                <Textarea
-                  id="notes"
-                  value={formData.notes}
-                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder={t.suppliersUi.notesPlaceholder}
-                  rows={3}
-                />
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                {t.common.cancel}
-              </Button>
-              <Button type="submit">
-                {selectedSupplier ? t.common.saveChanges : t.suppliersUi.createSupplier}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {/* Shared supplier form (also used by the Chart of Accounts "New supplier account") */}
+      <SupplierFormDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        supplier={selectedSupplier}
+        onSaved={() => { void refreshSuppliers(); }}
+      />
 
       {/* Delete Confirmation */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
