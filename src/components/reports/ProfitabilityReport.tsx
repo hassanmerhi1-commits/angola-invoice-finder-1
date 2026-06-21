@@ -1,159 +1,72 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useSales, useProducts, useCategories } from '@/hooks/useERP';
-import { Download, PieChart, TrendingUp, TrendingDown, DollarSign } from 'lucide-react';
-import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
-import { exportToExcel } from '@/lib/excel';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+import { useSales } from '@/hooks/useERP';
+import { PieChart, TrendingUp, TrendingDown, Package, Tags, Users, Truck } from 'lucide-react';
+import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
          PieChart as RechartsPie, Pie, Cell, Legend } from 'recharts';
+import { useTranslation } from '@/i18n';
+import { buildSalesPivot } from '@/lib/reports/salesPivot';
+import { useSalesPivotContext } from '@/components/reports/useSalesPivotContext';
+import PivotReportView from '@/components/reports/PivotReportView';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
-interface ProductProfitability {
-  productId: string;
-  productName: string;
-  category: string;
-  quantitySold: number;
-  revenue: number;
-  cost: number;
-  grossProfit: number;
-  margin: number;
-}
-
 export default function ProfitabilityReport() {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { branches, currentBranch, apiBranchId, canPickBranch } = useBranchScope();
   const { sales } = useSales(apiBranchId);
-  const { products } = useProducts(apiBranchId);
-  const { categories } = useCategories();
-  
+  const pivotCtx = useSalesPivotContext(apiBranchId);
+
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [selectedBranch, setSelectedBranch] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'profit' | 'margin' | 'revenue'>('profit');
+  const [viewTab, setViewTab] = useState('summary');
 
   useEffect(() => {
-    if (!canPickBranch && currentBranch?.id) {
-      setSelectedBranch(currentBranch.id);
-    }
+    if (!canPickBranch && currentBranch?.id) setSelectedBranch(currentBranch.id);
   }, [canPickBranch, currentBranch?.id]);
 
   const filteredSales = useMemo(() => {
-    return sales.filter(sale => {
+    return sales.filter((sale) => {
       const saleDate = sale.createdAt.split('T')[0];
       const matchesDate = saleDate >= dateFrom && saleDate <= dateTo;
       const matchesBranch = selectedBranch === 'all' || sale.branchId === selectedBranch;
-      const matchesStatus = sale.status === 'completed';
-      return matchesDate && matchesBranch && matchesStatus;
+      return matchesDate && matchesBranch && sale.status === 'completed';
     });
   }, [sales, dateFrom, dateTo, selectedBranch]);
 
-  // Calculate profitability by product
-  const productProfitability = useMemo((): ProductProfitability[] => {
-    const productMap: Record<string, ProductProfitability> = {};
-    
-    filteredSales.forEach(sale => {
-      sale.items.forEach(item => {
-        const product = products.find(p => p.id === item.productId);
-        const cost = product?.avgCost || product?.lastCost || product?.cost || 0;
-        
-        if (!productMap[item.productId]) {
-          productMap[item.productId] = {
-            productId: item.productId,
-            productName: item.productName,
-            category: product?.category || 'Sem Categoria',
-            quantitySold: 0,
-            revenue: 0,
-            cost: 0,
-            grossProfit: 0,
-            margin: 0,
-          };
-        }
-        
-        const revenue = item.subtotal;
-        const itemCost = cost * item.quantity;
-        
-        productMap[item.productId].quantitySold += item.quantity;
-        productMap[item.productId].revenue += revenue;
-        productMap[item.productId].cost += itemCost;
-      });
-    });
-    
-    // Calculate profit and margin
-    return Object.values(productMap)
-      .map(p => ({
-        ...p,
-        grossProfit: p.revenue - p.cost,
-        margin: p.revenue > 0 ? ((p.revenue - p.cost) / p.revenue) * 100 : 0,
-      }))
-      .sort((a, b) => {
-        if (sortBy === 'profit') return b.grossProfit - a.grossProfit;
-        if (sortBy === 'margin') return b.margin - a.margin;
-        return b.revenue - a.revenue;
-      });
-  }, [filteredSales, products, sortBy]);
+  const itemPivot = useMemo(() => buildSalesPivot(filteredSales, 'item', pivotCtx), [filteredSales, pivotCtx]);
+  const categoryPivot = useMemo(() => buildSalesPivot(filteredSales, 'category', pivotCtx), [filteredSales, pivotCtx]);
+  const customerPivot = useMemo(() => buildSalesPivot(filteredSales, 'customer', pivotCtx), [filteredSales, pivotCtx]);
+  const supplierPivot = useMemo(() => buildSalesPivot(filteredSales, 'supplier', pivotCtx), [filteredSales, pivotCtx]);
 
-  // Category profitability
-  const categoryProfitability = useMemo(() => {
-    const categoryMap: Record<string, { name: string; revenue: number; cost: number; profit: number }> = {};
-    
-    productProfitability.forEach(product => {
-      if (!categoryMap[product.category]) {
-        categoryMap[product.category] = { name: product.category, revenue: 0, cost: 0, profit: 0 };
-      }
-      categoryMap[product.category].revenue += product.revenue;
-      categoryMap[product.category].cost += product.cost;
-      categoryMap[product.category].profit += product.grossProfit;
-    });
-    
-    return Object.values(categoryMap)
-      .map(c => ({
-        ...c,
-        margin: c.revenue > 0 ? (c.profit / c.revenue) * 100 : 0,
-      }))
-      .sort((a, b) => b.profit - a.profit);
-  }, [productProfitability]);
-
-  // Summary stats
-  const summaryStats = useMemo(() => {
-    const totalRevenue = productProfitability.reduce((sum, p) => sum + p.revenue, 0);
-    const totalCost = productProfitability.reduce((sum, p) => sum + p.cost, 0);
-    const grossProfit = totalRevenue - totalCost;
+  const summary = useMemo(() => {
+    const totalRevenue = itemPivot.totals.base;
+    const totalCost = itemPivot.totals.cost;
+    const grossProfit = itemPivot.totals.profit;
     const avgMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
-    
-    const profitableProducts = productProfitability.filter(p => p.grossProfit > 0).length;
-    const unprofitableProducts = productProfitability.filter(p => p.grossProfit < 0).length;
-    
-    return { totalRevenue, totalCost, grossProfit, avgMargin, profitableProducts, unprofitableProducts };
-  }, [productProfitability]);
+    const profitable = itemPivot.rows.filter((r) => r.profit > 0).length;
+    const unprofitable = itemPivot.rows.filter((r) => r.profit < 0).length;
+    return { totalRevenue, totalCost, grossProfit, avgMargin, profitable, unprofitable };
+  }, [itemPivot]);
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-AO', { 
-      style: 'currency', 
-      currency: 'AOA',
-      minimumFractionDigits: 0 
-    }).format(value);
-  };
+  const categoryChart = useMemo(
+    () => categoryPivot.rows.slice(0, 8).map((r) => ({ name: r.label, profit: r.profit, margin: r.marginPct })),
+    [categoryPivot],
+  );
 
-  const handleExport = () => {
-    const data = productProfitability.map(p => ({
-      'Produto': p.productName,
-      'Categoria': p.category,
-      'Qtd Vendida': p.quantitySold,
-      'Receita': p.revenue,
-      'Custo': p.cost,
-      'Lucro Bruto': p.grossProfit,
-      'Margem %': p.margin.toFixed(2),
-    }));
-    
-    exportToExcel(data, `Rentabilidade_${format(new Date(), 'yyyyMMdd')}`);
-  };
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
+
+  const periodSuffix = `${dateFrom}_${dateTo}`;
+  const periodLabel = `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`;
 
   return (
     <div className="space-y-6">
@@ -162,39 +75,29 @@ export default function ProfitabilityReport() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <PieChart className="w-5 h-5" />
-            Análise de Rentabilidade
+            {t.profitUi.title}
           </CardTitle>
-          <CardDescription>
-            Margens de lucro por produto e categoria
-          </CardDescription>
+          <CardDescription>{t.profitUi.description}</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <Label>Data Início</Label>
-              <Input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-              />
+              <Label>{t.reportsUi.dateFrom}</Label>
+              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
             </div>
             <div>
-              <Label>Data Fim</Label>
-              <Input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-              />
+              <Label>{t.reportsUi.dateTo}</Label>
+              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
             <div>
-              <Label>Filial</Label>
+              <Label>{t.salesAnalysisUi.branch}</Label>
               <Select value={selectedBranch} onValueChange={setSelectedBranch} disabled={!canPickBranch}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Todas" />
+                  <SelectValue placeholder={t.common.all} />
                 </SelectTrigger>
                 <SelectContent>
-                  {canPickBranch && <SelectItem value="all">Todas as Filiais</SelectItem>}
-                  {(canPickBranch ? branches : currentBranch ? [currentBranch] : []).map(branch => (
+                  {canPickBranch && <SelectItem value="all">{t.salesAnalysisUi.allBranches}</SelectItem>}
+                  {(canPickBranch ? branches : currentBranch ? [currentBranch] : []).map((branch) => (
                     <SelectItem key={branch.id} value={branch.id}>
                       {branch.name}
                     </SelectItem>
@@ -202,171 +105,171 @@ export default function ProfitabilityReport() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label>Ordenar Por</Label>
-              <Select value={sortBy} onValueChange={(v: 'profit' | 'margin' | 'revenue') => setSortBy(v)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="profit">Lucro</SelectItem>
-                  <SelectItem value="margin">Margem %</SelectItem>
-                  <SelectItem value="revenue">Receita</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-end">
-              <Button variant="outline" onClick={handleExport}>
-                <Download className="w-4 h-4 mr-2" />
-                Exportar
-              </Button>
-            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Summary Cards */}
+      {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">Receita Total</p>
-            <p className="text-2xl font-bold">{formatCurrency(summaryStats.totalRevenue)}</p>
+            <p className="text-sm text-muted-foreground">{t.profitUi.totalRevenue}</p>
+            <p className="text-2xl font-bold">{formatCurrency(summary.totalRevenue)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">Custo Total</p>
-            <p className="text-2xl font-bold text-orange-500">{formatCurrency(summaryStats.totalCost)}</p>
+            <p className="text-sm text-muted-foreground">{t.profitUi.totalCost}</p>
+            <p className="text-2xl font-bold text-orange-500">{formatCurrency(summary.totalCost)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 mb-1">
-              {summaryStats.grossProfit >= 0 ? (
+              {summary.grossProfit >= 0 ? (
                 <TrendingUp className="w-4 h-4 text-green-500" />
               ) : (
                 <TrendingDown className="w-4 h-4 text-red-500" />
               )}
-              <p className="text-sm text-muted-foreground">Lucro Bruto</p>
+              <p className="text-sm text-muted-foreground">{t.profitUi.grossProfit}</p>
             </div>
-            <p className={`text-2xl font-bold ${summaryStats.grossProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {formatCurrency(summaryStats.grossProfit)}
+            <p className={`text-2xl font-bold ${summary.grossProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+              {formatCurrency(summary.grossProfit)}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">Margem Média</p>
-            <p className={`text-2xl font-bold ${summaryStats.avgMargin >= 20 ? 'text-green-500' : 'text-orange-500'}`}>
-              {summaryStats.avgMargin.toFixed(1)}%
+            <p className="text-sm text-muted-foreground">{t.profitUi.avgMargin}</p>
+            <p className={`text-2xl font-bold ${summary.avgMargin >= 20 ? 'text-green-500' : 'text-orange-500'}`}>
+              {summary.avgMargin.toFixed(1)}%
             </p>
             <div className="flex gap-4 mt-2 text-xs">
-              <span className="text-green-500">{summaryStats.profitableProducts} rentáveis</span>
-              <span className="text-red-500">{summaryStats.unprofitableProducts} negativos</span>
+              <span className="text-green-500">{t.profitUi.profitable.replace('{count}', String(summary.profitable))}</span>
+              <span className="text-red-500">{t.profitUi.unprofitable.replace('{count}', String(summary.unprofitable))}</span>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Charts */}
-      <div className="grid md:grid-cols-2 gap-4">
-        {/* Category Profitability Chart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Lucro por Categoria</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={categoryProfitability}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                  <Bar dataKey="profit" name="Lucro" fill="#10b981" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Sub-tabs */}
+      <Tabs value={viewTab} onValueChange={setViewTab}>
+        <TabsList className="flex-wrap h-auto">
+          <TabsTrigger value="summary">
+            <PieChart className="w-4 h-4 mr-2" />
+            {t.salesAnalysisUi.tabSummary}
+          </TabsTrigger>
+          <TabsTrigger value="item">
+            <Package className="w-4 h-4 mr-2" />
+            {t.salesAnalysisUi.tabByItem}
+          </TabsTrigger>
+          <TabsTrigger value="category">
+            <Tags className="w-4 h-4 mr-2" />
+            {t.salesAnalysisUi.tabByCategory}
+          </TabsTrigger>
+          <TabsTrigger value="customer">
+            <Users className="w-4 h-4 mr-2" />
+            {t.salesAnalysisUi.tabByCustomer}
+          </TabsTrigger>
+          <TabsTrigger value="supplier">
+            <Truck className="w-4 h-4 mr-2" />
+            {t.salesAnalysisUi.tabBySupplier}
+          </TabsTrigger>
+        </TabsList>
 
-        {/* Margin Distribution */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Distribuição de Margens</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <RechartsPie>
-                  <Pie
-                    data={categoryProfitability}
-                    dataKey="profit"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={100}
-                    label={({ name, margin }) => `${name} (${margin.toFixed(0)}%)`}
-                  >
-                    {categoryProfitability.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                  <Legend />
-                </RechartsPie>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+        <TabsContent value="summary" className="space-y-4">
+          <div className="grid md:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t.profitUi.profitByCategory}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={categoryChart}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                      <Bar dataKey="profit" name={t.profitUi.profit} fill="#10b981" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
 
-      {/* Product Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Rentabilidade por Produto</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Produto</TableHead>
-                <TableHead>Categoria</TableHead>
-                <TableHead className="text-right">Qtd</TableHead>
-                <TableHead className="text-right">Receita</TableHead>
-                <TableHead className="text-right">Custo</TableHead>
-                <TableHead className="text-right">Lucro</TableHead>
-                <TableHead>Margem</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {productProfitability.slice(0, 20).map((product) => (
-                <TableRow key={product.productId}>
-                  <TableCell className="font-medium">{product.productName}</TableCell>
-                  <TableCell>{product.category}</TableCell>
-                  <TableCell className="text-right">{product.quantitySold}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(product.revenue)}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(product.cost)}</TableCell>
-                  <TableCell className={`text-right font-medium ${product.grossProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                    {formatCurrency(product.grossProfit)}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Progress 
-                        value={Math.max(0, Math.min(product.margin, 100))} 
-                        className={`h-2 w-16 ${product.margin >= 30 ? '[&>div]:bg-green-500' : product.margin >= 15 ? '[&>div]:bg-yellow-500' : '[&>div]:bg-red-500'}`}
-                      />
-                      <span className={`text-sm ${product.margin >= 20 ? 'text-green-500' : product.margin >= 0 ? 'text-orange-500' : 'text-red-500'}`}>
-                        {product.margin.toFixed(1)}%
-                      </span>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t.profitUi.marginDistribution}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RechartsPie>
+                      <Pie
+                        data={categoryChart}
+                        dataKey="profit"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={100}
+                        label={({ name, margin }) => `${name} (${Number(margin).toFixed(0)}%)`}
+                      >
+                        {categoryChart.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                      <Legend />
+                    </RechartsPie>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="item">
+          <PivotReportView
+            dimensionLabel={t.salesByProductUi.product}
+            rows={itemPivot.rows}
+            totals={itemPivot.totals}
+            fileName={`Rentabilidade_Item_${periodSuffix}`}
+            subtitle={periodLabel}
+            enableGrouping
+          />
+        </TabsContent>
+
+        <TabsContent value="category">
+          <PivotReportView
+            dimensionLabel={t.salesByProductUi.category}
+            rows={categoryPivot.rows}
+            totals={categoryPivot.totals}
+            fileName={`Rentabilidade_Categoria_${periodSuffix}`}
+            subtitle={periodLabel}
+          />
+        </TabsContent>
+
+        <TabsContent value="customer">
+          <PivotReportView
+            dimensionLabel={t.reportsUi.client}
+            rows={customerPivot.rows}
+            totals={customerPivot.totals}
+            fileName={`Rentabilidade_Cliente_${periodSuffix}`}
+            subtitle={periodLabel}
+          />
+        </TabsContent>
+
+        <TabsContent value="supplier">
+          <PivotReportView
+            dimensionLabel={t.reportsUi.supplier}
+            rows={supplierPivot.rows}
+            totals={supplierPivot.totals}
+            fileName={`Rentabilidade_Fornecedor_${periodSuffix}`}
+            subtitle={periodLabel}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
