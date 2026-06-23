@@ -1,6 +1,7 @@
 // Chart of Accounts API routes
 const express = require('express');
 const db = require('../db');
+const { requirePermission } = require('../middleware/requirePermission');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -145,8 +146,8 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // Reset the chart of accounts to the Angola PGC (novo com IVA)
-  router.post('/reseed', async (req, res) => {
+  // Reset the chart of accounts to the Angola PGC (novo com IVA) — admin only (destructive).
+  router.post('/reseed', requirePermission('admin_settings'), async (req, res) => {
     try {
       const result = await db.resetChartOfAccountsToPgc();
       await broadcastTable('chart_of_accounts');
@@ -214,7 +215,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Create new account
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('accounting_create'), async (req, res) => {
     try {
       const { 
         code, name, description, account_type, account_nature,
@@ -248,7 +249,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Update account
-  router.put('/:id', async (req, res) => {
+  router.put('/:id', requirePermission('accounting_create'), async (req, res) => {
     try {
       const { id } = req.params;
       const { 

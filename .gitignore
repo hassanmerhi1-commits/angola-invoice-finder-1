@@ -22,7 +22,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment & secrets — never commit real values (templates use *.env.example)
 .env
+*.env
+!*.env.example
+data/secrets/
+*.pem
+*.key
+*.pfx
 .tmp-electron-package/
 # SQLite scratch files from local verify/backup scripts (not real app data)
 .tmp-*.db

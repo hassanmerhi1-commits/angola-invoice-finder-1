@@ -7,6 +7,7 @@ const { enqueueSaleCreated } = require('../sync/outbox');
 const { signSaleInvoice } = require('../agt/signSale');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 const { requireAuth } = require('../middleware/requireAuth');
+const { requirePermission } = require('../middleware/requirePermission');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -33,7 +34,8 @@ module.exports = function(broadcastTable) {
   });
 
   // CREATE: Delegated to Transaction Engine
-  router.post('/', async (req, res) => {
+  // POS cashiers (pos_access) and back-office invoicing (invoice_create) may create sales.
+  router.post('/', requirePermission('pos_access', 'invoice_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -116,7 +118,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Issued fiscal invoices are immutable — only due date may be adjusted.
-  router.patch('/:id', async (req, res) => {
+  router.patch('/:id', requirePermission('invoice_create'), async (req, res) => {
     try {
       const { dueDate } = req.body;
       const extraKeys = Object.keys(req.body || {}).filter((k) => k !== 'dueDate');

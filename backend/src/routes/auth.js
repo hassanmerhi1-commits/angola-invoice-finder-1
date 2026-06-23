@@ -7,6 +7,7 @@ const { JWT_SECRET } = require('../jwtSecret');
 const { requireAdmin } = require('../middleware/requireAdmin');
 const { requireAuth } = require('../middleware/requireAuth');
 const { loginRateLimiter } = require('../middleware/loginRateLimit');
+const { isLocked, recordFailure, recordSuccess } = require('../middleware/loginAttemptGuard');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 const {
   hashPassword,
@@ -90,20 +91,38 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
       return res.status(400).json({ error: 'Password is required' });
     }
 
+    const lockState = isLocked(rawIdentifier);
+    if (lockState.locked) {
+      const retryMinutes = Math.ceil(lockState.retryAfterMs / 60000);
+      await logFiscalEventFromReq(req, {
+        tableName: 'users',
+        action: 'login_locked',
+        userName: String(rawIdentifier).trim().slice(0, 120) || 'unknown',
+        description: 'Login blocked — account temporarily locked',
+        newValues: { identifier: String(rawIdentifier).trim().slice(0, 120) },
+      }).catch(() => {});
+      res.setHeader('Retry-After', String(Math.max(1, retryMinutes) * 60));
+      return res.status(429).json({
+        error: `Too many failed attempts. Account locked. Try again in ${Math.max(1, retryMinutes)} minute(s).`,
+      });
+    }
+
     const user = await findUserForLogin(db, rawIdentifier);
     const validPassword = await verifyPasswordWithDummyFallback(password, user?.password_hash);
 
     if (!user || !validPassword) {
+      const justLocked = recordFailure(rawIdentifier);
       await logFiscalEventFromReq(req, {
         tableName: 'users',
-        action: 'login_failed',
+        action: justLocked ? 'login_locked' : 'login_failed',
         userName: String(rawIdentifier).trim().slice(0, 120) || 'unknown',
-        description: 'Failed login attempt',
+        description: justLocked ? 'Account locked after repeated failed logins' : 'Failed login attempt',
         newValues: { identifier: String(rawIdentifier).trim().slice(0, 120) },
       }).catch(() => {});
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    recordSuccess(rawIdentifier);
     await upgradePasswordHashIfLegacy(db, user.id, password, user.password_hash);
 
     let effectiveBranchId = user.branch_id;

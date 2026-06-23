@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { createStockTransfer, processTransferApprove, processTransferReceive } = require('../transactionEngine');
+const { requirePermission } = require('../middleware/requirePermission');
 
 function mapStockTransferError(error) {
   const raw = error?.message || String(error);
@@ -50,7 +51,7 @@ module.exports = function(broadcastTable) {
   });
 
   // CREATE: Delegated to Transaction Engine
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('inventory_transfer'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -69,7 +70,7 @@ module.exports = function(broadcastTable) {
   });
 
   // APPROVE: Delegated to Transaction Engine (stock OUT)
-  router.post('/:id/approve', async (req, res) => {
+  router.post('/:id/approve', requirePermission('inventory_transfer'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -93,7 +94,7 @@ module.exports = function(broadcastTable) {
   });
 
   // RECEIVE: Delegated to Transaction Engine (stock IN + journal)
-  router.post('/:id/receive', async (req, res) => {
+  router.post('/:id/receive', requirePermission('inventory_transfer'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -117,7 +118,7 @@ module.exports = function(broadcastTable) {
   });
 
   // CANCEL: pending transfers only
-  router.post('/:id/cancel', async (req, res) => {
+  router.post('/:id/cancel', requirePermission('inventory_transfer'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');

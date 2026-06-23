@@ -3252,6 +3252,7 @@ export const en = {
     actionExport: "Export",
     actionLogin: "Login",
     actionLoginFailed: "Failed login",
+    actionLoginLocked: "Account locked",
     actionLogout: "Logout",
     actionPasswordChange: "Password changed",
     actionPasswordReset: "Password reset",

@@ -113,6 +113,33 @@ function rateLimiter(windowMs = 60000, maxRequests = 200) {
   };
 }
 
+// ── Global API authentication gate ──────────────────────────────────────────
+// Public API paths reachable without a user JWT. Sync routes carry their own
+// API-key auth; auth routes expose the public login and self-guarded admin
+// endpoints; health is an unauthenticated liveness probe.
+const PUBLIC_API_EXACT = new Set(['/api/health']);
+const PUBLIC_API_PREFIXES = ['/api/auth', '/api/sync', '/api/installations'];
+
+function isPublicApiPath(pathname) {
+  if (PUBLIC_API_EXACT.has(pathname)) return true;
+  return PUBLIC_API_PREFIXES.some((pre) => pathname === pre || pathname.startsWith(pre + '/'));
+}
+
+/**
+ * Requires a valid user JWT for every /api route except the public allowlist.
+ * Non-/api requests pass through. Set NEXOR_OPEN_API=1 to disable (emergency only).
+ */
+function apiAuthGate(req, res, next) {
+  if (process.env.NEXOR_OPEN_API === '1') return next();
+  const p = req.path;
+  if (!p.startsWith('/api/') && p !== '/api') return next();
+  if (req.method === 'OPTIONS') return next();
+  if (isPublicApiPath(p)) return next();
+  // Lazy require avoids a circular dependency at module load time.
+  const { requireAuth } = require('./requireAuth');
+  return requireAuth(req, res, next);
+}
+
 /**
  * Optimistic lock conflict helper
  * Returns 409 Conflict if rowCount is 0 after a versioned update
@@ -129,4 +156,4 @@ function checkOptimisticLock(result, res, entityName = 'Record') {
   return true;
 }
 
-module.exports = { lanCors, securityHeaders, rateLimiter, isAllowedOrigin, checkOptimisticLock };
+module.exports = { lanCors, securityHeaders, rateLimiter, isAllowedOrigin, checkOptimisticLock, apiAuthGate, isPublicApiPath };

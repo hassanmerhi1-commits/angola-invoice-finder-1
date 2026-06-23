@@ -3255,6 +3255,7 @@ export const pt: TranslationKeys = {
     actionExport: "Exportação",
     actionLogin: "Login",
     actionLoginFailed: "Login falhado",
+    actionLoginLocked: "Conta bloqueada",
     actionLogout: "Logout",
     actionPasswordChange: "Palavra-passe alterada",
     actionPasswordReset: "Palavra-passe reposta",

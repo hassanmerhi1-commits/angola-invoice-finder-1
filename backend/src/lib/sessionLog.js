@@ -8,17 +8,56 @@ const { workstationFromReq, ipFromReq } = require('./fiscalAudit');
 const touchThrottleMs = 60_000;
 const lastTouchByJti = new Map();
 
+// Revocation cache: jti -> { revoked: boolean, exp: epochMs }. Keeps the
+// per-request auth check from hitting the DB on every API call.
+const revocationCacheTtlMs = 15_000;
+const revocationCache = new Map();
+
+let tableExistsPromise = null;
 async function tableExists() {
+  // Schema doesn't change at runtime — resolve once and cache for the process.
+  if (tableExistsPromise) return tableExistsPromise;
+  tableExistsPromise = (async () => {
+    try {
+      const r = await db.query(
+        db.engine === 'postgres'
+          ? `SELECT 1 FROM information_schema.tables WHERE table_name = 'user_sessions' LIMIT 1`
+          : `SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'user_sessions' LIMIT 1`,
+      );
+      return r.rows.length > 0;
+    } catch {
+      tableExistsPromise = null; // allow retry after a transient failure
+      return false;
+    }
+  })();
+  return tableExistsPromise;
+}
+
+/**
+ * True if the session for this jti was explicitly ended (logout / admin revoke).
+ * Fails open (returns false) when sessions are unavailable or the jti has no
+ * row, so pre-existing tokens and missing-table setups are never locked out.
+ */
+async function isSessionRevoked(jti) {
+  if (!jti) return false;
+  const now = Date.now();
+  const cached = revocationCache.get(jti);
+  if (cached && cached.exp > now) return cached.revoked;
+  if (!(await tableExists())) return false;
+  let revoked = false;
   try {
     const r = await db.query(
-      db.engine === 'postgres'
-        ? `SELECT 1 FROM information_schema.tables WHERE table_name = 'user_sessions' LIMIT 1`
-        : `SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'user_sessions' LIMIT 1`,
+      `SELECT ended_at FROM user_sessions WHERE token_jti = $1 ORDER BY started_at DESC LIMIT 1`,
+      [jti],
     );
-    return r.rows.length > 0;
+    if (r.rows.length > 0) {
+      revoked = r.rows[0].ended_at != null;
+    }
   } catch {
-    return false;
+    revoked = false;
   }
+  revocationCache.set(jti, { revoked, exp: now + revocationCacheTtlMs });
+  return revoked;
 }
 
 async function startSession(req, { userId, userName, branchId, tokenJti }) {
@@ -73,7 +112,12 @@ async function endSession({ tokenJti, userId, reason = 'logout' }) {
       [userId, reason],
     );
   }
-  if (tokenJti) lastTouchByJti.delete(tokenJti);
+  if (tokenJti) {
+    lastTouchByJti.delete(tokenJti);
+    // Prime the cache so the just-revoked token is rejected immediately,
+    // without waiting for the TTL to expire.
+    revocationCache.set(tokenJti, { revoked: true, exp: Date.now() + revocationCacheTtlMs });
+  }
   return (result?.rows?.length || 0) > 0;
 }
 
@@ -118,4 +162,5 @@ module.exports = {
   endSession,
   listSessions,
   countActiveSessions,
+  isSessionRevoked,
 };

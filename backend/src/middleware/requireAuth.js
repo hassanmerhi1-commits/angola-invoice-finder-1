@@ -2,7 +2,7 @@ const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { JWT_SECRET } = require('../jwtSecret');
 const { getBearerToken } = require('./requireAdmin');
-const { touchSession } = require('../lib/sessionLog');
+const { touchSession, isSessionRevoked } = require('../lib/sessionLog');
 
 /**
  * Requires a valid JWT and an active user row.
@@ -28,6 +28,10 @@ async function requireAuth(req, res, next) {
     const active = user.is_active === true || user.is_active === 1;
     if (!active) {
       return res.status(401).json({ error: 'User account is inactive' });
+    }
+
+    if (decoded.jti && (await isSessionRevoked(decoded.jti))) {
+      return res.status(401).json({ error: 'Session ended. Please sign in again.' });
     }
 
     req.user = {

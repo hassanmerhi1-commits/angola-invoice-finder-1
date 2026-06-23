@@ -53,6 +53,7 @@ const ACTION_CONFIG: Record<string, { icon: typeof FileText; labelKey: string; c
   export: { icon: Download, labelKey: 'actionExport', color: 'text-muted-foreground' },
   login: { icon: LogIn, labelKey: 'actionLogin', color: 'text-green-600' },
   login_failed: { icon: AlertTriangle, labelKey: 'actionLoginFailed', color: 'text-destructive' },
+  login_locked: { icon: AlertTriangle, labelKey: 'actionLoginLocked', color: 'text-destructive' },
   logout: { icon: LogOut, labelKey: 'actionLogout', color: 'text-muted-foreground' },
   password_change: { icon: Edit, labelKey: 'actionPasswordChange', color: 'text-blue-600' },
   password_reset: { icon: Edit, labelKey: 'actionPasswordReset', color: 'text-amber-600' },

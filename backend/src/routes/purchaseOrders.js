@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { createPurchaseOrder, processPurchaseReceive } = require('../transactionEngine');
+const { requirePermission } = require('../middleware/requirePermission');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -31,7 +32,7 @@ module.exports = function(broadcastTable) {
    * When a purchase invoice is saved with an order number, mark that PO as received
    * without running goods receipt (stock already updated by the invoice transaction).
    */
-  router.post('/mark-received-from-invoice', async (req, res) => {
+  router.post('/mark-received-from-invoice', requirePermission('purchase_receive'), async (req, res) => {
     try {
       const { orderNumber, supplierId, receivedBy } = req.body || {};
       const num = orderNumber != null ? String(orderNumber).trim() : '';
@@ -98,7 +99,7 @@ module.exports = function(broadcastTable) {
   });
 
   // CREATE: Delegated to Transaction Engine
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('purchase_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -116,7 +117,7 @@ module.exports = function(broadcastTable) {
   });
 
   // APPROVE: status + linked approval_requests (no stock/accounting impact)
-  router.post('/:id/approve', async (req, res) => {
+  router.post('/:id/approve', requirePermission('purchase_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -212,7 +213,7 @@ module.exports = function(broadcastTable) {
   });
 
   // RECEIVE: Delegated to Transaction Engine (stock + accounting)
-  router.post('/:id/receive', async (req, res) => {
+  router.post('/:id/receive', requirePermission('purchase_receive'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');

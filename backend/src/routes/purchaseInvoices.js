@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { toRow, fromRow } = require('../purchaseInvoiceMappers');
+const { requirePermission } = require('../middleware/requirePermission');
 
 const UPSERT_SQL = `
   INSERT INTO purchase_invoices (
@@ -250,7 +251,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
     return txResult;
   }
 
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('purchase_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       const row = toRow(req.body);
@@ -316,7 +317,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   });
 
   /** Repair invoices saved without stock/payables (orphan headers). */
-  router.post('/backfill-accounting', async (req, res) => {
+  router.post('/backfill-accounting', requirePermission('admin_settings'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       const limit = Math.min(Number(req.body?.limit) || 100, 500);
@@ -371,7 +372,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
     }
   });
 
-  router.put('/:id', async (req, res) => {
+  router.put('/:id', requirePermission('purchase_create'), async (req, res) => {
     try {
       const row = toRow({ ...req.body, id: req.params.id });
       const dup = await findDuplicateSupplierInvoice(row.supplier_id, row.supplier_invoice_no, row.id);
@@ -475,7 +476,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   }
 
   /** Re-post stock / payables when header was saved but transaction engine failed earlier. */
-  router.post('/:id/repost-accounting', async (req, res) => {
+  router.post('/:id/repost-accounting', requirePermission('admin_settings'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       const saved = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [req.params.id]);

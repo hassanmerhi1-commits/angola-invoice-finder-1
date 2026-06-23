@@ -38,7 +38,7 @@ const { Server } = require('socket.io');
 
 require('./db');
 const db = require('./db');
-const { lanCors, securityHeaders, rateLimiter } = require('./middleware/security');
+const { lanCors, securityHeaders, rateLimiter, apiAuthGate } = require('./middleware/security');
 const { DiscoveryBroadcaster } = require('./discovery');
 
 const { readAppVersion, EXPECTED_SCHEMA_VERSION, recordAppMetaForDb, readSchemaVersionFromDb } = require('./lib/deploymentStatus');
@@ -129,6 +129,15 @@ app.get('/api/health', async (req, res) => {
     });
   }
 });
+
+// ── Global API authentication gate ──────────────────────────────────────────
+// Every /api route requires a valid user JWT, except the public allowlist in
+// security.js (health, auth, sync, installations). NEXOR_OPEN_API=1 disables it
+// (emergency escape hatch only).
+if (process.env.NEXOR_OPEN_API === '1') {
+  console.warn('[SECURITY] NEXOR_OPEN_API=1 — API authentication gate DISABLED. Do not use in production.');
+}
+app.use(apiAuthGate);
 
 app.use('/api/auth', require('./routes/auth'));
 

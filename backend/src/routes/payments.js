@@ -7,6 +7,7 @@ const { getEntityBalanceSelect } = require('../entityBalanceSql');
 const { listSupplierPayables } = require('../lib/supplierPayablesList');
 const { listCustomerReceivables } = require('../lib/customerReceivablesList');
 const { listChecklistDues } = require('../lib/openItemsBriefing');
+const { requirePermission } = require('../middleware/requirePermission');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -44,7 +45,7 @@ module.exports = function(broadcastTable) {
   });
 
   // CREATE: Delegated to Transaction Engine
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('accounting_payment', 'accounting_receipt'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -101,7 +102,7 @@ module.exports = function(broadcastTable) {
   });
 
   // POST: Fast backfill — create missing supplier payables from saved purchase invoices only
-  router.post('/backfill-missing-payables', async (req, res) => {
+  router.post('/backfill-missing-payables', requirePermission('admin_settings'), async (req, res) => {
     try {
       const { backfillMissingSupplierOpenItems } = require('../supplierBalanceRepair');
       const backfill = await backfillMissingSupplierOpenItems();
@@ -114,7 +115,7 @@ module.exports = function(broadcastTable) {
   });
 
   // POST: Backfill missing supplier open items from purchase invoices (admin repair)
-  router.post('/repair-supplier-payables', async (req, res) => {
+  router.post('/repair-supplier-payables', requirePermission('admin_settings'), async (req, res) => {
     try {
       const { runSupplierBalanceRepair } = require('../supplierBalanceRepair');
       const repair = await runSupplierBalanceRepair();
@@ -241,7 +242,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Period close (administrative — allowed in route)
-  router.post('/periods/:id/close', async (req, res) => {
+  router.post('/periods/:id/close', requirePermission('reports_close', 'accounting_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');

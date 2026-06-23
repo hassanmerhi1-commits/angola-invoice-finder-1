@@ -1,5 +1,5 @@
 const db = require('../db');
-const { hashPassword, isBcryptHash, verifyPassword } = require('./passwordAuth');
+const { hashPassword, isBcryptHash } = require('./passwordAuth');
 
 const DEFAULT_ACCOUNTS = [
   {
@@ -27,11 +27,14 @@ function isBrokenBcryptHash(storedHash) {
 async function repairUserPassword(user, account) {
   const stored = user.password_hash;
   const preferred = account.passwords[0];
+  // Only repair when there is no usable credential at all (missing, non-bcrypt,
+  // or a broken/placeholder hash). A valid bcrypt hash is left untouched even if
+  // it no longer matches the factory default — otherwise a deliberate password
+  // change would be silently reverted to the public default on every restart.
   const needsRepair =
     !stored
     || !isBcryptHash(stored)
-    || isBrokenBcryptHash(stored)
-    || !(await verifyPassword(preferred, stored));
+    || isBrokenBcryptHash(stored);
 
   if (!needsRepair) return false;
   const passwordHash = await hashPassword(preferred);
@@ -39,7 +42,7 @@ async function repairUserPassword(user, account) {
     'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
     [passwordHash, user.id],
   );
-  console.log(`[AUTH] Reset password for ${user.email} → use "${preferred}"`);
+  console.log(`[AUTH] Initialized default credential for ${user.email} → use "${preferred}" and change it after login`);
   return true;
 }
 

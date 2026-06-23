@@ -222,7 +222,7 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
     }
   });
 
-  router.post('/credit-notes/:id/cancel', async (req, res) => {
+  router.post('/credit-notes/:id/cancel', requireAuth, requirePermission('credit_note_create'), async (req, res) => {
     try {
       const result = await db.query(
         `UPDATE credit_notes SET status = 'cancelled'
@@ -352,7 +352,7 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
     }
   });
 
-  router.patch('/transport-documents/:id/status', async (req, res) => {
+  router.patch('/transport-documents/:id/status', requireAuth, requirePermission('invoice_create'), async (req, res) => {
     try {
       const { status } = req.body;
       const allowed = new Set(['in_transit', 'delivered', 'cancelled']);

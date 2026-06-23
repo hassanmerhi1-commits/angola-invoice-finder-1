@@ -15,6 +15,7 @@ const productActive = (alias) => coalesceActiveNotZero(db, `${alias}.is_active`)
 const branchMainActive = (alias) => coalesceMainTruthy(db, `${alias}.is_main`);
 const { DEFAULT_VAT_RATE } = require('../taxDefaults');
 const { checkOptimisticLock } = require('../middleware/security');
+const { requirePermission } = require('../middleware/requirePermission');
 const { attachUserBranchScope, resolveListBranchId, normalizeRequestedBranchId } = require('../middleware/branchScope');
 const {
   findProductBySkuAndBranch,
@@ -1094,7 +1095,7 @@ module.exports = function(broadcastTable) {
   });
 
   /** Reconcile filial stock from movements only (does not create product rows). */
-  router.post('/repair-filial-stock', async (req, res) => {
+  router.post('/repair-filial-stock', requirePermission('admin_settings'), async (req, res) => {
     try {
       const branchId = resolveListBranchId(req, req.query.branchId || req.body?.branchId);
       if (!branchId) {
@@ -1125,7 +1126,7 @@ module.exports = function(broadcastTable) {
    * no base price are skipped so we never zero-out their tiers). Only tiers whose percentage
    * is supplied are touched. One-time action (no stored rule).
    */
-  router.post('/bulk-tier-pricing', async (req, res) => {
+  router.post('/bulk-tier-pricing', requirePermission('price_edit'), async (req, res) => {
     try {
       const body = req.body || {};
       const parsePct = (v) => {
@@ -1348,7 +1349,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Create product
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('inventory_create'), async (req, res) => {
     try {
       const { name, sku, barcode, category, price, price2, price3, price4, cost, stock, unit, taxRate, branchId, isActive, supplierId, supplierName } = req.body;
       const activeFlag = isActive !== false;
@@ -1484,7 +1485,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Update product (with optimistic locking)
-  router.put('/:id', async (req, res) => {
+  router.put('/:id', requirePermission('inventory_edit'), async (req, res) => {
     try {
       const { id } = req.params;
       const existingResult = await db.query('SELECT * FROM products WHERE id = $1', [id]);
@@ -1622,7 +1623,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Update stock
-  router.patch('/:id/stock', async (req, res) => {
+  router.patch('/:id/stock', requirePermission('inventory_adjust'), async (req, res) => {
     try {
       const { id } = req.params;
       const { quantityChange } = req.body;
@@ -1641,7 +1642,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Batch import products (SQLite + PostgreSQL)
-  router.post('/batch', async (req, res) => {
+  router.post('/batch', requirePermission('inventory_import', 'inventory_create'), async (req, res) => {
     try {
       const { products: productList } = req.body;
       if (!Array.isArray(productList) || productList.length === 0) {
