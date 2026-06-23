@@ -135,14 +135,25 @@ export function generateReceiptText(
     const name = item.productName.substring(0, width - 15);
     lines.push(name);
     const qtyPrice = `  ${item.quantity} x ${item.unitPrice.toLocaleString('pt-AO')}`;
-    const subtotal = formatMoney(item.subtotal);
-    lines.push(leftRight(qtyPrice, subtotal));
+    const grossLine = item.quantity * item.unitPrice;
+    const discPct = item.discount || 0;
+    if (discPct > 0) {
+      // Show the original line value, then the discount, so the net is transparent.
+      lines.push(leftRight(qtyPrice, formatMoney(grossLine)));
+      lines.push(leftRight(`  Desc. ${discPct}%`, '-' + formatMoney(grossLine - item.subtotal)));
+    } else {
+      lines.push(leftRight(qtyPrice, formatMoney(item.subtotal)));
+    }
   }
   
   lines.push(divider);
   
   // Totals
-  lines.push(leftRight('Subtotal:', formatMoney(sale.subtotal)));
+  const grossSubtotal = sale.subtotal + (sale.discount || 0);
+  lines.push(leftRight('Subtotal:', formatMoney(grossSubtotal)));
+  if ((sale.discount || 0) > 0) {
+    lines.push(leftRight('Desconto:', '-' + formatMoney(sale.discount)));
+  }
   for (const row of taxBreakdownFromItems(sale.items)) {
     lines.push(leftRight(`Base IVA ${row.rate}%:`, formatMoney(row.base)));
     lines.push(leftRight(`IVA ${row.rate}%:`, formatMoney(row.tax)));

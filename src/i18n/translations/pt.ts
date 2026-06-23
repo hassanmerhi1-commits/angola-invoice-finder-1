@@ -331,6 +331,17 @@ export const pt: TranslationKeys = {
     nif: "NIF",
     name: "Nome",
     confirmPayment: "Confirmar Pagamento",
+    discountLabel: "Desconto",
+    discountLine: "Desconto ({pct}%)",
+    discountAuthHint: "Um desconto requer autorização de admin/gestor. Introduza a palavra-passe do supervisor.",
+    discountPasswordPlaceholder: "Palavra-passe do supervisor",
+    discountPasswordRequired: "Introduza a palavra-passe do supervisor",
+    discountAuthorize: "Autorizar",
+    discountVerifying: "A verificar…",
+    discountApproved: "Desconto autorizado",
+    discountApprovedBy: "Autorizado por {name}",
+    discountAuthFailed: "Credenciais de supervisor inválidas",
+    discountAuthReason: "Desconto POS {pct}%",
   },
 
   receiptUi: {
@@ -3250,6 +3261,8 @@ export const pt: TranslationKeys = {
     actionRestore: "Restauro",
     actionTransfer: "Transferência",
     actionSendAgt: "Enviar para AGT",
+    actionAuthorize: "Autorizar",
+    actionAuthorizeFailed: "Autorização recusada",
     permissionDenied: "Não tem permissão para ver o histórico de auditoria",
 
     moduleSales: "Vendas",

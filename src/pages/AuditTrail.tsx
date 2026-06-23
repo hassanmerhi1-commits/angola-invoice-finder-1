@@ -61,6 +61,8 @@ const ACTION_CONFIG: Record<string, { icon: typeof FileText; labelKey: string; c
   saft_export: { icon: Download, labelKey: 'actionExport', color: 'text-muted-foreground' },
   restore: { icon: RotateCcw, labelKey: 'actionRestore', color: 'text-amber-600' },
   transfer: { icon: ArrowRightLeft, labelKey: 'actionTransfer', color: 'text-blue-600' },
+  authorize: { icon: CheckCircle, labelKey: 'actionAuthorize', color: 'text-green-600' },
+  authorize_failed: { icon: AlertTriangle, labelKey: 'actionAuthorizeFailed', color: 'text-destructive' },
 };
 
 const MODULE_LABELS: Record<string, string> = {

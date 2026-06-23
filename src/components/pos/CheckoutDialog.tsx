@@ -11,10 +11,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Separator } from '@/components/ui/separator';
-import { Banknote, CreditCard, ArrowRightLeft, Check } from 'lucide-react';
+import { Banknote, CreditCard, ArrowRightLeft, Check, Percent, ShieldCheck, Lock } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { resolveSaleInvoiceType, normalizeCustomerNif, fiscalInvoiceTypeLabel, fsMaxAmount } from '@/lib/fiscalInvoiceType';
 import { Badge } from '@/components/ui/badge';
+import { api } from '@/lib/api/client';
+import { toast } from 'sonner';
 
 interface CheckoutDialogProps {
   open: boolean;
@@ -29,6 +31,7 @@ interface CheckoutDialogProps {
     amountPaid: number,
     customerNif?: string,
     customerName?: string,
+    discountPct?: number,
   ) => void;
 }
 
@@ -44,10 +47,25 @@ export function CheckoutDialog({
 }: CheckoutDialogProps) {
   const { t, language } = useTranslation();
   const [paymentMethod, setPaymentMethod] = useState<Sale['paymentMethod']>('cash');
-  const [amountPaid, setAmountPaid] = useState<string>(total.toString());
   const [customerNif, setCustomerNif] = useState('');
   const [customerName, setCustomerName] = useState('');
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+
+  // Discount (whole-sale %) gated behind an admin/manager password authorization.
+  const [discountInput, setDiscountInput] = useState('');
+  const [discountApproved, setDiscountApproved] = useState(false);
+  const [approverName, setApproverName] = useState('');
+  const [supervisorPassword, setSupervisorPassword] = useState('');
+  const [verifying, setVerifying] = useState(false);
+
+  const rawPct = parseFloat(discountInput || '0');
+  const discountPct = Number.isFinite(rawPct) ? Math.min(Math.max(rawPct, 0), 100) : 0;
+  const appliedPct = discountApproved ? discountPct : 0;
+  const discountAmount = total * (appliedPct / 100);
+  const effectiveTotal = total - discountAmount;
+  const effectiveTax = taxAmount * (1 - appliedPct / 100);
+
+  const [amountPaid, setAmountPaid] = useState<string>(total.toString());
 
   useEffect(() => {
     if (open) {
@@ -55,27 +73,75 @@ export function CheckoutDialog({
       setAmountPaid(total.toString());
       setCustomerNif(defaultCustomerNif || '');
       setCustomerName(defaultCustomerName || '');
+      setDiscountInput('');
+      setDiscountApproved(false);
+      setApproverName('');
+      setSupervisorPassword('');
+      setVerifying(false);
     }
   }, [open, total, defaultCustomerNif, defaultCustomerName]);
+
+  // Keep the cash amount in sync with the discounted total until the cashier edits it.
+  useEffect(() => {
+    setAmountPaid(effectiveTotal.toString());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliedPct]);
 
   const handlePaymentMethodChange = (value: Sale['paymentMethod']) => {
     setPaymentMethod(value);
     if (value === 'card' || value === 'transfer') {
-      setAmountPaid(total.toString());
+      setAmountPaid(effectiveTotal.toString());
+    }
+  };
+
+  const handleDiscountChange = (value: string) => {
+    setDiscountInput(value);
+    // Any change to the percentage invalidates a prior authorization.
+    if (discountApproved) {
+      setDiscountApproved(false);
+      setApproverName('');
+    }
+  };
+
+  const handleAuthorizeDiscount = async () => {
+    if (discountPct <= 0) return;
+    if (!supervisorPassword) {
+      toast.error(t.checkoutUi.discountPasswordRequired);
+      return;
+    }
+    setVerifying(true);
+    try {
+      const result = await api.auth.verifyElevated(supervisorPassword, {
+        reason: t.checkoutUi.discountAuthReason.replace('{pct}', String(discountPct)),
+      });
+      if (result.data?.ok) {
+        setDiscountApproved(true);
+        setApproverName(result.data.approver?.name || '');
+        setSupervisorPassword('');
+        toast.success(t.checkoutUi.discountApproved);
+      } else {
+        toast.error(result.error || t.checkoutUi.discountAuthFailed);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t.checkoutUi.discountAuthFailed);
+    } finally {
+      setVerifying(false);
     }
   };
 
   const paidAmount =
-    paymentMethod === 'cash' ? parseFloat(amountPaid || '0') : total;
-  const change = paidAmount - total;
+    paymentMethod === 'cash' ? parseFloat(amountPaid || '0') : effectiveTotal;
+  const change = paidAmount - effectiveTotal;
+  const needsAuthorization = discountPct > 0 && !discountApproved;
   const isValid =
-    paymentMethod === 'cash' ? paidAmount >= total : total > 0;
+    !needsAuthorization &&
+    (paymentMethod === 'cash' ? paidAmount >= effectiveTotal : effectiveTotal > 0);
 
   const normalizedCustomerNif = normalizeCustomerNif(customerNif);
   const previewInvoiceType = resolveSaleInvoiceType({
     customerNif: normalizedCustomerNif || undefined,
     paymentMethod,
-    total,
+    total: effectiveTotal,
   });
 
   const handleComplete = () => {
@@ -84,15 +150,16 @@ export function CheckoutDialog({
       paidAmount,
       normalizedCustomerNif || undefined,
       customerName || undefined,
+      appliedPct,
     );
   };
 
   const quickAmounts = [
-    Math.ceil(total / 100) * 100,
-    Math.ceil(total / 500) * 500,
-    Math.ceil(total / 1000) * 1000,
-    Math.ceil(total / 5000) * 5000,
-  ].filter((v, i, a) => a.indexOf(v) === i && v >= total).slice(0, 4);
+    Math.ceil(effectiveTotal / 100) * 100,
+    Math.ceil(effectiveTotal / 500) * 500,
+    Math.ceil(effectiveTotal / 1000) * 1000,
+    Math.ceil(effectiveTotal / 5000) * 5000,
+  ].filter((v, i, a) => a.indexOf(v) === i && v >= effectiveTotal).slice(0, 4);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -110,12 +177,18 @@ export function CheckoutDialog({
             </div>
             <div className="flex justify-between text-sm">
               <span>{t.pos.tax}</span>
-              <span>{taxAmount.toLocaleString(locale)} Kz</span>
+              <span>{effectiveTax.toLocaleString(locale)} Kz</span>
             </div>
+            {appliedPct > 0 && (
+              <div className="flex justify-between text-sm text-green-600 font-medium">
+                <span>{t.checkoutUi.discountLine.replace('{pct}', String(appliedPct))}</span>
+                <span>-{discountAmount.toLocaleString(locale)} Kz</span>
+              </div>
+            )}
             <Separator />
             <div className="flex justify-between text-xl font-bold">
               <span>{t.common.total}</span>
-              <span className="text-primary">{total.toLocaleString(locale)} Kz</span>
+              <span className="text-primary">{effectiveTotal.toLocaleString(locale)} Kz</span>
             </div>
             <div className="flex items-center justify-between gap-2 pt-1">
               <span className="text-xs text-muted-foreground">{t.checkoutUi.documentType}</span>
@@ -167,6 +240,67 @@ export function CheckoutDialog({
                 </Label>
               </div>
             </RadioGroup>
+          </div>
+
+          {/* Discount (admin authorized) */}
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5">
+              <Percent className="w-4 h-4" />
+              {t.checkoutUi.discountLabel}
+            </Label>
+            <div className="flex gap-2 items-center">
+              <Input
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={discountInput}
+                onChange={(e) => handleDiscountChange(e.target.value)}
+                className="h-10 w-28 text-center"
+                placeholder="0"
+              />
+              <span className="text-sm text-muted-foreground">%</span>
+              {discountApproved && appliedPct > 0 && (
+                <Badge variant="secondary" className="ml-auto gap-1">
+                  <ShieldCheck className="w-3.5 h-3.5 text-green-600" />
+                  {approverName
+                    ? t.checkoutUi.discountApprovedBy.replace('{name}', approverName)
+                    : t.checkoutUi.discountApproved}
+                </Badge>
+              )}
+            </div>
+            {needsAuthorization && (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5" />
+                  {t.checkoutUi.discountAuthHint}
+                </p>
+                <div className="flex gap-2">
+                  <Input
+                    type="password"
+                    autoComplete="off"
+                    value={supervisorPassword}
+                    onChange={(e) => setSupervisorPassword(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void handleAuthorizeDiscount();
+                      }
+                    }}
+                    className="h-10 flex-1"
+                    placeholder={t.checkoutUi.discountPasswordPlaceholder}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-10 shrink-0"
+                    disabled={verifying || discountPct <= 0}
+                    onClick={() => void handleAuthorizeDiscount()}
+                  >
+                    {verifying ? t.checkoutUi.discountVerifying : t.checkoutUi.discountAuthorize}
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Amount Paid (for cash) */}

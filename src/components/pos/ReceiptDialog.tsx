@@ -146,17 +146,26 @@ export function ReceiptDialog({
 
           {/* Items */}
           <div className="space-y-1">
-            {sale.items.map((item, idx) => (
-              <div key={idx} className="flex justify-between">
-                <div className="flex-1">
-                  <p className="truncate">{item.productName}</p>
-                  <p className="text-[10px] text-gray-600">
-                    {item.quantity} x {item.unitPrice.toLocaleString(locale)}
-                  </p>
+            {sale.items.map((item, idx) => {
+              const grossLine = item.quantity * item.unitPrice;
+              const discPct = item.discount || 0;
+              return (
+                <div key={idx} className="flex justify-between">
+                  <div className="flex-1">
+                    <p className="truncate">{item.productName}</p>
+                    <p className="text-[10px] text-gray-600">
+                      {item.quantity} x {item.unitPrice.toLocaleString(locale)}
+                    </p>
+                    {discPct > 0 && (
+                      <p className="text-[10px] text-green-700">
+                        {t.checkoutUi.discountLabel} {discPct}%: -{(grossLine - item.subtotal).toLocaleString(locale)}
+                      </p>
+                    )}
+                  </div>
+                  <span>{(discPct > 0 ? grossLine : item.subtotal).toLocaleString(locale)}</span>
                 </div>
-                <span>{item.subtotal.toLocaleString(locale)}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <Separator className="border-dashed" />
@@ -164,8 +173,14 @@ export function ReceiptDialog({
           <div className="space-y-1">
             <div className="flex justify-between">
               <span>{t.common.subtotal}</span>
-              <span>{sale.subtotal.toLocaleString(locale)} Kz</span>
+              <span>{(sale.subtotal + (sale.discount || 0)).toLocaleString(locale)} Kz</span>
             </div>
+            {(sale.discount || 0) > 0 && (
+              <div className="flex justify-between text-green-700">
+                <span>{t.checkoutUi.discountLabel}</span>
+                <span>-{sale.discount.toLocaleString(locale)} Kz</span>
+              </div>
+            )}
             {taxBreakdown.map((row) => (
               <div key={row.rate}>
                 <div className="flex justify-between text-[10px] text-gray-600">

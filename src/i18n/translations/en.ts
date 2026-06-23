@@ -329,6 +329,17 @@ export const en = {
     nif: "NIF",
     name: "Name",
     confirmPayment: "Confirm payment",
+    discountLabel: "Discount",
+    discountLine: "Discount ({pct}%)",
+    discountAuthHint: "A discount requires admin/manager authorization. Enter the supervisor password.",
+    discountPasswordPlaceholder: "Supervisor password",
+    discountPasswordRequired: "Enter the supervisor password",
+    discountAuthorize: "Authorize",
+    discountVerifying: "Verifying…",
+    discountApproved: "Discount authorized",
+    discountApprovedBy: "Authorized by {name}",
+    discountAuthFailed: "Invalid supervisor credentials",
+    discountAuthReason: "POS discount {pct}%",
   },
 
   receiptUi: {
@@ -3247,6 +3258,8 @@ export const en = {
     actionRestore: "Restore",
     actionTransfer: "Transfer",
     actionSendAgt: "Send to AGT",
+    actionAuthorize: "Authorize",
+    actionAuthorizeFailed: "Authorization denied",
     permissionDenied: "You do not have permission to view the audit trail",
 
     moduleSales: "Sales",

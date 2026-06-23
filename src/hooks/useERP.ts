@@ -704,22 +704,33 @@ export function useSales(branchId?: string) {
     amountPaid: number,
     customerNif?: string,
     customerName?: string,
+    discountPct = 0,
   ): Promise<Sale> => {
-    const saleItems: SaleItem[] = cartItems.map(item => ({
-      productId: item.product.id,
-      productName: item.product.name,
-      sku: item.product.sku,
-      quantity: item.quantity,
-      unitPrice: item.product.price,
-      discount: item.discount,
-      taxRate: item.product.taxRate,
-      taxAmount: item.subtotal * (item.product.taxRate / 100),
-      subtotal: item.subtotal,
-    }));
+    // Whole-sale commercial discount applied to the ex-VAT base of every line, so VAT
+    // is charged on the discounted base (AGT-correct). Header `discount` holds the Kz value.
+    const pct = Number.isFinite(discountPct) ? Math.min(Math.max(discountPct, 0), 100) : 0;
+    const discountFactor = 1 - pct / 100;
 
+    const saleItems: SaleItem[] = cartItems.map(item => {
+      const lineExVat = item.subtotal * discountFactor;
+      return {
+        productId: item.product.id,
+        productName: item.product.name,
+        sku: item.product.sku,
+        quantity: item.quantity,
+        unitPrice: item.product.price,
+        discount: pct,
+        taxRate: item.product.taxRate,
+        taxAmount: lineExVat * (item.product.taxRate / 100),
+        subtotal: lineExVat,
+      };
+    });
+
+    const grossSubtotal = cartItems.reduce((sum, item) => sum + item.subtotal, 0);
     const subtotal = saleItems.reduce((sum, item) => sum + item.subtotal, 0);
     const taxAmount = saleItems.reduce((sum, item) => sum + item.taxAmount, 0);
     const total = subtotal + taxAmount;
+    const discountValue = grossSubtotal - subtotal;
 
     const normalizedCustomerNif = customerNif ? normalizeCustomerNif(customerNif) : undefined;
 
@@ -758,7 +769,7 @@ export function useSales(branchId?: string) {
       items: saleItems,
       subtotal,
       taxAmount,
-      discount: 0,
+      discount: discountValue,
       total,
       paymentMethod,
       amountPaid,
@@ -781,7 +792,7 @@ export function useSales(branchId?: string) {
       items: saleItems,
       subtotal,
       taxAmount,
-      discount: 0,
+      discount: discountValue,
       total,
       paymentMethod,
       amountPaid,

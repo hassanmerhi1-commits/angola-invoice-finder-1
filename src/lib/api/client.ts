@@ -638,6 +638,21 @@ export const api = {
         body: JSON.stringify({ currentPassword, newPassword }),
       });
     },
+    /** Confirm a supervisor (admin/manager) password to authorize a POS action (e.g. discount). */
+    verifyElevated: async (password: string, options?: { identifier?: string; reason?: string }) => {
+      await ensureBackendAuthToken();
+      return apiFetch<{ ok: boolean; approver?: { id: string; name: string; role: string } }>(
+        '/auth/verify-elevated',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            password,
+            identifier: options?.identifier,
+            reason: options?.reason,
+          }),
+        },
+      );
+    },
     logout: async () => {
       await ensureBackendAuthToken();
       return apiFetch<{ success: boolean }>('/auth/logout', { method: 'POST' });

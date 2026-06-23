@@ -369,6 +369,70 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
   }
 });
 
+/**
+ * Verify an elevated (admin/manager) password to authorize a sensitive POS action
+ * such as applying a discount. Does NOT issue a token or start a session — it only
+ * confirms a supervisor approved the action, and records it in the fiscal audit log.
+ */
+router.post('/verify-elevated', requireAuth, async (req, res) => {
+  try {
+    const password = req.body?.password;
+    const identifier = req.body?.identifier;
+    const reason = String(req.body?.reason || 'Ação privilegiada').slice(0, 200);
+    if (password == null || String(password).length === 0) {
+      return res.status(400).json({ error: 'Password is required' });
+    }
+
+    let approver = null;
+    if (identifier && String(identifier).trim()) {
+      const user = await findUserForLogin(db, String(identifier).trim());
+      if (user && ['admin', 'manager'].includes(String(user.role))
+        && (user.is_active === true || user.is_active === 1)) {
+        const ok = await verifyPassword(String(password), user.password_hash);
+        if (ok) approver = user;
+      }
+    } else {
+      const candidates = await db.query(
+        `SELECT id, name, role, password_hash FROM users
+         WHERE role IN ('admin', 'manager') AND is_active = true`,
+      );
+      for (const candidate of candidates.rows) {
+        // eslint-disable-next-line no-await-in-loop
+        if (await verifyPassword(String(password), candidate.password_hash)) {
+          approver = candidate;
+          break;
+        }
+      }
+    }
+
+    if (!approver) {
+      await logFiscalEventFromReq(req, {
+        tableName: 'users',
+        action: 'authorize_failed',
+        userId: req.user?.id,
+        userName: req.user?.name,
+        description: `Autorização recusada: ${reason}`,
+      }).catch(() => {});
+      return res.status(401).json({ error: 'Invalid supervisor credentials' });
+    }
+
+    await logFiscalEventFromReq(req, {
+      tableName: 'users',
+      recordId: approver.id,
+      action: 'authorize',
+      userId: req.user?.id,
+      userName: req.user?.name,
+      description: `${reason} — autorizado por ${approver.name} (${approver.role})`,
+      newValues: { approverId: approver.id, approverName: approver.name, approverRole: approver.role },
+    }).catch(() => {});
+
+    res.json({ ok: true, approver: { id: approver.id, name: approver.name, role: approver.role } });
+  } catch (error) {
+    console.error('[AUTH ERROR] verify-elevated:', error);
+    res.status(500).json({ error: error.message || 'Authorization failed' });
+  }
+});
+
 /** Logged-in user changes own password (requires current password). */
 router.post('/change-password', requireAuth, async (req, res) => {
   try {

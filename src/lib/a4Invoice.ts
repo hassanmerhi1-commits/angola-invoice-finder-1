@@ -511,11 +511,7 @@ export async function generateA4InvoiceHTML(
       <div class="totals-box">
         <div class="total-row">
           <span>Subtotal (s/ IVA):</span>
-          <span>${formatMoney(sale.subtotal)} Kz</span>
-        </div>
-        <div class="total-row">
-          <span>Total IVA:</span>
-          <span>${formatMoney(sale.taxAmount)} Kz</span>
+          <span>${formatMoney(sale.subtotal + (sale.discount || 0))} Kz</span>
         </div>
         ${sale.discount > 0 ? `
         <div class="total-row" style="color: #dc2626;">
@@ -523,6 +519,10 @@ export async function generateA4InvoiceHTML(
           <span>-${formatMoney(sale.discount)} Kz</span>
         </div>
         ` : ''}
+        <div class="total-row">
+          <span>Total IVA:</span>
+          <span>${formatMoney(sale.taxAmount)} Kz</span>
+        </div>
         <div class="total-row grand-total">
           <span>TOTAL A PAGAR (c/ IVA):</span>
           <span>${formatMoney(sale.total)} Kz</span>

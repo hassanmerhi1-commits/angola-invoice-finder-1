@@ -61,7 +61,10 @@ async function getCertificationStatus() {
     getSigningStatus(),
     getCompanySettings(),
   ]);
-  const schema = deployment.schema || { stored: null, expected: EXPECTED_SCHEMA_VERSION };
+  const schema = {
+    stored: deployment.schemaVersion ?? null,
+    expected: deployment.schemaVersionExpected ?? EXPECTED_SCHEMA_VERSION,
+  };
   const schemaOk = schema.stored != null && schema.stored >= EXPECTED_SCHEMA_VERSION;
   const xsdPath = resolveXsdPath();
   const xsdOk = fs.existsSync(xsdPath);

@@ -28,19 +28,30 @@ function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
   const createdAt = sale.createdAt || sale.created_at || new Date().toISOString();
   const issueDate = String(createdAt).split('T')[0] || createdAt;
   const items = Array.isArray(sale.items) ? sale.items : [];
-  const lines: DocumentLine[] = items.map((item: any, idx: number) => ({
-    id: `line_${sale.id}_${idx}`,
-    productId: item.productId || item.product_id,
-    productSku: item.sku || '',
-    description: item.productName || item.product_name || '',
-    quantity: Number(item.quantity || 0),
-    unitPrice: Number(item.unitPrice || item.unit_price || 0),
-    discount: Number(item.discount || 0),
-    discountAmount: 0,
-    taxRate: Number(item.taxRate || item.tax_rate || 0),
-    taxAmount: Number(item.taxAmount || item.tax_amount || 0),
-    lineTotal: Number(item.subtotal || item.total || 0),
-  }));
+  const lines: DocumentLine[] = items.map((item: any, idx: number) => {
+    const quantity = Number(item.quantity || 0);
+    const unitPrice = Number(item.unitPrice || item.unit_price || 0);
+    const discountPct = Number(item.discount || 0);
+    const taxAmount = Number(item.taxAmount || item.tax_amount || 0);
+    // Stored line subtotal is the discounted (net, ex-VAT) amount; the unit price is the
+    // original price, so the discount value is the difference between gross and net.
+    const netExVat = Number(item.subtotal ?? item.total ?? quantity * unitPrice * (1 - discountPct / 100));
+    const grossExVat = quantity * unitPrice;
+    const discountAmount = Math.max(0, Math.round((grossExVat - netExVat) * 100) / 100);
+    return {
+      id: `line_${sale.id}_${idx}`,
+      productId: item.productId || item.product_id,
+      productSku: item.sku || '',
+      description: item.productName || item.product_name || '',
+      quantity,
+      unitPrice,
+      discount: discountPct,
+      discountAmount,
+      taxRate: Number(item.taxRate || item.tax_rate || 0),
+      taxAmount,
+      lineTotal: Math.round((netExVat + taxAmount) * 100) / 100,
+    };
+  });
 
   const total = Number(sale.total || 0);
   const amountPaid = Number(sale.amountPaid || sale.amount_paid || 0);
@@ -48,6 +59,12 @@ function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
   if (sale.status === 'voided') status = 'cancelled';
   else if (amountPaid >= total - 0.01) status = 'paid';
   else if (amountPaid > 0) status = 'partial';
+
+  // ERPDocument convention: subtotal is the gross (pre-discount) goods value, with the
+  // discount shown separately. Derive both from the lines so on-screen and printed
+  // totals stay consistent (Mercadoria − Desconto + IVA = Total).
+  const grossSubtotal = Math.round(lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0) * 100) / 100;
+  const totalDiscount = Math.round(lines.reduce((s, l) => s + l.discountAmount, 0) * 100) / 100;
 
   return {
     id: sale.id,
@@ -59,8 +76,8 @@ function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
     entityName: sale.customerName || sale.customer_name || 'Consumidor Final',
     entityNif: sale.customerNif || sale.customer_nif,
     lines,
-    subtotal: Number(sale.subtotal || 0),
-    totalDiscount: Number(sale.discount || 0),
+    subtotal: grossSubtotal,
+    totalDiscount,
     totalTax: Number(sale.taxAmount || sale.tax_amount || 0),
     total,
     currency: 'AOA',

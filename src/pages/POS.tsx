@@ -334,6 +334,7 @@ export default function POS() {
     amountPaid: number,
     customerNif?: string,
     customerName?: string,
+    discountPct = 0,
   ) => {
     if (!currentBranch || !user) return;
 
@@ -352,6 +353,7 @@ export default function POS() {
         amountPaid,
         customerNif,
         customerName,
+        discountPct,
       );
 
       applySoldQuantities(soldLines);
