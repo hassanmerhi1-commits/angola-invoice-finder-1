@@ -45,6 +45,7 @@ import { SyncPendingBadge } from '@/components/layout/SyncPendingBadge';
 import { CalculatorDialog } from '@/components/utilities/CalculatorDialog';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { userHasPermission } from '@/lib/permissions';
+import { canAccessRoute } from '@/lib/routePermissions';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { toast } from 'sonner';
@@ -281,6 +282,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
 
   // ========== MAIN TABS ==========
   const mainTabs = [
+    { label: t.nav.pos, path: '/pos', icon: ShoppingCart },
     { label: t.nav.dashboard, path: '/', icon: LayoutDashboard },
     { label: t.nav.chartOfAccounts, path: '/chart-of-accounts', icon: BookOpen },
     { label: t.nav.inventory, path: '/inventory', icon: Package },
@@ -292,6 +294,32 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     { label: t.common.import, path: '/import', icon: Globe },
     { label: t.nav.hr, path: '/hr', icon: Users },
   ];
+
+  // Hide nav the current user can't access (role + per-user overrides). Items
+  // without a path (Save, Print, Calculator, Logout, About…) are always kept.
+  const canVisit = (path?: string) =>
+    !path || canAccessRoute(user?.role, user?.permissionOverrides, path);
+  // Cashiers land on /pos, so the Dashboard tab (which would just redirect there) is hidden for them.
+  const visibleMainTabs = mainTabs.filter(
+    (tab) => canVisit(tab.path) && !(tab.path === '/' && user?.role === 'cashier'),
+  );
+  const visibleMenus = menuItems
+    .map((menu) => {
+      const kept = menu.items.filter((item) => {
+        if (item.label === 'separator') return true;
+        if ('path' in item && typeof item.path === 'string') return canVisit(item.path);
+        return true;
+      });
+      // Drop leading/duplicate/trailing separators left after filtering.
+      const cleaned = kept.filter((item, i) => {
+        if (item.label !== 'separator') return true;
+        const prev = kept[i - 1];
+        if (!prev || prev.label === 'separator') return false;
+        return kept.slice(i + 1).some((x) => x.label !== 'separator');
+      });
+      return { ...menu, items: cleaned };
+    })
+    .filter((menu) => menu.items.some((item) => item.label !== 'separator'));
 
   // ========== ACTION TOOLBAR ==========
   const handleToolbarNew = useCallback(() => {
@@ -565,7 +593,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
             </span>
           </div>
 
-          {menuItems.map((menu) => (
+          {visibleMenus.map((menu) => (
             <DropdownMenu key={menu.label}>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-7 px-2.5 text-xs font-medium text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent rounded-md">
@@ -669,7 +697,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
 
       {/* ====== ROW 2: Main Tabs ====== */}
       <div className="h-10 px-2 bg-card hidden lg:flex items-end gap-0.5 border-b overflow-x-auto">
-        {mainTabs.map((tab) => (
+        {visibleMainTabs.map((tab) => (
           <NavLink
             key={tab.path}
             to={tab.path}
@@ -784,7 +812,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       {mobileMenuOpen && (
         <nav className="lg:hidden border-t bg-card p-3 max-h-[70vh] overflow-y-auto animate-fade-in">
           <div className="grid grid-cols-4 gap-2">
-            {mainTabs.map((tab) => (
+            {visibleMainTabs.map((tab) => (
               <NavLink
                 key={tab.path}
                 to={tab.path}

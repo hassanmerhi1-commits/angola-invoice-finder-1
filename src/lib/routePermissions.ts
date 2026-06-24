@@ -3,20 +3,27 @@ import { userHasPermission, type PermissionOverrides, type UserRole } from '@/li
 /**
  * Single source of truth mapping app routes to the permission(s) required to
  * access them. Used by both the sidebar (to hide nav items) and the route guard
- * (to block direct/menu/URL navigation). Routes not listed here are open to any
- * authenticated user (e.g. dashboard, clients, data-sync, exchange-rates).
+ * (to block direct/menu/URL navigation). Only routes NOT listed here are open to
+ * any authenticated user — currently just the dashboard ("/"), which is the
+ * landing page. Everything else requires a permission, so a minimal (POS-only)
+ * cashier sees only what they've been granted.
  */
 export const ROUTE_PERMISSIONS: Record<string, string | string[]> = {
   '/pos': 'pos_access',
+  '/vendas': 'invoice_view',
   '/invoices': 'invoice_view',
   '/proforma': 'proforma_create',
   '/fiscal-documents': 'invoice_view',
   '/inventory': 'inventory_view',
   '/categories': 'inventory_view',
   '/suppliers': 'inventory_view',
+  '/clients': 'invoice_view',
+  '/customers': 'invoice_view',
   '/purchase-orders': 'purchase_create',
   '/purchase-invoices': 'purchase_create',
   '/stock-transfer': 'inventory_transfer',
+  '/import': 'inventory_import',
+  '/production': 'inventory_adjust',
   '/caixa': 'caixa_open',
   '/expenses': 'expense_create',
   '/bank-accounts': 'bank_manage',
@@ -28,10 +35,16 @@ export const ROUTE_PERMISSIONS: Record<string, string | string[]> = {
   '/budget-control': 'accounting_view',
   '/approvals': 'accounting_view',
   '/journals': 'accounting_journal',
+  '/extracto': 'reports_client_statement',
+  '/exchange-rates': 'accounting_view',
+  '/reports': 'reports_daily',
+  '/daily-reports': 'reports_daily',
   '/audit-trail': 'reports_audit',
+  '/hr': 'hr_view',
   '/users': 'admin_users',
   '/branches': 'admin_branches',
-  '/reports': 'reports_daily',
+  '/accounting': 'admin_branches',
+  '/data-sync': 'admin_settings',
   '/settings': 'admin_settings',
 };
 

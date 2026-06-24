@@ -111,12 +111,11 @@ export const DEFAULT_ROLE_PERMISSIONS: RolePermissions[] = [
   },
   {
     role: 'cashier',
+    // POS-only baseline. Everything else (invoices, inventory, caixa, reports, …)
+    // is granted per-user via permission overrides in User Management.
     permissions: [
       'pos_access', 'pos_discount',
-      'invoice_view', 'invoice_print', 'receipt_create',
-      'accounting_view', 'caixa_open',
-      'inventory_view',
-      'reports_daily',
+      'receipt_create', 'invoice_print',
     ],
   },
   {

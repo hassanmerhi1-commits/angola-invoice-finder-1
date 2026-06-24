@@ -275,7 +275,14 @@ function AppRoutes() {
         }
       >
         <Route element={<RoutePermissionGuard />}>
-        <Route path="/" element={!setupComplete ? <Navigate to="/setup" replace /> : <Dashboard />} />
+        <Route
+          path="/"
+          element={
+            !setupComplete ? <Navigate to="/setup" replace />
+            : user?.role === 'cashier' ? <Navigate to="/pos" replace />
+            : <Dashboard />
+          }
+        />
         <Route path="/pos" element={<POS />} />
         <Route path="/vendas" element={<Vendas />} />
         <Route path="/invoices" element={<Invoices />} />
