@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { getCachedList, setCachedList } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { 
@@ -109,7 +110,9 @@ export default function Expenses() {
   const { user } = useAuth();
   const { toast } = useToast();
 
-  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>(
+    () => getCachedList<Expense[]>(`expenses:${apiBranchId ?? 'all'}`) ?? [],
+  );
   const [caixas, setCaixas] = useState<Caixa[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -126,7 +129,9 @@ export default function Expenses() {
     if (currentBranch?.id) {
       await ensureBranchCaixa(currentBranch.id, currentBranch.name || t.branchUi.headOffice);
     }
-    setExpenses(await getExpenses(apiBranchId));
+    const loadedExpenses = await getExpenses(apiBranchId);
+    setExpenses(loadedExpenses);
+    setCachedList(`expenses:${apiBranchId ?? 'all'}`, loadedExpenses);
     setCaixas(await getCaixas(apiBranchId));
     setBankAccounts(await getBankAccounts(apiBranchId));
   };

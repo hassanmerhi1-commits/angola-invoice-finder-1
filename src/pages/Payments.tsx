@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
+import { getCachedList, setCachedList } from '@/lib/listCache';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
@@ -72,8 +73,9 @@ function mapOpenItemRow(oi: any): OpenItem {
 }
 
 function usePaymentsData(branchId?: string) {
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [openItems, setOpenItems] = useState<OpenItem[]>([]);
+  const scope = branchId ?? 'all';
+  const [payments, setPayments] = useState<Payment[]>(() => getCachedList<Payment[]>(`payments:${scope}`) ?? []);
+  const [openItems, setOpenItems] = useState<OpenItem[]>(() => getCachedList<OpenItem[]>(`openItems:${scope}`) ?? []);
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -87,10 +89,14 @@ function usePaymentsData(branchId?: string) {
         console.error('[PAYMENTS] List error:', paymentsRes.error);
       }
       if (paymentsRes.data) {
-        setPayments(paymentsRes.data.map(mapPaymentRow));
+        const mapped = paymentsRes.data.map(mapPaymentRow);
+        setPayments(mapped);
+        setCachedList(`payments:${branchId ?? 'all'}`, mapped);
       }
       if (openRes.data) {
-        setOpenItems(openRes.data.map(mapOpenItemRow));
+        const mappedOpen = openRes.data.map(mapOpenItemRow);
+        setOpenItems(mappedOpen);
+        setCachedList(`openItems:${branchId ?? 'all'}`, mappedOpen);
       }
     } catch (e) {
       console.error('[PAYMENTS] Failed to load:', e);

@@ -11,6 +11,7 @@ import { api, clearAuthSessionCache, ensureBackendAuthToken, isJwtAuthToken, set
 import { isDemoMode, isThinClientMode } from '@/lib/api/config';
 import { isOfflineModeActive } from '@/lib/offlineAuth';
 import { lanCatalogScopeKey, readLanProducts, readLanSuppliers, saveLanProducts, saveLanSuppliers } from '@/lib/lanCatalogCache';
+import { getCachedList, setCachedList } from '@/lib/listCache';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
 import { normalizeTaxRate } from '@/lib/taxUtils';
@@ -657,16 +658,20 @@ function mapSaleRow(s: any): Sale {
 }
 
 export function useSales(branchId?: string) {
-  const [sales, setSales] = useState<Sale[]>([]);
+  const salesCacheKey = `sales:${branchId ?? 'all'}`;
+  const [sales, setSales] = useState<Sale[]>(() => getCachedList<Sale[]>(salesCacheKey) ?? []);
 
   const refreshSales = useCallback(async () => {
     let data: any[] = [];
+    let reachedServer = false;
     try {
       const result = await api.sales.list(branchId);
       if (result.data !== undefined) {
         data = result.data;
+        reachedServer = true;
       } else if (isDemoMode()) {
         data = await storage.getSales(branchId);
+        reachedServer = true;
       } else {
         throw new Error(result.error || 'Failed to load sales');
       }
@@ -675,6 +680,7 @@ export function useSales(branchId?: string) {
       if (isDemoMode()) {
         try {
           data = await storage.getSales(branchId);
+          reachedServer = true;
         } catch {
           data = [];
         }
@@ -682,7 +688,11 @@ export function useSales(branchId?: string) {
         data = [];
       }
     }
-    setSales(data.map(mapSaleRow));
+    // Don't wipe a good cached list to empty on a transient fetch failure.
+    if (!reachedServer && data.length === 0) return;
+    const mapped = data.map(mapSaleRow);
+    setSales(mapped);
+    setCachedList(`sales:${branchId ?? 'all'}`, mapped);
   }, [branchId]);
 
   useEffect(() => {
@@ -1259,7 +1269,7 @@ function mapClientApiRow(c: any): Client {
 }
 
 export function useClients() {
-  const [clients, setClients] = useState<Client[]>([]);
+  const [clients, setClients] = useState<Client[]>(() => getCachedList<Client[]>('clients') ?? []);
 
   const refreshClients = useCallback(async () => {
     let apiRows: any[] = [];
@@ -1292,11 +1302,11 @@ export function useClients() {
       if (!byId.has(id)) byId.set(id, mapClientApiRow(c));
     }
 
-    setClients(
-      Array.from(byId.values()).sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
-      ),
+    const sorted = Array.from(byId.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
     );
+    setClients(sorted);
+    setCachedList('clients', sorted);
   }, []);
 
   const notifyClientsChanged = useCallback(() => {
@@ -1375,7 +1385,9 @@ export function useClients() {
 // ============================================
 export function useStockTransfers(branchId?: string) {
   const { t } = useTranslation();
-  const [transfers, setTransfers] = useState<StockTransfer[]>([]);
+  const [transfers, setTransfers] = useState<StockTransfer[]>(
+    () => getCachedList<StockTransfer[]>(`transfers:${branchId ?? 'all'}`) ?? [],
+  );
 
   const refreshTransfers = useCallback(async () => {
     try {
@@ -1383,10 +1395,11 @@ export function useStockTransfers(branchId?: string) {
         () => api.stockTransfers.list(branchId),
         () => storage.getStockTransfers(branchId)
       );
-      setTransfers(Array.isArray(data) ? data.map(mapStockTransfer) : []);
+      const mapped = Array.isArray(data) ? data.map(mapStockTransfer) : [];
+      setTransfers(mapped);
+      setCachedList(`transfers:${branchId ?? 'all'}`, mapped);
     } catch (error) {
       console.error('[STOCK TRANSFERS] Failed to load:', error);
-      setTransfers([]);
     }
   }, [branchId]);
 
@@ -1453,7 +1466,7 @@ export function useStockTransfers(branchId?: string) {
 // SUPPLIERS
 // ============================================
 export function useSuppliers() {
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => getCachedList<Supplier[]>('suppliers') ?? []);
 
   const refreshSuppliers = useCallback(async () => {
     let data: any[] = [];
@@ -1493,6 +1506,7 @@ export function useSuppliers() {
     }
     console.log(`[ERP] Suppliers loaded: ${mapped.length} total, ${mapped.filter(s => s.isActive).length} active`);
     setSuppliers(mapped);
+    setCachedList('suppliers', mapped);
   }, []);
 
   const notifySuppliersChanged = useCallback(() => {
@@ -1644,14 +1658,18 @@ function mapPurchaseOrder(order: any): PurchaseOrder {
 
 export function usePurchaseOrders(branchId?: string) {
   const { t } = useTranslation();
-  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+  const [orders, setOrders] = useState<PurchaseOrder[]>(
+    () => getCachedList<PurchaseOrder[]>(`purchaseOrders:${branchId ?? 'all'}`) ?? [],
+  );
 
   const refreshOrders = useCallback(async () => {
     const data = await apiFallback<any[]>(
       () => api.purchaseOrders.list(branchId),
       () => storage.getPurchaseOrders(branchId)
     );
-    setOrders(Array.isArray(data) ? data.map(mapPurchaseOrder) : []);
+    const mapped = Array.isArray(data) ? data.map(mapPurchaseOrder) : [];
+    setOrders(mapped);
+    setCachedList(`purchaseOrders:${branchId ?? 'all'}`, mapped);
   }, [branchId]);
 
   useEffect(() => { refreshOrders(); }, [refreshOrders]);
@@ -1741,14 +1759,16 @@ function dedupeCategoriesByName(categories: Category[]): Category[] {
 }
 
 export function useCategories() {
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [categories, setCategories] = useState<Category[]>(() => getCachedList<Category[]>('categories') ?? []);
 
   const refreshCategories = useCallback(async () => {
     const data = await apiFallback<any[]>(
       () => api.categories.list(),
       () => storage.getCategories()
     );
-    setCategories(Array.isArray(data) ? dedupeCategoriesByName(data.map(mapCategory)) : []);
+    const mapped = Array.isArray(data) ? dedupeCategoriesByName(data.map(mapCategory)) : [];
+    setCategories(mapped);
+    setCachedList('categories', mapped);
   }, []);
 
   useEffect(() => { refreshCategories(); }, [refreshCategories]);

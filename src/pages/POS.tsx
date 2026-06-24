@@ -398,10 +398,12 @@ export default function POS() {
 
       setLastSale(sale);
       setCheckoutOpen(false);
-      await refreshProducts();
-      void refreshSales();
-
+      // Show the receipt immediately — stock was already updated optimistically via
+      // applySoldQuantities. Refreshing the product/sales lists is a slow LAN round-trip,
+      // so do it in the background instead of blocking the print screen.
       setReceiptOpen(true);
+      void refreshProducts();
+      void refreshSales();
 
       try {
         const printResult = await printPosThermalReceipts(sale, currentBranch, {

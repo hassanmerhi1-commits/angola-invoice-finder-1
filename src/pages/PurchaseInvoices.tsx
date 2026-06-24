@@ -7,6 +7,7 @@ import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { api } from '@/lib/api/client';
+import { getCachedList, setCachedList } from '@/lib/listCache';
 import { recordPurchaseInvoicePrint } from '@/lib/recordPrintAudit';
 import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { useToast } from '@/hooks/use-toast';
@@ -1269,7 +1270,9 @@ export default function PurchaseInvoices() {
   const editingInvoiceRef = useRef<PurchaseInvoice | null>(null);
 
    // State
-  const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
+  const [invoices, setInvoices] = useState<PurchaseInvoice[]>(
+    () => getCachedList<PurchaseInvoice[]>(`purchaseInvoices:${apiBranchId ?? 'all'}`) ?? [],
+  );
   const [mode, setMode] = useState<'list' | 'create'>('list');
   const [searchTerm, setSearchTerm] = useState('');
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
@@ -1428,6 +1431,7 @@ export default function PurchaseInvoices() {
   const loadInvoiceList = useCallback(async () => {
     const piInvoices = await getPurchaseInvoices(apiBranchId, branches);
     setInvoices(piInvoices);
+    setCachedList(`purchaseInvoices:${apiBranchId ?? 'all'}`, piInvoices);
   }, [apiBranchId, branches]);
 
   const refreshReturnMetrics = useCallback(async () => {
