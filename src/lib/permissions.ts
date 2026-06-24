@@ -152,6 +152,63 @@ export function roleHasPermission(role: UserRole, permissionId: string): boolean
   return rolePerms?.permissions.includes(permissionId) ?? false;
 }
 
+// Per-user permission overrides (grant/revoke deltas applied on top of the role).
+export interface PermissionOverrides {
+  granted: string[];
+  revoked: string[];
+}
+
+export function normalizeOverrides(o?: Partial<PermissionOverrides> | null): PermissionOverrides {
+  return {
+    granted: Array.isArray(o?.granted) ? o!.granted.filter(x => typeof x === 'string') : [],
+    revoked: Array.isArray(o?.revoked) ? o!.revoked.filter(x => typeof x === 'string') : [],
+  };
+}
+
+export function hasOverrides(o?: Partial<PermissionOverrides> | null): boolean {
+  const n = normalizeOverrides(o);
+  return n.granted.length > 0 || n.revoked.length > 0;
+}
+
+// Effective check: role baseline with per-user grant/revoke applied.
+// Admins always have everything (immune to revokes); revoke wins over grant.
+export function userHasPermission(
+  role: UserRole,
+  overrides: Partial<PermissionOverrides> | null | undefined,
+  permissionId: string,
+): boolean {
+  if (role === 'admin') return true;
+  const o = normalizeOverrides(overrides);
+  if (o.revoked.includes(permissionId)) return false;
+  if (o.granted.includes(permissionId)) return true;
+  return roleHasPermission(role, permissionId);
+}
+
+// Full effective permission id set for a user (role defaults + grants − revokes).
+// Admins get every permission.
+export function getEffectivePermissions(
+  role: UserRole,
+  overrides?: Partial<PermissionOverrides> | null,
+): string[] {
+  if (role === 'admin') return PERMISSIONS.map(p => p.id);
+  const base = DEFAULT_ROLE_PERMISSIONS.find(rp => rp.role === role)?.permissions ?? [];
+  const o = normalizeOverrides(overrides);
+  const set = new Set(base);
+  for (const g of o.granted) set.add(g);
+  for (const r of o.revoked) set.delete(r);
+  return [...set];
+}
+
+// Convert a chosen effective permission set back into grant/revoke deltas vs the role.
+export function diffOverridesFromEffective(role: UserRole, effective: string[]): PermissionOverrides {
+  if (role === 'admin') return { granted: [], revoked: [] };
+  const base = new Set(DEFAULT_ROLE_PERMISSIONS.find(rp => rp.role === role)?.permissions ?? []);
+  const chosen = new Set(effective);
+  const granted = [...chosen].filter(p => !base.has(p));
+  const revoked = [...base].filter(p => !chosen.has(p));
+  return { granted, revoked };
+}
+
 // Helper: Get all permissions for a role grouped by category
 export function getPermissionsByCategory(role: UserRole) {
   const rolePerms = DEFAULT_ROLE_PERMISSIONS.find(rp => rp.role === role);

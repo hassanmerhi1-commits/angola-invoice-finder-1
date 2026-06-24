@@ -111,6 +111,7 @@ export interface User {
   isActive: boolean;
   createdAt: string;
   updatedAt?: string;
+  permissionOverrides?: { granted: string[]; revoked: string[] };
 }
 
 export interface DailySummary {

@@ -41,4 +41,61 @@ function roleHasPermission(role, permissionId) {
   return Array.isArray(perms) && perms.includes(permissionId);
 }
 
-module.exports = { roleHasPermission, ROLE_PERMISSIONS };
+/**
+ * Parse the raw `users.permissions` value (JSON text or object) into a normalized
+ * override delta { granted: string[], revoked: string[] }.
+ */
+function parsePermissionOverrides(raw) {
+  const empty = { granted: [], revoked: [] };
+  if (!raw) return empty;
+  let obj = raw;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return empty;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch (_) {
+      return empty;
+    }
+  }
+  if (!obj || typeof obj !== 'object') return empty;
+  const toStrArray = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+  return {
+    granted: toStrArray(obj.granted),
+    revoked: toStrArray(obj.revoked),
+  };
+}
+
+/**
+ * Effective check: role baseline with per-user grant/revoke deltas applied.
+ * Admins always have everything (immune to revokes). Revoke wins over grant.
+ */
+function userHasPermission(role, overrides, permissionId) {
+  if (typeof permissionId === 'string' && permissionId.endsWith('_delete')) return true;
+  if (role === 'admin') return true;
+  const o = parsePermissionOverrides(overrides);
+  if (o.revoked.includes(permissionId)) return false;
+  if (o.granted.includes(permissionId)) return true;
+  return roleHasPermission(role, permissionId);
+}
+
+/** Full effective permission set for a user (role defaults + grants − revokes). */
+function getEffectivePermissions(role, overrides) {
+  if (role === 'admin') {
+    return Object.keys(ROLE_PERMISSIONS).length ? null : null; // admin = all (null sentinel)
+  }
+  const base = Array.isArray(ROLE_PERMISSIONS[role]) ? ROLE_PERMISSIONS[role] : [];
+  const o = parsePermissionOverrides(overrides);
+  const set = new Set(base);
+  for (const g of o.granted) set.add(g);
+  for (const r of o.revoked) set.delete(r);
+  return [...set];
+}
+
+module.exports = {
+  roleHasPermission,
+  userHasPermission,
+  getEffectivePermissions,
+  parsePermissionOverrides,
+  ROLE_PERMISSIONS,
+};

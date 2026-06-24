@@ -2624,6 +2624,7 @@ export const pt: TranslationKeys = {
       labels: "Etiquetas",
       adjustStock: "Ajustar stock",
       branchPlaceholder: "Filial",
+      noPermission: "Não tem permissão para esta acção",
     },
     userMenu: {
       profile: "Perfil",
@@ -4891,6 +4892,8 @@ export const pt: TranslationKeys = {
     resetPasswordHint: "Deixe em branco para manter a senha actual. O utilizador entra com o nome de utilizador ou e-mail e esta nova senha.",
     roleUpdated: "Função actualizada",
     roleAndPasswordUpdated: "Função e senha actualizadas",
+    permAdded: "+ adicionada",
+    permRemoved: "− removida",
   },
 
   categoriesUi: {

@@ -26,7 +26,15 @@ function normalizeUser(row: Record<string, unknown>): User {
     isActive,
     createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
     updatedAt: row.updated_at || row.updatedAt ? String(row.updated_at ?? row.updatedAt) : undefined,
+    permissionOverrides: normalizeOverridesField(row.permissionOverrides ?? row.permission_overrides),
   };
+}
+
+function normalizeOverridesField(o: unknown): User['permissionOverrides'] | undefined {
+  if (!o || typeof o !== 'object') return undefined;
+  const rec = o as { granted?: unknown; revoked?: unknown };
+  const toArr = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') as string[] : []);
+  return { granted: toArr(rec.granted), revoked: toArr(rec.revoked) };
 }
 
 function readLocalUsers(): User[] {

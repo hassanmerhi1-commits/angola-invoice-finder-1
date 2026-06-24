@@ -130,6 +130,7 @@ const MIGRATIONS = [
   '042_simplified_invoice_fs.sql',
   '045_pgc_novo_com_iva.sql',
   '046_client_pricing.sql',
+  '047_user_permissions.sql',
 ];
 
 /**

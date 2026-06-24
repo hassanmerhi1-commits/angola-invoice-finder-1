@@ -1,7 +1,8 @@
-const { roleHasPermission } = require('../lib/rolePermissions');
+const { userHasPermission } = require('../lib/rolePermissions');
 
 /**
  * Requires req.user (use after requireAuth).
+ * Honors per-user permission overrides (req.user.permissionOverrides) on top of the role.
  */
 function requirePermission(...permissionIds) {
   return (req, res, next) => {
@@ -9,7 +10,7 @@ function requirePermission(...permissionIds) {
     if (!user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
-    const allowed = permissionIds.some((id) => roleHasPermission(user.role, id));
+    const allowed = permissionIds.some((id) => userHasPermission(user.role, user.permissionOverrides, id));
     if (!allowed) {
       return res.status(403).json({
         error: 'Permission denied',

@@ -1,5 +1,25 @@
 import { useState, useCallback, useMemo } from 'react';
-import { UserRole, PERMISSIONS, DEFAULT_ROLE_PERMISSIONS } from '@/lib/permissions';
+import {
+  UserRole,
+  getEffectivePermissions,
+  type PermissionOverrides,
+} from '@/lib/permissions';
+
+/** Read server-persisted permission overrides for a user from local caches. */
+function getStoredUserOverrides(userId: string): Partial<PermissionOverrides> | undefined {
+  try {
+    const cu = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || 'null');
+    if (cu?.id === userId && cu?.permissionOverrides) return cu.permissionOverrides;
+  } catch { /* ignore */ }
+  try {
+    const users = JSON.parse(localStorage.getItem('kwanzaerp_users') || '[]');
+    if (Array.isArray(users)) {
+      const u = users.find((x: { id?: string }) => x?.id === userId);
+      if (u?.permissionOverrides) return u.permissionOverrides;
+    }
+  } catch { /* ignore */ }
+  return undefined;
+}
 
 const STORAGE_KEY = 'kwanza_user_roles';
 
@@ -119,24 +139,12 @@ export function usePermissions(userId: string | undefined) {
 
   const userPermissions = useMemo(() => {
     if (!userId) return [];
-    
+
     const assignment = userRoles.find(ur => ur.userId === userId);
-    
-    // If custom permissions are set, use those
-    if (assignment?.customPermissions) {
-      return assignment.customPermissions;
-    }
-    
-    // Get role from assignment, or fall back to user's stored role
-    let role: UserRole;
-    if (assignment?.role) {
-      role = assignment.role;
-    } else {
-      role = getStoredUserRole(userId);
-    }
-    
-    const rolePerms = DEFAULT_ROLE_PERMISSIONS.find(rp => rp.role === role);
-    return rolePerms?.permissions || [];
+    const role: UserRole = assignment?.role || getStoredUserRole(userId);
+    // Effective permissions = role defaults + server-persisted per-user grant/revoke overrides.
+    const overrides = getStoredUserOverrides(userId);
+    return getEffectivePermissions(role, overrides);
   }, [userId, userRoles, getUserRole]);
 
   const hasPermission = useCallback((permissionId: string): boolean => {
@@ -215,32 +223,23 @@ export function usePermissionCheck() {
     
     const roles = getUserRoles();
     const assignment = roles.find(ur => ur.userId === userId);
-    
-    if (assignment?.customPermissions) {
-      return assignment.customPermissions.includes(permissionId);
-    }
-    
-    // Get role from assignment or fall back to user's stored role
-    let role: UserRole = 'viewer';
-    if (assignment?.role) {
-      role = assignment.role;
-    } else {
+
+    let role: UserRole = assignment?.role || 'viewer';
+    if (!assignment?.role) {
       const storedUsers = localStorage.getItem('kwanzaerp_users');
       if (storedUsers) {
         try {
           const users = JSON.parse(storedUsers);
           const user = users.find((u: any) => u.id === userId);
-          if (user?.role) {
-            role = user.role as UserRole;
-          }
+          if (user?.role) role = user.role as UserRole;
         } catch {
           // Ignore
         }
       }
     }
-    
-    const rolePerms = DEFAULT_ROLE_PERMISSIONS.find(rp => rp.role === role);
-    return rolePerms?.permissions.includes(permissionId) || false;
+
+    const overrides = getStoredUserOverrides(userId);
+    return getEffectivePermissions(role, overrides).includes(permissionId);
   }, []);
 
   return { checkPermission };

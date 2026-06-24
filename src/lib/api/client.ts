@@ -2280,6 +2280,7 @@ export const api = {
         branchId: data.branchId ?? data.branch_id,
         isActive: data.isActive ?? data.is_active,
         password: data.password,
+        ...(data.permissionOverrides !== undefined ? { permissionOverrides: data.permissionOverrides } : {}),
       };
       await ensureBackendAuthToken();
       return apiFetch<any>(`/auth/users/${id}`, { method: 'PUT', body: JSON.stringify(body) });

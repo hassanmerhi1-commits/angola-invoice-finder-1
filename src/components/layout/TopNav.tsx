@@ -44,6 +44,7 @@ import { OfflineModeBanner } from '@/components/layout/OfflineModeBanner';
 import { SyncPendingBadge } from '@/components/layout/SyncPendingBadge';
 import { CalculatorDialog } from '@/components/utilities/CalculatorDialog';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
+import { userHasPermission } from '@/lib/permissions';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { toast } from 'sonner';
@@ -87,7 +88,80 @@ type ToolbarButtonConfig = {
   actionKey: ToolbarActionKey;
   label: string;
   icon: LucideIcon;
+  disabled?: boolean;
 };
+
+/**
+ * Resolves the permission required for a toolbar action. Context-sensitive
+ * actions (new/edit) depend on the current module. Returns null for actions
+ * that everyone with page access may use (list/all, view-only filters, print
+ * helpers) and for delete (kept open by the QA delete override).
+ */
+function toolbarActionPermission(actionKey: ToolbarActionKey, path: string): string | null {
+  const has = (seg: string) => path === seg || path.startsWith(`${seg}/`);
+  const isInventory = has('/inventory');
+  const isInvoices = has('/invoices');
+  const isPurchase = has('/purchase-invoices') || has('/purchase-orders');
+  const isProforma = path.includes('proforma');
+  const isChartOfAccounts = path.includes('chart-of-accounts');
+
+  switch (actionKey) {
+    // Always available with page access (or governed by the QA delete override).
+    case 'all':
+    case 'delete':
+    case 'minQty':
+    case 'countSheet':
+    case 'labels':
+      return null;
+
+    case 'new':
+      if (isInventory) return 'inventory_create';
+      if (isInvoices) return 'invoice_create';
+      if (isPurchase) return 'purchase_create';
+      if (isProforma) return 'proforma_create';
+      return null; // e.g. suppliers — no dedicated permission defined
+    case 'edit':
+      if (isInventory) return 'inventory_edit';
+      if (isChartOfAccounts) return 'accounting_create';
+      if (isPurchase) return 'purchase_create';
+      if (isInvoices) return 'invoice_create';
+      return null;
+
+    case 'transfer':
+      return 'inventory_transfer';
+    case 'adjustEntry':
+    case 'adjustExit':
+    case 'adjustStock':
+    case 'reconcile':
+      return 'inventory_adjust';
+    case 'import':
+      return 'inventory_import';
+
+    case 'newSale':
+    case 'save':
+      return 'pos_access';
+    case 'void':
+      return 'pos_void';
+    case 'print':
+      return 'invoice_print';
+    case 'agtSend':
+      return 'agt_send';
+
+    case 'salesInvoice':
+      return 'invoice_create';
+    case 'receipt':
+      return 'receipt_create';
+    case 'payment':
+      return 'accounting_payment';
+    case 'purchaseInvoice':
+      return 'purchase_create';
+    case 'journalEntry':
+      return 'accounting_journal';
+
+    default:
+      return null;
+  }
+}
 
 export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout }: TopNavProps) {
   const { t } = useTranslation();
@@ -97,6 +171,12 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [calculatorOpen, setCalculatorOpen] = useState(false);
   const { logo, companyName } = useCompanyLogo();
+  // Authoritative permission check based on the logged-in user's role (the prop),
+  // not a localStorage lookup which can be stale after a user switch.
+  const canDo = useCallback(
+    (permissionId: string) => !!user && userHasPermission(user.role, user.permissionOverrides, permissionId),
+    [user],
+  );
 
   const openDailyTodos = useCallback(() => {
     ensureDayTodos(todayKey());
@@ -460,7 +540,14 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     return base;
   };
 
-  const actionButtons = getActionButtons();
+  // Grey out any toolbar action the logged-in role lacks permission for, so the
+  // block happens up front instead of after the user fills in a form.
+  const toolbarPath = resolveAppPathname(location.pathname);
+  const actionButtons = getActionButtons().map((btn) => {
+    const perm = toolbarActionPermission(btn.actionKey, toolbarPath);
+    if (!perm || canDo(perm)) return btn;
+    return { ...btn, disabled: true };
+  });
 
   return (
     <header className="sticky top-0 z-50">
@@ -619,6 +706,8 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
               variant="outline"
               size="sm"
               className={NEXOR_TOOLBAR_BTN}
+              disabled={btn.disabled}
+              title={btn.disabled ? t.topNav.toolbar.noPermission : undefined}
               onClick={() => handleToolbarClick(btn.actionKey)}
             >
               <btn.icon className="w-3.5 h-3.5" />

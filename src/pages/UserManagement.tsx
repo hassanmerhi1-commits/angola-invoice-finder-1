@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useUsers } from '@/hooks/useUsers';
-import { useUserRoles, usePermissions } from '@/hooks/usePermissions';
 import { useTranslation } from '@/i18n';
 import { User } from '@/types/erp';
 import { 
@@ -10,7 +9,10 @@ import {
   PERMISSIONS, 
   ROLE_NAMES, 
   ROLE_COLORS,
-  DEFAULT_ROLE_PERMISSIONS 
+  DEFAULT_ROLE_PERMISSIONS,
+  getEffectivePermissions,
+  diffOverridesFromEffective,
+  hasOverrides,
 } from '@/lib/permissions';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -70,9 +72,8 @@ export default function UserManagement() {
   const { t } = useTranslation();
   const { user: currentUser } = useAuth();
   const { branches } = useBranchContext();
-  const { isAdmin } = usePermissions(currentUser?.id);
+  const isAdmin = currentUser?.role === 'admin';
   const { users, isLoading, createUser, updateUser, deleteUser, toggleUserActive } = useUsers();
-  const { userRoles, assignRole, setCustomPermissions } = useUserRoles();
   
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -102,26 +103,18 @@ export default function UserManagement() {
     (u.username?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false)
   );
 
-  const getUserRoleDisplay = (userId: string, defaultRole: UserRole): UserRole => {
-    const assignment = userRoles.find(ur => ur.userId === userId);
-    return assignment?.role || defaultRole;
-  };
+  const getUserRoleDisplay = (_userId: string, defaultRole: UserRole): UserRole => defaultRole;
 
   const handleEditUser = (user: User) => {
     setSelectedUser(user);
-    const currentRole = getUserRoleDisplay(user.id, user.role);
+    const currentRole = user.role;
     setSelectedRole(currentRole);
-    
-    const assignment = userRoles.find(ur => ur.userId === user.id);
-    if (assignment?.customPermissions) {
-      setUseCustomPerms(true);
-      setCustomPerms(assignment.customPermissions);
-    } else {
-      setUseCustomPerms(false);
-      const rolePerms = DEFAULT_ROLE_PERMISSIONS.find(rp => rp.role === currentRole);
-      setCustomPerms(rolePerms?.permissions || []);
-    }
-    
+
+    const overridden = hasOverrides(user.permissionOverrides);
+    setUseCustomPerms(overridden);
+    // Show the effective permission set as the starting point for the toggles.
+    setCustomPerms(getEffectivePermissions(currentRole, user.permissionOverrides));
+
     setEditPassword('');
     setEditPasswordConfirm('');
     setEditDialogOpen(true);
@@ -138,7 +131,7 @@ export default function UserManagement() {
     }
     
     try {
-      const newUser = await createUser({
+      await createUser({
         name: formData.name,
         email: formData.email,
         username: formData.username || formData.email.split('@')[0],
@@ -146,10 +139,7 @@ export default function UserManagement() {
         branchId: formData.branchId,
         password: formData.password,
       });
-      
-      // Assign role to permissions system
-      assignRole(newUser.id, formData.role);
-      
+
       toast.success(`User "${formData.name}" created successfully`);
       setCreateDialogOpen(false);
       setFormData({ name: '', email: '', username: '', role: 'cashier', branchId: '', password: '' });
@@ -174,17 +164,17 @@ export default function UserManagement() {
     }
     
     try {
+      // Custom on → store grant/revoke deltas vs the role. Custom off → clear overrides.
+      const permissionOverrides = useCustomPerms
+        ? diffOverridesFromEffective(selectedRole, customPerms)
+        : { granted: [], revoked: [] };
+
       await updateUser({
         ...selectedUser,
         role: selectedRole,
+        permissionOverrides,
         ...(pwd ? { password: pwd } : {}),
       });
-
-      assignRole(selectedUser.id, selectedRole);
-
-      if (useCustomPerms) {
-        setCustomPermissions(selectedUser.id, customPerms);
-      }
 
       toast.success(
         pwd ? t.userManagementUi.roleAndPasswordUpdated : t.userManagementUi.roleUpdated,
@@ -247,6 +237,11 @@ export default function UserManagement() {
     acc[perm.category].push(perm);
     return acc;
   }, {} as Record<string, typeof PERMISSIONS>);
+
+  // Role baseline for the currently selected role — used to flag added/removed permissions.
+  const roleDefaultPerms = new Set(
+    DEFAULT_ROLE_PERMISSIONS.find(rp => rp.role === selectedRole)?.permissions ?? [],
+  );
 
   if (!isAdmin) {
     return (
@@ -329,9 +324,8 @@ export default function UserManagement() {
                   </TableHeader>
                   <TableBody>
                     {filteredUsers.map(user => {
-                      const role = getUserRoleDisplay(user.id, user.role);
-                      const assignment = userRoles.find(ur => ur.userId === user.id);
-                      const hasCustom = !!assignment?.customPermissions;
+                      const role = user.role;
+                      const hasCustom = hasOverrides(user.permissionOverrides);
                       const branch = branches.find(b => b.id === user.branchId);
                       
                       return (
@@ -722,18 +716,34 @@ export default function UserManagement() {
                   <div key={category}>
                     <h4 className="font-medium capitalize mb-2">{category}</h4>
                     <div className="grid gap-2 md:grid-cols-2">
-                      {perms.map(perm => (
-                        <div key={perm.id} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={perm.id}
-                            checked={customPerms.includes(perm.id)}
-                            onCheckedChange={() => togglePermission(perm.id)}
-                          />
-                          <Label htmlFor={perm.id} className="text-sm">
-                            {perm.name}
-                          </Label>
-                        </div>
-                      ))}
+                      {perms.map(perm => {
+                        const isDefault = roleDefaultPerms.has(perm.id);
+                        const isChecked = customPerms.includes(perm.id);
+                        const added = isChecked && !isDefault;
+                        const removed = !isChecked && isDefault;
+                        return (
+                          <div key={perm.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={perm.id}
+                              checked={isChecked}
+                              onCheckedChange={() => togglePermission(perm.id)}
+                            />
+                            <Label htmlFor={perm.id} className="text-sm">
+                              {perm.name}
+                            </Label>
+                            {added && (
+                              <Badge variant="outline" className="text-green-600 border-green-600 text-[10px] px-1 py-0">
+                                {t.userManagementUi.permAdded}
+                              </Badge>
+                            )}
+                            {removed && (
+                              <Badge variant="outline" className="text-red-500 border-red-500 text-[10px] px-1 py-0">
+                                {t.userManagementUi.permRemoved}
+                              </Badge>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ))}

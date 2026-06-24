@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowRightLeft, Plus, Package, Check, X, Truck, Clock, Search } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { userHasPermission } from '@/lib/permissions';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 
 const transferDialogFullscreen = cn(
@@ -70,6 +71,7 @@ export default function StockTransfer() {
   // Load ALL transfers (not branch-filtered) so we can see transfers between any branches
   const { transfers, createTransfer, approveTransfer, receiveTransfer, cancelTransfer } = useStockTransfers();
   const { toast } = useToast();
+  const canTransfer = !!user && userHasPermission(user.role, user.permissionOverrides, 'inventory_transfer');
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [receiveDialogOpen, setReceiveDialogOpen] = useState(false);
@@ -337,7 +339,11 @@ export default function StockTransfer() {
           <h1 className="text-2xl font-bold">{t.stockTransferUi.title}</h1>
           <p className="text-muted-foreground">{t.stockTransferUi.subtitle}</p>
         </div>
-        <Button onClick={() => setDialogOpen(true)}>
+        <Button
+          onClick={() => setDialogOpen(true)}
+          disabled={!canTransfer}
+          title={!canTransfer ? t.topNav.toolbar.noPermission : undefined}
+        >
           <Plus className="w-4 h-4 mr-2" />
           {t.stockTransferUi.newTransfer}
         </Button>
@@ -411,8 +417,8 @@ export default function StockTransfer() {
               <TransferTable
                 transfers={pendingTransfers}
                 getStatusBadge={getStatusBadge}
-                onApprove={handleApprove}
-                onCancel={handleCancel}
+                onApprove={canTransfer ? handleApprove : undefined}
+                onCancel={canTransfer ? handleCancel : undefined}
                 branchTransferActions={branchTransferActions}
               />
             </CardContent>
@@ -429,7 +435,7 @@ export default function StockTransfer() {
               <TransferTable
                 transfers={inTransitTransfers}
                 getStatusBadge={getStatusBadge}
-                onReceive={handleOpenReceiveDialog}
+                onReceive={canTransfer ? handleOpenReceiveDialog : undefined}
                 branchTransferActions={branchTransferActions}
               />
             </CardContent>

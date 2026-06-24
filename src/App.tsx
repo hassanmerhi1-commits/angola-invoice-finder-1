@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useERP";
 import { LanguageProvider, useLanguage } from "@/i18n";
 import { BranchProvider } from "@/contexts/BranchContext";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { RoutePermissionGuard } from "@/components/RoutePermissionGuard";
 import { PrintPreviewHost } from "@/components/print/PrintPreviewHost";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import {
@@ -273,6 +274,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
+        <Route element={<RoutePermissionGuard />}>
         <Route path="/" element={!setupComplete ? <Navigate to="/setup" replace /> : <Dashboard />} />
         <Route path="/pos" element={<POS />} />
         <Route path="/vendas" element={<Vendas />} />
@@ -320,6 +322,7 @@ function AppRoutes() {
         <Route path="/approvals" element={<Approvals />} />
         <Route path="/exchange-rates" element={<ExchangeRates />} />
         <Route path="/bank-reconciliation" element={<BankReconciliation />} />
+        </Route>
       </Route>
       <Route path="/purchase-invoices-window" element={<RedirectPreserveSearch to="/purchase-invoices" />} />
       <Route path="*" element={<NotFound />} />

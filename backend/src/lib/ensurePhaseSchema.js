@@ -138,6 +138,33 @@ async function ensureClientPricingColumns(db) {
   }
 }
 
+/** Per-user permission overrides (grant/revoke deltas on top of the role), stored as JSON text. */
+async function ensureUserPermissionsColumn(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions TEXT');
+    } catch (err) {
+      if (err.code !== '42701') console.warn('[SCHEMA] users.permissions column:', err.message);
+    }
+    return;
+  }
+
+  if (db.sqlite) {
+    let cols = [];
+    try {
+      cols = db.sqlite.pragma('table_info(users)');
+    } catch (_) {
+      return;
+    }
+    if (!cols.length) return;
+    if (!cols.some((c) => c.name === 'permissions')) {
+      try {
+        db.sqlite.exec('ALTER TABLE users ADD COLUMN permissions TEXT');
+      } catch (_) {}
+    }
+  }
+}
+
 async function ensureCreditNoteRestoreStockColumn(db) {
   if (db.engine === 'postgres') {
     const check = await db.query(
@@ -329,6 +356,7 @@ async function ensurePhaseSchema(db) {
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
+    await ensureUserPermissionsColumn(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
     console.log('[SCHEMA] PostgreSQL phase migrations applied');
@@ -352,6 +380,7 @@ async function ensurePhaseSchema(db) {
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
+    await ensureUserPermissionsColumn(db);
     await ensurePgcChartOfAccounts(db);
     console.log('[SCHEMA] SQLite phase column patches applied');
   }
@@ -363,5 +392,6 @@ module.exports = {
   ensureDocumentSequencesBranchScope,
   ensureCreditNoteRestoreStockColumn,
   ensureClientPricingColumns,
+  ensureUserPermissionsColumn,
   ensureAuditLogActions,
 };

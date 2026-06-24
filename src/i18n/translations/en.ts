@@ -2621,6 +2621,7 @@ export const en = {
       labels: "Labels",
       adjustStock: "Adjust stock",
       branchPlaceholder: "Branch",
+      noPermission: "You don't have permission for this action",
     },
     userMenu: {
       profile: "Profile",
@@ -4888,6 +4889,8 @@ export const en = {
     resetPasswordHint: "Leave blank to keep the current password. The user will log in with username or email and this new password.",
     roleUpdated: "Role updated",
     roleAndPasswordUpdated: "Role and password updated",
+    permAdded: "+ added",
+    permRemoved: "− removed",
   },
 
   categoriesUi: {

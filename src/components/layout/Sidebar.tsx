@@ -2,7 +2,8 @@ import { NavLink } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
 import { CompanyLogo } from '@/components/layout/CompanyLogo';
-import { usePermissions } from '@/hooks/usePermissions';
+import { useAuth } from '@/hooks/useERP';
+import { canAccessRoute } from '@/lib/routePermissions';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   LayoutDashboard,
@@ -45,46 +46,9 @@ interface SidebarProps {
   onClose?: () => void;
 }
 
-// Map routes to required permissions
-const ROUTE_PERMISSIONS: Record<string, string | string[]> = {
-  '/pos': 'pos_access',
-  '/invoices': 'invoice_view',
-  '/proforma': 'proforma_create',
-  '/fiscal-documents': 'invoice_view',
-  '/inventory': 'inventory_view',
-  '/categories': 'inventory_view',
-  '/suppliers': 'inventory_view',
-  '/purchase-orders': 'purchase_create',
-  '/purchase-invoices': 'purchase_create',
-  '/stock-transfer': 'inventory_transfer',
-  '/caixa': 'caixa_open',
-  '/expenses': 'expense_create',
-  '/bank-accounts': 'bank_manage',
-  '/bank-reconciliation': 'bank_manage',
-  '/payments': 'accounting_payment',
-  '/chart-of-accounts': 'accounting_view',
-  '/accounting-periods': 'accounting_view',
-  '/tax-management': 'accounting_view',
-  '/budget-control': 'accounting_view',
-  '/approvals': 'accounting_view',
-  '/audit-trail': 'reports_audit',
-  '/users': 'admin_users',
-  '/branches': 'admin_branches',
-  '/reports': 'reports_daily',
-  '/settings': 'admin_settings',
-};
-
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { t } = useTranslation();
-
-  // Get current user ID for permission checking
-  let currentUserId: string | undefined;
-  try {
-    const cu = localStorage.getItem('kwanzaerp_current_user');
-    if (cu) currentUserId = JSON.parse(cu)?.id;
-  } catch { /* ignore */ }
-
-  const { hasPermission, isAdmin } = usePermissions(currentUserId);
+  const { user } = useAuth();
 
   const navItems = [
     { icon: LayoutDashboard, label: t.nav.dashboard, path: '/' },
@@ -123,15 +87,11 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     { icon: Settings, label: t.nav.settings, path: '/settings' },
   ];
 
-  // Filter by permissions (admin sees everything, dashboard always visible)
-  const visibleItems = navItems.filter(item => {
-    if (item.path === '/' || item.path === '/data-sync' || item.path === '/clients' || item.path === '/exchange-rates') return true;
-    if (isAdmin) return true;
-    const requiredPerm = ROUTE_PERMISSIONS[item.path];
-    if (!requiredPerm) return true;
-    if (Array.isArray(requiredPerm)) return requiredPerm.some(p => hasPermission(p));
-    return hasPermission(requiredPerm);
-  });
+  // Filter by effective permissions (role + per-user overrides). Unmapped routes
+  // (dashboard, clients, data-sync, exchange-rates, …) are open to all.
+  const visibleItems = navItems.filter(item =>
+    canAccessRoute(user?.role, user?.permissionOverrides, item.path),
+  );
 
   return (
     <>

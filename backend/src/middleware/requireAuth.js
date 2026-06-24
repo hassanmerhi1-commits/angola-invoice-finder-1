@@ -3,6 +3,7 @@ const db = require('../db');
 const { JWT_SECRET } = require('../jwtSecret');
 const { getBearerToken } = require('./requireAdmin');
 const { touchSession, isSessionRevoked } = require('../lib/sessionLog');
+const { parsePermissionOverrides } = require('../lib/rolePermissions');
 
 /**
  * Requires a valid JWT and an active user row.
@@ -16,7 +17,7 @@ async function requireAuth(req, res, next) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     const result = await db.query(
-      'SELECT id, email, name, role, branch_id, is_active FROM users WHERE id = $1',
+      'SELECT id, email, name, role, branch_id, is_active, permissions FROM users WHERE id = $1',
       [decoded.userId],
     );
 
@@ -40,6 +41,7 @@ async function requireAuth(req, res, next) {
       name: user.name,
       role: user.role,
       branchId: user.branch_id,
+      permissionOverrides: parsePermissionOverrides(user.permissions),
     };
     req.tokenJti = decoded.jti || null;
     if (decoded.jti) {

@@ -16,6 +16,7 @@ const {
   verifyPasswordWithDummyFallback,
 } = require('../lib/passwordAuth');
 const { findUserForLogin } = require('../lib/loginUserLookup');
+const { parsePermissionOverrides } = require('../lib/rolePermissions');
 const { resolveAndPersistUserBranchId } = require('../middleware/branchScope');
 const { startSession, endSession } = require('../lib/sessionLog');
 
@@ -36,6 +37,7 @@ function mapUserRow(user) {
     role: user.role,
     branchId: user.branch_id,
     isActive: user.is_active === true || user.is_active === 1,
+    permissionOverrides: parsePermissionOverrides(user.permissions),
     createdAt: user.created_at,
     updatedAt: user.updated_at,
   };
@@ -188,7 +190,7 @@ router.post('/logout', requireAuth, async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT id, email, name, role, branch_id, is_active, created_at FROM users WHERE id = $1',
+      'SELECT id, email, name, role, branch_id, is_active, permissions, created_at FROM users WHERE id = $1',
       [req.user.id],
     );
     if (result.rows.length === 0) {
@@ -210,7 +212,7 @@ router.get('/me', requireAuth, async (req, res) => {
 router.get('/users', requireAdmin, async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT id, email, username, name, role, branch_id, is_active, created_at, updated_at
+      `SELECT id, email, username, name, role, branch_id, is_active, permissions, created_at, updated_at
        FROM users
        ORDER BY name`,
     );
@@ -281,6 +283,14 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { email, name, role, branchId, isActive, password, username } = req.body;
+    const permsInput = req.body.permissionOverrides ?? req.body.permissions;
+    let permissionsJson = null;
+    if (permsInput !== undefined) {
+      // Normalize to { granted, revoked }; '{}' clears any existing overrides.
+      const normalized = parsePermissionOverrides(permsInput);
+      const hasAny = normalized.granted.length > 0 || normalized.revoked.length > 0;
+      permissionsJson = hasAny ? JSON.stringify(normalized) : '{}';
+    }
 
     const existingRes = await db.query(
       'SELECT id, email, username, name, role, branch_id, is_active FROM users WHERE id = $1',
@@ -341,6 +351,7 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
          branch_id = COALESCE($6, branch_id),
          is_active = COALESCE($7, is_active),
          password_hash = COALESCE($8, password_hash),
+         permissions = COALESCE($9, permissions),
          updated_at = CURRENT_TIMESTAMP
        WHERE id = $1`,
       [
@@ -352,11 +363,12 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
         branchId !== undefined ? branchId : null,
         isActive !== undefined ? isActive : null,
         passwordHash || null,
+        permissionsJson,
       ],
     );
 
     const updated = await db.query(
-      'SELECT id, email, username, name, role, branch_id, is_active, created_at, updated_at FROM users WHERE id = $1',
+      'SELECT id, email, username, name, role, branch_id, is_active, permissions, created_at, updated_at FROM users WHERE id = $1',
       [id],
     );
     const after = updated.rows[0];

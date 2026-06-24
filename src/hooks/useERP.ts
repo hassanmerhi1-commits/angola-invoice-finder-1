@@ -931,6 +931,7 @@ async function initAuthStateOnce() {
             branchId: String(me.branchId ?? me.branch_id ?? currentUser.branchId ?? ''),
             isActive: true,
             createdAt: String(me.createdAt ?? me.created_at ?? currentUser.createdAt ?? ''),
+            permissionOverrides: me.permissionOverrides ?? currentUser.permissionOverrides,
           };
           storage.setCurrentUser(fresh);
           applyUserBranchLockOnLogin(fresh);
@@ -962,6 +963,7 @@ async function initAuthStateOnce() {
           branchId: String(me.branchId ?? me.branch_id ?? currentUser.branchId ?? ''),
           isActive: me.isActive !== false && me.is_active !== false,
           createdAt: String(me.createdAt ?? me.created_at ?? currentUser.createdAt ?? ''),
+          permissionOverrides: me.permissionOverrides ?? currentUser.permissionOverrides,
         };
         storage.setCurrentUser(fresh);
         applyUserBranchLockOnLogin(fresh);
@@ -1048,6 +1050,7 @@ export function useAuth() {
           branchId: String(apiUser.branchId ?? apiUser.branch_id ?? ''),
           isActive: true,
           createdAt: String(apiUser.createdAt ?? apiUser.created_at ?? new Date().toISOString()),
+          permissionOverrides: apiUser.permissionOverrides,
         };
         storage.clearLocalProductsCache();
         storage.setCurrentUser(user);
