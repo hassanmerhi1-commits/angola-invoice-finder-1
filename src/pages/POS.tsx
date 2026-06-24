@@ -2,6 +2,9 @@ import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useCart, useSales, useAuth, useClients } from '@/hooks/useERP';
 import { effectiveUnitPrice, clientPricing, normalizePriceLevel } from '@/lib/pricing';
+import { userHasPermission } from '@/lib/permissions';
+import { getCompanySettings, saveCompanySettings } from '@/lib/companySettings';
+import { api } from '@/lib/api/client';
 import {
   printPosThermalReceipts,
   printReceipt,
@@ -43,13 +46,41 @@ export default function POS() {
   const { completeSale, sales, refreshSales } = useSales(currentBranch?.id);
   const { clients } = useClients();
 
-  const [priceLevel, setPriceLevel] = useState(1);
+  // Only admins/managers (anyone with `pos_price_change`) may pick the price tier.
+  // Cashiers always get the admin-chosen default (or the selected client's level).
+  const canChoosePrice = !!user && userHasPermission(user.role, user.permissionOverrides, 'pos_price_change');
+
+  const [priceLevel, setPriceLevel] = useState(() =>
+    normalizePriceLevel(getCompanySettings().posDefaultPriceLevel ?? 1),
+  );
   const [selectedClientId, setSelectedClientId] = useState<string>('');
   const selectedClient = useMemo(
     () => clients.find((c) => c.id === selectedClientId) ?? null,
     [clients, selectedClientId],
   );
   const adjustmentPct = clientPricing(selectedClient).adjustmentPct;
+
+  // Pull the admin-chosen default price level from the server so every terminal
+  // (including cashiers) uses the same level. Cached to localStorage so the POS has
+  // a sensible value before the request resolves and when offline.
+  useEffect(() => {
+    let cancelled = false;
+    void api.companySettings
+      .get()
+      .then((res) => {
+        if (cancelled) return;
+        const serverLevel = normalizePriceLevel(res?.data?.posDefaultPriceLevel ?? 1);
+        saveCompanySettings({ posDefaultPriceLevel: serverLevel });
+        // Adopt the global default only while no client (which carries its own level)
+        // is selected. The client-selection effect below takes over otherwise.
+        if (!selectedClientId) setPriceLevel(serverLevel);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Effective ex-VAT unit price for the active price level + client % adjustment.
   const priceFor = useCallback(
@@ -63,9 +94,14 @@ export default function POS() {
     [priceFor],
   );
 
-  // Adopt the client's default price level when a client is selected.
+  // Adopt the client's default price level when a client is selected; fall back to
+  // the admin-chosen global default for walk-in sales (no client).
   useEffect(() => {
-    if (selectedClient) setPriceLevel(normalizePriceLevel(selectedClient.defaultPriceLevel ?? 1));
+    if (selectedClient) {
+      setPriceLevel(normalizePriceLevel(selectedClient.defaultPriceLevel ?? 1));
+    } else {
+      setPriceLevel(normalizePriceLevel(getCompanySettings().posDefaultPriceLevel ?? 1));
+    }
   }, [selectedClient]);
 
   // Reprice existing cart lines when the price level or client adjustment changes.
@@ -526,18 +562,28 @@ export default function POS() {
           </div>
           <div className="flex items-center gap-1.5">
             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">{t.posUi.priceLabel}</Label>
-            <Select value={String(priceLevel)} onValueChange={(v) => setPriceLevel(Number(v))}>
-              <SelectTrigger className="h-9 w-[120px] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[1, 2, 3, 4].map((n) => (
-                  <SelectItem key={n} value={String(n)}>
-                    {t.posUi.priceLevelOption.replace('{n}', String(n))}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {canChoosePrice ? (
+              <Select value={String(priceLevel)} onValueChange={(v) => setPriceLevel(Number(v))}>
+                <SelectTrigger className="h-9 w-[120px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[1, 2, 3, 4].map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {t.posUi.priceLevelOption.replace('{n}', String(n))}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Badge
+                variant="outline"
+                className="h-9 px-3 text-xs font-normal shrink-0"
+                title={t.posUi.priceLevelLocked}
+              >
+                {t.posUi.priceLevelOption.replace('{n}', String(priceLevel))}
+              </Badge>
+            )}
             {adjustmentPct !== 0 && (
               <Badge variant="secondary" className="shrink-0">
                 {adjustmentPct > 0 ? '+' : ''}{adjustmentPct}%

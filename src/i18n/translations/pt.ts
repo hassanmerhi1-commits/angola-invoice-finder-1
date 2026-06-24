@@ -277,6 +277,7 @@ export const pt: TranslationKeys = {
     walkInCustomer: "Consumidor final",
     priceLabel: "Preço",
     priceLevelOption: "Preço {n}",
+    priceLevelLocked: "O nível de preço é definido pelo administrador",
     keyboardShortcuts: "Atalhos de Teclado",
     checkoutShortcut: "Finalizar venda",
     clearCartShortcut: "Limpar carrinho",
@@ -2853,6 +2854,14 @@ export const pt: TranslationKeys = {
 
   settingsPage: {
     subtitle: "Gerir conta, empresa e preferências do sistema",
+    posPricing: {
+      title: "Preços no POS",
+      description: "Escolha o nível de preço padrão que o POS usa em cada venda. Os caixas não o podem alterar; o nível de preço próprio de um cliente continua a ter prioridade.",
+      defaultLevelLabel: "Nível de preço padrão",
+      defaultLevelHint: "Aplicado automaticamente às vendas a consumidor final em todos os terminais.",
+      saved: "Nível de preço padrão atualizado",
+      saveError: "Não foi possível guardar o nível de preço padrão",
+    },
     sections: {
       general: "Geral",
       generalDesc: "Senha, preferências de interacção e checklist diário",

@@ -275,6 +275,7 @@ export const en = {
     walkInCustomer: "Walk-in customer",
     priceLabel: "Price",
     priceLevelOption: "Price {n}",
+    priceLevelLocked: "Price level is set by the administrator",
     keyboardShortcuts: "Keyboard shortcuts",
     checkoutShortcut: "Checkout",
     clearCartShortcut: "Clear cart",
@@ -2850,6 +2851,14 @@ export const en = {
 
   settingsPage: {
     subtitle: "Manage your account, company, and system preferences",
+    posPricing: {
+      title: "POS pricing",
+      description: "Choose the default price level the POS uses for every sale. Cashiers can't change it; a client's own default price level still takes priority.",
+      defaultLevelLabel: "Default price level",
+      defaultLevelHint: "Applied automatically to walk-in sales on every terminal.",
+      saved: "Default price level updated",
+      saveError: "Could not save the default price level",
+    },
     sections: {
       general: "General",
       generalDesc: "Password, interaction preferences, and daily checklist",

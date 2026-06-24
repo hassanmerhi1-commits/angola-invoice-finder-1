@@ -19,7 +19,16 @@ const DEFAULTS = {
   email: '',
   agtCertificateNumber: '',
   softwareVersion: readAppVersion(),
+  // Admin-chosen default selling price level (1-4) the POS applies automatically.
+  // A selected client's own default price level still overrides this.
+  posDefaultPriceLevel: 1,
 };
+
+/** Clamp any value to a valid price level (1-4), defaulting to 1. */
+function normalizePriceLevel(value) {
+  const n = Math.trunc(Number(value));
+  return n >= 1 && n <= 4 ? n : 1;
+}
 
 function parseJson(raw) {
   if (!raw) return {};
@@ -43,6 +52,7 @@ async function getCompanySettings() {
 
 async function saveCompanySettings(payload) {
   const merged = { ...(await getCompanySettings()), ...(payload || {}) };
+  merged.posDefaultPriceLevel = normalizePriceLevel(merged.posDefaultPriceLevel);
   merged.updatedAt = new Date().toISOString();
 
   const json = JSON.stringify(merged);

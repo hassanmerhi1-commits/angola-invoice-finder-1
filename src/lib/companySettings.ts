@@ -39,6 +39,10 @@ export interface CompanySettings {
   invoicePrefix?: string;
   invoiceNotes?: string;
   footerText?: string;
+
+  // POS — admin-chosen default selling price level (1-4) applied automatically.
+  // A selected client's own default price level still overrides this.
+  posDefaultPriceLevel?: number;
   
   // Exchange Rates (Câmbio)
   exchangeRateUSD?: number; // 1 USD = X AOA
@@ -68,6 +72,7 @@ const DEFAULT_SETTINGS: CompanySettings = {
   footerText: 'Obrigado pela preferência!',
   invoiceNotes: 'Pagamento a pronto. Não aceitamos devoluções após 7 dias.',
   primaryColor: '#2563eb',
+  posDefaultPriceLevel: 1,
 };
 
 function needsBrandMigration(settings: Partial<CompanySettings>): boolean {

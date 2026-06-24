@@ -54,6 +54,11 @@ interface ConnectionTestResult {
   error?: string;
 }
 
+// Keep the in-progress server address across section/tab navigation (the card
+// unmounts when you leave Settings). Module scope so it survives remounts within
+// the session but resets on a full page reload (i.e. after Save applies it).
+let draftServerUrl: string | null = null;
+
 export function NetworkSettingsCard() {
   const { t } = useTranslation();
   const [serverUrl, setServerUrl] = useState('');
@@ -75,7 +80,13 @@ export function NetworkSettingsCard() {
 
   useEffect(() => {
     const currentUrl = getApiUrl();
-    setServerUrl(currentUrl);
+    // Restore a previously typed (but not yet saved) address so navigating away
+    // and back doesn't silently revert the field to the loopback default.
+    const initialUrl = draftServerUrl ?? currentUrl;
+    setServerUrl(initialUrl);
+    if (draftServerUrl != null && draftServerUrl !== currentUrl) {
+      setHasChanges(true);
+    }
     setIsNetworkMode(isLocalNetworkMode());
     setIsElectron(!!window.electronAPI?.discovery);
     setMockServerRunning(isMockServerRunning());
@@ -91,6 +102,7 @@ export function NetworkSettingsCard() {
   }, []);
 
   const handleUrlChange = (value: string) => {
+    draftServerUrl = value;
     setServerUrl(value);
     setHasChanges(true);
     setTestResult(null);
@@ -174,6 +186,9 @@ export function NetworkSettingsCard() {
     }
     url = url.replace(/\/$/, '');
 
+    // The address is now the active config; drop the draft so the reloaded page
+    // shows the saved value rather than the stale draft.
+    draftServerUrl = null;
     setApiUrl(url);
     // Page will reload automatically
   };
@@ -184,6 +199,7 @@ export function NetworkSettingsCard() {
   };
 
   const resetToDefault = () => {
+    draftServerUrl = 'http://localhost:3000';
     setServerUrl('http://localhost:3000');
     setHasChanges(true);
     setTestResult(null);
@@ -286,6 +302,7 @@ export function NetworkSettingsCard() {
   // Select a discovered server
   const selectServer = (server: DiscoveredServer) => {
     const url = `http://${server.ip}:${server.port}`;
+    draftServerUrl = url;
     setServerUrl(url);
     setHasChanges(true);
     setTestResult(null);

@@ -1,5 +1,6 @@
 const express = require('express');
 const { getCompanySettings, saveCompanySettings } = require('../agt/companySettings');
+const { requirePermission } = require('../middleware/requirePermission');
 
 module.exports = function companySettingsRouter() {
   const router = express.Router();
@@ -14,7 +15,7 @@ module.exports = function companySettingsRouter() {
     }
   });
 
-  router.put('/', async (req, res) => {
+  router.put('/', requirePermission('admin_settings'), async (req, res) => {
     try {
       const settings = await saveCompanySettings(req.body || {});
       res.json({ data: settings });
