@@ -13,6 +13,7 @@ import {
 } from '@/types/erp';
 import * as fiscalStorage from '@/lib/fiscalDocuments';
 import { api } from '@/lib/api/client';
+import { getCachedList, setCachedList } from '@/lib/listCache';
 import { CREDIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
 import { getCompanySettings } from '@/lib/companySettings';
 import { exportSAFTToXML } from '@/lib/saftAO';
@@ -31,12 +32,15 @@ async function resolveBranchName(branchId: string, cachedName?: string) {
 // ==================== CREDIT NOTES ====================
 
 export function useCreditNotes(branchId?: string) {
-  const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
+  const [creditNotes, setCreditNotes] = useState<CreditNote[]>(
+    () => getCachedList<CreditNote[]>(`creditNotes:${branchId ?? 'all'}`) ?? [],
+  );
   const [loading, setLoading] = useState(false);
 
   const refreshCreditNotes = useCallback(async (listBranchId?: string) => {
     setLoading(true);
     const filterBranch = listBranchId !== undefined ? listBranchId : branchId;
+    const cacheKey = `creditNotes:${filterBranch || branchId || 'all'}`;
     try {
       let result = await api.fiscalDocuments.listCreditNotes(filterBranch || undefined);
       if (result.error) throw new Error(result.error);
@@ -47,13 +51,16 @@ export function useCreditNotes(branchId?: string) {
           if (allRes.data?.length) notes = allRes.data as CreditNote[];
         }
         setCreditNotes(notes);
+        setCachedList(cacheKey, notes);
         setLoading(false);
         return;
       }
     } catch {
       /* fallback below */
     }
-    setCreditNotes(fiscalStorage.getCreditNotes(filterBranch || branchId));
+    const local = fiscalStorage.getCreditNotes(filterBranch || branchId);
+    setCreditNotes(local);
+    setCachedList(cacheKey, local);
     setLoading(false);
   }, [branchId]);
 
@@ -120,22 +127,29 @@ export function useCreditNotes(branchId?: string) {
 // ==================== DEBIT NOTES ====================
 
 export function useDebitNotes(branchId?: string) {
-  const [debitNotes, setDebitNotes] = useState<DebitNote[]>([]);
+  const [debitNotes, setDebitNotes] = useState<DebitNote[]>(
+    () => getCachedList<DebitNote[]>(`debitNotes:${branchId ?? 'all'}`) ?? [],
+  );
   const [loading, setLoading] = useState(false);
 
   const refreshDebitNotes = useCallback(async () => {
     setLoading(true);
+    const cacheKey = `debitNotes:${branchId ?? 'all'}`;
     try {
       const result = await api.fiscalDocuments.listDebitNotes(branchId);
       if (result.data) {
-        setDebitNotes(result.data as DebitNote[]);
+        const notes = result.data as DebitNote[];
+        setDebitNotes(notes);
+        setCachedList(cacheKey, notes);
         setLoading(false);
         return;
       }
     } catch {
       /* fallback */
     }
-    setDebitNotes(fiscalStorage.getDebitNotes(branchId));
+    const local = fiscalStorage.getDebitNotes(branchId);
+    setDebitNotes(local);
+    setCachedList(cacheKey, local);
     setLoading(false);
   }, [branchId]);
 
@@ -195,22 +209,29 @@ export function useDebitNotes(branchId?: string) {
 // ==================== TRANSPORT DOCUMENTS ====================
 
 export function useTransportDocuments(branchId?: string) {
-  const [transportDocs, setTransportDocs] = useState<TransportDocument[]>([]);
+  const [transportDocs, setTransportDocs] = useState<TransportDocument[]>(
+    () => getCachedList<TransportDocument[]>(`transportDocs:${branchId ?? 'all'}`) ?? [],
+  );
   const [loading, setLoading] = useState(false);
 
   const refreshTransportDocs = useCallback(async () => {
     setLoading(true);
+    const cacheKey = `transportDocs:${branchId ?? 'all'}`;
     try {
       const result = await api.fiscalDocuments.listTransportDocuments(branchId);
       if (result.data) {
-        setTransportDocs(result.data as TransportDocument[]);
+        const docs = result.data as TransportDocument[];
+        setTransportDocs(docs);
+        setCachedList(cacheKey, docs);
         setLoading(false);
         return;
       }
     } catch {
       /* fallback */
     }
-    setTransportDocs(fiscalStorage.getTransportDocuments(branchId));
+    const local = fiscalStorage.getTransportDocuments(branchId);
+    setTransportDocs(local);
+    setCachedList(cacheKey, local);
     setLoading(false);
   }, [branchId]);
 

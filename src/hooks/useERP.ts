@@ -1159,34 +1159,39 @@ function mapDailyReportRow(row: any): DailySummary {
 }
 
 export function useDailyReports(branchId?: string) {
-  const [reports, setReports] = useState<DailySummary[]>([]);
+  const [reports, setReports] = useState<DailySummary[]>(
+    () => getCachedList<DailySummary[]>(`dailyReports:${branchId ?? 'all'}`) ?? [],
+  );
 
   const refreshReports = useCallback(async () => {
+    const key = `dailyReports:${branchId ?? 'all'}`;
     try {
       const response = await api.dailyReports.list(branchId);
       if (!response.error && Array.isArray(response.data)) {
-        setReports(response.data.map(mapDailyReportRow));
+        const mapped = response.data.map(mapDailyReportRow);
+        setReports(mapped);
+        setCachedList(key, mapped);
         return;
       }
       if (!isDemoMode()) {
+        // Keep the last-known list rather than wiping to empty on a transient failure.
         console.warn('[useDailyReports] API list failed:', response.error);
-        setReports([]);
         return;
       }
     } catch (e) {
       if (!isDemoMode()) {
         console.warn('[useDailyReports] API list failed:', e);
-        setReports([]);
         return;
       }
     }
 
     try {
       const fromStorage = await storage.getDailyReports(branchId);
-      setReports(fromStorage.map(mapDailyReportRow));
+      const mapped = fromStorage.map(mapDailyReportRow);
+      setReports(mapped);
+      setCachedList(key, mapped);
     } catch (e) {
       console.warn('[useDailyReports] storage fallback failed:', e);
-      setReports([]);
     }
   }, [branchId]);
 
@@ -1977,17 +1982,21 @@ function mapImportOrder(row: any): ImportOrder {
 
 export function useImportOrders(branchId?: string) {
   const { t } = useTranslation();
-  const [orders, setOrders] = useState<ImportOrder[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cachedOrders = getCachedList<ImportOrder[]>(`importOrders:${branchId ?? 'all'}`);
+  const [orders, setOrders] = useState<ImportOrder[]>(() => cachedOrders ?? []);
+  const [loading, setLoading] = useState(() => !(cachedOrders && cachedOrders.length));
 
   const refreshOrders = useCallback(async () => {
     setLoading(true);
     try {
       const result = await api.importOrders.list(branchId);
-      setOrders(Array.isArray(result.data) ? result.data.map(mapImportOrder) : []);
+      if (Array.isArray(result.data)) {
+        const mapped = result.data.map(mapImportOrder);
+        setOrders(mapped);
+        setCachedList(`importOrders:${branchId ?? 'all'}`, mapped);
+      }
     } catch (error) {
       console.error('[IMPORT ORDERS] Failed to load:', error);
-      setOrders([]);
     } finally {
       setLoading(false);
     }

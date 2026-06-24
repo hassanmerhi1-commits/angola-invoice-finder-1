@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api/client';
+import { getCachedList, setCachedList } from '@/lib/listCache';
 
 export interface CostCenterRow {
   id: string;
@@ -67,27 +68,39 @@ function mapBudget(row: Record<string, unknown>): BudgetRow {
 }
 
 export function useBudgets(year: number, month: number) {
-  const [costCenters, setCostCenters] = useState<CostCenterRow[]>([]);
-  const [budgets, setBudgets] = useState<BudgetRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const ccKey = 'budgetCostCenters';
+  const budgetKey = `budgets:${year}-${month}`;
+  const cachedCostCenters = getCachedList<CostCenterRow[]>(ccKey);
+  const cachedBudgets = getCachedList<BudgetRow[]>(budgetKey);
+  const [costCenters, setCostCenters] = useState<CostCenterRow[]>(() => cachedCostCenters ?? []);
+  const [budgets, setBudgets] = useState<BudgetRow[]>(() => cachedBudgets ?? []);
+  const [loading, setLoading] = useState(() => !(cachedBudgets && cachedBudgets.length));
+  const hasRowsRef = useRef((cachedBudgets?.length ?? 0) > 0);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
+    if (!hasRowsRef.current) setLoading(true);
     try {
       const [ccRes, budgetRes] = await Promise.all([
         api.budgets.costCenters(),
         api.budgets.list({ year, month }),
       ]);
-      setCostCenters(Array.isArray(ccRes.data) ? ccRes.data.map(mapCostCenter) : []);
-      setBudgets(Array.isArray(budgetRes.data) ? budgetRes.data.map(mapBudget) : []);
+      if (Array.isArray(ccRes.data)) {
+        const mappedCc = ccRes.data.map(mapCostCenter);
+        setCostCenters(mappedCc);
+        setCachedList(ccKey, mappedCc);
+      }
+      if (Array.isArray(budgetRes.data)) {
+        const mappedBudgets = budgetRes.data.map(mapBudget);
+        setBudgets(mappedBudgets);
+        setCachedList(budgetKey, mappedBudgets);
+        hasRowsRef.current = mappedBudgets.length > 0;
+      }
     } catch (error) {
       console.error('[BUDGETS] Failed to load:', error);
-      setCostCenters([]);
-      setBudgets([]);
     } finally {
       setLoading(false);
     }
-  }, [year, month]);
+  }, [year, month, budgetKey]);
 
   useEffect(() => {
     void refresh();

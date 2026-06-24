@@ -26,6 +26,7 @@ import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
 import type { CreditNote } from '@/types/erp';
 import { api } from '@/lib/api/client';
+import { getCachedList, setCachedList } from '@/lib/listCache';
 import {
   getDocuments,
   convertDocument,
@@ -169,8 +170,10 @@ export default function Invoices() {
 
   const refresh = useCallback(() => setRefreshKey(k => k + 1), []);
 
-  // Load documents
-  const [documents, setDocuments] = useState<ERPDocument[]>([]);
+  // Load documents — seed instantly from cache so the tab renders without waiting on the network.
+  const [documents, setDocuments] = useState<ERPDocument[]>(
+    () => getCachedList<ERPDocument[]>(`invoicesDocs:${activeTab}:${listBranchId ?? 'all'}`) ?? [],
+  );
 
   useEffect(() => {
     const onSalesChanged = () => setRefreshKey((k) => k + 1);
@@ -194,6 +197,7 @@ export default function Invoices() {
       isMain: b.isMain,
     }));
 
+    const cacheKey = `invoicesDocs:${activeTab}:${listBranchId ?? 'all'}`;
     const load = async () => {
       try {
         if (type === 'nota_credito') {
@@ -205,6 +209,7 @@ export default function Invoices() {
             mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
           );
           setDocuments(mapped);
+          setCachedList(cacheKey, mapped);
           return;
         }
 
@@ -254,11 +259,16 @@ export default function Invoices() {
         }
 
         merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setDocuments(type ? merged.filter((d) => d.documentType === type) : merged);
+        const result = type ? merged.filter((d) => d.documentType === type) : merged;
+        setDocuments(result);
+        setCachedList(cacheKey, result);
       } catch (err) {
         console.error('[Invoices] load failed:', err);
-        setDocuments([]);
-        toast.error(err instanceof Error ? err.message : t.common.loading);
+        // Keep showing the last cached list instead of blanking the tab on a transient failure.
+        const cached = getCachedList<ERPDocument[]>(cacheKey);
+        if (!cached || cached.length === 0) {
+          toast.error(err instanceof Error ? err.message : t.common.loading);
+        }
       }
     };
 

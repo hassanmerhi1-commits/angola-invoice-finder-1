@@ -1,6 +1,7 @@
 import { generateId } from '@/lib/utils';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/client';
+import { getCachedList, setCachedList } from '@/lib/listCache';
 import { Account, AccountFormData, TrialBalanceRow, BalanceSheetAccountRow, AccountType } from '@/types/accounting';
 import { ensureBranchCaixaAccounts } from '@/lib/chartOfAccountsEngine';
 import { PGC_ACCOUNTS } from '@/lib/pgcChartOfAccounts';
@@ -90,14 +91,17 @@ const createLocalId = () =>
 
 export function useChartOfAccounts() {
   const { t } = useTranslation();
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const cachedAccounts = getCachedList<Account[]>('chartOfAccounts');
+  const [accounts, setAccounts] = useState<Account[]>(() => cachedAccounts ?? []);
+  const [isLoading, setIsLoading] = useState(() => !(cachedAccounts && cachedAccounts.length));
   const [error, setError] = useState<string | null>(null);
   const branchCaixaSeeded = useRef(false);
+  // Once we have rows to show, background refreshes shouldn't flash the spinner.
+  const hasRowsRef = useRef((cachedAccounts?.length ?? 0) > 0);
 
   const fetchAccounts = useCallback(async () => {
     try {
-      setIsLoading(true);
+      if (!hasRowsRef.current) setIsLoading(true);
       const response = await api.chartOfAccounts.list();
       if (response.error) throw new Error(response.error);
       let remoteAccounts = sortAccountsByCode(response.data || []);
@@ -106,11 +110,15 @@ export function useChartOfAccounts() {
         if (local.length > 0) remoteAccounts = local;
       }
       setAccounts(remoteAccounts);
+      setCachedList('chartOfAccounts', remoteAccounts);
+      hasRowsRef.current = remoteAccounts.length > 0;
       setError(null);
     } catch (err: any) {
       const local = loadLocalAccounts(t);
       if (local.length > 0) {
         setAccounts(local);
+        setCachedList('chartOfAccounts', local);
+        hasRowsRef.current = true;
         setError(null);
       } else {
         setError(err.message || 'Failed to fetch accounts');

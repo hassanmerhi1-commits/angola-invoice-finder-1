@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Account } from '@/types/accounting';
 import { api } from '@/lib/api/client';
+import { getCachedList, setCachedList } from '@/lib/listCache';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
 import { useTrialBalance } from '@/hooks/useChartOfAccounts';
 import { useSales } from '@/hooks/useERP';
@@ -106,7 +107,10 @@ function useJournalEntries(
   branchId: string | undefined,
   ui: { systemUser: string; salesOfMerchandise: string }
 ) {
-  const [entries, setEntries] = useState<DisplayEntry[]>([]);
+  const cacheKey = `journalEntries:${branchId ?? 'all'}`;
+  const [entries, setEntries] = useState<DisplayEntry[]>(
+    () => getCachedList<DisplayEntry[]>(cacheKey) ?? [],
+  );
 
   const loadAll = useCallback(async () => {
     const allEntries: DisplayEntry[] = [];
@@ -205,7 +209,13 @@ function useJournalEntries(
     }
 
     allEntries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const key = `journalEntries:${branchId ?? 'all'}`;
+    // Don't wipe a populated cached list to empty on a transient failure.
+    if (allEntries.length === 0 && (getCachedList<DisplayEntry[]>(key)?.length ?? 0) > 0) {
+      return;
+    }
     setEntries(allEntries);
+    setCachedList(key, allEntries);
   }, [branchId, ui.salesOfMerchandise, ui.systemUser]);
 
   useEffect(() => { void loadAll(); }, [loadAll]);

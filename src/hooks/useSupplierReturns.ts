@@ -9,17 +9,21 @@ import {
   generateSupplierReturnNumber 
 } from '@/lib/supplierReturns';
 import { api } from '@/lib/api/client';
+import { getCachedList, setCachedList } from '@/lib/listCache';
 import {
   afterSupplierReturnMutation,
   subscribeSupplierReturnsChanged,
 } from '@/lib/supplierReturnSync';
 
 export function useSupplierReturns(branchId?: string) {
-  const [supplierReturns, setSupplierReturns] = useState<SupplierReturn[]>([]);
+  const [supplierReturns, setSupplierReturns] = useState<SupplierReturn[]>(
+    () => getCachedList<SupplierReturn[]>(`supplierReturns:${branchId ?? 'all'}`) ?? [],
+  );
 
   const refreshReturns = useCallback(async () => {
     const data = await getSupplierReturns(branchId);
     setSupplierReturns(data);
+    setCachedList(`supplierReturns:${branchId ?? 'all'}`, data);
   }, [branchId]);
 
   useEffect(() => {

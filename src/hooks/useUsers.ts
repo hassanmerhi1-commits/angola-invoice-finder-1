@@ -1,5 +1,5 @@
 // User Management Hook — API-First
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { User } from '@/types/erp';
 import { UserRole } from '@/lib/permissions';
 import { api } from '@/lib/api/client';
@@ -54,11 +54,13 @@ function saveLocalUsers(users: User[]) {
 }
 
 export function useUsers() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const initialUsers = readLocalUsers();
+  const [users, setUsers] = useState<User[]>(() => initialUsers);
+  const [isLoading, setIsLoading] = useState(() => initialUsers.length === 0);
+  const hasRowsRef = useRef(initialUsers.length > 0);
 
   const refreshUsers = useCallback(async () => {
-    setIsLoading(true);
+    if (!hasRowsRef.current) setIsLoading(true);
     try {
       const usersResponse = await api.users.list();
       if (usersResponse.error) {
@@ -68,6 +70,7 @@ export function useUsers() {
         const normalized = usersResponse.data.map((row) => normalizeUser(row));
         setUsers(normalized);
         saveLocalUsers(normalized);
+        hasRowsRef.current = normalized.length > 0;
         return;
       }
       const local = readLocalUsers();

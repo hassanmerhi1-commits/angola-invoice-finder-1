@@ -14,16 +14,20 @@ import {
   getProFormaStats,
 } from '@/lib/proforma';
 import { api } from '@/lib/api/client';
+import { getCachedList, setCachedList } from '@/lib/listCache';
 import { useTransactionHistory } from './useTransactionHistory';
 
 export function useProForma(branchId?: string) {
-  const [proformas, setProformas] = useState<ProForma[]>([]);
+  const [proformas, setProformas] = useState<ProForma[]>(
+    () => getCachedList<ProForma[]>(`proformas:${branchId ?? 'all'}`) ?? [],
+  );
   const { log: logTransaction } = useTransactionHistory();
 
   const refresh = useCallback(async () => {
     await updateExpiredProFormas();
     const data = await getProFormas(branchId);
     setProformas(data);
+    setCachedList(`proformas:${branchId ?? 'all'}`, data);
   }, [branchId]);
 
   useEffect(() => {
