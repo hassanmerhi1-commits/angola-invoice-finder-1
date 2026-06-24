@@ -10,7 +10,6 @@ import {
   withSellingPriceFromMap,
 } from '@/lib/productDedupe';
 import { readSellingPriceHintsSession } from '@/lib/sellingPriceHints';
-import { invalidateInventoryGridCache } from '@/lib/inventoryGrid';
 
 /**
  * POS — one products list per branch (+ main catalog prices when on a filial).
@@ -64,12 +63,6 @@ export function usePosProducts() {
     );
     return branchProducts.map((row) => withSellingPriceFromMap(row, priceBySku));
   }, [branchProducts, catalogProducts]);
-
-  useEffect(() => {
-    if (!branchId) return;
-    invalidateInventoryGridCache(branchId, false);
-    void refreshBranch();
-  }, [branchId]); // eslint-disable-line react-hooks/exhaustive-deps -- refresh when warehouse changes
 
   const refreshProducts = useCallback(async () => {
     await refreshBranch();

@@ -4,10 +4,19 @@ import {
   cacheKey,
   fetchInventoryGrid,
   invalidateInventoryGridCache,
+  readInventoryGridCacheStale,
   writeCache,
 } from '@/lib/inventoryGrid';
-import { saveLanInventoryGrid } from '@/lib/lanCatalogCache';
+import { saveLanInventoryGrid, readLanInventoryGrid } from '@/lib/lanCatalogCache';
 import { canonicalProductSku } from '@/lib/productDedupe';
+
+/** Best available cached rows (session cache, then LAN cache) for an instant warm start. */
+function readWarmStartRows(branchId: string | undefined, consolidated: boolean): Product[] | null {
+  const stale = readInventoryGridCacheStale(branchId, consolidated);
+  if (stale?.length) return stale;
+  const lan = readLanInventoryGrid(cacheKey(branchId, consolidated));
+  return lan?.length ? lan : null;
+}
 
 export function useInventoryGrid(opts: {
   branchId?: string;
@@ -47,8 +56,18 @@ export function useInventoryGrid(opts: {
     }
 
     const gen = ++generationRef.current;
-    setRows([]);
-    setLoading(true);
+
+    // Stale-while-revalidate: show last-known rows instantly (so POS search and the
+    // inventory grid aren't blank while a slow LAN fetch runs), then refresh in the
+    // background. Only show the full loading state when we have nothing cached.
+    const warm = readWarmStartRows(opts.branchId, opts.consolidated);
+    if (warm?.length) {
+      setRows(warm);
+      setLoading(false);
+    } else {
+      setRows([]);
+      setLoading(true);
+    }
 
     void (async () => {
       try {
@@ -61,7 +80,7 @@ export function useInventoryGrid(opts: {
         setRows(fresh);
       } catch (err) {
         console.error('[useInventoryGrid] load failed:', err);
-        if (gen === generationRef.current) setRows([]);
+        if (gen === generationRef.current && !warm?.length) setRows([]);
       } finally {
         if (gen === generationRef.current) setLoading(false);
       }

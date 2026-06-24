@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getApiUrlAsync, isDemoMode, isThinClientMode } from '@/lib/api/config';
 import { electronAwareJsonRequest } from '@/lib/electronHttp';
 import { isOfflineModeActive, setOfflineModeActive } from '@/lib/offlineAuth';
@@ -10,11 +10,18 @@ type OfflineBannerState = {
   serverReachable: boolean | null;
 };
 
+// A single dropped/slow LAN ping shouldn't flip the whole UI to "offline" and
+// back. Require this many consecutive failures before declaring the server
+// unreachable; recovery is immediate on the first successful ping.
+const OFFLINE_FAIL_THRESHOLD = 2;
+
 async function pingCityServer(): Promise<boolean> {
   try {
     const apiUrl = await getApiUrlAsync({ waitForPortMs: 2000 });
     const origin = new URL(apiUrl).origin;
-    const res = await electronAwareJsonRequest(`${origin}/api/health`, { timeoutMs: 4000 });
+    // Generous timeout so normal Wi-Fi latency / a momentarily busy server
+    // doesn't read as an outage.
+    const res = await electronAwareJsonRequest(`${origin}/api/health`, { timeoutMs: 8000 });
     return res.ok && !!(res.json as { ok?: boolean })?.ok;
   } catch {
     return false;
@@ -25,21 +32,33 @@ export function useOfflineBanner(): OfflineBannerState {
   const [serverReachable, setServerReachable] = useState<boolean | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [offlineLogin, setOfflineLogin] = useState(() => isOfflineModeActive());
+  const failStreak = useRef(0);
 
   const refresh = useCallback(async () => {
     setOfflineLogin(isOfflineModeActive());
     setPendingCount(await getOfflinePendingCount());
 
     if (!isThinClientMode() && !isOfflineModeActive()) {
+      failStreak.current = 0;
       setServerReachable(null);
       return;
     }
 
     const reachable = await pingCityServer();
-    setServerReachable(reachable);
-    if (reachable && isOfflineModeActive()) {
-      setOfflineModeActive(false);
-      setOfflineLogin(false);
+    if (reachable) {
+      failStreak.current = 0;
+      setServerReachable(true);
+      if (isOfflineModeActive()) {
+        setOfflineModeActive(false);
+        setOfflineLogin(false);
+      }
+      return;
+    }
+
+    // Only surface "offline" after repeated failures to avoid transient flapping.
+    failStreak.current += 1;
+    if (failStreak.current >= OFFLINE_FAIL_THRESHOLD) {
+      setServerReachable(false);
     }
   }, []);
 
