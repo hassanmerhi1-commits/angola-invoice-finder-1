@@ -59,6 +59,12 @@ export function useOfflineBanner(): OfflineBannerState {
     failStreak.current += 1;
     if (failStreak.current >= OFFLINE_FAIL_THRESHOLD) {
       setServerReachable(false);
+      // Mark offline so sales/other writes queue immediately instead of waiting on
+      // a full network timeout each time. Cleared automatically on the next good ping.
+      if (isThinClientMode() && !isOfflineModeActive()) {
+        setOfflineModeActive(true);
+        setOfflineLogin(true);
+      }
     }
   }, []);
 

@@ -914,9 +914,55 @@ export const api = {
       const { newClientRequestId, enqueueOfflineSale, dispatchSalesChanged } = await import('@/lib/sync/offlineSales');
       const { isOfflineFirstEnabled, saveSaleLocally } = await import('@/lib/sync/offlineFirst');
       const { savePendingSaleCache } = await import('@/lib/sync/pendingSalesCache');
+      const { isOfflineModeActive } = await import('@/lib/offlineAuth');
       const body = {
         ...data,
         clientRequestId: data.clientRequestId || newClientRequestId(),
+      };
+
+      const hasOutbox = typeof window !== 'undefined' && !!(window as any).electronAPI?.syncOutbox;
+
+      // Enqueue the sale into the offline outbox and return an immediate optimistic
+      // receipt stub. Shared by the "known offline" short-circuit and the network-error fallback.
+      const queueOfflineSale = async () => {
+        const queued = await enqueueOfflineSale(body);
+        if (!queued) return null;
+        const stub = {
+          id: body.clientRequestId,
+          invoice_number: body.invoiceNumber || `OFF-${String(body.clientRequestId).slice(0, 8)}`,
+          invoiceNumber: body.invoiceNumber || `OFF-${String(body.clientRequestId).slice(0, 8)}`,
+          branch_id: body.branchId,
+          branchId: body.branchId,
+          cashier_id: body.cashierId,
+          cashierId: body.cashierId,
+          cashier_name: body.cashierName,
+          cashierName: body.cashierName,
+          items: body.items,
+          subtotal: body.subtotal,
+          tax_amount: body.taxAmount,
+          taxAmount: body.taxAmount,
+          discount: body.discount,
+          total: body.total,
+          payment_method: body.paymentMethod,
+          paymentMethod: body.paymentMethod,
+          amount_paid: body.amountPaid,
+          amountPaid: body.amountPaid,
+          change_amount: body.change,
+          change: body.change,
+          customer_nif: body.customerNif,
+          customerNif: body.customerNif,
+          customer_name: body.customerName,
+          customerName: body.customerName,
+          status: 'completed',
+          pendingSync: true,
+          client_request_id: body.clientRequestId,
+          clientRequestId: body.clientRequestId,
+          created_at: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        };
+        savePendingSaleCache(stub);
+        dispatchSalesChanged(String(body.branchId || ''));
+        return { data: stub, error: null };
       };
 
       if (typeof window !== 'undefined' && (await isOfflineFirstEnabled())) {
@@ -939,49 +985,17 @@ export const api = {
         }
       }
 
+      // Already known to be offline: don't make the cashier wait for a 25s network
+      // timeout — queue the sale right away so the receipt prints instantly.
+      if (hasOutbox && isOfflineModeActive()) {
+        const queuedResult = await queueOfflineSale();
+        if (queuedResult) return queuedResult;
+      }
+
       const result = await apiFetch<any>('/sales', { method: 'POST', body: JSON.stringify(body) });
-      if (result.error && typeof window !== 'undefined' && (window as any).electronAPI?.syncOutbox) {
-        if (isNetworkErrorMessage(result.error)) {
-          const queued = await enqueueOfflineSale(body);
-          if (queued) {
-            const stub = {
-              id: body.clientRequestId,
-              invoice_number: body.invoiceNumber || `OFF-${String(body.clientRequestId).slice(0, 8)}`,
-              invoiceNumber: body.invoiceNumber || `OFF-${String(body.clientRequestId).slice(0, 8)}`,
-              branch_id: body.branchId,
-              branchId: body.branchId,
-              cashier_id: body.cashierId,
-              cashierId: body.cashierId,
-              cashier_name: body.cashierName,
-              cashierName: body.cashierName,
-              items: body.items,
-              subtotal: body.subtotal,
-              tax_amount: body.taxAmount,
-              taxAmount: body.taxAmount,
-              discount: body.discount,
-              total: body.total,
-              payment_method: body.paymentMethod,
-              paymentMethod: body.paymentMethod,
-              amount_paid: body.amountPaid,
-              amountPaid: body.amountPaid,
-              change_amount: body.change,
-              change: body.change,
-              customer_nif: body.customerNif,
-              customerNif: body.customerNif,
-              customer_name: body.customerName,
-              customerName: body.customerName,
-              status: 'completed',
-              pendingSync: true,
-              client_request_id: body.clientRequestId,
-              clientRequestId: body.clientRequestId,
-              created_at: new Date().toISOString(),
-              createdAt: new Date().toISOString(),
-            };
-            savePendingSaleCache(stub);
-            dispatchSalesChanged(String(body.branchId || ''));
-            return { data: stub, error: null };
-          }
-        }
+      if (result.error && hasOutbox && isNetworkErrorMessage(result.error)) {
+        const queuedResult = await queueOfflineSale();
+        if (queuedResult) return queuedResult;
       }
       if (result.data) {
         dispatchSalesChanged(String(body.branchId || data.branchId || ''));
