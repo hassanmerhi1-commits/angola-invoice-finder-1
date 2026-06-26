@@ -37,6 +37,16 @@ data/secrets/
 .tmp-*.db-shm
 .tmp-*.db-wal
 
+# Database files — NEVER commit real business data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+# Migration import staging — keep the folder, never its data
+import/*
+!import/.gitkeep
+
 # Playwright
 /playwright-report/
 /test-results/

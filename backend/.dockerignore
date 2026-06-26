@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log
+.env
+*.env
+!.env.example
+data
+*.db
+*.db-wal
+*.db-shm
+test
+coverage
+.git
+.gitignore
+Dockerfile
+.dockerignore

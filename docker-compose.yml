@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16
@@ -19,6 +17,26 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # NEXOR ERP backend API (the thing LAN/Tailscale clients connect to on :3000).
+  # Runs headless — no desktop app required. Applies migrations on startup.
+  backend:
+    build: ./backend
+    container_name: nexor-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_ENGINE: postgres
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-yel3an7azi}@postgres:5432/kwanza_erp
+      PORT: 3000
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    volumes:
+      # Drop belas.db here to run the one-time SQLite -> Postgres migration.
+      - ./import:/import:ro
 
 volumes:
   kwanza_pgdata:

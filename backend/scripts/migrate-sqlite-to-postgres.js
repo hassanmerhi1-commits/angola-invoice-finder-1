@@ -19,6 +19,8 @@
  *   $env:MIGRATE_DRY_RUN="true"  # no writes
  */
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const { Pool } = require('pg');
@@ -77,6 +79,23 @@ function mapEntityId(entityType, entityId, maps) {
   return null;
 }
 
+/** Resolve a journal entry's polymorphic source document to its new UUID (or null). */
+function mapJournalRef(refType, refId, maps) {
+  if (refId == null || refId === '') return null;
+  const s = String(refId);
+  switch (refType) {
+    case 'sale': return mapRef(maps.sales, s);
+    case 'purchase_invoice': return mapRef(maps.purchase_invoices, s);
+    case 'payment': return mapRef(maps.payments, s);
+    case 'transfer': return mapRef(maps.stock_transfers, s);
+    default: return null; // credit_note and unknown types are not hard-linked
+  }
+}
+
+function roundInt(v) {
+  return Math.round(safeNumber(v));
+}
+
 function parseDateOnly(v) {
   if (!v) return null;
   const d = new Date(v);
@@ -104,6 +123,8 @@ async function ensureCanConnect(pg) {
 async function truncateTarget(pg) {
   // Keep it limited to the core tables that exist in both schemas and are safe to re-import.
   const tables = [
+    'journal_entry_lines',
+    'journal_entries',
     'clearings',
     'open_items',
     'stock_movements',
@@ -116,6 +137,7 @@ async function truncateTarget(pg) {
     'stock_transfer_items',
     'stock_transfers',
     'daily_reports',
+    'cost_centers',
     'products',
     'suppliers',
     'clients',
@@ -155,7 +177,25 @@ async function main() {
   console.log('[MIGRATE] SQLITE_PATH:', SQLITE_PATH);
   console.log('[MIGRATE] DRY_RUN:', DRY_RUN);
 
-  const sqlite = new Database(SQLITE_PATH, { readonly: true, fileMustExist: true });
+  // Stage a writable temp copy of the SQLite file. This lets us open WAL-mode
+  // databases even when the source is on a read-only mount (e.g. Docker :ro),
+  // and guarantees the source file is never modified.
+  let effectiveSqlitePath = SQLITE_PATH;
+  let stagedPath = null;
+  try {
+    stagedPath = path.join(os.tmpdir(), `migrate-src-${Date.now()}.db`);
+    fs.copyFileSync(SQLITE_PATH, stagedPath);
+    for (const ext of ['-wal', '-shm']) {
+      if (fs.existsSync(SQLITE_PATH + ext)) fs.copyFileSync(SQLITE_PATH + ext, stagedPath + ext);
+    }
+    effectiveSqlitePath = stagedPath;
+    console.log('[MIGRATE] Staged read-only copy at:', stagedPath);
+  } catch (e) {
+    stagedPath = null;
+    console.warn('[MIGRATE] Could not stage temp copy, opening source directly:', e.message);
+  }
+
+  const sqlite = new Database(effectiveSqlitePath, { readonly: true, fileMustExist: true });
   const pg = new Pool({ connectionString: DATABASE_URL });
 
   try {
@@ -188,7 +228,14 @@ async function main() {
       open_items: sqliteTables.includes('open_items') ? buildIdMap(sqlite, 'open_items') : new Map(),
       clearings: sqliteTables.includes('clearings') ? buildIdMap(sqlite, 'clearings') : new Map(),
       stock_movements: sqliteTables.includes('stock_movements') ? buildIdMap(sqlite, 'stock_movements') : new Map(),
+      journal_entries: sqliteTables.includes('journal_entries') ? buildIdMap(sqlite, 'journal_entries') : new Map(),
+      journal_entry_lines: sqliteTables.includes('journal_entry_lines') ? buildIdMap(sqlite, 'journal_entry_lines') : new Map(),
+      cost_centers: sqliteTables.includes('cost_centers') ? buildIdMap(sqlite, 'cost_centers') : new Map(),
     };
+
+    // chart_of_accounts is seeded by migrations; we map gold COA id -> existing PG id (by code)
+    // or to a freshly generated UUID for custom accounts the user added.
+    const coaIdMap = new Map();
 
     await pg.query('BEGIN');
     await truncateTarget(pg);
@@ -619,6 +666,353 @@ async function main() {
       console.log('[MIGRATE] stock_movements:', rows.length);
     }
 
+    // ========== chart_of_accounts (upsert balances by code, add custom accounts) ==========
+    if (sqliteTables.includes('chart_of_accounts')) {
+      const existing = (await pg.query('SELECT id, code FROM chart_of_accounts')).rows;
+      const codeToPgId = new Map(existing.map(r => [String(r.code), r.id]));
+      const src = sqlite.prepare('SELECT * FROM chart_of_accounts').all();
+
+      // First pass: every gold account gets a target id (existing PG id by code, or a new uuid).
+      for (const r of src) {
+        const code = String(r.code);
+        coaIdMap.set(String(r.id), codeToPgId.get(code) || uuid());
+      }
+
+      // Second pass: update balances on seeded accounts, collect brand-new accounts to insert.
+      let updated = 0;
+      const toInsert = [];
+      for (const r of src) {
+        const code = String(r.code);
+        const targetId = coaIdMap.get(String(r.id));
+        const parentId = r.parent_id ? (coaIdMap.get(String(r.parent_id)) || null) : null;
+        const branchId = r.branch_id ? (maps.branches.get(String(r.branch_id)) || null) : null;
+        if (codeToPgId.has(code)) {
+          if (!DRY_RUN) {
+            await pg.query(
+              'UPDATE chart_of_accounts SET opening_balance=$1, current_balance=$2, branch_id=COALESCE($3, branch_id), updated_at=now() WHERE id=$4',
+              [safeNumber(r.opening_balance), safeNumber(r.current_balance), branchId, targetId]
+            );
+          }
+          updated++;
+        } else {
+          toInsert.push({
+            id: targetId,
+            code,
+            name: r.name || code,
+            description: r.description || null,
+            account_type: r.account_type || 'asset',
+            account_nature: r.account_nature || 'debit',
+            parent_id: parentId,
+            level: roundInt(r.level) || 1,
+            is_header: safeBool(r.is_header),
+            is_active: r.is_active == null ? true : safeBool(r.is_active),
+            opening_balance: safeNumber(r.opening_balance),
+            current_balance: safeNumber(r.current_balance),
+            children_count: roundInt(r.children_count),
+            branch_id: branchId,
+            created_at: r.created_at ? new Date(r.created_at) : new Date(),
+            updated_at: r.updated_at ? new Date(r.updated_at) : new Date(),
+          });
+        }
+      }
+      // Insert parents before children so the self-referencing FK is satisfied.
+      toInsert.sort((a, b) => a.level - b.level);
+      await insertBatch(
+        pg,
+        'chart_of_accounts',
+        [
+          'id', 'code', 'name', 'description', 'account_type', 'account_nature', 'parent_id',
+          'level', 'is_header', 'is_active', 'opening_balance', 'current_balance', 'children_count',
+          'branch_id', 'created_at', 'updated_at',
+        ],
+        toInsert
+      );
+      console.log('[MIGRATE] chart_of_accounts: updated', updated, 'balances, inserted', toInsert.length, 'new accounts');
+    }
+
+    // ========== cost_centers ==========
+    if (sqliteTables.includes('cost_centers')) {
+      const src = sqlite.prepare('SELECT * FROM cost_centers').all();
+      const rows = src.map(r => ({
+        id: maps.cost_centers.get(String(r.id)),
+        code: r.code,
+        name: r.name,
+        is_active: r.is_active == null ? true : safeBool(r.is_active),
+        created_at: r.created_at ? new Date(r.created_at) : new Date(),
+      }));
+      await insertBatch(pg, 'cost_centers', ['id', 'code', 'name', 'is_active', 'created_at'], rows);
+      console.log('[MIGRATE] cost_centers:', rows.length);
+    }
+
+    // ========== purchase_orders ==========
+    if (sqliteTables.includes('purchase_orders')) {
+      const src = sqlite.prepare('SELECT * FROM purchase_orders').all();
+      const rows = src.map(r => ({
+        id: maps.purchase_orders.get(String(r.id)),
+        order_number: r.order_number || `PO-${String(r.id).slice(0, 8)}`,
+        supplier_id: r.supplier_id ? (maps.suppliers.get(String(r.supplier_id)) || null) : null,
+        supplier_name: r.supplier_name || null,
+        branch_id: r.branch_id ? (maps.branches.get(String(r.branch_id)) || null) : null,
+        branch_name: r.branch_name || null,
+        subtotal: safeNumber(r.subtotal),
+        tax_amount: safeNumber(r.tax_amount),
+        total: safeNumber(r.total),
+        status: r.status || 'draft',
+        notes: r.notes || null,
+        created_by: r.created_by ? (maps.users.get(String(r.created_by)) || null) : null,
+        approved_by: r.approved_by ? (maps.users.get(String(r.approved_by)) || null) : null,
+        approved_at: r.approved_at ? new Date(r.approved_at) : null,
+        received_by: r.received_by ? (maps.users.get(String(r.received_by)) || null) : null,
+        received_at: r.received_at ? new Date(r.received_at) : null,
+        expected_delivery_date: parseDateOnly(r.expected_delivery_date),
+        freight_cost: safeNumber(r.freight_cost),
+        other_costs: safeNumber(r.other_costs),
+        other_costs_description: r.other_costs_description || null,
+        freight_distributed: safeBool(r.freight_distributed),
+        created_at: r.created_at ? new Date(r.created_at) : new Date(),
+      }));
+      await insertBatch(
+        pg,
+        'purchase_orders',
+        [
+          'id', 'order_number', 'supplier_id', 'supplier_name', 'branch_id', 'branch_name',
+          'subtotal', 'tax_amount', 'total', 'status', 'notes', 'created_by', 'approved_by',
+          'approved_at', 'received_by', 'received_at', 'expected_delivery_date', 'freight_cost',
+          'other_costs', 'other_costs_description', 'freight_distributed', 'created_at',
+        ],
+        rows
+      );
+      console.log('[MIGRATE] purchase_orders:', rows.length);
+    }
+
+    // ========== purchase_order_items ==========
+    if (sqliteTables.includes('purchase_order_items')) {
+      const src = sqlite.prepare('SELECT * FROM purchase_order_items').all();
+      const rows = src
+        .map(r => {
+          const orderId = r.order_id ? maps.purchase_orders.get(String(r.order_id)) : null;
+          if (!orderId) return null;
+          return {
+            id: maps.purchase_order_items.get(String(r.id)),
+            order_id: orderId,
+            product_id: r.product_id ? (maps.products.get(String(r.product_id)) || null) : null,
+            product_name: r.product_name || '',
+            sku: r.sku || null,
+            quantity: roundInt(r.quantity),
+            received_quantity: roundInt(r.received_quantity),
+            unit_cost: safeNumber(r.unit_cost),
+            tax_rate: safeNumber(r.tax_rate),
+            subtotal: safeNumber(r.subtotal),
+            freight_allocation: safeNumber(r.freight_allocation),
+            effective_cost: safeNumber(r.effective_cost),
+          };
+        })
+        .filter(Boolean);
+      await insertBatch(
+        pg,
+        'purchase_order_items',
+        [
+          'id', 'order_id', 'product_id', 'product_name', 'sku', 'quantity', 'received_quantity',
+          'unit_cost', 'tax_rate', 'subtotal', 'freight_allocation', 'effective_cost',
+        ],
+        rows
+      );
+      console.log('[MIGRATE] purchase_order_items:', rows.length);
+    }
+
+    // ========== stock_transfers ==========
+    if (sqliteTables.includes('stock_transfers')) {
+      const src = sqlite.prepare('SELECT * FROM stock_transfers').all();
+      const rows = src.map(r => ({
+        id: maps.stock_transfers.get(String(r.id)),
+        transfer_number: r.transfer_number || `TR-${String(r.id).slice(0, 8)}`,
+        from_branch_id: r.from_branch_id ? (maps.branches.get(String(r.from_branch_id)) || null) : null,
+        from_branch_name: r.from_branch_name || null,
+        to_branch_id: r.to_branch_id ? (maps.branches.get(String(r.to_branch_id)) || null) : null,
+        to_branch_name: r.to_branch_name || null,
+        status: r.status || 'pending',
+        requested_by: r.requested_by ? (maps.users.get(String(r.requested_by)) || null) : null,
+        approved_by: r.approved_by ? (maps.users.get(String(r.approved_by)) || null) : null,
+        approved_at: r.approved_at ? new Date(r.approved_at) : null,
+        received_by: r.received_by ? (maps.users.get(String(r.received_by)) || null) : null,
+        received_at: r.received_at ? new Date(r.received_at) : null,
+        notes: r.notes || null,
+        created_at: r.created_at ? new Date(r.created_at) : new Date(),
+      }));
+      await insertBatch(
+        pg,
+        'stock_transfers',
+        [
+          'id', 'transfer_number', 'from_branch_id', 'from_branch_name', 'to_branch_id', 'to_branch_name',
+          'status', 'requested_by', 'approved_by', 'approved_at', 'received_by', 'received_at', 'notes', 'created_at',
+        ],
+        rows
+      );
+      console.log('[MIGRATE] stock_transfers:', rows.length);
+    }
+
+    // ========== stock_transfer_items ==========
+    if (sqliteTables.includes('stock_transfer_items')) {
+      const src = sqlite.prepare('SELECT * FROM stock_transfer_items').all();
+      const rows = src
+        .map(r => {
+          const transferId = r.transfer_id ? maps.stock_transfers.get(String(r.transfer_id)) : null;
+          if (!transferId) return null;
+          return {
+            id: maps.stock_transfer_items.get(String(r.id)),
+            transfer_id: transferId,
+            product_id: r.product_id ? (maps.products.get(String(r.product_id)) || null) : null,
+            product_name: r.product_name || '',
+            sku: r.sku || null,
+            quantity: roundInt(r.quantity),
+            received_quantity: roundInt(r.received_quantity),
+          };
+        })
+        .filter(Boolean);
+      await insertBatch(
+        pg,
+        'stock_transfer_items',
+        ['id', 'transfer_id', 'product_id', 'product_name', 'sku', 'quantity', 'received_quantity'],
+        rows
+      );
+      console.log('[MIGRATE] stock_transfer_items:', rows.length);
+    }
+
+    // ========== daily_reports ==========
+    if (sqliteTables.includes('daily_reports')) {
+      const src = sqlite.prepare('SELECT * FROM daily_reports').all();
+      const rows = src.map(r => ({
+        id: maps.daily_reports.get(String(r.id)),
+        date: parseDateOnly(r.date) || new Date(),
+        branch_id: r.branch_id ? (maps.branches.get(String(r.branch_id)) || null) : null,
+        branch_name: r.branch_name || null,
+        total_sales: safeNumber(r.total_sales),
+        total_transactions: roundInt(r.total_transactions),
+        cash_total: safeNumber(r.cash_total),
+        card_total: safeNumber(r.card_total),
+        transfer_total: safeNumber(r.transfer_total),
+        tax_collected: safeNumber(r.tax_collected),
+        opening_balance: safeNumber(r.opening_balance),
+        closing_balance: safeNumber(r.closing_balance),
+        status: r.status || 'open',
+        closed_by: r.closed_by ? (maps.users.get(String(r.closed_by)) || null) : null,
+        closed_at: r.closed_at ? new Date(r.closed_at) : null,
+        notes: r.notes || null,
+        created_at: r.created_at ? new Date(r.created_at) : new Date(),
+      }));
+      await insertBatch(
+        pg,
+        'daily_reports',
+        [
+          'id', 'date', 'branch_id', 'branch_name', 'total_sales', 'total_transactions', 'cash_total',
+          'card_total', 'transfer_total', 'tax_collected', 'opening_balance', 'closing_balance',
+          'status', 'closed_by', 'closed_at', 'notes', 'created_at',
+        ],
+        rows
+      );
+      console.log('[MIGRATE] daily_reports:', rows.length);
+    }
+
+    // ========== journal_entries ==========
+    if (sqliteTables.includes('journal_entries')) {
+      const src = sqlite.prepare('SELECT * FROM journal_entries').all();
+      let snapped = 0;
+      const rows = src.map(r => {
+        // Round to cents first: the numeric(,2) column rounds on insert, which can turn a
+        // sub-cent float gap into exactly 0.01 and trip the |debit-credit| < 0.01 check.
+        let totalDebit = Math.round(safeNumber(r.total_debit) * 100) / 100;
+        let totalCredit = Math.round(safeNumber(r.total_credit) * 100) / 100;
+        // Snap residual rounding gaps in legacy data (keep the debit side as source of truth).
+        if (totalDebit !== totalCredit && Math.abs(totalDebit - totalCredit) <= 1) {
+          totalCredit = totalDebit;
+          snapped++;
+        }
+        return {
+        id: maps.journal_entries.get(String(r.id)),
+        entry_number: r.entry_number || `JE-${String(r.id).slice(0, 8)}`,
+        entry_date: parseDateOnly(r.entry_date) || parseDateOnly(r.created_at) || new Date(),
+        description: r.description || '',
+        reference_type: r.reference_type || null,
+        reference_id: mapJournalRef(r.reference_type, r.reference_id, maps),
+        total_debit: totalDebit,
+        total_credit: totalCredit,
+        is_posted: r.is_posted == null ? true : safeBool(r.is_posted),
+        posted_at: r.posted_at ? new Date(r.posted_at) : null,
+        branch_id: r.branch_id ? (maps.branches.get(String(r.branch_id)) || null) : null,
+        created_by: r.created_by ? (maps.users.get(String(r.created_by)) || null) : null,
+        created_at: r.created_at ? new Date(r.created_at) : new Date(),
+        };
+      });
+      await insertBatch(
+        pg,
+        'journal_entries',
+        [
+          'id', 'entry_number', 'entry_date', 'description', 'reference_type', 'reference_id',
+          'total_debit', 'total_credit', 'is_posted', 'posted_at', 'branch_id', 'created_by', 'created_at',
+        ],
+        rows
+      );
+      console.log('[MIGRATE] journal_entries:', rows.length, snapped ? `(snapped ${snapped} sub-unit rounding gap)` : '');
+    }
+
+    // ========== journal_entry_lines ==========
+    if (sqliteTables.includes('journal_entry_lines')) {
+      const src = sqlite.prepare('SELECT * FROM journal_entry_lines').all();
+      let skipped = 0;
+      const rows = src
+        .map(r => {
+          const entryId = r.journal_entry_id ? maps.journal_entries.get(String(r.journal_entry_id)) : null;
+          const accountId = r.account_id ? coaIdMap.get(String(r.account_id)) : null;
+          if (!entryId || !accountId) { skipped++; return null; }
+          return {
+            id: maps.journal_entry_lines.get(String(r.id)),
+            journal_entry_id: entryId,
+            account_id: accountId,
+            description: r.description || null,
+            debit_amount: safeNumber(r.debit_amount),
+            credit_amount: safeNumber(r.credit_amount),
+            created_at: r.created_at ? new Date(r.created_at) : new Date(),
+          };
+        })
+        .filter(Boolean);
+      await insertBatch(
+        pg,
+        'journal_entry_lines',
+        ['id', 'journal_entry_id', 'account_id', 'description', 'debit_amount', 'credit_amount', 'created_at'],
+        rows
+      );
+      console.log('[MIGRATE] journal_entry_lines:', rows.length, skipped ? `(skipped ${skipped} with unmapped entry/account)` : '');
+    }
+
+    // ========== document_sequences (continue invoice numbering, no duplicates) ==========
+    if (sqliteTables.includes('document_sequences') && !DRY_RUN) {
+      const src = sqlite.prepare('SELECT * FROM document_sequences').all();
+      let upserted = 0;
+      for (const r of src) {
+        const branchId = r.branch_id ? (maps.branches.get(String(r.branch_id)) || String(r.branch_id)) : '';
+        const dt = r.document_type;
+        const fy = roundInt(r.fiscal_year);
+        const cur = roundInt(r.current_number);
+        const found = await pg.query(
+          'SELECT id, current_number FROM document_sequences WHERE document_type=$1 AND fiscal_year=$2 AND branch_id=$3',
+          [dt, fy, branchId]
+        );
+        if (found.rows.length) {
+          await pg.query(
+            'UPDATE document_sequences SET current_number=GREATEST(current_number, $1) WHERE id=$2',
+            [cur, found.rows[0].id]
+          );
+        } else {
+          await pg.query(
+            'INSERT INTO document_sequences (id, document_type, prefix, fiscal_year, current_number, branch_id) VALUES ($1,$2,$3,$4,$5,$6)',
+            [uuid(), dt, r.prefix || '', fy, cur, branchId]
+          );
+        }
+        upserted++;
+      }
+      console.log('[MIGRATE] document_sequences: upserted', upserted);
+    }
+
     if (!DRY_RUN) await pg.query('COMMIT');
     else await pg.query('ROLLBACK');
 
@@ -626,6 +1020,9 @@ async function main() {
     const countTables = [
       'branches', 'users', 'categories', 'suppliers', 'clients', 'products', 'sales', 'sale_items',
       'purchase_invoices', 'payments', 'open_items', 'clearings', 'stock_movements',
+      'purchase_orders', 'purchase_order_items', 'stock_transfers', 'stock_transfer_items',
+      'daily_reports', 'cost_centers', 'chart_of_accounts', 'journal_entries', 'journal_entry_lines',
+      'document_sequences',
     ];
     for (const t of countTables) {
       try {
@@ -644,6 +1041,11 @@ async function main() {
   } finally {
     try { sqlite.close(); } catch (_) {}
     try { await pg.end(); } catch (_) {}
+    if (stagedPath) {
+      for (const ext of ['', '-wal', '-shm']) {
+        try { fs.unlinkSync(stagedPath + ext); } catch (_) {}
+      }
+    }
   }
 }
 

@@ -1,0 +1,2 @@
+# Place belas.db here (on the server PC) to run the one-time SQLite -> Postgres migration.
+# It is mounted read-only into the backend container at /import.

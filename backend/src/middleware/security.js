@@ -3,7 +3,8 @@
 
 /**
  * LAN-restricted CORS middleware
- * Allows: localhost, 127.0.0.1, 192.168.x.x, 10.x.x.x, 172.16-31.x.x, Electron file://
+ * Allows: localhost, 127.0.0.1, 192.168.x.x, 10.x.x.x, 172.16-31.x.x,
+ * Tailscale 100.64-127.x.x (CGNAT), Electron file://
  */
 function lanCors(req, res, next) {
   const origin = req.headers.origin || '';
@@ -39,6 +40,8 @@ function isAllowedOrigin(origin) {
     if (host.startsWith('192.168.')) return true;
     if (host.startsWith('10.')) return true;
     if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+    // Tailscale / CGNAT range (100.64.0.0/10) — for VPN-connected LAN clients
+    if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)) return true;
 
     // Electron file://
     if (url.protocol === 'file:') return true;
