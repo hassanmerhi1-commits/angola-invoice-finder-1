@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useProducts } from '@/hooks/useERP';
 import { ShoppingCart, Loader2, Truck, Package, Tags, Calendar } from 'lucide-react';
@@ -12,8 +11,15 @@ import { useTranslation } from '@/i18n';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { buildPurchasesPivot, type PurchasesPivotContext } from '@/lib/reports/purchasesPivot';
 import PurchasesPivotView from '@/components/reports/PurchasesPivotView';
+import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
 
-export default function PurchasesAnalysisReport() {
+export default function PurchasesAnalysisReport({
+  view,
+  onViewChange,
+}: {
+  view?: string;
+  onViewChange?: (value: string) => void;
+} = {}) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
@@ -23,7 +29,9 @@ export default function PurchasesAnalysisReport() {
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [purchases, setPurchases] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [viewTab, setViewTab] = useState('summary');
+  const [internalViewTab, setInternalViewTab] = useState('summary');
+  const viewTab = view ?? internalViewTab;
+  const setViewTab = onViewChange ?? setInternalViewTab;
 
   useEffect(() => {
     let cancelled = false;
@@ -92,6 +100,14 @@ export default function PurchasesAnalysisReport() {
   const periodSuffix = `${dateFrom}_${dateTo}`;
   const periodLabel = `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`;
 
+  const viewOptions: ReportOption[] = [
+    { value: 'summary', label: t.purchasesReportUi.tabSummary, icon: Calendar },
+    { value: 'suppliers', label: t.purchasesReportUi.bySupplier, icon: Truck },
+    { value: 'products', label: t.purchasesReportUi.byProduct, icon: Package },
+    { value: 'categories', label: t.purchasesReportUi.byCategory, icon: Tags },
+    { value: 'months', label: t.purchasesReportUi.byMonth, icon: Calendar },
+  ];
+
   return (
     <div className="space-y-6">
       <Card>
@@ -150,31 +166,10 @@ export default function PurchasesAnalysisReport() {
             </Card>
           </div>
 
-          <Tabs value={viewTab} onValueChange={setViewTab}>
-            <TabsList className="flex-wrap h-auto">
-              <TabsTrigger value="summary">
-                <Calendar className="w-4 h-4 mr-2" />
-                {t.purchasesReportUi.tabSummary}
-              </TabsTrigger>
-              <TabsTrigger value="suppliers">
-                <Truck className="w-4 h-4 mr-2" />
-                {t.purchasesReportUi.bySupplier}
-              </TabsTrigger>
-              <TabsTrigger value="products">
-                <Package className="w-4 h-4 mr-2" />
-                {t.purchasesReportUi.byProduct}
-              </TabsTrigger>
-              <TabsTrigger value="categories">
-                <Tags className="w-4 h-4 mr-2" />
-                {t.purchasesReportUi.byCategory}
-              </TabsTrigger>
-              <TabsTrigger value="months">
-                <Calendar className="w-4 h-4 mr-2" />
-                {t.purchasesReportUi.byMonth}
-              </TabsTrigger>
-            </TabsList>
+          {!onViewChange && <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />}
 
-            <TabsContent value="summary">
+          <div>
+            {viewTab === 'summary' && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">{t.purchasesReportUi.byMonth}</CardTitle>
@@ -193,9 +188,9 @@ export default function PurchasesAnalysisReport() {
                   </div>
                 </CardContent>
               </Card>
-            </TabsContent>
+            )}
 
-            <TabsContent value="suppliers">
+            {viewTab === 'suppliers' && (
               <PurchasesPivotView
                 dimensionLabel={t.purchasesReportUi.supplier}
                 rows={supplierPivot.rows}
@@ -204,9 +199,9 @@ export default function PurchasesAnalysisReport() {
                 fileName={`Compras_Fornecedor_${periodSuffix}`}
                 subtitle={periodLabel}
               />
-            </TabsContent>
+            )}
 
-            <TabsContent value="products">
+            {viewTab === 'products' && (
               <PurchasesPivotView
                 dimensionLabel={t.purchasesReportUi.product}
                 rows={productPivot.rows}
@@ -215,9 +210,9 @@ export default function PurchasesAnalysisReport() {
                 fileName={`Compras_Produto_${periodSuffix}`}
                 subtitle={periodLabel}
               />
-            </TabsContent>
+            )}
 
-            <TabsContent value="categories">
+            {viewTab === 'categories' && (
               <PurchasesPivotView
                 dimensionLabel={t.purchasesReportUi.category}
                 rows={categoryPivot.rows}
@@ -226,9 +221,9 @@ export default function PurchasesAnalysisReport() {
                 fileName={`Compras_Categoria_${periodSuffix}`}
                 subtitle={periodLabel}
               />
-            </TabsContent>
+            )}
 
-            <TabsContent value="months">
+            {viewTab === 'months' && (
               <PurchasesPivotView
                 dimensionLabel={t.purchasesReportUi.month}
                 rows={monthPivot.rows}
@@ -238,8 +233,8 @@ export default function PurchasesAnalysisReport() {
                 showChart={false}
                 subtitle={periodLabel}
               />
-            </TabsContent>
-          </Tabs>
+            )}
+          </div>
         </>
       )}
     </div>

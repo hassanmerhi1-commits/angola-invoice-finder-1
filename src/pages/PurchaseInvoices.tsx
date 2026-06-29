@@ -468,13 +468,13 @@ function ProductPickerDialog({
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const [search, setSearch] = useState('');
   const filtered = useMemo(() => {
-    if (!search) return products.slice(0, 100);
+    if (!search) return products.slice(0, 1000);
     const q = search.toLowerCase();
     return products.filter(p =>
       p.name.toLowerCase().includes(q) ||
       p.sku.toLowerCase().includes(q) ||
       p.barcode?.toLowerCase().includes(q)
-    ).slice(0, 100);
+    ).slice(0, 1000);
   }, [products, search]);
 
   return (

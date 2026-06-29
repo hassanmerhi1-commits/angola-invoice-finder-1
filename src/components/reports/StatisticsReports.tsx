@@ -3,7 +3,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales } from '@/hooks/useERP';
 import { Trophy, Users, Package, Truck, User } from 'lucide-react';
@@ -12,10 +11,15 @@ import { useTranslation } from '@/i18n';
 import { buildSalesPivot } from '@/lib/reports/salesPivot';
 import { useSalesPivotContext } from '@/components/reports/useSalesPivotContext';
 import PivotReportView from '@/components/reports/PivotReportView';
+import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
 
-const SUB_TABS = new Set(['top-customers', 'top-products', 'top-suppliers', 'top-users']);
-
-export default function StatisticsReports({ initialTab }: { initialTab?: string }) {
+export default function StatisticsReports({
+  view,
+  onViewChange,
+}: {
+  view?: string;
+  onViewChange?: (value: string) => void;
+}) {
   const { t } = useTranslation();
   const { branches, currentBranch, apiBranchId, canPickBranch } = useBranchScope();
   const { sales } = useSales(apiBranchId);
@@ -24,11 +28,9 @@ export default function StatisticsReports({ initialTab }: { initialTab?: string 
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [selectedBranch, setSelectedBranch] = useState<string>('all');
-  const [tab, setTab] = useState(initialTab && SUB_TABS.has(initialTab) ? initialTab : 'top-customers');
-
-  useEffect(() => {
-    if (initialTab && SUB_TABS.has(initialTab)) setTab(initialTab);
-  }, [initialTab]);
+  const [internalTab, setInternalTab] = useState('top-customers');
+  const tab = view ?? internalTab;
+  const setTab = onViewChange ?? setInternalTab;
 
   useEffect(() => {
     if (!canPickBranch && currentBranch?.id) setSelectedBranch(currentBranch.id);
@@ -50,6 +52,13 @@ export default function StatisticsReports({ initialTab }: { initialTab?: string 
 
   const periodSuffix = `${dateFrom}_${dateTo}`;
   const periodLabel = `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`;
+
+  const options: ReportOption[] = [
+    { value: 'top-customers', label: t.statisticsUi.topCustomers, icon: Users },
+    { value: 'top-products', label: t.statisticsUi.topProducts, icon: Package },
+    { value: 'top-suppliers', label: t.statisticsUi.topSuppliers, icon: Truck },
+    { value: 'top-users', label: t.statisticsUi.topUsers, icon: User },
+  ];
 
   return (
     <div className="space-y-6">
@@ -92,27 +101,10 @@ export default function StatisticsReports({ initialTab }: { initialTab?: string 
         </CardContent>
       </Card>
 
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="flex-wrap h-auto">
-          <TabsTrigger value="top-customers">
-            <Users className="w-4 h-4 mr-2" />
-            {t.statisticsUi.topCustomers}
-          </TabsTrigger>
-          <TabsTrigger value="top-products">
-            <Package className="w-4 h-4 mr-2" />
-            {t.statisticsUi.topProducts}
-          </TabsTrigger>
-          <TabsTrigger value="top-suppliers">
-            <Truck className="w-4 h-4 mr-2" />
-            {t.statisticsUi.topSuppliers}
-          </TabsTrigger>
-          <TabsTrigger value="top-users">
-            <User className="w-4 h-4 mr-2" />
-            {t.statisticsUi.topUsers}
-          </TabsTrigger>
-        </TabsList>
+      {!onViewChange && <ReportPicker options={options} value={tab} onChange={setTab} />}
 
-        <TabsContent value="top-customers" className="mt-4">
+      <div>
+        {tab === 'top-customers' && (
           <PivotReportView
             dimensionLabel={t.reportsUi.client}
             rows={customerPivot.rows}
@@ -120,9 +112,9 @@ export default function StatisticsReports({ initialTab }: { initialTab?: string 
             fileName={`TopClientes_${periodSuffix}`}
             subtitle={periodLabel}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="top-products" className="mt-4">
+        {tab === 'top-products' && (
           <PivotReportView
             dimensionLabel={t.salesByProductUi.product}
             rows={productPivot.rows}
@@ -131,9 +123,9 @@ export default function StatisticsReports({ initialTab }: { initialTab?: string 
             subtitle={periodLabel}
             enableGrouping
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="top-suppliers" className="mt-4">
+        {tab === 'top-suppliers' && (
           <PivotReportView
             dimensionLabel={t.reportsUi.supplier}
             rows={supplierPivot.rows}
@@ -141,9 +133,9 @@ export default function StatisticsReports({ initialTab }: { initialTab?: string 
             fileName={`TopFornecedores_${periodSuffix}`}
             subtitle={periodLabel}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="top-users" className="mt-4">
+        {tab === 'top-users' && (
           <PivotReportView
             dimensionLabel={t.salesAnalysisUi.colUser}
             rows={userPivot.rows}
@@ -151,8 +143,8 @@ export default function StatisticsReports({ initialTab }: { initialTab?: string 
             fileName={`TopVendedores_${periodSuffix}`}
             subtitle={periodLabel}
           />
-        </TabsContent>
-      </Tabs>
+        )}
+      </div>
     </div>
   );
 }

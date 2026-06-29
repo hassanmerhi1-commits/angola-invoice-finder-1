@@ -9,6 +9,10 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import { PRICE_LEVELS, normalizePriceLevel } from '@/lib/pricing';
+import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
@@ -33,11 +37,11 @@ export default function Branches() {
   const [isLoading, setIsLoading] = useState(false);
 
   const [formData, setFormData] = useState({
-    name: '', code: '', address: '', phone: '', isMain: false,
+    name: '', code: '', address: '', phone: '', isMain: false, priceLevel: 1,
   });
 
   const resetForm = () => {
-    setFormData({ name: '', code: '', address: '', phone: '', isMain: false });
+    setFormData({ name: '', code: '', address: '', phone: '', isMain: false, priceLevel: 1 });
     setEditingBranch(null);
   };
 
@@ -48,6 +52,7 @@ export default function Branches() {
     setFormData({
       name: branch.name, code: branch.code || '', address: branch.address || '',
       phone: branch.phone || '', isMain: branch.isMain || false,
+      priceLevel: normalizePriceLevel(branch.priceLevel ?? 1),
     });
     setDialogOpen(true);
   };
@@ -84,7 +89,7 @@ export default function Branches() {
             address: formData.address || '',
             phone: formData.phone || '',
             isMain: formData.isMain || false,
-            priceLevel: 1,
+            priceLevel: normalizePriceLevel(formData.priceLevel),
             createdAt: new Date().toISOString(),
           };
           await saveBranch(newBranch);
@@ -164,6 +169,7 @@ export default function Branches() {
                   <TableHead>{t.branchesUi.colCode}</TableHead>
                   <TableHead>{t.branchesUi.colAddress}</TableHead>
                   <TableHead>{t.branchesUi.colPhone}</TableHead>
+                  <TableHead>{t.branchesUi.colPriceLevel}</TableHead>
                   <TableHead>{t.branchesUi.colType}</TableHead>
                   <TableHead className="text-right">{t.branchesUi.colActions}</TableHead>
                 </TableRow>
@@ -188,6 +194,11 @@ export default function Branches() {
                           {branch.phone}
                         </span>
                       ) : '-'}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">
+                        {t.posUi.priceLevelOption.replace('{n}', String(normalizePriceLevel(branch.priceLevel ?? 1)))}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       {branch.isMain ? (
@@ -235,6 +246,25 @@ export default function Branches() {
             <div className="space-y-2">
               <Label htmlFor="phone">{t.branchesUi.phoneLabel}</Label>
               <Input id="phone" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} placeholder={t.branchesUi.phonePlaceholder} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="priceLevel">{t.branchesUi.priceLevelLabel}</Label>
+              <Select
+                value={String(formData.priceLevel)}
+                onValueChange={(v) => setFormData({ ...formData, priceLevel: normalizePriceLevel(Number(v)) })}
+              >
+                <SelectTrigger id="priceLevel">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PRICE_LEVELS.map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {t.posUi.priceLevelOption.replace('{n}', String(n))}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t.branchesUi.priceLevelHint}</p>
             </div>
             <div className="flex items-center justify-between">
               <Label htmlFor="isMain">{t.branchesUi.mainBranchLabel}</Label>

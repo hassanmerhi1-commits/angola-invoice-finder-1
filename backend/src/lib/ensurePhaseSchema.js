@@ -138,6 +138,34 @@ async function ensureClientPricingColumns(db) {
   }
 }
 
+/** Per-branch default selling price level (1-4) applied automatically at the POS. */
+async function ensureBranchPricingColumn(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query('ALTER TABLE branches ADD COLUMN IF NOT EXISTS price_level INTEGER DEFAULT 1');
+    } catch (err) {
+      if (err.code !== '42701') console.warn('[SCHEMA] branches.price_level column:', err.message);
+    }
+    return;
+  }
+
+  if (db.sqlite) {
+    let cols = [];
+    try {
+      cols = db.sqlite.pragma('table_info(branches)');
+    } catch (_) {
+      return;
+    }
+    if (!cols.length) return;
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has('price_level')) {
+      try {
+        db.sqlite.exec('ALTER TABLE branches ADD COLUMN price_level INTEGER DEFAULT 1');
+      } catch (_) {}
+    }
+  }
+}
+
 /** Per-user permission overrides (grant/revoke deltas on top of the role), stored as JSON text. */
 async function ensureUserPermissionsColumn(db) {
   if (db.engine === 'postgres') {
@@ -356,6 +384,7 @@ async function ensurePhaseSchema(db) {
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
+    await ensureBranchPricingColumn(db);
     await ensureUserPermissionsColumn(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
@@ -380,6 +409,7 @@ async function ensurePhaseSchema(db) {
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
+    await ensureBranchPricingColumn(db);
     await ensureUserPermissionsColumn(db);
     await ensurePgcChartOfAccounts(db);
     console.log('[SCHEMA] SQLite phase column patches applied');
@@ -392,6 +422,7 @@ module.exports = {
   ensureDocumentSequencesBranchScope,
   ensureCreditNoteRestoreStockColumn,
   ensureClientPricingColumns,
+  ensureBranchPricingColumn,
   ensureUserPermissionsColumn,
   ensureAuditLogActions,
 };

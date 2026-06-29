@@ -1,47 +1,37 @@
-import { useEffect, useState } from 'react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useState } from 'react';
 import { Package, ArrowRightLeft, Tags } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
 import StockValuationReport from '@/components/reports/StockValuationReport';
 import StockByCategoryReport from '@/components/reports/StockByCategoryReport';
 import StockMovementReport from '@/components/reports/StockMovementReport';
 
-const SUB_TABS = new Set(['valuation', 'category', 'movements']);
-
-export default function InventoryReports({ initialTab }: { initialTab?: string }) {
+export default function InventoryReports({
+  view,
+  onViewChange,
+}: {
+  view?: string;
+  onViewChange?: (value: string) => void;
+}) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState(initialTab && SUB_TABS.has(initialTab) ? initialTab : 'valuation');
+  const [internalTab, setInternalTab] = useState('valuation');
+  const tab = view ?? internalTab;
+  const setTab = onViewChange ?? setInternalTab;
 
-  useEffect(() => {
-    if (initialTab && SUB_TABS.has(initialTab)) setTab(initialTab);
-  }, [initialTab]);
+  const options: ReportOption[] = [
+    { value: 'valuation', label: t.reportsCenterUi.tabStock, icon: Package },
+    { value: 'category', label: t.stockValuationUi.byCategory, icon: Tags },
+    { value: 'movements', label: t.reportsCenterUi.tabMovements, icon: ArrowRightLeft },
+  ];
 
   return (
-    <Tabs value={tab} onValueChange={setTab}>
-      <TabsList className="flex-wrap h-auto">
-        <TabsTrigger value="valuation">
-          <Package className="w-4 h-4 mr-2" />
-          {t.reportsCenterUi.tabStock}
-        </TabsTrigger>
-        <TabsTrigger value="category">
-          <Tags className="w-4 h-4 mr-2" />
-          {t.stockValuationUi.byCategory}
-        </TabsTrigger>
-        <TabsTrigger value="movements">
-          <ArrowRightLeft className="w-4 h-4 mr-2" />
-          {t.reportsCenterUi.tabMovements}
-        </TabsTrigger>
-      </TabsList>
-
-      <TabsContent value="valuation" className="mt-4">
-        <StockValuationReport />
-      </TabsContent>
-      <TabsContent value="category" className="mt-4">
-        <StockByCategoryReport />
-      </TabsContent>
-      <TabsContent value="movements" className="mt-4">
-        <StockMovementReport />
-      </TabsContent>
-    </Tabs>
+    <div className="space-y-4">
+      {!onViewChange && <ReportPicker options={options} value={tab} onChange={setTab} />}
+      <div>
+        {tab === 'valuation' && <StockValuationReport />}
+        {tab === 'category' && <StockByCategoryReport />}
+        {tab === 'movements' && <StockMovementReport />}
+      </div>
+    </div>
   );
 }

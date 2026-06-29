@@ -3,7 +3,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales } from '@/hooks/useERP';
 import { PieChart, TrendingUp, TrendingDown, Package, Tags, Users, Truck } from 'lucide-react';
@@ -14,10 +13,17 @@ import { useTranslation } from '@/i18n';
 import { buildSalesPivot } from '@/lib/reports/salesPivot';
 import { useSalesPivotContext } from '@/components/reports/useSalesPivotContext';
 import PivotReportView from '@/components/reports/PivotReportView';
+import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
-export default function ProfitabilityReport() {
+export default function ProfitabilityReport({
+  view,
+  onViewChange,
+}: {
+  view?: string;
+  onViewChange?: (value: string) => void;
+} = {}) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { branches, currentBranch, apiBranchId, canPickBranch } = useBranchScope();
@@ -27,7 +33,9 @@ export default function ProfitabilityReport() {
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [selectedBranch, setSelectedBranch] = useState<string>('all');
-  const [viewTab, setViewTab] = useState('summary');
+  const [internalViewTab, setInternalViewTab] = useState('summary');
+  const viewTab = view ?? internalViewTab;
+  const setViewTab = onViewChange ?? setInternalViewTab;
 
   useEffect(() => {
     if (!canPickBranch && currentBranch?.id) setSelectedBranch(currentBranch.id);
@@ -67,6 +75,14 @@ export default function ProfitabilityReport() {
 
   const periodSuffix = `${dateFrom}_${dateTo}`;
   const periodLabel = `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`;
+
+  const viewOptions: ReportOption[] = [
+    { value: 'summary', label: t.salesAnalysisUi.tabSummary, icon: PieChart },
+    { value: 'item', label: t.salesAnalysisUi.tabByItem, icon: Package },
+    { value: 'category', label: t.salesAnalysisUi.tabByCategory, icon: Tags },
+    { value: 'customer', label: t.salesAnalysisUi.tabByCustomer, icon: Users },
+    { value: 'supplier', label: t.salesAnalysisUi.tabBySupplier, icon: Truck },
+  ];
 
   return (
     <div className="space-y-6">
@@ -152,32 +168,11 @@ export default function ProfitabilityReport() {
         </Card>
       </div>
 
-      {/* Sub-tabs */}
-      <Tabs value={viewTab} onValueChange={setViewTab}>
-        <TabsList className="flex-wrap h-auto">
-          <TabsTrigger value="summary">
-            <PieChart className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabSummary}
-          </TabsTrigger>
-          <TabsTrigger value="item">
-            <Package className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabByItem}
-          </TabsTrigger>
-          <TabsTrigger value="category">
-            <Tags className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabByCategory}
-          </TabsTrigger>
-          <TabsTrigger value="customer">
-            <Users className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabByCustomer}
-          </TabsTrigger>
-          <TabsTrigger value="supplier">
-            <Truck className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabBySupplier}
-          </TabsTrigger>
-        </TabsList>
+      {/* Sub-report selector */}
+      {!onViewChange && <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />}
 
-        <TabsContent value="summary" className="space-y-4">
+      <div className="space-y-4">
+        {viewTab === 'summary' && (
           <div className="grid md:grid-cols-2 gap-4">
             <Card>
               <CardHeader>
@@ -227,9 +222,9 @@ export default function ProfitabilityReport() {
               </CardContent>
             </Card>
           </div>
-        </TabsContent>
+        )}
 
-        <TabsContent value="item">
+        {viewTab === 'item' && (
           <PivotReportView
             dimensionLabel={t.salesByProductUi.product}
             rows={itemPivot.rows}
@@ -238,9 +233,9 @@ export default function ProfitabilityReport() {
             subtitle={periodLabel}
             enableGrouping
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="category">
+        {viewTab === 'category' && (
           <PivotReportView
             dimensionLabel={t.salesByProductUi.category}
             rows={categoryPivot.rows}
@@ -248,9 +243,9 @@ export default function ProfitabilityReport() {
             fileName={`Rentabilidade_Categoria_${periodSuffix}`}
             subtitle={periodLabel}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="customer">
+        {viewTab === 'customer' && (
           <PivotReportView
             dimensionLabel={t.reportsUi.client}
             rows={customerPivot.rows}
@@ -258,9 +253,9 @@ export default function ProfitabilityReport() {
             fileName={`Rentabilidade_Cliente_${periodSuffix}`}
             subtitle={periodLabel}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="supplier">
+        {viewTab === 'supplier' && (
           <PivotReportView
             dimensionLabel={t.reportsUi.supplier}
             rows={supplierPivot.rows}
@@ -268,8 +263,8 @@ export default function ProfitabilityReport() {
             fileName={`Rentabilidade_Fornecedor_${periodSuffix}`}
             subtitle={periodLabel}
           />
-        </TabsContent>
-      </Tabs>
+        )}
+      </div>
     </div>
   );
 }

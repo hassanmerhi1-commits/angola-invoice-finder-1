@@ -1,63 +1,43 @@
-import { useEffect, useState } from 'react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useState } from 'react';
 import { Scale, DollarSign, FileText, Receipt, Wallet } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
 import TrialBalanceReport from '@/components/reports/TrialBalanceReport';
 import IncomeStatementReport from '@/components/reports/IncomeStatementReport';
 import BalanceSheetReport from '@/components/reports/BalanceSheetReport';
 import VatSummaryReport from '@/components/reports/VatSummaryReport';
 import CashFlowReport from '@/components/reports/CashFlowReport';
 
-const SUB_TABS = new Set(['trial-balance', 'income-statement', 'balance-sheet', 'vat', 'cash-flow']);
-
-export default function FinancialReports({ initialTab }: { initialTab?: string }) {
+export default function FinancialReports({
+  view,
+  onViewChange,
+}: {
+  view?: string;
+  onViewChange?: (value: string) => void;
+}) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState(initialTab && SUB_TABS.has(initialTab) ? initialTab : 'trial-balance');
+  const [internalTab, setInternalTab] = useState('trial-balance');
+  const tab = view ?? internalTab;
+  const setTab = onViewChange ?? setInternalTab;
 
-  useEffect(() => {
-    if (initialTab && SUB_TABS.has(initialTab)) setTab(initialTab);
-  }, [initialTab]);
+  const options: ReportOption[] = [
+    { value: 'trial-balance', label: t.reportsCenterUi.tabTrialBalance, icon: Scale },
+    { value: 'income-statement', label: t.reportsCenterUi.tabIncomeStatement, icon: DollarSign },
+    { value: 'balance-sheet', label: t.reportsCenterUi.tabBalanceSheet, icon: FileText },
+    { value: 'vat', label: t.reportsCenterUi.tabVat, icon: Receipt },
+    { value: 'cash-flow', label: t.reportsCenterUi.tabCashFlow, icon: Wallet },
+  ];
 
   return (
-    <Tabs value={tab} onValueChange={setTab}>
-      <TabsList className="flex-wrap h-auto">
-        <TabsTrigger value="trial-balance">
-          <Scale className="w-4 h-4 mr-2" />
-          {t.reportsCenterUi.tabTrialBalance}
-        </TabsTrigger>
-        <TabsTrigger value="income-statement">
-          <DollarSign className="w-4 h-4 mr-2" />
-          {t.reportsCenterUi.tabIncomeStatement}
-        </TabsTrigger>
-        <TabsTrigger value="balance-sheet">
-          <FileText className="w-4 h-4 mr-2" />
-          {t.reportsCenterUi.tabBalanceSheet}
-        </TabsTrigger>
-        <TabsTrigger value="vat">
-          <Receipt className="w-4 h-4 mr-2" />
-          {t.reportsCenterUi.tabVat}
-        </TabsTrigger>
-        <TabsTrigger value="cash-flow">
-          <Wallet className="w-4 h-4 mr-2" />
-          {t.reportsCenterUi.tabCashFlow}
-        </TabsTrigger>
-      </TabsList>
-
-      <TabsContent value="trial-balance" className="mt-4">
-        <TrialBalanceReport />
-      </TabsContent>
-      <TabsContent value="income-statement" className="mt-4">
-        <IncomeStatementReport />
-      </TabsContent>
-      <TabsContent value="balance-sheet" className="mt-4">
-        <BalanceSheetReport />
-      </TabsContent>
-      <TabsContent value="vat" className="mt-4">
-        <VatSummaryReport />
-      </TabsContent>
-      <TabsContent value="cash-flow" className="mt-4">
-        <CashFlowReport />
-      </TabsContent>
-    </Tabs>
+    <div className="space-y-4">
+      {!onViewChange && <ReportPicker options={options} value={tab} onChange={setTab} />}
+      <div>
+        {tab === 'trial-balance' && <TrialBalanceReport />}
+        {tab === 'income-statement' && <IncomeStatementReport />}
+        {tab === 'balance-sheet' && <BalanceSheetReport />}
+        {tab === 'vat' && <VatSummaryReport />}
+        {tab === 'cash-flow' && <CashFlowReport />}
+      </div>
+    </div>
   );
 }

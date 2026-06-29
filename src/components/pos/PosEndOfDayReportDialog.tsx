@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Sale, Branch, User } from '@/types/erp';
+import type { CaixaSession } from '@/types/accounting';
 import {
   Dialog,
   DialogContent,
@@ -7,6 +8,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Table,
   TableBody,
@@ -17,7 +21,7 @@ import {
   TableFooter,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Printer, FileText } from 'lucide-react';
+import { Printer, FileText, DoorClosed, Wallet } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { getCompanySettings } from '@/lib/companySettings';
 import { printHtml } from '@/lib/printHtml';
@@ -30,6 +34,8 @@ interface PosEndOfDayReportDialogProps {
   sales: Sale[];
   cashier: User | null;
   branch: Branch | null;
+  session?: CaixaSession | null;
+  onCloseCaixa?: (countedCash: number, notes?: string) => void | Promise<void>;
 }
 
 function saleLocalDate(createdAt: string) {
@@ -50,12 +56,24 @@ export function PosEndOfDayReportDialog({
   sales,
   cashier,
   branch,
+  session,
+  onCloseCaixa,
 }: PosEndOfDayReportDialogProps) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const dfLocale = language === 'pt' ? pt : enUS;
   const company = getCompanySettings();
   const today = todayLocalDate();
+  const [countedCash, setCountedCash] = useState('');
+  const [closeNotes, setCloseNotes] = useState('');
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setCountedCash('');
+      setCloseNotes('');
+    }
+  }, [open]);
 
   const cashierSales = useMemo(() => {
     if (!cashier) return [];
@@ -138,6 +156,24 @@ export function PosEndOfDayReportDialog({
     await printHtml(buildPrintHtml());
   };
 
+  const expectedCash = session
+    ? session.openingBalance + session.totalIn - session.totalOut
+    : 0;
+  const counted = parseFloat(countedCash);
+  const countedValue = Number.isFinite(counted) ? counted : 0;
+  const difference = countedValue - expectedCash;
+
+  const handleCloseCaixa = async () => {
+    if (!session || !onCloseCaixa) return;
+    setClosing(true);
+    try {
+      await onCloseCaixa(countedValue, closeNotes.trim() || undefined);
+      onOpenChange(false);
+    } finally {
+      setClosing(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
@@ -214,6 +250,74 @@ export function PosEndOfDayReportDialog({
             <div className="font-mono font-semibold">{(totals.byPayment.transfer || 0).toLocaleString(locale)} Kz</div>
           </div>
         </div>
+
+        {session && onCloseCaixa && (
+          <div className="rounded-md border p-3 space-y-3 bg-muted/30">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Wallet className="w-4 h-4" />
+              {t.posUi.caixa.reconcileTitle}
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+              <span className="text-muted-foreground">{t.posUi.caixa.openingBalanceLabel}</span>
+              <span className="text-right font-mono">{session.openingBalance.toLocaleString(locale)} Kz</span>
+              <span className="text-muted-foreground">{t.posUi.caixa.cashInLabel}</span>
+              <span className="text-right font-mono">{session.totalIn.toLocaleString(locale)} Kz</span>
+              <span className="text-muted-foreground">{t.posUi.caixa.cashOutLabel}</span>
+              <span className="text-right font-mono">{session.totalOut.toLocaleString(locale)} Kz</span>
+              <span className="font-semibold">{t.posUi.caixa.expectedCashLabel}</span>
+              <span className="text-right font-mono font-semibold">{expectedCash.toLocaleString(locale)} Kz</span>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="pos-counted-cash">{t.posUi.caixa.countedCashLabel}</Label>
+              <Input
+                id="pos-counted-cash"
+                type="number"
+                min={0}
+                step="0.01"
+                value={countedCash}
+                onChange={(e) => setCountedCash(e.target.value)}
+                placeholder="0"
+              />
+            </div>
+
+            {countedCash !== '' && (
+              <div
+                className={`flex items-center justify-between text-sm font-semibold rounded px-2 py-1.5 ${
+                  difference === 0
+                    ? 'bg-emerald-500/15 text-emerald-600'
+                    : 'bg-amber-500/15 text-amber-600'
+                }`}
+              >
+                <span>
+                  {difference === 0
+                    ? t.posUi.caixa.balanced
+                    : difference > 0
+                      ? t.posUi.caixa.over
+                      : t.posUi.caixa.short}
+                </span>
+                <span className="font-mono">{Math.abs(difference).toLocaleString(locale)} Kz</span>
+              </div>
+            )}
+
+            <Textarea
+              value={closeNotes}
+              onChange={(e) => setCloseNotes(e.target.value)}
+              placeholder={t.posUi.caixa.closeNotesPlaceholder}
+              rows={2}
+            />
+
+            <Button
+              variant="destructive"
+              className="w-full"
+              disabled={closing || countedCash === ''}
+              onClick={() => void handleCloseCaixa()}
+            >
+              <DoorClosed className="w-4 h-4 mr-2" />
+              {t.posUi.caixa.closeButton}
+            </Button>
+          </div>
+        )}
 
         <Button className="w-full" onClick={() => void handlePrint()}>
           <Printer className="w-4 h-4 mr-2" />

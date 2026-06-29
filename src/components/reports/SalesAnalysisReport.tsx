@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales } from '@/hooks/useERP';
 import { Download, TrendingUp, Calendar, Package, Tags, Building2, Users, Truck, User, FileText } from 'lucide-react';
@@ -19,8 +18,15 @@ import PivotReportView from '@/components/reports/PivotReportView';
 import { DailySalesDetailReport } from '@/components/reports/DailySalesDetailReport';
 import { buildSalesPivot } from '@/lib/reports/salesPivot';
 import { useSalesPivotContext } from '@/components/reports/useSalesPivotContext';
+import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
 
-export default function SalesAnalysisReport() {
+export default function SalesAnalysisReport({
+  view,
+  onViewChange,
+}: {
+  view?: string;
+  onViewChange?: (value: string) => void;
+} = {}) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const dfLocale = language === 'pt' ? pt : enUS;
@@ -32,7 +38,9 @@ export default function SalesAnalysisReport() {
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [selectedBranch, setSelectedBranch] = useState<string>('all');
   const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month'>('day');
-  const [viewTab, setViewTab] = useState('summary');
+  const [internalViewTab, setInternalViewTab] = useState('summary');
+  const viewTab = view ?? internalViewTab;
+  const setViewTab = onViewChange ?? setInternalViewTab;
   const [dailyOpen, setDailyOpen] = useState(false);
 
   useEffect(() => {
@@ -112,7 +120,18 @@ export default function SalesAnalysisReport() {
 
   const periodSuffix = `${dateFrom}_${dateTo}`;
   const periodLabel = `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`;
-  const subTabClass = '';
+
+  const viewOptions: ReportOption[] = [
+    { value: 'summary', label: t.salesAnalysisUi.tabSummary, icon: Calendar },
+    { value: 'item', label: t.salesAnalysisUi.tabByItem, icon: Package },
+    { value: 'category', label: t.salesAnalysisUi.tabByCategory, icon: Tags },
+    { value: 'customer', label: t.salesAnalysisUi.tabByCustomer, icon: Users },
+    { value: 'supplier', label: t.salesAnalysisUi.tabBySupplier, icon: Truck },
+    { value: 'warehouse', label: t.salesAnalysisUi.tabByBranch, icon: Building2 },
+    { value: 'user', label: t.salesAnalysisUi.tabByUser, icon: User },
+    { value: 'detailed', label: t.salesAnalysisUi.tabDetailed, icon: FileText },
+    { value: 'daily', label: t.reportsCenterUi.tabDailyDetail, icon: Calendar },
+  ];
 
   return (
     <div className="space-y-6">
@@ -208,48 +227,12 @@ export default function SalesAnalysisReport() {
         </Card>
       </div>
 
-      {/* Sub-tabs */}
-      <Tabs value={viewTab} onValueChange={setViewTab}>
-        <TabsList className="flex-wrap h-auto">
-          <TabsTrigger value="summary" className={subTabClass}>
-            <Calendar className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabSummary}
-          </TabsTrigger>
-          <TabsTrigger value="item" className={subTabClass}>
-            <Package className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabByItem}
-          </TabsTrigger>
-          <TabsTrigger value="category" className={subTabClass}>
-            <Tags className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabByCategory}
-          </TabsTrigger>
-          <TabsTrigger value="customer" className={subTabClass}>
-            <Users className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabByCustomer}
-          </TabsTrigger>
-          <TabsTrigger value="supplier" className={subTabClass}>
-            <Truck className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabBySupplier}
-          </TabsTrigger>
-          <TabsTrigger value="warehouse" className={subTabClass}>
-            <Building2 className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabByBranch}
-          </TabsTrigger>
-          <TabsTrigger value="user" className={subTabClass}>
-            <User className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabByUser}
-          </TabsTrigger>
-          <TabsTrigger value="detailed" className={subTabClass}>
-            <FileText className="w-4 h-4 mr-2" />
-            {t.salesAnalysisUi.tabDetailed}
-          </TabsTrigger>
-          <TabsTrigger value="daily" className={subTabClass}>
-            <Calendar className="w-4 h-4 mr-2" />
-            {t.reportsCenterUi.tabDailyDetail}
-          </TabsTrigger>
-        </TabsList>
+      {/* Sub-report selector */}
+      {!onViewChange && <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />}
 
-        <TabsContent value="summary" className="space-y-4">
+      <div className="space-y-4">
+        {viewTab === 'summary' && (
+          <div className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>{t.salesAnalysisUi.salesEvolution}</CardTitle>
@@ -291,9 +274,10 @@ export default function SalesAnalysisReport() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+          </div>
+        )}
 
-        <TabsContent value="item">
+        {viewTab === 'item' && (
           <PivotReportView
             dimensionLabel={t.salesByProductUi.product}
             rows={itemPivot.rows}
@@ -302,9 +286,9 @@ export default function SalesAnalysisReport() {
             subtitle={periodLabel}
             enableGrouping
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="category">
+        {viewTab === 'category' && (
           <PivotReportView
             dimensionLabel={t.salesByProductUi.category}
             rows={categoryPivot.rows}
@@ -312,9 +296,9 @@ export default function SalesAnalysisReport() {
             fileName={`Vendas_Categoria_${periodSuffix}`}
             subtitle={periodLabel}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="customer">
+        {viewTab === 'customer' && (
           <PivotReportView
             dimensionLabel={t.reportsUi.client}
             rows={customerPivot.rows}
@@ -322,9 +306,9 @@ export default function SalesAnalysisReport() {
             fileName={`Vendas_Cliente_${periodSuffix}`}
             subtitle={periodLabel}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="supplier">
+        {viewTab === 'supplier' && (
           <PivotReportView
             dimensionLabel={t.reportsUi.supplier}
             rows={supplierPivot.rows}
@@ -332,9 +316,9 @@ export default function SalesAnalysisReport() {
             fileName={`Vendas_Fornecedor_${periodSuffix}`}
             subtitle={periodLabel}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="warehouse">
+        {viewTab === 'warehouse' && (
           <PivotReportView
             dimensionLabel={t.salesAnalysisUi.branch}
             rows={warehousePivot.rows}
@@ -342,9 +326,9 @@ export default function SalesAnalysisReport() {
             fileName={`Vendas_Armazem_${periodSuffix}`}
             subtitle={periodLabel}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="user">
+        {viewTab === 'user' && (
           <PivotReportView
             dimensionLabel={t.salesAnalysisUi.colUser}
             rows={userPivot.rows}
@@ -352,40 +336,42 @@ export default function SalesAnalysisReport() {
             fileName={`Vendas_Utilizador_${periodSuffix}`}
             subtitle={periodLabel}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="detailed">
+        {viewTab === 'detailed' && (
           <SalesByProductReport embedded dateFrom={dateFrom} dateTo={dateTo} selectedBranch={selectedBranch} />
-        </TabsContent>
+        )}
 
-        <TabsContent value="daily">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="w-5 h-5" />
-                {t.reportsUi.dailySalesDetailTitle}
-              </CardTitle>
-              <CardDescription>{t.reportsCenterUi.categories.sales.description}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button onClick={() => setDailyOpen(true)}>
-                <FileText className="w-4 h-4 mr-2" />
-                {t.reportsCenterUi.viewReports}
-              </Button>
-            </CardContent>
-          </Card>
-          {dailyOpen && (
-            <DailySalesDetailReport
-              open={dailyOpen}
-              onOpenChange={setDailyOpen}
-              startDate={dateFrom}
-              endDate={dateTo}
-              branchId={selectedBranch === 'all' ? apiBranchId : selectedBranch}
-              branchName={currentBranch?.name}
-            />
-          )}
-        </TabsContent>
-      </Tabs>
+        {viewTab === 'daily' && (
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Calendar className="w-5 h-5" />
+                  {t.reportsUi.dailySalesDetailTitle}
+                </CardTitle>
+                <CardDescription>{t.reportsCenterUi.categories.sales.description}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button onClick={() => setDailyOpen(true)}>
+                  <FileText className="w-4 h-4 mr-2" />
+                  {t.reportsCenterUi.viewReports}
+                </Button>
+              </CardContent>
+            </Card>
+            {dailyOpen && (
+              <DailySalesDetailReport
+                open={dailyOpen}
+                onOpenChange={setDailyOpen}
+                startDate={dateFrom}
+                endDate={dateTo}
+                branchId={selectedBranch === 'all' ? apiBranchId : selectedBranch}
+                branchName={currentBranch?.name}
+              />
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

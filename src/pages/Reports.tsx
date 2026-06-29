@@ -1,8 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales, useProducts } from '@/hooks/useERP';
@@ -11,9 +14,10 @@ import { exportToExcel } from '@/lib/excel';
 import { format, startOfMonth } from 'date-fns';
 import {
   BarChart3, Users, Truck, TrendingUp, Calendar,
-  FileText, Download, DollarSign,
+  FileText, Download, DollarSign, Check, ChevronDown,
   Package, PieChart, ArrowUpRight, ShoppingCart,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import SalesAnalysisReport from '@/components/reports/SalesAnalysisReport';
 import ProfitabilityReport from '@/components/reports/ProfitabilityReport';
 import PurchasesAnalysisReport from '@/components/reports/PurchasesAnalysisReport';
@@ -80,7 +84,15 @@ function resolveReportsTab(value: string | undefined): FamilyTarget | null {
 export default function Reports() {
   const location = useLocation();
   const [activeTab, setActiveTab] = useState('overview');
-  const [familySub, setFamilySub] = useState<Record<string, string | undefined>>({});
+  const [views, setViews] = useState<Record<string, string>>({
+    sales: 'summary',
+    purchases: 'summary',
+    profit: 'summary',
+    inventory: 'valuation',
+    statistics: 'top-customers',
+    financial: 'trial-balance',
+    statements: 'client-statement',
+  });
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
@@ -91,8 +103,11 @@ export default function Reports() {
 
   const goToTarget = (target: FamilyTarget) => {
     setActiveTab(target.family);
-    if (target.sub) setFamilySub((prev) => ({ ...prev, [target.family]: target.sub }));
+    if (target.sub) setViews((prev) => ({ ...prev, [target.family]: target.sub! }));
   };
+
+  const setView = (family: string, value: string) =>
+    setViews((prev) => ({ ...prev, [family]: value }));
 
   useEffect(() => {
     let cancelled = false;
@@ -198,8 +213,109 @@ export default function Reports() {
     },
   ];
 
-  const tabClass =
-    'text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary';
+  type FamilyDef = {
+    value: string;
+    label: string;
+    icon: LucideIcon;
+    options?: { value: string; label: string }[];
+  };
+
+  const families: FamilyDef[] = [
+    { value: 'overview', label: t.reportsCenterUi.tabOverview, icon: BarChart3 },
+    {
+      value: 'sales',
+      label: t.reportsCenterUi.tabSales,
+      icon: TrendingUp,
+      options: [
+        { value: 'summary', label: t.salesAnalysisUi.tabSummary },
+        { value: 'item', label: t.salesAnalysisUi.tabByItem },
+        { value: 'category', label: t.salesAnalysisUi.tabByCategory },
+        { value: 'customer', label: t.salesAnalysisUi.tabByCustomer },
+        { value: 'supplier', label: t.salesAnalysisUi.tabBySupplier },
+        { value: 'warehouse', label: t.salesAnalysisUi.tabByBranch },
+        { value: 'user', label: t.salesAnalysisUi.tabByUser },
+        { value: 'detailed', label: t.salesAnalysisUi.tabDetailed },
+        { value: 'daily', label: t.reportsCenterUi.tabDailyDetail },
+      ],
+    },
+    {
+      value: 'purchases',
+      label: t.reportsCenterUi.tabPurchases,
+      icon: ShoppingCart,
+      options: [
+        { value: 'summary', label: t.purchasesReportUi.tabSummary },
+        { value: 'suppliers', label: t.purchasesReportUi.bySupplier },
+        { value: 'products', label: t.purchasesReportUi.byProduct },
+        { value: 'categories', label: t.purchasesReportUi.byCategory },
+        { value: 'months', label: t.purchasesReportUi.byMonth },
+      ],
+    },
+    {
+      value: 'profit',
+      label: t.reportsCenterUi.familyProfit,
+      icon: PieChart,
+      options: [
+        { value: 'summary', label: t.salesAnalysisUi.tabSummary },
+        { value: 'item', label: t.salesAnalysisUi.tabByItem },
+        { value: 'category', label: t.salesAnalysisUi.tabByCategory },
+        { value: 'customer', label: t.salesAnalysisUi.tabByCustomer },
+        { value: 'supplier', label: t.salesAnalysisUi.tabBySupplier },
+      ],
+    },
+    {
+      value: 'inventory',
+      label: t.reportsCenterUi.familyInventory,
+      icon: Package,
+      options: [
+        { value: 'valuation', label: t.reportsCenterUi.tabStock },
+        { value: 'category', label: t.stockValuationUi.byCategory },
+        { value: 'movements', label: t.reportsCenterUi.tabMovements },
+      ],
+    },
+    {
+      value: 'statistics',
+      label: t.reportsCenterUi.familyStatistics,
+      icon: Users,
+      options: [
+        { value: 'top-customers', label: t.statisticsUi.topCustomers },
+        { value: 'top-products', label: t.statisticsUi.topProducts },
+        { value: 'top-suppliers', label: t.statisticsUi.topSuppliers },
+        { value: 'top-users', label: t.statisticsUi.topUsers },
+      ],
+    },
+    { value: 'monthly', label: t.reportsCenterUi.familyMonthly, icon: Calendar },
+    {
+      value: 'financial',
+      label: t.reportsCenterUi.familyFinancial,
+      icon: DollarSign,
+      options: [
+        { value: 'trial-balance', label: t.reportsCenterUi.tabTrialBalance },
+        { value: 'income-statement', label: t.reportsCenterUi.tabIncomeStatement },
+        { value: 'balance-sheet', label: t.reportsCenterUi.tabBalanceSheet },
+        { value: 'vat', label: t.reportsCenterUi.tabVat },
+        { value: 'cash-flow', label: t.reportsCenterUi.tabCashFlow },
+      ],
+    },
+    {
+      value: 'statements',
+      label: t.reportsCenterUi.familyStatements,
+      icon: FileText,
+      options: [
+        { value: 'client-statement', label: t.reportsCenterUi.tabClients },
+        { value: 'receivables', label: t.reportsCenterUi.tabReceivables },
+        { value: 'supplier-statement', label: t.reportsCenterUi.tabSuppliers },
+        { value: 'payables', label: t.reportsCenterUi.tabPayables },
+        { value: 'transactions', label: t.reportsCenterUi.tabHistory },
+      ],
+    },
+  ];
+
+  const tabBtnClass = (active: boolean) =>
+    `inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-none border-b-2 transition-colors ${
+      active
+        ? 'border-primary text-foreground'
+        : 'border-transparent text-muted-foreground hover:text-foreground'
+    }`;
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-auto">
@@ -216,44 +332,58 @@ export default function Reports() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col px-6">
-        <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0 flex-wrap">
-          <TabsTrigger value="overview" className={tabClass}>
-            <BarChart3 className="w-4 h-4 mr-2" />
-            {t.reportsCenterUi.tabOverview}
-          </TabsTrigger>
-          <TabsTrigger value="sales" className={tabClass}>
-            <TrendingUp className="w-4 h-4 mr-2" />
-            {t.reportsCenterUi.tabSales}
-          </TabsTrigger>
-          <TabsTrigger value="purchases" className={tabClass}>
-            <ShoppingCart className="w-4 h-4 mr-2" />
-            {t.reportsCenterUi.tabPurchases}
-          </TabsTrigger>
-          <TabsTrigger value="profit" className={tabClass}>
-            <PieChart className="w-4 h-4 mr-2" />
-            {t.reportsCenterUi.familyProfit}
-          </TabsTrigger>
-          <TabsTrigger value="inventory" className={tabClass}>
-            <Package className="w-4 h-4 mr-2" />
-            {t.reportsCenterUi.familyInventory}
-          </TabsTrigger>
-          <TabsTrigger value="statistics" className={tabClass}>
-            <Users className="w-4 h-4 mr-2" />
-            {t.reportsCenterUi.familyStatistics}
-          </TabsTrigger>
-          <TabsTrigger value="monthly" className={tabClass}>
-            <Calendar className="w-4 h-4 mr-2" />
-            {t.reportsCenterUi.familyMonthly}
-          </TabsTrigger>
-          <TabsTrigger value="financial" className={tabClass}>
-            <DollarSign className="w-4 h-4 mr-2" />
-            {t.reportsCenterUi.familyFinancial}
-          </TabsTrigger>
-          <TabsTrigger value="statements" className={tabClass}>
-            <FileText className="w-4 h-4 mr-2" />
-            {t.reportsCenterUi.familyStatements}
-          </TabsTrigger>
-        </TabsList>
+        <div className="w-full flex flex-wrap items-stretch border-b bg-muted/30">
+          {families.map((fam) => {
+            const Icon = fam.icon;
+            const active = activeTab === fam.value;
+            if (!fam.options) {
+              return (
+                <button
+                  key={fam.value}
+                  type="button"
+                  onClick={() => setActiveTab(fam.value)}
+                  className={tabBtnClass(active)}
+                >
+                  <Icon className="w-4 h-4" />
+                  {fam.label}
+                </button>
+              );
+            }
+            return (
+              <DropdownMenu key={fam.value}>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab(fam.value)}
+                    className={tabBtnClass(active)}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {fam.label}
+                    <ChevronDown className="w-4 h-4 opacity-60" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-56">
+                  {fam.options.map((opt) => {
+                    const selected = active && views[fam.value] === opt.value;
+                    return (
+                      <DropdownMenuItem
+                        key={opt.value}
+                        onSelect={() => {
+                          setActiveTab(fam.value);
+                          setView(fam.value, opt.value);
+                        }}
+                        className="flex items-center justify-between"
+                      >
+                        {opt.label}
+                        {selected && <Check className="w-4 h-4 text-primary" />}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            );
+          })}
+        </div>
 
         <div className="flex-1 overflow-auto py-4">
           <TabsContent value="overview" className="mt-0 space-y-6">
@@ -322,23 +452,23 @@ export default function Reports() {
           </TabsContent>
 
           <TabsContent value="sales" className="mt-0">
-            <SalesAnalysisReport />
+            <SalesAnalysisReport view={views.sales} onViewChange={(v) => setView('sales', v)} />
           </TabsContent>
 
           <TabsContent value="purchases" className="mt-0">
-            <PurchasesAnalysisReport />
+            <PurchasesAnalysisReport view={views.purchases} onViewChange={(v) => setView('purchases', v)} />
           </TabsContent>
 
           <TabsContent value="profit" className="mt-0">
-            <ProfitabilityReport />
+            <ProfitabilityReport view={views.profit} onViewChange={(v) => setView('profit', v)} />
           </TabsContent>
 
           <TabsContent value="inventory" className="mt-0">
-            <InventoryReports initialTab={familySub.inventory} />
+            <InventoryReports view={views.inventory} onViewChange={(v) => setView('inventory', v)} />
           </TabsContent>
 
           <TabsContent value="statistics" className="mt-0">
-            <StatisticsReports initialTab={familySub.statistics} />
+            <StatisticsReports view={views.statistics} onViewChange={(v) => setView('statistics', v)} />
           </TabsContent>
 
           <TabsContent value="monthly" className="mt-0">
@@ -346,11 +476,11 @@ export default function Reports() {
           </TabsContent>
 
           <TabsContent value="financial" className="mt-0">
-            <FinancialReports initialTab={familySub.financial} />
+            <FinancialReports view={views.financial} onViewChange={(v) => setView('financial', v)} />
           </TabsContent>
 
           <TabsContent value="statements" className="mt-0">
-            <StatementsReports initialTab={familySub.statements} />
+            <StatementsReports view={views.statements} onViewChange={(v) => setView('statements', v)} />
           </TabsContent>
         </div>
       </Tabs>

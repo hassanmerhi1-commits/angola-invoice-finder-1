@@ -702,6 +702,7 @@ export const api = {
           address: data.address || '',
           phone: data.phone || '',
           isMain: !!data.isMain,
+          priceLevel: data.priceLevel ?? 1,
         };
         const apiResult = await apiFetch<any>('/branches', {
           method: 'POST',
@@ -716,6 +717,7 @@ export const api = {
           address: data.address || '',
           phone: data.phone || '',
           is_main: data.isMain || false,
+          price_level: data.priceLevel ?? 1,
           created_at: new Date().toISOString(),
         };
         return ipcInsert('branches', branch);
@@ -730,6 +732,7 @@ export const api = {
           address: data.address || '',
           phone: data.phone || '',
           isMain: !!data.isMain,
+          priceLevel: data.priceLevel ?? 1,
         };
         const apiResult = await apiFetch<any>(`/branches/${encodeURIComponent(id)}`, {
           method: 'PUT',
@@ -743,6 +746,7 @@ export const api = {
           address: data.address || '',
           phone: data.phone || '',
           is_main: data.isMain,
+          price_level: data.priceLevel ?? 1,
         });
       }
       return apiFetch<any>(`/branches/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) });

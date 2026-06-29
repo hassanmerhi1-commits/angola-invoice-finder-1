@@ -486,6 +486,7 @@ export default function Inventory() {
   }, [showDetailedQtyTab, loadPerBranchBreakdown, listBranchId, isHeadOffice]);
   const [stockListFilter, setStockListFilter] = useState<StockListFilter>('all');
   const [listSearch, setListSearch] = useState('');
+  const [showSearchResults, setShowSearchResults] = useState(false);
   const listSearchRef = useRef<HTMLInputElement>(null);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
 
@@ -544,15 +545,16 @@ export default function Inventory() {
     });
   }, [displayProducts, stockListFilter, listSearch]);
 
-  // While searching, auto-select the top matching product so every tab (Detailed Qty,
-  // Statement, Chart, …) shows its info without the user having to click the row first.
-  // Keeps the current selection if it still matches the search; otherwise picks the first hit.
+  // While searching, follow the top matching product so every tab (Detailed Qty,
+  // Statement, Chart, …) shows its info live as the query narrows — without the user
+  // having to click the row first. We always track the first hit (rather than sticking
+  // to a stale prior selection that happens to still match), so partial searches update
+  // the detail tabs immediately instead of only when the full code/name is typed.
   useEffect(() => {
     if (!listSearch.trim()) return;
-    if (gridProducts.length === 0) return;
-    setSelectedProduct((prev) =>
-      prev && gridProducts.some((p) => p.id === prev.id) ? prev : gridProducts[0],
-    );
+    const top = gridProducts[0];
+    if (!top) return;
+    setSelectedProduct((prev) => (prev && prev.id === top.id ? prev : top));
   }, [listSearch, gridProducts]);
 
   const navigateProduct = useCallback((direction: -1 | 1) => {
@@ -1174,7 +1176,7 @@ export default function Inventory() {
         </Alert>
       )}
       {/* Toolbar */}
-      <div className="flex items-center gap-1.5 px-3 py-2 bg-card/50 border-b backdrop-blur-sm">
+      <div className="relative z-30 flex items-center gap-1.5 px-3 py-2 bg-card/50 border-b backdrop-blur-sm">
         {canSwitchBranch && (
           <BranchSelector
             compact
@@ -1206,14 +1208,20 @@ export default function Inventory() {
             ref={listSearchRef}
             type="search"
             value={listSearch}
-            onChange={(e) => setListSearch(e.target.value)}
+            onChange={(e) => {
+              setListSearch(e.target.value);
+              setShowSearchResults(true);
+            }}
+            onFocus={() => setShowSearchResults(true)}
+            onBlur={() => setTimeout(() => setShowSearchResults(false), 150)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && gridProducts.length > 0) {
                 setSelectedProduct(gridProducts[0]);
-                setActiveTab('lista');
+                setShowSearchResults(false);
               }
               if (e.key === 'Escape') {
                 setListSearch('');
+                setShowSearchResults(false);
                 listSearchRef.current?.blur();
               }
             }}
@@ -1222,6 +1230,28 @@ export default function Inventory() {
             autoComplete="off"
             spellCheck={false}
           />
+          {showSearchResults && listSearch.trim() && gridProducts.length > 0 && (
+            <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-72 overflow-auto rounded-md border bg-popover shadow-md">
+              {gridProducts.slice(0, 50).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setSelectedProduct(p);
+                    setShowSearchResults(false);
+                  }}
+                  className={`flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-accent ${
+                    selectedProduct?.id === p.id ? 'bg-accent' : ''
+                  }`}
+                >
+                  <span className="font-mono text-muted-foreground shrink-0 w-20 truncate">{p.sku}</span>
+                  <span className="flex-1 truncate">{p.name}</span>
+                  <span className="shrink-0 text-muted-foreground tabular-nums">{readProductStock(p)}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="w-px h-5 bg-border mx-1 shrink-0" />
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => {

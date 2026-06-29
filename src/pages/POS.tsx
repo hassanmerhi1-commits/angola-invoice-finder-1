@@ -13,6 +13,8 @@ import {
 } from '@/lib/thermalPrinter';
 import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { usePosProducts } from '@/hooks/usePosProducts';
+import { usePosCaixa } from '@/hooks/usePosCaixa';
+import { processSalePayment } from '@/lib/accountingStorage';
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
 import { useKeyboardShortcuts, KeyboardShortcut } from '@/hooks/useKeyboardShortcuts';
 import { Sale, Product } from '@/types/erp';
@@ -21,6 +23,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from '@/components/ui/command';
 import { Label } from '@/components/ui/label';
 import { PosProductSearchList } from '@/components/pos/PosProductSearchList';
 import { findPosProductByCode, filterPosProductsBySearch } from '@/lib/posProductSearch';
@@ -29,8 +34,9 @@ import { CheckoutDialog } from '@/components/pos/CheckoutDialog';
 import { ReceiptDialog } from '@/components/pos/ReceiptDialog';
 import { PrinterSettingsDialog } from '@/components/pos/PrinterSettingsDialog';
 import { BranchSelector } from '@/components/BranchSelector';
-import { Search, ScanBarcode, Keyboard, ShoppingCart, FileText } from 'lucide-react';
+import { Search, ScanBarcode, Keyboard, ShoppingCart, FileText, Check, ChevronsUpDown } from 'lucide-react';
 import { PosEndOfDayReportDialog } from '@/components/pos/PosEndOfDayReportDialog';
+import { PosOpenCaixaDialog } from '@/components/pos/PosOpenCaixaDialog';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 import { readNexorPosNewSaleFlag, NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
@@ -53,16 +59,22 @@ export default function POS() {
   const [priceLevel, setPriceLevel] = useState(() =>
     normalizePriceLevel(getCompanySettings().posDefaultPriceLevel ?? 1),
   );
+  // Company-wide fallback level, used only for walk-in sales at a branch that has no
+  // explicit price level configured. A branch's own level overrides this.
+  const [companyDefaultLevel, setCompanyDefaultLevel] = useState(() =>
+    normalizePriceLevel(getCompanySettings().posDefaultPriceLevel ?? 1),
+  );
   const [selectedClientId, setSelectedClientId] = useState<string>('');
+  const [clientPickerOpen, setClientPickerOpen] = useState(false);
   const selectedClient = useMemo(
     () => clients.find((c) => c.id === selectedClientId) ?? null,
     [clients, selectedClientId],
   );
   const adjustmentPct = clientPricing(selectedClient).adjustmentPct;
 
-  // Pull the admin-chosen default price level from the server so every terminal
-  // (including cashiers) uses the same level. Cached to localStorage so the POS has
-  // a sensible value before the request resolves and when offline.
+  // Pull the company-wide default price level from the server and cache it. This is
+  // only the fallback — each branch's own level (set in Filiais) takes precedence,
+  // and a selected client's level wins over both.
   useEffect(() => {
     let cancelled = false;
     void api.companySettings
@@ -71,15 +83,12 @@ export default function POS() {
         if (cancelled) return;
         const serverLevel = normalizePriceLevel(res?.data?.posDefaultPriceLevel ?? 1);
         saveCompanySettings({ posDefaultPriceLevel: serverLevel });
-        // Adopt the global default only while no client (which carries its own level)
-        // is selected. The client-selection effect below takes over otherwise.
-        if (!selectedClientId) setPriceLevel(serverLevel);
+        setCompanyDefaultLevel(serverLevel);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Effective ex-VAT unit price for the active price level + client % adjustment.
@@ -94,15 +103,17 @@ export default function POS() {
     [priceFor],
   );
 
-  // Adopt the client's default price level when a client is selected; fall back to
-  // the admin-chosen global default for walk-in sales (no client).
+  // Resolve the active price level by precedence: selected client's level wins, then
+  // the current branch's configured level, then the company-wide default.
   useEffect(() => {
     if (selectedClient) {
       setPriceLevel(normalizePriceLevel(selectedClient.defaultPriceLevel ?? 1));
+    } else if (currentBranch?.priceLevel) {
+      setPriceLevel(normalizePriceLevel(currentBranch.priceLevel));
     } else {
-      setPriceLevel(normalizePriceLevel(getCompanySettings().posDefaultPriceLevel ?? 1));
+      setPriceLevel(companyDefaultLevel);
     }
-  }, [selectedClient]);
+  }, [selectedClient, currentBranch, companyDefaultLevel]);
 
   // Reprice existing cart lines when the price level or client adjustment changes.
   useEffect(() => {
@@ -126,6 +137,15 @@ export default function POS() {
   const [lastSale, setLastSale] = useState<Sale | null>(null);
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
   const [endOfDayOpen, setEndOfDayOpen] = useState(false);
+  const {
+    session: caixaSession,
+    loading: caixaLoading,
+    openSession: openCaixaSessionForBranch,
+    closeSession: closeCaixaSessionForBranch,
+    recordCashSale,
+  } = usePosCaixa(currentBranch?.id, currentBranch?.name);
+  const [openingCaixa, setOpeningCaixa] = useState(false);
+  const caixaOpen = !!caixaSession;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const qtyInputRef = useRef<HTMLInputElement>(null);
 
@@ -256,12 +276,16 @@ export default function POS() {
   useBarcodeScanner({ onScan: handleBarcodeScan });
 
   const handleCheckout = useCallback(() => {
+    if (!caixaOpen) {
+      toast.error(t.posUi.caixa.requiredToSell, { description: t.posUi.caixa.openDesc });
+      return;
+    }
     if (cart.items.length > 0) {
       setCheckoutOpen(true);
     } else {
       toast.info(t.posUi.emptyCart, { description: t.posUi.addProductsToCheckout });
     }
-  }, [cart.items.length, t.posUi]);
+  }, [caixaOpen, cart.items.length, t.posUi]);
 
   const handleClearCart = useCallback(() => {
     if (cart.items.length > 0) {
@@ -405,6 +429,23 @@ export default function POS() {
       void refreshProducts();
       void refreshSales();
 
+      // Record cash takings against the open shift for end-of-day reconciliation.
+      // Tracked in memory so the open-caixa gate stays closed; also persisted to the
+      // caixa ledger on a best-effort basis (no-op in SQLite desktop mode, where the
+      // accounting store is reserved for the Express backend).
+      if (paymentMethod === 'cash') {
+        recordCashSale(sale.total);
+        void processSalePayment(
+          currentBranch.id,
+          sale.id,
+          sale.invoiceNumber,
+          sale.total,
+          'cash',
+          user.id,
+          customerName,
+        ).catch((caixaErr) => console.warn('[POS] Failed to post sale to caixa:', caixaErr));
+      }
+
       try {
         const printResult = await printPosThermalReceipts(sale, currentBranch, {
           openDrawer: paymentMethod === 'cash',
@@ -454,6 +495,22 @@ export default function POS() {
 
   const handleNewSale = () => {
     beginNewSaleSession();
+  };
+
+  const handleOpenCaixa = async (openingCash: number) => {
+    if (!user) return;
+    setOpeningCaixa(true);
+    try {
+      await openCaixaSessionForBranch(openingCash, user.name || user.username || 'POS');
+      toast.success(t.posUi.caixa.openedToast, {
+        description: `${t.posUi.caixa.openingCashLabel}: ${openingCash.toLocaleString('pt-AO')} Kz`,
+      });
+    } catch (err) {
+      console.error('[POS] Failed to open caixa:', err);
+      toast.error(t.posUi.caixa.openError);
+    } finally {
+      setOpeningCaixa(false);
+    }
   };
 
   return (
@@ -547,20 +604,61 @@ export default function POS() {
           <BranchSelector compact />
           <div className="flex items-center gap-1.5">
             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">{t.posUi.clientLabel}</Label>
-            <Select
-              value={selectedClientId || 'none'}
-              onValueChange={(v) => setSelectedClientId(v === 'none' ? '' : v)}
-            >
-              <SelectTrigger className="h-9 w-[170px] text-xs">
-                <SelectValue placeholder={t.posUi.walkInCustomer} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">{t.posUi.walkInCustomer}</SelectItem>
-                {clients.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Popover open={clientPickerOpen} onOpenChange={setClientPickerOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={clientPickerOpen}
+                  className="h-9 w-[200px] justify-between text-xs font-normal"
+                >
+                  <span className="truncate">
+                    {selectedClient ? selectedClient.name : t.posUi.walkInCustomer}
+                  </span>
+                  <ChevronsUpDown className="ml-1 h-3.5 w-3.5 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[260px] p-0" align="start">
+                <Command>
+                  <CommandInput placeholder={t.posUi.clientLabel} className="text-xs" />
+                  <CommandList>
+                    <CommandEmpty>{t.common.noResults}</CommandEmpty>
+                    <CommandGroup>
+                      <CommandItem
+                        value={t.posUi.walkInCustomer}
+                        onSelect={() => {
+                          setSelectedClientId('');
+                          setClientPickerOpen(false);
+                        }}
+                      >
+                        <Check
+                          className={`mr-2 h-3.5 w-3.5 ${selectedClientId ? 'opacity-0' : 'opacity-100'}`}
+                        />
+                        {t.posUi.walkInCustomer}
+                      </CommandItem>
+                      {clients.map((c) => (
+                        <CommandItem
+                          key={c.id}
+                          value={`${c.name} ${c.nif ?? ''} ${c.phone ?? ''}`}
+                          onSelect={() => {
+                            setSelectedClientId(c.id);
+                            setClientPickerOpen(false);
+                          }}
+                        >
+                          <Check
+                            className={`mr-2 h-3.5 w-3.5 ${selectedClientId === c.id ? 'opacity-100' : 'opacity-0'}`}
+                          />
+                          <span className="flex-1 truncate">{c.name}</span>
+                          {c.nif && (
+                            <span className="ml-2 text-[10px] text-muted-foreground">{c.nif}</span>
+                          )}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
           </div>
           <div className="flex items-center gap-1.5">
             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">{t.posUi.priceLabel}</Label>
@@ -675,6 +773,23 @@ export default function POS() {
         sales={sales}
         cashier={user}
         branch={currentBranch}
+        session={caixaSession}
+        onCloseCaixa={async (countedCash, notes) => {
+          if (!user) return;
+          await closeCaixaSessionForBranch(
+            countedCash,
+            user.name || user.username || 'POS',
+            notes,
+          );
+        }}
+      />
+
+      <PosOpenCaixaDialog
+        open={!!currentBranch && !caixaLoading && !caixaOpen}
+        branchName={currentBranch?.name}
+        cashierName={user?.name || user?.username}
+        submitting={openingCaixa}
+        onConfirm={handleOpenCaixa}
       />
     </div>
   );

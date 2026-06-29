@@ -4,6 +4,12 @@ const db = require('../db');
 const { branchesListSql } = require('../lib/sqlDialect');
 const crypto = require('crypto');
 
+/** Clamp any incoming value to a valid selling price level (1-4), defaulting to 1. */
+function clampPriceLevel(value) {
+  const n = Math.trunc(Number(value));
+  return n >= 1 && n <= 4 ? n : 1;
+}
+
 function buildBranchCode(name = '') {
   const cleaned = String(name).toUpperCase().replace(/[^A-Z0-9]/g, '');
   const base = (cleaned.slice(0, 3) || 'FIL').padEnd(3, 'X');
@@ -72,6 +78,7 @@ module.exports = function(broadcastTable) {
         result.rows.map((row) => ({
           ...row,
           isMain: row.is_main === 1 || row.is_main === true || row.is_main === '1',
+          priceLevel: clampPriceLevel(row.price_level),
           cityId: row.city_id,
           parentBranchId: row.parent_branch_id,
           nodeRole: row.node_role || (row.is_main ? 'main' : 'shop'),
@@ -89,8 +96,9 @@ module.exports = function(broadcastTable) {
     try {
       await client.query('BEGIN');
 
-      const { name, code, address, phone, isMain } = req.body;
+      const { name, code, address, phone, isMain, priceLevel } = req.body;
       const normalizedName = String(name || '').trim();
+      const normalizedPriceLevel = clampPriceLevel(priceLevel);
       let normalizedCode = String(code || '').trim().toUpperCase();
 
       if (!normalizedName) {
@@ -114,10 +122,10 @@ module.exports = function(broadcastTable) {
       }
       
       const result = await client.query(
-        `INSERT INTO branches (name, code, address, phone, is_main)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO branches (name, code, address, phone, is_main, price_level)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
-         [normalizedName, normalizedCode, address?.trim?.() || '', phone?.trim?.() || '', isMain || false]
+         [normalizedName, normalizedCode, address?.trim?.() || '', phone?.trim?.() || '', isMain || false, normalizedPriceLevel]
       );
 
       const branch = result.rows[0];
@@ -145,8 +153,9 @@ module.exports = function(broadcastTable) {
   router.put('/:id', async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, code, address, phone, isMain } = req.body;
+      const { name, code, address, phone, isMain, priceLevel } = req.body;
       const normalizedName = String(name || '').trim();
+      const normalizedPriceLevel = priceLevel == null ? null : clampPriceLevel(priceLevel);
       let normalizedCode = String(code || '').trim().toUpperCase() || buildBranchCode(normalizedName);
 
       if (!normalizedName) {
@@ -160,9 +169,9 @@ module.exports = function(broadcastTable) {
       }
       
       const result = await db.query(
-        `UPDATE branches SET name = $1, code = $2, address = $3, phone = $4, is_main = $5
-         WHERE id = $6 RETURNING *`,
-         [normalizedName, normalizedCode, address?.trim?.() || '', phone?.trim?.() || '', isMain, id]
+        `UPDATE branches SET name = $1, code = $2, address = $3, phone = $4, is_main = $5, price_level = COALESCE($6, price_level)
+         WHERE id = $7 RETURNING *`,
+         [normalizedName, normalizedCode, address?.trim?.() || '', phone?.trim?.() || '', isMain, normalizedPriceLevel, id]
       );
 
       if (result.rowCount === 0) {
