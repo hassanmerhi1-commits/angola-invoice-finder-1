@@ -5,15 +5,37 @@ import {
   openCaixaSession,
   closeCaixaSession,
 } from '@/lib/accountingStorage';
+import { api } from '@/lib/api/client';
 import type { Caixa, CaixaSession } from '@/types/accounting';
+
+function mapServerSession(row: Record<string, unknown>): CaixaSession {
+  return {
+    id: String(row.id),
+    caixaId: String(row.caixaId ?? row.caixa_id ?? ''),
+    branchId: String(row.branchId ?? row.branch_id ?? ''),
+    date: String(row.date ?? '').slice(0, 10),
+    openingBalance: Number(row.openingBalance ?? row.opening_balance) || 0,
+    closingBalance:
+      row.closingBalance != null || row.closing_balance != null
+        ? Number(row.closingBalance ?? row.closing_balance)
+        : undefined,
+    totalIn: Number(row.totalIn ?? row.total_in) || 0,
+    totalOut: Number(row.totalOut ?? row.total_out) || 0,
+    salesTotal: Number(row.salesTotal ?? row.sales_total) || 0,
+    expensesTotal: Number(row.expensesTotal ?? row.expenses_total) || 0,
+    adjustments: Number(row.adjustments) || 0,
+    status: (row.status as CaixaSession['status']) || 'open',
+    openedBy: String(row.openedBy ?? row.opened_by ?? ''),
+    openedAt: String(row.openedAt ?? row.opened_at ?? ''),
+    closedBy: row.closedBy != null ? String(row.closedBy) : row.closed_by != null ? String(row.closed_by) : undefined,
+    closedAt: row.closedAt != null ? String(row.closedAt) : row.closed_at != null ? String(row.closed_at) : undefined,
+    notes: row.notes != null ? String(row.notes) : undefined,
+    createdAt: String(row.createdAt ?? row.created_at ?? new Date().toISOString()),
+  };
+}
 
 /**
  * Cash-register (caixa) session state for the POS, scoped to the active branch.
- *
- * The shift must be opened with an opening-cash count before any sale, and closed
- * with a counted-cash amount at end of day so the system can reconcile expected vs.
- * counted (over/short). The branch's single "Caixa Principal" is reused; one open
- * session per branch at a time (matches the Caixa management model).
  */
 export function usePosCaixa(branchId?: string, branchName?: string) {
   const [caixa, setCaixa] = useState<Caixa | null>(null);
@@ -31,8 +53,13 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
     try {
       const cx = await ensureBranchCaixa(branchId, branchName || branchId);
       setCaixa(cx);
-      const sess = await getOpenCaixaSession(cx.id);
-      setSession(sess ?? null);
+      const localSess = await getOpenCaixaSession(cx.id);
+      if (localSess) {
+        setSession(localSess);
+      } else {
+        const remote = await api.caixa.getOpenSession(branchId);
+        setSession(remote.data ? mapServerSession(remote.data as Record<string, unknown>) : null);
+      }
     } catch (err) {
       console.error('[usePosCaixa] load failed:', err);
       setSession(null);
@@ -57,6 +84,17 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       }
       const sess = await openCaixaSession(cx.id, branchId, openingCash, openedBy);
       setSession(sess);
+      void api.caixa
+        .openSession({
+          id: sess.id,
+          caixaId: sess.caixaId,
+          branchId: sess.branchId,
+          branchName: branchName || branchId,
+          openingBalance: sess.openingBalance,
+          openedBy: sess.openedBy,
+          date: sess.date,
+        })
+        .catch((err) => console.warn('[usePosCaixa] server open sync:', err));
       return sess;
     },
     [branchId, branchName, caixa],
@@ -65,17 +103,43 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
   const closeSession = useCallback(
     async (countedCash: number, closedBy: string, notes?: string) => {
       if (!session) return;
+      const snapshot = { ...session };
       await closeCaixaSession(session.id, countedCash, closedBy, notes);
+      void api.caixa
+        .closeSession(snapshot.id, {
+          caixaId: snapshot.caixaId,
+          branchId: snapshot.branchId,
+          date: snapshot.date,
+          openingBalance: snapshot.openingBalance,
+          closingBalance: countedCash,
+          totalIn: snapshot.totalIn,
+          totalOut: snapshot.totalOut,
+          salesTotal: snapshot.salesTotal,
+          expensesTotal: snapshot.expensesTotal,
+          adjustments: snapshot.adjustments,
+          openedBy: snapshot.openedBy,
+          closedBy,
+          openedAt: snapshot.openedAt,
+          notes,
+          caixa: caixa
+            ? {
+                id: caixa.id,
+                branchId: caixa.branchId,
+                branchName: caixa.branchName,
+                name: caixa.name,
+                openingBalance: caixa.openingBalance,
+                currentBalance: countedCash,
+                closingBalance: countedCash,
+                status: 'closed',
+              }
+            : undefined,
+        })
+        .catch((err) => console.warn('[usePosCaixa] server close sync:', err));
       setSession(null);
     },
-    [session],
+    [session, caixa],
   );
 
-  /**
-   * Record a cash sale against the open shift. Kept in component state so the gate
-   * stays closed and end-of-day totals stay correct even when the accounting store
-   * isn't persisted in this run mode (SQLite desktop reserves the DB for Express).
-   */
   const recordCashSale = useCallback((amount: number) => {
     setSession((prev) =>
       prev

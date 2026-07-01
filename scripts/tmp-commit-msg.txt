@@ -1,0 +1,8 @@
+Release v1.0.93: accounting hardening — server-backed periods, credit sales, and caixa GL reconciliation
+
+- Accounting periods UI now reads/writes the server accounting_periods table so
+  close/lock/reopen actually blocks postings via validatePeriod.
+- POS on-account (credit / a prazo) sales post to client receivables (311) with
+  open items; card/transfer no longer create duplicate receivables; COGS uses avg_cost.
+- End-of-day caixa reconciliation compares session cash, ERP cash sales, and GL
+  45x postings; server caixa session open/close APIs and schema bootstrap added.

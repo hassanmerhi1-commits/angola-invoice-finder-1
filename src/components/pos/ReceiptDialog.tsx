@@ -226,7 +226,9 @@ export function ReceiptDialog({
                     ? t.pos.card
                     : sale.paymentMethod === 'transfer'
                       ? t.pos.transfer
-                      : sale.paymentMethod}
+                      : sale.paymentMethod === 'credit'
+                        ? t.pos.credit
+                        : sale.paymentMethod}
               </span>
             </div>
             <div className="flex justify-between">

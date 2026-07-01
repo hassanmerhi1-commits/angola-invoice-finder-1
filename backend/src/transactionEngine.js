@@ -240,6 +240,35 @@ async function getEntityAccountCode(client, entityType, entityId, entityName) {
   return fallback;
 }
 
+/** Resolve the 311xx client receivable account for a registered customer (credit sales). */
+async function resolveCustomerReceivableAccount(client, clientId) {
+  const result = await client.query(
+    `SELECT id, name, nif, credit_limit, current_balance, payment_terms_days
+     FROM clients WHERE id = $1 LIMIT 1`,
+    [clientId],
+  );
+  if (result.rows.length === 0) {
+    throw new Error('Cliente não encontrado');
+  }
+  const row = result.rows[0];
+  const name = String(row.name || '').trim();
+  const nif = String(row.nif || '').trim();
+
+  const accountLookup = await client.query(
+    `SELECT code FROM chart_of_accounts
+     WHERE code LIKE $1 AND is_header = false AND level >= 3 AND is_active = true
+       AND (
+         LOWER(TRIM(name)) = LOWER($2)
+         OR ($3 != '' AND LOWER(COALESCE(description, '')) LIKE '%' || LOWER($3) || '%')
+       )
+     ORDER BY LENGTH(code) DESC
+     LIMIT 1`,
+    [ACC.CLIENTS_PARENT + '%', name, nif],
+  );
+  const accountCode = accountLookup.rows[0]?.code || ACC.CLIENTS_CURRENT;
+  return { accountCode, client: row };
+}
+
 const INVENTORY_MERCHANDISE_ACCOUNT = ACC.PURCHASES_MERCHANDISE;
 const INVENTORY_STOCK_ACCOUNT = ACC.INVENTORY_STOCK;
 
@@ -1623,9 +1652,13 @@ async function processSale(client, saleData) {
   requireParam(cashierId, 'cashierId');
   if (!items || items.length === 0) throw new Error('Venda deve ter pelo menos um item');
   const totalAmount = requirePositive(total, 'total');
+  const isCreditSale = paymentMethod === 'credit';
+  if (isCreditSale) {
+    requireParam(clientId, 'clientId');
+  }
 
   const today = new Date().toISOString().split('T')[0];
-  const saleDueDate = dueDate ? String(dueDate).slice(0, 10) : today;
+  let saleDueDate = dueDate ? String(dueDate).slice(0, 10) : today;
 
   // ── Step 0: Validate period ──
   await validatePeriod(client, today);
@@ -1741,6 +1774,12 @@ async function processSale(client, saleData) {
     }
   }
 
+  if (clientId) {
+    try {
+      await client.query(`UPDATE sales SET client_id = $1 WHERE id = $2`, [clientId, saleId]);
+    } catch (_) {}
+  }
+
   // ── Step 3b: Insert sale_items + stock ──
   let totalCOGS = 0;
   for (const item of resolvedItems) {
@@ -1765,27 +1804,48 @@ async function processSale(client, saleData) {
       });
 
       // COGS
-      const costResult = await client.query('SELECT cost FROM products WHERE id = $1', [pid]);
+      const costResult = await client.query('SELECT cost, avg_cost FROM products WHERE id = $1', [pid]);
       if (costResult.rows.length > 0) {
-        totalCOGS += parseFloat(costResult.rows[0].cost) * item.quantity;
+        const row = costResult.rows[0];
+        const unitCost = parseFloat(row.avg_cost) || parseFloat(row.cost) || 0;
+        totalCOGS += unitCost * item.quantity;
       }
     }
   }
 
   // ── Step 4: Journal entries (balanced) ──
-  let cashAccountCode = ACC.CASH;
-  if (paymentMethod === 'cash') {
+  let debitAccountCode = ACC.BANK;
+  let creditCustomer = null;
+
+  if (isCreditSale) {
+    const resolved = await resolveCustomerReceivableAccount(client, clientId);
+    debitAccountCode = resolved.accountCode;
+    creditCustomer = resolved.client;
+    const creditLimit = parseFloat(creditCustomer.credit_limit) || 0;
+    const currentBalance = parseFloat(creditCustomer.current_balance) || 0;
+    if (creditLimit > 0 && currentBalance + totalAmount > creditLimit + 0.01) {
+      throw new Error(
+        `Limite de crédito excedido para ${creditCustomer.name}. `
+        + `Saldo: ${currentBalance.toLocaleString('pt-AO')} AOA, limite: ${creditLimit.toLocaleString('pt-AO')} AOA.`,
+      );
+    }
+    const termsDays = Math.trunc(Number(creditCustomer.payment_terms_days) || 0);
+    if (!dueDate && termsDays > 0) {
+      const due = new Date(today);
+      due.setDate(due.getDate() + termsDays);
+      saleDueDate = due.toISOString().slice(0, 10);
+    }
+  } else if (paymentMethod === 'cash') {
+    debitAccountCode = ACC.CASH;
     const caixaResult = await client.query(
       `SELECT code FROM chart_of_accounts WHERE code LIKE $1 AND is_header = false
        AND branch_id = $2 AND is_active = true LIMIT 1`, [ACC.CASH_PARENT + '%', branchId]
     );
-    if (caixaResult.rows.length > 0) cashAccountCode = caixaResult.rows[0].code;
-  } else {
-    cashAccountCode = ACC.BANK;
+    if (caixaResult.rows.length > 0) debitAccountCode = caixaResult.rows[0].code;
   }
 
   const revenueLines = [
-    { accountCode: cashAccountCode, description: `Venda ${invoiceNumber}`, debit: parseFloat(total), credit: 0 },
+    { accountCode: debitAccountCode, description: `Venda ${invoiceNumber}`, debit: parseFloat(total), credit: 0 },
     { accountCode: ACC.SALES, description: `Receita ${invoiceNumber}`, debit: 0, credit: parseFloat(subtotal) },
   ];
   if (parseFloat(taxAmount) > 0) {
@@ -1808,13 +1868,21 @@ async function processSale(client, saleData) {
     });
   }
 
-  // ── Step 5: Open item (credit sales) ──
-  if (clientId && paymentMethod !== 'cash') {
+  // ── Step 5: Open item (credit / on-account sales only) ──
+  if (isCreditSale) {
     await createOpenItem(client, {
       entityType: 'customer', entityId: clientId, documentType: 'invoice',
       documentId: saleId, documentNumber: invoiceNumber, documentDate: today,
       dueDate: saleDueDate, originalAmount: totalAmount, isDebit: true, branchId,
     });
+    try {
+      await client.query(
+        `UPDATE clients SET current_balance = COALESCE(current_balance, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+        [totalAmount, clientId],
+      );
+    } catch (e) {
+      console.warn('[TX] Client balance update skipped:', e.message);
+    }
   }
 
   // Tax summary (non-critical)

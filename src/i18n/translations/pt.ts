@@ -258,6 +258,7 @@ export const pt: TranslationKeys = {
     cash: "Dinheiro",
     card: "Cartão",
     transfer: "Transferência",
+    credit: "A prazo",
     mixed: "Misto",
     amountReceived: "Valor Recebido",
     change: "Troco",
@@ -337,6 +338,15 @@ export const pt: TranslationKeys = {
       short: "Falta",
       closeNotesPlaceholder: "Observações (opcional)",
       closeButton: "Fechar caixa e terminar turno",
+      glReconcileTitle: "Conferência contabilística (conta {code})",
+      glCashSalesLabel: "Vendas em dinheiro no ERP",
+      glSaleDebitsLabel: "Lançado na contabilidade (451)",
+      glNetMovementLabel: "Movimento líquido GL hoje",
+      varianceLabel: "Diferença",
+      glBalanced: "Turno, vendas e contabilidade coincidem",
+      glMismatch: "Divergência — reveja antes de fechar",
+      glLoading: "A carregar comparação com o razão…",
+      glUnavailable: "Não foi possível carregar a comparação contabilística",
     },
   },
 
@@ -364,6 +374,8 @@ export const pt: TranslationKeys = {
     discountApprovedBy: "Autorizado por {name}",
     discountAuthFailed: "Credenciais de supervisor inválidas",
     discountAuthReason: "Desconto POS {pct}%",
+    creditRequiresClient: "Selecione um cliente registado para vender a prazo",
+    creditHint: "Lança na conta do cliente (311) — pagamento posterior",
   },
 
   receiptUi: {
@@ -3168,6 +3180,8 @@ export const pt: TranslationKeys = {
     toastClosed: "Período {period} fechado",
     toastLocked: "Período {period} bloqueado permanentemente",
     toastReopened: "Período {period} reaberto",
+    loading: "A carregar períodos do servidor…",
+    actionFailed: "Não foi possível atualizar o período",
   },
 
   approvalsUi: {

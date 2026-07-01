@@ -68,7 +68,7 @@ export interface Sale {
   taxAmount: number;
   discount: number;
   total: number;
-  paymentMethod: 'cash' | 'card' | 'transfer' | 'mixed';
+  paymentMethod: 'cash' | 'card' | 'transfer' | 'mixed' | 'credit';
   amountPaid: number;
   change: number;
   customerNif?: string;

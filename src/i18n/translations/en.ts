@@ -256,6 +256,7 @@ export const en = {
     cash: "Cash",
     card: "Card",
     transfer: "Transfer",
+    credit: "On account",
     mixed: "Mixed",
     amountReceived: "Amount Received",
     change: "Change",
@@ -335,6 +336,15 @@ export const en = {
       short: "Short",
       closeNotesPlaceholder: "Notes (optional)",
       closeButton: "Close register & end shift",
+      glReconcileTitle: "Accounting check (account {code})",
+      glCashSalesLabel: "Cash sales in ERP",
+      glSaleDebitsLabel: "Posted to ledger (451)",
+      glNetMovementLabel: "Net GL movement today",
+      varianceLabel: "Difference",
+      glBalanced: "Session, sales, and ledger match",
+      glMismatch: "Mismatch — review before closing",
+      glLoading: "Loading ledger comparison…",
+      glUnavailable: "Could not load ledger comparison",
     },
   },
 
@@ -362,6 +372,8 @@ export const en = {
     discountApprovedBy: "Authorized by {name}",
     discountAuthFailed: "Invalid supervisor credentials",
     discountAuthReason: "POS discount {pct}%",
+    creditRequiresClient: "Select a registered customer to sell on account",
+    creditHint: "Posts to customer ledger (311) — payment due later",
   },
 
   receiptUi: {
@@ -3165,6 +3177,8 @@ export const en = {
     toastClosed: "Period {period} closed",
     toastLocked: "Period {period} permanently locked",
     toastReopened: "Period {period} reopened",
+    loading: "Loading periods from server…",
+    actionFailed: "Could not update period",
   },
 
   approvalsUi: {

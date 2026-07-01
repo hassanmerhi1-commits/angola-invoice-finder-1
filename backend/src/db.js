@@ -639,6 +639,8 @@ function ensureAppTablesAndColumns() {
   }
 
   seedAccountingPeriods();
+  tryAlterAdd('accounting_periods', 'closed_by TEXT');
+  tryAlterAdd('accounting_periods', 'closed_at TEXT');
   repairMisboundProductColumns();
   backfillJournalEntryBranchIds();
   backfillAllSkuStockFromMovements();

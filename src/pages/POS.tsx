@@ -395,6 +395,7 @@ export default function POS() {
     customerNif?: string,
     customerName?: string,
     discountPct = 0,
+    clientId?: string,
   ) => {
     if (!currentBranch || !user) return;
 
@@ -414,6 +415,7 @@ export default function POS() {
         customerNif,
         customerName,
         discountPct,
+        clientId,
       );
 
       applySoldQuantities(soldLines);
@@ -751,6 +753,7 @@ export default function POS() {
         taxAmount={cart.taxAmount}
         defaultCustomerNif={selectedClient?.nif}
         defaultCustomerName={selectedClient?.name}
+        registeredClientId={selectedClient?.id}
         onCompleteSale={handleCompleteSale}
       />
 

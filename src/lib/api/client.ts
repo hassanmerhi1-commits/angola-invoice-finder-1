@@ -1186,6 +1186,45 @@ export const api = {
     },
   },
 
+  caixa: {
+    reconciliation: (params: {
+      branchId: string;
+      date: string;
+      session?: {
+        openingBalance?: number;
+        totalIn?: number;
+        totalOut?: number;
+        salesTotal?: number;
+      };
+    }) => {
+      const sp = new URLSearchParams();
+      sp.set('branchId', params.branchId);
+      sp.set('date', params.date);
+      if (params.session?.openingBalance != null) {
+        sp.set('sessionOpening', String(params.session.openingBalance));
+      }
+      if (params.session?.totalIn != null) {
+        sp.set('sessionCashIn', String(params.session.totalIn));
+      }
+      if (params.session?.totalOut != null) {
+        sp.set('sessionCashOut', String(params.session.totalOut));
+      }
+      if (params.session?.salesTotal != null) {
+        sp.set('sessionSalesTotal', String(params.session.salesTotal));
+      }
+      return apiFetch<any>(`/caixa/reconciliation?${sp}`);
+    },
+    getOpenSession: (branchId: string) =>
+      apiFetch<any | null>(`/caixa/sessions/open?branchId=${encodeURIComponent(branchId)}`),
+    openSession: (body: Record<string, unknown>) =>
+      apiFetch<any>('/caixa/sessions/open', { method: 'POST', body: JSON.stringify(body) }),
+    closeSession: (sessionId: string, body: Record<string, unknown>) =>
+      apiFetch<any>(`/caixa/sessions/${encodeURIComponent(sessionId)}/close`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+  },
+
   // Daily Reports — always via HTTP API (aggregates sales on the server)
   dailyReports: {
     list: (branchId?: string) => {
@@ -1706,13 +1745,86 @@ export const api = {
       if (dateTo) sp.append('dateTo', dateTo);
       return apiFetch<any>(`/payments/statement/${entityType}/${entityId}?${sp}`);
     },
-    periods: () => {
-      if (isElectronMode()) return ipcQuery<any>('SELECT * FROM accounting_periods ORDER BY year DESC, month DESC');
-      return apiFetch<any[]>('/payments/periods');
+    periods: async (year?: number) => {
+      const qs = year != null ? `?year=${encodeURIComponent(String(year))}` : '';
+      if (isElectronMode()) {
+        const apiResult = await apiFetch<any[]>(`/payments/periods${qs}`);
+        if (Array.isArray(apiResult.data)) return { data: apiResult.data };
+        if (await isElectronLanClient()) {
+          return { error: apiResult.error || 'Cannot reach server' };
+        }
+        let sql = 'SELECT * FROM accounting_periods';
+        const params: unknown[] = [];
+        if (year != null) {
+          sql += ' WHERE year = $1';
+          params.push(year);
+        }
+        sql += ' ORDER BY year DESC, month DESC';
+        return ipcQuery<any>(sql, params);
+      }
+      return apiFetch<any[]>(`/payments/periods${qs}`);
     },
     closePeriod: (id: string, closedBy: string) => {
-      if (isElectronMode()) return ipcUpdate('accounting_periods', id, { status: 'closed', closed_by: closedBy, closed_at: new Date().toISOString() });
-      return apiFetch<any>(`/payments/periods/${id}/close`, { method: 'POST', body: JSON.stringify({ closedBy }) });
+      if (isElectronMode()) {
+        return apiFetch<{ success?: boolean }>(`/payments/periods/${encodeURIComponent(id)}/close`, {
+          method: 'POST',
+          body: JSON.stringify({ closedBy }),
+        }).then(async (apiResult) => {
+          if (apiResult.error) {
+            if (await isElectronLanClient()) return apiResult;
+            return ipcUpdate('accounting_periods', id, {
+              status: 'closed',
+              closed_by: closedBy,
+              closed_at: new Date().toISOString(),
+            });
+          }
+          return apiResult;
+        });
+      }
+      return apiFetch<{ success?: boolean }>(`/payments/periods/${encodeURIComponent(id)}/close`, {
+        method: 'POST',
+        body: JSON.stringify({ closedBy }),
+      });
+    },
+    lockPeriod: (id: string) => {
+      if (isElectronMode()) {
+        return apiFetch<{ success?: boolean }>(`/payments/periods/${encodeURIComponent(id)}/lock`, {
+          method: 'POST',
+          body: JSON.stringify({}),
+        }).then(async (apiResult) => {
+          if (apiResult.error) {
+            if (await isElectronLanClient()) return apiResult;
+            return ipcUpdate('accounting_periods', id, { status: 'locked' });
+          }
+          return apiResult;
+        });
+      }
+      return apiFetch<{ success?: boolean }>(`/payments/periods/${encodeURIComponent(id)}/lock`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+    },
+    reopenPeriod: (id: string) => {
+      if (isElectronMode()) {
+        return apiFetch<{ success?: boolean }>(`/payments/periods/${encodeURIComponent(id)}/reopen`, {
+          method: 'POST',
+          body: JSON.stringify({}),
+        }).then(async (apiResult) => {
+          if (apiResult.error) {
+            if (await isElectronLanClient()) return apiResult;
+            return ipcUpdate('accounting_periods', id, {
+              status: 'open',
+              closed_by: null,
+              closed_at: null,
+            });
+          }
+          return apiResult;
+        });
+      }
+      return apiFetch<{ success?: boolean }>(`/payments/periods/${encodeURIComponent(id)}/reopen`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
     },
     stockMovements: (params?: { productId?: string; warehouseId?: string }) => {
       if (isElectronMode()) {

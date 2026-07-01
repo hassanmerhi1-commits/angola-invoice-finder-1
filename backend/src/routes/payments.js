@@ -8,6 +8,7 @@ const { listSupplierPayables } = require('../lib/supplierPayablesList');
 const { listCustomerReceivables } = require('../lib/customerReceivablesList');
 const { listChecklistDues } = require('../lib/openItemsBriefing');
 const { requirePermission } = require('../middleware/requirePermission');
+const { ensureYearPeriods, fetchPeriods, getPeriodById } = require('../lib/accountingPeriods');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -231,32 +232,112 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // READ: Periods
+  // READ: Periods (server is source of truth — transaction engine blocks closed/locked months)
   router.get('/periods', async (req, res) => {
     try {
-      const result = await db.query('SELECT * FROM accounting_periods ORDER BY year DESC, month DESC');
-      res.json(result.rows);
+      const year = req.query.year != null && req.query.year !== '' ? Number(req.query.year) : undefined;
+      const rows = await fetchPeriods({ year });
+      res.json(rows);
     } catch (error) {
-      res.status(500).json({ error: 'Failed to fetch periods' });
+      console.error('[PAYMENTS] periods list:', error);
+      res.status(500).json({ error: error.message || 'Failed to fetch periods' });
     }
   });
 
-  // Period close (administrative — allowed in route)
   router.post('/periods/:id/close', requirePermission('reports_close', 'accounting_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
       const { id } = req.params;
       const { closedBy } = req.body;
+      const period = await getPeriodById(id);
+      if (!period) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Período não encontrado' });
+      }
+      if (period.status !== 'open') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `Período já está ${period.status}` });
+      }
       await client.query(
         `UPDATE accounting_periods SET status = 'closed', closed_by = $1, closed_at = CURRENT_TIMESTAMP WHERE id = $2`,
-        [closedBy, id]
+        [closedBy || null, id],
       );
       await client.query('COMMIT');
+      if (broadcastTable) await broadcastTable('accounting_periods');
       res.json({ success: true });
     } catch (error) {
       await client.query('ROLLBACK');
-      res.status(500).json({ error: 'Failed to close period' });
+      console.error('[PAYMENTS] close period:', error);
+      res.status(500).json({ error: error.message || 'Failed to close period' });
+    } finally {
+      client.release();
+    }
+  });
+
+  router.post('/periods/:id/lock', requirePermission('reports_close', 'accounting_create'), async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { id } = req.params;
+      const period = await getPeriodById(id);
+      if (!period) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Período não encontrado' });
+      }
+      if (period.status !== 'closed') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: period.status === 'locked'
+            ? 'Período já está bloqueado permanentemente'
+            : 'Feche o período antes de o bloquear',
+        });
+      }
+      await client.query(
+        `UPDATE accounting_periods SET status = 'locked' WHERE id = $1`,
+        [id],
+      );
+      await client.query('COMMIT');
+      if (broadcastTable) await broadcastTable('accounting_periods');
+      res.json({ success: true });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('[PAYMENTS] lock period:', error);
+      res.status(500).json({ error: error.message || 'Failed to lock period' });
+    } finally {
+      client.release();
+    }
+  });
+
+  router.post('/periods/:id/reopen', requirePermission('reports_close', 'accounting_create'), async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { id } = req.params;
+      const period = await getPeriodById(id);
+      if (!period) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Período não encontrado' });
+      }
+      if (period.status === 'locked') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Período bloqueado — não pode ser reaberto' });
+      }
+      if (period.status === 'open') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Período já está aberto' });
+      }
+      await client.query(
+        `UPDATE accounting_periods SET status = 'open', closed_by = NULL, closed_at = NULL WHERE id = $1`,
+        [id],
+      );
+      await client.query('COMMIT');
+      if (broadcastTable) await broadcastTable('accounting_periods');
+      res.json({ success: true });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('[PAYMENTS] reopen period:', error);
+      res.status(500).json({ error: error.message || 'Failed to reopen period' });
     } finally {
       client.release();
     }

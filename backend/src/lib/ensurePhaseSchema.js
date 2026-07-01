@@ -138,6 +138,138 @@ async function ensureClientPricingColumns(db) {
   }
 }
 
+/** Allow `credit` (on-account) sales in payment_method CHECK constraints. */
+async function ensureSalesCreditPaymentMethod(db) {
+  if (db.engine !== 'postgres') return;
+  const drops = [
+    'sales_payment_method_check',
+    'chk_sales_payment_method',
+  ];
+  for (const name of drops) {
+    try {
+      await db.query(`ALTER TABLE sales DROP CONSTRAINT IF EXISTS ${name}`);
+    } catch (_) {}
+  }
+  try {
+    await db.query(
+      `ALTER TABLE sales ADD CONSTRAINT sales_payment_method_check
+       CHECK (payment_method IN ('cash', 'card', 'transfer', 'cheque', 'mixed', 'credit'))`,
+    );
+  } catch (err) {
+    if (err.code !== '42710') console.warn('[SCHEMA] sales.payment_method credit:', err.message);
+  }
+}
+
+}
+
+/** POS caixa session tables (city server sync + GL reconciliation). */
+async function ensureCaixaTables(db) {
+  if (db.engine === 'postgres') {
+    for (const stmt of [
+      `CREATE TABLE IF NOT EXISTS caixas (
+        id UUID PRIMARY KEY,
+        branch_id UUID,
+        branch_name VARCHAR(255) DEFAULT '',
+        name VARCHAR(255) NOT NULL DEFAULT '',
+        opening_balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
+        current_balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
+        closing_balance DECIMAL(15, 2),
+        status VARCHAR(20) NOT NULL DEFAULT 'closed',
+        petty_limit DECIMAL(15, 2) DEFAULT 0,
+        daily_limit DECIMAL(15, 2) DEFAULT 0,
+        requires_approval BOOLEAN NOT NULL DEFAULT false,
+        opened_by VARCHAR(255) DEFAULT '',
+        closed_by VARCHAR(255) DEFAULT '',
+        opened_at TIMESTAMP,
+        closed_at TIMESTAMP,
+        notes TEXT DEFAULT '',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS caixa_sessions (
+        id UUID PRIMARY KEY,
+        caixa_id UUID,
+        branch_id UUID,
+        date DATE NOT NULL,
+        opening_balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
+        closing_balance DECIMAL(15, 2),
+        total_in DECIMAL(15, 2) NOT NULL DEFAULT 0,
+        total_out DECIMAL(15, 2) NOT NULL DEFAULT 0,
+        sales_total DECIMAL(15, 2) NOT NULL DEFAULT 0,
+        expenses_total DECIMAL(15, 2) NOT NULL DEFAULT 0,
+        adjustments DECIMAL(15, 2) NOT NULL DEFAULT 0,
+        status VARCHAR(20) NOT NULL DEFAULT 'open',
+        opened_by VARCHAR(255) DEFAULT '',
+        closed_by VARCHAR(255) DEFAULT '',
+        opened_at TIMESTAMP,
+        closed_at TIMESTAMP,
+        notes TEXT DEFAULT '',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_caixa_sessions_branch ON caixa_sessions(branch_id, date DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_caixas_branch ON caixas(branch_id)',
+    ]) {
+      try {
+        await db.query(stmt);
+      } catch (err) {
+        console.warn('[SCHEMA] caixa table:', err.message);
+      }
+    }
+    return;
+  }
+
+  if (db.sqlite) {
+    try {
+      db.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS caixas (
+          id TEXT PRIMARY KEY,
+          branch_id TEXT,
+          branch_name TEXT DEFAULT '',
+          name TEXT NOT NULL DEFAULT '',
+          opening_balance REAL NOT NULL DEFAULT 0,
+          current_balance REAL NOT NULL DEFAULT 0,
+          closing_balance REAL,
+          status TEXT NOT NULL DEFAULT 'closed',
+          petty_limit REAL DEFAULT 0,
+          daily_limit REAL DEFAULT 0,
+          requires_approval INTEGER NOT NULL DEFAULT 0,
+          opened_by TEXT DEFAULT '',
+          closed_by TEXT DEFAULT '',
+          opened_at TEXT,
+          closed_at TEXT,
+          notes TEXT DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS caixa_sessions (
+          id TEXT PRIMARY KEY,
+          caixa_id TEXT,
+          branch_id TEXT,
+          date TEXT NOT NULL,
+          opening_balance REAL NOT NULL DEFAULT 0,
+          closing_balance REAL,
+          total_in REAL NOT NULL DEFAULT 0,
+          total_out REAL NOT NULL DEFAULT 0,
+          sales_total REAL NOT NULL DEFAULT 0,
+          expenses_total REAL NOT NULL DEFAULT 0,
+          adjustments REAL NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'open',
+          opened_by TEXT DEFAULT '',
+          closed_by TEXT DEFAULT '',
+          opened_at TEXT,
+          closed_at TEXT,
+          notes TEXT DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_caixa_sessions_branch ON caixa_sessions(branch_id, date);
+        CREATE INDEX IF NOT EXISTS idx_caixas_branch ON caixas(branch_id);
+      `);
+    } catch (err) {
+      console.warn('[SCHEMA] caixa sqlite:', err.message);
+    }
+  }
+}
+
 /** Per-branch default selling price level (1-4) applied automatically at the POS. */
 async function ensureBranchPricingColumn(db) {
   if (db.engine === 'postgres') {
@@ -385,6 +517,8 @@ async function ensurePhaseSchema(db) {
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
     await ensureBranchPricingColumn(db);
+    await ensureSalesCreditPaymentMethod(db);
+    await ensureCaixaTables(db);
     await ensureUserPermissionsColumn(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
@@ -410,6 +544,8 @@ async function ensurePhaseSchema(db) {
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
     await ensureBranchPricingColumn(db);
+    await ensureSalesCreditPaymentMethod(db);
+    await ensureCaixaTables(db);
     await ensureUserPermissionsColumn(db);
     await ensurePgcChartOfAccounts(db);
     console.log('[SCHEMA] SQLite phase column patches applied');
@@ -423,6 +559,8 @@ module.exports = {
   ensureCreditNoteRestoreStockColumn,
   ensureClientPricingColumns,
   ensureBranchPricingColumn,
+  ensureSalesCreditPaymentMethod,
+  ensureCaixaTables,
   ensureUserPermissionsColumn,
   ensureAuditLogActions,
 };

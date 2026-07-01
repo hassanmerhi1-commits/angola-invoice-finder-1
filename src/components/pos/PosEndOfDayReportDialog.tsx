@@ -21,12 +21,28 @@ import {
   TableFooter,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Printer, FileText, DoorClosed, Wallet } from 'lucide-react';
+import { Printer, FileText, DoorClosed, Wallet, Scale, Loader2 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { getCompanySettings } from '@/lib/companySettings';
 import { printHtml } from '@/lib/printHtml';
 import { format } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
+import { api } from '@/lib/api/client';
+import { cn } from '@/lib/utils';
+
+interface CaixaGlReconciliation {
+  caixaAccountCode: string;
+  caixaAccountName: string;
+  erpCashSalesTotal: number;
+  glCashSaleDebits: number;
+  glNetMovement: number;
+  balanced: boolean;
+  variances: {
+    sessionCashVsErpSales: number;
+    sessionCashVsGlDebits: number;
+    erpSalesVsGlDebits: number;
+  };
+}
 
 interface PosEndOfDayReportDialogProps {
   open: boolean;
@@ -67,13 +83,59 @@ export function PosEndOfDayReportDialog({
   const [countedCash, setCountedCash] = useState('');
   const [closeNotes, setCloseNotes] = useState('');
   const [closing, setClosing] = useState(false);
+  const [glRecon, setGlRecon] = useState<CaixaGlReconciliation | null>(null);
+  const [glLoading, setGlLoading] = useState(false);
+  const [glError, setGlError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setCountedCash('');
       setCloseNotes('');
+      setGlRecon(null);
+      setGlError(null);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !branch?.id) return;
+    let cancelled = false;
+    setGlLoading(true);
+    setGlError(null);
+    void api.caixa
+      .reconciliation({
+        branchId: branch.id,
+        date: today,
+        session: session
+          ? {
+              openingBalance: session.openingBalance,
+              totalIn: session.totalIn,
+              totalOut: session.totalOut,
+              salesTotal: session.salesTotal,
+            }
+          : undefined,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        if (res.error || !res.data) {
+          setGlError(res.error || t.posUi.caixa.glUnavailable);
+          setGlRecon(null);
+          return;
+        }
+        setGlRecon(res.data as CaixaGlReconciliation);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setGlError(t.posUi.caixa.glUnavailable);
+          setGlRecon(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setGlLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, branch?.id, session, today, t.posUi.caixa.glUnavailable]);
 
   const cashierSales = useMemo(() => {
     if (!cashier) return [];
@@ -299,6 +361,70 @@ export function PosEndOfDayReportDialog({
                 <span className="font-mono">{Math.abs(difference).toLocaleString(locale)} Kz</span>
               </div>
             )}
+
+            <div className="rounded-md border bg-background p-3 space-y-2">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Scale className="w-4 h-4" />
+                {glRecon
+                  ? t.posUi.caixa.glReconcileTitle.replace('{code}', glRecon.caixaAccountCode)
+                  : t.posUi.caixa.glReconcileTitle.replace('{code}', '451')}
+              </div>
+              {glLoading && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  {t.posUi.caixa.glLoading}
+                </div>
+              )}
+              {glError && !glLoading && (
+                <p className="text-xs text-destructive">{glError}</p>
+              )}
+              {glRecon && !glLoading && (
+                <>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+                    <span className="text-muted-foreground">{t.posUi.caixa.cashInLabel}</span>
+                    <span className="text-right font-mono">{session.totalIn.toLocaleString(locale)} Kz</span>
+                    <span className="text-muted-foreground">{t.posUi.caixa.glCashSalesLabel}</span>
+                    <span className="text-right font-mono">
+                      {glRecon.erpCashSalesTotal.toLocaleString(locale)} Kz
+                    </span>
+                    <span className="text-muted-foreground">{t.posUi.caixa.glSaleDebitsLabel}</span>
+                    <span className="text-right font-mono">
+                      {glRecon.glCashSaleDebits.toLocaleString(locale)} Kz
+                    </span>
+                    <span className="text-muted-foreground">{t.posUi.caixa.glNetMovementLabel}</span>
+                    <span className="text-right font-mono">
+                      {glRecon.glNetMovement.toLocaleString(locale)} Kz
+                    </span>
+                  </div>
+                  <div
+                    className={cn(
+                      'text-xs font-medium rounded px-2 py-1.5',
+                      glRecon.balanced
+                        ? 'bg-emerald-500/15 text-emerald-600'
+                        : 'bg-amber-500/15 text-amber-600',
+                    )}
+                  >
+                    {glRecon.balanced ? t.posUi.caixa.glBalanced : t.posUi.caixa.glMismatch}
+                    {!glRecon.balanced && (
+                      <div className="mt-1 font-mono text-[11px] space-y-0.5">
+                        {Math.abs(glRecon.variances.sessionCashVsErpSales) > 0.01 && (
+                          <div>
+                            {t.posUi.caixa.varianceLabel} (turno vs ERP):{' '}
+                            {glRecon.variances.sessionCashVsErpSales.toLocaleString(locale)} Kz
+                          </div>
+                        )}
+                        {Math.abs(glRecon.variances.erpSalesVsGlDebits) > 0.01 && (
+                          <div>
+                            {t.posUi.caixa.varianceLabel} (ERP vs 451):{' '}
+                            {glRecon.variances.erpSalesVsGlDebits.toLocaleString(locale)} Kz
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
 
             <Textarea
               value={closeNotes}

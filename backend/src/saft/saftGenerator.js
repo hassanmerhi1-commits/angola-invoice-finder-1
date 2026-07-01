@@ -370,7 +370,7 @@ async function loadPayments(period) {
       SourcePayment: 'P',
     },
     PaymentMethod: {
-      PaymentMechanism: p.payment_method === 'cash' ? 'NU' : p.payment_method === 'card' ? 'CC' : 'TB',
+      PaymentMechanism: p.payment_method === 'cash' ? 'NU' : p.payment_method === 'card' ? 'CC' : p.payment_method === 'credit' ? 'CD' : 'TB',
       PaymentAmount: parseFloat(p.amount),
       PaymentDate: toDateOnly(p.created_at),
     },

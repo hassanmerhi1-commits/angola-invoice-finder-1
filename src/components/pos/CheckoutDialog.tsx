@@ -11,12 +11,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Separator } from '@/components/ui/separator';
-import { Banknote, CreditCard, ArrowRightLeft, Check, Percent, ShieldCheck, Lock } from 'lucide-react';
+import { Banknote, CreditCard, ArrowRightLeft, Check, Percent, ShieldCheck, Lock, FileText } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { resolveSaleInvoiceType, normalizeCustomerNif, fiscalInvoiceTypeLabel, fsMaxAmount } from '@/lib/fiscalInvoiceType';
 import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api/client';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 interface CheckoutDialogProps {
   open: boolean;
@@ -26,12 +27,15 @@ interface CheckoutDialogProps {
   taxAmount: number;
   defaultCustomerNif?: string;
   defaultCustomerName?: string;
+  /** Registered ERP client — required for on-account (credit) sales */
+  registeredClientId?: string;
   onCompleteSale: (
     paymentMethod: Sale['paymentMethod'],
     amountPaid: number,
     customerNif?: string,
     customerName?: string,
     discountPct?: number,
+    clientId?: string,
   ) => void;
 }
 
@@ -43,6 +47,7 @@ export function CheckoutDialog({
   taxAmount,
   defaultCustomerNif,
   defaultCustomerName,
+  registeredClientId,
   onCompleteSale,
 }: CheckoutDialogProps) {
   const { t, language } = useTranslation();
@@ -91,6 +96,8 @@ export function CheckoutDialog({
     setPaymentMethod(value);
     if (value === 'card' || value === 'transfer') {
       setAmountPaid(effectiveTotal.toString());
+    } else if (value === 'credit') {
+      setAmountPaid('0');
     }
   };
 
@@ -130,12 +137,22 @@ export function CheckoutDialog({
   };
 
   const paidAmount =
-    paymentMethod === 'cash' ? parseFloat(amountPaid || '0') : effectiveTotal;
-  const change = paidAmount - effectiveTotal;
+    paymentMethod === 'cash'
+      ? parseFloat(amountPaid || '0')
+      : paymentMethod === 'credit'
+        ? 0
+        : effectiveTotal;
+  const change = paymentMethod === 'cash' ? paidAmount - effectiveTotal : 0;
   const needsAuthorization = discountPct > 0 && !discountApproved;
+  const creditBlocked = paymentMethod === 'credit' && !registeredClientId;
   const isValid =
     !needsAuthorization &&
-    (paymentMethod === 'cash' ? paidAmount >= effectiveTotal : effectiveTotal > 0);
+    !creditBlocked &&
+    (paymentMethod === 'cash'
+      ? paidAmount >= effectiveTotal
+      : paymentMethod === 'credit'
+        ? effectiveTotal > 0 && !!registeredClientId
+        : effectiveTotal > 0);
 
   const normalizedCustomerNif = normalizeCustomerNif(customerNif);
   const previewInvoiceType = resolveSaleInvoiceType({
@@ -151,6 +168,7 @@ export function CheckoutDialog({
       normalizedCustomerNif || undefined,
       customerName || undefined,
       appliedPct,
+      paymentMethod === 'credit' ? registeredClientId : undefined,
     );
   };
 
@@ -207,7 +225,7 @@ export function CheckoutDialog({
             <RadioGroup
               value={paymentMethod}
               onValueChange={(v) => handlePaymentMethodChange(v as Sale['paymentMethod'])}
-              className="grid grid-cols-3 gap-2"
+              className="grid grid-cols-2 gap-2"
             >
               <div>
                 <RadioGroupItem value="cash" id="cash" className="peer sr-only" />
@@ -239,7 +257,31 @@ export function CheckoutDialog({
                   <span className="text-sm">{t.pos.transfer}</span>
                 </Label>
               </div>
+              <div>
+                <RadioGroupItem
+                  value="credit"
+                  id="credit"
+                  className="peer sr-only"
+                  disabled={!registeredClientId}
+                />
+                <Label
+                  htmlFor="credit"
+                  className={cn(
+                    'flex flex-col items-center justify-center rounded-lg border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary',
+                    registeredClientId ? 'cursor-pointer' : 'cursor-not-allowed opacity-50',
+                  )}
+                >
+                  <FileText className="mb-2 h-6 w-6" />
+                  <span className="text-sm text-center">{t.pos.credit}</span>
+                </Label>
+              </div>
             </RadioGroup>
+            {!registeredClientId && (
+              <p className="text-xs text-muted-foreground">{t.checkoutUi.creditRequiresClient}</p>
+            )}
+            {paymentMethod === 'credit' && registeredClientId && (
+              <p className="text-xs text-muted-foreground">{t.checkoutUi.creditHint}</p>
+            )}
           </div>
 
           {/* Discount (admin authorized) */}
