@@ -42,6 +42,7 @@ const { lanCors, securityHeaders, rateLimiter, apiAuthGate } = require('./middle
 const { DiscoveryBroadcaster } = require('./discovery');
 
 const { readAppVersion, EXPECTED_SCHEMA_VERSION, recordAppMetaForDb, readSchemaVersionFromDb } = require('./lib/deploymentStatus');
+const { buildSchemaChecks } = require('./lib/schemaChecks');
 
 const PORT = Number(process.env.PORT) || 3000;
 const APP_VERSION = readAppVersion();
@@ -89,6 +90,7 @@ app.get('/api/health', async (req, res) => {
   try {
     const row = await db.query(db.engine === 'postgres' ? 'SELECT NOW() AS now' : "SELECT datetime('now') AS now");
     const schema = await readSchemaVersionFromDb(db);
+    const schemaChecks = await buildSchemaChecks(db);
     const payload = {
       ok: true,
       engine: db.engine || 'sqlite',
@@ -102,6 +104,7 @@ app.get('/api/health', async (req, res) => {
       },
       schemaVersion: schema.stored,
       schemaVersionExpected: EXPECTED_SCHEMA_VERSION,
+      schemaChecks,
       dbPath: db.engine === 'sqlite' ? db.dbPath : undefined,
     };
     if (!lite) {
@@ -198,8 +201,13 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
 (async () => {
   try {
     await ensurePhaseSchema(db);
+    const checks = await buildSchemaChecks(db);
+    if (!checks.ok) {
+      console.warn('[SCHEMA] Post-migration checks failed:', JSON.stringify(checks));
+      console.warn('[SCHEMA] Run: npm run migrate --prefix backend  (or restart Docker backend)');
+    }
   } catch (e) {
-    console.warn('[SCHEMA]', e.message);
+    console.error('[SCHEMA] ensurePhaseSchema failed:', e.message);
   }
 
   try {

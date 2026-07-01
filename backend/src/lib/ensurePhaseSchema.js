@@ -18,6 +18,7 @@ const MIGRATION_FILES = [
   '041_user_sessions_security.sql',
   '042_simplified_invoice_fs.sql',
   '048_sales_payment_method_credit.sql',
+  '049_branches_price_level.sql',
 ];
 
 function isCommentOnlySQL(stmt) {

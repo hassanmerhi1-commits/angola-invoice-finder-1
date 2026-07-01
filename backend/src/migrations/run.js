@@ -131,6 +131,8 @@ const MIGRATIONS = [
   '045_pgc_novo_com_iva.sql',
   '046_client_pricing.sql',
   '047_user_permissions.sql',
+  '048_sales_payment_method_credit.sql',
+  '049_branches_price_level.sql',
 ];
 
 /**

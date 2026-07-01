@@ -108,12 +108,12 @@ export default function POS() {
   useEffect(() => {
     if (selectedClient) {
       setPriceLevel(normalizePriceLevel(selectedClient.defaultPriceLevel ?? 1));
-    } else if (currentBranch?.priceLevel) {
-      setPriceLevel(normalizePriceLevel(currentBranch.priceLevel));
+    } else if (currentBranch) {
+      setPriceLevel(normalizePriceLevel(currentBranch.priceLevel ?? companyDefaultLevel));
     } else {
       setPriceLevel(companyDefaultLevel);
     }
-  }, [selectedClient, currentBranch, companyDefaultLevel]);
+  }, [selectedClient, currentBranch?.id, currentBranch?.priceLevel, companyDefaultLevel]);
 
   // Reprice existing cart lines when the price level or client adjustment changes.
   useEffect(() => {

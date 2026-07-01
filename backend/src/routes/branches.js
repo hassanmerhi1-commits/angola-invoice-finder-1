@@ -177,9 +177,17 @@ module.exports = function(broadcastTable) {
       if (result.rowCount === 0) {
         return res.status(404).json({ error: 'Branch not found' });
       }
-      
+
+      const row = result.rows[0];
       await broadcastTable('branches');
-      res.json(result.rows[0]);
+      res.json({
+        ...row,
+        isMain: row.is_main === 1 || row.is_main === true || row.is_main === '1',
+        priceLevel: clampPriceLevel(row.price_level),
+        cityId: row.city_id,
+        parentBranchId: row.parent_branch_id,
+        nodeRole: row.node_role || (row.is_main ? 'main' : 'shop'),
+      });
     } catch (error) {
       console.error('[BRANCHES ERROR]', error);
       if (error.code === '23505') {
