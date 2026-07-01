@@ -181,12 +181,12 @@ export function CheckoutDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[min(92dvh,900px)] max-w-md flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 border-b px-6 py-4">
           <DialogTitle>{t.checkoutUi.title}</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-6">
+        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-4">
           {/* Order Summary */}
           <div className="bg-muted/50 rounded-lg p-4 space-y-2">
             <div className="flex justify-between text-sm">
@@ -396,15 +396,16 @@ export function CheckoutDialog({
               />
             </div>
           </div>
+        </div>
 
-          {/* Complete Button */}
+        <div className="shrink-0 border-t bg-background px-6 py-4">
           <Button
-            className="w-full h-14 text-lg"
+            className="h-14 w-full text-lg"
             size="lg"
             onClick={handleComplete}
             disabled={!isValid}
           >
-            <Check className="w-5 h-5 mr-2" />
+            <Check className="mr-2 h-5 w-5" />
             {t.checkoutUi.confirmPayment}
           </Button>
         </div>

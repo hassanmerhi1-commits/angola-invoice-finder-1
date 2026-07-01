@@ -17,6 +17,7 @@ const MIGRATION_FILES = [
   '040_users_username.sql',
   '041_user_sessions_security.sql',
   '042_simplified_invoice_fs.sql',
+  '048_sales_payment_method_credit.sql',
 ];
 
 function isCommentOnlySQL(stmt) {
@@ -140,26 +141,43 @@ async function ensureClientPricingColumns(db) {
 
 /** Allow `credit` (on-account) sales in payment_method CHECK constraints. */
 async function ensureSalesCreditPaymentMethod(db) {
-  if (db.engine !== 'postgres') return;
-  const drops = [
-    'sales_payment_method_check',
-    'chk_sales_payment_method',
-  ];
-  for (const name of drops) {
+  const allowedList = "('cash', 'card', 'transfer', 'cheque', 'mixed', 'credit')";
+  if (db.engine === 'postgres') {
     try {
-      await db.query(`ALTER TABLE sales DROP CONSTRAINT IF EXISTS ${name}`);
-    } catch (_) {}
+      const found = await db.query(
+        `SELECT c.conname AS name
+         FROM pg_constraint c
+         JOIN pg_class t ON c.conrelid = t.oid
+         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+         WHERE t.relname = 'sales'
+           AND a.attname = 'payment_method'
+           AND c.contype = 'c'`,
+      );
+      for (const row of found.rows || []) {
+        const name = row.name;
+        if (!name) continue;
+        try {
+          await db.query(`ALTER TABLE sales DROP CONSTRAINT IF EXISTS "${name}"`);
+        } catch (_) {}
+      }
+    } catch (err) {
+      console.warn('[SCHEMA] list sales.payment_method constraints:', err.message);
+    }
+    for (const name of ['sales_payment_method_check', 'chk_sales_payment_method']) {
+      try {
+        await db.query(`ALTER TABLE sales DROP CONSTRAINT IF EXISTS ${name}`);
+      } catch (_) {}
+    }
+    try {
+      await db.query(
+        `ALTER TABLE sales ADD CONSTRAINT sales_payment_method_check
+         CHECK (payment_method IN ${allowedList})`,
+      );
+    } catch (err) {
+      if (err.code !== '42710') console.warn('[SCHEMA] sales.payment_method credit:', err.message);
+    }
+    return;
   }
-  try {
-    await db.query(
-      `ALTER TABLE sales ADD CONSTRAINT sales_payment_method_check
-       CHECK (payment_method IN ('cash', 'card', 'transfer', 'cheque', 'mixed', 'credit'))`,
-    );
-  } catch (err) {
-    if (err.code !== '42710') console.warn('[SCHEMA] sales.payment_method credit:', err.message);
-  }
-}
-
 }
 
 /** POS caixa session tables (city server sync + GL reconciliation). */

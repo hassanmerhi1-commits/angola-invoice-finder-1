@@ -33,7 +33,7 @@ import {
   Database, Calculator, Receipt, Factory, Import, UserCog,
   FolderOpen, BookOpen, Landmark, CreditCard, DollarSign,
   Shield, Wallet, PieChart, TrendingUp, Globe, Keyboard,
-  Monitor, Bell, ListTodo, ClipboardCheck,
+  Monitor, Bell, ListTodo, ClipboardCheck, CalendarCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { ensureDayTodos, todayKey } from '@/lib/dailyTodos';
@@ -233,6 +233,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { label: t.topNav.accounting.multiCredit, icon: Plus, path: '/journals' },
         { label: t.topNav.accounting.multiDebit, icon: Plus, path: '/journals' },
         { label: t.topNav.accounting.journalEntry, icon: BookOpen, path: '/chart-of-accounts' },
+        { label: t.nav.accountingPeriods, icon: CalendarCheck, path: '/accounting-periods' },
       ],
     },
     {

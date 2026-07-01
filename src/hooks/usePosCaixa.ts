@@ -8,6 +8,45 @@ import {
 import { api } from '@/lib/api/client';
 import type { Caixa, CaixaSession } from '@/types/accounting';
 
+const POS_CAIXA_CACHE_PREFIX = 'nexor:pos-caixa-open:v1:';
+
+function todayKey(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function readPosCaixaCache(branchId: string): CaixaSession | null {
+  try {
+    const raw = localStorage.getItem(`${POS_CAIXA_CACHE_PREFIX}${branchId}`);
+    if (!raw) return null;
+    const session = JSON.parse(raw) as CaixaSession;
+    if (session.status !== 'open' || session.date !== todayKey()) return null;
+    return session;
+  } catch {
+    return null;
+  }
+}
+
+function writePosCaixaCache(branchId: string, session: CaixaSession): void {
+  if (session.status !== 'open' || session.date !== todayKey()) return;
+  localStorage.setItem(`${POS_CAIXA_CACHE_PREFIX}${branchId}`, JSON.stringify(session));
+}
+
+function clearPosCaixaCache(branchId: string): void {
+  localStorage.removeItem(`${POS_CAIXA_CACHE_PREFIX}${branchId}`);
+}
+
+function mergeSessionTotals(server: CaixaSession, cached: CaixaSession): CaixaSession {
+  if (server.id !== cached.id) return server;
+  return {
+    ...server,
+    totalIn: Math.max(server.totalIn, cached.totalIn),
+    totalOut: Math.max(server.totalOut, cached.totalOut),
+    salesTotal: Math.max(server.salesTotal, cached.salesTotal),
+    expensesTotal: Math.max(server.expensesTotal, cached.expensesTotal),
+    adjustments: Math.max(server.adjustments, cached.adjustments),
+  };
+}
+
 function mapServerSession(row: Record<string, unknown>): CaixaSession {
   return {
     id: String(row.id),
@@ -49,20 +88,30 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       setLoading(false);
       return;
     }
+    const cached = readPosCaixaCache(branchId);
+    if (cached) setSession(cached);
     setLoading(true);
     try {
       const cx = await ensureBranchCaixa(branchId, branchName || branchId);
       setCaixa(cx);
       const localSess = await getOpenCaixaSession(cx.id);
-      if (localSess) {
-        setSession(localSess);
-      } else {
+      let remoteSess: CaixaSession | null = null;
+      if (!localSess) {
         const remote = await api.caixa.getOpenSession(branchId);
-        setSession(remote.data ? mapServerSession(remote.data as Record<string, unknown>) : null);
+        remoteSess = remote.data
+          ? mapServerSession(remote.data as Record<string, unknown>)
+          : null;
       }
+      let resolved = localSess ?? remoteSess ?? cached ?? null;
+      if (resolved && cached && resolved.id === cached.id) {
+        resolved = mergeSessionTotals(resolved, cached);
+      }
+      setSession(resolved);
+      if (resolved) writePosCaixaCache(branchId, resolved);
+      else clearPosCaixaCache(branchId);
     } catch (err) {
       console.error('[usePosCaixa] load failed:', err);
-      setSession(null);
+      if (!cached) setSession(null);
     } finally {
       setLoading(false);
     }
@@ -80,10 +129,17 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       const existing = await getOpenCaixaSession(cx.id);
       if (existing) {
         setSession(existing);
+        writePosCaixaCache(branchId, existing);
         return existing;
+      }
+      const cached = readPosCaixaCache(branchId);
+      if (cached) {
+        setSession(cached);
+        return cached;
       }
       const sess = await openCaixaSession(cx.id, branchId, openingCash, openedBy);
       setSession(sess);
+      writePosCaixaCache(branchId, sess);
       void api.caixa
         .openSession({
           id: sess.id,
@@ -135,18 +191,27 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
             : undefined,
         })
         .catch((err) => console.warn('[usePosCaixa] server close sync:', err));
+      if (branchId) clearPosCaixaCache(branchId);
       setSession(null);
     },
-    [session, caixa],
+    [session, caixa, branchId],
   );
 
-  const recordCashSale = useCallback((amount: number) => {
-    setSession((prev) =>
-      prev
-        ? { ...prev, totalIn: prev.totalIn + amount, salesTotal: prev.salesTotal + amount }
-        : prev,
-    );
-  }, []);
+  const recordCashSale = useCallback(
+    (amount: number) => {
+      setSession((prev) => {
+        if (!prev || !branchId) return prev;
+        const next = {
+          ...prev,
+          totalIn: prev.totalIn + amount,
+          salesTotal: prev.salesTotal + amount,
+        };
+        writePosCaixaCache(branchId, next);
+        return next;
+      });
+    },
+    [branchId],
+  );
 
   return { caixa, session, loading, refresh, openSession, closeSession, recordCashSale };
 }

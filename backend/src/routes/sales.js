@@ -69,8 +69,14 @@ module.exports = function(broadcastTable) {
       const raw = error.message || 'Failed to create sale';
       const errorMessage = /chk_products_stock_nonneg/i.test(raw)
         ? 'Stock insuficiente para concluir a venda. Verifique o inventário nesta filial.'
+        : /sales_payment_method_check|payment_method_check/i.test(raw)
+          ? 'O servidor precisa de atualização: método de pagamento não permitido na base de dados. Reinicie o serviço NEXOR no servidor ou contacte o administrador.'
         : raw;
-      const status = /stock insuficiente/i.test(errorMessage) ? 409 : 500;
+      const status = /stock insuficiente/i.test(errorMessage)
+        ? 409
+        : /método de pagamento/i.test(errorMessage)
+          ? 503
+          : 500;
       res.status(status).json({ error: errorMessage });
     } finally {
       client.release();

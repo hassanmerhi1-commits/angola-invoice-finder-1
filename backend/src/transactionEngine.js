@@ -1635,11 +1635,25 @@ async function linkDocuments(client, sourceType, sourceId, sourceNumber, targetT
 
 // ==================== PROCESS SALE ====================
 
+const SALE_PAYMENT_METHODS = new Set(['cash', 'card', 'transfer', 'cheque', 'mixed', 'credit']);
+
+function normalizeSalePaymentMethod(saleData) {
+  const raw = saleData?.paymentMethod ?? saleData?.payment_method ?? 'cash';
+  const method = String(raw).trim().toLowerCase();
+  if (!SALE_PAYMENT_METHODS.has(method)) {
+    throw new Error(
+      `Método de pagamento inválido: "${raw}". Use cash, card, transfer, cheque, mixed ou credit.`,
+    );
+  }
+  return method;
+}
+
 async function processSale(client, saleData) {
+  const paymentMethod = normalizeSalePaymentMethod(saleData);
   const {
     branchId, cashierId, cashierName, items,
     subtotal, taxAmount, discount, total,
-    paymentMethod, amountPaid, change,
+    amountPaid, change,
     customerNif, customerName, clientId,
     clientRequestId, idempotencyKey,
     dueDate, invoiceType: requestedInvoiceType,
