@@ -54,6 +54,7 @@ module.exports = function caixaRouter(broadcastTable) {
         totalIn: req.query.sessionCashIn,
         totalOut: req.query.sessionCashOut,
         salesTotal: req.query.sessionSalesTotal,
+        openedAt: req.query.sessionOpenedAt,
       };
       const report = await buildCaixaReconciliation({ branchId, date, session });
       res.json(report);

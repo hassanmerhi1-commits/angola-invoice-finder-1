@@ -321,6 +321,14 @@ export default function Invoices() {
         openFiscalDebitNoteCreate();
         return;
       }
+      if (resolved === 'recibo') {
+        navigate('/payments', { state: { openReceipt: true } });
+        return;
+      }
+      if (resolved === 'pagamento') {
+        navigate('/payments', { state: { openPayment: true } });
+        return;
+      }
       const type = documentTypeForNewFromTab(resolved);
       if (type === 'fatura_compra') {
         navigateThenStartPurchaseCreate(navigate, location.pathname);
@@ -341,10 +349,7 @@ export default function Invoices() {
       openNewDocumentForTab(detail?.tab ?? getInvoicesWorkspaceTab());
     };
     const openReceipt = () => {
-      setFormDocType('recibo');
-      setEditDoc(null);
-      setPrefillDoc(null);
-      setFormOpen(true);
+      navigate('/payments', { state: { openReceipt: true } });
     };
     window.addEventListener(NEXOR_INVOICES_NEW, onToolbarNew);
     window.addEventListener(NEXOR_INVOICES_NEW_RECEIPT, openReceipt);
@@ -352,7 +357,7 @@ export default function Invoices() {
       window.removeEventListener(NEXOR_INVOICES_NEW, onToolbarNew);
       window.removeEventListener(NEXOR_INVOICES_NEW_RECEIPT, openReceipt);
     };
-  }, [openNewDocumentForTab]);
+  }, [openNewDocumentForTab, navigate]);
 
   const filteredDocs = useMemo(() => {
     if (!searchTerm) return documents;

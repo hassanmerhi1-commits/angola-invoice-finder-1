@@ -66,6 +66,14 @@ function todayLocalDate() {
   return saleLocalDate(new Date().toISOString());
 }
 
+function saleInShift(sale: Sale, session: CaixaSession | null | undefined): boolean {
+  if (!session?.openedAt) return true;
+  const shiftStart = new Date(session.openedAt).getTime();
+  if (!Number.isFinite(shiftStart)) return true;
+  const saleTime = new Date(sale.createdAt).getTime();
+  return Number.isFinite(saleTime) && saleTime >= shiftStart;
+}
+
 export function PosEndOfDayReportDialog({
   open,
   onOpenChange,
@@ -111,6 +119,7 @@ export function PosEndOfDayReportDialog({
               totalIn: session.totalIn,
               totalOut: session.totalOut,
               salesTotal: session.salesTotal,
+              openedAt: session.openedAt,
             }
           : undefined,
       })
@@ -139,17 +148,46 @@ export function PosEndOfDayReportDialog({
 
   const cashierSales = useMemo(() => {
     if (!cashier) return [];
-    return sales
+    if (!session) return [];
+    const filtered = sales
       .filter((sale) => {
         const sameDay = saleLocalDate(sale.createdAt) === today;
         const sameCashier =
           sale.cashierId === cashier.id
           || sale.cashierName === cashier.name
           || sale.cashierName === cashier.username;
-        return sameDay && sameCashier;
+        return sameDay && sameCashier && saleInShift(sale, session);
       })
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  }, [sales, cashier, today]);
+
+    // Guard against duplicate rows (offline stub + server sale with different ids).
+    const deduped: Sale[] = [];
+    for (const sale of filtered) {
+      const idx = deduped.findIndex((existing) => {
+        const sameInvoice =
+          sale.invoiceNumber
+          && existing.invoiceNumber
+          && sale.invoiceNumber.trim().toUpperCase() === existing.invoiceNumber.trim().toUpperCase();
+        return sameInvoice || existing.id === sale.id;
+      });
+      if (idx < 0) {
+        deduped.push(sale);
+      } else if ((sale.items?.length ?? 0) > (deduped[idx].items?.length ?? 0)) {
+        deduped[idx] = sale;
+      }
+    }
+    return deduped;
+  }, [sales, cashier, today, session]);
+
+  const shiftOpenedLabel = useMemo(() => {
+    if (!session?.openedAt) return null;
+    const opened = new Date(session.openedAt);
+    if (!Number.isFinite(opened.getTime())) return null;
+    return t.posUi.endOfDayShiftSince.replace(
+      '{time}',
+      opened.toLocaleString(locale, { hour: '2-digit', minute: '2-digit' }),
+    );
+  }, [session?.openedAt, locale, t.posUi.endOfDayShiftSince]);
 
   const totals = useMemo(() => {
     const byPayment: Record<string, number> = { cash: 0, card: 0, transfer: 0, mixed: 0 };
@@ -199,6 +237,7 @@ export function PosEndOfDayReportDialog({
     <div>${branch?.name || ''}</div>
     <div>${t.posUi.endOfDayCashier}: <strong>${cashier?.name || cashier?.username || '—'}</strong></div>
     <div>${t.posUi.endOfDayDate}: <strong>${format(new Date(), 'PPP', { locale: dfLocale })}</strong></div>
+    ${shiftOpenedLabel ? `<div>${shiftOpenedLabel}</div>` : ''}
   </div>
   <table>
     <thead><tr><th>${t.posUi.endOfDayInvoice}</th><th>${t.posUi.endOfDayTime}</th><th>${t.common.total}</th><th>${t.receiptUi.payment}</th></tr></thead>
@@ -254,6 +293,11 @@ export function PosEndOfDayReportDialog({
           <Badge variant="outline">
             {format(new Date(), 'PPP', { locale: dfLocale })}
           </Badge>
+          {shiftOpenedLabel && (
+            <Badge variant="secondary" className="text-xs">
+              {shiftOpenedLabel}
+            </Badge>
+          )}
         </div>
 
         <Table>
@@ -269,12 +313,14 @@ export function PosEndOfDayReportDialog({
             {cashierSales.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                  {t.posUi.endOfDayNoSales}
+                  {!session
+                    ? t.posUi.endOfDayNoOpenShift
+                    : t.posUi.endOfDayNoSales}
                 </TableCell>
               </TableRow>
             ) : (
               cashierSales.map((sale) => (
-                <TableRow key={sale.id}>
+                <TableRow key={`${sale.id}-${sale.invoiceNumber}`}>
                   <TableCell className="font-mono text-xs">{sale.invoiceNumber}</TableCell>
                   <TableCell>{new Date(sale.createdAt).toLocaleString(locale)}</TableCell>
                   <TableCell className="text-right font-mono">{sale.total.toLocaleString(locale)} Kz</TableCell>

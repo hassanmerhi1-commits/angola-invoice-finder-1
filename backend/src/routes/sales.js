@@ -9,6 +9,31 @@ const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
 
+function isPaymentMethodConstraintError(err) {
+  const msg = String(err?.message || err || '');
+  return /sales_payment_method_check|payment_method_check|violates check constraint.*payment_method/i.test(msg);
+}
+
+async function repairCreditPaymentSchema() {
+  const { ensureSalesCreditPaymentMethod } = require('../lib/ensurePhaseSchema');
+  const { salesAllowsCreditPayment } = require('../lib/schemaChecks');
+  await ensureSalesCreditPaymentMethod(db);
+  return salesAllowsCreditPayment(db);
+}
+
+async function commitSaleCreation(client, sale, body) {
+  const idemKey = body.clientRequestId || body.idempotencyKey || `sale:${sale.id}`;
+  if (body.clientRequestId || body.idempotencyKey) {
+    await client.query(
+      `UPDATE sales SET client_request_id = $1 WHERE id = $2`,
+      [idemKey, sale.id],
+    );
+  }
+  await enqueueSaleCreated(client, sale.id, body.branchId, idemKey);
+  await client.query('COMMIT');
+  return sale;
+}
+
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
@@ -36,45 +61,49 @@ module.exports = function(broadcastTable) {
   // CREATE: Delegated to Transaction Engine
   // POS cashiers (pos_access) and back-office invoicing (invoice_create) may create sales.
   router.post('/', requirePermission('pos_access', 'invoice_create'), async (req, res) => {
-    const client = await db.pool.connect();
+    let client = await db.pool.connect();
+    let attempt = 0;
     try {
-      await client.query('BEGIN');
-      const sale = await processSale(client, req.body);
-      const idemKey = req.body.clientRequestId || req.body.idempotencyKey || `sale:${sale.id}`;
-      if (req.body.clientRequestId || req.body.idempotencyKey) {
-        await client.query(
-          `UPDATE sales SET client_request_id = $1 WHERE id = $2`,
-          [idemKey, sale.id]
-        );
+      for (;;) {
+        try {
+          await client.query('BEGIN');
+          const sale = await processSale(client, req.body);
+          await commitSaleCreation(client, sale, req.body);
+          let saftHash = null;
+          try {
+            await signSaleInvoice(sale.id);
+            const signed = await db.query('SELECT saft_hash FROM sales WHERE id = $1', [sale.id]);
+            saftHash = signed.rows[0]?.saft_hash || null;
+          } catch (e) {
+            console.warn('[AGT SIGN]', e.message);
+          }
+          await broadcastTable('sales');
+          await broadcastTable('products');
+          return res.status(201).json({ ...sale, items: req.body.items, saft_hash: saftHash });
+        } catch (error) {
+          await client.query('ROLLBACK');
+          const isCredit = String(req.body?.paymentMethod || req.body?.payment_method || '').toLowerCase() === 'credit';
+          if (attempt === 0 && isCredit && isPaymentMethodConstraintError(error)) {
+            console.warn('[SALES] credit constraint hit — auto-repairing schema and retrying once');
+            const repaired = await repairCreditPaymentSchema();
+            if (!repaired) throw error;
+            attempt += 1;
+            continue;
+          }
+          throw error;
+        }
       }
-      await enqueueSaleCreated(client, sale.id, req.body.branchId, idemKey);
-      await client.query('COMMIT');
-      // Sign the invoice and surface the fiscal hash on the response so the POS
-      // receipt prints the genuine AGT signature (not a placeholder). Signing runs
-      // after COMMIT; failures must not fail the sale, so they are swallowed here.
-      let saftHash = null;
-      try {
-        await signSaleInvoice(sale.id);
-        const signed = await db.query('SELECT saft_hash FROM sales WHERE id = $1', [sale.id]);
-        saftHash = signed.rows[0]?.saft_hash || null;
-      } catch (e) {
-        console.warn('[AGT SIGN]', e.message);
-      }
-      await broadcastTable('sales');
-      await broadcastTable('products');
-      res.status(201).json({ ...sale, items: req.body.items, saft_hash: saftHash });
     } catch (error) {
-      await client.query('ROLLBACK');
       console.error('[SALES ERROR]', error);
       const raw = error.message || 'Failed to create sale';
       const errorMessage = /chk_products_stock_nonneg/i.test(raw)
         ? 'Stock insuficiente para concluir a venda. Verifique o inventário nesta filial.'
-        : /sales_payment_method_check|payment_method_check/i.test(raw)
-          ? 'O servidor precisa de atualização: método de pagamento não permitido na base de dados. Reinicie o serviço NEXOR no servidor ou contacte o administrador.'
+        : isPaymentMethodConstraintError(error)
+          ? 'Não foi possível registar venda a prazo: a base de dados do servidor ainda não permite pagamento "credit". Reinicie o contentor backend ou execute: docker compose exec backend node scripts/ensure-server-schema.js'
         : raw;
       const status = /stock insuficiente/i.test(errorMessage)
         ? 409
-        : /método de pagamento/i.test(errorMessage)
+        : isPaymentMethodConstraintError(error)
           ? 503
           : 500;
       res.status(status).json({ error: errorMessage });

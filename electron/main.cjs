@@ -2267,6 +2267,11 @@ ipcMain.handle('syncOutbox:pendingCount', () => ({
   count: syncOutbox.getPendingCount(),
 }));
 
+ipcMain.handle('syncOutbox:listPending', () => ({
+  count: syncOutbox.getPendingCount(),
+  items: syncOutbox.listPendingForUi(),
+}));
+
 ipcMain.handle('syncOutbox:flush', async (_, apiBaseUrl) => {
   try {
     return { success: true, ...(await syncOutbox.flushToServer(apiBaseUrl || getCityApiBaseForClient())) };

@@ -223,7 +223,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     {
       label: t.topNav.menus.accounting,
       items: [
-        { label: t.topNav.accounting.receipt, icon: Receipt, path: '/invoices' },
+        { label: t.topNav.accounting.receipt, icon: Receipt, path: '/payments', state: { openReceipt: true } },
         { label: t.topNav.accounting.receiveMethod, icon: Wallet, path: '/payments' },
         { label: t.topNav.accounting.creditAmount, icon: CreditCard, path: '/payments' },
         { label: 'separator' },
@@ -384,8 +384,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           );
           return;
         case 'receipt':
-          navigate('/invoices');
-          window.setTimeout(() => window.dispatchEvent(new CustomEvent(NEXOR_INVOICES_NEW_RECEIPT)), 150);
+          navigate('/payments', { state: { openReceipt: true } });
           return;
         case 'payment':
           navigate('/payments');

@@ -152,6 +152,30 @@ function listPending() {
   return readJsonOutbox().filter((e) => e.status === 'pending' || e.status === 'failed');
 }
 
+/** Normalized rows for renderer tooltips / settings UI. */
+function listPendingForUi() {
+  return listPending().map((row) => {
+    if (row && typeof row === 'object' && 'event_type' in row) {
+      return {
+        id: String(row.id || ''),
+        eventType: String(row.event_type || 'sale.created'),
+        status: String(row.status || 'pending'),
+        lastError: row.last_error ? String(row.last_error) : null,
+        createdAt: row.created_at ? String(row.created_at) : null,
+        retryCount: Number(row.retry_count || 0),
+      };
+    }
+    return {
+      id: String(row.idempotencyKey || row.id || ''),
+      eventType: String(row.type || 'sale.created'),
+      status: String(row.status || 'pending'),
+      lastError: row.lastError || row.last_error ? String(row.lastError || row.last_error) : null,
+      createdAt: row.createdAt || row.created_at ? String(row.createdAt || row.created_at) : null,
+      retryCount: Number(row.attempts || 0),
+    };
+  });
+}
+
 async function checkServerHealth(apiBase) {
   const url = `${apiBase.replace(/\/$/, '')}/api/health`;
   const ctrl = new AbortController();
@@ -275,6 +299,7 @@ module.exports = {
   enqueueEvent,
   getPendingCount,
   listPending,
+  listPendingForUi,
   flushToServer,
   OUTBOX_PATH,
   useSqliteOutbox,

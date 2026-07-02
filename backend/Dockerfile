@@ -5,7 +5,7 @@ FROM node:22-bookworm-slim
 # Build tools for native deps (better-sqlite3 is only used by the one-time
 # SQLite->Postgres migration script; the running server uses pg).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates wget \
+  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates wget postgresql-client \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

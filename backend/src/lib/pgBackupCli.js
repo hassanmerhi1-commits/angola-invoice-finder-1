@@ -9,6 +9,14 @@ const DEFAULT_DOCKER_CONTAINER =
   || process.env.NEXOR_PG_DOCKER_CONTAINER
   || 'kwanza-postgres';
 
+function runningInsideDocker() {
+  try {
+    return fs.existsSync('/.dockerenv');
+  } catch {
+    return false;
+  }
+}
+
 function parsePgConnection() {
   const connStr = process.env.DATABASE_URL;
   if (connStr) {
@@ -65,6 +73,7 @@ function execFileAsync(cmd, args, opts = {}) {
 }
 
 async function isDockerContainerRunning(name) {
+  if (runningInsideDocker()) return false;
   try {
     const out = await execFileAsync('docker', ['inspect', '-f', '{{.State.Running}}', name], { timeout: 15000 });
     return String(out).trim() === 'true';
@@ -90,7 +99,7 @@ async function localPgDump(binary, filepath, conn) {
     '--no-acl',
     '-f', filepath,
   ];
-  await execFileAsync(binary, args, { env: pgEnv(conn), timeout: 120000 });
+  await execFileAsync(binary, args, { env: pgEnv(conn), timeout: 300000 });
 }
 
 async function dockerPgDump(filepath, conn) {
@@ -110,24 +119,33 @@ async function dockerPgDump(filepath, conn) {
   console.log(`[BACKUP] PostgreSQL dump via Docker (${container})`);
 }
 
-async function createPostgresBackup(filepath) {
-  const conn = parsePgConnection();
+async function buildBackupCandidates() {
   const candidates = [];
   const custom = String(process.env.PG_DUMP_PATH || '').trim();
   if (custom) candidates.push({ kind: 'local', bin: custom });
-  candidates.push({ kind: 'local', bin: 'pg_dump' });
+
+  // Host machine: prefer docker exec into kwanza-postgres (no local pg_dump install needed).
   if (await isDockerContainerRunning(DEFAULT_DOCKER_CONTAINER)) {
     candidates.push({ kind: 'docker' });
   }
 
+  candidates.push({ kind: 'local', bin: 'pg_dump' });
+  return candidates;
+}
+
+async function createPostgresBackup(filepath) {
+  const conn = parsePgConnection();
+  const candidates = await buildBackupCandidates();
   let lastErr;
-  for (const c of candidates) {
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const c = candidates[i];
     try {
       if (c.kind === 'docker') {
         await dockerPgDump(filepath, conn);
       } else {
         await localPgDump(c.bin, filepath, conn);
-        console.log(`[BACKUP] PostgreSQL dump via ${c.bin}`);
+        console.log(`[BACKUP] PostgreSQL dump via ${c.bin} → ${conn.host}:${conn.port}/${conn.database}`);
       }
       if (!fs.existsSync(filepath) || fs.statSync(filepath).size < 50) {
         throw new Error('Backup file is empty or missing');
@@ -135,22 +153,23 @@ async function createPostgresBackup(filepath) {
       return;
     } catch (e) {
       lastErr = e;
-      if (!isMissingBinaryError(e) && c.kind === 'local' && candidates.some((x) => x.kind === 'docker')) {
-        console.warn(`[BACKUP] ${c.bin} failed (${e.message}) — trying Docker…`);
-        continue;
-      }
-      if (c.kind === 'docker' || !candidates.some((x) => x.kind === 'docker')) {
-        if (!isMissingBinaryError(e)) throw e;
-      }
+      const label = c.kind === 'docker' ? 'docker' : c.bin;
+      console.warn(`[BACKUP] ${label} failed (${i + 1}/${candidates.length}):`, e.message);
+      if (i === candidates.length - 1) break;
+      if (isMissingBinaryError(e)) continue;
+      // Connection/auth errors on local pg_dump — still try docker if available.
+      if (c.kind === 'local' && candidates.some((x) => x.kind === 'docker')) continue;
+      throw e;
     }
   }
 
   throw lastErr || new Error(
-    'pg_dump not found. Install PostgreSQL client tools, set PG_DUMP_PATH, or run Postgres in Docker (kwanza-postgres).',
+    'pg_dump not found. Install PostgreSQL client tools, set PG_DUMP_PATH, rebuild the backend Docker image (postgresql-client), or run Postgres in Docker (kwanza-postgres).',
   );
 }
 
 async function localPsqlRestore(filepath, conn) {
+  const binary = String(process.env.PSQL_PATH || 'psql').trim() || 'psql';
   const args = [
     '-h', conn.host,
     '-p', String(conn.port),
@@ -158,7 +177,7 @@ async function localPsqlRestore(filepath, conn) {
     '-d', conn.database,
     '-f', filepath,
   ];
-  await execFileAsync('psql', args, { env: pgEnv(conn), timeout: 300000 });
+  await execFileAsync(binary, args, { env: pgEnv(conn), timeout: 300000 });
 }
 
 function dockerPsqlRestore(filepath, conn) {
@@ -188,15 +207,26 @@ function dockerPsqlRestore(filepath, conn) {
 
 async function restorePostgresBackup(filepath) {
   const conn = parsePgConnection();
-  try {
-    await localPsqlRestore(filepath, conn);
-    return;
-  } catch (e) {
-    if (!isMissingBinaryError(e) || !(await isDockerContainerRunning(DEFAULT_DOCKER_CONTAINER))) {
-      throw e;
+  if (!runningInsideDocker() && await isDockerContainerRunning(DEFAULT_DOCKER_CONTAINER)) {
+    try {
+      await dockerPsqlRestore(filepath, conn);
+      return;
+    } catch (e) {
+      if (!isMissingBinaryError(e)) {
+        console.warn('[BACKUP] Docker restore failed, trying local psql:', e.message);
+      }
     }
   }
-  await dockerPsqlRestore(filepath, conn);
+  try {
+    await localPsqlRestore(filepath, conn);
+  } catch (e) {
+    if (!isMissingBinaryError(e) || runningInsideDocker()) throw e;
+    if (await isDockerContainerRunning(DEFAULT_DOCKER_CONTAINER)) {
+      await dockerPsqlRestore(filepath, conn);
+      return;
+    }
+    throw e;
+  }
 }
 
 module.exports = {
@@ -204,4 +234,5 @@ module.exports = {
   restorePostgresBackup,
   parsePgConnection,
   DEFAULT_DOCKER_CONTAINER,
+  runningInsideDocker,
 };

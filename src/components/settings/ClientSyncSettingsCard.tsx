@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CloudOff, RefreshCw } from 'lucide-react';
 import { useTranslation } from '@/i18n';
-import { getOfflinePendingCount } from '@/lib/sync/offlineSales';
-import { getLocalPendingSyncItems, isOfflineFirstEnabled } from '@/lib/sync/offlineFirst';
+import { getOfflinePendingSummary } from '@/lib/sync/offlineSales';
+import { isOfflineFirstEnabled } from '@/lib/sync/offlineFirst';
 import { isThinClientMode } from '@/lib/api/config';
+import type { OfflinePendingItem } from '@/lib/sync/offlineSales';
 
 export function ClientSyncSettingsCard() {
   const { t } = useTranslation();
@@ -15,14 +16,15 @@ export function ClientSyncSettingsCard() {
   const [thinClient, setThinClient] = useState(false);
   const [pending, setPending] = useState(0);
   const [agtPending, setAgtPending] = useState(0);
-  const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
+  const [items, setItems] = useState<OfflinePendingItem[]>([]);
   const [flushing, setFlushing] = useState(false);
 
   const refresh = useCallback(async () => {
     setOfflineFirst(await isOfflineFirstEnabled());
     setThinClient(isThinClientMode());
-    setPending(await getOfflinePendingCount());
-    setItems(await getLocalPendingSyncItems());
+    const summary = await getOfflinePendingSummary();
+    setPending(summary.count);
+    setItems(summary.items);
     try {
       const agtApi = (window as any).electronAPI?.clientLocal?.getAgtPendingCount;
       if (agtApi) {
@@ -75,12 +77,22 @@ export function ClientSyncSettingsCard() {
             <Badge variant={agtPending > 0 ? 'outline' : 'secondary'}>{agtPending}</Badge>
           </div>
         )}
-        {offlineFirst && items.length > 0 && (
-          <ul className="text-xs space-y-1 max-h-32 overflow-y-auto text-muted-foreground">
+        {items.length > 0 && (
+          <ul className="text-xs space-y-2 max-h-40 overflow-y-auto text-muted-foreground border rounded-md p-2">
             {items.slice(0, 8).map((row) => (
-              <li key={String(row.id)} className="flex justify-between gap-2">
-                <span>{String(row.event_type || 'sale')}</span>
-                <span>{String(row.status)}</span>
+              <li key={row.id} className="space-y-0.5">
+                <div className="flex justify-between gap-2 font-medium text-foreground">
+                  <span>{row.eventType === 'sale.created' ? t.syncPendingUi.eventSale : row.eventType}</span>
+                  <span>{row.status}</span>
+                </div>
+                <p className="text-[11px] break-words">
+                  {row.lastError
+                    ? `${ui.lastErrorLabel}: ${row.lastError}`
+                    : ui.noErrorYet}
+                  {row.retryCount != null && row.retryCount > 0
+                    ? ` (${row.retryCount}×)`
+                    : ''}
+                </p>
               </li>
             ))}
           </ul>

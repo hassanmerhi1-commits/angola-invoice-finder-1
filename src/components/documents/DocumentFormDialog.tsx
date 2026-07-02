@@ -9,7 +9,7 @@ import { NumericInput } from '@/components/ui/numeric-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 import { Plus, Trash2, Search, Save, Printer, X, Send } from 'lucide-react';
 import { printDocument } from '@/lib/documentPDF';
@@ -20,7 +20,7 @@ import { linkProformaAfterInvoiceConfirm } from '@/lib/linkProformaConversion';
 import { useProducts, useAuth, useClients, useSuppliers } from '@/hooks/useERP';
 import type { Client, Supplier, OpenItem } from '@/types/erp';
 import { effectiveUnitPrice, clientPricing, normalizePriceLevel } from '@/lib/pricing';
-import { signedOpenItemBalance } from '@/lib/openItems';
+import { signedOpenItemBalance, isOpenItemDebit } from '@/lib/openItems';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { api } from '@/lib/api/client';
 import { isAgtValidated } from '@/lib/agtStatus';
@@ -29,7 +29,7 @@ import { useTranslation } from '@/i18n';
 import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutability';
 import { useAgtTransmit } from '@/hooks/useAgtTransmit';
 import { usePermissions } from '@/hooks/usePermissions';
-import { SALES_CHANGED_EVENT } from '@/lib/storage';
+import { OPEN_ITEMS_CHANGED_EVENT, SALES_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 
 function defaultSalesDueDate(daysAhead = 15): string {
   const d = new Date();
@@ -56,6 +56,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const { clients } = useClients();
   const { suppliers } = useSuppliers();
   const config = DOCUMENT_TYPE_CONFIG[documentType];
+  const isPaymentDocument = documentType === 'recibo' || documentType === 'pagamento';
   const typeUi = (t.documentFormUi.types as Record<DocumentType, { full: string; short: string }>)[documentType];
   const fiscalLocked = Boolean(editDocument && isFiscallyImmutable(editDocument));
   const dueDateOnlyEdit = Boolean(editDocument && allowsDueDateOnlyEdit(editDocument));
@@ -120,6 +121,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         setPaymentMethod('cash');
         setAmountPaid(0);
         setLines([]);
+        setSelectedOpenItemIds(new Set());
       }
       setEntityPickerOpen(false);
     }
@@ -164,12 +166,13 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const showPricingControls = config.entityType === 'customer' && !contentLocked;
 
   const selectEntity = (entity: Client | Supplier) => {
-    setEntityId(entity.id);
+    setEntityId(String(entity.id));
     setEntityName(entity.name);
     setEntityNif(entity.nif || '');
     setEntityAddress(entity.address || '');
     setEntityPhone(entity.phone || '');
     setEntityPickerOpen(false);
+    setSelectedOpenItemIds(new Set());
     if (config.entityType === 'customer') {
       const client = entity as Client;
       setPriceLevel(normalizePriceLevel(client.defaultPriceLevel ?? 1));
@@ -205,6 +208,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
   const [entityOpenItemsLoading, setEntityOpenItemsLoading] = useState(false);
   const [entityOpenItems, setEntityOpenItems] = useState<OpenItem[]>([]);
+  const [selectedOpenItemIds, setSelectedOpenItemIds] = useState<Set<string>>(new Set());
 
   const mapOpenItemRow = (oi: any): OpenItem => ({
     id: String(oi.id ?? ''),
@@ -225,18 +229,33 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     clearedAt: oi.cleared_at ?? oi.clearedAt ?? undefined,
   });
 
+  const entityPayableItems = useMemo(
+    () => entityOpenItems.filter((oi) => isOpenItemDebit(oi.isDebit)),
+    [entityOpenItems],
+  );
+
+  const payableItemsKey = entityPayableItems.map((oi) => oi.id).join('|');
+  useEffect(() => {
+    if (!isPaymentDocument || !entityId || !payableItemsKey) return;
+    setSelectedOpenItemIds(new Set(entityPayableItems.map((oi) => oi.id)));
+    const total = entityPayableItems.reduce((sum, oi) => sum + signedOpenItemBalance(oi), 0);
+    setAmountPaid((prev) => (prev > 0 ? prev : Math.round(total * 100) / 100));
+  }, [isPaymentDocument, entityId, payableItemsKey, entityPayableItems]);
+
   useEffect(() => {
     if (!open) return;
-    if (documentType !== 'fatura_venda') return;
-    if (config.entityType !== 'customer') return;
-    if (!entityId) {
+    const showOpenItems =
+      (documentType === 'fatura_venda' || documentType === 'recibo' || documentType === 'pagamento')
+      && Boolean(entityId);
+    if (!showOpenItems) {
       setEntityOpenItems([]);
       setEntityOpenItemsLoading(false);
       return;
     }
+    const entType = documentType === 'pagamento' ? 'supplier' : 'customer';
     let cancelled = false;
     setEntityOpenItemsLoading(true);
-    void api.payments.openItems('customer', entityId).then((res) => {
+    void api.payments.openItems(entType, entityId).then((res) => {
       if (cancelled) return;
       const rows = Array.isArray(res.data) ? res.data : [];
       setEntityOpenItems(rows.map(mapOpenItemRow).filter((x) => x.status !== 'cleared'));
@@ -248,7 +267,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     return () => {
       cancelled = true;
     };
-  }, [open, documentType, config.entityType, entityId]);
+  }, [open, documentType, entityId]);
 
   // Filtered products for search
   const filteredProducts = useMemo(() => {
@@ -379,7 +398,20 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     if (!entityName && config.entityType === 'customer') {
       setEntityName(finalConsumerName);
     }
-    if (lines.length === 0) {
+    if (isPaymentDocument) {
+      if (!entityId) {
+        toast.error(t.paymentsUi.requiredFields);
+        return;
+      }
+      if (!amountPaid || amountPaid <= 0) {
+        toast.error(t.paymentsUi.requiredFields);
+        return;
+      }
+      if (status !== 'confirmed') {
+        toast.error(t.documentFormUi.paymentConfirmOnly);
+        return;
+      }
+    } else if (lines.length === 0) {
       toast.error(t.documentFormUi.addAtLeastOneLine);
       return;
     }
@@ -541,6 +573,85 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               .replace('{short}', typeUi.short)
               .replace('{number}', doc.documentNumber),
           );
+        } else if (isPaymentDocument && status === 'confirmed') {
+          const paymentType = documentType === 'recibo' ? 'receipt' : 'payment';
+          const entType = documentType === 'recibo' ? 'customer' : 'supplier';
+          const branchId = currentBranch?.id || user?.branchId || '';
+          const selected = entityPayableItems.filter((oi) => selectedOpenItemIds.has(oi.id));
+
+          const payRes = await api.payments.create({
+            paymentType,
+            entityType: entType,
+            entityId,
+            entityName: entityName || '',
+            paymentMethod,
+            amount: amountPaid,
+            branchId,
+            createdBy: user?.id || user?.email || 'user-admin',
+            reference: '',
+            notes,
+            invoiceIds: selected.map((oi) => oi.documentId),
+          });
+
+          if (payRes.error || !payRes.data) {
+            throw new Error(payRes.error || t.paymentsUi.recordFailed);
+          }
+
+          const payRow = payRes.data as Record<string, unknown>;
+          const paymentId = String(payRow.id || '');
+          const paymentNumber = String(payRow.payment_number || payRow.paymentNumber || '');
+
+          const paymentLine = calculateLineTotals({
+            id: `line_${Date.now()}`,
+            description: documentType === 'recibo'
+              ? `${t.paymentsUi.receipts} — ${entityName}`
+              : `${t.paymentsUi.payments} — ${entityName}`,
+            quantity: 1,
+            unitPrice: amountPaid,
+            discount: 0,
+            taxRate: 0,
+          });
+
+          const doc = await createDocument(
+            documentType,
+            branchId,
+            currentBranch?.code || 'SEDE',
+            currentBranch?.name || '',
+            user?.id || '',
+            user?.name || '',
+            {
+              id: paymentId || undefined,
+              documentNumber: paymentNumber || undefined,
+              entityId,
+              entityName: entityName || finalConsumerName,
+              entityNif,
+              entityAddress,
+              entityPhone,
+              lines: [paymentLine],
+              subtotal: amountPaid,
+              totalDiscount: 0,
+              totalTax: 0,
+              total: amountPaid,
+              paymentMethod: paymentMethod as ERPDocument['paymentMethod'],
+              amountPaid,
+              amountDue: 0,
+              parentDocumentId: prefillFrom?.id,
+              parentDocumentNumber: prefillFrom?.documentNumber,
+              parentDocumentType: prefillFrom?.documentType,
+              dueDate,
+              notes,
+              status: 'confirmed',
+            },
+          );
+
+          window.dispatchEvent(new Event(OPEN_ITEMS_CHANGED_EVENT));
+          if (entType === 'supplier') {
+            window.dispatchEvent(new CustomEvent(SUPPLIERS_CHANGED_EVENT, { detail: {} }));
+          }
+          onSaved?.(doc);
+          toast.success(
+            documentType === 'recibo' ? t.paymentsUi.receiptRecorded : t.paymentsUi.paymentRecorded,
+          );
         } else {
           // All other document types (proforma, draft, etc.) — save locally
           const doc = await createDocument(
@@ -651,7 +762,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                 {agtValidated ? t.agtUi.agtValidatedLabel : t.documentFormUi.sendToAgt}
               </Button>
             )}
-            {!fiscalLocked && (
+            {!fiscalLocked && !isPaymentDocument && (
               <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleSave('draft')}>
                 <Save className="w-3 h-3" /> {t.documentFormUi.saveDraft}
               </Button>
@@ -786,26 +897,31 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             </div>
           )}
 
-          {/* Pending receipts / open items for selected customer */}
-          {documentType === 'fatura_venda' && config.entityType === 'customer' && entityId && (
+          {/* Pending receipts / open items for selected customer or supplier */}
+          {(documentType === 'fatura_venda' || isPaymentDocument) && entityId && (
             <div className="border rounded-md">
               <div className="flex items-center justify-between gap-2 px-3 py-2 border-b bg-muted/40">
                 <div className="text-xs font-semibold">
-                  {t.paymentsUi.openItems} ({entityOpenItems.length})
+                  {t.paymentsUi.openDocsToOffset} ({entityPayableItems.length})
                 </div>
                 {entityOpenItemsLoading && (
-                  <div className="text-xs text-muted-foreground">{t.common.loading}</div>
+                  <div className="text-xs text-muted-foreground">{t.paymentsUi.loadingOpenDocs}</div>
                 )}
               </div>
               <div className="max-h-40 overflow-y-auto">
-                {entityOpenItems.length === 0 && !entityOpenItemsLoading ? (
+                {entityPayableItems.length === 0 && !entityOpenItemsLoading ? (
                   <div className="px-3 py-4 text-xs text-muted-foreground">
-                    {t.paymentsUi.noneOpenItems}
+                    {documentType === 'recibo'
+                      ? t.paymentsUi.noOpenDocsForEntity
+                      : documentType === 'pagamento'
+                        ? t.paymentsUi.noOpenDocsForSupplier
+                        : t.paymentsUi.noneOpenItems}
                   </div>
                 ) : (
                   <table className="w-full text-xs">
                     <thead className="sticky top-0 bg-background/90 backdrop-blur border-b">
                       <tr>
+                        {isPaymentDocument && <th className="w-8 px-2 py-2" />}
                         <th className="text-left font-semibold px-3 py-2">{t.paymentsUi.document}</th>
                         <th className="text-left font-semibold px-3 py-2">{t.common.date}</th>
                         <th className="text-left font-semibold px-3 py-2">{t.paymentsUi.dueDate}</th>
@@ -813,8 +929,21 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/50">
-                      {entityOpenItems.map((oi) => (
+                      {entityPayableItems.map((oi) => (
                         <tr key={oi.id} className="hover:bg-accent/30">
+                          {isPaymentDocument && (
+                            <td className="px-2 py-2">
+                              <Checkbox
+                                checked={selectedOpenItemIds.has(oi.id)}
+                                onCheckedChange={(checked) => {
+                                  const next = new Set(selectedOpenItemIds);
+                                  if (checked) next.add(oi.id);
+                                  else next.delete(oi.id);
+                                  setSelectedOpenItemIds(next);
+                                }}
+                              />
+                            </td>
+                          )}
                           <td className="px-3 py-2 font-mono">{oi.documentNumber}</td>
                           <td className="px-3 py-2 text-muted-foreground">
                             {oi.documentDate ? new Date(oi.documentDate).toLocaleDateString(locale) : '—'}
@@ -868,12 +997,16 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">{t.documentFormUi.amountPaid}</Label>
+                  <Label className="text-xs">
+                    {isPaymentDocument ? t.paymentsUi.amount : t.documentFormUi.amountPaid}
+                  </Label>
                   <Input type="number" value={amountPaid} onChange={e => setAmountPaid(Number(e.target.value))} className="h-8 text-xs" />
                 </div>
               </div>
             )}
 
+          {!isPaymentDocument && (
+          <>
           {/* Product search + add */}
           <div className="flex gap-2 items-end">
             <div className="flex-1 space-y-1">
@@ -1028,6 +1161,15 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               )}
             </div>
           </div>
+          </>
+          )}
+
+          {isPaymentDocument && (
+            <div className="space-y-1">
+              <Label className="text-xs">{t.common.notes}</Label>
+              <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder={t.documentFormUi.notesPlaceholder} rows={3} className="text-xs" />
+            </div>
+          )}
           </div>
         </div>
       </DialogContent>

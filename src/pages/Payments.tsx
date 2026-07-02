@@ -1,4 +1,5 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
@@ -29,6 +30,7 @@ import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
 import * as storage from '@/lib/storage';
 import { OPEN_ITEMS_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import { isOpenItemDebit, signedOpenItemBalance } from '@/lib/openItems';
+import { userHasPermission } from '@/lib/permissions';
 
 // Demo data for localStorage mode
 function mapPaymentRow(p: any): Payment {
@@ -51,19 +53,26 @@ function mapPaymentRow(p: any): Payment {
 }
 
 function mapOpenItemRow(oi: any): OpenItem {
+  const documentType = oi.document_type || oi.documentType || 'invoice';
+  const rawDebit = oi.is_debit ?? oi.isDebit;
+  const isDebit =
+    rawDebit === undefined || rawDebit === null
+      ? documentType === 'invoice' || documentType === 'debit_note'
+      : isOpenItemDebit(rawDebit);
+
   return {
-    id: oi.id,
+    id: String(oi.id ?? ''),
     entityType: oi.entity_type || oi.entityType,
-    entityId: oi.entity_id || oi.entityId,
+    entityId: String(oi.entity_id ?? oi.entityId ?? ''),
     entityName: oi.entity_name || oi.entityName || undefined,
-    documentType: oi.document_type || oi.documentType,
-    documentId: oi.document_id || oi.documentId,
-    documentNumber: oi.document_number || oi.documentNumber,
+    documentType,
+    documentId: String(oi.document_id ?? oi.documentId ?? ''),
+    documentNumber: String(oi.document_number ?? oi.documentNumber ?? ''),
     documentDate: oi.document_date || oi.documentDate,
     dueDate: oi.due_date || oi.dueDate,
     originalAmount: parseFloat(oi.original_amount ?? oi.originalAmount ?? 0),
     remainingAmount: parseFloat(oi.remaining_amount ?? oi.remainingAmount ?? 0),
-    isDebit: oi.is_debit ?? oi.isDebit,
+    isDebit,
     status: oi.status,
     currency: oi.currency || 'AOA',
     branchId: oi.branch_id || oi.branchId,
@@ -125,28 +134,20 @@ function usePaymentsData(branchId?: string) {
     return res.data;
   }, [refresh]);
 
-  const loadOpenItems = useCallback(async (entityType: string, entityId: string) => {
-    const res = await api.payments.openItems(entityType, entityId);
-    if (res.data) {
-      const scoped = res.data.map(mapOpenItemRow);
-      setOpenItems((prev) => {
-        const others = prev.filter((oi) => !(oi.entityType === entityType && oi.entityId === entityId));
-        return [...others, ...scoped];
-      });
-    }
-  }, []);
-
-  return { payments, openItems, loading, refresh, createPayment, loadOpenItems };
+  return { payments, openItems, loading, refresh, createPayment };
 }
 
 export default function Payments() {
   const { t, language } = useTranslation();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const deepLinkHandled = useRef(false);
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const { apiBranchId } = useBranchScope();
-  const { clients } = useClients();
-  const { suppliers } = useSuppliers();
-  const { payments, openItems, loading, refresh, createPayment, loadOpenItems } = usePaymentsData(apiBranchId);
+  const { clients, refreshClients } = useClients();
+  const { suppliers, refreshSuppliers } = useSuppliers();
+  const { payments, openItems, loading, refresh, createPayment } = usePaymentsData(apiBranchId);
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
 
   const [activeTab, setActiveTab] = useState<'receipts' | 'payments' | 'open-items'>('receipts');
@@ -163,6 +164,14 @@ export default function Payments() {
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [selectedOpenItems, setSelectedOpenItems] = useState<Set<string>>(new Set());
+  const [entityDialogOpenItems, setEntityDialogOpenItems] = useState<OpenItem[]>([]);
+  const [entityOpenItemsLoading, setEntityOpenItemsLoading] = useState(false);
+
+  const canRecordReceipt = !!user && (
+    userHasPermission(user.role, user.permissionOverrides, 'accounting_receipt')
+    || userHasPermission(user.role, user.permissionOverrides, 'accounting_payment')
+  );
+  const canRecordPayment = !!user && userHasPermission(user.role, user.permissionOverrides, 'accounting_payment');
 
   const entities = paymentType === 'receipt' ? clients : suppliers;
   const entityLabel = paymentType === 'receipt' ? t.paymentsUi.customer : t.paymentsUi.supplier;
@@ -170,7 +179,7 @@ export default function Payments() {
   const filteredEntities = useMemo(() => {
     const active = entities.filter((e) => e.isActive !== false);
     const q = entitySearch.trim().toLowerCase();
-    if (!q) return [];
+    if (!q) return active.slice(0, 30);
     return active
       .filter((e) => {
         const name = e.name.toLowerCase();
@@ -193,13 +202,11 @@ export default function Payments() {
   };
 
   const selectEntity = (entity: Client | Supplier) => {
-    setEntityId(entity.id);
+    setEntityId(String(entity.id));
     setEntitySearch(formatEntityOption(entity));
     setEntityPickerOpen(false);
     setSelectedOpenItems(new Set());
     setAmount('');
-    const entType = paymentType === 'receipt' ? 'customer' : 'supplier';
-    void loadOpenItems(entType, entity.id);
   };
 
   const resolveEntityName = useCallback((
@@ -217,16 +224,9 @@ export default function Payments() {
     return clients.find((c) => String(c.id) === id)?.name || id;
   }, [suppliers, clients]);
 
-  const entityOpenItems = useMemo(() => {
-    if (!entityId) return [];
-    const entType = paymentType === 'receipt' ? 'customer' : 'supplier';
-    return openItems.filter(oi => oi.entityType === entType && oi.entityId === entityId && oi.status !== 'cleared');
-  }, [entityId, paymentType, openItems]);
-
-  /** Invoices / payables to settle (exclude payment lines and supplier credits). */
   const entityPayableItems = useMemo(() => {
-    return entityOpenItems.filter((oi) => isOpenItemDebit(oi.isDebit));
-  }, [entityOpenItems]);
+    return entityDialogOpenItems.filter((oi) => isOpenItemDebit(oi.isDebit));
+  }, [entityDialogOpenItems]);
 
   const payableTotal = useMemo(() => {
     return entityPayableItems.reduce((sum, oi) => sum + signedOpenItemBalance(oi), 0);
@@ -274,12 +274,46 @@ export default function Payments() {
     setEntityId('');
     setEntitySearch('');
     setEntityPickerOpen(false);
+    setEntityDialogOpenItems([]);
+    setEntityOpenItemsLoading(false);
     setPaymentMethod('cash');
     setAmount('');
     setReference('');
     setNotes('');
     setSelectedOpenItems(new Set());
   };
+
+  useEffect(() => {
+    if (!showNewDialog || !entityId) {
+      setEntityDialogOpenItems([]);
+      setEntityOpenItemsLoading(false);
+      return;
+    }
+    const entType = paymentType === 'receipt' ? 'customer' : 'supplier';
+    let cancelled = false;
+    setEntityOpenItemsLoading(true);
+    void api.payments.openItems(entType, entityId).then((res) => {
+      if (cancelled) return;
+      if (res.error) {
+        toast.error(res.error);
+        setEntityDialogOpenItems([]);
+        return;
+      }
+      const rows = Array.isArray(res.data) ? res.data : [];
+      setEntityDialogOpenItems(rows.map(mapOpenItemRow).filter((x) => x.status !== 'cleared'));
+    }).catch((err) => {
+      if (!cancelled) {
+        console.error('[PAYMENTS] openItems failed:', err);
+        setEntityDialogOpenItems([]);
+        toast.error(t.paymentsUi.recordFailed);
+      }
+    }).finally(() => {
+      if (!cancelled) setEntityOpenItemsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [showNewDialog, entityId, paymentType, t.paymentsUi.recordFailed]);
 
   const payableItemsKey = entityPayableItems.map((oi) => oi.id).join('|');
   useEffect(() => {
@@ -297,7 +331,7 @@ export default function Payments() {
       return;
     }
 
-    const entity = entities.find(e => e.id === entityId);
+    const entity = entities.find(e => String(e.id) === String(entityId));
     const selected = entityPayableItems.filter(oi => selectedOpenItems.has(oi.id));
 
     const branchId = currentBranch?.id || user?.branchId || 'branch-main';
@@ -334,11 +368,55 @@ export default function Payments() {
     }
   };
 
-  const openNewDialog = (type: 'receipt' | 'payment') => {
+  const openNewDialog = (type: 'receipt' | 'payment', preset?: { entityId?: string; entityName?: string }) => {
+    if (type === 'receipt' && !canRecordReceipt) {
+      toast.error(t.topNav.toolbar.noPermission);
+      return;
+    }
+    if (type === 'payment' && !canRecordPayment) {
+      toast.error(t.topNav.toolbar.noPermission);
+      return;
+    }
     setPaymentType(type);
     resetForm();
+    void (type === 'receipt' ? refreshClients() : refreshSuppliers());
+    if (preset?.entityId) {
+      setEntityId(String(preset.entityId));
+      if (preset.entityName) setEntitySearch(preset.entityName);
+    } else if (preset?.entityName) {
+      const directory = type === 'receipt' ? clients : suppliers;
+      const match = directory.find((e) =>
+        e.name.toLowerCase() === preset.entityName!.toLowerCase()
+        || String(e.nif || '').toLowerCase() === preset.entityName!.toLowerCase(),
+      );
+      if (match) {
+        setEntityId(String(match.id));
+        setEntitySearch(formatEntityOption(match));
+      } else {
+        setEntitySearch(preset.entityName);
+        setEntityPickerOpen(true);
+      }
+    }
     setShowNewDialog(true);
   };
+
+  useEffect(() => {
+    const state = location.state as {
+      openReceipt?: boolean;
+      openPayment?: boolean;
+      entityId?: string;
+      entityName?: string;
+    } | null;
+    if (!state || deepLinkHandled.current) return;
+    if (!state.openReceipt && !state.openPayment) return;
+    deepLinkHandled.current = true;
+    const type = state.openReceipt ? 'receipt' : 'payment';
+    openNewDialog(type, {
+      entityId: state.entityId,
+      entityName: state.entityName,
+    });
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
 
   const totalReceipts = payments.filter(p => p.paymentType === 'receipt').reduce((s, p) => s + p.amount, 0);
   const totalPayments = payments.filter(p => p.paymentType === 'payment').reduce((s, p) => s + p.amount, 0);
@@ -401,10 +479,10 @@ export default function Payments() {
 
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b">
-        <Button size="sm" className="gap-1" onClick={() => openNewDialog('receipt')}>
+        <Button size="sm" className="gap-1" onClick={() => openNewDialog('receipt')} disabled={!canRecordReceipt}>
           <ArrowDownCircle className="w-4 h-4" /> {t.paymentsUi.newReceipt}
         </Button>
-        <Button size="sm" variant="outline" className="gap-1" onClick={() => openNewDialog('payment')}>
+        <Button size="sm" variant="outline" className="gap-1" onClick={() => openNewDialog('payment')} disabled={!canRecordPayment}>
           <ArrowUpCircle className="w-4 h-4" /> {t.paymentsUi.newPayment}
         </Button>
         <div className="flex-1" />
@@ -554,10 +632,11 @@ export default function Payments() {
                     const value = e.target.value;
                     setEntitySearch(value);
                     setEntityId('');
-                    setEntityPickerOpen(value.trim().length > 0);
+                    setEntityPickerOpen(true);
                     setSelectedOpenItems(new Set());
                     setAmount('');
                   }}
+                  onFocus={() => setEntityPickerOpen(true)}
                   onBlur={() => {
                     window.setTimeout(() => setEntityPickerOpen(false), 150);
                   }}
@@ -565,7 +644,7 @@ export default function Payments() {
                   className="h-10"
                   autoComplete="off"
                 />
-                {entityPickerOpen && entitySearch.trim() && filteredEntities.length > 0 && (
+                {entityPickerOpen && filteredEntities.length > 0 && (
                   <div className="absolute z-50 top-full left-0 right-0 mt-1 border rounded-md bg-popover shadow-lg max-h-56 overflow-y-auto">
                     {filteredEntities.map((entity) => (
                       <button
@@ -573,7 +652,7 @@ export default function Payments() {
                         type="button"
                         className={cn(
                           'w-full text-left px-3 py-2.5 text-sm hover:bg-accent/50 flex justify-between gap-3 border-b border-border/40 last:border-0',
-                          entityId === entity.id && 'nexor-row-selected',
+                          entityId === String(entity.id) && 'nexor-row-selected',
                         )}
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => selectEntity(entity)}
@@ -586,16 +665,22 @@ export default function Payments() {
                     ))}
                   </div>
                 )}
-                {entityPickerOpen && entitySearch.trim() && filteredEntities.length === 0 && (
+                {entityPickerOpen && filteredEntities.length === 0 && (
                   <div className="absolute z-50 top-full left-0 right-0 mt-1 border rounded-md bg-popover shadow-md px-3 py-2 text-sm text-muted-foreground">
-                    {t.paymentsUi.noEntityMatch}
+                    {entitySearch.trim()
+                      ? t.paymentsUi.noEntityMatch
+                      : t.paymentsUi.noEntitiesAvailable.replace('{entity}', entityLabel.toLowerCase())}
                   </div>
                 )}
               </div>
             </div>
 
+            {entityId && entityOpenItemsLoading && (
+              <p className="text-sm text-muted-foreground">{t.paymentsUi.loadingOpenDocs}</p>
+            )}
+
             {/* Open Items for this entity */}
-            {entityId && entityPayableItems.length > 0 && (
+            {entityId && !entityOpenItemsLoading && entityPayableItems.length > 0 && (
               <div>
                 <Label className="mb-2 block">{t.paymentsUi.openDocsToOffset}</Label>
                 <div className="border rounded-md max-h-64 overflow-y-auto">
@@ -634,6 +719,12 @@ export default function Payments() {
                     {t.paymentsUi.totalSelected} <strong>{selectedTotal.toLocaleString(locale)} Kz</strong>
                   </p>
                 )}
+              </div>
+            )}
+
+            {entityId && !entityOpenItemsLoading && entityPayableItems.length === 0 && (
+              <div className="rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">
+                {paymentType === 'receipt' ? t.paymentsUi.noOpenDocsForEntity : t.paymentsUi.noOpenDocsForSupplier}
               </div>
             )}
 

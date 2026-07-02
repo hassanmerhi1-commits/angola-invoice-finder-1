@@ -825,6 +825,16 @@ export function useSales(branchId?: string) {
 
     setSales((prev) => {
       if (prev.some((row) => row.id === sale.id)) return prev;
+      if (
+        sale.invoiceNumber
+        && prev.some(
+          (row) =>
+            row.invoiceNumber
+            && row.invoiceNumber.trim().toUpperCase() === sale.invoiceNumber.trim().toUpperCase(),
+        )
+      ) {
+        return prev;
+      }
       return [sale, ...prev];
     });
     await refreshSales();

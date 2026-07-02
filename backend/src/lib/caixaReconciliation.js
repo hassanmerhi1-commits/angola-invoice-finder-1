@@ -14,6 +14,20 @@ function salesDateFilterSql() {
   return `date(created_at) = date($2)`;
 }
 
+function salesShiftFilterSql(paramIndex) {
+  if (db.engine === 'postgres') {
+    return ` AND created_at >= $${paramIndex}::timestamptz`;
+  }
+  return ` AND datetime(created_at) >= datetime($${paramIndex})`;
+}
+
+function journalShiftFilterSql(paramIndex) {
+  if (db.engine === 'postgres') {
+    return ` AND je.created_at >= $${paramIndex}::timestamptz`;
+  }
+  return ` AND datetime(je.created_at) >= datetime($${paramIndex})`;
+}
+
 function journalDateFilterSql() {
   if (db.engine === 'postgres') {
     return `je.entry_date = $3::date`;
@@ -48,20 +62,26 @@ async function resolveBranchCaixaGlAccount(branchId) {
   };
 }
 
-async function sumErpCashSales(branchId, date) {
+async function sumErpCashSales(branchId, date, shiftOpenedAt) {
+  const params = [branchId, date];
+  let shiftClause = '';
+  if (shiftOpenedAt) {
+    params.push(String(shiftOpenedAt));
+    shiftClause = salesShiftFilterSql(params.length);
+  }
   const result = await db.query(
     `SELECT COALESCE(SUM(total), 0) AS total
      FROM sales
      WHERE branch_id = $1
        AND payment_method = 'cash'
        AND status IN ('completed', 'confirmed')
-       AND ${salesDateFilterSql()}`,
-    [branchId, date],
+       AND ${salesDateFilterSql()}${shiftClause}`,
+    params,
   );
   return roundMoney(result.rows[0]?.total);
 }
 
-async function sumGlCashMovements(accountId, accountCode, branchId, date) {
+async function sumGlCashMovements(accountId, accountCode, branchId, date, shiftOpenedAt) {
   if (!accountId && !accountCode) {
     return { saleDebits: 0, debits: 0, credits: 0, net: 0 };
   }
@@ -71,6 +91,11 @@ async function sumGlCashMovements(accountId, accountCode, branchId, date) {
     : `coa.code = $1`;
 
   const params = accountId ? [accountId, branchId, date] : [accountCode, branchId, date];
+  let shiftClause = '';
+  if (shiftOpenedAt) {
+    params.push(String(shiftOpenedAt));
+    shiftClause = journalShiftFilterSql(params.length);
+  }
 
   const movement = await db.query(
     `SELECT
@@ -83,7 +108,7 @@ async function sumGlCashMovements(accountId, accountCode, branchId, date) {
      WHERE ${accountClause}
        AND je.branch_id = $2
        AND je.is_posted = true
-       AND ${journalDateFilterSql()}`,
+       AND ${journalDateFilterSql()}${shiftClause}`,
     params,
   );
 
@@ -102,19 +127,24 @@ async function sumGlCashMovements(accountId, accountCode, branchId, date) {
  * @param {{
  *   branchId: string,
  *   date: string,
- *   session?: { openingBalance?: number, totalIn?: number, totalOut?: number, salesTotal?: number },
+ *   session?: { openingBalance?: number, totalIn?: number, totalOut?: number, salesTotal?: number, openedAt?: string },
  * }} input
  */
 async function buildCaixaReconciliation(input) {
   const branchId = String(input.branchId || '').trim();
   const date = String(input.date || '').slice(0, 10);
+  const shiftOpenedAt = input.session?.openedAt
+    ? String(input.session.openedAt).trim()
+    : input.shiftOpenedAt
+      ? String(input.shiftOpenedAt).trim()
+      : null;
   if (!branchId || !date) {
     throw new Error('branchId e date são obrigatórios');
   }
 
   const account = await resolveBranchCaixaGlAccount(branchId);
-  const erpCashSalesTotal = await sumErpCashSales(branchId, date);
-  const gl = await sumGlCashMovements(account.id, account.code, branchId, date);
+  const erpCashSalesTotal = await sumErpCashSales(branchId, date, shiftOpenedAt);
+  const gl = await sumGlCashMovements(account.id, account.code, branchId, date, shiftOpenedAt);
 
   const sessionOpening = roundMoney(input.session?.openingBalance ?? 0);
   const sessionCashIn = roundMoney(input.session?.totalIn ?? input.session?.salesTotal ?? 0);
@@ -128,6 +158,7 @@ async function buildCaixaReconciliation(input) {
   return {
     branchId,
     date,
+    shiftOpenedAt,
     caixaAccountCode: account.code,
     caixaAccountName: account.name,
     erpCashSalesTotal,

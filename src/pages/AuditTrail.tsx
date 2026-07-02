@@ -20,6 +20,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 import { mapAuditLogRow, type AuditLogRow } from '@/lib/auditLogDisplay';
+import { AuditDetailPanel } from '@/components/audit/AuditDetailPanel';
 
 export type AuditEntry = AuditLogRow & { workstationId?: string };
 
@@ -96,6 +97,27 @@ export default function AuditTrail() {
   const { hasPermission } = usePermissions(user?.id);
   const canViewAudit = hasPermission('reports_audit');
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+
+  const auditDetailLabels = useMemo(
+    () => ({
+      fieldInvoiceNumber: t.auditTrailUi.fieldInvoiceNumber,
+      fieldInvoiceType: t.auditTrailUi.fieldInvoiceType,
+      fieldPaymentMethod: t.auditTrailUi.fieldPaymentMethod,
+      fieldTotal: t.auditTrailUi.fieldTotal,
+      fieldItemCount: t.auditTrailUi.fieldItemCount,
+      fieldProformaNumber: t.auditTrailUi.fieldProformaNumber,
+      fieldProformaId: t.auditTrailUi.fieldProformaId,
+      fieldEmpty: t.auditTrailUi.fieldEmpty,
+      paymentCash: t.chartsUi.methodCash,
+      paymentCard: t.chartsUi.methodCard,
+      paymentTransfer: t.chartsUi.methodTransfer,
+      paymentCheque: t.supplierStatementUi.methodCheque,
+      paymentMixed: t.chartsUi.methodMixed,
+      paymentCredit: t.posUi.credit,
+      detailRawJson: t.auditTrailUi.detailRawJson,
+    }),
+    [t],
+  );
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAction, setFilterAction] = useState('all');
@@ -392,9 +414,13 @@ export default function AuditTrail() {
                   <Separator />
                   <div>
                     <span className="text-muted-foreground text-xs">{t.auditTrailUi.detailAdditionalData}:</span>
-                    <pre className="text-[10px] bg-muted/50 p-2 rounded mt-1 overflow-auto max-h-40 font-mono">
-                      {JSON.stringify(selectedEntry.details, null, 2)}
-                    </pre>
+                    <div className="mt-1">
+                      <AuditDetailPanel
+                        details={selectedEntry.details}
+                        labels={auditDetailLabels}
+                        locale={uiLocale}
+                      />
+                    </div>
                   </div>
                 </>
               )}

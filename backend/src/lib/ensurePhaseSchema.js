@@ -140,26 +140,29 @@ async function ensureClientPricingColumns(db) {
   }
 }
 
-/** Allow `credit` (on-account) sales in payment_method CHECK constraints. */
+/** Allow `credit` (on-account) sales in payment_method CHECK constraints. Returns true when DB allows credit. */
 async function ensureSalesCreditPaymentMethod(db) {
   const allowedList = "('cash', 'card', 'transfer', 'cheque', 'mixed', 'credit')";
   if (db.engine === 'postgres') {
     try {
       const found = await db.query(
-        `SELECT c.conname AS name
+        `SELECT c.conname AS name, pg_get_constraintdef(c.oid) AS def
          FROM pg_constraint c
          JOIN pg_class t ON c.conrelid = t.oid
-         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
-         WHERE t.relname = 'sales'
-           AND a.attname = 'payment_method'
-           AND c.contype = 'c'`,
+         JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE n.nspname = 'public'
+           AND t.relname = 'sales'
+           AND c.contype = 'c'
+           AND pg_get_constraintdef(c.oid) ILIKE '%payment_method%'`,
       );
       for (const row of found.rows || []) {
         const name = row.name;
         if (!name) continue;
         try {
           await db.query(`ALTER TABLE sales DROP CONSTRAINT IF EXISTS "${name}"`);
-        } catch (_) {}
+        } catch (dropErr) {
+          console.warn(`[SCHEMA] drop sales constraint ${name}:`, dropErr.message);
+        }
       }
     } catch (err) {
       console.warn('[SCHEMA] list sales.payment_method constraints:', err.message);
@@ -175,10 +178,26 @@ async function ensureSalesCreditPaymentMethod(db) {
          CHECK (payment_method IN ${allowedList})`,
       );
     } catch (err) {
-      if (err.code !== '42710') console.warn('[SCHEMA] sales.payment_method credit:', err.message);
+      if (err.code !== '42710') {
+        console.warn('[SCHEMA] sales.payment_method credit ADD:', err.message);
+      }
     }
-    return;
+    try {
+      const { salesAllowsCreditPayment } = require('./schemaChecks');
+      const ok = await salesAllowsCreditPayment(db);
+      if (!ok) {
+        console.error('[SCHEMA] FATAL: sales.payment_method still rejects credit after repair');
+      }
+      return ok;
+    } catch (_) {
+      return false;
+    }
   }
+  if (db.sqlite) {
+    // SQLite local dev: recreate sales CHECK if present (table rebuild not required — often no CHECK).
+    return true;
+  }
+  return true;
 }
 
 /** POS caixa session tables (city server sync + GL reconciliation). */

@@ -1650,6 +1650,13 @@ function normalizeSalePaymentMethod(saleData) {
 
 async function processSale(client, saleData) {
   const paymentMethod = normalizeSalePaymentMethod(saleData);
+  if (paymentMethod === 'credit') {
+    const dbModule = require('../db');
+    if (dbModule.engine === 'postgres') {
+      const { ensureSalesCreditPaymentMethod } = require('./lib/ensurePhaseSchema');
+      await ensureSalesCreditPaymentMethod(dbModule);
+    }
+  }
   const {
     branchId, cashierId, cashierName, items,
     subtotal, taxAmount, discount, total,

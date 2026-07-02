@@ -32,12 +32,16 @@ services:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-yel3an7azi}@postgres:5432/kwanza_erp
       PORT: 3000
       NODE_ENV: production
+      BACKUP_DIR: /app/backups
     ports:
       - "3000:3000"
     volumes:
       # Drop belas.db here to run the one-time SQLite -> Postgres migration.
       - ./import:/import:ro
+      - nexor_backups:/app/backups
 
 volumes:
   kwanza_pgdata:
+    driver: local
+  nexor_backups:
     driver: local

@@ -24,5 +24,11 @@ node src/migrations/run.js || {
   exit 1
 }
 
+echo "[entrypoint] Ensuring critical schema (credit sales, branch price_level)..."
+node scripts/ensure-server-schema.js || {
+  echo "[entrypoint] Schema ensure failed" >&2
+  exit 1
+}
+
 echo "[entrypoint] Starting NEXOR ERP API on :${PORT:-3000}"
 exec node src/server.js

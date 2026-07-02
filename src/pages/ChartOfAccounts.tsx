@@ -546,11 +546,21 @@ export default function ChartOfAccounts() {
           <FileText className="w-3 h-3" /> {t.chartOfAccountsUi.salesInvoice}
         </Button>
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccount}
-          onClick={() => { navigate('/invoices'); window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new-receipt')), 150); }}>
+          onClick={() => {
+            const entityName = selectedAccount
+              ? resolveAccountDisplayName(selectedAccount, language, t)
+              : undefined;
+            navigate('/payments', { state: { openReceipt: true, entityName } });
+          }}>
           <Receipt className="w-3 h-3" /> {t.chartOfAccountsUi.receipt}
         </Button>
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccount}
-          onClick={() => navigate('/payments')}>
+          onClick={() => {
+            const entityName = selectedAccount
+              ? resolveAccountDisplayName(selectedAccount, language, t)
+              : undefined;
+            navigate('/payments', { state: { openPayment: true, entityName } });
+          }}>
           <Banknote className="w-3 h-3" /> {t.chartOfAccountsUi.payment}
         </Button>
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccount}

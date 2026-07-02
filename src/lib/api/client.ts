@@ -885,6 +885,10 @@ export const api = {
       if (typeof window !== 'undefined') {
         const localRows = await getLocalSales(branchId);
         const pendingRows = readPendingSalesCache(branchId);
+        if (serverRows?.length) {
+          const { prunePendingSalesCacheForServerRows } = await import('@/lib/sync/pendingSalesCache');
+          prunePendingSalesCacheForServerRows(serverRows);
+        }
         merged = mergeSaleRows(merged, [...localRows, ...pendingRows]);
       }
 
@@ -1002,6 +1006,12 @@ export const api = {
         if (queuedResult) return queuedResult;
       }
       if (result.data) {
+        const { clearPendingSaleMatches } = await import('@/lib/sync/pendingSalesCache');
+        clearPendingSaleMatches({
+          ...result.data,
+          clientRequestId: body.clientRequestId,
+          client_request_id: body.clientRequestId,
+        });
         dispatchSalesChanged(String(body.branchId || data.branchId || ''));
       }
       return result;
@@ -1195,6 +1205,7 @@ export const api = {
         totalIn?: number;
         totalOut?: number;
         salesTotal?: number;
+        openedAt?: string;
       };
     }) => {
       const sp = new URLSearchParams();
@@ -1211,6 +1222,9 @@ export const api = {
       }
       if (params.session?.salesTotal != null) {
         sp.set('sessionSalesTotal', String(params.session.salesTotal));
+      }
+      if (params.session?.openedAt) {
+        sp.set('sessionOpenedAt', params.session.openedAt);
       }
       return apiFetch<any>(`/caixa/reconciliation?${sp}`);
     },
@@ -1653,13 +1667,6 @@ export const api = {
       });
     },
     openItems: (entityType: string, entityId: string) => {
-      if (isDemoMode()) {
-        const items = JSON.parse(localStorage.getItem('kwanzaerp_open_items') || '[]')
-          .filter((oi: any) => oi.entityType === entityType && oi.entityId === entityId && oi.status !== 'cleared')
-          .sort((a: any, b: any) => `${a.documentDate || ''}${a.createdAt || ''}`.localeCompare(`${b.documentDate || ''}${b.createdAt || ''}`));
-        return Promise.resolve({ data: items }) as Promise<ApiResponse<any[]>>;
-      }
-      return apiFetch<any[]>(`/payments/open-items/${entityType}/${entityId}`);
       if (isDemoMode()) {
         const items = JSON.parse(localStorage.getItem('kwanzaerp_open_items') || '[]')
           .filter((oi: any) => oi.entityType === entityType && oi.entityId === entityId && oi.status !== 'cleared')

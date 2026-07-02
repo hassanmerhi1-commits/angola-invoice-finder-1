@@ -107,6 +107,10 @@ app.get('/api/health', async (req, res) => {
       schemaChecks,
       dbPath: db.engine === 'sqlite' ? db.dbPath : undefined,
     };
+    if (schemaChecks && schemaChecks.salesCreditPayment === false) {
+      payload.schemaRepairHint =
+        'Credit (on-account) sales blocked by DB constraint. Rebuild/restart backend Docker, or run: docker compose exec backend node scripts/ensure-server-schema.js';
+    }
     if (!lite) {
       try {
         const c = await db.query('SELECT COUNT(*) AS n FROM products');

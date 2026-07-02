@@ -28,7 +28,7 @@ export const ROUTE_PERMISSIONS: Record<string, string | string[]> = {
   '/expenses': 'expense_create',
   '/bank-accounts': 'bank_manage',
   '/bank-reconciliation': 'bank_manage',
-  '/payments': 'accounting_payment',
+  '/payments': ['accounting_payment', 'accounting_receipt'],
   '/chart-of-accounts': 'accounting_view',
   '/accounting-periods': 'accounting_view',
   '/tax-management': 'accounting_view',

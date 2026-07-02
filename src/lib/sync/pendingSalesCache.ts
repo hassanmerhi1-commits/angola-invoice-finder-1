@@ -23,12 +23,37 @@ function writeAll(rows: PendingSaleRow[]): void {
   }
 }
 
+function rowString(row: PendingSaleRow, ...keys: string[]): string {
+  for (const key of keys) {
+    const val = String(row[key] ?? '').trim();
+    if (val) return val;
+  }
+  return '';
+}
+
+function normalizedInvoice(row: PendingSaleRow): string {
+  return rowString(row, 'invoice_number', 'invoiceNumber').toUpperCase();
+}
+
+/** True when two rows describe the same sale (offline stub vs server row). */
+export function salesRowsMatch(a: PendingSaleRow, b: PendingSaleRow): boolean {
+  const aId = rowString(a, 'id');
+  const bId = rowString(b, 'id');
+  const aCrid = rowString(a, 'client_request_id', 'clientRequestId');
+  const bCrid = rowString(b, 'client_request_id', 'clientRequestId');
+  const aInv = normalizedInvoice(a);
+  const bInv = normalizedInvoice(b);
+
+  if (aId && (aId === bId || aId === bCrid)) return true;
+  if (aCrid && (aCrid === bId || aCrid === bCrid)) return true;
+  if (aInv && aInv === bInv && !aInv.startsWith('OFF-') && !aInv.startsWith('LOCAL-')) return true;
+  return false;
+}
+
 export function savePendingSaleCache(sale: PendingSaleRow): void {
-  const id = String(sale.id || sale.clientRequestId || sale.client_request_id || '').trim();
+  const id = rowString(sale, 'id', 'clientRequestId', 'client_request_id');
   if (!id) return;
-  const rows = readAll().filter(
-    (r) => String(r.id || r.clientRequestId || r.client_request_id || '') !== id,
-  );
+  const rows = readAll().filter((r) => !salesRowsMatch(r, sale));
   rows.unshift({ ...sale, pendingSync: true, pending_sync: true });
   writeAll(rows.slice(0, 200));
 }
@@ -45,44 +70,63 @@ export function readPendingSalesCache(branchId?: string): PendingSaleRow[] {
 export function removePendingSaleFromCache(idOrRequestId: string): void {
   const key = String(idOrRequestId || '').trim();
   if (!key) return;
+  const keyUpper = key.toUpperCase();
   writeAll(
-    readAll().filter(
-      (r) =>
-        String(r.id || '') !== key
-        && String(r.clientRequestId || r.client_request_id || '') !== key,
-    ),
+    readAll().filter((r) => {
+      const candidates = [
+        rowString(r, 'id'),
+        rowString(r, 'clientRequestId', 'client_request_id'),
+        normalizedInvoice(r),
+      ].filter(Boolean);
+      return !candidates.some((c) => c === key || c.toUpperCase() === keyUpper);
+    }),
   );
+}
+
+/** Drop pending stubs once the city server has the authoritative sale row. */
+export function clearPendingSaleMatches(row: PendingSaleRow): void {
+  const tokens = [
+    rowString(row, 'id'),
+    rowString(row, 'client_request_id', 'clientRequestId'),
+    normalizedInvoice(row),
+  ].filter(Boolean);
+  for (const token of tokens) {
+    removePendingSaleFromCache(token);
+  }
+}
+
+export function prunePendingSalesCacheForServerRows(serverRows: PendingSaleRow[]): void {
+  for (const row of serverRows) {
+    clearPendingSaleMatches(row);
+  }
 }
 
 function saleRowScore(row: PendingSaleRow): number {
   let score = 0;
   if (Array.isArray(row.items) && row.items.length > 0) score += 20;
-  if (row.pendingSync || row.pending_sync) score += 10;
+  if (row.pendingSync || row.pending_sync) score -= 20;
+  else score += 20;
   if (row.invoice_number || row.invoiceNumber) score += 5;
   if (row.created_at || row.createdAt) score += 1;
   return score;
 }
 
-/** Merge server + local/pending rows; prefer richer local rows until server catches up. */
+/** Merge server + local/pending rows; one row per sale (invoice / client request id). */
 export function mergeSaleRows(serverRows: PendingSaleRow[], extraRows: PendingSaleRow[]): PendingSaleRow[] {
-  const byKey = new Map<string, PendingSaleRow>();
-  const keyFor = (row: PendingSaleRow) => {
-    const id = String(row.id || '').trim();
-    const crid = String(row.client_request_id || row.clientRequestId || '').trim();
-    const inv = String(row.invoice_number || row.invoiceNumber || '').trim();
-    return id || crid || inv;
-  };
+  const merged: PendingSaleRow[] = [];
 
   for (const row of [...extraRows, ...serverRows]) {
-    const key = keyFor(row);
-    if (!key) continue;
-    const prev = byKey.get(key);
-    if (!prev || saleRowScore(row) >= saleRowScore(prev)) {
-      byKey.set(key, row);
+    const idx = merged.findIndex((existing) => salesRowsMatch(existing, row));
+    if (idx >= 0) {
+      if (saleRowScore(row) >= saleRowScore(merged[idx])) {
+        merged[idx] = row;
+      }
+    } else {
+      merged.push(row);
     }
   }
 
-  return Array.from(byKey.values()).sort((a, b) => {
+  return merged.sort((a, b) => {
     const ta = new Date(String(a.created_at || a.createdAt || 0)).getTime();
     const tb = new Date(String(b.created_at || b.createdAt || 0)).getTime();
     return tb - ta;
