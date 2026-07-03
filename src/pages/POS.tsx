@@ -34,6 +34,13 @@ import { BranchSelector } from '@/components/BranchSelector';
 import { Search, ScanBarcode, Keyboard, ShoppingCart, FileText, Check, ChevronsUpDown } from 'lucide-react';
 import { PosEndOfDayReportDialog } from '@/components/pos/PosEndOfDayReportDialog';
 import { PosOpenCaixaDialog } from '@/components/pos/PosOpenCaixaDialog';
+import { PosShiftInvoicesPanel } from '@/components/pos/PosShiftInvoicesPanel';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { filterShiftSalesForCashier } from '@/lib/posShiftSales';
+import {
+  appendShiftIssue,
+  clearSaleIssueKind,
+} from '@/lib/posShiftSaleIssues';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 import { readNexorPosNewSaleFlag, NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
@@ -134,6 +141,9 @@ export default function POS() {
   const [lastSale, setLastSale] = useState<Sale | null>(null);
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
   const [endOfDayOpen, setEndOfDayOpen] = useState(false);
+  const [posMainTab, setPosMainTab] = useState<'cart' | 'invoices'>('cart');
+  const [shiftIssuesVersion, setShiftIssuesVersion] = useState(0);
+  const bumpShiftIssues = useCallback(() => setShiftIssuesVersion((v) => v + 1), []);
   const {
     session: caixaSession,
     loading: caixaLoading,
@@ -142,6 +152,19 @@ export default function POS() {
     recordCashSale,
   } = usePosCaixa(currentBranch?.id, currentBranch?.name);
   const [openingCaixa, setOpeningCaixa] = useState(false);
+  const shiftInvoiceCount = useMemo(
+    () => filterShiftSalesForCashier(sales, user, caixaSession).length,
+    [sales, user, caixaSession],
+  );
+
+  const recordShiftIssue = useCallback(
+    (issue: Parameters<typeof appendShiftIssue>[2]) => {
+      if (!currentBranch?.id || !caixaSession?.id) return;
+      appendShiftIssue(currentBranch.id, caixaSession.id, issue);
+      bumpShiftIssues();
+    },
+    [currentBranch?.id, caixaSession?.id, bumpShiftIssues],
+  );
   const caixaOpen = !!caixaSession;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const qtyInputRef = useRef<HTMLInputElement>(null);
@@ -442,7 +465,30 @@ export default function POS() {
           'cash',
           user.id,
           customerName,
-        ).catch((caixaErr) => console.warn('[POS] Failed to post sale to caixa:', caixaErr));
+        ).then((caixaResult) => {
+          if (
+            caixaResult.message
+            && /nenhuma caixa|sessão de caixa não encontrada/i.test(caixaResult.message)
+          ) {
+            recordShiftIssue({
+              kind: 'caixa',
+              saleId: sale.id,
+              invoiceNumber: sale.invoiceNumber,
+              message: caixaResult.message,
+            });
+          } else if (currentBranch?.id && caixaSession?.id) {
+            clearSaleIssueKind(currentBranch.id, caixaSession.id, sale.id, 'caixa');
+            bumpShiftIssues();
+          }
+        }).catch((caixaErr) => {
+          console.warn('[POS] Failed to post sale to caixa:', caixaErr);
+          recordShiftIssue({
+            kind: 'caixa',
+            saleId: sale.id,
+            invoiceNumber: sale.invoiceNumber,
+            message: caixaErr instanceof Error ? caixaErr.message : String(caixaErr),
+          });
+        });
       }
 
       // Print in the background so the receipt screen is not blocked by LAN + spooler.
@@ -452,10 +498,22 @@ export default function POS() {
             openDrawer: paymentMethod === 'cash',
           });
           if (printResult.success) {
+            if (currentBranch?.id && caixaSession?.id) {
+              clearSaleIssueKind(currentBranch.id, caixaSession.id, sale.id, 'print');
+              bumpShiftIssues();
+            }
             void recordSalePrint(sale, { format: 'thermal', source: 'pos' });
             toast.success(t.receiptUi.autoPrintSuccess);
             return;
           }
+          recordShiftIssue({
+            kind: 'print',
+            saleId: sale.id,
+            invoiceNumber: sale.invoiceNumber,
+            message: printResult.needsPrinterSetup
+              ? t.receiptUi.printerSetupRequired
+              : t.receiptUi.autoPrintError,
+          });
           if (printResult.needsPrinterSetup) {
             setPrinterSettingsOpen(true);
             toast.error(t.receiptUi.printerSetupRequired, {
@@ -466,6 +524,12 @@ export default function POS() {
           toast.error(t.receiptUi.autoPrintError);
         } catch (printError) {
           console.warn('[POS] Auto thermal print failed:', printError);
+          recordShiftIssue({
+            kind: 'print',
+            saleId: sale.id,
+            invoiceNumber: sale.invoiceNumber,
+            message: printError instanceof Error ? printError.message : t.receiptUi.autoPrintError,
+          });
           toast.error(t.receiptUi.autoPrintError);
         }
       })();
@@ -481,6 +545,7 @@ export default function POS() {
       const friendly = /stock insuficiente|chk_products_stock_nonneg/i.test(detail)
         ? t.documentsUi.insufficientStockToCompleteSaleInvoice
         : detail;
+      recordShiftIssue({ kind: 'checkout', message: friendly });
       toast.error(t.posUi.completeSaleError, { description: friendly });
     }
   };
@@ -509,14 +574,41 @@ export default function POS() {
     <div className="h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
       {/* Top: cart list */}
       <div className="flex-1 min-h-0 flex flex-col bg-card border-b">
-        <div className="px-3 py-1.5 border-b shrink-0 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">{t.posUi.shoppingCartTitle}</h2>
+        <div className="px-3 py-1.5 border-b shrink-0 flex items-center justify-between gap-2">
+          <Tabs
+            value={posMainTab}
+            onValueChange={(v) => setPosMainTab(v as 'cart' | 'invoices')}
+            className="min-w-0"
+          >
+            <TabsList className="h-8">
+              <TabsTrigger value="cart" className="text-xs px-3">
+                {t.posUi.shoppingCartTitle}
+              </TabsTrigger>
+              <TabsTrigger value="invoices" className="text-xs px-3">
+                {t.posUi.shiftInvoices.tab}
+                {shiftInvoiceCount > 0 ? ` (${shiftInvoiceCount})` : ''}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           {currentBranch?.name && (
-            <span className="text-xs text-muted-foreground">{currentBranch.name}</span>
+            <span className="text-xs text-muted-foreground shrink-0">{currentBranch.name}</span>
           )}
         </div>
         <div className="flex-1 min-h-0 px-3 py-2 overflow-hidden">
-          {productsLoading && products.length === 0 ? (
+          {posMainTab === 'invoices' ? (
+            <PosShiftInvoicesPanel
+              sales={sales}
+              session={caixaSession}
+              cashier={user}
+              branch={currentBranch}
+              issuesVersion={shiftIssuesVersion}
+              onRefresh={refreshSales}
+              onViewSale={(sale) => {
+                setLastSale(sale);
+                setReceiptOpen(true);
+              }}
+            />
+          ) : productsLoading && products.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4">{t.common.loading}</p>
           ) : !branchId ? (
             <p className="text-sm text-muted-foreground py-4">{t.posUi.selectBranchFirst}</p>

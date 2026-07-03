@@ -1873,15 +1873,22 @@ async function processSale(client, saleData) {
     revenueLines.push({ accountCode: ACC.IVA_LIQUIDATED, description: `IVA ${invoiceNumber}`, debit: 0, credit: parseFloat(taxAmount) });
   }
 
+  const saleCustomerLabel = String(customerName || creditCustomer?.name || '').trim();
+  const saleJournalDesc = saleCustomerLabel
+    ? `Venda ${invoiceNumber} - ${saleCustomerLabel}`
+    : `Venda ${invoiceNumber}`;
+
   await createJournalEntry(client, {
-    description: `Venda ${invoiceNumber}`, referenceType: 'sale', referenceId: saleId,
+    description: saleJournalDesc, referenceType: 'sale', referenceId: saleId,
     branchId, createdBy: cashierId, lines: revenueLines,
   });
 
   if (totalCOGS > 0) {
     await createJournalEntry(client, {
-      description: `CMV - ${invoiceNumber}`, referenceType: 'sale', referenceId: saleId,
-      branchId, createdBy: cashierId,
+      description: saleCustomerLabel
+        ? `CMV ${invoiceNumber} - ${saleCustomerLabel}`
+        : `CMV ${invoiceNumber}`,
+      referenceType: 'sale', referenceId: saleId,
       lines: [
         { accountCode: ACC.COGS, description: 'Custo Mercadorias Vendidas', debit: totalCOGS, credit: 0 },
         { accountCode: ACC.INVENTORY_STOCK, description: 'Saída Mercadorias', debit: 0, credit: totalCOGS },

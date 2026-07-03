@@ -343,6 +343,255 @@ export function validateImportedProducts(products: ExcelProduct[]): {
   return { valid, errors };
 }
 
+// ============ STOCK ENTRY (ADJUST IN) IMPORT ============
+
+export interface ExcelStockEntryLine {
+  codigo: string;
+  descricao?: string;
+  quantidade: number;
+  custo: number;
+}
+
+function normalizeSpreadsheetHeader(key: string): string {
+  return key
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\./g, '')
+    .replace(/\s+/g, ' ');
+}
+
+/** Format product codes from Excel cells (numbers must not use scientific notation). */
+export function formatSpreadsheetCode(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return '';
+    if (Number.isInteger(value)) return String(value);
+    const asText = String(value);
+    return asText.includes('e') || asText.includes('E')
+      ? String(Math.trunc(value))
+      : asText.replace(/\.0+$/, '');
+  }
+  let text = String(value).trim();
+  if (!text) return '';
+  if (/^\d+\.0+$/.test(text)) text = text.replace(/\.0+$/, '');
+  if (/^\d+(\.\d+)?e[+-]?\d+$/i.test(text)) {
+    const n = Number(text);
+    if (Number.isFinite(n)) return String(Math.trunc(n));
+  }
+  return text;
+}
+
+function parseSpreadsheetNumber(value: unknown): number {
+  if (value === undefined || value === null || value === '') return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const raw = String(value).trim().replace(/\s/g, '');
+  if (!raw) return 0;
+  // 1.234,56 (pt) vs 1,234.56 (en)
+  const ptStyle = /^-?\d{1,3}(\.\d{3})*(,\d+)?$/.test(raw);
+  const normalized = ptStyle ? raw.replace(/\./g, '').replace(',', '.') : raw.replace(/,/g, '');
+  const n = parseFloat(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Pick first non-empty cell matching any header alias (exact or normalized). */
+function pickSpreadsheetField(row: Record<string, unknown>, aliases: string[]): unknown {
+  const normalizedAliases = aliases.map(normalizeSpreadsheetHeader);
+
+  for (const alias of aliases) {
+    const val = row[alias];
+    if (val !== undefined && val !== null && String(val).trim() !== '') return val;
+  }
+
+  for (const [key, val] of Object.entries(row)) {
+    if (val === undefined || val === null || String(val).trim() === '') continue;
+    const nk = normalizeSpreadsheetHeader(key);
+    if (normalizedAliases.includes(nk)) return val;
+  }
+
+  return undefined;
+}
+
+/** Quantity column priority: explicit qty → count sheet count/diff → system stock. */
+function pickSpreadsheetQuantity(row: Record<string, unknown>): number {
+  const priorityGroups = [
+    ['quantidade', 'quantity', 'qty', 'qtd a entrar', 'entrada', 'qtde'],
+    ['contagem', 'count', 'contado', 'contagem fisica', 'contagem física'],
+    ['diff', 'dif', 'diferenca', 'diferença', 'delta'],
+    ['qtd', 'stock', 'existencias', 'existências', 'exist', 'saldo'],
+  ];
+
+  for (const group of priorityGroups) {
+    for (const [key, val] of Object.entries(row)) {
+      if (val === undefined || val === null || String(val).trim() === '') continue;
+      const nk = normalizeSpreadsheetHeader(key);
+      if (group.some((g) => nk === g || nk.startsWith(`${g} `) || nk.endsWith(` ${g}`))) {
+        const n = parseSpreadsheetNumber(val);
+        if (n !== 0) return Math.abs(n);
+      }
+    }
+  }
+
+  const fallback = pickSpreadsheetField(row, [
+    'Quantidade', 'quantidade', 'Quantity', 'quantity',
+    'Contagem', 'contagem', 'Count', 'count',
+    'Diff', 'diff', 'Dif', 'Diferença', 'Diferenca',
+    'Qty', 'qty', 'QTD', 'qtd', 'Qtd', 'Qtd.',
+    'Stock', 'stock', 'Exist.', 'Existências',
+  ]);
+  return Math.abs(parseSpreadsheetNumber(fallback));
+}
+
+function parseStockEntryRow(row: Record<string, unknown>): ExcelStockEntryLine {
+  const codigoRaw = pickSpreadsheetField(row, [
+    'Código', 'Codigo', 'codigo', 'SKU', 'sku', 'Cod', 'COD', 'Code', 'code',
+    'Código Produto', 'codigo_produto', 'Ref', 'Referência', 'Referencia',
+  ]);
+  const costRaw = pickSpreadsheetField(row, [
+    'Preço Custo', 'Preco Custo', 'custo', 'Custo', 'Cost', 'cost',
+    'Preço de Custo', 'preco_custo', 'Valor Custo',
+  ]);
+  const descRaw = pickSpreadsheetField(row, [
+    'Descrição', 'Descricao', 'descricao', 'Nome', 'nome', 'Produto', 'Description',
+  ]);
+
+  return {
+    codigo: formatSpreadsheetCode(codigoRaw),
+    descricao: descRaw != null ? String(descRaw).trim() : undefined,
+    quantidade: pickSpreadsheetQuantity(row),
+    custo: parseSpreadsheetNumber(costRaw),
+  };
+}
+
+function parseHeaderlessStockEntryRow(cells: unknown[]): ExcelStockEntryLine {
+  const colCount = cells.length;
+  // Count sheet layout: code | description | [barcode] | system qty | count | diff
+  let qtyCell: unknown;
+  if (colCount >= 6) {
+    qtyCell = cells[5] ?? cells[4] ?? cells[3];
+  } else if (colCount >= 5) {
+    qtyCell = cells[4] ?? cells[3] ?? cells[2];
+  } else if (colCount >= 4) {
+    qtyCell = cells[3] ?? cells[2];
+  } else if (colCount >= 3) {
+    qtyCell = cells[2];
+  }
+  // 2 columns = code + description only (quantity entered manually after import)
+
+  return parseStockEntryRow({
+    Código: formatSpreadsheetCode(cells[0]),
+    Descrição: colCount >= 2 ? cells[1] : undefined,
+    Quantidade: qtyCell,
+    'Preço Custo': colCount >= 5 ? cells[colCount - 1] : undefined,
+  });
+}
+
+/** Parse Excel/CSV rows for stock entry (code + quantity + optional cost). */
+export async function parseStockEntryExcelFile(
+  file: File,
+  columnMappings?: ColumnMapping[],
+): Promise<ExcelStockEntryLine[]> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        const isHeaderless = detectHeaderless(firstSheet);
+
+        let rows: ExcelStockEntryLine[] = [];
+
+        if (isHeaderless) {
+          const rawRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as unknown[][];
+          rows = rawRows
+            .filter((r) => r.some((cell) => cell !== null && cell !== undefined && cell !== ''))
+            .map((r) => parseHeaderlessStockEntryRow(r));
+        } else if (columnMappings && columnMappings.length > 0) {
+          const jsonRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet);
+          rows = jsonRows.map((row) => {
+            const getMappedValue = (field: string) => {
+              const mapping = columnMappings.find((m) => m.systemField === field);
+              return mapping?.excelColumn ? row[mapping.excelColumn] : undefined;
+            };
+            return parseStockEntryRow({
+              Código: getMappedValue('codigo'),
+              Descrição: getMappedValue('descricao'),
+              Quantidade: getMappedValue('quantidade'),
+              'Preço Custo': getMappedValue('custo'),
+            });
+          });
+        } else {
+          const jsonRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet);
+          rows = jsonRows.map((row) => parseStockEntryRow(row));
+        }
+
+        resolve(rows.filter((r) => String(r.codigo || '').trim()));
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+export function validateImportedStockEntryLines(products: ExcelStockEntryLine[]): {
+  valid: ExcelStockEntryLine[];
+  errors: { row: number; errors: string[] }[];
+} {
+  const valid: ExcelStockEntryLine[] = [];
+  const errors: { row: number; errors: string[] }[] = [];
+
+  products.forEach((row, index) => {
+    const rowErrors: string[] = [];
+
+    if (!row.codigo.trim()) {
+      rowErrors.push('Código é obrigatório');
+    }
+    if (row.custo < 0) {
+      rowErrors.push('Custo não pode ser negativo');
+    }
+
+    if (rowErrors.length > 0) {
+      errors.push({ row: index + 2, errors: rowErrors });
+    } else {
+      valid.push({
+        codigo: row.codigo.trim(),
+        descricao: row.descricao,
+        quantidade: row.quantidade > 0 ? Math.round(row.quantidade) : 0,
+        custo: Math.max(0, row.custo),
+      });
+    }
+  });
+
+  return { valid, errors };
+}
+
+export function downloadStockEntryImportTemplate() {
+  const templateData = [
+    {
+      'Código': 'PROD001',
+      'Descrição': 'Exemplo de produto',
+    },
+    {
+      'Código': 'PROD002',
+      'Descrição': 'Outro produto',
+    },
+  ];
+
+  const ws = XLSX.utils.json_to_sheet(templateData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Entrada');
+
+  ws['!cols'] = [{ wch: 14 }, { wch: 40 }];
+
+  XLSX.writeFile(wb, 'template_entrada_stock.xlsx');
+}
+
 // ============ CLIENT IMPORT ============
 
 export interface ExcelClient {

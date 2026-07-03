@@ -8,6 +8,27 @@ export const ROWS_NEAR_END_BUFFER = 2;
 export const normalizeSearchText = (value: string) =>
   value.trim().toLowerCase().replace(/\s+/g, '');
 
+const DUP_SKU_SUFFIX_RE = /-dup-[a-f0-9]+$/i;
+
+/** Normalize SKU for import matching (strip repair suffix, optional leading zeros on numeric codes). */
+export function canonicalProductCodeForMatch(code: string): string {
+  const raw = normalizeSearchText(code).replace(DUP_SKU_SUFFIX_RE, '');
+  if (/^\d+$/.test(raw)) {
+    const trimmed = raw.replace(/^0+/, '');
+    return trimmed || '0';
+  }
+  return raw;
+}
+
+function productCodeMatchKeys(code: string): string[] {
+  const trimmed = String(code || '').trim();
+  if (!trimmed) return [];
+  const keys = new Set<string>();
+  keys.add(normalizeSearchText(trimmed));
+  keys.add(canonicalProductCodeForMatch(trimmed));
+  return Array.from(keys).filter(Boolean);
+}
+
 /** Numeric product code (digits / separators only) — use strict exact-SKU when complete. */
 export const searchLooksLikeNumericCode = (rawTerm: string) => {
   const term = rawTerm.trim();
@@ -147,6 +168,67 @@ export function findProductForBranchSku(
   );
 }
 
+/** Stock quantity for a SKU at the target branch (0 if no row exists yet). */
+export function getProductStockAtBranch(
+  products: Product[],
+  sku: string,
+  branchId: string,
+): number {
+  const row = findProductForBranchSku(products, sku, branchId);
+  return row?.stock ?? 0;
+}
+
+/** Match product by SKU or barcode (prefers selected branch when duplicates exist). */
+export function findProductByCodeOrBarcode(
+  products: Product[],
+  code: string,
+  branchId: string,
+): Product | undefined {
+  const keys = productCodeMatchKeys(code);
+  if (keys.length === 0) return undefined;
+
+  const skuMatches = products.filter((p) => {
+    const skuKeys = productCodeMatchKeys(p.sku);
+    return skuKeys.some((k) => keys.includes(k));
+  });
+  if (skuMatches.length > 0) {
+    return dedupeProductsBySku(skuMatches, branchId)[0];
+  }
+
+  const barcodeMatches = products.filter((p) => {
+    if (!p.barcode) return false;
+    const barcodeKeys = productCodeMatchKeys(p.barcode);
+    return barcodeKeys.some((k) => keys.includes(k));
+  });
+  if (barcodeMatches.length > 0) {
+    return dedupeProductsBySku(barcodeMatches, branchId)[0];
+  }
+
+  return undefined;
+}
+
+/** Resolve product for stock-entry import (code, then optional description). */
+export function findProductForStockEntryImport(
+  products: Product[],
+  codigo: string,
+  branchId: string,
+  descricao?: string,
+): Product | undefined {
+  const byCode = findProductByCodeOrBarcode(products, codigo, branchId);
+  if (byCode) return byCode;
+
+  const nameKey = normalizeSearchText(descricao || '');
+  if (!nameKey) return undefined;
+
+  const nameMatches = products.filter((p) => normalizeSearchText(p.name) === nameKey);
+  if (nameMatches.length === 0) {
+    const partial = products.filter((p) => normalizeSearchText(p.name).includes(nameKey));
+    if (partial.length === 1) return partial[0];
+    return undefined;
+  }
+  return dedupeProductsBySku(nameMatches, branchId)[0];
+}
+
 export function remapLineProductIdsForBranch(
   lines: { rowId: string; productId: string | null; search: string }[],
   productsById: Map<string, Product>,
@@ -162,7 +244,7 @@ export function remapLineProductIdsForBranch(
     const match = findProductForBranchSku(allProducts, product.sku, branchId);
     return {
       ...line,
-      productId: match?.id ?? null,
+      productId: match?.id ?? product.id,
       search: match ? '' : line.search || product.sku,
     };
   });

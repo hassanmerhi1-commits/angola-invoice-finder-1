@@ -43,6 +43,7 @@ import {
   Hash,
   StickyNote,
   Search,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { Product, Branch } from '@/types/erp';
 import { useBranches } from '@/hooks/useERP';
@@ -51,15 +52,24 @@ import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import {
+  parseStockEntryExcelFile,
+  downloadStockEntryImportTemplate,
+  type ExcelStockEntryLine,
+} from '@/lib/excel';
+import { ExcelImportDialog } from '@/components/import/ExcelImportDialog';
+import { mapApiProductRow } from '@/lib/productSupplierResolve';
+import {
   DEFAULT_LINE_ROWS,
   PRODUCT_LINE_SUGGESTION_LIMIT,
   ROWS_APPEND_BATCH,
   ROWS_NEAR_END_BUFFER,
   ensureRowsForIndex,
-  filterProductsForBranch,
   filterProductsForSearch,
+  findProductForStockEntryImport,
   findProductForBranchSku,
+  getProductStockAtBranch,
   newLineRowId,
+  normalizeSearchText,
   remapLineProductIdsForBranch,
   sortProductSearchResults,
 } from './productLineSearch';
@@ -258,6 +268,8 @@ export function StockEntryDialog({
   linesRef.current = form.lines;
   const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
   const [freightAccountPickerOpen, setFreightAccountPickerOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importLookupProducts, setImportLookupProducts] = useState<Product[]>([]);
 
   const catalogProducts = useMemo(() => {
     if (searchProducts && searchProducts.length > 0) return searchProducts;
@@ -275,10 +287,43 @@ export function StockEntryDialog({
     : (warehouseId || form.entryBranchId);
   const entryBranchId = effectiveWarehouseId || currentBranch?.id || '';
 
-  const branchScopedProducts = useMemo(
-    () => filterProductsForBranch(searchableProducts, entryBranchId),
-    [searchableProducts, entryBranchId],
-  );
+  const productsForImport = useMemo(() => {
+    const byId = new Map<string, Product>();
+    for (const p of [...searchableProducts, ...importLookupProducts]) {
+      if (p.isActive === false) continue;
+      byId.set(p.id, p);
+    }
+    return Array.from(byId.values());
+  }, [searchableProducts, importLookupProducts]);
+
+  const loadImportCatalog = useCallback(async () => {
+    if (!entryBranchId) return [] as Product[];
+    try {
+      const [branchRes, allRes] = await Promise.all([
+        api.products.list(entryBranchId, { light: false }),
+        api.products.list(undefined, { light: false }),
+      ]);
+      const merged = new Map<string, Product>();
+      for (const row of [...(branchRes.data || []), ...(allRes.data || [])]) {
+        const product = mapApiProductRow(row as Record<string, unknown>);
+        if (product.isActive !== false) merged.set(product.id, product);
+      }
+      const rows = Array.from(merged.values());
+      setImportLookupProducts(rows);
+      return rows;
+    } catch {
+      setImportLookupProducts([]);
+      return [];
+    }
+  }, [entryBranchId]);
+
+  useEffect(() => {
+    if (!open || !entryBranchId) {
+      setImportLookupProducts([]);
+      return;
+    }
+    void loadImportCatalog();
+  }, [open, entryBranchId, loadImportCatalog]);
 
   const productsById = useMemo(
     () => new Map(catalogProducts.map((p) => [p.id, p])),
@@ -447,13 +492,20 @@ export function StockEntryDialog({
   }, []);
 
   const resolveProductForEntry = useCallback(
-    (product: Product): Product | null => {
+    (product: Product): Product => {
       const branchId = entryBranchId;
       if (!branchId) return product;
       if ((product.branchId || '') === branchId) return product;
-      const skuNorm = (product.sku || '').trim().toLowerCase();
-      if (!skuNorm) return null;
-      return findProductForBranchSku(searchableProducts, product.sku, branchId) ?? null;
+      return findProductForBranchSku(searchableProducts, product.sku, branchId) ?? product;
+    },
+    [searchableProducts, entryBranchId],
+  );
+
+  const stockAtEntryBranch = useCallback(
+    (product: Product | undefined) => {
+      if (!product) return 0;
+      if (!entryBranchId) return product.stock ?? 0;
+      return getProductStockAtBranch(searchableProducts, product.sku, entryBranchId);
     },
     [searchableProducts, entryBranchId],
   );
@@ -482,11 +534,11 @@ export function StockEntryDialog({
           .filter((l) => l.rowId !== rowId && l.productId)
           .map((l) => l.productId as string),
       );
-      return filterProductsForSearch(branchScopedProducts, search, usedElsewhere, entryBranchId)
+      return filterProductsForSearch(searchableProducts, search, usedElsewhere, entryBranchId)
         .sort((a, b) => sortProductSearchResults(a, b, search, entryBranchId))
         .slice(0, PRODUCT_LINE_SUGGESTION_LIMIT);
     },
-    [branchScopedProducts, form.lines, entryBranchId],
+    [searchableProducts, form.lines, entryBranchId],
   );
 
   const activePickerLine = useMemo(
@@ -529,8 +581,9 @@ export function StockEntryDialog({
     const items: EntryItem[] = [];
     for (const line of form.lines) {
       if (!line.productId) continue;
-      const product = productsById.get(line.productId);
-      if (!product) continue;
+      const picked = productsById.get(line.productId);
+      if (!picked) continue;
+      const product = resolveProductForEntry(picked);
       const branchId = entryBranchId;
       items.push({
         productId: product.id,
@@ -539,28 +592,17 @@ export function StockEntryDialog({
         unit: product.unit,
         quantity: Math.max(1, line.quantity),
         cost: Math.max(0, line.cost),
-        currentStock: product.stock ?? 0,
+        currentStock: stockAtEntryBranch(picked),
         branchId,
         branchName: resolveBranchName(branchId),
       });
     }
     return items;
-  }, [form.lines, entryBranchId, productsById, resolveBranchName]);
+  }, [form.lines, entryBranchId, productsById, resolveBranchName, resolveProductForEntry, stockAtEntryBranch]);
 
   const selectProductOnRow = useCallback(
     (rowId: string, product: Product) => {
       const resolved = resolveProductForEntry(product);
-      if (!resolved) {
-        toast({
-          title: t.stockEntryUi.productNotInBranchTitle,
-          description: t.stockEntryUi.productNotInBranchDesc.replace(
-            '{branch}',
-            resolveBranchName(entryBranchId),
-          ),
-          variant: 'destructive',
-        });
-        return;
-      }
       setForm((prev) => {
         const mapped = prev.lines.map((l) =>
           l.rowId === rowId
@@ -569,7 +611,7 @@ export function StockEntryDialog({
                 productId: resolved.id,
                 search: '',
                 quantity: Math.max(1, l.quantity),
-                cost: l.cost > 0 ? l.cost : resolved.cost || 0,
+                cost: l.cost > 0 ? l.cost : resolved.cost || product.cost || 0,
               }
             : l,
         );
@@ -584,7 +626,7 @@ export function StockEntryDialog({
       setPickerAnchorRect(null);
       focusQtyLine(rowId);
     },
-    [focusQtyLine, resolveProductForEntry, toast, t, resolveBranchName, entryBranchId],
+    [focusQtyLine, resolveProductForEntry],
   );
 
   const updateLineSearch = (rowId: string, search: string) => {
@@ -631,6 +673,135 @@ export function StockEntryDialog({
       lines: [...prev.lines, ...createInitialLines(ROWS_APPEND_BATCH)],
     }));
   };
+
+  const validateStockEntryImport = useCallback(
+    (data: ExcelStockEntryLine[]) => {
+      const valid: ExcelStockEntryLine[] = [];
+      const errors: { row: number; errors: string[] }[] = [];
+
+      data.forEach((row, index) => {
+        const rowErrors: string[] = [];
+        const codigo = String(row.codigo || '').trim();
+
+        if (!codigo) {
+          rowErrors.push(t.stockEntryUi.importErrorCodeRequired);
+        }
+        if (rowErrors.length === 0 && !findProductForStockEntryImport(productsForImport, codigo, entryBranchId, row.descricao)) {
+          rowErrors.push(t.stockEntryUi.importProductNotFound.replace('{code}', codigo));
+        }
+
+        if (rowErrors.length > 0) {
+          errors.push({ row: index + 2, errors: rowErrors });
+        } else {
+          valid.push({
+            codigo,
+            descricao: row.descricao,
+            quantidade: row.quantidade > 0 ? Math.round(row.quantidade) : 0,
+            custo: Math.max(0, row.custo || 0),
+          });
+        }
+      });
+
+      return { valid, errors };
+    },
+    [productsForImport, entryBranchId, t.stockEntryUi],
+  );
+
+  const handleImportFromExcel = useCallback(
+    (data: ExcelStockEntryLine[]) => {
+      if (!entryBranchId || data.length === 0) return;
+
+      const mergedBySku = new Map<string, { productId: string; quantity: number; cost: number; rowId?: string }>();
+      const importQty = (qty: number) => (qty > 0 ? qty : 1);
+
+      for (const row of data) {
+        const catalogProduct = findProductForStockEntryImport(
+          productsForImport,
+          row.codigo,
+          entryBranchId,
+          row.descricao,
+        );
+        if (!catalogProduct) continue;
+
+        const skuKey = normalizeSearchText(catalogProduct.sku);
+        const qty = importQty(row.quantidade);
+        const cost = row.custo > 0 ? row.custo : (catalogProduct.cost || 0);
+        const prev = mergedBySku.get(skuKey);
+
+        if (prev) {
+          mergedBySku.set(skuKey, {
+            productId: catalogProduct.id,
+            quantity: prev.quantity + qty,
+            cost: row.custo > 0 ? row.custo : prev.cost,
+            rowId: prev.rowId,
+          });
+        } else {
+          mergedBySku.set(skuKey, {
+            productId: catalogProduct.id,
+            quantity: qty,
+            cost,
+          });
+        }
+      }
+
+      let firstImportedRowId: string | null = null;
+
+      setForm((prev) => {
+        const byProductId = new Map<string, EntryLineRow>();
+        for (const line of prev.lines) {
+          if (line.productId) byProductId.set(line.productId, line);
+        }
+        for (const { productId, quantity, cost } of mergedBySku.values()) {
+          const existing = byProductId.get(productId);
+          if (existing) {
+            byProductId.set(productId, {
+              ...existing,
+              quantity: existing.quantity + quantity,
+              cost: cost > 0 ? cost : existing.cost,
+            });
+          } else {
+            const rowId = newLineRowId();
+            if (!firstImportedRowId) firstImportedRowId = rowId;
+            byProductId.set(productId, {
+              rowId,
+              productId,
+              search: '',
+              quantity: Math.max(1, quantity),
+              cost,
+            });
+          }
+        }
+        const filled = Array.from(byProductId.values());
+        const minLen = Math.max(DEFAULT_LINE_ROWS, filled.length + ROWS_APPEND_BATCH);
+        const lines = [...filled];
+        while (lines.length < minLen) lines.push(createEmptyLine());
+        return { ...prev, lines };
+      });
+
+      if (firstImportedRowId) {
+        window.setTimeout(() => focusQtyLine(firstImportedRowId!), 80);
+      }
+
+      toast({
+        title: t.stockEntryUi.importSuccess,
+        description: t.stockEntryUi.importSuccessDesc.replace('{count}', String(mergedBySku.size)),
+      });
+    },
+    [entryBranchId, productsForImport, toast, t.stockEntryUi, focusQtyLine],
+  );
+
+  const openImportDialog = useCallback(async () => {
+    if (!entryBranchId) {
+      toast({
+        variant: 'destructive',
+        title: t.stockEntryUi.branchRequiredTitle,
+        description: t.stockEntryUi.branchRequiredDesc,
+      });
+      return;
+    }
+    await loadImportCatalog();
+    setImportDialogOpen(true);
+  }, [entryBranchId, loadImportCatalog, toast, t.stockEntryUi]);
 
   const handleProductKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement>,
@@ -1037,6 +1208,10 @@ export function StockEntryDialog({
               <p className="text-[11px] text-muted-foreground">{t.stockEntryUi.pickerKeyboardHint}</p>
             </div>
             <div className="flex gap-2 shrink-0">
+              <Button type="button" variant="outline" size="sm" className="h-8" onClick={openImportDialog}>
+                <FileSpreadsheet className="h-3.5 w-3.5 mr-1" />
+                {t.stockEntryUi.importExcel}
+              </Button>
               {onAddProduct ? (
                 <Button type="button" variant="outline" size="sm" className="h-8" onClick={onAddProduct}>
                   <Package className="h-3.5 w-3.5 mr-1" />
@@ -1068,7 +1243,7 @@ export function StockEntryDialog({
               <TableBody>
                 {form.lines.map((line, rowIndex) => {
                   const product = line.productId ? productsById.get(line.productId) : undefined;
-                  const stock = product?.stock ?? 0;
+                  const stock = stockAtEntryBranch(product);
                   const stockAfter = product ? stock + line.quantity : null;
                   const freightPerUnit = line.productId
                     ? freightAllocations[line.productId] || 0
@@ -1267,8 +1442,7 @@ export function StockEntryDialog({
                     <span className="mx-0.5">—</span>
                     {p.name}
                     <span className="text-muted-foreground ml-1">
-                      ({p.stock ?? 0} {p.unit}
-                      {p.branchId ? ` · ${resolveBranchName(p.branchId)}` : ''})
+                      ({stockAtEntryBranch(p)} {p.unit} @ {resolveBranchName(entryBranchId)})
                     </span>
                   </button>
                 ))
@@ -1283,6 +1457,20 @@ export function StockEntryDialog({
         onSelect={(code, name) =>
           setForm((p) => ({ ...p, freightSourceAccount: code, freightSourceName: name }))
         }
+      />
+      <ExcelImportDialog<ExcelStockEntryLine>
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        title={t.stockEntryUi.importDialogTitle}
+        description={t.stockEntryUi.importDialogDesc}
+        parseFile={parseStockEntryExcelFile}
+        validateData={validateStockEntryImport}
+        onImport={handleImportFromExcel}
+        downloadTemplate={downloadStockEntryImportTemplate}
+        columns={[
+          { key: 'codigo', label: t.stockEntryUi.colCode },
+          { key: 'descricao', label: t.stockEntryUi.colProduct },
+        ]}
       />
     </Dialog>
   );

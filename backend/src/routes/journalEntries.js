@@ -1,6 +1,29 @@
 // Journal Entries API routes
 const express = require('express');
 const db = require('../db');
+const { enrichJournalEntryContext, enrichJournalEntries } = require('../lib/journalEntryContext');
+
+const ENTRY_HEADER_SELECT = `
+  SELECT je.*,
+    u.name AS created_by_name,
+    b.name AS branch_name
+  FROM journal_entries je
+  LEFT JOIN users u ON je.created_by = u.id
+  LEFT JOIN branches b ON je.branch_id = b.id
+`;
+
+async function loadJournalLines(entryId) {
+  const linesResult = await db.query(`
+    SELECT jel.*,
+      coa.code AS account_code,
+      coa.name AS account_name
+    FROM journal_entry_lines jel
+    LEFT JOIN chart_of_accounts coa ON jel.account_id = coa.id
+    WHERE jel.journal_entry_id = $1
+    ORDER BY jel.debit_amount DESC, jel.credit_amount ASC
+  `, [entryId]);
+  return linesResult.rows;
+}
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -9,15 +32,7 @@ module.exports = function(broadcastTable) {
   router.get('/', async (req, res) => {
     try {
       const { branchId, referenceType, startDate, endDate } = req.query;
-      let query = `
-        SELECT je.*, 
-          u.name as created_by_name,
-          b.name as branch_name
-        FROM journal_entries je
-        LEFT JOIN users u ON je.created_by = u.id
-        LEFT JOIN branches b ON je.branch_id = b.id
-        WHERE 1=1
-      `;
+      let query = `${ENTRY_HEADER_SELECT} WHERE 1=1`;
       const params = [];
       let paramIndex = 1;
 
@@ -41,19 +56,10 @@ module.exports = function(broadcastTable) {
       query += ' ORDER BY je.entry_date DESC, je.created_at DESC';
       const result = await db.query(query, params);
 
-      // Load lines for each entry
-      for (let entry of result.rows) {
-        const linesResult = await db.query(`
-          SELECT jel.*, 
-            coa.code as account_code, 
-            coa.name as account_name
-          FROM journal_entry_lines jel
-          LEFT JOIN chart_of_accounts coa ON jel.account_id = coa.id
-          WHERE jel.journal_entry_id = $1
-          ORDER BY jel.debit_amount DESC
-        `, [entry.id]);
-        entry.lines = linesResult.rows;
+      for (const entry of result.rows) {
+        entry.lines = await loadJournalLines(entry.id);
       }
+      await enrichJournalEntries(db, result.rows);
 
       res.json(result.rows);
     } catch (error) {
@@ -66,22 +72,15 @@ module.exports = function(broadcastTable) {
   router.get('/:id', async (req, res) => {
     try {
       const { id } = req.params;
-      const result = await db.query('SELECT * FROM journal_entries WHERE id = $1', [id]);
-      
+      const result = await db.query(`${ENTRY_HEADER_SELECT} WHERE je.id = $1`, [id]);
+
       if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Journal entry not found' });
       }
 
       const entry = result.rows[0];
-      const linesResult = await db.query(`
-        SELECT jel.*, 
-          coa.code as account_code, 
-          coa.name as account_name
-        FROM journal_entry_lines jel
-        LEFT JOIN chart_of_accounts coa ON jel.account_id = coa.id
-        WHERE jel.journal_entry_id = $1
-      `, [id]);
-      entry.lines = linesResult.rows;
+      entry.lines = await loadJournalLines(id);
+      entry.context = await enrichJournalEntryContext(db, entry);
 
       res.json(entry);
     } catch (error) {
@@ -95,19 +94,16 @@ module.exports = function(broadcastTable) {
     try {
       const { type, id } = req.params;
       const result = await db.query(
-        'SELECT * FROM journal_entries WHERE reference_type = $1 AND reference_id = $2 ORDER BY created_at',
-        [type, id]
+        `${ENTRY_HEADER_SELECT}
+         WHERE je.reference_type = $1 AND je.reference_id = $2
+         ORDER BY je.created_at`,
+        [type, id],
       );
 
-      for (let entry of result.rows) {
-        const linesResult = await db.query(`
-          SELECT jel.*, coa.code as account_code, coa.name as account_name
-          FROM journal_entry_lines jel
-          LEFT JOIN chart_of_accounts coa ON jel.account_id = coa.id
-          WHERE jel.journal_entry_id = $1
-        `, [entry.id]);
-        entry.lines = linesResult.rows;
+      for (const entry of result.rows) {
+        entry.lines = await loadJournalLines(entry.id);
       }
+      await enrichJournalEntries(db, result.rows);
 
       res.json(result.rows);
     } catch (error) {

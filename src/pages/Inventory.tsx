@@ -331,6 +331,8 @@ export default function Inventory() {
   }, [inventoryRows, allBranchProducts]);
 
   const stockEntrySearchProducts = useMemo(() => {
+    const fromCatalog = flatCatalog.filter((p) => p.isActive !== false);
+    if (fromCatalog.length > 0) return fromCatalog;
     if (canSwitchBranch && Object.keys(allBranchProducts).length > 0) {
       return Object.entries(allBranchProducts).flatMap(([branchId, prods]) =>
         prods
@@ -340,7 +342,7 @@ export default function Inventory() {
     }
     const branchId = listBranchId || currentBranch?.id || '';
     return inventoryRows.map((p) => ({ ...p, branchId: p.branchId || branchId }));
-  }, [canSwitchBranch, allBranchProducts, inventoryRows, listBranchId, currentBranch?.id]);
+  }, [flatCatalog, canSwitchBranch, allBranchProducts, inventoryRows, listBranchId, currentBranch?.id]);
 
   /** Full catalog for exit search (stock checked when selecting a line, not when searching). */
   const adjustmentProducts = useMemo(() => {
@@ -597,6 +599,7 @@ export default function Inventory() {
     };
     const onEntry = () => {
       setSelectedProduct(null);
+      if (canSwitchBranch) void loadPerBranchBreakdown();
       setStockEntryDialogOpen(true);
     };
     const onMinQty = () => {

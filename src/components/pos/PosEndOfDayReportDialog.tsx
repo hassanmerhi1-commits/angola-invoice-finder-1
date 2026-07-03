@@ -29,6 +29,7 @@ import { format } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
 import { api } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
+import { filterShiftSalesForCashier, todayLocalDate } from '@/lib/posShiftSales';
 
 interface CaixaGlReconciliation {
   caixaAccountCode: string;
@@ -52,26 +53,6 @@ interface PosEndOfDayReportDialogProps {
   branch: Branch | null;
   session?: CaixaSession | null;
   onCloseCaixa?: (countedCash: number, notes?: string) => void | Promise<void>;
-}
-
-function saleLocalDate(createdAt: string) {
-  const d = new Date(createdAt);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function todayLocalDate() {
-  return saleLocalDate(new Date().toISOString());
-}
-
-function saleInShift(sale: Sale, session: CaixaSession | null | undefined): boolean {
-  if (!session?.openedAt) return true;
-  const shiftStart = new Date(session.openedAt).getTime();
-  if (!Number.isFinite(shiftStart)) return true;
-  const saleTime = new Date(sale.createdAt).getTime();
-  return Number.isFinite(saleTime) && saleTime >= shiftStart;
 }
 
 export function PosEndOfDayReportDialog({
@@ -147,36 +128,8 @@ export function PosEndOfDayReportDialog({
   }, [open, branch?.id, session, today, t.posUi.caixa.glUnavailable]);
 
   const cashierSales = useMemo(() => {
-    if (!cashier) return [];
-    if (!session) return [];
-    const filtered = sales
-      .filter((sale) => {
-        const sameDay = saleLocalDate(sale.createdAt) === today;
-        const sameCashier =
-          sale.cashierId === cashier.id
-          || sale.cashierName === cashier.name
-          || sale.cashierName === cashier.username;
-        return sameDay && sameCashier && saleInShift(sale, session);
-      })
-      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-    // Guard against duplicate rows (offline stub + server sale with different ids).
-    const deduped: Sale[] = [];
-    for (const sale of filtered) {
-      const idx = deduped.findIndex((existing) => {
-        const sameInvoice =
-          sale.invoiceNumber
-          && existing.invoiceNumber
-          && sale.invoiceNumber.trim().toUpperCase() === existing.invoiceNumber.trim().toUpperCase();
-        return sameInvoice || existing.id === sale.id;
-      });
-      if (idx < 0) {
-        deduped.push(sale);
-      } else if ((sale.items?.length ?? 0) > (deduped[idx].items?.length ?? 0)) {
-        deduped[idx] = sale;
-      }
-    }
-    return deduped;
+    const rows = filterShiftSalesForCashier(sales, cashier, session, today);
+    return [...rows].reverse();
   }, [sales, cashier, today, session]);
 
   const shiftOpenedLabel = useMemo(() => {
