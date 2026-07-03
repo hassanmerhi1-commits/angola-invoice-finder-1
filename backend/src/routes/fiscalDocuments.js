@@ -208,6 +208,10 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
         if (broadcastTable) {
           broadcastTable('credit_notes');
           broadcastTable('products');
+          if (note.caixaRefund?.recorded || note.caixa_refund?.recorded) {
+            broadcastTable('caixa_sessions');
+            broadcastTable('caixas');
+          }
         }
       } catch (broadcastErr) {
         console.warn('[FISCAL] broadcast after credit note:', broadcastErr.message);

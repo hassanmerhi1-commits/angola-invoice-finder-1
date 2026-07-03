@@ -1205,6 +1205,7 @@ export const api = {
         totalIn?: number;
         totalOut?: number;
         salesTotal?: number;
+        expensesTotal?: number;
         openedAt?: string;
       };
     }) => {
@@ -1222,6 +1223,9 @@ export const api = {
       }
       if (params.session?.salesTotal != null) {
         sp.set('sessionSalesTotal', String(params.session.salesTotal));
+      }
+      if (params.session?.expensesTotal != null) {
+        sp.set('sessionExpensesTotal', String(params.session.expensesTotal));
       }
       if (params.session?.openedAt) {
         sp.set('sessionOpenedAt', params.session.openedAt);

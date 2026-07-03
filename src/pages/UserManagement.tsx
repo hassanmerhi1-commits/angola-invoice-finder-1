@@ -96,6 +96,12 @@ export default function UserManagement() {
   const [useCustomPerms, setUseCustomPerms] = useState(false);
   const [editPassword, setEditPassword] = useState('');
   const [editPasswordConfirm, setEditPasswordConfirm] = useState('');
+  const [editFormData, setEditFormData] = useState({
+    name: '',
+    email: '',
+    username: '',
+    branchId: '',
+  });
 
   const filteredUsers = users.filter(u =>
     u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -109,6 +115,13 @@ export default function UserManagement() {
     setSelectedUser(user);
     const currentRole = user.role;
     setSelectedRole(currentRole);
+
+    setEditFormData({
+      name: user.name,
+      email: user.email,
+      username: user.username || user.email.split('@')[0] || '',
+      branchId: user.branchId || '',
+    });
 
     const overridden = hasOverrides(user.permissionOverrides);
     setUseCustomPerms(overridden);
@@ -151,6 +164,14 @@ export default function UserManagement() {
   const handleSaveRole = async () => {
     if (!selectedUser) return;
 
+    const name = editFormData.name.trim();
+    const email = editFormData.email.trim();
+    const username = editFormData.username.trim() || email.split('@')[0] || '';
+    if (!name || !email || !editFormData.branchId) {
+      toast.error(t.userManagementUi.requiredFields);
+      return;
+    }
+
     const pwd = editPassword.trim();
     if (pwd || editPasswordConfirm.trim()) {
       if (pwd.length < 8) {
@@ -171,14 +192,18 @@ export default function UserManagement() {
 
       await updateUser({
         ...selectedUser,
+        name,
+        email,
+        username,
+        branchId: editFormData.branchId,
         role: selectedRole,
         permissionOverrides,
         ...(pwd ? { password: pwd } : {}),
       });
 
       toast.success(
-        pwd ? t.userManagementUi.roleAndPasswordUpdated : t.userManagementUi.roleUpdated,
-        { description: selectedUser.name },
+        pwd ? t.userManagementUi.userAndPasswordUpdated : t.userManagementUi.userUpdated,
+        { description: name },
       );
       setEditPassword('');
       setEditPasswordConfirm('');
@@ -642,13 +667,62 @@ export default function UserManagement() {
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit User Role & Permissions</DialogTitle>
+            <DialogTitle>{t.userManagementUi.editUserTitle}</DialogTitle>
             <DialogDescription>
-              Configure access for {selectedUser?.name}
+              {t.userManagementUi.editUserDesc}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6 py-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="edit-name">{t.userManagementUi.fullName} *</Label>
+                <Input
+                  id="edit-name"
+                  value={editFormData.name}
+                  onChange={(e) => setEditFormData((prev) => ({ ...prev, name: e.target.value }))}
+                  placeholder={t.userManagementUi.fullNamePlaceholder}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-email">{t.userManagementUi.email} *</Label>
+                <Input
+                  id="edit-email"
+                  type="email"
+                  value={editFormData.email}
+                  onChange={(e) => setEditFormData((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="joao@company.com"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-username">{t.userManagementUi.username}</Label>
+                <Input
+                  id="edit-username"
+                  value={editFormData.username}
+                  onChange={(e) => setEditFormData((prev) => ({ ...prev, username: e.target.value }))}
+                  placeholder="joaosilva"
+                />
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label>{t.userManagementUi.branch} *</Label>
+                <Select
+                  value={editFormData.branchId}
+                  onValueChange={(v) => setEditFormData((prev) => ({ ...prev, branchId: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={t.userManagementUi.selectBranch} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {branches.map((branch) => (
+                      <SelectItem key={branch.id} value={branch.id}>
+                        {branch.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
             <div className="rounded-lg border p-4 space-y-3 bg-muted/30">
               <p className="text-sm font-medium">{t.userManagementUi.resetPasswordSection}</p>
               <p className="text-xs text-muted-foreground">{t.userManagementUi.resetPasswordHint}</p>

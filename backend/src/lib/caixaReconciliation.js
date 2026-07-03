@@ -81,9 +81,43 @@ async function sumErpCashSales(branchId, date, shiftOpenedAt) {
   return roundMoney(result.rows[0]?.total);
 }
 
+function creditNoteDateFilterSql() {
+  if (db.engine === 'postgres') {
+    return `cn.issued_at::date = $2::date`;
+  }
+  return `date(cn.issued_at) = date($2)`;
+}
+
+function creditNoteShiftFilterSql(paramIndex) {
+  if (db.engine === 'postgres') {
+    return ` AND cn.issued_at >= $${paramIndex}::timestamptz`;
+  }
+  return ` AND datetime(cn.issued_at) >= datetime($${paramIndex})`;
+}
+
+async function sumErpCashRefunds(branchId, date, shiftOpenedAt) {
+  const params = [branchId, date];
+  let shiftClause = '';
+  if (shiftOpenedAt) {
+    params.push(String(shiftOpenedAt));
+    shiftClause = creditNoteShiftFilterSql(params.length);
+  }
+  const result = await db.query(
+    `SELECT COALESCE(SUM(cn.total), 0) AS total
+     FROM credit_notes cn
+     INNER JOIN sales s ON s.id = cn.original_invoice_id
+     WHERE cn.branch_id = $1
+       AND cn.status = 'issued'
+       AND LOWER(COALESCE(s.payment_method, '')) = 'cash'
+       AND ${creditNoteDateFilterSql()}${shiftClause}`,
+    params,
+  );
+  return roundMoney(result.rows[0]?.total);
+}
+
 async function sumGlCashMovements(accountId, accountCode, branchId, date, shiftOpenedAt) {
   if (!accountId && !accountCode) {
-    return { saleDebits: 0, debits: 0, credits: 0, net: 0 };
+    return { saleDebits: 0, refundCredits: 0, debits: 0, credits: 0, net: 0, netCashSales: 0 };
   }
 
   const accountClause = accountId
@@ -101,7 +135,8 @@ async function sumGlCashMovements(accountId, accountCode, branchId, date, shiftO
     `SELECT
        COALESCE(SUM(jel.debit_amount), 0) AS debits,
        COALESCE(SUM(jel.credit_amount), 0) AS credits,
-       COALESCE(SUM(CASE WHEN je.reference_type = 'sale' THEN jel.debit_amount ELSE 0 END), 0) AS sale_debits
+       COALESCE(SUM(CASE WHEN je.reference_type = 'sale' THEN jel.debit_amount ELSE 0 END), 0) AS sale_debits,
+       COALESCE(SUM(CASE WHEN je.reference_type = 'credit_note' THEN jel.credit_amount ELSE 0 END), 0) AS refund_credits
      FROM journal_entry_lines jel
      INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
      INNER JOIN chart_of_accounts coa ON coa.id = jel.account_id
@@ -115,11 +150,14 @@ async function sumGlCashMovements(accountId, accountCode, branchId, date, shiftO
   const debits = roundMoney(movement.rows[0]?.debits);
   const credits = roundMoney(movement.rows[0]?.credits);
   const saleDebits = roundMoney(movement.rows[0]?.sale_debits);
+  const refundCredits = roundMoney(movement.rows[0]?.refund_credits);
   return {
     saleDebits,
+    refundCredits,
     debits,
     credits,
     net: roundMoney(debits - credits),
+    netCashSales: roundMoney(saleDebits - refundCredits),
   };
 }
 
@@ -127,7 +165,7 @@ async function sumGlCashMovements(accountId, accountCode, branchId, date, shiftO
  * @param {{
  *   branchId: string,
  *   date: string,
- *   session?: { openingBalance?: number, totalIn?: number, totalOut?: number, salesTotal?: number, openedAt?: string },
+ *   session?: { openingBalance?: number, totalIn?: number, totalOut?: number, salesTotal?: number, expensesTotal?: number, openedAt?: string },
  * }} input
  */
 async function buildCaixaReconciliation(input) {
@@ -144,16 +182,24 @@ async function buildCaixaReconciliation(input) {
 
   const account = await resolveBranchCaixaGlAccount(branchId);
   const erpCashSalesTotal = await sumErpCashSales(branchId, date, shiftOpenedAt);
+  const erpCashRefundsTotal = await sumErpCashRefunds(branchId, date, shiftOpenedAt);
+  const erpNetCashTotal = roundMoney(erpCashSalesTotal - erpCashRefundsTotal);
   const gl = await sumGlCashMovements(account.id, account.code, branchId, date, shiftOpenedAt);
 
   const sessionOpening = roundMoney(input.session?.openingBalance ?? 0);
   const sessionCashIn = roundMoney(input.session?.totalIn ?? input.session?.salesTotal ?? 0);
   const sessionCashOut = roundMoney(input.session?.totalOut ?? 0);
+  const sessionExpensesTotal = roundMoney(input.session?.expensesTotal ?? 0);
   const sessionExpectedCash = roundMoney(sessionOpening + sessionCashIn - sessionCashOut);
+  const sessionNetCash = roundMoney(sessionCashIn - sessionCashOut);
+  const erpDrawerNet = roundMoney(erpNetCashTotal - sessionExpensesTotal);
 
   const sessionCashVsErpSales = roundMoney(sessionCashIn - erpCashSalesTotal);
+  const sessionNetVsErpNet = roundMoney(sessionNetCash - erpDrawerNet);
   const sessionCashVsGlDebits = roundMoney(sessionCashIn - gl.saleDebits);
   const erpSalesVsGlDebits = roundMoney(erpCashSalesTotal - gl.saleDebits);
+  const erpRefundsVsGlCredits = roundMoney(erpCashRefundsTotal - gl.refundCredits);
+  const erpNetVsGlNet = roundMoney(erpNetCashTotal - gl.netCashSales);
 
   return {
     branchId,
@@ -162,7 +208,13 @@ async function buildCaixaReconciliation(input) {
     caixaAccountCode: account.code,
     caixaAccountName: account.name,
     erpCashSalesTotal,
+    erpCashRefundsTotal,
+    erpNetCashTotal,
+    erpDrawerNet,
+    sessionExpensesTotal,
     glCashSaleDebits: gl.saleDebits,
+    glCashRefundCredits: gl.refundCredits,
+    glNetCashSales: gl.netCashSales,
     glDebits: gl.debits,
     glCredits: gl.credits,
     glNetMovement: gl.net,
@@ -170,17 +222,22 @@ async function buildCaixaReconciliation(input) {
       openingBalance: sessionOpening,
       cashIn: sessionCashIn,
       cashOut: sessionCashOut,
+      expensesTotal: sessionExpensesTotal,
       expectedCash: sessionExpectedCash,
+      netCash: sessionNetCash,
     },
     variances: {
       sessionCashVsErpSales,
+      sessionNetVsErpNet,
       sessionCashVsGlDebits,
       erpSalesVsGlDebits,
+      erpRefundsVsGlCredits,
+      erpNetVsGlNet,
     },
     balanced:
-      Math.abs(sessionCashVsErpSales) < 0.01
-      && Math.abs(sessionCashVsGlDebits) < 0.01
-      && Math.abs(erpSalesVsGlDebits) < 0.01,
+      Math.abs(sessionNetVsErpNet) < 0.01
+      && Math.abs(erpNetVsGlNet) < 0.01
+      && Math.abs(erpRefundsVsGlCredits) < 0.01,
   };
 }
 

@@ -213,5 +213,36 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
     [branchId],
   );
 
-  return { caixa, session, loading, refresh, openSession, closeSession, recordCashSale };
+  const recordCashRefund = useCallback(
+    (amount: number) => {
+      setSession((prev) => {
+        if (!prev || !branchId) return prev;
+        const next = {
+          ...prev,
+          totalOut: prev.totalOut + amount,
+        };
+        writePosCaixaCache(branchId, next);
+        return next;
+      });
+    },
+    [branchId],
+  );
+
+  const recordCashExpense = useCallback(
+    (amount: number) => {
+      setSession((prev) => {
+        if (!prev || !branchId) return prev;
+        const next = {
+          ...prev,
+          totalOut: prev.totalOut + amount,
+          expensesTotal: prev.expensesTotal + amount,
+        };
+        writePosCaixaCache(branchId, next);
+        return next;
+      });
+    },
+    [branchId],
+  );
+
+  return { caixa, session, loading, refresh, openSession, closeSession, recordCashSale, recordCashRefund, recordCashExpense };
 }

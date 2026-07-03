@@ -12,6 +12,7 @@ import {
   Sale,
 } from '@/types/erp';
 import * as fiscalStorage from '@/lib/fiscalDocuments';
+import { processSaleRefund } from '@/lib/accountingStorage';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
 import { CREDIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
@@ -108,6 +109,32 @@ export function useCreditNotes(branchId?: string) {
         detail: { branchId: note.branchId },
       }));
     }
+
+    const paymentMethod = String(
+      originalSale.paymentMethod
+      || (note as CreditNote & { originalPaymentMethod?: string }).originalPaymentMethod
+      || '',
+    ).toLowerCase();
+    if (paymentMethod === 'cash') {
+      void processSaleRefund(
+        branchIdParam,
+        note.id,
+        note.documentNumber,
+        originalSale.invoiceNumber,
+        note.total,
+        issuedBy,
+        originalSale.customerName,
+      )
+        .then(() => {
+          window.dispatchEvent(
+            new CustomEvent('nexor:pos-caixa-refund', {
+              detail: { branchId: branchIdParam, amount: note.total },
+            }),
+          );
+        })
+        .catch((err) => console.warn('[CAIXA] Local refund sync failed:', err));
+    }
+
     return note;
   }, []);
 

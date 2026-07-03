@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Separator } from '@/components/ui/separator';
-import { Banknote, CreditCard, ArrowRightLeft, Check, Percent, ShieldCheck, Lock, FileText } from 'lucide-react';
+import { Banknote, CreditCard, ArrowRightLeft, Check, Percent, ShieldCheck, Lock, FileText, Loader2 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { resolveSaleInvoiceType, normalizeCustomerNif, fiscalInvoiceTypeLabel, fsMaxAmount } from '@/lib/fiscalInvoiceType';
 import { Badge } from '@/components/ui/badge';
@@ -36,7 +36,7 @@ interface CheckoutDialogProps {
     customerName?: string,
     discountPct?: number,
     clientId?: string,
-  ) => void;
+  ) => void | Promise<void>;
 }
 
 export function CheckoutDialog({
@@ -62,6 +62,7 @@ export function CheckoutDialog({
   const [approverName, setApproverName] = useState('');
   const [supervisorPassword, setSupervisorPassword] = useState('');
   const [verifying, setVerifying] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const rawPct = parseFloat(discountInput || '0');
   const discountPct = Number.isFinite(rawPct) ? Math.min(Math.max(rawPct, 0), 100) : 0;
@@ -83,6 +84,7 @@ export function CheckoutDialog({
       setApproverName('');
       setSupervisorPassword('');
       setVerifying(false);
+      setSubmitting(false);
     }
   }, [open, total, defaultCustomerNif, defaultCustomerName]);
 
@@ -161,15 +163,21 @@ export function CheckoutDialog({
     total: effectiveTotal,
   });
 
-  const handleComplete = () => {
-    onCompleteSale(
-      paymentMethod,
-      paidAmount,
-      normalizedCustomerNif || undefined,
-      customerName || undefined,
-      appliedPct,
-      paymentMethod === 'credit' ? registeredClientId : undefined,
-    );
+  const handleComplete = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await onCompleteSale(
+        paymentMethod,
+        paidAmount,
+        normalizedCustomerNif || undefined,
+        customerName || undefined,
+        appliedPct,
+        paymentMethod === 'credit' ? registeredClientId : undefined,
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const quickAmounts = [
@@ -402,11 +410,15 @@ export function CheckoutDialog({
           <Button
             className="h-14 w-full text-lg"
             size="lg"
-            onClick={handleComplete}
-            disabled={!isValid}
+            onClick={() => void handleComplete()}
+            disabled={!isValid || submitting}
           >
-            <Check className="mr-2 h-5 w-5" />
-            {t.checkoutUi.confirmPayment}
+            {submitting ? (
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+            ) : (
+              <Check className="mr-2 h-5 w-5" />
+            )}
+            {submitting ? t.checkoutUi.processingPayment : t.checkoutUi.confirmPayment}
           </Button>
         </div>
       </DialogContent>

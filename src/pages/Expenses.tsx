@@ -242,10 +242,10 @@ export default function Expenses() {
     loadData();
   };
 
-  const handlePay = (expense: Expense) => {
-    payExpense(expense.id, user?.name || t.expensesUi.systemUser);
+  const handlePay = async (expense: Expense) => {
+    await payExpense(expense.id, user?.name || t.expensesUi.systemUser);
     toast({ title: t.expensesUi.paidTitle, description: t.expensesUi.expensePaid.replace('{number}', expense.expenseNumber) });
-    loadData();
+    await loadData();
   };
 
   const handleSubmitForApproval = (expense: Expense) => {
@@ -452,7 +452,7 @@ export default function Expenses() {
                               </>
                             )}
                             {expense.status === 'approved' && (
-                              <DropdownMenuItem onClick={() => handlePay(expense)} className="text-green-600">
+                              <DropdownMenuItem onClick={() => void handlePay(expense)} className="text-green-600">
                                 <Receipt className="w-4 h-4 mr-2" />
                                 {t.expensesUi.markAsPaid}
                               </DropdownMenuItem>

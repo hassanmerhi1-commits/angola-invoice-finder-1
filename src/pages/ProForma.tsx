@@ -80,6 +80,8 @@ export default function ProFormaPage() {
   const [notes, setNotes] = useState('');
   const [selectedItems, setSelectedItems] = useState<ProFormaItem[]>([]);
   const [productSearch, setProductSearch] = useState('');
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientPickerOpen, setClientPickerOpen] = useState(false);
 
   // stats loaded via useEffect above
 
@@ -106,6 +108,21 @@ export default function ProFormaPage() {
       product.sku.toLowerCase().includes(productSearch.toLowerCase())
     ).slice(0, 20);
   }, [products, productSearch]);
+
+  const filteredClients = useMemo(() => {
+    const active = clients.filter((c) => c.isActive !== false);
+    const q = clientSearch.trim().toLowerCase();
+    if (!q) return active.slice(0, 25);
+    return active
+      .filter(
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          (c.nif && c.nif.toLowerCase().includes(q)) ||
+          (c.email && c.email.toLowerCase().includes(q)) ||
+          (c.phone && c.phone.includes(q)),
+      )
+      .slice(0, 25);
+  }, [clients, clientSearch]);
 
   const formatMoney = (value: number) =>
     `${value.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} ${t.common.currency}`;
@@ -139,16 +156,15 @@ export default function ProFormaPage() {
     );
   };
 
-  const handleSelectClient = (clientId: string) => {
-    const client = clients.find(c => c.id === clientId);
-    if (client) {
-      setSelectedClient(client);
-      setCustomerName(client.name);
-      setCustomerNif(client.nif);
-      setCustomerEmail(client.email || '');
-      setCustomerPhone(client.phone || '');
-      setCustomerAddress(client.address || '');
-    }
+  const handleSelectClient = (client: Client) => {
+    setSelectedClient(client);
+    setCustomerName(client.name);
+    setCustomerNif(client.nif);
+    setCustomerEmail(client.email || '');
+    setCustomerPhone(client.phone || '');
+    setCustomerAddress(client.address || '');
+    setClientSearch(client.name);
+    setClientPickerOpen(false);
   };
 
   const handleAddProduct = (product: Product) => {
@@ -195,6 +211,8 @@ export default function ProFormaPage() {
     setNotes('');
     setSelectedItems([]);
     setProductSearch('');
+    setClientSearch('');
+    setClientPickerOpen(false);
   };
 
   const handleCreateProforma = async () => {
@@ -458,20 +476,45 @@ export default function ProFormaPage() {
               </TabsList>
 
               <TabsContent value="customer" className="space-y-4 mt-4">
-                <div>
+                <div className="space-y-2">
                   <Label>{p.selectExistingClient}</Label>
-                  <Select onValueChange={handleSelectClient}>
-                    <SelectTrigger>
-                      <SelectValue placeholder={p.selectClientPlaceholder} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {clients.map(client => (
-                        <SelectItem key={client.id} value={client.id}>
-                          {client.name} - {client.nif}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      value={clientSearch}
+                      onChange={(e) => {
+                        setClientSearch(e.target.value);
+                        setSelectedClient(null);
+                        setClientPickerOpen(true);
+                      }}
+                      onFocus={() => setClientPickerOpen(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setClientPickerOpen(false), 150);
+                      }}
+                      placeholder={p.searchClientPlaceholder}
+                      className="pl-10"
+                      autoComplete="off"
+                    />
+                    {clientPickerOpen && filteredClients.length > 0 && (
+                      <div className="absolute z-50 top-full left-0 right-0 mt-0.5 border rounded-md bg-popover shadow-md max-h-48 overflow-y-auto">
+                        {filteredClients.map((client) => (
+                          <button
+                            key={client.id}
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-sm hover:bg-accent/50 flex justify-between gap-2 border-b last:border-b-0"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => handleSelectClient(client)}
+                          >
+                            <span className="truncate font-medium">{client.name}</span>
+                            <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                              {client.nif || client.phone || '—'}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">{p.searchClientHint}</p>
                 </div>
                 
                 <div className="text-center text-muted-foreground">{p.orFillManually}</div>
@@ -481,7 +524,10 @@ export default function ProFormaPage() {
                     <Label>{t.common.name} *</Label>
                     <Input
                       value={customerName}
-                      onChange={(e) => setCustomerName(e.target.value)}
+                      onChange={(e) => {
+                        setCustomerName(e.target.value);
+                        setSelectedClient(null);
+                      }}
                       placeholder={p.customerNamePlaceholder}
                     />
                   </div>

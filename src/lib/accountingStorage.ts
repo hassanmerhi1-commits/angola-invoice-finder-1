@@ -173,10 +173,70 @@ export async function processSalePayment(
   };
 }
 
+/** Cash refund when a credit note is issued against a cash POS sale. */
+export async function processSaleRefund(
+  branchId: string,
+  creditNoteId: string,
+  documentNumber: string,
+  originalInvoiceNumber: string,
+  amount: number,
+  cashierId: string,
+  customerName?: string,
+): Promise<{ success: boolean; message: string; transaction?: CashTransaction; caixaName?: string; newBalance?: number }> {
+  const openCaixa = await getOpenCaixaForBranch(branchId);
+  if (!openCaixa) {
+    console.warn(`[CAIXA] No open Caixa for branch ${branchId} - refund recorded without Caixa entry`);
+    return {
+      success: true,
+      message: 'Devolução registada, mas nenhuma Caixa aberta para este balcão',
+    };
+  }
+
+  const openSession = await getOpenCaixaSession(openCaixa.id);
+  if (!openSession) {
+    console.warn(`[CAIXA] No open session for Caixa ${openCaixa.id}`);
+    return {
+      success: true,
+      message: 'Devolução registada, mas sessão de Caixa não encontrada',
+    };
+  }
+
+  const transaction = await createCashTransaction(
+    openCaixa.id,
+    branchId,
+    'sale_refund',
+    amount,
+    `Devolução ${documentNumber} (fatura ${originalInvoiceNumber})${customerName ? ` - ${customerName}` : ''}`,
+    cashierId,
+    undefined,
+    customerName,
+    'sale',
+    creditNoteId,
+    documentNumber,
+  );
+
+  await updateCaixaBalance(openCaixa.id, amount, 'out');
+
+  const updatedCaixa = await getCaixaById(openCaixa.id);
+  const newBalance = updatedCaixa?.currentBalance ?? openCaixa.currentBalance - amount;
+
+  await updateCaixaSessionTotals(openSession.id, amount, 'sale_refund');
+
+  console.log(`[CAIXA] Refund ${documentNumber} recorded: -${amount.toLocaleString('pt-AO')} Kz from ${openCaixa.name}`);
+
+  return {
+    success: true,
+    message: 'Devolução registada na Caixa',
+    transaction,
+    caixaName: openCaixa.name,
+    newBalance,
+  };
+}
+
 export async function updateCaixaSessionTotals(
   sessionId: string, 
   amount: number, 
-  type: 'sale' | 'expense' | 'deposit' | 'withdrawal' | 'adjustment'
+  type: 'sale' | 'sale_refund' | 'expense' | 'deposit' | 'withdrawal' | 'adjustment'
 ): Promise<void> {
   if (isElectronMode()) {
     // For Electron, update the session in the DB
@@ -191,6 +251,9 @@ export async function updateCaixaSessionTotals(
       case 'expense': case 'withdrawal':
         session.totalOut += amount;
         if (type === 'expense') session.expensesTotal += amount;
+        break;
+      case 'sale_refund':
+        session.totalOut += amount;
         break;
       case 'adjustment':
         session.adjustments += amount;
@@ -212,6 +275,9 @@ export async function updateCaixaSessionTotals(
       case 'expense': case 'withdrawal':
         session.totalOut += amount;
         if (type === 'expense') session.expensesTotal += amount;
+        break;
+      case 'sale_refund':
+        session.totalOut += amount;
         break;
       case 'adjustment':
         session.adjustments += amount;
@@ -521,6 +587,21 @@ export async function payExpense(
       );
       expense.transactionId = transaction.id;
       await updateCaixaBalance(expense.caixaId, expense.totalAmount, 'out');
+      const openSession = await getOpenCaixaSession(expense.caixaId);
+      if (openSession) {
+        await updateCaixaSessionTotals(openSession.id, expense.totalAmount, 'expense');
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('nexor:pos-caixa-expense', {
+            detail: {
+              branchId: expense.branchId,
+              caixaId: expense.caixaId,
+              amount: expense.totalAmount,
+            },
+          }),
+        );
+      }
     } else if (expense.paymentSource === 'bank' && expense.bankAccountId) {
       const transaction = await createBankTransaction(
         expense.bankAccountId,

@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useCart, useSales, useAuth, useClients } from '@/hooks/useERP';
+import { useCreditNotes } from '@/hooks/useFiscalDocuments';
 import { effectiveUnitPrice, clientPricing, normalizePriceLevel } from '@/lib/pricing';
 import { userHasPermission } from '@/lib/permissions';
 import { getCompanySettings, saveCompanySettings } from '@/lib/companySettings';
@@ -11,7 +12,8 @@ import {
 import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { usePosProducts } from '@/hooks/usePosProducts';
 import { usePosCaixa } from '@/hooks/usePosCaixa';
-import { processSalePayment } from '@/lib/accountingStorage';
+import { processSalePayment, getExpenses } from '@/lib/accountingStorage';
+import type { Expense } from '@/types/accounting';
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
 import { useKeyboardShortcuts, KeyboardShortcut } from '@/hooks/useKeyboardShortcuts';
 import { Sale, Product } from '@/types/erp';
@@ -35,6 +37,7 @@ import { Search, ScanBarcode, Keyboard, ShoppingCart, FileText, Check, ChevronsU
 import { PosEndOfDayReportDialog } from '@/components/pos/PosEndOfDayReportDialog';
 import { PosOpenCaixaDialog } from '@/components/pos/PosOpenCaixaDialog';
 import { PosShiftInvoicesPanel } from '@/components/pos/PosShiftInvoicesPanel';
+import { PosUpdateMenu } from '@/components/pos/PosUpdateMenu';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { filterShiftSalesForCashier } from '@/lib/posShiftSales';
 import {
@@ -44,6 +47,7 @@ import {
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 import { readNexorPosNewSaleFlag, NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
+import { CREDIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 
 export default function POS() {
@@ -54,6 +58,7 @@ export default function POS() {
   const { t } = useTranslation();
   const cart = useCart();
   const { completeSale, sales, refreshSales } = useSales(currentBranch?.id);
+  const { creditNotes, refreshCreditNotes } = useCreditNotes(currentBranch?.id);
   const { clients } = useClients();
 
   // Only admins/managers (anyone with `pos_price_change`) may pick the price tier.
@@ -143,6 +148,7 @@ export default function POS() {
   const [endOfDayOpen, setEndOfDayOpen] = useState(false);
   const [posMainTab, setPosMainTab] = useState<'cart' | 'invoices'>('cart');
   const [shiftIssuesVersion, setShiftIssuesVersion] = useState(0);
+  const [shiftExpenses, setShiftExpenses] = useState<Expense[]>([]);
   const bumpShiftIssues = useCallback(() => setShiftIssuesVersion((v) => v + 1), []);
   const {
     session: caixaSession,
@@ -150,6 +156,9 @@ export default function POS() {
     openSession: openCaixaSessionForBranch,
     closeSession: closeCaixaSessionForBranch,
     recordCashSale,
+    recordCashRefund,
+    recordCashExpense,
+    refresh: refreshCaixa,
   } = usePosCaixa(currentBranch?.id, currentBranch?.name);
   const [openingCaixa, setOpeningCaixa] = useState(false);
   const shiftInvoiceCount = useMemo(
@@ -168,6 +177,53 @@ export default function POS() {
   const caixaOpen = !!caixaSession;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const qtyInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!currentBranch?.id) {
+      setShiftExpenses([]);
+      return;
+    }
+    let cancelled = false;
+    void getExpenses(currentBranch.id).then((rows) => {
+      if (!cancelled) setShiftExpenses(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentBranch?.id, endOfDayOpen, shiftIssuesVersion]);
+
+  useEffect(() => {
+    const onCreditNotesChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ branchId?: string }>).detail;
+      if (detail?.branchId && detail.branchId !== currentBranch?.id) return;
+      void refreshCreditNotes(currentBranch?.id);
+      void refreshCaixa();
+    };
+    const onCaixaRefund = (event: Event) => {
+      const detail = (event as CustomEvent<{ branchId?: string; amount?: number }>).detail;
+      if (detail?.branchId && detail.branchId !== currentBranch?.id) return;
+      if (detail?.amount && detail.amount > 0) recordCashRefund(detail.amount);
+      void refreshCaixa();
+    };
+    const onCaixaExpense = (event: Event) => {
+      const detail = (event as CustomEvent<{ branchId?: string; caixaId?: string; amount?: number }>).detail;
+      if (detail?.branchId && detail.branchId !== currentBranch?.id) return;
+      if (caixaSession?.caixaId && detail?.caixaId && detail.caixaId !== caixaSession.caixaId) return;
+      if (detail?.amount && detail.amount > 0) recordCashExpense(detail.amount);
+      void refreshCaixa();
+      if (currentBranch?.id) {
+        void getExpenses(currentBranch.id).then(setShiftExpenses);
+      }
+    };
+    window.addEventListener(CREDIT_NOTES_CHANGED_EVENT, onCreditNotesChanged);
+    window.addEventListener('nexor:pos-caixa-refund', onCaixaRefund);
+    window.addEventListener('nexor:pos-caixa-expense', onCaixaExpense);
+    return () => {
+      window.removeEventListener(CREDIT_NOTES_CHANGED_EVENT, onCreditNotesChanged);
+      window.removeEventListener('nexor:pos-caixa-refund', onCaixaRefund);
+      window.removeEventListener('nexor:pos-caixa-expense', onCaixaExpense);
+    };
+  }, [currentBranch?.id, caixaSession?.caixaId, refreshCreditNotes, refreshCaixa, recordCashRefund, recordCashExpense]);
 
   const navigableSearchResults = useMemo(
     () => filterPosProductsBySearch(products, searchTerm),
@@ -803,6 +859,7 @@ export default function POS() {
             <FileText className="w-3.5 h-3.5" />
             {t.posUi.endOfDayButton}
           </Button>
+          <PosUpdateMenu />
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" size="icon" className="shrink-0 h-9 w-9">
@@ -856,6 +913,8 @@ export default function POS() {
         open={endOfDayOpen}
         onOpenChange={setEndOfDayOpen}
         sales={sales}
+        creditNotes={creditNotes}
+        expenses={shiftExpenses}
         cashier={user}
         branch={currentBranch}
         session={caixaSession}

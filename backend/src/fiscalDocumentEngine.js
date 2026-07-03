@@ -14,6 +14,7 @@ const {
   linkDocuments,
 } = require('./transactionEngine');
 const { ensureCreditNoteRestoreStockColumn } = require('./lib/ensurePhaseSchema');
+const { isCashPaymentMethod, recordCashRefundOnOpenSession } = require('./lib/caixaCashRefund');
 const db = require('./db');
 
 function roundMoney(value) {
@@ -251,6 +252,17 @@ async function processCreditNote(client, data) {
     description: `Nota de Crédito ${documentNumber} sobre ${sale.invoice_number}`,
   });
 
+  let caixaRefund = null;
+  if (isCashPaymentMethod(sale.payment_method)) {
+    caixaRefund = await recordCashRefundOnOpenSession(client, {
+      branchId,
+      amount: total,
+      creditNoteId: noteId,
+      documentNumber,
+      originalInvoiceNumber: sale.invoice_number,
+    });
+  }
+
   return {
     id: noteId,
     document_number: documentNumber,
@@ -278,6 +290,10 @@ async function processCreditNote(client, data) {
     reason_description: reasonDescription,
     reasonDescription,
     items,
+    original_payment_method: sale.payment_method,
+    originalPaymentMethod: sale.payment_method,
+    caixa_refund: caixaRefund,
+    caixaRefund,
   };
 }
 

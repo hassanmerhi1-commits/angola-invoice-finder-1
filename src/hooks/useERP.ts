@@ -758,25 +758,11 @@ export function useSales(branchId?: string) {
       } catch { return ''; }
     })();
 
-    let invoiceNumberHint = '';
-    try {
-      const invoicePreview = await api.sales.generateInvoiceNumber(branchCode, {
-        paymentMethod,
-        total,
-        customerNif: normalizedCustomerNif,
-        invoiceType,
-      });
-      invoiceNumberHint = invoicePreview.data?.invoiceNumber || '';
-    } catch {
-      /* offline-first: local engine assigns LOCAL-* invoice number */
-    }
-
     const apiResult = await api.sales.create({
       branchId,
       branchCode,
       cashierId,
       cashierName,
-      invoiceNumber: invoiceNumberHint || undefined,
       items: saleItems,
       subtotal,
       taxAmount,
@@ -797,7 +783,7 @@ export function useSales(branchId?: string) {
 
     const sale: Sale = {
       id: apiResult.data.id,
-      invoiceNumber: apiResult.data.invoice_number || apiResult.data.invoiceNumber || invoiceNumberHint || '',
+      invoiceNumber: apiResult.data.invoice_number || apiResult.data.invoiceNumber || '',
       branchId,
       cashierId,
       cashierName,
@@ -814,7 +800,7 @@ export function useSales(branchId?: string) {
       status: 'completed',
       invoiceType: resolveSaleDocumentType({
         invoiceType: apiResult.data.invoice_type || apiResult.data.invoiceType || invoiceType,
-        invoiceNumber: apiResult.data.invoice_number || apiResult.data.invoiceNumber || invoiceNumberHint,
+        invoiceNumber: apiResult.data.invoice_number || apiResult.data.invoiceNumber,
       }),
       saftHash: apiResult.data.saft_hash || apiResult.data.saftHash || undefined,
       agtCode: apiResult.data.agt_code || apiResult.data.agtCode || undefined,

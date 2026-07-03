@@ -69,17 +69,15 @@ module.exports = function(broadcastTable) {
           await client.query('BEGIN');
           const sale = await processSale(client, req.body);
           await commitSaleCreation(client, sale, req.body);
-          let saftHash = null;
-          try {
-            await signSaleInvoice(sale.id);
-            const signed = await db.query('SELECT saft_hash FROM sales WHERE id = $1', [sale.id]);
-            saftHash = signed.rows[0]?.saft_hash || null;
-          } catch (e) {
-            console.warn('[AGT SIGN]', e.message);
-          }
+          // Fiscal signing reads PKCS#12 from disk — defer so POS checkout is not blocked.
+          setImmediate(() => {
+            signSaleInvoice(sale.id)
+              .then(() => broadcastTable('sales'))
+              .catch((e) => console.warn('[AGT SIGN]', e.message));
+          });
           await broadcastTable('sales');
           await broadcastTable('products');
-          return res.status(201).json({ ...sale, items: req.body.items, saft_hash: saftHash });
+          return res.status(201).json({ ...sale, items: req.body.items, saft_hash: null });
         } catch (error) {
           await client.query('ROLLBACK');
           const isCredit = String(req.body?.paymentMethod || req.body?.payment_method || '').toLowerCase() === 'credit';

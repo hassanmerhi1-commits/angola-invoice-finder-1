@@ -10,6 +10,15 @@ const { randomUUID } = require('crypto');
 const db = require('../db');
 const { isTruthySql } = require('../lib/sqlDialect');
 
+const SIGNING_MATERIAL_CACHE_MS = 5 * 60 * 1000;
+let cachedSigningMaterial = null;
+let cachedSigningMaterialAt = 0;
+
+function clearSigningMaterialCache() {
+  cachedSigningMaterial = null;
+  cachedSigningMaterialAt = 0;
+}
+
 function signingDir() {
   const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
   const dir = path.join(installDir, 'data', 'signing');
@@ -151,6 +160,7 @@ async function activateCertificate(keyId) {
   if (!res.rows.length) throw new Error('Certificado não encontrado');
   await db.query(`UPDATE signing_keys SET is_active = $1 WHERE ${isTruthySql(db, 'is_active')}`, [false]);
   await db.query('UPDATE signing_keys SET is_active = $1 WHERE id = $2', [true, keyId]);
+  clearSigningMaterialCache();
   return { success: true };
 }
 
@@ -169,10 +179,14 @@ async function deleteCertificate(keyId, options = {}) {
   if (pfxPath && fs.existsSync(pfxPath)) {
     try { fs.unlinkSync(pfxPath); } catch (_) {}
   }
+  clearSigningMaterialCache();
   return { success: true };
 }
 
 async function loadActiveSigningMaterial() {
+  if (cachedSigningMaterial && Date.now() - cachedSigningMaterialAt < SIGNING_MATERIAL_CACHE_MS) {
+    return cachedSigningMaterial;
+  }
   const res = await db.query(
     `SELECT id, key_alias, public_key_pem, encrypted_passphrase, pfx_storage_path, valid_until
      FROM signing_keys
@@ -197,12 +211,15 @@ async function loadActiveSigningMaterial() {
 
   if (!privateKeyPem) return null;
 
-  return {
+  const material = {
     keyId: row.id,
     keyAlias: row.key_alias,
     publicKeyPem: row.public_key_pem,
     privateKeyPem,
   };
+  cachedSigningMaterial = material;
+  cachedSigningMaterialAt = Date.now();
+  return material;
 }
 
 /** Self-signed PKCS#12 for internal AGT certification demos (not valid for live AGT). */
