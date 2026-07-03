@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { branchesListSql } = require('../lib/sqlDialect');
+const { ensureBranchCaixaAccount, ensureAllBranchCaixaAccounts } = require('../lib/branchCaixaAccounts');
 const crypto = require('crypto');
 
 /** Clamp any incoming value to a valid selling price level (1-4), defaulting to 1. */
@@ -19,56 +20,6 @@ function buildBranchCode(name = '') {
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
-
-  /**
-   * Auto-create a 45X Caixa sub-account for a branch (Angola PGC novo com IVA).
-   * 451/452/453 are reserved by the PGC, so branch caixa accounts start at 454.
-   */
-  async function ensureBranchCaixaAccount(client, branchId, branchName) {
-    // Check if already exists
-    const existing = await client.query(
-      `SELECT code FROM chart_of_accounts WHERE code LIKE '45%' AND level = 2 AND is_header = false
-       AND (branch_id = $1 OR name LIKE '%' || $2 || '%')`,
-      [branchId, branchName]
-    );
-    if (existing.rows.length > 0) return existing.rows[0].code;
-
-    // Find parent 45 (Caixa)
-    const parent = await client.query(
-      `SELECT id FROM chart_of_accounts WHERE code = '45' AND is_active = true LIMIT 1`
-    );
-    if (parent.rows.length === 0) {
-      console.warn('[BRANCHES] Parent account 45 (Caixa) not found — skipping sub-account');
-      return null;
-    }
-    const parentId = parent.rows[0].id;
-
-    // Next sequence (skip the PGC-reserved 451/452/453)
-    const seqResult = await client.query(
-      `SELECT COUNT(*) as count FROM chart_of_accounts WHERE code LIKE '45%' AND level = 2 AND is_header = false`
-    );
-    const nextSeq = Math.max(3, parseInt(seqResult.rows[0].count)) + 1;
-    const code = `45${nextSeq}`;
-
-    await client.query(
-      `INSERT INTO chart_of_accounts
-       (code, name, description, account_type, account_nature, parent_id, level, is_header, opening_balance, current_balance, branch_id)
-       VALUES ($1, $2, $3, 'asset', 'debit', $4, 2, false, 0, 0, $5)
-       ON CONFLICT (code) DO NOTHING`,
-      [code, `Caixa - ${branchName}`, `Conta caixa da filial ${branchName}`, parentId, branchId]
-    );
-
-    // Update parent children_count
-    await client.query(
-      `UPDATE chart_of_accounts SET children_count = (
-         SELECT COUNT(*) FROM chart_of_accounts WHERE parent_id = $1 AND is_active = true
-       ) WHERE id = $1`,
-      [parentId]
-    );
-
-    console.log(`[BRANCHES] Created sub-account ${code} — Caixa - ${branchName}`);
-    return code;
-  }
 
   // Get all branches
   router.get('/', async (req, res) => {
@@ -130,7 +81,6 @@ module.exports = function(broadcastTable) {
 
       const branch = result.rows[0];
 
-      // Auto-create Caixa sub-account for this branch
       await ensureBranchCaixaAccount(client, branch.id, normalizedName);
 
       await client.query('COMMIT');
@@ -146,6 +96,20 @@ module.exports = function(broadcastTable) {
       res.status(500).json({ error: 'Failed to create branch' });
     } finally {
       client.release();
+    }
+  });
+
+  /** Backfill Caixa GL (45x) accounts for branches missing one — safe to run after deploy. */
+  router.post('/ensure-caixa-accounts', async (req, res) => {
+    try {
+      const result = await ensureAllBranchCaixaAccounts(db);
+      if (result.created > 0) {
+        await broadcastTable('chart_of_accounts');
+      }
+      res.json({ success: true, ...result });
+    } catch (error) {
+      console.error('[BRANCHES] ensure-caixa-accounts:', error);
+      res.status(500).json({ error: error.message || 'Failed to ensure branch caixa accounts' });
     }
   });
 

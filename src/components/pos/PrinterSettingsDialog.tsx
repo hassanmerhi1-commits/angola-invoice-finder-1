@@ -30,6 +30,8 @@ import {
   DEFAULT_PRINTER_CONFIG,
   getPrinterConfig,
   savePrinterConfig,
+  pickLikelyThermalPrinter,
+  isLikelyThermalPrinterName,
 } from '@/lib/thermalPrinter';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
@@ -62,10 +64,18 @@ export function PrinterSettingsDialog({
         setLoadingPrinters(true);
         void window.electronAPI!.print.listPrinters()
           .then((result) => {
-            setPrinters(result.printers || []);
+            const list = result.printers || [];
+            setPrinters(list);
             const saved = getPrinterConfig();
-            if (!saved.deviceName && result.defaultPrinter) {
-              setConfig((prev) => ({ ...prev, deviceName: result.defaultPrinter || undefined }));
+            if (!saved.deviceName?.trim()) {
+              const suggested =
+                pickLikelyThermalPrinter(list)
+                || (result.defaultPrinter && isLikelyThermalPrinterName(result.defaultPrinter)
+                  ? result.defaultPrinter
+                  : undefined);
+              if (suggested) {
+                setConfig((prev) => ({ ...prev, deviceName: suggested, posAutoPrint: true }));
+              }
             }
           })
           .catch(() => setPrinters([]))

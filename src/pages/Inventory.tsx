@@ -591,8 +591,14 @@ export default function Inventory() {
       setSelectedProduct(null);
       setDialogOpen(false);
     };
-    const onAdjustExit = () => setStockExitDialogOpen(true);
-    const onEntry = () => setStockEntryDialogOpen(true);
+    const onAdjustExit = () => {
+      setSelectedProduct(null);
+      setStockExitDialogOpen(true);
+    };
+    const onEntry = () => {
+      setSelectedProduct(null);
+      setStockEntryDialogOpen(true);
+    };
     const onMinQty = () => {
       setStockListFilter('qtyGt0');
       toast.info(t.inventoryPageUi.qtyGt0);
@@ -978,15 +984,19 @@ export default function Inventory() {
       }
 
       await refreshInventoryAfterStockAdjust(targetWarehouseId);
+      if (result.errors.length > 0 && result.applied === 0) {
+        throw new Error(result.errors.slice(0, 3).join('; '));
+      }
+      if (result.applied === 0) {
+        throw new Error(t.stockEntryUi.saveFailed);
+      }
       if (result.errors.length > 0) {
         toast.error(result.errors.slice(0, 3).join('; '));
-      } else if (result.applied > 0) {
+      } else {
         const msg = t.stockEntryUi.productsAddedDesc.replace('{count}', String(result.applied));
         toast.success(
           result.journalEntryId ? `${msg} (${t.stockEntryUi.journalPosted})` : msg,
         );
-      } else {
-        toast.error(t.stockEntryUi.saveFailed);
       }
     },
     [warehouseId, productsById, updateProduct, refreshInventoryAfterStockAdjust, t],
@@ -1074,15 +1084,19 @@ export default function Inventory() {
       }
 
       await refreshInventoryAfterStockAdjust(targetWarehouseId);
+      if (result.errors.length > 0 && result.applied === 0) {
+        throw new Error(result.errors.slice(0, 3).join('; '));
+      }
+      if (result.applied === 0) {
+        throw new Error(t.stockExitUi.saveFailed);
+      }
       if (result.errors.length > 0) {
         toast.error(result.errors.slice(0, 3).join('; '));
-      } else if (result.applied > 0) {
+      } else {
         const msg = t.stockExitUi.productsRemovedDesc.replace('{count}', String(result.applied));
         toast.success(
           result.journalEntryId ? `${msg} (${t.stockExitUi.journalPosted})` : msg,
         );
-      } else {
-        toast.error(t.stockExitUi.saveFailed);
       }
     },
     [warehouseId, productsById, updateProduct, refreshInventoryAfterStockAdjust, t],
@@ -1680,34 +1694,42 @@ export default function Inventory() {
         onApplyAdjustments={handleApplyAdjustments}
       />
 
-      {/* Stock Entry Dialog (Ajustar Entrada) */}
-      <StockEntryDialog
-        key={`stock-entry-${language}`}
-        open={stockEntryDialogOpen}
-        onOpenChange={setStockEntryDialogOpen}
-        products={inventoryRows}
-        searchProducts={stockEntrySearchProducts}
-        currentBranch={currentBranch}
-        warehouseId={warehouseId}
-        canSwitchBranch={canSwitchBranch}
-        onAddProduct={() =>
-          openNewProductDialog(listBranchId || currentBranch?.id || undefined)
-        }
-        initialProduct={selectedProduct}
-        onApplyEntry={handleApplyStockEntry}
-      />
+      {/* Stock Entry Dialog (Ajustar Entrada) — unmount when closed so lines never persist */}
+      {stockEntryDialogOpen ? (
+        <StockEntryDialog
+          key={`stock-entry-${language}`}
+          open
+          onOpenChange={(next) => {
+            if (!next) setStockEntryDialogOpen(false);
+          }}
+          products={inventoryRows}
+          searchProducts={stockEntrySearchProducts}
+          currentBranch={currentBranch}
+          warehouseId={warehouseId}
+          canSwitchBranch={canSwitchBranch}
+          onAddProduct={() =>
+            openNewProductDialog(listBranchId || currentBranch?.id || undefined)
+          }
+          initialProduct={null}
+          onApplyEntry={handleApplyStockEntry}
+        />
+      ) : null}
 
-      <StockExitDialog
-        key={`stock-exit-${language}`}
-        open={stockExitDialogOpen}
-        onOpenChange={setStockExitDialogOpen}
-        products={inventoryRows}
-        searchProducts={stockExitSearchProducts}
-        currentBranch={currentBranch}
-        warehouseId={warehouseId}
-        initialProduct={selectedProduct}
-        onApplyExit={handleApplyStockExit}
-      />
+      {stockExitDialogOpen ? (
+        <StockExitDialog
+          key={`stock-exit-${language}`}
+          open
+          onOpenChange={(next) => {
+            if (!next) setStockExitDialogOpen(false);
+          }}
+          products={inventoryRows}
+          searchProducts={stockExitSearchProducts}
+          currentBranch={currentBranch}
+          warehouseId={warehouseId}
+          initialProduct={null}
+          onApplyExit={handleApplyStockExit}
+        />
+      ) : null}
 
       {/* Bulk tier pricing (Price 2/3/4 = Price 1 x % across all products) */}
       <BulkTierPricingDialog

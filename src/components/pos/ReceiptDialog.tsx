@@ -66,6 +66,8 @@ export function ReceiptDialog({
         openDrawer: autoOpenDrawer,
         copies: POS_RECEIPT_COPY_LABELS.length,
         copyLabels: [...POS_RECEIPT_COPY_LABELS],
+        direct: !!config.deviceName?.trim(),
+        allowDialogFallback: !config.deviceName?.trim(),
       });
       
       if (result.success) {

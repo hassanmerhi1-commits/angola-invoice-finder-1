@@ -139,10 +139,7 @@ export function useChartOfAccounts() {
       const branches = response.data || [];
       if (branches.length > 0) {
         ensureBranchCaixaAccounts(branches.map((b: any) => ({ id: b.id, name: b.name }))).then(() => {
-          const updated = loadLocalAccounts(t);
-          if (updated.length > accounts.length) {
-            setAccounts(sortAccountsByCode(updated));
-          }
+          void fetchAccounts();
         });
       }
     }).catch(() => {

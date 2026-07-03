@@ -5,6 +5,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 const db = require('../src/db');
 const { ensureSalesCreditPaymentMethod, ensureBranchPricingColumn } = require('../src/lib/ensurePhaseSchema');
+const { ensureAllBranchCaixaAccounts } = require('../src/lib/branchCaixaAccounts');
 const { buildSchemaChecks } = require('../src/lib/schemaChecks');
 
 async function main() {
@@ -12,6 +13,13 @@ async function main() {
   console.log('[ensure-server-schema] engine:', db.engine);
   await ensureSalesCreditPaymentMethod(db);
   await ensureBranchPricingColumn(db);
+  const caixaRepair = await ensureAllBranchCaixaAccounts(db);
+  console.log('[ensure-server-schema] branchCaixa:', JSON.stringify({
+    totalBranches: caixaRepair.totalBranches,
+    created: caixaRepair.created,
+    skipped: caixaRepair.skipped,
+    failed: caixaRepair.failed,
+  }));
   const checks = await buildSchemaChecks(db);
   console.log('[ensure-server-schema] schemaChecks:', JSON.stringify(checks));
   if (!checks.salesCreditPayment) {

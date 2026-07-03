@@ -56,8 +56,11 @@ import {
   ROWS_APPEND_BATCH,
   ROWS_NEAR_END_BUFFER,
   ensureRowsForIndex,
+  filterProductsForBranch,
   filterProductsForSearch,
+  findProductForBranchSku,
   newLineRowId,
+  remapLineProductIdsForBranch,
   sortProductSearchResults,
 } from './productLineSearch';
 
@@ -266,6 +269,17 @@ export function StockEntryDialog({
     [catalogProducts],
   );
 
+  const branchLocked = Boolean(warehouseId) && !canSwitchBranch;
+  const effectiveWarehouseId = canSwitchBranch
+    ? (form.entryBranchId || warehouseId)
+    : (warehouseId || form.entryBranchId);
+  const entryBranchId = effectiveWarehouseId || currentBranch?.id || '';
+
+  const branchScopedProducts = useMemo(
+    () => filterProductsForBranch(searchableProducts, entryBranchId),
+    [searchableProducts, entryBranchId],
+  );
+
   const productsById = useMemo(
     () => new Map(catalogProducts.map((p) => [p.id, p])),
     [catalogProducts],
@@ -319,24 +333,45 @@ export function StockEntryDialog({
     setPickerAnchorRect(el ? el.getBoundingClientRect() : null);
   }, []);
 
+  const handleDialogOpenChange = useCallback(
+    (next: boolean) => {
+      if (!next) resetForm();
+      onOpenChange(next);
+    },
+    [onOpenChange, resetForm],
+  );
+
   useEffect(() => {
     if (!open) {
       resetForm();
       return;
     }
+    const openBranchId = warehouseId || currentBranch?.id || '';
     const lines = createInitialLines();
     if (initialProduct) {
-      lines[0] = {
-        rowId: lines[0].rowId,
-        productId: initialProduct.id,
-        search: '',
-        quantity: 1,
-        cost: initialProduct.cost || 0,
-      };
+      const resolved = openBranchId
+        ? findProductForBranchSku(
+            catalogProducts.filter((p) => p.isActive !== false),
+            initialProduct.sku,
+            openBranchId,
+          )
+        : initialProduct;
+      const productForLine =
+        resolved
+        ?? ((initialProduct.branchId || '') === openBranchId ? initialProduct : null);
+      if (productForLine) {
+        lines[0] = {
+          rowId: lines[0].rowId,
+          productId: productForLine.id,
+          search: '',
+          quantity: 1,
+          cost: productForLine.cost || 0,
+        };
+      }
     }
     setForm({
       ...emptyForm(),
-      entryBranchId: warehouseId || currentBranch?.id || '',
+      entryBranchId: openBranchId,
       lines,
     });
     setPickerRowId(null);
@@ -381,12 +416,6 @@ export function StockEntryDialog({
     [branchNameById, form.entryBranchId, currentBranch?.id, t.stockEntryUi.thisBranch],
   );
 
-  const branchLocked = Boolean(warehouseId) && !canSwitchBranch;
-  const effectiveWarehouseId = canSwitchBranch
-    ? (form.entryBranchId || warehouseId)
-    : (warehouseId || form.entryBranchId);
-  const entryBranchId = effectiveWarehouseId || currentBranch?.id || '';
-
   const entryNumber = useMemo(() => {
     const date = format(new Date(), 'yyyyMMdd');
     const seq = Math.floor(Math.random() * 1000)
@@ -418,17 +447,31 @@ export function StockEntryDialog({
   }, []);
 
   const resolveProductForEntry = useCallback(
-    (product: Product): Product => {
+    (product: Product): Product | null => {
       const branchId = entryBranchId;
+      if (!branchId) return product;
+      if ((product.branchId || '') === branchId) return product;
       const skuNorm = (product.sku || '').trim().toLowerCase();
-      if (!branchId || !skuNorm) return product;
-      const forBranch = searchableProducts.find(
-        (p) =>
-          (p.sku || '').trim().toLowerCase() === skuNorm && (p.branchId || '') === branchId,
-      );
-      return forBranch ?? product;
+      if (!skuNorm) return null;
+      return findProductForBranchSku(searchableProducts, product.sku, branchId) ?? null;
     },
     [searchableProducts, entryBranchId],
+  );
+
+  const handleEntryBranchChange = useCallback(
+    (branchId: string) => {
+      setForm((prev) => ({
+        ...prev,
+        entryBranchId: branchId,
+        lines: remapLineProductIdsForBranch(
+          prev.lines,
+          productsById,
+          searchableProducts,
+          branchId,
+        ),
+      }));
+    },
+    [productsById, searchableProducts],
   );
 
   const getSuggestionsForRow = useCallback(
@@ -439,11 +482,11 @@ export function StockEntryDialog({
           .filter((l) => l.rowId !== rowId && l.productId)
           .map((l) => l.productId as string),
       );
-      return filterProductsForSearch(searchableProducts, search, usedElsewhere, entryBranchId)
+      return filterProductsForSearch(branchScopedProducts, search, usedElsewhere, entryBranchId)
         .sort((a, b) => sortProductSearchResults(a, b, search, entryBranchId))
         .slice(0, PRODUCT_LINE_SUGGESTION_LIMIT);
     },
-    [searchableProducts, form.lines, entryBranchId],
+    [branchScopedProducts, form.lines, entryBranchId],
   );
 
   const activePickerLine = useMemo(
@@ -488,7 +531,7 @@ export function StockEntryDialog({
       if (!line.productId) continue;
       const product = productsById.get(line.productId);
       if (!product) continue;
-      const branchId = product.branchId || form.entryBranchId || currentBranch?.id || '';
+      const branchId = entryBranchId;
       items.push({
         productId: product.id,
         sku: product.sku,
@@ -502,11 +545,22 @@ export function StockEntryDialog({
       });
     }
     return items;
-  }, [form.lines, form.entryBranchId, productsById, currentBranch?.id, resolveBranchName]);
+  }, [form.lines, entryBranchId, productsById, resolveBranchName]);
 
   const selectProductOnRow = useCallback(
     (rowId: string, product: Product) => {
       const resolved = resolveProductForEntry(product);
+      if (!resolved) {
+        toast({
+          title: t.stockEntryUi.productNotInBranchTitle,
+          description: t.stockEntryUi.productNotInBranchDesc.replace(
+            '{branch}',
+            resolveBranchName(entryBranchId),
+          ),
+          variant: 'destructive',
+        });
+        return;
+      }
       setForm((prev) => {
         const mapped = prev.lines.map((l) =>
           l.rowId === rowId
@@ -530,7 +584,7 @@ export function StockEntryDialog({
       setPickerAnchorRect(null);
       focusQtyLine(rowId);
     },
-    [focusQtyLine, resolveProductForEntry],
+    [focusQtyLine, resolveProductForEntry, toast, t, resolveBranchName, entryBranchId],
   );
 
   const updateLineSearch = (rowId: string, search: string) => {
@@ -715,6 +769,12 @@ export function StockEntryDialog({
       });
       resetForm();
       onOpenChange(false);
+    } catch (error) {
+      toast({
+        title: t.stockEntryUi.saveFailed,
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      });
     } finally {
       setSubmitting(false);
     }
@@ -723,7 +783,7 @@ export function StockEntryDialog({
   const branchLabel = selectedBranch?.name || t.stockEntryUi.thisBranch;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
         ref={dialogContentRef}
         className={cn(
@@ -785,7 +845,7 @@ export function StockEntryDialog({
                 variant="ghost"
                 size="icon"
                 className="h-9 w-9"
-                onClick={() => onOpenChange(false)}
+                onClick={() => handleDialogOpenChange(false)}
                 aria-label={t.common.cancel}
               >
                 <X className="h-4 w-4" />
@@ -855,7 +915,7 @@ export function StockEntryDialog({
               ) : (
                 <Select
                   value={form.entryBranchId}
-                  onValueChange={(v) => setForm((p) => ({ ...p, entryBranchId: v }))}
+                  onValueChange={handleEntryBranchChange}
                 >
                   <SelectTrigger className="bg-background h-9">
                     <SelectValue placeholder={t.stockEntryUi.selectBranchPlaceholder} />
@@ -1052,7 +1112,7 @@ export function StockEntryDialog({
                         )}
                       </TableCell>
                       <TableCell className="text-xs truncate align-middle">
-                        {product ? resolveBranchName(product.branchId) : '—'}
+                        {product ? resolveBranchName(entryBranchId) : '—'}
                       </TableCell>
                       <TableCell className="text-center text-xs align-middle">
                         {product?.unit ?? '—'}
@@ -1142,7 +1202,7 @@ export function StockEntryDialog({
             </div>
           </div>
           <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+            <Button variant="outline" onClick={() => handleDialogOpenChange(false)} disabled={submitting}>
               {t.common.cancel}
             </Button>
             <Button

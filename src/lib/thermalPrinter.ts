@@ -745,6 +745,31 @@ export async function openCashDrawer(): Promise<boolean> {
   }
 }
 
+/** Exclude virtual/PDF printers — not suitable for POS thermal receipts. */
+export function isLikelyThermalPrinterName(name: string): boolean {
+  const n = String(name || '').trim().toLowerCase();
+  if (!n) return false;
+  if (/pdf|xps|fax|onenote|anydesk|microsoft print|send to|document writer|snagit|cutepdf|bullzip|adobe/i.test(n)) {
+    return false;
+  }
+  return /thermal|pos|receipt|ticket|epson|star|bixolon|citizen|xprinter|gprinter|mp-|tm-|rp\d|esc\/pos|80mm|58mm|rongta|zjiang|hprt|sunmi/i.test(n);
+}
+
+/** Pick the best Windows printer for silent POS thermal printing. */
+export function pickLikelyThermalPrinter(
+  printers: Array<{ name: string }>,
+): string | undefined {
+  const names = printers.map((p) => String(p.name || '').trim()).filter(Boolean);
+  const thermal = names.find((name) => isLikelyThermalPrinterName(name));
+  if (thermal) return thermal;
+  const nonVirtual = names.find((name) => !/pdf|xps|fax|microsoft print/i.test(name.toLowerCase()));
+  return nonVirtual;
+}
+
+export function isPosPrinterConfigured(): boolean {
+  return !!getPrinterConfig().deviceName?.trim();
+}
+
 // Get saved printer configuration
 export function getPrinterConfig(): PrinterConfig {
   try {

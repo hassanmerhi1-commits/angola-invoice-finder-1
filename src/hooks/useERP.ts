@@ -837,7 +837,8 @@ export function useSales(branchId?: string) {
       }
       return [sale, ...prev];
     });
-    await refreshSales();
+    // POS refreshes sales in the background; awaiting here blocks checkout + auto-print.
+    void refreshSales();
     return sale;
   }, [refreshSales]);
 

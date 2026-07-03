@@ -51,8 +51,11 @@ import {
   ROWS_NEAR_END_BUFFER,
   dedupeProductsBySku,
   ensureRowsForIndex,
+  filterProductsForBranch,
   filterProductsForSearch,
+  findProductForBranchSku,
   newLineRowId,
+  remapLineProductIdsForBranch,
   sortProductSearchResults,
 } from './productLineSearch';
 
@@ -193,23 +196,43 @@ export function StockExitDialog({
     [catalogProducts],
   );
 
+  const exitBranchId = form.exitBranchId || warehouseId || currentBranch?.id || '';
+
+  const branchScopedProducts = useMemo(
+    () => filterProductsForBranch(searchableProducts, exitBranchId),
+    [searchableProducts, exitBranchId],
+  );
+
   const resolveProductForExit = useCallback(
-    (product: Product): Product => {
-      if ((product.stock ?? 0) > 0) return product;
+    (product: Product): Product | null => {
+      const branchId = exitBranchId;
+      if (!branchId) return (product.stock ?? 0) > 0 ? product : null;
 
-      const branchId = form.exitBranchId || warehouseId || currentBranch?.id || '';
-      const skuNorm = (product.sku || '').trim().toLowerCase();
-      if (!branchId || !skuNorm) return product;
+      if ((product.branchId || '') === branchId && (product.stock ?? 0) > 0) {
+        return product;
+      }
 
-      const forBranch = searchableProducts.find(
-        (p) =>
-          (p.sku || '').trim().toLowerCase() === skuNorm
-          && (p.branchId || '') === branchId
-          && (p.stock ?? 0) > 0,
-      );
-      return forBranch ?? product;
+      const forBranch = findProductForBranchSku(searchableProducts, product.sku, branchId);
+      if (forBranch && (forBranch.stock ?? 0) > 0) return forBranch;
+      return null;
     },
-    [searchableProducts, form.exitBranchId, warehouseId, currentBranch?.id],
+    [searchableProducts, exitBranchId],
+  );
+
+  const handleExitBranchChange = useCallback(
+    (branchId: string) => {
+      setForm((prev) => ({
+        ...prev,
+        exitBranchId: branchId,
+        lines: remapLineProductIdsForBranch(
+          prev.lines,
+          productsById,
+          searchableProducts,
+          branchId,
+        ),
+      }));
+    },
+    [productsById, searchableProducts],
   );
 
   const resetForm = useCallback(() => {
@@ -250,6 +273,14 @@ export function StockExitDialog({
     const el = productInputRefs.current[rowId];
     setPickerAnchorRect(el ? el.getBoundingClientRect() : null);
   }, []);
+
+  const handleDialogOpenChange = useCallback(
+    (next: boolean) => {
+      if (!next) resetForm();
+      onOpenChange(next);
+    },
+    [onOpenChange, resetForm],
+  );
 
   useEffect(() => {
     if (!open) {
@@ -355,11 +386,11 @@ export function StockExitDialog({
           .map((l) => l.productId as string),
       );
       const exitBranchId = form.exitBranchId || warehouseId || currentBranch?.id || '';
-      return filterProductsForSearch(searchableProducts, search, usedElsewhere, exitBranchId)
+      return filterProductsForSearch(branchScopedProducts, search, usedElsewhere, exitBranchId)
         .sort((a, b) => sortProductSearchResults(a, b, search, exitBranchId))
         .slice(0, SUGGESTION_LIMIT);
     },
-    [searchableProducts, form.lines, form.exitBranchId, warehouseId, currentBranch?.id],
+    [branchScopedProducts, form.lines, form.exitBranchId, warehouseId, currentBranch?.id],
   );
 
   const activePickerLine = useMemo(
@@ -405,7 +436,7 @@ export function StockExitDialog({
       const product = productsById.get(line.productId);
       if (!product) continue;
       const stock = product.stock ?? 0;
-      const branchId = product.branchId || form.exitBranchId || currentBranch?.id || '';
+      const branchId = exitBranchId;
       items.push({
         productId: product.id,
         sku: product.sku,
@@ -419,11 +450,29 @@ export function StockExitDialog({
       });
     }
     return items;
-  }, [form.lines, form.exitBranchId, productsById, currentBranch?.id, resolveBranchName]);
+  }, [form.lines, exitBranchId, productsById, resolveBranchName]);
 
   const selectProductOnRow = useCallback(
     (rowId: string, product: Product) => {
       const resolved = resolveProductForExit(product);
+      if (!resolved) {
+        const stockAtBranch = findProductForBranchSku(searchableProducts, product.sku, exitBranchId);
+        if (!stockAtBranch || (stockAtBranch.stock ?? 0) <= 0) {
+          toast({
+            title: stockAtBranch
+              ? t.stockExitUi.noStockTitle
+              : t.stockExitUi.productNotInBranchTitle,
+            description: stockAtBranch
+              ? t.stockExitUi.noStockDesc.replace('{sku}', product.sku || '')
+              : t.stockExitUi.productNotInBranchDesc.replace(
+                  '{branch}',
+                  resolveBranchName(exitBranchId),
+                ),
+            variant: 'destructive',
+          });
+        }
+        return;
+      }
       const stock = resolved.stock ?? 0;
       if (stock <= 0) {
         toast({
@@ -455,7 +504,7 @@ export function StockExitDialog({
       setPickerAnchorRect(null);
       focusQtyLine(rowId);
     },
-    [focusQtyLine, resolveProductForExit, toast, t.stockExitUi],
+    [focusQtyLine, resolveProductForExit, toast, t.stockExitUi, searchableProducts, exitBranchId, resolveBranchName],
   );
 
   const updateLineSearch = (rowId: string, search: string) => {
@@ -613,6 +662,12 @@ export function StockExitDialog({
       });
       resetForm();
       onOpenChange(false);
+    } catch (error) {
+      toast({
+        title: t.stockExitUi.saveFailed,
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      });
     } finally {
       setSubmitting(false);
     }
@@ -621,7 +676,7 @@ export function StockExitDialog({
   const branchLabel = selectedBranch?.name || t.stockExitUi.thisBranch;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
         ref={dialogContentRef}
         className={cn(
@@ -686,7 +741,7 @@ export function StockExitDialog({
                 variant="ghost"
                 size="icon"
                 className="h-9 w-9"
-                onClick={() => onOpenChange(false)}
+                onClick={() => handleDialogOpenChange(false)}
                 aria-label={t.common.cancel}
               >
                 <X className="h-4 w-4" />
@@ -753,7 +808,7 @@ export function StockExitDialog({
               <Label className="text-sm font-medium">{t.stockExitUi.branch}</Label>
               <Select
                 value={form.exitBranchId}
-                onValueChange={(v) => setForm((p) => ({ ...p, exitBranchId: v }))}
+                onValueChange={handleExitBranchChange}
               >
                 <SelectTrigger className="bg-background h-9">
                   <SelectValue />
@@ -873,7 +928,7 @@ export function StockExitDialog({
                         )}
                       </TableCell>
                       <TableCell className="text-xs truncate align-middle">
-                        {product ? resolveBranchName(product.branchId) : '—'}
+                        {product ? resolveBranchName(exitBranchId) : '—'}
                       </TableCell>
                       <TableCell className="text-center text-xs align-middle">
                         {product?.unit ?? '—'}
@@ -952,7 +1007,7 @@ export function StockExitDialog({
             </div>
           </div>
           <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+            <Button variant="outline" onClick={() => handleDialogOpenChange(false)} disabled={submitting}>
               {t.common.cancel}
             </Button>
             <Button

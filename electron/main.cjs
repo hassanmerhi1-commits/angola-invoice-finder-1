@@ -3839,7 +3839,18 @@ ipcMain.handle('print:html', async (_, html, options = {}) => {
         document.close();
       })()`
     );
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    await printWin.webContents.executeJavaScript(
+      `new Promise((resolve) => {
+        const done = () => resolve(true);
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(done).catch(done);
+        } else {
+          done();
+        }
+        setTimeout(done, 400);
+      })`,
+      true,
+    );
 
     const isSilent = !!options.silent;
     const deviceName = options.deviceName ? String(options.deviceName).trim() : '';

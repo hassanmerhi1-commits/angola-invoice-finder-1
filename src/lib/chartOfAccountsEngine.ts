@@ -176,10 +176,23 @@ export async function ensureBranchCaixaAccounts(branches: { id: string; name: st
 
     if (existing) continue;
 
-    // Find next sequence among Caixa sub-accounts (451, 452, 453 are reserved by the PGC)
-    const children = accounts.filter(a => a.code.startsWith('45') && a.code.length === 3 && a.level === 2 && !a.is_header);
-    const nextSeq = Math.max(3, children.length) + 1;
-    const code = `45${nextSeq.toString()}`;
+    // Find next free 45x code (451–453 reserved by PGC).
+    const children = accounts.filter(
+      (a) => /^45\d+$/.test(a.code) && a.code.length === 3 && a.level === 2 && !a.is_header,
+    );
+    const used = new Set(children.map((a) => a.code));
+    let code = '';
+    for (let suffix = 4; suffix <= 99; suffix += 1) {
+      const candidate = `45${suffix}`;
+      if (!used.has(candidate)) {
+        code = candidate;
+        break;
+      }
+    }
+    if (!code) {
+      console.warn('[CoA Engine] No free 45x caixa code for branch', branch.name);
+      continue;
+    }
 
     const newAccount: Account = {
       id: `local-coa-caixa-${branch.id}`,
@@ -203,7 +216,11 @@ export async function ensureBranchCaixaAccounts(branches: { id: string; name: st
     } as Account;
 
     if (usingApi) {
-      await tryApiCreateAccount(newAccount);
+      const ok = await tryApiCreateAccount(newAccount);
+      if (ok) {
+        const reloaded = await tryLoadAccountsFromApi();
+        if (reloaded) accounts = reloaded;
+      }
     }
 
     // Update parent children count

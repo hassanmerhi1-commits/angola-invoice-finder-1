@@ -7,9 +7,6 @@ import { getCompanySettings, saveCompanySettings } from '@/lib/companySettings';
 import { api } from '@/lib/api/client';
 import {
   printPosThermalReceipts,
-  printReceipt,
-  getPrinterConfig,
-  POS_RECEIPT_COPY_LABELS,
 } from '@/lib/thermalPrinter';
 import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { usePosProducts } from '@/hooks/usePosProducts';
@@ -448,37 +445,30 @@ export default function POS() {
         ).catch((caixaErr) => console.warn('[POS] Failed to post sale to caixa:', caixaErr));
       }
 
-      try {
-        const printResult = await printPosThermalReceipts(sale, currentBranch, {
-          openDrawer: paymentMethod === 'cash',
-        });
-        if (printResult.success) {
-          void recordSalePrint(sale, { format: 'thermal', source: 'pos' });
-          toast.success(t.receiptUi.autoPrintSuccess);
-        } else if (printResult.needsPrinterSetup) {
-          // No silent printer configured — still print automatically by opening
-          // the thermal receipt in the browser/OS print dialog (no A4, no manual click).
-          const fallback = await printReceipt(sale, currentBranch, getPrinterConfig(), {
+      // Print in the background so the receipt screen is not blocked by LAN + spooler.
+      void (async () => {
+        try {
+          const printResult = await printPosThermalReceipts(sale, currentBranch, {
             openDrawer: paymentMethod === 'cash',
-            copies: POS_RECEIPT_COPY_LABELS.length,
-            copyLabels: [...POS_RECEIPT_COPY_LABELS],
-            allowDialogFallback: true,
           });
-          if (fallback.success) {
+          if (printResult.success) {
             void recordSalePrint(sale, { format: 'thermal', source: 'pos' });
             toast.success(t.receiptUi.autoPrintSuccess);
-          } else {
+            return;
+          }
+          if (printResult.needsPrinterSetup) {
+            setPrinterSettingsOpen(true);
             toast.error(t.receiptUi.printerSetupRequired, {
               description: t.receiptUi.printerSetupRequiredDesc,
             });
+            return;
           }
-        } else {
+          toast.error(t.receiptUi.autoPrintError);
+        } catch (printError) {
+          console.warn('[POS] Auto thermal print failed:', printError);
           toast.error(t.receiptUi.autoPrintError);
         }
-      } catch (printError) {
-        console.warn('[POS] Auto thermal print failed:', printError);
-        toast.error(t.receiptUi.autoPrintError);
-      }
+      })();
 
       if (paymentMethod === 'cash') {
         toast.info(t.posUi.saleCompleted, {

@@ -128,6 +128,46 @@ export const filterProductsForSearch = (
 
 export const newLineRowId = () => `row_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
+/** Limit search/picker to the branch selected in the dialog header. */
+export function filterProductsForBranch(products: Product[], branchId: string): Product[] {
+  if (!branchId) return products;
+  return products.filter((p) => !p.branchId || p.branchId === branchId);
+}
+
+/** Resolve the product row for a branch + SKU (same code, different branch ids). */
+export function findProductForBranchSku(
+  products: Product[],
+  sku: string,
+  branchId: string,
+): Product | undefined {
+  const skuNorm = normalizeSearchText(sku);
+  if (!skuNorm || !branchId) return undefined;
+  return products.find(
+    (p) => normalizeSearchText(p.sku) === skuNorm && (p.branchId || '') === branchId,
+  );
+}
+
+export function remapLineProductIdsForBranch(
+  lines: { rowId: string; productId: string | null; search: string }[],
+  productsById: Map<string, Product>,
+  allProducts: Product[],
+  branchId: string,
+) {
+  if (!branchId) return lines;
+  return lines.map((line) => {
+    if (!line.productId) return line;
+    const product = productsById.get(line.productId);
+    if (!product) return { ...line, productId: null };
+    if (product.branchId === branchId) return line;
+    const match = findProductForBranchSku(allProducts, product.sku, branchId);
+    return {
+      ...line,
+      productId: match?.id ?? null,
+      search: match ? '' : line.search || product.sku,
+    };
+  });
+}
+
 export const ensureRowsForIndex = <T>(lines: T[], targetRowIndex: number, createRow: () => T): T[] => {
   const minLength = targetRowIndex + ROWS_NEAR_END_BUFFER + 1;
   if (lines.length >= minLength) return lines;
