@@ -716,6 +716,7 @@ export function useSales(branchId?: string) {
     customerName?: string,
     discountPct = 0,
     clientId?: string,
+    clientRequestId?: string,
   ): Promise<Sale> => {
     // Whole-sale commercial discount applied to the ex-VAT base of every line, so VAT
     // is charged on the discounted base (AGT-correct). Header `discount` holds the Kz value.
@@ -774,6 +775,7 @@ export function useSales(branchId?: string) {
       customerNif: normalizedCustomerNif,
       customerName,
       clientId,
+      clientRequestId,
     });
 
     if (!apiResult.data) {

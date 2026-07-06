@@ -111,6 +111,8 @@ export type PrintHtmlOptions = {
   deviceName?: string;
   /** Thermal receipt width in mm (58 or 80). */
   pageWidthMm?: 58 | 80;
+  /** Thermal receipt content height in mm — sizes the page so long receipts stay on one continuous slip. */
+  pageHeightMm?: number;
   /** Electron only: if false, never open the Windows print dialog on silent failure (POS auto-print). */
   allowDialogFallback?: boolean;
 };
@@ -130,6 +132,7 @@ export async function printHtml(html: string, options: PrintHtmlOptions = {}): P
       silent: wantSilent,
       deviceName: deviceName || undefined,
       pageWidthMm: options.pageWidthMm,
+      pageHeightMm: options.pageHeightMm,
       allowDialogFallback: wantSilent ? allowDialogFallback : true,
     };
 
@@ -141,6 +144,7 @@ export async function printHtml(html: string, options: PrintHtmlOptions = {}): P
       result = await electronPrint(html, {
         silent: false,
         pageWidthMm: options.pageWidthMm,
+        pageHeightMm: options.pageHeightMm,
         allowDialogFallback: true,
       });
       if (result.success) return;

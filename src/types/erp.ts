@@ -316,6 +316,7 @@ export interface CreditNote {
   branchName: string;
   originalInvoiceId: string;
   originalInvoiceNumber: string;
+  originalPaymentMethod?: string; // Payment method of the original sale (for cash-drawer filtering)
   reason: 'return' | 'discount' | 'error' | 'other';
   reasonDescription: string;
   items: CreditNoteItem[];

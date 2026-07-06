@@ -503,13 +503,19 @@ async function buildReceiptBrowserHtml(
     console.warn('[thermal] QR code skipped for print:', error);
   }
   const company = getCompanySettings();
-  const width = paperWidth === 80 ? '80mm' : '58mm';
-  // Narrower 58mm paper needs smaller type and tighter margins to avoid clipping.
+  const paperMm = paperWidth === 80 ? 80 : 58;
+  // Thermal heads only print the inner area of the roll — the outer ~4mm (80mm) /
+  // ~5mm (58mm) per side is a mechanical dead zone. Printing at the full paper width
+  // pushes edge content (left labels / right values) into that dead zone, so it gets
+  // clipped. Constrain content to the printable width and centre it on the page.
+  const printableMm = paperWidth === 80 ? 66 : 44;
+  const width = `${paperMm}mm`;
+  const contentWidth = `${printableMm}mm`;
+  // Narrower 58mm paper needs smaller type to avoid clipping.
   const baseFont = paperWidth === 80 ? 12 : 10;
   const largeFont = paperWidth === 80 ? 14 : 11;
   const totalFont = paperWidth === 80 ? 15 : 12;
   const smallFont = paperWidth === 80 ? 10 : 9;
-  const pad = paperWidth === 80 ? 3 : 2;
   const bodies = copyLabels.map((label) =>
     buildReceiptCopyBody(sale, branch, paperWidth, company, qrCodeDataURL, label),
   );
@@ -523,6 +529,16 @@ async function buildReceiptBrowserHtml(
     @page {
       size: ${width} auto;
       margin: 0;
+    }
+    .receipt-copy {
+      /* Thermal heads print from the LEFT edge of the paper, so keep the receipt
+         left-aligned and cap the width to the printable band. Centring pushes the
+         right side into the non-printable dead zone and clips it. A small left pad
+         (inside the width via border-box) keeps the first characters off the edge. */
+      width: ${contentWidth};
+      max-width: ${contentWidth};
+      margin: 0;
+      padding-left: 2mm;
     }
     * {
       margin: 0;
@@ -544,7 +560,7 @@ async function buildReceiptBrowserHtml(
       line-height: 1.25;
       width: ${width};
       max-width: ${width};
-      padding: ${pad}mm;
+      padding: 0;
       color: #000;
       word-wrap: break-word;
       overflow-wrap: anywhere;
@@ -604,10 +620,83 @@ async function buildReceiptBrowserHtml(
     }
   </style>
 </head>
-<body>
+<body data-items="${sale.items.length}" data-copies="${copyLabels.length}">
   ${bodies.join('\n')}
 </body>
 </html>`;
+}
+
+/**
+ * Measure the rendered height (mm) of the tallest receipt copy by laying the HTML
+ * out in a hidden iframe inside the current document. The renderer always performs
+ * layout (unlike the hidden print window), so this gives a reliable content height
+ * we can hand to the print layer — that's what keeps a long receipt on ONE
+ * continuous page instead of paginating at A4.
+ */
+async function measureReceiptHeightMm(
+  html: string,
+  paperWidth: 58 | 80,
+): Promise<number | null> {
+  if (typeof document === 'undefined') return null;
+  const paperMm = paperWidth === 80 ? 80 : 58;
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.cssText = [
+    'position:fixed',
+    'left:-10000px',
+    'top:0',
+    `width:${paperMm}mm`,
+    'height:10px',
+    'border:0',
+    'visibility:hidden',
+    'pointer-events:none',
+  ].join(';');
+  document.body.appendChild(iframe);
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc) return null;
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    // Wait for fonts + images so the measured height matches the printed layout.
+    const win = iframe.contentWindow;
+    const fontsReady = (doc as Document).fonts?.ready ?? Promise.resolve();
+    const imgs = Array.from(doc.images || []);
+    const imgsReady = Promise.all(
+      imgs
+        .filter((img) => !img.complete)
+        .map(
+          (img) =>
+            new Promise<void>((res) => {
+              img.addEventListener('load', () => res(), { once: true });
+              img.addEventListener('error', () => res(), { once: true });
+            }),
+        ),
+    );
+    await Promise.race([
+      Promise.all([fontsReady, imgsReady]),
+      new Promise((res) => setTimeout(res, 1500)),
+    ]);
+    await new Promise((res) =>
+      (win || window).requestAnimationFrame(() => (win || window).requestAnimationFrame(() => res(null))),
+    );
+
+    const copies = Array.from(doc.querySelectorAll('.receipt-copy')) as HTMLElement[];
+    let maxPx = 0;
+    for (const el of copies) {
+      const h = el.getBoundingClientRect().height;
+      if (h > maxPx) maxPx = h;
+    }
+    if (maxPx < 1) {
+      maxPx = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
+    }
+    if (maxPx < 1) return null;
+    // CSS px -> mm at 96dpi, plus a bottom buffer so the last line / cut clears.
+    return (maxPx * 25.4) / 96 + 12;
+  } finally {
+    iframe.remove();
+  }
 }
 
 export async function printViaBrowser(
@@ -624,12 +713,20 @@ export async function printViaBrowser(
   const config = getPrinterConfig();
   const deviceName = options.deviceName ?? config.deviceName;
   const useSilent = !!(options.direct && deviceName?.trim());
+  let pageHeightMm: number | undefined;
+  try {
+    const measured = await measureReceiptHeightMm(html, paperWidth);
+    if (measured && Number.isFinite(measured)) pageHeightMm = measured;
+  } catch {
+    pageHeightMm = undefined;
+  }
   const { printHtml } = await import('./printHtml');
   await printHtml(html, {
     direct: options.direct,
     silent: useSilent,
     deviceName,
     pageWidthMm: paperWidth,
+    pageHeightMm,
     allowDialogFallback: options.allowDialogFallback ?? !useSilent,
   });
 }

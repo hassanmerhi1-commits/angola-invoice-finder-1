@@ -90,7 +90,11 @@ export function filterShiftCashRefunds(
     if (issuedDay !== day) return false;
     if (!creditNoteInShift(note, session)) return false;
     const original = saleById.get(note.originalInvoiceId);
-    return String(original?.paymentMethod || '').toLowerCase() === 'cash';
+    const method = String(original?.paymentMethod || note.originalPaymentMethod || '').toLowerCase();
+    // When the original sale isn't in the loaded list and no method is stored, include the
+    // note so it stays visible; the server reconciliation is authoritative for the amount.
+    if (!method) return true;
+    return method === 'cash';
   });
 }
 

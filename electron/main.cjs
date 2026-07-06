@@ -3757,6 +3757,12 @@ ipcMain.handle('window:closeCurrent', (event) => {
 function electronPrintWebContents(webContents, options = {}) {
   const pageWidthMm = Number(options.pageWidthMm) || 80;
   const deviceName = options.deviceName ? String(options.deviceName).trim() : '';
+  // Size the page to the receipt content (thermal roll is continuous). Falling back
+  // to A4 height paginates long receipts and detaches the QR/footer onto a 2nd page.
+  const rawHeight = Number(options.pageHeightMicrons);
+  const pageHeightMicrons = Number.isFinite(rawHeight) && rawHeight > 0
+    ? Math.min(Math.max(Math.round(rawHeight), 40000), 3000000)
+    : 297000;
   const attempts = [
     {
       silent: !!options.silent,
@@ -3765,7 +3771,7 @@ function electronPrintWebContents(webContents, options = {}) {
       margins: { marginType: 'none' },
       pageSize: {
         width: Math.round(pageWidthMm * 1000),
-        height: 297000,
+        height: pageHeightMicrons,
       },
     },
   ];
@@ -3858,10 +3864,76 @@ ipcMain.handle('print:html', async (_, html, options = {}) => {
       printWin.showInactive();
     }
 
+    // Measure the tallest receipt copy so the page can be sized to the content
+    // (thermal roll is continuous — the whole receipt must be ONE page). Copies are
+    // separated by a forced page break, so each page only needs to fit one copy.
+    // We wait for images + two animation frames so layout is settled in the hidden
+    // window, and fall back to a content-proportional estimate (never A4) if the DOM
+    // reports zero height. Only thermal receipts pass pageWidthMm — A4 documents keep
+    // their normal (paginated) behaviour.
+    let pageHeightMicrons = 0;
+    // Preferred: height measured in the renderer (reliable layout) and passed in.
+    if (options.pageWidthMm && Number(options.pageHeightMm) > 0) {
+      pageHeightMicrons = Math.round(Number(options.pageHeightMm) * 1000);
+    }
+    if (options.pageWidthMm && !pageHeightMicrons) try {
+      const measuredPx = await printWin.webContents.executeJavaScript(
+        `new Promise((resolve) => {
+          const compute = () => {
+            const copies = Array.from(document.querySelectorAll('.receipt-copy'));
+            let copyMax = 0;
+            for (const el of copies) {
+              const h = el.getBoundingClientRect().height;
+              if (h > copyMax) copyMax = h;
+            }
+            let h = copies.length
+              ? copyMax
+              : Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+            if (!h || h < 1) {
+              // Layout unavailable — estimate from item count so we never cut at A4.
+              const items = Number(document.body.getAttribute('data-items')) || 0;
+              h = 520 + items * 34; // ~137mm base (header/totals/QR/footer) + ~9mm/item
+            }
+            resolve(Math.ceil(h));
+          };
+          const imgs = Array.from(document.images || []);
+          const pending = imgs.filter((i) => !i.complete);
+          const settle = () => requestAnimationFrame(() => requestAnimationFrame(compute));
+          if (pending.length === 0) { settle(); return; }
+          let left = pending.length;
+          const done = () => { if (--left <= 0) settle(); };
+          pending.forEach((i) => {
+            i.addEventListener('load', done, { once: true });
+            i.addEventListener('error', done, { once: true });
+          });
+          setTimeout(settle, 1500);
+        })`,
+        true,
+      );
+      if (measuredPx && Number.isFinite(measuredPx) && measuredPx > 0) {
+        // CSS px -> mm at 96dpi, plus a bottom buffer so the last line / cut clears.
+        const mm = (Number(measuredPx) * 25.4) / 96 + 12;
+        pageHeightMicrons = Math.round(mm * 1000);
+      }
+    } catch {
+      pageHeightMicrons = 0;
+    }
+
+    // Last-resort estimate straight from the HTML (never let a receipt fall back to
+    // A4). Uses the item count embedded in the body when DOM measurement failed.
+    if (options.pageWidthMm && !pageHeightMicrons) {
+      const m = /data-items="(\d+)"/.exec(String(html));
+      const items = m ? Number(m[1]) : 0;
+      const px = 520 + items * 34;
+      const mm = (px * 25.4) / 96 + 12;
+      pageHeightMicrons = Math.round(mm * 1000);
+    }
+
     let result = await electronPrintWebContents(printWin.webContents, {
       silent: isSilent,
       deviceName: deviceName || undefined,
       pageWidthMm: options.pageWidthMm,
+      pageHeightMicrons,
     });
 
     const allowDialogFallback = options.allowDialogFallback !== false;
@@ -3870,6 +3942,7 @@ ipcMain.handle('print:html', async (_, html, options = {}) => {
       result = await electronPrintWebContents(printWin.webContents, {
         silent: false,
         pageWidthMm: options.pageWidthMm,
+        pageHeightMicrons,
       });
     }
 

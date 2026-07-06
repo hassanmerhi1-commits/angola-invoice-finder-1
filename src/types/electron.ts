@@ -179,6 +179,7 @@ export interface ElectronAPI {
         silent?: boolean;
         deviceName?: string;
         pageWidthMm?: number;
+        pageHeightMm?: number;
         allowDialogFallback?: boolean;
       },
     ) => Promise<{ success: boolean; error?: string }>;

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { newClientRequestId } from '@/lib/sync/offlineSales';
 import { CartItem, Sale } from '@/types/erp';
 import {
   Dialog,
@@ -36,6 +37,7 @@ interface CheckoutDialogProps {
     customerName?: string,
     discountPct?: number,
     clientId?: string,
+    clientRequestId?: string,
   ) => void | Promise<void>;
 }
 
@@ -63,6 +65,8 @@ export function CheckoutDialog({
   const [supervisorPassword, setSupervisorPassword] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const saleInFlightRef = useRef(false);
+  const checkoutRequestIdRef = useRef<string | null>(null);
 
   const rawPct = parseFloat(discountInput || '0');
   const discountPct = Number.isFinite(rawPct) ? Math.min(Math.max(rawPct, 0), 100) : 0;
@@ -75,6 +79,8 @@ export function CheckoutDialog({
 
   useEffect(() => {
     if (open) {
+      checkoutRequestIdRef.current = newClientRequestId();
+      saleInFlightRef.current = false;
       setPaymentMethod('cash');
       setAmountPaid(total.toString());
       setCustomerNif(defaultCustomerNif || '');
@@ -164,7 +170,8 @@ export function CheckoutDialog({
   });
 
   const handleComplete = async () => {
-    if (submitting) return;
+    if (saleInFlightRef.current || submitting) return;
+    saleInFlightRef.current = true;
     setSubmitting(true);
     try {
       await onCompleteSale(
@@ -174,10 +181,17 @@ export function CheckoutDialog({
         customerName || undefined,
         appliedPct,
         paymentMethod === 'credit' ? registeredClientId : undefined,
+        checkoutRequestIdRef.current || undefined,
       );
     } finally {
+      saleInFlightRef.current = false;
       setSubmitting(false);
     }
+  };
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && (submitting || saleInFlightRef.current)) return;
+    onOpenChange(nextOpen);
   };
 
   const quickAmounts = [
@@ -188,7 +202,7 @@ export function CheckoutDialog({
   ].filter((v, i, a) => a.indexOf(v) === i && v >= effectiveTotal).slice(0, 4);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="flex max-h-[min(92dvh,900px)] max-w-md flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="shrink-0 border-b px-6 py-4">
           <DialogTitle>{t.checkoutUi.title}</DialogTitle>
@@ -412,6 +426,7 @@ export function CheckoutDialog({
             size="lg"
             onClick={() => void handleComplete()}
             disabled={!isValid || submitting}
+            aria-busy={submitting}
           >
             {submitting ? (
               <Loader2 className="mr-2 h-5 w-5 animate-spin" />

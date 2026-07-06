@@ -18,6 +18,19 @@ function generateApiKey() {
   return crypto.randomBytes(24).toString('hex');
 }
 
+/**
+ * Repair a possibly-malformed base URL: `http//host` / `http:/host` → `http://host`,
+ * bare `host[:port]` → `http://host[:port]`. Returns null for empty input.
+ */
+function normalizeMainApiUrl(raw) {
+  const s = String(raw || '').trim().replace(/\/+$/, '');
+  if (!s) return null;
+  const scheme = s.match(/^(https?)\b[:/]*(.*)$/i);
+  if (scheme) return `${scheme[1].toLowerCase()}://${scheme[2]}`;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return `http://${s}`;
+  return s;
+}
+
 async function tableExists(name) {
   try {
     if (db.engine === 'postgres') {
@@ -65,7 +78,7 @@ async function getInstallationConfig(force = false) {
     role,
     cityId: ENV_CITY_ID || row?.city_id || mainBranch.rows[0]?.city_id || null,
     branchId: row?.branch_id || mainBranch.rows[0]?.id || null,
-    mainApiUrl: ENV_MAIN_URL || row?.main_api_url || null,
+    mainApiUrl: normalizeMainApiUrl(ENV_MAIN_URL || row?.main_api_url || null),
     apiKey: ENV_API_KEY || row?.api_key || null,
     isMainServer: role === 'main_server',
     isCityServer: role === 'city_server',

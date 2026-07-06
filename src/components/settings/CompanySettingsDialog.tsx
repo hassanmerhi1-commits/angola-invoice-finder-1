@@ -29,10 +29,11 @@ import {
 import {
   CompanySettings,
   getCompanySettings,
-  saveCompanySettings,
   resetCompanySettings,
   fileToBase64,
   validateNIF,
+  hydrateCompanySettingsFromServer,
+  saveCompanySettingsToServer,
 } from '@/lib/companySettings';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
@@ -58,13 +59,20 @@ export function CompanySettingsDialog({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (open) {
-      try {
-        setSettings(getCompanySettings());
-      } catch (error) {
-        console.error('Error loading company settings:', error);
-      }
+    if (!open) return;
+    try {
+      setSettings(getCompanySettings());
+    } catch (error) {
+      console.error('Error loading company settings:', error);
     }
+    // Pull the latest shared profile from the server so the admin edits current data.
+    let cancelled = false;
+    void hydrateCompanySettingsFromServer().then((remote) => {
+      if (!cancelled && remote) setSettings(remote);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   const handleChange = (field: keyof CompanySettings, value: string) => {
@@ -119,10 +127,12 @@ export function CompanySettingsDialog({
         ? { ...settings, exchangeRateUpdatedAt: new Date().toISOString() }
         : settings;
         
-      saveCompanySettings(toSave);
+      // Persist to the server (shared) so every LAN client picks it up, and mirror locally.
+      await saveCompanySettingsToServer(toSave);
       toast.success(t.companySettingsUi.savedSuccess);
       onOpenChange(false);
     } catch (error) {
+      console.error('Error saving company settings:', error);
       toast.error(t.companySettingsUi.saveError);
     } finally {
       setIsSaving(false);

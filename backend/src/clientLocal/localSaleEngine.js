@@ -287,7 +287,32 @@ function saveLocalSale(db, saleData) {
     return { saleId, invoiceNumber, shortHash, saleItems };
   });
 
-  const result = saveTx();
+  let result;
+  try {
+    result = saveTx();
+  } catch (err) {
+    if (/UNIQUE constraint failed.*client_request_id/i.test(String(err?.message || err))) {
+      const dupRetry = db.prepare(
+        'SELECT id, invoice_number, total, status, created_at FROM sales WHERE client_request_id = ?'
+      ).get(clientReq);
+      if (dupRetry) {
+        return {
+          duplicate: true,
+          sale: {
+            id: dupRetry.id,
+            invoice_number: dupRetry.invoice_number,
+            invoiceNumber: dupRetry.invoice_number,
+            total: dupRetry.total,
+            status: dupRetry.status,
+            created_at: dupRetry.created_at,
+            pendingSync: true,
+            client_request_id: clientReq,
+          },
+        };
+      }
+    }
+    throw err;
+  }
 
   return {
     duplicate: false,

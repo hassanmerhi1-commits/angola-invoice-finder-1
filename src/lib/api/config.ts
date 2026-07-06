@@ -3,6 +3,7 @@
 
 import {
   buildLanServerApiBase,
+  normalizeApiBaseUrl,
   parseLanServerEndpoint,
   repairLanClientConfigStorage,
 } from '@/lib/lanServerAddress';
@@ -164,10 +165,10 @@ function parseSavedRemoteApiUrl(): string | null {
   ) {
     return null;
   }
-  const u = savedUrl.trim().replace(/\/$/, '');
+  const u = normalizeApiBaseUrl(savedUrl);
   const isLocal = u.includes('127.0.0.1') || u.includes('localhost');
   if (isLocal) return null;
-  return u;
+  return u || null;
 }
 
 // Detect if running in a cloud preview (Lovable, Vercel, etc.)

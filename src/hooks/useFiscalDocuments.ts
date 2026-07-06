@@ -100,6 +100,11 @@ export function useCreditNotes(branchId?: string) {
     }
 
     const note = result.data as CreditNote;
+    // Annotate the original sale's payment method so shift/drawer filtering works even
+    // when the original invoice isn't in the terminal's loaded sales list.
+    if (!note.originalPaymentMethod && originalSale.paymentMethod) {
+      note.originalPaymentMethod = originalSale.paymentMethod;
+    }
     setCreditNotes((prev) => {
       const rest = prev.filter((n) => n.id !== note.id);
       return [note, ...rest];

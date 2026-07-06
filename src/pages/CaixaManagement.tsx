@@ -13,7 +13,9 @@ import {
   getCashTransactions,
   createCashTransaction,
   updateCaixaBalance,
-  ensureBranchCaixa
+  updateCaixaSessionTotals,
+  ensureBranchCaixa,
+  postCaixaGlEntry
 } from '@/lib/accountingStorage';
 import { Caixa, CaixaSession, CashTransaction } from '@/types/accounting';
 import { MoneyTransferDialog } from '@/components/accounting/MoneyTransferDialog';
@@ -286,7 +288,7 @@ export default function CaixaManagement() {
   };
 
   // Add transaction
-  const handleAddTransaction = () => {
+  const handleAddTransaction = async () => {
     if (!selectedCaixa) return;
     if (transactionData.amount <= 0) {
       toast({ title: t.caixaUi.toastErrorTitle, description: t.caixaUi.amountMustBeGreaterThanZero, variant: 'destructive' });
@@ -306,9 +308,10 @@ export default function CaixaManagement() {
       }
     }
 
-    createCashTransaction(
+    const branchId = currentBranch?.id || 'default';
+    const manualTxn = await createCashTransaction(
       selectedCaixa.id,
-      currentBranch?.id || 'default',
+      branchId,
       transactionData.type,
       transactionData.amount,
       transactionData.description,
@@ -327,6 +330,26 @@ export default function CaixaManagement() {
       transactionData.amount, 
       transactionData.type === 'withdrawal' ? 'out' : 'in'
     );
+
+    // Reflect the manual movement in the open session so it affects the end-of-day close.
+    const openSession = await getOpenCaixaSession(selectedCaixa.id);
+    if (openSession) {
+      await updateCaixaSessionTotals(openSession.id, transactionData.amount, transactionData.type);
+    }
+
+    // GL: mirror the manual movement on the branch cash account. Withdrawals credit the caixa
+    // (cash out), deposits/adjustments debit it (cash in); the counterpart is 452 "Valores para
+    // depositar". Best-effort so it never blocks the manual entry.
+    await postCaixaGlEntry({
+      branchId,
+      amount: transactionData.amount,
+      direction: transactionData.type === 'withdrawal' ? 'out' : 'in',
+      counterAccountCode: '452',
+      description: transactionData.description || `Movimento manual: ${transactionData.type}`,
+      referenceType: 'manual',
+      referenceId: manualTxn.id,
+      createdBy: user?.name || t.caixaUi.systemUser,
+    });
 
     toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.transactionRecorded });
     setIsTransactionDialogOpen(false);

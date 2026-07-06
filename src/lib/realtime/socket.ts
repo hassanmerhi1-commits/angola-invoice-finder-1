@@ -16,7 +16,8 @@ type TableName =
   | 'purchase_orders'
   | 'supplier_returns'
   | 'payments'
-  | 'journal_entries';
+  | 'journal_entries'
+  | 'company_settings';
 
 type TableListener = (payload: { table: TableName; ts?: number; entityId?: string }) => void;
 

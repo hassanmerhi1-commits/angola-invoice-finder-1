@@ -17,6 +17,44 @@ import {
 } from '@/types/accounting';
 import { format } from 'date-fns';
 import { isElectronMode, dbGetAll, dbInsert, dbUpdate, dbDelete, lsGet, lsSet } from '@/lib/dbHelper';
+import { api } from '@/lib/api/client';
+
+// Angola PGC expense accounts (class 7 = Custos). Used to book cash/bank expenses to the GL.
+const EXPENSE_GL_ACCOUNTS: Record<ExpenseCategory, string> = {
+  staff: '722', // Remunerações - Pessoal
+  transport: '752', // Fornecimentos e serviços de terceiros
+  utilities: '752',
+  materials: '752',
+  maintenance: '752',
+  other: '758', // Outros custos e perdas operacionais
+};
+
+function expenseGlAccount(category?: ExpenseCategory): string {
+  return (category && EXPENSE_GL_ACCOUNTS[category]) || '758';
+}
+
+/**
+ * Post a balanced GL journal entry for a cash movement against the branch caixa account.
+ * Best-effort: the drawer/session totals remain authoritative, so a GL failure (offline,
+ * missing account, permissions) must never break the underlying cash operation.
+ */
+export async function postCaixaGlEntry(body: {
+  branchId: string;
+  amount: number;
+  direction: 'in' | 'out';
+  counterAccountCode: string;
+  description: string;
+  referenceType: string;
+  referenceId?: string;
+  createdBy?: string;
+}): Promise<void> {
+  try {
+    if (!body.branchId || !(body.amount > 0)) return;
+    await api.caixa.postGlEntry(body);
+  } catch (err) {
+    console.warn('[ACCOUNTING] caixa GL post skipped:', (err as Error)?.message || err);
+  }
+}
 
 // Storage keys (localStorage fallback)
 const STORAGE_KEYS = {
@@ -591,6 +629,17 @@ export async function payExpense(
       if (openSession) {
         await updateCaixaSessionTotals(openSession.id, expense.totalAmount, 'expense');
       }
+      // GL: Dr expense account, Cr branch caixa — so the branch cash account reflects the payout.
+      await postCaixaGlEntry({
+        branchId: expense.branchId,
+        amount: expense.totalAmount,
+        direction: 'out',
+        counterAccountCode: expenseGlAccount(expense.category),
+        description: `Despesa: ${expense.description}`,
+        referenceType: 'expense',
+        referenceId: expense.id,
+        createdBy: paidBy,
+      });
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('nexor:pos-caixa-expense', {
@@ -878,6 +927,33 @@ export async function executeMoneyTransfer(
     }
   }
   
+  // GL: only transfers that move cash in/out of the branch caixa affect the branch cash
+  // account. caixa↔bank posts one balanced entry against 431 (bank). caixa↔caixa within the
+  // same branch nets to zero on the single branch GL account, and bank↔bank never touches it.
+  if (sourceType === 'caixa' && destinationType === 'bank') {
+    await postCaixaGlEntry({
+      branchId,
+      amount,
+      direction: 'out',
+      counterAccountCode: '431',
+      description: `Transferência para ${destinationDescription}: ${reason}`,
+      referenceType: 'transfer',
+      referenceId: transfer.id,
+      createdBy,
+    });
+  } else if (sourceType === 'bank' && destinationType === 'caixa') {
+    await postCaixaGlEntry({
+      branchId,
+      amount,
+      direction: 'in',
+      counterAccountCode: '431',
+      description: `Transferência de ${sourceDescription}: ${reason}`,
+      referenceType: 'transfer',
+      referenceId: transfer.id,
+      createdBy,
+    });
+  }
+
   // Save transfer record
   if (isElectronMode()) {
     await dbInsert('money_transfers', mapMoneyTransferToDb(transfer));

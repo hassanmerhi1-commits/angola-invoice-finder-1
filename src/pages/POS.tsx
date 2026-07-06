@@ -141,6 +141,8 @@ export default function POS() {
   const [selectedCartProductId, setSelectedCartProductId] = useState<string | null>(null);
   const [focusCartQtyProductId, setFocusCartQtyProductId] = useState<string | null>(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [completingSale, setCompletingSale] = useState(false);
+  const completingSaleRef = useRef(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [printerSettingsOpen, setPrinterSettingsOpen] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
@@ -187,10 +189,17 @@ export default function POS() {
     void getExpenses(currentBranch.id).then((rows) => {
       if (!cancelled) setShiftExpenses(rows);
     });
+    // When the end-of-day dialog opens, pull the latest sales and credit notes from the
+    // server so items created on another PC (e.g. a credit note issued elsewhere) are
+    // reflected in this register's close.
+    if (endOfDayOpen) {
+      void refreshSales();
+      void refreshCreditNotes(currentBranch.id);
+    }
     return () => {
       cancelled = true;
     };
-  }, [currentBranch?.id, endOfDayOpen, shiftIssuesVersion]);
+  }, [currentBranch?.id, endOfDayOpen, shiftIssuesVersion, refreshSales, refreshCreditNotes]);
 
   useEffect(() => {
     const onCreditNotesChanged = (event: Event) => {
@@ -352,6 +361,7 @@ export default function POS() {
   useBarcodeScanner({ onScan: handleBarcodeScan });
 
   const handleCheckout = useCallback(() => {
+    if (completingSaleRef.current || completingSale) return;
     if (!caixaOpen) {
       toast.error(t.posUi.caixa.requiredToSell, { description: t.posUi.caixa.openDesc });
       return;
@@ -361,7 +371,7 @@ export default function POS() {
     } else {
       toast.info(t.posUi.emptyCart, { description: t.posUi.addProductsToCheckout });
     }
-  }, [caixaOpen, cart.items.length, t.posUi]);
+  }, [completingSale, caixaOpen, cart.items.length, t.posUi]);
 
   const handleClearCart = useCallback(() => {
     if (cart.items.length > 0) {
@@ -463,7 +473,7 @@ export default function POS() {
     [handleCheckout, handleEscape, focusSearch, cart, t.posUi],
   );
 
-  useKeyboardShortcuts({ shortcuts, enabled: !checkoutOpen && !receiptOpen });
+  useKeyboardShortcuts({ shortcuts, enabled: !checkoutOpen && !receiptOpen && !completingSale });
 
   const handleCompleteSale = async (
     paymentMethod: Sale['paymentMethod'],
@@ -472,8 +482,12 @@ export default function POS() {
     customerName?: string,
     discountPct = 0,
     clientId?: string,
+    clientRequestId?: string,
   ) => {
     if (!currentBranch || !user) return;
+    if (completingSaleRef.current) return;
+    completingSaleRef.current = true;
+    setCompletingSale(true);
 
     try {
       const soldLines = cart.items.map((item) => ({
@@ -492,6 +506,7 @@ export default function POS() {
         customerName,
         discountPct,
         clientId,
+        clientRequestId,
       );
 
       applySoldQuantities(soldLines);
@@ -603,6 +618,9 @@ export default function POS() {
         : detail;
       recordShiftIssue({ kind: 'checkout', message: friendly });
       toast.error(t.posUi.completeSaleError, { description: friendly });
+    } finally {
+      completingSaleRef.current = false;
+      setCompletingSale(false);
     }
   };
 
@@ -687,6 +705,7 @@ export default function POS() {
                 }
               }}
               onCheckout={handleCheckout}
+              checkoutDisabled={checkoutOpen || completingSale}
             />
           )}
         </div>

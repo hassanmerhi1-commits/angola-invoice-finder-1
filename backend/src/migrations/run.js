@@ -133,6 +133,7 @@ const MIGRATIONS = [
   '047_user_permissions.sql',
   '048_sales_payment_method_credit.sql',
   '049_branches_price_level.sql',
+  '050_credit_note_caixa_gl_fix.sql',
 ];
 
 /**

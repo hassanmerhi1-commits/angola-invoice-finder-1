@@ -182,7 +182,7 @@ app.use('/api/caixa', require('./routes/caixa')(broadcastTable));
 app.use('/api/agt', require('./routes/agt')(broadcastTable));
 app.use('/api/signing', require('./routes/signing')());
 app.use('/api/fiscal-documents', require('./routes/fiscalDocuments')(broadcastTable));
-app.use('/api/company-settings', require('./routes/companySettings')());
+app.use('/api/company-settings', require('./routes/companySettings')(broadcastTable));
 app.use('/api/sync', require('./routes/syncIngest')(broadcastTable));
 app.use('/api/installations', require('./routes/installations')());
 

@@ -1000,6 +1000,29 @@ export const api = {
         if (queuedResult) return queuedResult;
       }
 
+      // LAN client with outbox: quick health probe so a dead server queues immediately
+      // instead of blocking checkout for the full HTTP timeout.
+      if (hasOutbox && !isOfflineModeActive() && typeof window !== 'undefined') {
+        const elApi = (window as any).electronAPI;
+        if (elApi?.isElectron) {
+          const lanClient = await isElectronLanClient();
+          if (lanClient && elApi?.network?.httpJson) {
+            const baseUrl = await getApiUrlAsync();
+            const authToken = getAuthToken();
+            const healthUrl = `${baseUrl}/api/health`;
+            const health = await electronHttpJson(healthUrl, {
+              method: 'GET',
+              headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+              timeoutMs: 2500,
+            });
+            if (!health.ok) {
+              const queuedResult = await queueOfflineSale();
+              if (queuedResult) return queuedResult;
+            }
+          }
+        }
+      }
+
       const result = await apiFetch<any>('/sales', { method: 'POST', body: JSON.stringify(body) });
       if (result.error && hasOutbox && isNetworkErrorMessage(result.error)) {
         const queuedResult = await queueOfflineSale();
@@ -1241,6 +1264,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+    postGlEntry: (body: Record<string, unknown>) =>
+      apiFetch<any>('/caixa/gl/post', { method: 'POST', body: JSON.stringify(body) }),
   },
 
   // Daily Reports — always via HTTP API (aggregates sales on the server)

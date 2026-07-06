@@ -1770,6 +1770,21 @@ async function processSale(client, saleData) {
         params,
       );
     } catch (insertErr) {
+      if (isUniqueViolation(insertErr) && /client_request_id/i.test(insertErr.message || '')) {
+        const existing = await client.query(
+          `SELECT * FROM sales WHERE client_request_id = $1 LIMIT 1`,
+          [clientReqId],
+        );
+        if (existing.rows.length > 0) {
+          return {
+            id: existing.rows[0].id,
+            invoice_number: existing.rows[0].invoice_number,
+            total: parseFloat(existing.rows[0].total),
+            status: existing.rows[0].status,
+            duplicate: true,
+          };
+        }
+      }
       if (isUniqueViolation(insertErr) && /invoice_number/i.test(insertErr.message || '')) {
         throw insertErr;
       }
@@ -1787,6 +1802,21 @@ async function processSale(client, saleData) {
   try {
     await insertSaleHeader(invoiceNumber);
   } catch (insertErr) {
+    if (isUniqueViolation(insertErr) && /client_request_id/i.test(insertErr.message || '')) {
+      const existing = await client.query(
+        `SELECT * FROM sales WHERE client_request_id = $1 LIMIT 1`,
+        [clientReqId],
+      );
+      if (existing.rows.length > 0) {
+        return {
+          id: existing.rows[0].id,
+          invoice_number: existing.rows[0].invoice_number,
+          total: parseFloat(existing.rows[0].total),
+          status: existing.rows[0].status,
+          duplicate: true,
+        };
+      }
+    }
     if (isUniqueViolation(insertErr) && /invoice_number/i.test(insertErr.message || '')) {
       invoiceNumber = await allocateUniqueSaleInvoiceNumber(client, seqKey, seqPrefix, seqScope);
       await insertSaleHeader(invoiceNumber);

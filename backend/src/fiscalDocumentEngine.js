@@ -199,8 +199,20 @@ async function processCreditNote(client, data) {
   if (taxAmount > 0) {
     journalLines.push({ accountCode: '3452', description: `IVA NC ${documentNumber}`, debit: taxAmount, credit: 0 });
   }
+  // Credit the SAME treasury account the sale debited: the branch-specific cash
+  // account (45x for this branch) for cash sales, otherwise bank (431). Using a
+  // hardcoded '451' left branch cash accounts (e.g. 458) never getting the refund credit.
+  let refundAccountCode = sale.payment_method === 'cash' ? '451' : '431';
+  if (sale.payment_method === 'cash') {
+    const caixaAccount = await client.query(
+      `SELECT code FROM chart_of_accounts WHERE code LIKE $1 AND is_header = false
+       AND branch_id = $2 AND is_active = true LIMIT 1`,
+      ['45%', branchId],
+    );
+    if (caixaAccount.rows.length > 0) refundAccountCode = caixaAccount.rows[0].code;
+  }
   journalLines.push({
-    accountCode: sale.payment_method === 'cash' ? '451' : '431',
+    accountCode: refundAccountCode,
     description: `NC ${documentNumber}`,
     debit: 0,
     credit: total,

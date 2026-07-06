@@ -23,6 +23,7 @@ interface CartProps {
   onUpdateQuantity: (productId: string, quantity: number) => void;
   onRemoveItem: (productId: string) => void;
   onCheckout: () => void;
+  checkoutDisabled?: boolean;
 }
 
 function getLineAmounts(item: CartItem) {
@@ -42,6 +43,7 @@ function CartTotals({
   taxLabel,
   onCheckout,
   checkoutLabel,
+  checkoutDisabled = false,
   compact = false,
 }: {
   subtotal: number;
@@ -50,6 +52,7 @@ function CartTotals({
   taxLabel: string;
   onCheckout: () => void;
   checkoutLabel: string;
+  checkoutDisabled?: boolean;
   compact?: boolean;
 }) {
   const { t, language } = useTranslation();
@@ -77,7 +80,7 @@ function CartTotals({
         className={cn('w-full mt-2', compact ? 'h-11' : 'h-12 text-base')}
         size="lg"
         onClick={onCheckout}
-        disabled={total <= 0}
+        disabled={total <= 0 || checkoutDisabled}
       >
         {checkoutLabel}
       </Button>
@@ -222,6 +225,7 @@ export function Cart({
   onUpdateQuantity,
   onRemoveItem,
   onCheckout,
+  checkoutDisabled = false,
 }: CartProps) {
   const { t } = useTranslation();
   const taxLabel = formatTaxLabel(items.map((item) => item.product.taxRate), t.pos.tax);
@@ -250,6 +254,7 @@ export function Cart({
             taxLabel={taxLabel}
             onCheckout={onCheckout}
             checkoutLabel={t.pos.checkout}
+            checkoutDisabled={checkoutDisabled}
             compact
           />
         </div>
@@ -311,6 +316,7 @@ export function Cart({
         taxLabel={taxLabel}
         onCheckout={onCheckout}
         checkoutLabel={t.pos.checkout}
+        checkoutDisabled={checkoutDisabled}
       />
     </div>
   );

@@ -221,9 +221,30 @@ export function PosEndOfDayReportDialog({
     await printHtml(buildPrintHtml());
   };
 
-  const expectedCash = session
-    ? session.openingBalance + session.totalIn - session.totalOut
-    : 0;
+  // Authoritative drawer math. Cash sales and credit-note refunds come from the server
+  // reconciliation (so they count even when issued on another terminal); expenses come
+  // from the shift-filtered local data; manual deposits/withdrawals are whatever the
+  // session counted beyond sales/refunds/expenses. This avoids relying on the fragile
+  // in-session event counters that miss cross-terminal activity.
+  const drawer = useMemo(() => {
+    const opening = session?.openingBalance || 0;
+    const cashSales = glRecon?.erpCashSalesTotal ?? (totals.byPayment.cash || 0);
+    const cashRefunds = glRecon?.erpCashRefundsTotal ?? totals.cashRefundsTotal;
+    const cashExpenses = Math.max(totals.cashExpensesTotal, session?.expensesTotal || 0);
+    // Non-sale inflows the session recorded (manual deposits / reforços).
+    const manualIn = Math.max(0, (session?.totalIn || 0) - (session?.salesTotal || 0));
+    // Whatever the session's cash-out can't be explained by known expenses + authoritative
+    // refunds is treated as a manual withdrawal (sangria). This avoids double-counting the
+    // refunds/expenses we already subtract explicitly below.
+    const manualOut = Math.max(
+      0,
+      (session?.totalOut || 0) - (session?.expensesTotal || 0) - cashRefunds,
+    );
+    const cashIn = cashSales + manualIn;
+    const expected = opening + cashIn - cashRefunds - cashExpenses - manualOut;
+    return { opening, cashSales, cashRefunds, cashExpenses, manualIn, manualOut, cashIn, expected };
+  }, [session, glRecon, totals]);
+  const expectedCash = drawer.expected;
   const counted = parseFloat(countedCash);
   const countedValue = Number.isFinite(counted) ? counted : 0;
   const difference = countedValue - expectedCash;
@@ -332,27 +353,31 @@ export function PosEndOfDayReportDialog({
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
               <span className="text-muted-foreground">{t.posUi.caixa.openingBalanceLabel}</span>
-              <span className="text-right font-mono">{session.openingBalance.toLocaleString(locale)} Kz</span>
+              <span className="text-right font-mono">{drawer.opening.toLocaleString(locale)} Kz</span>
               <span className="text-muted-foreground">{t.posUi.caixa.cashInLabel}</span>
-              <span className="text-right font-mono">{session.totalIn.toLocaleString(locale)} Kz</span>
-              {totals.cashRefundsTotal > 0 && (
+              <span className="text-right font-mono">{drawer.cashIn.toLocaleString(locale)} Kz</span>
+              {drawer.cashRefunds > 0 && (
                 <>
                   <span className="text-muted-foreground pl-2">{t.posUi.caixa.cashOutRefundsLabel}</span>
                   <span className="text-right font-mono text-amber-700">
-                    -{totals.cashRefundsTotal.toLocaleString(locale)} Kz
+                    -{drawer.cashRefunds.toLocaleString(locale)} Kz
                   </span>
                 </>
               )}
-              {(totals.cashExpensesTotal > 0 || session.expensesTotal > 0) && (
+              {drawer.cashExpenses > 0 && (
                 <>
                   <span className="text-muted-foreground pl-2">{t.posUi.caixa.cashOutExpensesLabel}</span>
                   <span className="text-right font-mono text-amber-700">
-                    -{(totals.cashExpensesTotal || session.expensesTotal).toLocaleString(locale)} Kz
+                    -{drawer.cashExpenses.toLocaleString(locale)} Kz
                   </span>
                 </>
               )}
-              <span className="text-muted-foreground">{t.posUi.caixa.cashOutLabel}</span>
-              <span className="text-right font-mono">{session.totalOut.toLocaleString(locale)} Kz</span>
+              {drawer.manualOut > 0 && (
+                <>
+                  <span className="text-muted-foreground">{t.posUi.caixa.cashOutLabel}</span>
+                  <span className="text-right font-mono">-{drawer.manualOut.toLocaleString(locale)} Kz</span>
+                </>
+              )}
               <span className="font-semibold">{t.posUi.caixa.expectedCashLabel}</span>
               <span className="text-right font-mono font-semibold">{expectedCash.toLocaleString(locale)} Kz</span>
             </div>
