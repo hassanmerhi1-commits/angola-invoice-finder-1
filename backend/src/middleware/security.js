@@ -123,6 +123,14 @@ function rateLimiter(windowMs = 60000, maxRequests = 200) {
 const PUBLIC_API_EXACT = new Set(['/api/health']);
 const PUBLIC_API_PREFIXES = ['/api/auth', '/api/sync', '/api/installations'];
 
+/** Electron embedded backend calls these from 127.0.0.1 without a user JWT. */
+const LOOPBACK_INTERNAL_PATHS = new Set(['/api/caixa/gl/sync-record']);
+
+function isLoopbackRequest(req) {
+  const ip = String(req.ip || req.socket?.remoteAddress || '').trim();
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
 function isPublicApiPath(pathname) {
   if (PUBLIC_API_EXACT.has(pathname)) return true;
   return PUBLIC_API_PREFIXES.some((pre) => pathname === pre || pathname.startsWith(pre + '/'));
@@ -138,6 +146,17 @@ function apiAuthGate(req, res, next) {
   if (!p.startsWith('/api/') && p !== '/api') return next();
   if (req.method === 'OPTIONS') return next();
   if (isPublicApiPath(p)) return next();
+  if (LOOPBACK_INTERNAL_PATHS.has(p) && isLoopbackRequest(req)) {
+    req.user = {
+      id: 'system-internal',
+      email: 'system@localhost',
+      name: 'System',
+      role: 'admin',
+      branchId: null,
+      permissionOverrides: null,
+    };
+    return next();
+  }
   // Lazy require avoids a circular dependency at module load time.
   const { requireAuth } = require('./requireAuth');
   return requireAuth(req, res, next);

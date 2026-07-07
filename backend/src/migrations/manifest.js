@@ -53,6 +53,7 @@ const MIGRATION_FILES = [
   '048_sales_payment_method_credit.sql',
   '049_branches_price_level.sql',
   '050_credit_note_caixa_gl_fix.sql',
+  '051_credit_note_caixa_gl_repair_js.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */

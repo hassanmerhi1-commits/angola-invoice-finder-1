@@ -44,6 +44,21 @@ export async function dismissBlockingDialogs(page: Page) {
   }
 }
 
+/** POS requires an open caixa shift before checkout — this dialog cannot be dismissed with Escape. */
+export async function ensurePosRegisterOpen(page: Page) {
+  const openDialog = page.getByRole('dialog', { name: /open cash register/i });
+  const visible = await openDialog.isVisible().catch(() => false);
+  if (!visible) return;
+
+  const openingInput = page.getByLabel(/opening cash/i);
+  if (await openingInput.isVisible().catch(() => false)) {
+    await openingInput.fill('0');
+  }
+
+  await page.getByRole('button', { name: /open register & start shift/i }).click();
+  await openDialog.waitFor({ state: 'hidden', timeout: 30_000 });
+}
+
 export async function loginAsAdmin(page: Page) {
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: /welcome back/i })).toBeVisible();

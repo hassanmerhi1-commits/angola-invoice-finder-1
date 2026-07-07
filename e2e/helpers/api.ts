@@ -156,6 +156,26 @@ export async function seedProduct(
   };
 }
 
+export async function ensureOpenCaixaSession(
+  request: APIRequestContext,
+  auth: E2eAuthContext,
+  openingBalance = 0,
+) {
+  const res = await request.post(`${E2E_BACKEND_URL}/api/caixa/sessions/open`, {
+    headers: {
+      Authorization: `Bearer ${auth.token}`,
+      'Content-Type': 'application/json',
+    },
+    data: {
+      branchId: auth.branchId,
+      branchName: 'Main Branch',
+      openingBalance,
+      openedBy: auth.userId,
+    },
+  });
+  expect(res.ok()).toBeTruthy();
+}
+
 export async function seedPosSaleProduct(
   request: APIRequestContext,
   options: { sku?: string; stock?: number; price?: number } = {},

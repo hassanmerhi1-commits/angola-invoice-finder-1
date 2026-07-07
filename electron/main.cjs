@@ -173,6 +173,32 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** After saving caixa-related records, post GL on the embedded Express backend (loopback). */
+function scheduleCaixaGlSync(table, record) {
+  const glTables = new Set(['expenses', 'caixa_transactions', 'money_transfers']);
+  if (!glTables.has(table) || !record) return;
+  setImmediate(async () => {
+    try {
+      const r = await requestExpressJson('POST', '/api/caixa/gl/sync-record', { table, record });
+      if (!r) {
+        console.warn('[CAIXA] GL sync-record: Express unreachable');
+        return;
+      }
+      if (r.status >= 400) {
+        console.warn('[CAIXA] GL sync-record failed:', r.status, r.json?.error || r.json);
+        return;
+      }
+      if (r.json?.skipped) {
+        console.log('[CAIXA] GL sync-record skipped:', r.json.reason);
+      } else if (r.json?.entryNumber) {
+        console.log('[CAIXA] GL synced:', r.json.entryNumber);
+      }
+    } catch (e) {
+      console.warn('[CAIXA] GL sync-record error:', e.message);
+    }
+  });
+}
+
 /**
  * If this PC is the DB server (SQLite path in IP file) but Express never bound a port
  * (failed spawn at startup, child crash, etc.), try spawning it again before supplier IPC.
@@ -1791,6 +1817,7 @@ async function dbInsert(table, data, companyId = null) {
       } catch (e) { /* audit table might not exist yet */ }
     }
     broadcastUpdate(table, 'insert', data.id, companyId);
+    scheduleCaixaGlSync(table, data);
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -1894,6 +1921,7 @@ async function dbUpdate(table, id, data, companyId = null) {
       } catch (e) {}
     }
     broadcastUpdate(table, 'update', id, companyId);
+    scheduleCaixaGlSync(table, merged);
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };

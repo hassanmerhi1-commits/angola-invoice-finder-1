@@ -243,8 +243,16 @@ export default function Expenses() {
   };
 
   const handlePay = async (expense: Expense) => {
-    await payExpense(expense.id, user?.name || t.expensesUi.systemUser);
-    toast({ title: t.expensesUi.paidTitle, description: t.expensesUi.expensePaid.replace('{number}', expense.expenseNumber) });
+    const result = await payExpense(expense.id, user?.name || t.expensesUi.systemUser);
+    if (result.glError) {
+      toast({
+        title: t.expensesUi.paidTitle,
+        description: `${t.expensesUi.expensePaid.replace('{number}', expense.expenseNumber)} — AVISO GL: ${result.glError}`,
+        variant: 'destructive',
+      });
+    } else {
+      toast({ title: t.expensesUi.paidTitle, description: t.expensesUi.expensePaid.replace('{number}', expense.expenseNumber) });
+    }
     await loadData();
   };
 

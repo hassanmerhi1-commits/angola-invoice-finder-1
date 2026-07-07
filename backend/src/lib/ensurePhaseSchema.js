@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { applyPostgresMigrations } = require('../migrations/applyMigrations');
+const { repairCreditNoteCaixaGlAccounts } = require('./creditNoteCaixaGlRepair');
 
 /** Idempotent — legacy DBs may lack restore_stock if migration 033 was skipped. */
 /** Drop legacy CHECK on audit_log.action (PG) so fiscal events are not rejected. */
@@ -505,6 +506,7 @@ async function ensurePhaseSchema(db) {
     await ensureUserPermissionsColumn(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
+    await repairCreditNoteCaixaGlAccounts(db);
     console.log('[SCHEMA] PostgreSQL phase migrations applied');
     return;
   }
@@ -531,6 +533,7 @@ async function ensurePhaseSchema(db) {
     await ensureCaixaTables(db);
     await ensureUserPermissionsColumn(db);
     await ensurePgcChartOfAccounts(db);
+    await repairCreditNoteCaixaGlAccounts(db);
     console.log('[SCHEMA] SQLite phase column patches applied');
   }
 }

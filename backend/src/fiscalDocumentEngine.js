@@ -205,9 +205,12 @@ async function processCreditNote(client, data) {
   let refundAccountCode = sale.payment_method === 'cash' ? '451' : '431';
   if (sale.payment_method === 'cash') {
     const caixaAccount = await client.query(
-      `SELECT code FROM chart_of_accounts WHERE code LIKE $1 AND is_header = false
-       AND branch_id = $2 AND is_active = true LIMIT 1`,
-      ['45%', branchId],
+      `SELECT code FROM chart_of_accounts
+       WHERE branch_id = $1 AND is_active = true AND is_header = false
+         AND code LIKE '45%'
+       ORDER BY LENGTH(code) DESC, code
+       LIMIT 1`,
+      [branchId],
     );
     if (caixaAccount.rows.length > 0) refundAccountCode = caixaAccount.rows[0].code;
   }

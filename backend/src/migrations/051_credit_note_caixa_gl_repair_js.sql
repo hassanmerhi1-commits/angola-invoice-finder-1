@@ -1,0 +1,4 @@
+-- 051_credit_note_caixa_gl_repair_js.sql
+-- Historical NC GL repair (451 → branch caixa) runs in JavaScript on startup
+-- (creditNoteCaixaGlRepair.js) so it works on SQLite and PostgreSQL.
+-- This file marks schema version 51 for deployment tracking only.

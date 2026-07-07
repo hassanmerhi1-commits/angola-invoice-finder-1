@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin, primeBrowserStorage, dismissBlockingDialogs } from '../helpers/auth';
+import { loginAsAdmin, primeBrowserStorage, dismissBlockingDialogs, ensurePosRegisterOpen } from '../helpers/auth';
 import {
   fetchLatestSaleForBranch,
   fetchProductStock,
   seedPosSaleProduct,
+  ensureOpenCaixaSession,
 } from '../helpers/api';
 
 test.describe('POS sale E2E', () => {
@@ -13,10 +14,12 @@ test.describe('POS sale E2E', () => {
 
   test('cash sale: add item, checkout, receipt, stock and sale recorded', async ({ page, request }) => {
     const seeded = await seedPosSaleProduct(request, { stock: 20, price: 1000 });
+    await ensureOpenCaixaSession(request, seeded.auth);
 
     await loginAsAdmin(page);
     await page.goto('/pos');
     await dismissBlockingDialogs(page);
+    await ensurePosRegisterOpen(page);
 
     const search = page.getByPlaceholder(/code or product name/i);
     await expect(search).toBeVisible({ timeout: 30_000 });

@@ -17,7 +17,7 @@ import {
 } from '@/types/accounting';
 import { format } from 'date-fns';
 import { isElectronMode, dbGetAll, dbInsert, dbUpdate, dbDelete, lsGet, lsSet } from '@/lib/dbHelper';
-import { api } from '@/lib/api/client';
+import { api, ensureBackendAuthToken } from '@/lib/api/client';
 
 // Angola PGC expense accounts (class 7 = Custos). Used to book cash/bank expenses to the GL.
 const EXPENSE_GL_ACCOUNTS: Record<ExpenseCategory, string> = {
@@ -33,10 +33,13 @@ function expenseGlAccount(category?: ExpenseCategory): string {
   return (category && EXPENSE_GL_ACCOUNTS[category]) || '758';
 }
 
+export type CaixaGlPostResult =
+  | { ok: true; entryNumber?: string; alreadyPosted?: boolean }
+  | { ok: false; error: string };
+
 /**
  * Post a balanced GL journal entry for a cash movement against the branch caixa account.
- * Best-effort: the drawer/session totals remain authoritative, so a GL failure (offline,
- * missing account, permissions) must never break the underlying cash operation.
+ * Returns success/failure — callers should warn the user when GL posting fails.
  */
 export async function postCaixaGlEntry(body: {
   branchId: string;
@@ -47,13 +50,30 @@ export async function postCaixaGlEntry(body: {
   referenceType: string;
   referenceId?: string;
   createdBy?: string;
-}): Promise<void> {
-  try {
-    if (!body.branchId || !(body.amount > 0)) return;
-    await api.caixa.postGlEntry(body);
-  } catch (err) {
-    console.warn('[ACCOUNTING] caixa GL post skipped:', (err as Error)?.message || err);
+}): Promise<CaixaGlPostResult> {
+  if (!body.branchId || !(body.amount > 0)) {
+    return { ok: false, error: 'Dados de caixa inválidos para lançamento contabilístico' };
   }
+
+  const token = await ensureBackendAuthToken();
+  if (!token) {
+    return {
+      ok: false,
+      error: 'Sessão não autenticada no servidor — faça login novamente para lançar na contabilidade',
+    };
+  }
+
+  const res = await api.caixa.postGlEntry(body);
+  if (res.error) {
+    console.error('[ACCOUNTING] caixa GL post failed:', res.error);
+    return { ok: false, error: res.error };
+  }
+
+  return {
+    ok: true,
+    entryNumber: res.data?.entryNumber,
+    alreadyPosted: res.data?.alreadyPosted,
+  };
 }
 
 // Storage keys (localStorage fallback)
@@ -600,13 +620,14 @@ export async function payExpense(
   expenseId: string,
   paidBy: string,
   createTransaction: boolean = true
-): Promise<void> {
+): Promise<{ glError?: string }> {
   const expense = await getExpenseById(expenseId);
-  if (!expense) return;
+  if (!expense) return {};
   
   expense.status = 'paid';
   expense.paidBy = paidBy;
   expense.paidAt = new Date().toISOString();
+  let glError: string | undefined;
   
   if (createTransaction) {
     if (expense.paymentSource === 'caixa' && expense.caixaId) {
@@ -630,7 +651,7 @@ export async function payExpense(
         await updateCaixaSessionTotals(openSession.id, expense.totalAmount, 'expense');
       }
       // GL: Dr expense account, Cr branch caixa — so the branch cash account reflects the payout.
-      await postCaixaGlEntry({
+      const glResult = await postCaixaGlEntry({
         branchId: expense.branchId,
         amount: expense.totalAmount,
         direction: 'out',
@@ -640,6 +661,7 @@ export async function payExpense(
         referenceId: expense.id,
         createdBy: paidBy,
       });
+      if (!glResult.ok) glError = glResult.error;
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('nexor:pos-caixa-expense', {
@@ -675,6 +697,7 @@ export async function payExpense(
   }
   
   await saveExpense(expense);
+  return glError ? { glError } : {};
 }
 
 // ==================== CASH TRANSACTION FUNCTIONS ====================
@@ -930,8 +953,9 @@ export async function executeMoneyTransfer(
   // GL: only transfers that move cash in/out of the branch caixa affect the branch cash
   // account. caixa↔bank posts one balanced entry against 431 (bank). caixa↔caixa within the
   // same branch nets to zero on the single branch GL account, and bank↔bank never touches it.
+  let glError: string | undefined;
   if (sourceType === 'caixa' && destinationType === 'bank') {
-    await postCaixaGlEntry({
+    const glResult = await postCaixaGlEntry({
       branchId,
       amount,
       direction: 'out',
@@ -941,8 +965,9 @@ export async function executeMoneyTransfer(
       referenceId: transfer.id,
       createdBy,
     });
+    if (!glResult.ok) glError = glResult.error;
   } else if (sourceType === 'bank' && destinationType === 'caixa') {
-    await postCaixaGlEntry({
+    const glResult = await postCaixaGlEntry({
       branchId,
       amount,
       direction: 'in',
@@ -952,6 +977,7 @@ export async function executeMoneyTransfer(
       referenceId: transfer.id,
       createdBy,
     });
+    if (!glResult.ok) glError = glResult.error;
   }
 
   // Save transfer record
@@ -965,7 +991,7 @@ export async function executeMoneyTransfer(
   
   console.log(`[TRANSFER] ${transferNumber}: ${amount.toLocaleString('pt-AO')} Kz from ${sourceDescription} to ${destinationDescription}`);
   
-  return { success: true, transfer };
+  return { success: true, transfer, glError };
 }
 
 // ==================== INITIALIZATION ====================

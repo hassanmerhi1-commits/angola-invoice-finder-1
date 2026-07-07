@@ -2,9 +2,9 @@ const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
-const { buildCaixaReconciliation, resolveBranchCaixaGlAccount } = require('../lib/caixaReconciliation');
+const { buildCaixaReconciliation } = require('../lib/caixaReconciliation');
 const { applyCaixaClose } = require('../sync/caixaIngest');
-const { createJournalEntry } = require('../accounting');
+const { postCaixaGlMovement, syncCaixaGlFromRecord } = require('../lib/caixaGlPosting');
 
 async function caixaTablesExist() {
   try {
@@ -153,90 +153,40 @@ module.exports = function caixaRouter(broadcastTable) {
 
   // Post a balanced GL journal entry for a cash movement (expense, withdrawal/sangria,
   // deposit/reforço, or transfer leg) against the branch-specific caixa account (45x).
-  // direction:'out' credits the caixa (cash leaves the drawer); 'in' debits it (cash enters).
-  // The counterparty account is supplied by the caller (e.g. an expense account for expenses,
-  // 431 for bank transfers, 452 "Valores para depositar" for manual sangria/reforço).
   router.post('/gl/post', requirePermission('pos_access', 'caixa_open', 'caixa_close', 'admin_settings'), async (req, res) => {
-    const {
-      branchId,
-      amount,
-      direction,
-      counterAccountCode,
-      description,
-      referenceType,
-      referenceId,
-      createdBy,
-      entryDate,
-    } = req.body || {};
-
-    const amt = Number(amount);
-    if (!branchId) return res.status(400).json({ error: 'branchId required' });
-    if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: 'amount must be > 0' });
-    if (direction !== 'in' && direction !== 'out') {
-      return res.status(400).json({ error: "direction must be 'in' or 'out'" });
-    }
-    if (!counterAccountCode) return res.status(400).json({ error: 'counterAccountCode required' });
-
-    const refType = String(referenceType || 'adjustment');
-    const refId = referenceId != null ? String(referenceId) : null;
-
-    const client = await db.pool.connect();
     try {
-      await client.query('BEGIN');
-
-      // Idempotency: never post the same cash movement twice (client retries / outbox replays).
-      if (refId) {
-        const existing = await client.query(
-          `SELECT id, entry_number FROM journal_entries
-           WHERE reference_type = $1 AND reference_id = $2 LIMIT 1`,
-          [refType, refId],
-        );
-        if (existing.rows.length > 0) {
-          await client.query('COMMIT');
-          return res.json({
-            alreadyPosted: true,
-            journalEntryId: existing.rows[0].id,
-            entryNumber: existing.rows[0].entry_number,
-          });
-        }
-      }
-
-      const caixa = await resolveBranchCaixaGlAccount(branchId);
-      const caixaCode = caixa.code;
-
-      const lines = direction === 'out'
-        ? [
-            { accountCode: counterAccountCode, description: description || undefined, debit: amt, credit: 0 },
-            { accountCode: caixaCode, description: description || undefined, debit: 0, credit: amt },
-          ]
-        : [
-            { accountCode: caixaCode, description: description || undefined, debit: amt, credit: 0 },
-            { accountCode: counterAccountCode, description: description || undefined, debit: 0, credit: amt },
-          ];
-
-      const entry = await createJournalEntry(client, {
-        description: description || 'Movimento de caixa',
-        referenceType: refType,
-        referenceId: refId,
-        branchId,
-        createdBy: createdBy || null,
-        entryDate: entryDate || undefined,
-        lines,
-      });
-
-      await client.query('COMMIT');
-
+      const result = await postCaixaGlMovement(req.body || {});
       if (broadcastTable) {
         try { await broadcastTable('journal_entries'); } catch (_) { /* non-fatal */ }
       }
-
-      res.status(201).json({ journalEntryId: entry.id, entryNumber: entry.entry_number });
+      if (result.alreadyPosted) {
+        return res.json(result);
+      }
+      res.status(201).json(result);
     } catch (error) {
-      try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
       console.error('[CAIXA] gl post:', error);
       res.status(500).json({ error: error.message || 'Failed to post GL entry' });
-    } finally {
-      client.release();
+    }
+  });
+
+  // Loopback-only: Electron server posts GL after saving expense/caixa records (no user JWT).
+  router.post('/gl/sync-record', async (req, res) => {
+    try {
+      const { table, record } = req.body || {};
+      if (!table || !record) {
+        return res.status(400).json({ error: 'table and record required' });
+      }
+      const outcome = await syncCaixaGlFromRecord(String(table), record);
+      if (outcome.skipped) {
+        return res.json({ skipped: true, reason: outcome.reason });
+      }
+      if (broadcastTable) {
+        try { await broadcastTable('journal_entries'); } catch (_) { /* non-fatal */ }
+      }
+      res.status(201).json(outcome.result);
+    } catch (error) {
+      console.error('[CAIXA] gl sync-record:', error);
+      res.status(500).json({ error: error.message || 'Failed to sync GL from record' });
     }
   });
 

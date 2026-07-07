@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 /** Bump when SQL migrations change (match highest migration number). */
-const EXPECTED_SCHEMA_VERSION = 50;
+const EXPECTED_SCHEMA_VERSION = 51;
 
 function readAppVersion() {
   if (process.env.NEXOR_APP_VERSION) {

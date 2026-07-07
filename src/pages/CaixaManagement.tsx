@@ -340,7 +340,7 @@ export default function CaixaManagement() {
     // GL: mirror the manual movement on the branch cash account. Withdrawals credit the caixa
     // (cash out), deposits/adjustments debit it (cash in); the counterpart is 452 "Valores para
     // depositar". Best-effort so it never blocks the manual entry.
-    await postCaixaGlEntry({
+    const glResult = await postCaixaGlEntry({
       branchId,
       amount: transactionData.amount,
       direction: transactionData.type === 'withdrawal' ? 'out' : 'in',
@@ -351,7 +351,15 @@ export default function CaixaManagement() {
       createdBy: user?.name || t.caixaUi.systemUser,
     });
 
-    toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.transactionRecorded });
+    if (!glResult.ok) {
+      toast({
+        title: t.caixaUi.toastSuccessTitle,
+        description: `${t.caixaUi.transactionRecorded} — AVISO GL: ${glResult.error}`,
+        variant: 'destructive',
+      });
+    } else {
+      toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.transactionRecorded });
+    }
     setIsTransactionDialogOpen(false);
     setTransactionData(initialTransactionData);
     loadData();
