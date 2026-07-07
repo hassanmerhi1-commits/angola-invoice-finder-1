@@ -4,8 +4,8 @@
 const fs = require('fs');
 const path = require('path');
 
-/** Bump when SQLite tryAlterAdd / migrations change (match highest migration number). */
-const EXPECTED_SCHEMA_VERSION = 42;
+/** Bump when SQL migrations change (match highest migration number). */
+const EXPECTED_SCHEMA_VERSION = 50;
 
 function readAppVersion() {
   if (process.env.NEXOR_APP_VERSION) {

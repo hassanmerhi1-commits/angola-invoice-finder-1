@@ -1,7 +1,7 @@
-// Run database migrations in order
-// Splits SQL files into individual statements to handle DO $$ blocks properly
-const fs = require('fs');
+// Run database migrations in order (PostgreSQL only).
+// Also runs automatically on server startup via ensurePhaseSchema.
 const path = require('path');
+const fs = require('fs');
 
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
@@ -59,6 +59,8 @@ function loadNexorDatabaseEnv() {
 
 const nexorEnv = loadNexorDatabaseEnv();
 const db = require('../db');
+const { applyPostgresMigrations } = require('./applyMigrations');
+const { MIGRATION_FILES } = require('./manifest');
 
 function assertPostgresEngine() {
   if (db.engine === 'postgres') return;
@@ -82,111 +84,6 @@ function assertPostgresEngine() {
 }
 
 assertPostgresEngine();
-
-const MIGRATIONS = [
-  '001_initial_schema.sql',
-  '002_agt_compliance.sql',
-  '003_chart_of_accounts.sql',
-  '004_purchase_order_freight.sql',
-  '005_transaction_engine.sql',
-  '006_tax_engine.sql',
-  '007_enterprise_controls.sql',
-  '008_multi_currency.sql',
-  '009_seed_data.sql',
-  '010_data_integrity.sql',
-  '011_optimistic_locking.sql',
-  '012_products_updated_at.sql',
-  '013_document_sequences.sql',
-  '014_chart_of_accounts_children_count.sql',
-  '015_products_supplier.sql',
-  '016_freight_expense_account.sql',
-  '016_purchase_invoice_sequence.sql',
-  '017_branch_document_sequences.sql',
-  '017_multi_price_levels.sql',
-  '018_purchase_invoices_table.sql',
-  '019_org_hierarchy.sql',
-  '020_inventory_vat_5_percent.sql',
-  '021_inventory_shrinkage_account.sql',
-  '022_sales_due_date.sql',
-  '023_sales_printed_at.sql',
-  '024_products_min_stock.sql',
-  '025_proformas.sql',
-  '026_sync_audit.sql',
-  '027_sync_outbox_destination.sql',
-  '028_client_ingest_log.sql',
-  '029_hq_ingest_log.sql',
-  '030_caixa_sync.sql',
-  '031_purchase_invoice_freight.sql',
-  '032_fiscal_documents_phase1.sql',
-  '033_credit_note_restore_stock.sql',
-  '034_fiscal_signing_phase2.sql',
-  '035_agt_api_phase3.sql',
-  '036_company_settings_phase4.sql',
-  '037_fiscal_audit_phase5.sql',
-  '038_audit_log_actions_phase5.sql',
-  '039_app_meta_schema_version.sql',
-  '040_users_username.sql',
-  '041_user_sessions_security.sql',
-  '042_simplified_invoice_fs.sql',
-  '045_pgc_novo_com_iva.sql',
-  '046_client_pricing.sql',
-  '047_user_permissions.sql',
-  '048_sales_payment_method_credit.sql',
-  '049_branches_price_level.sql',
-  '050_credit_note_caixa_gl_fix.sql',
-];
-
-/**
- * Split SQL into executable statements, respecting $$ dollar-quoted blocks.
- * pg.Pool.query() fails silently with multi-statement strings containing DO $$ blocks.
- */
-function splitSQL(sql) {
-  const statements = [];
-  let current = '';
-  let inDollarQuote = false;
-  const lines = sql.split('\n');
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Skip pure comments outside of dollar-quoted blocks
-    if (!inDollarQuote && (trimmed.startsWith('--') || trimmed === '')) {
-      current += line + '\n';
-      continue;
-    }
-
-    current += line + '\n';
-
-    // Track $$ dollar-quoting (DO $$ ... $$; and CREATE FUNCTION ... $$ ... $$;)
-    const dollarMatches = line.match(/\$\$/g);
-    if (dollarMatches) {
-      for (const _ of dollarMatches) {
-        inDollarQuote = !inDollarQuote;
-      }
-    }
-
-    // Statement ends with ; outside dollar-quoted blocks
-    if (!inDollarQuote && trimmed.endsWith(';')) {
-      const stmt = current.trim();
-      const lines = stmt.split('\n').map((l) => l.trim()).filter(Boolean);
-      const commentOnly = lines.length > 0 && lines.every((l) => l.startsWith('--'));
-      if (stmt && !commentOnly) {
-        statements.push(stmt);
-      }
-      current = '';
-    }
-  }
-
-  // Catch any trailing statement without semicolon
-  const remaining = current.trim();
-  const remainingLines = remaining.split('\n').map((l) => l.trim()).filter(Boolean);
-  const remainingCommentOnly = remainingLines.length > 0 && remainingLines.every((l) => l.startsWith('--'));
-  if (remaining && !remainingCommentOnly) {
-    statements.push(remaining);
-  }
-
-  return statements;
-}
 
 function printMigrateHints(error) {
   const code = error?.code || '';
@@ -230,40 +127,13 @@ async function runMigrations() {
   }
 
   try {
-    // Wait for DB connection
     await db.query('SELECT 1');
-
-    for (const file of MIGRATIONS) {
-      const sqlFile = path.join(__dirname, file);
-      if (!fs.existsSync(sqlFile)) {
-        console.warn(`[MIGRATE] ⚠ Skipping ${file} (not found)`);
-        continue;
-      }
-
-      const sql = fs.readFileSync(sqlFile, 'utf8');
-      const statements = splitSQL(sql);
-
-      for (let i = 0; i < statements.length; i++) {
-        try {
-          await db.query(statements[i]);
-        } catch (err) {
-          // Log but continue on "already exists" type errors
-          if (err.code === '42P07' || err.code === '42710' || err.code === '23505' || err.code === '42701') {
-            // 42P07 = relation already exists, 42710 = type already exists, 23505 = duplicate key, 42701 = duplicate column
-            continue;
-          }
-          console.error(`[MIGRATE] ❌ Error in ${file} (statement ${i + 1}):`, err.message);
-          throw err;
-        }
-      }
-
-      console.log(`[MIGRATE] ✅ ${file} applied (${statements.length} statements)`);
-    }
+    await applyPostgresMigrations(db, { logPrefix: '[MIGRATE]', strict: true });
 
     const { recordAppMetaForDb, readAppVersion, EXPECTED_SCHEMA_VERSION } = require('../lib/deploymentStatus');
     await recordAppMetaForDb(db, readAppVersion());
     console.log(`[MIGRATE] app_meta schema_version=${EXPECTED_SCHEMA_VERSION}`);
-
+    console.log(`[MIGRATE] Migration manifest: ${MIGRATION_FILES.length} files`);
     console.log('[MIGRATE] ✅ All migrations completed successfully!');
     console.log('[MIGRATE] Database is ready.');
     process.exit(0);

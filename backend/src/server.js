@@ -208,7 +208,7 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
     const checks = await buildSchemaChecks(db);
     if (!checks.ok) {
       console.warn('[SCHEMA] Post-migration checks failed:', JSON.stringify(checks));
-      console.warn('[SCHEMA] Run: npm run migrate --prefix backend  (or restart Docker backend)');
+      console.warn('[SCHEMA] Restart the server after updating — migrations run automatically on startup for PostgreSQL.');
     }
   } catch (e) {
     console.error('[SCHEMA] ensurePhaseSchema failed:', e.message);

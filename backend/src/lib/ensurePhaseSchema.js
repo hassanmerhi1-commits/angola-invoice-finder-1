@@ -4,53 +4,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-
-const MIGRATION_FILES = [
-  '032_fiscal_documents_phase1.sql',
-  '033_credit_note_restore_stock.sql',
-  '034_fiscal_signing_phase2.sql',
-  '035_agt_api_phase3.sql',
-  '036_company_settings_phase4.sql',
-  '037_fiscal_audit_phase5.sql',
-  '038_audit_log_actions_phase5.sql',
-  '039_app_meta_schema_version.sql',
-  '040_users_username.sql',
-  '041_user_sessions_security.sql',
-  '042_simplified_invoice_fs.sql',
-  '048_sales_payment_method_credit.sql',
-  '049_branches_price_level.sql',
-];
-
-function isCommentOnlySQL(stmt) {
-  const lines = stmt.split('\n').map((line) => line.trim()).filter(Boolean);
-  return lines.length > 0 && lines.every((line) => line.startsWith('--'));
-}
-
-function splitSQL(sql) {
-  const statements = [];
-  let current = '';
-  let inDollarQuote = false;
-  for (const line of sql.split('\n')) {
-    const trimmed = line.trim();
-    if (!inDollarQuote && (trimmed.startsWith('--') || trimmed === '')) {
-      current += `${line}\n`;
-      continue;
-    }
-    current += `${line}\n`;
-    const dollarMatches = line.match(/\$\$/g);
-    if (dollarMatches) {
-      for (const _ of dollarMatches) inDollarQuote = !inDollarQuote;
-    }
-    if (!inDollarQuote && trimmed.endsWith(';')) {
-      const stmt = current.trim();
-      if (stmt && !isCommentOnlySQL(stmt)) statements.push(stmt);
-      current = '';
-    }
-  }
-  const tail = current.trim();
-  if (tail && !isCommentOnlySQL(tail)) statements.push(tail);
-  return statements;
-}
+const { applyPostgresMigrations } = require('../migrations/applyMigrations');
 
 /** Idempotent — legacy DBs may lack restore_stock if migration 033 was skipped. */
 /** Drop legacy CHECK on audit_log.action (PG) so fiscal events are not rejected. */
@@ -528,23 +482,14 @@ async function ensurePgcChartOfAccounts(db) {
 }
 
 async function ensurePhaseSchema(db) {
-  const migrationsDir = path.join(__dirname, '../migrations');
-
   if (db.engine === 'postgres') {
     await ensureDocumentSequencesBranchScope(db);
-    for (const file of MIGRATION_FILES) {
-      const sqlFile = path.join(migrationsDir, file);
-      if (!fs.existsSync(sqlFile)) continue;
-      const statements = splitSQL(fs.readFileSync(sqlFile, 'utf8'));
-      for (const stmt of statements) {
-        try {
-          await db.query(stmt);
-        } catch (err) {
-          const code = err.code || '';
-          if (code === '42P07' || code === '42710' || code === '23505' || code === '42701') continue;
-          console.warn(`[SCHEMA] ${file}:`, err.message);
-        }
-      }
+    const migrationResult = await applyPostgresMigrations(db, { logPrefix: '[SCHEMA]' });
+    if (migrationResult.applied.length > 0) {
+      console.log(`[SCHEMA] PostgreSQL migrations checked (${migrationResult.applied.length} files)`);
+    }
+    if (migrationResult.errors.length > 0) {
+      console.warn('[SCHEMA] Migration warnings:', migrationResult.errors.length);
     }
     try {
       await db.query(

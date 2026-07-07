@@ -1,0 +1,64 @@
+/**
+ * Single source of truth for PostgreSQL SQL migration files (order matters).
+ * Used by `npm run migrate` and by server startup (ensurePhaseSchema).
+ */
+const MIGRATION_FILES = [
+  '001_initial_schema.sql',
+  '002_agt_compliance.sql',
+  '003_chart_of_accounts.sql',
+  '004_purchase_order_freight.sql',
+  '005_transaction_engine.sql',
+  '006_tax_engine.sql',
+  '007_enterprise_controls.sql',
+  '008_multi_currency.sql',
+  '009_seed_data.sql',
+  '010_data_integrity.sql',
+  '011_optimistic_locking.sql',
+  '012_products_updated_at.sql',
+  '013_document_sequences.sql',
+  '014_chart_of_accounts_children_count.sql',
+  '015_products_supplier.sql',
+  '016_freight_expense_account.sql',
+  '016_purchase_invoice_sequence.sql',
+  '017_branch_document_sequences.sql',
+  '017_multi_price_levels.sql',
+  '018_purchase_invoices_table.sql',
+  '019_org_hierarchy.sql',
+  '020_inventory_vat_5_percent.sql',
+  '021_inventory_shrinkage_account.sql',
+  '022_sales_due_date.sql',
+  '023_sales_printed_at.sql',
+  '024_products_min_stock.sql',
+  '025_proformas.sql',
+  '026_sync_audit.sql',
+  '027_sync_outbox_destination.sql',
+  '028_client_ingest_log.sql',
+  '029_hq_ingest_log.sql',
+  '030_caixa_sync.sql',
+  '031_purchase_invoice_freight.sql',
+  '032_fiscal_documents_phase1.sql',
+  '033_credit_note_restore_stock.sql',
+  '034_fiscal_signing_phase2.sql',
+  '035_agt_api_phase3.sql',
+  '036_company_settings_phase4.sql',
+  '037_fiscal_audit_phase5.sql',
+  '038_audit_log_actions_phase5.sql',
+  '039_app_meta_schema_version.sql',
+  '040_users_username.sql',
+  '041_user_sessions_security.sql',
+  '042_simplified_invoice_fs.sql',
+  '045_pgc_novo_com_iva.sql',
+  '046_client_pricing.sql',
+  '047_user_permissions.sql',
+  '048_sales_payment_method_credit.sql',
+  '049_branches_price_level.sql',
+  '050_credit_note_caixa_gl_fix.sql',
+];
+
+/** PostgreSQL errors that mean "already applied" — safe to skip. */
+const IGNORABLE_PG_CODES = new Set(['42P07', '42710', '23505', '42701']);
+
+module.exports = {
+  MIGRATION_FILES,
+  IGNORABLE_PG_CODES,
+};

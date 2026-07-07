@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Product } from '@/types/erp';
 import { NEXOR_STAT_CARD, NEXOR_SECTION_LABEL, NEXOR_TONE_TILE, type NexorTone } from '@/lib/nexorToneStyles';
+import { NEXOR_FEATURE_SHORTCUT_BTN } from '@/lib/nexorToolbarStyles';
 
 interface DashboardKPIs {
   todaySales: { count: number; total: number };
@@ -348,15 +349,20 @@ export default function Dashboard() {
           ))}
         </div>
 
-        <div className="p-3 border-t">
-          <Button
-            variant="outline"
-            className="w-full h-12 text-xs font-bold gap-2 rounded-xl shadow-sm"
+        <div className="p-3 border-t border-slate-200/80">
+          <button
+            type="button"
             onClick={() => navigate('/chart-of-accounts')}
+            className={NEXOR_FEATURE_SHORTCUT_BTN}
           >
-            <FileCheck className="w-4 h-4" />
-            {d.accountsSaft}
-          </Button>
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100/90 group-hover:bg-indigo-200/70 transition-colors">
+              <BookOpen className="w-4 h-4 text-indigo-600" />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col leading-tight">
+              <span className="text-[11px] font-semibold tracking-tight text-slate-800">{t.nav.chartOfAccounts}</span>
+              <span className="text-[10px] font-medium text-indigo-600/80">SAF-T</span>
+            </span>
+          </button>
         </div>
       </div>
     </div>
