@@ -6,6 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const { applyPostgresMigrations } = require('../migrations/applyMigrations');
 const { repairCreditNoteCaixaGlAccounts } = require('./creditNoteCaixaGlRepair');
+const { ensureAllBranchCaixaAccounts } = require('./branchCaixaAccounts');
+const { linkOrphanBranchCaixaAccounts } = require('./resolveBranchCaixaGlAccount');
 
 /** Idempotent — legacy DBs may lack restore_stock if migration 033 was skipped. */
 /** Drop legacy CHECK on audit_log.action (PG) so fiscal events are not rejected. */
@@ -506,6 +508,14 @@ async function ensurePhaseSchema(db) {
     await ensureUserPermissionsColumn(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
+    const linkResult = await linkOrphanBranchCaixaAccounts(db);
+    if (linkResult.linked > 0) {
+      console.log(`[SCHEMA] Linked ${linkResult.linked} orphan branch caixa account(s)`);
+    }
+    const caixaEnsure = await ensureAllBranchCaixaAccounts(db);
+    if (caixaEnsure.created > 0) {
+      console.log(`[SCHEMA] Created ${caixaEnsure.created} branch caixa account(s)`);
+    }
     await repairCreditNoteCaixaGlAccounts(db);
     console.log('[SCHEMA] PostgreSQL phase migrations applied');
     return;
@@ -533,6 +543,14 @@ async function ensurePhaseSchema(db) {
     await ensureCaixaTables(db);
     await ensureUserPermissionsColumn(db);
     await ensurePgcChartOfAccounts(db);
+    const linkResult = await linkOrphanBranchCaixaAccounts(db);
+    if (linkResult.linked > 0) {
+      console.log(`[SCHEMA] Linked ${linkResult.linked} orphan branch caixa account(s)`);
+    }
+    const caixaEnsure = await ensureAllBranchCaixaAccounts(db);
+    if (caixaEnsure.created > 0) {
+      console.log(`[SCHEMA] Created ${caixaEnsure.created} branch caixa account(s)`);
+    }
     await repairCreditNoteCaixaGlAccounts(db);
     console.log('[SCHEMA] SQLite phase column patches applied');
   }

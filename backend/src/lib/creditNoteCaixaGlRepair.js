@@ -1,9 +1,11 @@
 /**
  * Re-point historical cash credit-note GL credits from global 451 → branch caixa (45x).
  * Works on PostgreSQL and SQLite (migration 050 is PostgreSQL-only).
- * Idempotent — guarded by app_meta flag.
+ * Idempotent — guarded by app_meta flag (v2 re-runs after orphan account linking).
  */
-const REPAIR_FLAG = 'credit_note_caixa_gl_repair_v1';
+const { resolveBranchCaixaGlAccountCode } = require('./resolveBranchCaixaGlAccount');
+
+const REPAIR_FLAG = 'credit_note_caixa_gl_repair_v2';
 
 async function ensureAppMetaTable(db) {
   try {
@@ -75,10 +77,12 @@ async function repairCreditNoteCaixaGlAccounts(db) {
          jel.id AS line_id,
          jel.credit_amount AS amount,
          old_acc.id AS old_account_id,
-         je.branch_id AS branch_id
+         je.branch_id AS branch_id,
+         cn.original_invoice_id AS sale_id
        FROM journal_entry_lines jel
        JOIN journal_entries je ON je.id = jel.journal_entry_id
        JOIN chart_of_accounts old_acc ON old_acc.id = jel.account_id
+       LEFT JOIN credit_notes cn ON cn.id = je.reference_id AND je.reference_type = 'credit_note'
        WHERE je.reference_type = 'credit_note'
          AND je.branch_id IS NOT NULL
          AND TRIM(COALESCE(je.branch_id, '')) != ''
@@ -88,13 +92,15 @@ async function repairCreditNoteCaixaGlAccounts(db) {
 
     for (const row of candidates.rows || []) {
       const branchId = row.branch_id;
+      const newCode = await resolveBranchCaixaGlAccountCode(db, {
+        branchId,
+        saleId: row.sale_id,
+      });
+      if (!newCode || newCode === '451') continue;
+
       const branchAccount = await db.query(
-        `SELECT id, code FROM chart_of_accounts
-         WHERE branch_id = $1 AND is_active = true AND is_header = false
-           AND code LIKE '45%'
-         ORDER BY LENGTH(code) DESC, code
-         LIMIT 1`,
-        [branchId],
+        `SELECT id, code FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
+        [newCode],
       );
       const newAcc = branchAccount.rows[0];
       if (!newAcc || newAcc.id === row.old_account_id) continue;

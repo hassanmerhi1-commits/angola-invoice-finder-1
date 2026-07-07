@@ -33,6 +33,7 @@ const {
   sqlMovementSkuKey,
 } = require('./lib/productSkuResolve');
 const { randomUUID } = require('crypto');
+const { resolveBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlAccount');
 
 // ==================== PGC (novo com IVA) POSTING ACCOUNT CODES ====================
 // Angola Plano Geral de Contabilidade with no-dot numbering (main 11 → first sub 111).
@@ -1700,8 +1701,9 @@ async function processSale(client, saleData) {
     total: totalAmount,
   });
 
-  const branchCodeRow = await client.query('SELECT code FROM branches WHERE id = $1 LIMIT 1', [branchId]);
+  const branchCodeRow = await client.query('SELECT code, name FROM branches WHERE id = $1 LIMIT 1', [branchId]);
   const branchCode = normalizeBranchCode(branchCodeRow.rows[0]?.code);
+  const branchNameForGl = String(branchCodeRow.rows[0]?.name || '').trim();
   const seqKey = sequenceKeyForInvoiceType(invoiceType);
   const seqPrefix = prefixForInvoiceType(invoiceType);
   const seqScope = { branchId, branchCode };
@@ -1887,12 +1889,11 @@ async function processSale(client, saleData) {
       saleDueDate = due.toISOString().slice(0, 10);
     }
   } else if (paymentMethod === 'cash') {
-    debitAccountCode = ACC.CASH;
-    const caixaResult = await client.query(
-      `SELECT code FROM chart_of_accounts WHERE code LIKE $1 AND is_header = false
-       AND branch_id = $2 AND is_active = true LIMIT 1`, [ACC.CASH_PARENT + '%', branchId]
-    );
-    if (caixaResult.rows.length > 0) debitAccountCode = caixaResult.rows[0].code;
+    debitAccountCode = await resolveBranchCaixaGlAccountCode(client, {
+      branchId,
+      branchName: branchNameForGl,
+      saleId,
+    });
   }
 
   const revenueLines = [

@@ -3,6 +3,8 @@
  * Codes 451–453 are reserved; branch caixa accounts use 454+.
  */
 
+const { linkOrphanBranchCaixaAccounts } = require('./resolveBranchCaixaGlAccount');
+
 const CAIXA_PARENT_CODE = '45';
 const CAIXA_CODE_MIN_SUFFIX = 4; // → 454
 const CAIXA_CODE_MAX_SUFFIX = 99;
@@ -135,6 +137,8 @@ async function ensureBranchCaixaAccount(dbOrClient, branchId, branchName) {
  * Backfill missing caixa GL accounts for every active branch.
  */
 async function ensureAllBranchCaixaAccounts(db) {
+  await linkOrphanBranchCaixaAccounts(db);
+
   const branches = await queryDb(
     db,
     `SELECT id, name FROM branches ORDER BY name`,

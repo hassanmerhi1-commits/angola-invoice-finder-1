@@ -1,0 +1,2 @@
+-- Branch caixa resolver + orphan linking runs in JavaScript on startup (ensurePhaseSchema).
+-- NC GL repair v2 re-processes any remaining 451 credit-note lines.

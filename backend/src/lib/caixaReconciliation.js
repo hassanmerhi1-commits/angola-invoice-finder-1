@@ -2,6 +2,10 @@
  * Compare POS caixa session totals with ERP cash sales and GL account 45x movements.
  */
 const db = require('../db');
+const {
+  resolveBranchCaixaGlAccountCode,
+  GLOBAL_PETTY_CASH_CODE,
+} = require('./resolveBranchCaixaGlAccount');
 
 function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -35,27 +39,24 @@ function journalDateFilterSql() {
   return `date(je.entry_date) = date($3)`;
 }
 
-async function resolveBranchCaixaGlAccount(branchId) {
-  const branchAccount = await db.query(
+async function resolveBranchCaixaGlAccount(branchId, scope = {}) {
+  const code = await resolveBranchCaixaGlAccountCode(db, {
+    branchId,
+    branchName: scope.branchName,
+    saleId: scope.saleId,
+  });
+  const account = await db.query(
     `SELECT id, code, name, opening_balance, account_nature
      FROM chart_of_accounts
-     WHERE branch_id = $1 AND is_active = true AND is_header = false
-       AND code LIKE '45%'
-     ORDER BY LENGTH(code) DESC, code
+     WHERE code = $1 AND is_active = true
      LIMIT 1`,
-    [branchId],
+    [code],
   );
-  if (branchAccount.rows[0]) return branchAccount.rows[0];
+  if (account.rows[0]) return account.rows[0];
 
-  const fallback = await db.query(
-    `SELECT id, code, name, opening_balance, account_nature
-     FROM chart_of_accounts
-     WHERE code = '451' AND is_active = true
-     LIMIT 1`,
-  );
-  return fallback.rows[0] || {
+  return {
     id: null,
-    code: '451',
+    code: GLOBAL_PETTY_CASH_CODE,
     name: 'Caixa',
     opening_balance: 0,
     account_nature: 'debit',

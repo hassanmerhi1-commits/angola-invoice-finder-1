@@ -15,6 +15,7 @@ const {
 } = require('./transactionEngine');
 const { ensureCreditNoteRestoreStockColumn } = require('./lib/ensurePhaseSchema');
 const { isCashPaymentMethod, recordCashRefundOnOpenSession } = require('./lib/caixaCashRefund');
+const { resolveBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlAccount');
 const db = require('./db');
 
 function roundMoney(value) {
@@ -199,20 +200,14 @@ async function processCreditNote(client, data) {
   if (taxAmount > 0) {
     journalLines.push({ accountCode: '3452', description: `IVA NC ${documentNumber}`, debit: taxAmount, credit: 0 });
   }
-  // Credit the SAME treasury account the sale debited: the branch-specific cash
-  // account (45x for this branch) for cash sales, otherwise bank (431). Using a
-  // hardcoded '451' left branch cash accounts (e.g. 458) never getting the refund credit.
-  let refundAccountCode = sale.payment_method === 'cash' ? '451' : '431';
+  // Credit the SAME treasury account the sale debited (branch 45x or bank 431).
+  let refundAccountCode = '431';
   if (sale.payment_method === 'cash') {
-    const caixaAccount = await client.query(
-      `SELECT code FROM chart_of_accounts
-       WHERE branch_id = $1 AND is_active = true AND is_header = false
-         AND code LIKE '45%'
-       ORDER BY LENGTH(code) DESC, code
-       LIMIT 1`,
-      [branchId],
-    );
-    if (caixaAccount.rows.length > 0) refundAccountCode = caixaAccount.rows[0].code;
+    refundAccountCode = await resolveBranchCaixaGlAccountCode(client, {
+      branchId,
+      branchName,
+      saleId: sale.id,
+    });
   }
   journalLines.push({
     accountCode: refundAccountCode,
