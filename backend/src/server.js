@@ -104,9 +104,15 @@ app.get('/api/health', async (req, res) => {
       },
       schemaVersion: schema.stored,
       schemaVersionExpected: EXPECTED_SCHEMA_VERSION,
+      schemaUpToDate: schema.stored == null ? null : schema.stored >= EXPECTED_SCHEMA_VERSION,
       schemaChecks,
       dbPath: db.engine === 'sqlite' ? db.dbPath : undefined,
     };
+    if (schema.stored != null && schema.stored < EXPECTED_SCHEMA_VERSION) {
+      payload.schemaRepairHint = db.engine === 'postgres'
+        ? 'PostgreSQL schema is behind. On the SERVER PC run fix-server-schema.cmd in C:\\NEXOR ERP, then restart NEXOR. LAN clients: check health on the server IP, not localhost.'
+        : 'This is the local SQLite database (typical on LAN clients). For production schema, check http://SERVER-IP:3001/api/health?lite=1 on the PostgreSQL server.';
+    }
     if (schemaChecks && schemaChecks.salesCreditPayment === false) {
       payload.schemaRepairHint =
         'Credit (on-account) sales blocked by DB constraint. Rebuild/restart backend Docker, or run: docker compose exec backend node scripts/ensure-server-schema.js';

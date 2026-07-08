@@ -42,6 +42,10 @@
       "filter": ["**/*"]
     },
     {
+      "from": "scripts/fix-server-schema.cmd",
+      "to": "fix-server-schema.cmd"
+    },
+    {
       "from": "public/splash.png",
       "to": "splash.png"
     },

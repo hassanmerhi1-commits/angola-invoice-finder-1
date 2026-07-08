@@ -7,5 +7,5 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions TEXT;
 INSERT INTO app_meta (key, value, updated_at)
 VALUES ('schema_version', '47', NOW())
 ON CONFLICT (key) DO UPDATE
-SET value = EXCLUDED.value,
+SET value = GREATEST(app_meta.value::integer, EXCLUDED.value::integer)::text,
     updated_at = EXCLUDED.updated_at;
