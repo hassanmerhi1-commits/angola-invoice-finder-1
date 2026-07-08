@@ -7,7 +7,8 @@ const { createJournalEntry } = require('../accounting');
 const { recordStockMovement, auditLog, validatePeriod } = require('../transactionEngine');
 const { getAgtConfigWithSecrets } = require('./agtConfig');
 const { transmitVoid } = require('./connector');
-const { resolveBranchCaixaGlAccountCode } = require('../lib/resolveBranchCaixaGlAccount');
+const { resolveBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('../lib/resolveBranchCaixaGlAccount');
+const { isCashPaymentMethod } = require('../lib/caixaCashRefund');
 
 function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -97,10 +98,12 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
     const paymentMethod = sale.payment_method || 'cash';
 
     let cashAccountCode = '431';
-    if (paymentMethod === 'cash') {
+    if (isCashPaymentMethod(paymentMethod)) {
+      await linkOrphanBranchCaixaAccounts(client);
       cashAccountCode = await resolveBranchCaixaGlAccountCode(client, {
         branchId,
         branchName: sale.branch_name,
+        branchCode: sale.branch_code,
         saleId: invoiceId,
       });
     }

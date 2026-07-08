@@ -15,7 +15,7 @@ const {
 } = require('./transactionEngine');
 const { ensureCreditNoteRestoreStockColumn } = require('./lib/ensurePhaseSchema');
 const { isCashPaymentMethod, recordCashRefundOnOpenSession } = require('./lib/caixaCashRefund');
-const { resolveBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlAccount');
+const { resolveBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('./lib/resolveBranchCaixaGlAccount');
 const db = require('./db');
 
 function roundMoney(value) {
@@ -202,10 +202,12 @@ async function processCreditNote(client, data) {
   }
   // Credit the SAME treasury account the sale debited (branch 45x or bank 431).
   let refundAccountCode = '431';
-  if (sale.payment_method === 'cash') {
+  if (isCashPaymentMethod(sale.payment_method)) {
+    await linkOrphanBranchCaixaAccounts(client);
     refundAccountCode = await resolveBranchCaixaGlAccountCode(client, {
       branchId,
       branchName,
+      branchCode,
       saleId: sale.id,
     });
   }

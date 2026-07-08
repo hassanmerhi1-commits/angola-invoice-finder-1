@@ -5,7 +5,7 @@
  */
 const { resolveBranchCaixaGlAccountCode } = require('./resolveBranchCaixaGlAccount');
 
-const REPAIR_FLAG = 'credit_note_caixa_gl_repair_v2';
+const REPAIR_FLAG = 'credit_note_caixa_gl_repair_v3';
 
 async function ensureAppMetaTable(db) {
   try {
@@ -78,7 +78,8 @@ async function repairCreditNoteCaixaGlAccounts(db) {
          jel.credit_amount AS amount,
          old_acc.id AS old_account_id,
          je.branch_id AS branch_id,
-         cn.original_invoice_id AS sale_id
+         cn.original_invoice_id AS sale_id,
+         cn.branch_name AS branch_name
        FROM journal_entry_lines jel
        JOIN journal_entries je ON je.id = jel.journal_entry_id
        JOIN chart_of_accounts old_acc ON old_acc.id = jel.account_id
@@ -94,6 +95,7 @@ async function repairCreditNoteCaixaGlAccounts(db) {
       const branchId = row.branch_id;
       const newCode = await resolveBranchCaixaGlAccountCode(db, {
         branchId,
+        branchName: row.branch_name,
         saleId: row.sale_id,
       });
       if (!newCode || newCode === '451') continue;

@@ -3,7 +3,11 @@
  * Codes 451–453 are reserved; branch caixa accounts use 454+.
  */
 
-const { linkOrphanBranchCaixaAccounts } = require('./resolveBranchCaixaGlAccount');
+const {
+  resolveBranchCaixaGlAccountCode,
+  linkOrphanBranchCaixaAccounts,
+  GLOBAL_PETTY_CASH_CODE,
+} = require('./resolveBranchCaixaGlAccount');
 
 const CAIXA_PARENT_CODE = '45';
 const CAIXA_CODE_MIN_SUFFIX = 4; // → 454
@@ -16,18 +20,19 @@ async function queryDb(dbOrClient, sql, params = []) {
   return db.query(sql, params);
 }
 
-async function findBranchCaixaAccount(client, branchId) {
+async function findBranchCaixaAccount(client, branchId, branchName) {
+  const code = await resolveBranchCaixaGlAccountCode(client, {
+    branchId,
+    branchName,
+  });
+  if (!code || code === GLOBAL_PETTY_CASH_CODE) return null;
   const result = await queryDb(
     client,
     `SELECT id, code, name, branch_id
      FROM chart_of_accounts
-     WHERE branch_id = $1
-       AND is_active = true
-       AND is_header = false
-       AND code LIKE '45%'
-     ORDER BY code
+     WHERE code = $1 AND is_active = true AND is_header = false
      LIMIT 1`,
-    [branchId],
+    [code],
   );
   return result.rows[0] || null;
 }
@@ -84,7 +89,7 @@ async function ensureBranchCaixaAccount(dbOrClient, branchId, branchName) {
   }
 
   const run = async (client) => {
-    const existing = await findBranchCaixaAccount(client, branchIdStr);
+    const existing = await findBranchCaixaAccount(client, branchIdStr, name);
     if (existing) {
       return { created: false, code: existing.code, branchId: branchIdStr, branchName: name };
     }
