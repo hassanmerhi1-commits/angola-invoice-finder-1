@@ -590,10 +590,33 @@ async function copyInstallerToTemp(installerPath, version) {
   return tempPath;
 }
 
+/** Launch installer after this process exits — avoids file locks and silent /S failures. */
+function scheduleInstallerAfterQuit(installerPath, version) {
+  const safeVersion = String(version || 'update').replace(/[^\w.-]+/g, '_');
+  const launcherPath = path.join(app.getPath('temp'), `nexor-install-${safeVersion}.cmd`);
+  const escapedExe = String(installerPath).replace(/"/g, '""');
+  const lines = [
+    '@echo off',
+    'REM Wait for NEXOR ERP to release files before running the updater',
+    'ping 127.0.0.1 -n 5 >nul',
+    `start "" /wait "${escapedExe}" --updated --force-run`,
+    `if errorlevel 1 start "" "${escapedExe}" /S --updated --force-run`,
+    'del /f /q "%~f0" >nul 2>&1',
+  ];
+  fs.writeFileSync(launcherPath, `${lines.join('\r\n')}\r\n`, 'utf8');
+
+  const { spawn } = require('child_process');
+  const child = spawn('cmd.exe', ['/d', '/c', launcherPath], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.unref();
+}
+
 async function launchDownloadedInstaller(installerPath, version) {
   quittingForUpdate = true;
   quitConfirmed = true;
-  isQuittingCleanly = true;
 
   let launchPath = installerPath;
   try {
@@ -615,58 +638,13 @@ async function launchDownloadedInstaller(installerPath, version) {
     console.warn('[AutoUpdater] backend stop before install:', err?.message || err);
   }
 
-  const argSets = [
-    ['/S', '--updated', '--force-run'],
-    ['--updated', '--force-run'],
-  ];
+  scheduleInstallerAfterQuit(launchPath, version);
 
-  const trySpawn = (args) => new Promise((resolve, reject) => {
-    const { spawn } = require('child_process');
-    const child = spawn(launchPath, args, {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    child.once('error', reject);
-    child.once('spawn', () => {
-      child.unref();
-      resolve();
-    });
-  });
-
-  for (const args of argSets) {
-    try {
-      await trySpawn(args);
-      setTimeout(() => {
-        try {
-          app.exit(0);
-        } catch (_) {}
-      }, 400);
-      return;
-    } catch (err) {
-      console.warn('[AutoUpdater] spawn failed:', args.join(' '), err?.message || err);
-    }
-  }
-
-  await new Promise((resolve, reject) => {
-    const { spawn } = require('child_process');
-    const escaped = launchPath.replace(/"/g, '""');
-    const child = spawn(
-      'cmd.exe',
-      ['/d', '/c', 'start', '""', `"${escaped}"`, '/S', '--updated', '--force-run'],
-      { detached: true, stdio: 'ignore', windowsHide: true },
-    );
-    child.once('error', reject);
-    child.once('spawn', () => {
-      child.unref();
-      resolve();
-    });
-  });
   setTimeout(() => {
     try {
       app.exit(0);
     } catch (_) {}
-  }, 400);
+  }, 800);
 }
 
 function verifySha512File(filePath, expectedBase64) {
@@ -3388,7 +3366,10 @@ app.whenReady().then(async () => {
   }
 });
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('window-all-closed', () => {
+  if (quittingForUpdate) return;
+  if (process.platform !== 'darwin') app.quit();
+});
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 app.on('web-contents-created', (event, contents) => {
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -4141,8 +4122,6 @@ ipcMain.handle('updater:install', async () => {
   if (pendingHttpInstallerPath && fs.existsSync(pendingHttpInstallerPath)) {
     const meta = readPendingUpdateMeta();
     try {
-      quittingForUpdate = true;
-      quitConfirmed = true;
       await launchDownloadedInstaller(pendingHttpInstallerPath, meta?.version);
       return { success: true, source: 'http-installer' };
     } catch (err) {
@@ -4152,13 +4131,31 @@ ipcMain.handle('updater:install', async () => {
       const message = err?.message || String(err);
       console.error('[AutoUpdater] install launch failed:', message);
       sendUpdaterStatus({ status: 'error', error: message });
-      return { success: false, error: message };
+      try {
+        shell.showItemInFolder(pendingHttpInstallerPath);
+      } catch (_) {}
+      return {
+        success: false,
+        error: `${message}. The installer folder was opened — run the .exe manually if install does not start.`,
+      };
     }
   }
-  quittingForUpdate = true;
-  quitConfirmed = true;
-  autoUpdater.quitAndInstall();
-  return { success: true, source: 'electron-updater' };
+
+  if (autoUpdaterLoaded && typeof autoUpdater.quitAndInstall === 'function') {
+    quittingForUpdate = true;
+    quitConfirmed = true;
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true, source: 'electron-updater' };
+  }
+
+  const pendingDir = getUpdaterPendingDir();
+  const message = 'Update installer not found. Download the update first, or install manually from GitHub Releases.';
+  sendUpdaterStatus({ status: 'error', error: message });
+  try {
+    if (fs.existsSync(pendingDir)) shell.openPath(pendingDir);
+    else shell.openExternal(`https://github.com/${UPDATER_GITHUB_OWNER}/${UPDATER_GITHUB_REPO}/releases/latest`);
+  } catch (_) {}
+  return { success: false, error: message };
 });
 ipcMain.handle('updater:openReleasePage', () => {
   const url = `https://github.com/${UPDATER_GITHUB_OWNER}/${UPDATER_GITHUB_REPO}/releases/latest`;

@@ -362,7 +362,15 @@ const App = () => {
 
   const handleInstallUpdate = React.useCallback(() => {
     setInstallingUpdate(true);
-    void window.electronAPI?.updater?.install?.();
+    void window.electronAPI?.updater?.install?.().then((result) => {
+      if (result && !result.success) {
+        setInstallingUpdate(false);
+        toast.error(result.error || 'Could not launch installer. Run the downloaded .exe manually.');
+      }
+    }).catch(() => {
+      setInstallingUpdate(false);
+      toast.error('Could not launch installer. Run the downloaded .exe manually.');
+    });
   }, []);
 
   React.useEffect(() => {
