@@ -92,12 +92,40 @@ async function linkOrphanBranchCaixaAccounts(dbOrClient) {
 
 async function resolveByBranchId(client, branchId) {
   if (!branchId) return null;
+
+  const engine = client?.engine || getDb().engine;
+  const nameClause = engine === 'postgres'
+    ? `(coa.branch_id = $1
+        OR (
+          (coa.branch_id IS NULL OR TRIM(COALESCE(coa.branch_id, '')) = '')
+          AND (
+            coa.name ILIKE '%' || b.name || '%'
+            OR coa.name ILIKE '%' || b.code || '%'
+            OR coa.name ILIKE 'Caixa - ' || b.name
+            OR coa.name ILIKE 'Cash - ' || b.name
+          )
+        ))`
+    : `(coa.branch_id = $1
+        OR (
+          (coa.branch_id IS NULL OR TRIM(COALESCE(coa.branch_id, '')) = '')
+          AND (
+            LOWER(coa.name) LIKE '%' || LOWER(b.name) || '%'
+            OR LOWER(coa.name) LIKE '%' || LOWER(b.code) || '%'
+            OR LOWER(coa.name) LIKE 'caixa - ' || LOWER(b.name)
+            OR LOWER(coa.name) LIKE 'cash - ' || LOWER(b.name)
+          )
+        ))`;
+
   const result = await queryClient(
     client,
-    `SELECT code FROM chart_of_accounts
-     WHERE branch_id = $1 AND is_active = true AND is_header = false
-       AND code LIKE '45%' AND code != '45'
-     ORDER BY LENGTH(code) DESC, code
+    `SELECT coa.code
+     FROM chart_of_accounts coa
+     JOIN branches b ON b.id = $1
+     WHERE coa.is_active = true AND coa.is_header = false
+       AND coa.code LIKE '45%' AND coa.code NOT IN ('45', '451')
+       AND ${nameClause}
+     ORDER BY CASE WHEN coa.branch_id = $1 THEN 0 ELSE 1 END,
+              LENGTH(coa.code) DESC, coa.code
      LIMIT 1`,
     [String(branchId)],
   );
@@ -118,7 +146,7 @@ async function resolveFromSaleJournal(client, saleId) {
        AND coa.is_active = true
        AND coa.is_header = false
        AND coa.code LIKE '45%'
-       AND coa.code != '45'
+       AND coa.code NOT IN ('45', '451')
      ORDER BY jel.debit_amount DESC, LENGTH(coa.code) DESC, coa.code
      LIMIT 1`,
     [String(saleId)],
@@ -139,7 +167,7 @@ async function resolveByBranchName(client, branchName) {
     client,
     `SELECT code FROM chart_of_accounts
      WHERE is_active = true AND is_header = false
-       AND code LIKE '45%' AND code != '45'
+       AND code LIKE '45%' AND code NOT IN ('45', '451')
        AND ${nameClause}
      ORDER BY LENGTH(code) DESC, code
      LIMIT 1`,

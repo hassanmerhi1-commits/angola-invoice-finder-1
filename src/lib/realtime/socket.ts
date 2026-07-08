@@ -17,17 +17,24 @@ type TableName =
   | 'supplier_returns'
   | 'payments'
   | 'journal_entries'
-  | 'company_settings';
+  | 'company_settings'
+  | 'credit_notes'
+  | 'debit_notes'
+  | 'transport_documents'
+  | 'purchase_invoices'
+  | 'caixas'
+  | 'caixa_sessions'
+  | 'chart_of_accounts'
+  | 'proformas'
+  | 'expenses';
 
 type TableListener = (payload: { table: TableName; ts?: number; entityId?: string }) => void;
 
 class RealtimeSocket {
   private socket: Socket | null = null;
   private listeners: Map<TableName, Set<TableListener>> = new Map();
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 12;
   private isConnecting = false;
-  private useLegacyWs = false;
+  private manualReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   private async resolveApiBase(): Promise<string> {
     if (typeof window !== 'undefined' && (window as any).electronAPI?.getApiUrl) {
@@ -40,55 +47,86 @@ class RealtimeSocket {
     return getApiUrl();
   }
 
+  private clearManualReconnect() {
+    if (this.manualReconnectTimer) {
+      clearTimeout(this.manualReconnectTimer);
+      this.manualReconnectTimer = null;
+    }
+  }
+
+  private scheduleManualReconnect(delayMs = 3000) {
+    if (this.manualReconnectTimer || this.socket?.connected) return;
+    this.manualReconnectTimer = setTimeout(() => {
+      this.manualReconnectTimer = null;
+      if (!this.socket?.connected && this.listeners.size > 0) {
+        this.isConnecting = false;
+        this.connect();
+      }
+    }, delayMs);
+  }
+
   connect(): void {
     if (this.socket?.connected || this.isConnecting) return;
     this.isConnecting = true;
+    this.clearManualReconnect();
 
     void this.resolveApiBase().then((apiBase) => {
       const url = apiBase.replace(/\/$/, '');
       console.log(`[Socket.IO] Connecting to ${url}...`);
 
+      if (this.socket) {
+        this.socket.removeAllListeners();
+        this.socket.disconnect();
+        this.socket = null;
+      }
+
       this.socket = io(url, {
         transports: ['websocket', 'polling'],
         reconnection: true,
-        reconnectionAttempts: this.maxReconnectAttempts,
+        reconnectionAttempts: Infinity,
         reconnectionDelay: 2000,
+        reconnectionDelayMax: 15000,
       });
 
       this.socket.on('connect', () => {
         console.log('[Socket.IO] Connected');
-        this.reconnectAttempts = 0;
         this.isConnecting = false;
+        this.clearManualReconnect();
       });
 
-      this.socket.on('table-update', (message: { table?: TableName; ts?: number; entityId?: string }) => {
+      this.socket.on('table-update', (message: { table?: string; ts?: number; entityId?: string }) => {
         if (!message?.table) return;
-        console.log(`[Socket.IO] table-update: ${message.table}`);
-        this.notifyListeners(message.table, message);
+        const table = message.table as TableName;
+        console.log(`[Socket.IO] table-update: ${table}`);
+        this.notifyListeners(table, { ...message, table });
       });
 
       this.socket.on('disconnect', (reason) => {
         console.log('[Socket.IO] disconnected:', reason);
         this.isConnecting = false;
+        if (reason === 'io server disconnect') {
+          this.socket?.connect();
+        } else {
+          this.scheduleManualReconnect();
+        }
       });
 
       this.socket.on('connect_error', (err) => {
         console.warn('[Socket.IO] connect_error:', err.message);
         this.isConnecting = false;
-        if (!this.useLegacyWs) {
-          this.reconnectAttempts += 1;
-        }
+        this.scheduleManualReconnect(5000);
       });
     });
   }
 
   disconnect(): void {
+    this.clearManualReconnect();
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
     }
     this.listeners.clear();
-    this.reconnectAttempts = this.maxReconnectAttempts;
+    this.isConnecting = false;
   }
 
   subscribe(table: TableName, listener: TableListener): () => void {
@@ -104,6 +142,17 @@ class RealtimeSocket {
         if (set.size === 0) this.listeners.delete(table);
       }
     };
+  }
+
+  /** Force a new connection (e.g. after server URL change). */
+  reconnect(): void {
+    this.clearManualReconnect();
+    if (this.socket) {
+      this.socket.disconnect();
+      this.socket = null;
+    }
+    this.isConnecting = false;
+    this.connect();
   }
 
   private notifyListeners(table: TableName, payload: { table: TableName; ts?: number; entityId?: string }) {

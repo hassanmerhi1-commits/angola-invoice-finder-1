@@ -12,6 +12,7 @@ import { isDemoMode, isThinClientMode } from '@/lib/api/config';
 import { isOfflineModeActive } from '@/lib/offlineAuth';
 import { lanCatalogScopeKey, readLanProducts, readLanSuppliers, saveLanProducts, saveLanSuppliers } from '@/lib/lanCatalogCache';
 import { getCachedList, setCachedList } from '@/lib/listCache';
+import { TABLE_REFRESH_EVENT } from '@/lib/realtime/tableRefreshBridge';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
 import { normalizeTaxRate } from '@/lib/taxUtils';
@@ -1198,6 +1199,15 @@ export function useDailyReports(branchId?: string) {
 
   useEffect(() => { refreshReports(); }, [refreshReports]);
 
+  useEffect(() => {
+    const onRefresh = (event: Event) => {
+      const table = (event as CustomEvent<{ table?: string }>).detail?.table;
+      if (table === 'daily_reports') void refreshReports();
+    };
+    window.addEventListener(TABLE_REFRESH_EVENT, onRefresh);
+    return () => window.removeEventListener(TABLE_REFRESH_EVENT, onRefresh);
+  }, [refreshReports]);
+
   const generateReport = useCallback(async (branchId: string, date: string): Promise<DailySummary> => {
     const apiResult = await api.dailyReports.generate(branchId, date);
     if (apiResult.data) {
@@ -1680,6 +1690,15 @@ export function usePurchaseOrders(branchId?: string) {
 
   useEffect(() => { refreshOrders(); }, [refreshOrders]);
 
+  useEffect(() => {
+    const onRefresh = (event: Event) => {
+      const table = (event as CustomEvent<{ table?: string }>).detail?.table;
+      if (table === 'purchase_orders') void refreshOrders();
+    };
+    window.addEventListener(TABLE_REFRESH_EVENT, onRefresh);
+    return () => window.removeEventListener(TABLE_REFRESH_EVENT, onRefresh);
+  }, [refreshOrders]);
+
   const createOrder = useCallback(async (
     supplierId: string, branchId: string, items: PurchaseOrderItem[],
     createdBy: string, notes?: string, expectedDeliveryDate?: string,
@@ -1778,6 +1797,15 @@ export function useCategories() {
   }, []);
 
   useEffect(() => { refreshCategories(); }, [refreshCategories]);
+
+  useEffect(() => {
+    const onRefresh = (event: Event) => {
+      const table = (event as CustomEvent<{ table?: string }>).detail?.table;
+      if (table === 'categories') void refreshCategories();
+    };
+    window.addEventListener(TABLE_REFRESH_EVENT, onRefresh);
+    return () => window.removeEventListener(TABLE_REFRESH_EVENT, onRefresh);
+  }, [refreshCategories]);
 
   const saveCategory = useCallback(async (category: Category) => {
     const result = await api.categories.update(category.id, category);

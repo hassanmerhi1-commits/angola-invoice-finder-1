@@ -140,6 +140,12 @@ export default function Expenses() {
     loadData();
   }, [apiBranchId]);
 
+  useEffect(() => {
+    const onRefresh = () => { void loadData(); };
+    window.addEventListener('nexor:expenses-changed', onRefresh);
+    return () => window.removeEventListener('nexor:expenses-changed', onRefresh);
+  }, [apiBranchId, currentBranch?.id, currentBranch?.name]);
+
   const filteredExpenses = useMemo(() => {
     return expenses.filter(exp => {
       const matchesSearch = exp.description.toLowerCase().includes(searchTerm.toLowerCase()) ||

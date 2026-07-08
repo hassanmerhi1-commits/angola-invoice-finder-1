@@ -69,6 +69,12 @@ export function useCreditNotes(branchId?: string) {
     void refreshCreditNotes();
   }, [refreshCreditNotes]);
 
+  useEffect(() => {
+    const onChanged = () => { void refreshCreditNotes(); };
+    window.addEventListener(CREDIT_NOTES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(CREDIT_NOTES_CHANGED_EVENT, onChanged);
+  }, [refreshCreditNotes]);
+
   const createCreditNote = useCallback(async (
     branchIdParam: string,
     branchCode: string,

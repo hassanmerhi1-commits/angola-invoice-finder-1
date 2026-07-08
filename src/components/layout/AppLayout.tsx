@@ -15,7 +15,7 @@ import { AppInteractionProvider } from '@/components/interaction/AppInteractionP
 import { DailyTodoDialog } from '@/components/daily/DailyTodoDialog';
 import { ensureDayTodos, shouldShowDailyTodoDialog, todayKey } from '@/lib/dailyTodos';
 import { hydrateCompanySettingsFromServer } from '@/lib/companySettings';
-import { onTableSync } from '@/lib/realtime/socket';
+import { useRealtimeSyncBridge } from '@/hooks/useRealtimeSyncBridge';
 
 function resolveAppPathname(pathname: string): string {
   const p = pathname.replace(/\/$/, '') || '/';
@@ -39,15 +39,13 @@ export function AppLayout() {
     }
   }, [user]);
 
+  useRealtimeSyncBridge(!!user);
+
   // Keep the shared company profile (name, NIF, address, logo, ...) in sync with the
   // server: hydrate once after login, then refetch whenever any terminal updates it.
   useEffect(() => {
     if (!user) return;
     void hydrateCompanySettingsFromServer();
-    const unsubscribe = onTableSync('company_settings', () => {
-      void hydrateCompanySettingsFromServer();
-    });
-    return unsubscribe;
   }, [user]);
 
   useEffect(() => {

@@ -579,11 +579,41 @@ function unblockWindowsDownload(filePath) {
   }
 }
 
+async function copyInstallerToTemp(installerPath, version) {
+  const safeVersion = String(version || 'update').replace(/[^\w.-]+/g, '_');
+  const tempPath = path.join(app.getPath('temp'), `NEXOR-ERP-${safeVersion}-x64.exe`);
+  try {
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+  } catch (_) {}
+  await fs.promises.copyFile(installerPath, tempPath);
+  unblockWindowsDownload(tempPath);
+  return tempPath;
+}
+
 async function launchDownloadedInstaller(installerPath, version) {
-  unblockWindowsDownload(installerPath);
+  quittingForUpdate = true;
+  quitConfirmed = true;
+  isQuittingCleanly = true;
+
+  let launchPath = installerPath;
+  try {
+    launchPath = await copyInstallerToTemp(installerPath, version);
+  } catch (err) {
+    console.warn('[AutoUpdater] temp copy failed, using pending path:', err?.message || err);
+    unblockWindowsDownload(installerPath);
+  }
+
   showInstallProgressWindow(version);
   sendUpdaterStatus({ status: 'installing', version });
   hideMainWindowForInstall();
+
+  try {
+    if (backendManager.getStatus().running) {
+      await backendManager.stop();
+    }
+  } catch (err) {
+    console.warn('[AutoUpdater] backend stop before install:', err?.message || err);
+  }
 
   const argSets = [
     ['/S', '--updated', '--force-run'],
@@ -592,7 +622,7 @@ async function launchDownloadedInstaller(installerPath, version) {
 
   const trySpawn = (args) => new Promise((resolve, reject) => {
     const { spawn } = require('child_process');
-    const child = spawn(installerPath, args, {
+    const child = spawn(launchPath, args, {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
@@ -609,9 +639,9 @@ async function launchDownloadedInstaller(installerPath, version) {
       await trySpawn(args);
       setTimeout(() => {
         try {
-          app.quit();
+          app.exit(0);
         } catch (_) {}
-      }, 2000);
+      }, 400);
       return;
     } catch (err) {
       console.warn('[AutoUpdater] spawn failed:', args.join(' '), err?.message || err);
@@ -619,18 +649,24 @@ async function launchDownloadedInstaller(installerPath, version) {
   }
 
   await new Promise((resolve, reject) => {
-    const { exec } = require('child_process');
-    const escaped = installerPath.replace(/"/g, '\\"');
-    exec(`cmd.exe /c start "" "${escaped}" /S --updated --force-run`, { windowsHide: true }, (err) => {
-      if (err) reject(err);
-      else resolve();
+    const { spawn } = require('child_process');
+    const escaped = launchPath.replace(/"/g, '""');
+    const child = spawn(
+      'cmd.exe',
+      ['/d', '/c', 'start', '""', `"${escaped}"`, '/S', '--updated', '--force-run'],
+      { detached: true, stdio: 'ignore', windowsHide: true },
+    );
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolve();
     });
   });
   setTimeout(() => {
     try {
-      app.quit();
+      app.exit(0);
     } catch (_) {}
-  }, 2000);
+  }, 400);
 }
 
 function verifySha512File(filePath, expectedBase64) {
@@ -1791,6 +1827,15 @@ async function dbInsert(table, data, companyId = null) {
           broadcastUpdate(table, 'insert', r.json.id, companyId);
         } catch (_) {}
         return { success: true, data: r.json };
+      }
+      const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
+      return { success: false, error: errMsg };
+    }
+    if (table === 'expenses' && data) {
+      const r = await requestExpressJson('POST', '/api/expenses', data);
+      if (r && r.status >= 200 && r.status < 300 && r.json?.data) {
+        try { broadcastUpdate(table, 'insert', r.json.data.id, companyId); } catch (_) {}
+        return { success: true, data: r.json.data };
       }
       const errMsg = r?.json?.error || (r ? `HTTP ${r.status}` : embeddedExpressUnreachableMessage());
       return { success: false, error: errMsg };
@@ -3063,6 +3108,8 @@ function openPurchaseProductPickerWindow(parentWindow) {
 
 /** User confirmed exit — skip on second close / before-quit pass. */
 let quitConfirmed = false;
+/** Silent quit for in-app update install (must not show the exit confirmation dialog). */
+let quittingForUpdate = false;
 
 /** Mirrors renderer `kwanza_language` (en | pt) for native Electron dialogs. */
 let cachedUiLanguage = 'pt';
@@ -3371,7 +3418,7 @@ ipcMain.handle('backend:openLogDir', async () => {
 // Cleanup on quit — stop backend gracefully BEFORE killing WS / pool.
 let isQuittingCleanly = false;
 app.on('before-quit', async (event) => {
-  if (!quitConfirmed) {
+  if (!quitConfirmed && !quittingForUpdate) {
     event.preventDefault();
     requestAppExit();
     return;
@@ -4094,15 +4141,22 @@ ipcMain.handle('updater:install', async () => {
   if (pendingHttpInstallerPath && fs.existsSync(pendingHttpInstallerPath)) {
     const meta = readPendingUpdateMeta();
     try {
+      quittingForUpdate = true;
+      quitConfirmed = true;
       await launchDownloadedInstaller(pendingHttpInstallerPath, meta?.version);
       return { success: true, source: 'http-installer' };
     } catch (err) {
+      quittingForUpdate = false;
+      quitConfirmed = false;
+      isQuittingCleanly = false;
       const message = err?.message || String(err);
       console.error('[AutoUpdater] install launch failed:', message);
       sendUpdaterStatus({ status: 'error', error: message });
       return { success: false, error: message };
     }
   }
+  quittingForUpdate = true;
+  quitConfirmed = true;
   autoUpdater.quitAndInstall();
   return { success: true, source: 'electron-updater' };
 });

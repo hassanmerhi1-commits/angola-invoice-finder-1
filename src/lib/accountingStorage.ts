@@ -17,7 +17,7 @@ import {
 } from '@/types/accounting';
 import { format } from 'date-fns';
 import { isElectronMode, dbGetAll, dbInsert, dbUpdate, dbDelete, lsGet, lsSet } from '@/lib/dbHelper';
-import { api, ensureBackendAuthToken } from '@/lib/api/client';
+import { api, ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
 
 // Angola PGC expense accounts (class 7 = Custos). Used to book cash/bank expenses to the GL.
 const EXPENSE_GL_ACCOUNTS: Record<ExpenseCategory, string> = {
@@ -535,9 +535,52 @@ export async function createBankAccount(
   return account;
 }
 
+function expenseToApiPayload(expense: Expense): Record<string, unknown> {
+  return {
+    id: expense.id,
+    expenseNumber: expense.expenseNumber,
+    branchId: expense.branchId,
+    branchName: expense.branchName,
+    category: expense.category,
+    description: expense.description,
+    amount: expense.amount,
+    taxAmount: expense.taxAmount,
+    totalAmount: expense.totalAmount,
+    paymentSource: expense.paymentSource,
+    caixaId: expense.caixaId,
+    bankAccountId: expense.bankAccountId,
+    payeeName: expense.payeeName,
+    invoiceNumber: expense.invoiceNumber,
+    status: expense.status,
+    requestedBy: expense.requestedBy,
+    requestedAt: expense.requestedAt,
+    approvedBy: expense.approvedBy,
+    approvedAt: expense.approvedAt,
+    paidBy: expense.paidBy,
+    paidAt: expense.paidAt,
+    transactionId: expense.transactionId,
+    notes: expense.notes,
+  };
+}
+
+async function canUseServerExpensesApi(): Promise<boolean> {
+  const ensured = await ensureBackendAuthToken();
+  return isJwtAuthToken(ensured);
+}
+
 // ==================== EXPENSE FUNCTIONS ====================
 
 export async function getExpenses(branchId?: string): Promise<Expense[]> {
+  if (await canUseServerExpensesApi()) {
+    try {
+      const res = await api.expenses.list(branchId);
+      if (res.data && Array.isArray(res.data)) {
+        return res.data.map((row: any) => mapExpenseFromDb(row));
+      }
+    } catch (e) {
+      console.warn('[expenses] server list failed:', e);
+    }
+  }
   if (isElectronMode()) {
     const rows = await dbGetAll<any>('expenses');
     let expenses = rows.map(mapExpenseFromDb);
@@ -561,6 +604,14 @@ export function generateExpenseNumber(branchCode: string): string {
 }
 
 export async function saveExpense(expense: Expense): Promise<void> {
+  if (await canUseServerExpensesApi()) {
+    const res = await api.expenses.save(expenseToApiPayload(expense));
+    if (!res.error && res.data) return;
+    if (res.error) {
+      console.warn('[expenses] server save failed:', res.error);
+      throw new Error(res.error);
+    }
+  }
   if (isElectronMode()) {
     await dbInsert('expenses', mapExpenseToDb(expense));
     return;
@@ -628,6 +679,18 @@ export async function payExpense(
   expense.paidBy = paidBy;
   expense.paidAt = new Date().toISOString();
   let glError: string | undefined;
+
+  if (await canUseServerExpensesApi()) {
+    await saveExpense(expense);
+    const payRes = await api.expenses.pay(expenseId, paidBy);
+    if (payRes.error) {
+      throw new Error(payRes.error);
+    }
+    glError = payRes.data?.glError;
+    if (payRes.data) {
+      Object.assign(expense, mapExpenseFromDb(payRes.data));
+    }
+  }
   
   if (createTransaction) {
     if (expense.paymentSource === 'caixa' && expense.caixaId) {
@@ -650,18 +713,19 @@ export async function payExpense(
       if (openSession) {
         await updateCaixaSessionTotals(openSession.id, expense.totalAmount, 'expense');
       }
-      // GL: Dr expense account, Cr branch caixa — so the branch cash account reflects the payout.
-      const glResult = await postCaixaGlEntry({
-        branchId: expense.branchId,
-        amount: expense.totalAmount,
-        direction: 'out',
-        counterAccountCode: expenseGlAccount(expense.category),
-        description: `Despesa: ${expense.description}`,
-        referenceType: 'expense',
-        referenceId: expense.id,
-        createdBy: paidBy,
-      });
-      if (!glResult.ok) glError = glResult.error;
+      if (!(await canUseServerExpensesApi())) {
+        const glResult = await postCaixaGlEntry({
+          branchId: expense.branchId,
+          amount: expense.totalAmount,
+          direction: 'out',
+          counterAccountCode: expenseGlAccount(expense.category),
+          description: `Despesa: ${expense.description}`,
+          referenceType: 'expense',
+          referenceId: expense.id,
+          createdBy: paidBy,
+        });
+        if (!glResult.ok) glError = glResult.error;
+      }
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('nexor:pos-caixa-expense', {

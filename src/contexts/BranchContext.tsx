@@ -13,6 +13,7 @@ import {
   resolveStoredBranchScopeId,
   resolveEffectiveUserBranch,
 } from '@/lib/branchAccess';
+import { TABLE_REFRESH_EVENT } from '@/lib/realtime/tableRefreshBridge';
 
 interface BranchContextType {
   branches: Branch[];
@@ -112,6 +113,15 @@ export function BranchProvider({ children }: { children: ReactNode }) {
   }, [applyBranchList]);
 
   useEffect(() => { loadBranches(); }, [loadBranches]);
+
+  useEffect(() => {
+    const onRefresh = (event: Event) => {
+      const table = (event as CustomEvent<{ table?: string }>).detail?.table;
+      if (table === 'branches') void loadBranches();
+    };
+    window.addEventListener(TABLE_REFRESH_EVENT, onRefresh);
+    return () => window.removeEventListener(TABLE_REFRESH_EVENT, onRefresh);
+  }, [loadBranches]);
 
   useEffect(() => {
     const onLockChanged = () => {

@@ -1268,6 +1268,20 @@ export const api = {
       apiFetch<any>('/caixa/gl/post', { method: 'POST', body: JSON.stringify(body) }),
   },
 
+  expenses: {
+    list: (branchId?: string) => {
+      const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/expenses${q}`);
+    },
+    save: (expense: Record<string, unknown>) =>
+      apiFetch<any>('/expenses', { method: 'POST', body: JSON.stringify(expense) }),
+    pay: (id: string, paidBy: string) =>
+      apiFetch<any>(`/expenses/${encodeURIComponent(id)}/pay`, {
+        method: 'POST',
+        body: JSON.stringify({ paidBy }),
+      }),
+  },
+
   // Daily Reports — always via HTTP API (aggregates sales on the server)
   dailyReports: {
     list: (branchId?: string) => {

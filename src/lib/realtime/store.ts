@@ -22,7 +22,6 @@ export function useRealtimeStatus() {
     }, 2000);
     return () => {
       window.clearInterval(id);
-      realtimeSocket.disconnect();
     };
   }, []);
 
