@@ -47,6 +47,8 @@ const MIGRATION_FILES = [
   '040_users_username.sql',
   '041_user_sessions_security.sql',
   '042_simplified_invoice_fs.sql',
+  '043_stock_transfer_items_created_at.sql',
+  '044_import_orders.sql',
   '045_pgc_novo_com_iva.sql',
   '046_client_pricing.sql',
   '047_user_permissions.sql',
@@ -54,6 +56,8 @@ const MIGRATION_FILES = [
   '049_branches_price_level.sql',
   '050_credit_note_caixa_gl_fix.sql',
   '051_credit_note_caixa_gl_repair_js.sql',
+  '052_branch_caixa_resolver.sql',
+  '053_expenses_table.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */
