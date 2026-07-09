@@ -1220,6 +1220,12 @@ export const api = {
   },
 
   caixa: {
+    listRegisters: (branchId?: string) => {
+      const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/caixa/registers${q}`);
+    },
+    ensureRegister: (body: { branchId: string; branchName?: string }) =>
+      apiFetch<any>('/caixa/registers/ensure', { method: 'POST', body: JSON.stringify(body) }),
     reconciliation: (params: {
       branchId: string;
       date: string;

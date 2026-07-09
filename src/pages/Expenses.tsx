@@ -157,7 +157,16 @@ export default function Expenses() {
     });
   }, [expenses, searchTerm, statusFilter, categoryFilter]);
 
-  const handleOpenDialog = (expense?: Expense) => {
+  const handleOpenDialog = async (expense?: Expense) => {
+    let caixaOptions = caixas;
+    let bankOptions = bankAccounts;
+    if (!expense && currentBranch?.id) {
+      await ensureBranchCaixa(currentBranch.id, currentBranch.name || t.branchUi.headOffice);
+      caixaOptions = await getCaixas(apiBranchId);
+      bankOptions = await getBankAccounts(apiBranchId);
+      setCaixas(caixaOptions);
+      setBankAccounts(bankOptions);
+    }
     if (expense) {
       setEditingId(expense.id);
       setFormData({
@@ -177,8 +186,8 @@ export default function Expenses() {
       setEditingId(null);
       setFormData({
         ...initialFormData,
-        caixaId: caixas[0]?.id || '',
-        bankAccountId: bankAccounts[0]?.id || '',
+        caixaId: caixaOptions[0]?.id || '',
+        bankAccountId: bankOptions[0]?.id || '',
       });
     }
     setIsDialogOpen(true);
@@ -294,7 +303,7 @@ export default function Expenses() {
             {t.expensesUi.subtitle.replace('{branch}', String(currentBranch?.name || t.expensesUi.allBranches))}
           </p>
         </div>
-        <Button onClick={() => handleOpenDialog()} className="gap-2">
+        <Button onClick={() => void handleOpenDialog()} className="gap-2">
           <Plus className="w-4 h-4" />
           {t.expensesUi.newExpense}
         </Button>

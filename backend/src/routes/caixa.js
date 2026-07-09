@@ -43,8 +43,96 @@ function mapSessionRow(row) {
   };
 }
 
+function mapCaixaRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    branchId: row.branch_id,
+    branchName: row.branch_name || '',
+    name: row.name || '',
+    openingBalance: Number(row.opening_balance) || 0,
+    currentBalance: Number(row.current_balance ?? row.closing_balance ?? 0),
+    status: row.status || 'closed',
+    pettyLimit: row.petty_limit != null ? Number(row.petty_limit) : undefined,
+    dailyLimit: row.daily_limit != null ? Number(row.daily_limit) : undefined,
+    requiresApproval: !!row.requires_approval,
+    openedBy: row.opened_by,
+    openedAt: row.opened_at,
+    closedBy: row.closed_by,
+    closedAt: row.closed_at,
+    closingBalance: row.closing_balance != null ? Number(row.closing_balance) : undefined,
+    closingNotes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 module.exports = function caixaRouter(broadcastTable) {
   const router = express.Router();
+
+  /** List cash registers (caixas) — used by LAN clients for expenses/POS dropdowns. */
+  router.get('/registers', async (req, res) => {
+    try {
+      if (!(await caixaTablesExist())) {
+        return res.json({ data: [] });
+      }
+      const branchId = String(req.query.branchId || '').trim();
+      const params = [];
+      let sql = 'SELECT * FROM caixas';
+      if (branchId) {
+        sql += ' WHERE branch_id = $1';
+        params.push(branchId);
+      }
+      const orderBy = db.engine === 'postgres'
+        ? 'updated_at DESC NULLS LAST, created_at DESC'
+        : 'updated_at DESC, created_at DESC';
+      sql += ` ORDER BY ${orderBy}`;
+      const result = await db.query(sql, params);
+      res.json({ data: (result.rows || []).map(mapCaixaRow).filter(Boolean) });
+    } catch (error) {
+      console.error('[CAIXA] registers list:', error);
+      res.status(500).json({ error: error.message || 'Failed to list caixas' });
+    }
+  });
+
+  /** Create a default caixa for a branch when none exists (expenses form). */
+  router.post('/registers/ensure', async (req, res) => {
+    try {
+      if (!(await caixaTablesExist())) {
+        return res.status(503).json({ error: 'Caixa tables not available on server' });
+      }
+      const branchId = String(req.body?.branchId || '').trim();
+      const branchName = String(req.body?.branchName || '').trim();
+      if (!branchId) return res.status(400).json({ error: 'branchId required' });
+
+      const existing = await db.query(
+        db.engine === 'postgres'
+          ? 'SELECT * FROM caixas WHERE branch_id = $1 ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1'
+          : 'SELECT * FROM caixas WHERE branch_id = $1 ORDER BY updated_at DESC, created_at DESC LIMIT 1',
+        [branchId],
+      );
+      if (existing.rows[0]) {
+        return res.json({ data: mapCaixaRow(existing.rows[0]) });
+      }
+
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const name = `Caixa Principal - ${branchName || branchId}`;
+      await db.query(
+        `INSERT INTO caixas (
+          id, branch_id, branch_name, name, opening_balance, current_balance,
+          status, requires_approval, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,0,0,'closed',false,$5,$5)`,
+        [id, branchId, branchName || '', name, now],
+      );
+      const row = await db.query('SELECT * FROM caixas WHERE id = $1', [id]);
+      if (broadcastTable) await broadcastTable('caixas');
+      res.status(201).json({ data: mapCaixaRow(row.rows[0]) });
+    } catch (error) {
+      console.error('[CAIXA] registers ensure:', error);
+      res.status(500).json({ error: error.message || 'Failed to ensure caixa' });
+    }
+  });
 
   router.get('/reconciliation', async (req, res) => {
     try {

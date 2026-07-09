@@ -65,6 +65,7 @@ export function CheckoutDialog({
   const [supervisorPassword, setSupervisorPassword] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const saleInFlightRef = useRef(false);
   const checkoutRequestIdRef = useRef<string | null>(null);
 
@@ -91,6 +92,7 @@ export function CheckoutDialog({
       setSupervisorPassword('');
       setVerifying(false);
       setSubmitting(false);
+      setSubmitError(null);
     }
   }, [open, total, defaultCustomerNif, defaultCustomerName]);
 
@@ -173,6 +175,7 @@ export function CheckoutDialog({
     if (saleInFlightRef.current || submitting) return;
     saleInFlightRef.current = true;
     setSubmitting(true);
+    setSubmitError(null);
     try {
       await onCompleteSale(
         paymentMethod,
@@ -183,6 +186,10 @@ export function CheckoutDialog({
         paymentMethod === 'credit' ? registeredClientId : undefined,
         checkoutRequestIdRef.current || undefined,
       );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSubmitError(msg);
+      throw err;
     } finally {
       saleInFlightRef.current = false;
       setSubmitting(false);
@@ -420,11 +427,16 @@ export function CheckoutDialog({
           </div>
         </div>
 
-        <div className="shrink-0 border-t bg-background px-6 py-4">
+        <div className="shrink-0 border-t bg-background px-6 py-4 space-y-3">
+          {submitError && (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {submitError}
+            </div>
+          )}
           <Button
             className="h-14 w-full text-lg"
             size="lg"
-            onClick={() => void handleComplete()}
+            onClick={() => void handleComplete().catch(() => undefined)}
             disabled={!isValid || submitting}
             aria-busy={submitting}
           >

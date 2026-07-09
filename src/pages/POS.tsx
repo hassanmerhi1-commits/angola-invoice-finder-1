@@ -484,7 +484,13 @@ export default function POS() {
     clientId?: string,
     clientRequestId?: string,
   ) => {
-    if (!currentBranch || !user) return;
+    if (!currentBranch || !user) {
+      throw new Error(
+        !user
+          ? t.posUi.checkoutSessionExpired
+          : t.posUi.checkoutBranchMissing,
+      );
+    }
     if (completingSaleRef.current) return;
     completingSaleRef.current = true;
     setCompletingSale(true);
@@ -613,9 +619,13 @@ export default function POS() {
     } catch (error) {
       console.error('Failed to complete sale:', error);
       const detail = error instanceof Error ? error.message : String(error);
-      const friendly = /stock insuficiente|chk_products_stock_nonneg/i.test(detail)
-        ? t.documentsUi.insufficientStockToCompleteSaleInvoice
-        : detail;
+      const friendly = /authentication required|não autenticad|unauthorized|401/i.test(detail)
+        ? t.posUi.checkoutAuthRequired
+        : /stock insuficiente|chk_products_stock_nonneg/i.test(detail)
+          ? t.documentsUi.insufficientStockToCompleteSaleInvoice
+          : /failed to fetch|timeout|econnrefused|network/i.test(detail)
+            ? t.posUi.checkoutNetworkError
+            : detail;
       recordShiftIssue({ kind: 'checkout', message: friendly });
       toast.error(t.posUi.completeSaleError, { description: friendly });
     } finally {

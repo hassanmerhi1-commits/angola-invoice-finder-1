@@ -90,6 +90,16 @@ const STORAGE_KEYS = {
 // ==================== CAIXA FUNCTIONS ====================
 
 export async function getCaixas(branchId?: string): Promise<Caixa[]> {
+  if (await canUseServerExpensesApi()) {
+    try {
+      const res = await api.caixa.listRegisters(branchId);
+      if (!res.error && res.data) {
+        return unwrapApiList<any>(res.data).map((row) => mapCaixaFromDb(row));
+      }
+    } catch (e) {
+      console.warn('[caixas] server list failed:', e);
+    }
+  }
   if (isElectronMode()) {
     const rows = await dbGetAll<any>('caixas');
     let caixas = rows.map(mapCaixaFromDb);
@@ -159,6 +169,15 @@ export async function ensureBranchCaixa(branchId: string, branchName: string): P
   const existing = await getCaixas(branchId);
   if (existing.length > 0) {
     return existing[0];
+  }
+  if (await canUseServerExpensesApi()) {
+    try {
+      const res = await api.caixa.ensureRegister({ branchId, branchName });
+      const row = res.data ? unwrapApiItem<any>(res.data) : null;
+      if (row) return mapCaixaFromDb(row);
+    } catch (e) {
+      console.warn('[caixas] server ensure failed:', e);
+    }
   }
   return createCaixa(branchId, branchName, `Caixa Principal - ${branchName}`, 0);
 }
@@ -568,14 +587,31 @@ async function canUseServerExpensesApi(): Promise<boolean> {
   return isJwtAuthToken(ensured);
 }
 
+/** Unwrap `{ data: T }` API envelopes from Express routes. */
+function unwrapApiList<T>(payload: unknown): T[] {
+  if (Array.isArray(payload)) return payload as T[];
+  if (payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data)) {
+    return (payload as { data: T[] }).data;
+  }
+  return [];
+}
+
+function unwrapApiItem<T>(payload: unknown): T | null {
+  if (!payload || typeof payload !== 'object') return null;
+  if ('data' in payload && (payload as { data?: T }).data != null) {
+    return (payload as { data: T }).data;
+  }
+  return payload as T;
+}
+
 // ==================== EXPENSE FUNCTIONS ====================
 
 export async function getExpenses(branchId?: string): Promise<Expense[]> {
   if (await canUseServerExpensesApi()) {
     try {
       const res = await api.expenses.list(branchId);
-      if (res.data && Array.isArray(res.data)) {
-        return res.data.map((row: any) => mapExpenseFromDb(row));
+      if (!res.error && res.data) {
+        return unwrapApiList<any>(res.data).map((row) => mapExpenseFromDb(row));
       }
     } catch (e) {
       console.warn('[expenses] server list failed:', e);
@@ -1071,18 +1107,24 @@ export async function initializeBranchAccounting(branchId: string, branchName: s
 
 function mapCaixaFromDb(row: any): Caixa {
   return {
-    id: row.id, branchId: row.branch_id || '', branchName: row.branch_name || '',
-    name: row.name || '', openingBalance: Number(row.opening_balance || 0),
-    currentBalance: Number(row.current_balance ?? row.closing_balance ?? 0),
+    id: row.id,
+    branchId: row.branch_id || row.branchId || '',
+    branchName: row.branch_name || row.branchName || '',
+    name: row.name || '',
+    openingBalance: Number(row.opening_balance ?? row.openingBalance ?? 0),
+    currentBalance: Number(row.current_balance ?? row.currentBalance ?? row.closing_balance ?? row.closingBalance ?? 0),
     status: row.status || 'closed',
-    pettyLimit: row.petty_limit ? Number(row.petty_limit) : undefined,
-    dailyLimit: row.daily_limit ? Number(row.daily_limit) : undefined,
-    requiresApproval: !!row.requires_approval,
-    openedBy: row.opened_by, openedAt: row.opened_at,
-    closedBy: row.closed_by, closedAt: row.closed_at,
-    closingBalance: row.closing_balance ? Number(row.closing_balance) : undefined,
-    closingNotes: row.notes, createdAt: row.created_at || '',
-    updatedAt: row.updated_at,
+    pettyLimit: row.petty_limit != null ? Number(row.petty_limit) : row.pettyLimit != null ? Number(row.pettyLimit) : undefined,
+    dailyLimit: row.daily_limit != null ? Number(row.daily_limit) : row.dailyLimit != null ? Number(row.dailyLimit) : undefined,
+    requiresApproval: !!(row.requires_approval ?? row.requiresApproval),
+    openedBy: row.opened_by || row.openedBy,
+    openedAt: row.opened_at || row.openedAt,
+    closedBy: row.closed_by || row.closedBy,
+    closedAt: row.closed_at || row.closedAt,
+    closingBalance: row.closing_balance != null ? Number(row.closing_balance) : row.closingBalance != null ? Number(row.closingBalance) : undefined,
+    closingNotes: row.notes || row.closingNotes,
+    createdAt: row.created_at || row.createdAt || '',
+    updatedAt: row.updated_at || row.updatedAt,
   };
 }
 
@@ -1156,20 +1198,31 @@ function mapBankAccountToDb(account: BankAccount): any {
 
 function mapExpenseFromDb(row: any): Expense {
   return {
-    id: row.id, expenseNumber: row.expense_number || '',
-    branchId: row.branch_id || '', branchName: row.branch_name || '',
-    category: row.category || 'other', description: row.description || '',
-    amount: Number(row.amount || 0), taxAmount: Number(row.tax_amount || 0),
-    totalAmount: Number(row.total_amount || row.amount || 0),
-    paymentSource: row.payment_source || row.payment_method || 'caixa',
-    caixaId: row.caixa_id, bankAccountId: row.bank_account_id,
-    payeeName: row.payee_name, invoiceNumber: row.invoice_number,
+    id: row.id,
+    expenseNumber: row.expense_number || row.expenseNumber || '',
+    branchId: row.branch_id || row.branchId || '',
+    branchName: row.branch_name || row.branchName || '',
+    category: row.category || 'other',
+    description: row.description || '',
+    amount: Number(row.amount || 0),
+    taxAmount: Number(row.tax_amount ?? row.taxAmount ?? 0),
+    totalAmount: Number(row.total_amount ?? row.totalAmount ?? row.amount ?? 0),
+    paymentSource: row.payment_source || row.paymentSource || row.payment_method || 'caixa',
+    caixaId: row.caixa_id || row.caixaId,
+    bankAccountId: row.bank_account_id || row.bankAccountId,
+    payeeName: row.payee_name || row.payeeName,
+    invoiceNumber: row.invoice_number || row.invoiceNumber,
     status: row.status || 'draft',
-    requestedBy: row.created_by || '', requestedAt: row.created_at || '',
-    approvedBy: row.approved_by, approvedAt: row.approved_at,
-    paidBy: row.paid_by, paidAt: row.paid_at,
-    transactionId: row.transaction_id,
-    notes: row.notes, createdAt: row.created_at || '', updatedAt: row.updated_at,
+    requestedBy: row.created_by || row.requestedBy || '',
+    requestedAt: row.created_at || row.requestedAt || '',
+    approvedBy: row.approved_by || row.approvedBy,
+    approvedAt: row.approved_at || row.approvedAt,
+    paidBy: row.paid_by || row.paidBy,
+    paidAt: row.paid_at || row.paidAt,
+    transactionId: row.transaction_id || row.transactionId,
+    notes: row.notes,
+    createdAt: row.created_at || row.createdAt || '',
+    updatedAt: row.updated_at || row.updatedAt,
   };
 }
 
