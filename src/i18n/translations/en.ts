@@ -1853,6 +1853,12 @@ export const en = {
     reasonCorrection: "Correction",
     reasonLoss: "Loss / expiry",
     openFromInventory: "Adjustment history",
+    editTitle: "Edit stock adjustment",
+    editNeedsLines: "Add at least one line with quantity greater than zero.",
+    editSuccess: "Adjustment updated as {ref}. The previous document was voided and stock/journal reversed.",
+    deleteTitle: "Delete adjustment?",
+    deleteDescription: "This will reverse stock and accounting for {ref}. The original document stays in the audit trail as voided.",
+    deleteSuccess: "Adjustment {ref} deleted (reversed).",
   },
   stockValuationUi: {
     title: "Stock valuation",

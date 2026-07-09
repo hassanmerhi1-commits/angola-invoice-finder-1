@@ -16,6 +16,8 @@ const {
   validatePeriod,
   auditLog,
   processStockAdjustment,
+  voidStockAdjustment,
+  replaceStockAdjustment,
   applyPurchaseSupplierToProducts,
 } = require('../transactionEngine');
 const { attachUserBranchScope, resolveWarehouseId } = require('../middleware/branchScope');
@@ -270,6 +272,73 @@ module.exports = function(broadcastTable) {
         msg.includes('obrigatório') ||
         msg.includes('inválido') ||
         msg.includes('Período')
+          ? 400
+          : 500;
+      res.status(status).json({ error: msg });
+    } finally {
+      client.release();
+    }
+  });
+
+  /** Void (delete) a stock adjustment document — reverses stock and journal. */
+  router.delete('/stock-adjustment/:documentId', async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await voidStockAdjustment(client, {
+        documentId: req.params.documentId,
+        voidedBy: req.body?.createdBy ?? req.body?.voidedBy ?? req.user?.id,
+        reason: req.body?.reason,
+      });
+      await client.query('COMMIT');
+      await broadcastTable('products');
+      await broadcastTable('journal_entries');
+      res.json(result);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      const msg = error.message || 'Failed to void stock adjustment';
+      const status = /não encontrado|já foi anulado|insuficiente|Período|obrigatório/i.test(msg) ? 400 : 500;
+      res.status(status).json({ error: msg });
+    } finally {
+      client.release();
+    }
+  });
+
+  /** Edit a stock adjustment — void original and post replacement. */
+  router.put('/stock-adjustment/:documentId', async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await replaceStockAdjustment(client, {
+        documentId: req.params.documentId,
+        direction: req.body.direction,
+        warehouseId: req.body.warehouseId ?? req.body.warehouse_id,
+        referenceNumber: req.body.referenceNumber ?? req.body.reference_number,
+        referenceType: req.body.referenceType ?? req.body.reference_type,
+        entryDate: req.body.entryDate ?? req.body.entry_date,
+        notes: req.body.notes,
+        createdBy: req.body.createdBy ?? req.body.created_by ?? req.user?.id,
+        lines: req.body.lines,
+        landingCosts: req.body.landingCosts ?? req.body.landing_costs,
+        freightSourceAccount: req.body.freightSourceAccount ?? req.body.freight_source_account,
+        freightSourceName: req.body.freightSourceName ?? req.body.freight_source_name,
+        voidReason: req.body.voidReason,
+      });
+      await client.query('COMMIT');
+      await broadcastTable('products');
+      await broadcastTable('chart_of_accounts');
+      await broadcastTable('journal_entries');
+      res.json(result);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      const msg = error.message || 'Failed to update stock adjustment';
+      const status =
+        msg.includes('insuficiente') ||
+        msg.includes('obrigatório') ||
+        msg.includes('inválido') ||
+        msg.includes('Período') ||
+        msg.includes('não encontrado') ||
+        msg.includes('anulado')
           ? 400
           : 500;
       res.status(status).json({ error: msg });

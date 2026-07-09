@@ -258,7 +258,7 @@ async function createJournalEntry(client, params) {
 
   const prefixMap = {
     sale: 'VD', purchase: 'CP', purchase_invoice: 'CP', transfer: 'TRF',
-    expense: 'DSP', adjustment: 'AJ', receipt: 'REC', payment: 'PAG',
+    expense: 'DSP', adjustment: 'AJ', adjustment_void: 'AJV', receipt: 'REC', payment: 'PAG',
     credit_note: 'NC', debit_note: 'ND', payment_receipt: 'REC', payment_out: 'PAG',
   };
   const prefix = prefixMap[referenceType] || 'JE';

@@ -2712,6 +2712,41 @@ export const api = {
         direction: string;
       }>('/transactions/stock-adjustment', { method: 'POST', body: JSON.stringify(data) });
     },
+    voidStockAdjustment: (documentId: string, body?: { reason?: string; createdBy?: string }) =>
+      apiFetch<{
+        documentId: string;
+        voidReferenceNumber: string;
+        reversalMovementIds: string[];
+        voidJournalEntryId?: string | null;
+      }>(`/transactions/stock-adjustment/${encodeURIComponent(documentId)}`, {
+        method: 'DELETE',
+        body: JSON.stringify(body || {}),
+      }),
+    replaceStockAdjustment: (
+      documentId: string,
+      body: {
+        direction: 'IN' | 'OUT';
+        warehouseId: string;
+        referenceNumber?: string;
+        referenceType?: string;
+        entryDate?: string;
+        notes?: string;
+        createdBy?: string;
+        lines: { productId: string; quantity: number; unitCost: number }[];
+        voidReason?: string;
+      },
+    ) =>
+      apiFetch<{
+        documentId: string;
+        referenceNumber: string;
+        movementIds: string[];
+        journalEntryId: string | null;
+        totalValue: number;
+        direction: string;
+      }>(`/transactions/stock-adjustment/${encodeURIComponent(documentId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
     openItems: (params?: { entityType?: string; entityId?: string; branchId?: string; status?: string }) => {
       const sp = new URLSearchParams();
       if (params?.entityType) sp.append('entityType', params.entityType);

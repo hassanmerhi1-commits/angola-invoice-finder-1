@@ -738,6 +738,178 @@ async function processStockAdjustment(client, data) {
   };
 }
 
+const ADJUSTMENT_VOID_REF_TYPES = new Set([
+  'adjustment',
+  'correction',
+  'damage',
+  'initial',
+  'loss',
+  'expired',
+  'internal_use',
+  'sample',
+  'donation',
+]);
+
+/**
+ * Void a stock adjustment document: reverse movements + reverse journal (audit-safe).
+ */
+async function voidStockAdjustment(client, data) {
+  const documentId = String(data.documentId || data.referenceId || '').trim();
+  const voidedBy = normalizeUuid(data.voidedBy || data.createdBy);
+  const reason = String(data.reason || 'Anulado pelo utilizador').trim();
+
+  if (!documentId) throw new Error('documentId é obrigatório');
+
+  const voidCheck = await client.query(
+    `SELECT id FROM stock_movements
+     WHERE reference_id = $1 AND reference_type = 'adjustment_void'
+     LIMIT 1`,
+    [documentId],
+  );
+  if (voidCheck.rows.length > 0) {
+    throw new Error('Este ajuste já foi anulado');
+  }
+
+  const movResult = await client.query(
+    `SELECT sm.*, p.sku, p.name AS product_name
+     FROM stock_movements sm
+     LEFT JOIN products p ON p.id = sm.product_id
+     WHERE sm.reference_id = $1
+       AND sm.reference_type != 'adjustment_void'
+       AND COALESCE(sm.notes, '') NOT LIKE '%[ANULADO]%'
+     ORDER BY sm.created_at`,
+    [documentId],
+  );
+
+  if (movResult.rows.length === 0) {
+    throw new Error('Ajuste não encontrado ou já anulado');
+  }
+
+  for (const row of movResult.rows) {
+    const refType = String(row.reference_type || '').toLowerCase();
+    if (!ADJUSTMENT_VOID_REF_TYPES.has(refType) && !/^AJ-/i.test(String(row.reference_number || ''))) {
+      throw new Error('Apenas ajustes de inventário podem ser anulados');
+    }
+  }
+
+  const first = movResult.rows[0];
+  const warehouseId = first.warehouse_id;
+  const refNumber = String(first.reference_number || documentId).trim();
+  const voidRefNumber = `VOID-${refNumber}`;
+  const docDate = new Date().toISOString().split('T')[0];
+  await validatePeriod(client, docDate);
+
+  const reversalIds = [];
+  for (const row of movResult.rows) {
+    const opposite = String(row.movement_type).toUpperCase() === 'IN' ? 'OUT' : 'IN';
+    const movement = await recordStockMovement(client, {
+      productId: row.product_id,
+      warehouseId: row.warehouse_id,
+      movementType: opposite,
+      quantity: row.quantity,
+      unitCost: Number(row.unit_cost) || 0,
+      referenceType: 'adjustment_void',
+      referenceId: documentId,
+      referenceNumber: voidRefNumber,
+      notes: `${reason} — anula ${refNumber}`,
+      createdBy: voidedBy,
+    });
+    reversalIds.push(movement.id);
+  }
+
+  let voidJournalEntryId = null;
+  const jeResult = await client.query(
+    `SELECT * FROM journal_entries
+     WHERE reference_id = $1 AND reference_type = 'adjustment'
+     LIMIT 1`,
+    [documentId],
+  );
+  if (jeResult.rows[0]) {
+    const linesResult = await client.query(
+      `SELECT jel.debit_amount, jel.credit_amount, coa.code AS account_code
+       FROM journal_entry_lines jel
+       JOIN chart_of_accounts coa ON coa.id = jel.account_id
+       WHERE jel.journal_entry_id = $1`,
+      [jeResult.rows[0].id],
+    );
+    const reverseLines = linesResult.rows
+      .filter((l) => (Number(l.debit_amount) || 0) > 0 || (Number(l.credit_amount) || 0) > 0)
+      .map((l) => ({
+        accountCode: l.account_code,
+        description: `Anulação ${refNumber}`,
+        debit: Number(l.credit_amount) || 0,
+        credit: Number(l.debit_amount) || 0,
+      }));
+    if (reverseLines.length > 0) {
+      const entry = await createJournalEntry(client, {
+        description: `Anulação ajuste ${refNumber}`,
+        referenceType: 'adjustment_void',
+        referenceId: documentId,
+        branchId: jeResult.rows[0].branch_id || warehouseId,
+        createdBy: voidedBy,
+        entryDate: docDate,
+        lines: reverseLines,
+      });
+      voidJournalEntryId = entry.id;
+    }
+  }
+
+  await client.query(
+    `UPDATE stock_movements
+     SET notes = CASE
+       WHEN COALESCE(notes, '') LIKE '%[ANULADO]%' THEN notes
+       ELSE trim(COALESCE(notes, '') || ' [ANULADO]')
+     END
+     WHERE reference_id = $1 AND reference_type != 'adjustment_void'`,
+    [documentId],
+  );
+
+  await auditLog(client, {
+    tableName: 'stock_movements',
+    recordId: documentId,
+    action: 'void',
+    userId: voidedBy,
+    branchId: warehouseId,
+    description: `Ajuste anulado ${refNumber}`,
+    newValues: { voidRefNumber, reversalCount: reversalIds.length },
+  });
+
+  return {
+    documentId,
+    voidReferenceNumber: voidRefNumber,
+    reversalMovementIds: reversalIds,
+    voidJournalEntryId,
+  };
+}
+
+/**
+ * Replace a stock adjustment: void original + post new adjustment in one transaction.
+ */
+async function replaceStockAdjustment(client, data) {
+  const documentId = String(data.documentId || '').trim();
+  if (!documentId) throw new Error('documentId é obrigatório');
+
+  await voidStockAdjustment(client, {
+    documentId,
+    voidedBy: data.createdBy,
+    reason: String(data.voidReason || 'Substituído por edição'),
+  });
+
+  return processStockAdjustment(client, {
+    direction: data.direction,
+    warehouseId: data.warehouseId ?? data.warehouse_id,
+    referenceNumber: data.referenceNumber ?? data.reference_number,
+    referenceType: data.referenceType ?? data.reference_type,
+    entryDate: data.entryDate ?? data.entry_date,
+    notes: data.notes,
+    createdBy: data.createdBy ?? data.created_by,
+    lines: data.lines,
+    landingCosts: data.landingCosts ?? data.landing_costs,
+    freightSourceAccount: data.freightSourceAccount ?? data.freight_source_account,
+    freightSourceName: data.freightSourceName ?? data.freight_source_name,
+  });
+}
+
 // ==================== PERIOD VALIDATION ====================
 
 async function validatePeriod(client, date) {
@@ -2591,6 +2763,8 @@ module.exports = {
   processTransferReceive,
   processPayment,
   processStockAdjustment,
+  voidStockAdjustment,
+  replaceStockAdjustment,
   // Helpers
   auditLog,
   getEntityAccountCode,

@@ -1855,6 +1855,12 @@ export const pt: TranslationKeys = {
     reasonCorrection: "Correcção",
     reasonLoss: "Perda / validade",
     openFromInventory: "Histórico de ajustes",
+    editTitle: "Editar ajuste de stock",
+    editNeedsLines: "Adicione pelo menos uma linha com quantidade superior a zero.",
+    editSuccess: "Ajuste actualizado como {ref}. O documento anterior foi anulado e stock/contabilidade revertidos.",
+    deleteTitle: "Eliminar ajuste?",
+    deleteDescription: "Isto reverte o stock e a contabilidade de {ref}. O documento original fica no histórico como anulado.",
+    deleteSuccess: "Ajuste {ref} eliminado (revertido).",
   },
   stockValuationUi: {
     title: "Valorização de Stock",

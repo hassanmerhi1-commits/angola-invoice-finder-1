@@ -7,8 +7,10 @@ import {
   ClipboardList,
   Download,
   Eye,
+  Pencil,
   Printer,
   Search,
+  Trash2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -37,6 +39,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { useToast } from '@/hooks/use-toast';
+import { StockAdjustmentEditDialog } from '@/components/inventory/StockAdjustmentEditDialog';
+import { voidStockAdjustmentDocument } from '@/lib/stockAdjustmentActions';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
@@ -76,6 +91,7 @@ export default function StockAdjustmentHistoryReport() {
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const dfLocale = language === 'pt' ? pt : enUS;
   const { apiBranchId, branches, canPickBranch } = useBranchScope();
+  const { toast } = useToast();
 
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [loading, setLoading] = useState(false);
@@ -89,6 +105,9 @@ export default function StockAdjustmentHistoryReport() {
   const [branchFilter, setBranchFilter] = useState(apiBranchId || '');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDoc, setSelectedDoc] = useState<StockAdjustmentDocument | null>(null);
+  const [editDoc, setEditDoc] = useState<StockAdjustmentDocument | null>(null);
+  const [deleteDoc, setDeleteDoc] = useState<StockAdjustmentDocument | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadMovements = useCallback(async () => {
     setLoading(true);
@@ -198,6 +217,29 @@ export default function StockAdjustmentHistoryReport() {
     }),
     [t, dfLocale],
   );
+
+  const handleDeleteDocument = async () => {
+    if (!deleteDoc) return;
+    setDeleting(true);
+    try {
+      await voidStockAdjustmentDocument(deleteDoc.id, undefined, deleteDoc.branchId);
+      toast({
+        title: t.common.success,
+        description: t.adjustmentHistoryUi.deleteSuccess.replace('{ref}', deleteDoc.referenceNumber),
+      });
+      setDeleteDoc(null);
+      setSelectedDoc(null);
+      await loadMovements();
+    } catch (err) {
+      toast({
+        title: t.common.error,
+        description: err instanceof Error ? err.message : String(err),
+        variant: 'destructive',
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handlePrintDocument = (doc: StockAdjustmentDocument) => {
     printStockAdjustmentDocument(
@@ -376,6 +418,18 @@ export default function StockAdjustmentHistoryReport() {
                         <Button variant="ghost" size="icon" onClick={() => handlePrintDocument(doc)} title={t.common.print}>
                           <Printer className="w-4 h-4" />
                         </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setEditDoc(doc)} title={t.common.edit}>
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setDeleteDoc(doc)}
+                          title={t.common.delete}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -428,20 +482,64 @@ export default function StockAdjustmentHistoryReport() {
                     ))}
                   </TableBody>
                 </Table>
-                <div className="flex justify-between items-center pt-2 border-t">
+                <div className="flex justify-between items-center pt-2 border-t gap-2 flex-wrap">
                   <span className="font-medium">
                     {t.adjustmentHistoryUi.documentTotal}: {formatMoney(selectedDoc.totalValue)}
                   </span>
-                  <Button onClick={() => handlePrintDocument(selectedDoc)}>
-                    <Printer className="w-4 h-4 mr-2" />
-                    {t.common.print}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setEditDoc(selectedDoc)}>
+                      <Pencil className="w-4 h-4 mr-2" />
+                      {t.common.edit}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => handlePrintDocument(selectedDoc)}>
+                      <Printer className="w-4 h-4 mr-2" />
+                      {t.common.print}
+                    </Button>
+                    <Button variant="destructive" size="sm" onClick={() => setDeleteDoc(selectedDoc)}>
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      {t.common.delete}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </>
           )}
         </DialogContent>
       </Dialog>
+
+      <StockAdjustmentEditDialog
+        open={!!editDoc}
+        onOpenChange={(open) => !open && setEditDoc(null)}
+        document={editDoc}
+        onSaved={() => void loadMovements()}
+      />
+
+      <AlertDialog open={!!deleteDoc} onOpenChange={(open) => !open && setDeleteDoc(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.adjustmentHistoryUi.deleteTitle}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.adjustmentHistoryUi.deleteDescription.replace(
+                '{ref}',
+                deleteDoc?.referenceNumber || '',
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>{t.common.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleting}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleDeleteDocument();
+              }}
+            >
+              {deleting ? t.common.loading : t.common.delete}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

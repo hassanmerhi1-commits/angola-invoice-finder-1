@@ -39,9 +39,11 @@ export interface StockAdjustmentDocument {
 }
 
 export function isStockAdjustmentMovement(
-  movement: Pick<StockMovement, 'reason' | 'referenceNumber'>,
+  movement: Pick<StockMovement, 'reason' | 'referenceNumber' | 'notes'>,
 ): boolean {
   const reason = String(movement.reason || '').toLowerCase().trim();
+  if (reason === 'adjustment_void') return false;
+  if (String(movement.notes || '').includes('[ANULADO]')) return false;
   if (NON_ADJUSTMENT_REASONS.has(reason)) return false;
   if (
     reason === 'adjustment'
