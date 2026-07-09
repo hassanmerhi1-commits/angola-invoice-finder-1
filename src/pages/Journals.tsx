@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { branchIdsEqual } from '@/lib/branchAccess';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
