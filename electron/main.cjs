@@ -1494,6 +1494,12 @@ function parseIPFile() {
     if (clientHost?.host) {
       const host = clientHost.host;
       if (isLoopbackOrLocalHost(host)) {
+        const { loadDatabaseEnv } = require('./databaseConfig.cjs');
+        const dbEnv = loadDatabaseEnv();
+        if (dbEnv.engine === 'postgres' && dbEnv.databaseUrl) {
+          console.log('[IP] Local hostname/IP with database.env → PostgreSQL server');
+          return { valid: true, path: null, isServer: true, usePostgres: true };
+        }
         const dbPath = ensureSqliteFileReady(DEFAULT_NEXOR_PATH);
         copyBestLegacySqliteInto(dbPath);
         console.log('[IP] Local hostname/IP in IP file → server SQLite:', dbPath);
@@ -2609,17 +2615,15 @@ function readSetupConfigFromDisk() {
  * If setup-config says server, rewrite IP file to the .db path so we spawn embedded Express.
  */
 function repairIPFileForServerRole() {
-  const saved = readSetupConfigFromDisk();
-  if (saved?.role !== 'server') return null;
-
-  const ip = parseIPFile();
-  if (ip.valid && ip.isServer && (ip.path || ip.usePostgres)) return ip.path || null;
-
   const { loadDatabaseEnv } = require('./databaseConfig.cjs');
   const dbEnv = loadDatabaseEnv();
+  const saved = readSetupConfigFromDisk();
+  const ip = parseIPFile();
+
   if (dbEnv.engine === 'postgres' && dbEnv.databaseUrl) {
     try {
-      if (!ip.valid || !ip.usePostgres) {
+      const content = fs.existsSync(IP_FILE_PATH) ? fs.readFileSync(IP_FILE_PATH, 'utf-8').trim() : '';
+      if (!/^postgres$/i.test(content)) {
         fs.writeFileSync(IP_FILE_PATH, 'postgres', 'utf-8');
         console.log('[IP] Repaired server IP file → postgres (database.env)');
       }
@@ -2628,6 +2632,10 @@ function repairIPFileForServerRole() {
     }
     return null;
   }
+
+  if (saved?.role !== 'server') return null;
+
+  if (ip.valid && ip.isServer && (ip.path || ip.usePostgres)) return ip.path || null;
 
   let dbPath = saved?.serverConfig?.databasePath || DEFAULT_NEXOR_PATH;
   if (!/\.db$/i.test(dbPath)) dbPath = DEFAULT_NEXOR_PATH;
@@ -2666,7 +2674,12 @@ function resolveStartupBackendPlan(dbResult) {
     return canonical;
   };
 
-  // Standalone / test laptops: .db path in IP file beats a copied database.env.
+  // PostgreSQL server (database.env) wins over legacy .db path in the IP file.
+  if (dbMode.engine === 'postgres' && dbMode.databaseUrl) {
+    return { mode: 'server', sqlitePath: null, usePostgres: true };
+  }
+
+  // Standalone / test laptops: .db path in IP file when no postgres database.env.
   if (dbMode.forceSqlite && dbMode.sqlitePath) {
     return { mode: 'server', sqlitePath: finalizeSqlite(dbMode.sqlitePath) };
   }
@@ -2674,9 +2687,6 @@ function resolveStartupBackendPlan(dbResult) {
     return { mode: 'server', sqlitePath: finalizeSqlite(readIpFileContent()) };
   }
 
-  if (dbMode.engine === 'postgres' && dbMode.databaseUrl) {
-    return { mode: 'server', sqlitePath: null, usePostgres: true };
-  }
   if (ip.valid && ip.isServer && ip.usePostgres) {
     return { mode: 'server', sqlitePath: null, usePostgres: true, needsConfig: !!dbMode.error || !dbMode.databaseUrl };
   }

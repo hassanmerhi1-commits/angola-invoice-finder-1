@@ -54,11 +54,22 @@ function defaultSqliteDatabasePath() {
 }
 
 /**
- * IP file with a .db path = embedded SQLite on this PC (standalone / test installs).
- * That wins over database.env postgres copied from a production server.
+ * Resolve DB mode for this PC.
+ * PostgreSQL in database.env wins on the server — legacy .db in the IP file must not shadow it.
  */
 function resolveInstallDatabaseMode() {
+  const env = loadDatabaseEnv();
   const ipContent = readIpFileContent();
+
+  if (env.engine === 'postgres' && env.databaseUrl && !env.error) {
+    return {
+      engine: 'postgres',
+      databaseUrl: env.databaseUrl,
+      filePath: env.filePath,
+      forceSqlite: false,
+      sqlitePath: null,
+    };
+  }
 
   if (isSqliteDatabaseIpContent(ipContent)) {
     return {
@@ -71,7 +82,6 @@ function resolveInstallDatabaseMode() {
   }
 
   if (/^postgres$/i.test(ipContent) || /^postgres(ql)?:\/\//i.test(ipContent)) {
-    const env = loadDatabaseEnv();
     return {
       engine: 'postgres',
       databaseUrl: env.databaseUrl,
@@ -82,7 +92,6 @@ function resolveInstallDatabaseMode() {
     };
   }
 
-  const env = loadDatabaseEnv();
   return {
     ...env,
     forceSqlite: false,

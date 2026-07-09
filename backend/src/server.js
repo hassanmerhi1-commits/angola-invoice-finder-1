@@ -105,13 +105,17 @@ app.get('/api/health', async (req, res) => {
       schemaVersion: schema.stored,
       schemaVersionExpected: EXPECTED_SCHEMA_VERSION,
       schemaUpToDate: schema.stored == null ? null : schema.stored >= EXPECTED_SCHEMA_VERSION,
+      databaseEnvConfigured: fs.existsSync(path.join(process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP', 'database.env')),
+      postgresConfigured: db.engine === 'postgres',
       schemaChecks,
       dbPath: db.engine === 'sqlite' ? db.dbPath : undefined,
     };
     if (schema.stored != null && schema.stored < EXPECTED_SCHEMA_VERSION) {
       payload.schemaRepairHint = db.engine === 'postgres'
         ? 'PostgreSQL schema is behind. On the SERVER PC run fix-server-schema.cmd in C:\\NEXOR ERP, then restart NEXOR. LAN clients: check health on the server IP, not localhost.'
-        : 'This is the local SQLite database (typical on LAN clients). For production schema, check http://SERVER-IP:3001/api/health?lite=1 on the PostgreSQL server.';
+        : 'Backend is using local SQLite (schema 42 is normal here). For production data, configure C:\\NEXOR ERP\\database.env and set C:\\NEXOR ERP\\IP to postgres, then restart.';
+    } else if (db.engine === 'sqlite' && fs.existsSync(path.join(process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP', 'database.env'))) {
+      payload.schemaRepairHint = 'database.env exists but backend is on SQLite. Set C:\\NEXOR ERP\\IP to postgres (not a .db path) and restart NEXOR.';
     }
     if (schemaChecks && schemaChecks.salesCreditPayment === false) {
       payload.schemaRepairHint =
