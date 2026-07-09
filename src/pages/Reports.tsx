@@ -57,6 +57,7 @@ const TAB_TARGETS: Record<string, FamilyTarget> = {
   profitability: { family: 'profit' },
   'stock-valuation': { family: 'inventory', sub: 'valuation' },
   'stock-movements': { family: 'inventory', sub: 'movements' },
+  'stock-adjustments': { family: 'inventory', sub: 'adjustments' },
   'top-customers': { family: 'statistics', sub: 'top-customers' },
   'trial-balance': { family: 'financial', sub: 'trial-balance' },
   'income-statement': { family: 'financial', sub: 'income-statement' },

@@ -18,6 +18,8 @@ import {
 import { format } from 'date-fns';
 import { isElectronMode, dbGetAll, dbInsert, dbUpdate, dbDelete, lsGet, lsSet } from '@/lib/dbHelper';
 import { api, ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
+import { isThinClientMode, isServerDatabaseHost } from '@/lib/api/config';
+import { branchIdsEqual } from '@/lib/branchAccess';
 
 // Angola PGC expense accounts (class 7 = Custos). Used to book cash/bank expenses to the GL.
 const EXPENSE_GL_ACCOUNTS: Record<ExpenseCategory, string> = {
@@ -89,25 +91,61 @@ const STORAGE_KEYS = {
 
 // ==================== CAIXA FUNCTIONS ====================
 
-export async function getCaixas(branchId?: string): Promise<Caixa[]> {
-  if (await canUseServerExpensesApi()) {
+export async function getCaixas(branchId?: string, branchName?: string): Promise<Caixa[]> {
+  const branchKey = String(branchId || '').trim();
+  const branchLabel = String(branchName || '').trim();
+
+  if (await shouldLoadCaixasFromServerApi()) {
     try {
-      const res = await api.caixa.listRegisters(branchId);
-      if (!res.error && res.data) {
-        return unwrapApiList<any>(res.data).map((row) => mapCaixaFromDb(row));
+      let list: Caixa[] = [];
+
+      const listRes = await api.caixa.listRegisters(branchKey || undefined);
+      if (!listRes.error && listRes.data) {
+        list = unwrapApiList<any>(listRes.data).map((row) => mapCaixaFromDb(row));
+      } else if (listRes.error && /authentication required|unauthorized|401/i.test(listRes.error)) {
+        console.warn('[caixas] server list auth failed:', listRes.error);
+        return [];
+      }
+
+      list = filterCaixasForBranch(list, branchKey || undefined);
+      if (list.length > 0) return list;
+
+      if (branchKey) {
+        const allRes = await api.caixa.listRegisters();
+        if (!allRes.error && allRes.data) {
+          list = filterCaixasForBranch(
+            unwrapApiList<any>(allRes.data).map((row) => mapCaixaFromDb(row)),
+            branchKey,
+          );
+          if (list.length > 0) return list;
+        }
+
+        const sessionRes = await api.caixa.getOpenSession(branchKey);
+        const fromSession = sessionRes.data
+          ? caixaFromOpenSessionRow(sessionRes.data as Record<string, unknown>, branchKey, branchLabel || branchKey)
+          : null;
+        if (fromSession) return [fromSession];
+
+        const ensureRes = await api.caixa.ensureRegister({
+          branchId: branchKey,
+          branchName: branchLabel || undefined,
+        });
+        const ensured = ensureRes.data ? unwrapApiItem<any>(ensureRes.data) : null;
+        if (ensured) return [mapCaixaFromDb(ensured)];
       }
     } catch (e) {
       console.warn('[caixas] server list failed:', e);
     }
   }
-  if (isElectronMode()) {
+
+  if (isElectronMode() && !isThinClientMode()) {
     const rows = await dbGetAll<any>('caixas');
     let caixas = rows.map(mapCaixaFromDb);
-    if (branchId) caixas = caixas.filter(c => c.branchId === branchId);
+    if (branchKey) caixas = caixas.filter((c) => branchIdsEqual(c.branchId, branchKey));
     return caixas;
   }
   const caixas = lsGet<Caixa[]>(STORAGE_KEYS.caixas, []);
-  return branchId ? caixas.filter(c => c.branchId === branchId) : caixas;
+  return branchKey ? caixas.filter((c) => branchIdsEqual(c.branchId, branchKey)) : caixas;
 }
 
 export async function getCaixaById(id: string): Promise<Caixa | undefined> {
@@ -166,11 +204,11 @@ export async function updateCaixaBalance(caixaId: string, amount: number, direct
 }
 
 export async function ensureBranchCaixa(branchId: string, branchName: string): Promise<Caixa> {
-  const existing = await getCaixas(branchId);
+  const existing = await getCaixas(branchId, branchName);
   if (existing.length > 0) {
     return existing[0];
   }
-  if (await canUseServerExpensesApi()) {
+  if (await shouldLoadCaixasFromServerApi()) {
     try {
       const res = await api.caixa.ensureRegister({ branchId, branchName });
       const row = res.data ? unwrapApiItem<any>(res.data) : null;
@@ -585,6 +623,42 @@ function expenseToApiPayload(expense: Expense): Record<string, unknown> {
 async function canUseServerExpensesApi(): Promise<boolean> {
   const ensured = await ensureBackendAuthToken();
   return isJwtAuthToken(ensured);
+}
+
+async function shouldLoadCaixasFromServerApi(): Promise<boolean> {
+  if (typeof window !== 'undefined') {
+    if (isServerDatabaseHost()) return true;
+    if (isThinClientMode()) {
+      return isJwtAuthToken(await ensureBackendAuthToken());
+    }
+  }
+  return canUseServerExpensesApi();
+}
+
+function caixaFromOpenSessionRow(
+  row: Record<string, unknown>,
+  branchId: string,
+  branchName: string,
+): Caixa | null {
+  const caixaId = String(row.caixaId ?? row.caixa_id ?? '').trim();
+  if (!caixaId) return null;
+  const opening = Number(row.openingBalance ?? row.opening_balance) || 0;
+  return {
+    id: caixaId,
+    branchId: String(row.branchId ?? row.branch_id ?? branchId),
+    branchName,
+    name: `Caixa POS — ${branchName}`,
+    openingBalance: opening,
+    currentBalance: opening,
+    status: 'open',
+    createdAt: String(row.openedAt ?? row.opened_at ?? new Date().toISOString()),
+  };
+}
+
+function filterCaixasForBranch(caixas: Caixa[], branchId?: string): Caixa[] {
+  if (!branchId) return caixas;
+  const matched = caixas.filter((c) => branchIdsEqual(c.branchId, branchId));
+  return matched.length > 0 ? matched : caixas;
 }
 
 /** Unwrap `{ data: T }` API envelopes from Express routes. */

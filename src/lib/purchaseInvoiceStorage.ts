@@ -354,13 +354,22 @@ export async function getPurchaseInvoices(
     const res = await api.purchaseInvoices.list(branchId ? { branchId } : undefined);
     if (res.error) {
       console.error('[PurchaseInvoice] API list failed:', res.error);
-      return [];
+      throw new Error(res.error);
     }
     let docs = (res.data || []).map((row) =>
       normalizeInvoiceWarehouse(mapPIFromApiRow(row)),
     );
     if (branchId) {
       docs = docs.filter((d) => invoiceBelongsToBranch(d, branchId, branchCatalog));
+      // If strict server filter missed rows (branch id drift), retry without filter once.
+      if (docs.length === 0) {
+        const allRes = await api.purchaseInvoices.list();
+        if (!allRes.error && allRes.data?.length) {
+          docs = allRes.data
+            .map((row) => normalizeInvoiceWarehouse(mapPIFromApiRow(row)))
+            .filter((d) => invoiceBelongsToBranch(d, branchId, branchCatalog));
+        }
+      }
     }
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }

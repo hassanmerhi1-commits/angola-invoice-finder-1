@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { enrichJournalEntryContext, enrichJournalEntries } = require('../lib/journalEntryContext');
+const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
 
 const ENTRY_HEADER_SELECT = `
   SELECT je.*,
@@ -37,8 +38,12 @@ module.exports = function(broadcastTable) {
       let paramIndex = 1;
 
       if (branchId) {
-        query += ` AND je.branch_id = $${paramIndex++}`;
-        params.push(branchId);
+        const branchFilter = await buildJournalBranchFilter(db, branchId, paramIndex);
+        if (branchFilter.sql) {
+          query += branchFilter.sql;
+          params.push(...branchFilter.params);
+          paramIndex += branchFilter.params.length;
+        }
       }
       if (referenceType) {
         query += ` AND je.reference_type = $${paramIndex++}`;

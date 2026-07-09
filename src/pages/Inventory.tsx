@@ -41,6 +41,7 @@ import {
   Building2,
   Search,
   Percent,
+  ClipboardList,
 } from 'lucide-react';
 import { AdvancedDataGrid } from '@/components/inventory/AdvancedDataGrid';
 import { ShelfLabelPrintDialog } from '@/components/inventory/ShelfLabelPrintDialog';
@@ -66,6 +67,7 @@ import { ExcelImportDialog } from '@/components/import/ExcelImportDialog';
 import { InventoryCountSheetDialog } from '@/components/inventory/InventoryCountSheetDialog';
 import { InventoryReconciliationDialog } from '@/components/inventory/InventoryReconciliationDialog';
 import { InventoryAdjustmentDialog } from '@/components/inventory/InventoryAdjustmentDialog';
+import { StockAdjustmentHistoryDialog } from '@/components/inventory/StockAdjustmentHistoryDialog';
 import { StockEntryDialog } from '@/components/inventory/StockEntryDialog';
 import { StockExitDialog } from '@/components/inventory/StockExitDialog';
 import { toast } from 'sonner';
@@ -392,6 +394,7 @@ export default function Inventory() {
   const [stockExitDialogOpen, setStockExitDialogOpen] = useState(false);
   const [labelPrintDialogOpen, setLabelPrintDialogOpen] = useState(false);
   const [bulkTierDialogOpen, setBulkTierDialogOpen] = useState(false);
+  const [adjustmentHistoryOpen, setAdjustmentHistoryOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('lista');
 
   const branchList = allBranches.length > 0 ? allBranches : branches;
@@ -1293,6 +1296,16 @@ export default function Inventory() {
           variant="outline"
           size="sm"
           className={NEXOR_TOOLBAR_BTN_SM}
+          onClick={() => setAdjustmentHistoryOpen(true)}
+          title={t.adjustmentHistoryUi.openFromInventory}
+        >
+          <ClipboardList className="w-3 h-3" />
+          {t.adjustmentHistoryUi.openFromInventory}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className={NEXOR_TOOLBAR_BTN_SM}
           onClick={() => setBulkTierDialogOpen(true)}
           title={t.inventoryPageUi.tierPricing.title}
         >
@@ -1733,6 +1746,11 @@ export default function Inventory() {
           onApplyExit={handleApplyStockExit}
         />
       ) : null}
+
+      <StockAdjustmentHistoryDialog
+        open={adjustmentHistoryOpen}
+        onOpenChange={setAdjustmentHistoryOpen}
+      />
 
       {/* Bulk tier pricing (Price 2/3/4 = Price 1 x % across all products) */}
       <BulkTierPricingDialog

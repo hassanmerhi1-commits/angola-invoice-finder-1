@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
@@ -115,6 +116,7 @@ export default function Expenses() {
   );
   const [caixas, setCaixas] = useState<Caixa[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [caixaLoadHint, setCaixaLoadHint] = useState<string | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState<ExpenseFormData>(initialFormData);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -124,15 +126,31 @@ export default function Expenses() {
   const [statusFilter, setStatusFilter] = useState<string>('__all__');
   const [categoryFilter, setCategoryFilter] = useState<string>('__all__');
 
+  const expenseBranchId = apiBranchId ?? currentBranch?.id;
+  const expenseBranchName = currentBranch?.name || t.branchUi.headOffice;
+
   const loadData = async () => {
-    // Auto-seed a default Caixa for the current branch if none exists
-    if (currentBranch?.id) {
-      await ensureBranchCaixa(currentBranch.id, currentBranch.name || t.branchUi.headOffice);
+    if (!expenseBranchId) {
+      setCaixaLoadHint(t.expensesUi.caixaNeedsBranch);
+      setCaixas([]);
+      setBankAccounts([]);
+      setExpenses(await getExpenses(apiBranchId));
+      return;
     }
+    await ensureBranchCaixa(expenseBranchId, expenseBranchName);
     const loadedExpenses = await getExpenses(apiBranchId);
     setExpenses(loadedExpenses);
     setCachedList(`expenses:${apiBranchId ?? 'all'}`, loadedExpenses);
-    setCaixas(await getCaixas(apiBranchId));
+    const loggedIn = isJwtAuthToken(await ensureBackendAuthToken());
+    const loadedCaixas = await getCaixas(expenseBranchId, expenseBranchName);
+    setCaixas(loadedCaixas);
+    setCaixaLoadHint(
+      loadedCaixas.length > 0
+        ? null
+        : !loggedIn
+          ? t.expensesUi.caixaNeedsLogin
+          : t.expensesUi.caixaEmptyHint,
+    );
     setBankAccounts(await getBankAccounts(apiBranchId));
   };
 
@@ -144,7 +162,7 @@ export default function Expenses() {
     const onRefresh = () => { void loadData(); };
     window.addEventListener('nexor:expenses-changed', onRefresh);
     return () => window.removeEventListener('nexor:expenses-changed', onRefresh);
-  }, [apiBranchId, currentBranch?.id, currentBranch?.name]);
+  }, [apiBranchId, expenseBranchId, expenseBranchName, t.expensesUi.caixaEmptyHint, t.expensesUi.caixaNeedsBranch, t.branchUi.headOffice]);
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter(exp => {
@@ -160,12 +178,15 @@ export default function Expenses() {
   const handleOpenDialog = async (expense?: Expense) => {
     let caixaOptions = caixas;
     let bankOptions = bankAccounts;
-    if (!expense && currentBranch?.id) {
-      await ensureBranchCaixa(currentBranch.id, currentBranch.name || t.branchUi.headOffice);
-      caixaOptions = await getCaixas(apiBranchId);
+    if (!expense && expenseBranchId) {
+      await ensureBranchCaixa(expenseBranchId, expenseBranchName);
+      caixaOptions = await getCaixas(expenseBranchId, expenseBranchName);
       bankOptions = await getBankAccounts(apiBranchId);
       setCaixas(caixaOptions);
       setBankAccounts(bankOptions);
+      setCaixaLoadHint(
+        caixaOptions.length > 0 ? null : t.expensesUi.caixaEmptyHint,
+      );
     }
     if (expense) {
       setEditingId(expense.id);
@@ -536,18 +557,29 @@ export default function Expenses() {
             {formData.paymentSource === 'caixa' ? (
               <div className="space-y-2">
                 <Label>Caixa *</Label>
+                {caixaLoadHint && caixas.length === 0 && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5">
+                    {caixaLoadHint}
+                  </p>
+                )}
                 <Select value={formData.caixaId} onValueChange={(v) => setFormData({ ...formData, caixaId: v })}>
                   <SelectTrigger>
                     <SelectValue placeholder={t.expensesUi.selectCashPlaceholder} />
                   </SelectTrigger>
                   <SelectContent>
-                    {caixas.map(c => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {t.expensesUi.cashWithBalance
-                          .replace('{name}', c.name)
-                          .replace('{balance}', c.currentBalance.toLocaleString(uiLocale))}
+                    {caixas.length === 0 ? (
+                      <SelectItem value="__none__" disabled>
+                        {t.expensesUi.noCashRegisters}
                       </SelectItem>
-                    ))}
+                    ) : (
+                      caixas.map(c => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {t.expensesUi.cashWithBalance
+                            .replace('{name}', c.name)
+                            .replace('{balance}', c.currentBalance.toLocaleString(uiLocale))}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>

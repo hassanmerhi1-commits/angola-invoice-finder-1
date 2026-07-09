@@ -1,0 +1,261 @@
+import type { StockMovement } from '@/types/erp';
+
+const NON_ADJUSTMENT_REASONS = new Set([
+  'purchase',
+  'sale',
+  'transfer',
+  'transfer_in',
+  'transfer_out',
+  'purchase_invoice',
+  'credit_note',
+  'return',
+]);
+
+export interface StockAdjustmentLine {
+  id: string;
+  productId: string;
+  sku: string;
+  productName: string;
+  quantity: number;
+  unitCost: number;
+  lineValue: number;
+}
+
+export interface StockAdjustmentDocument {
+  id: string;
+  referenceNumber: string;
+  direction: 'IN' | 'OUT';
+  branchId: string;
+  branchName: string;
+  reason: string;
+  notes: string;
+  createdAt: string;
+  createdBy: string;
+  createdByName: string;
+  lineCount: number;
+  totalQuantity: number;
+  totalValue: number;
+  lines: StockAdjustmentLine[];
+}
+
+export function isStockAdjustmentMovement(
+  movement: Pick<StockMovement, 'reason' | 'referenceNumber'>,
+): boolean {
+  const reason = String(movement.reason || '').toLowerCase().trim();
+  if (NON_ADJUSTMENT_REASONS.has(reason)) return false;
+  if (
+    reason === 'adjustment'
+    || reason === 'correction'
+    || reason === 'damage'
+    || reason === 'initial'
+    || reason === 'loss'
+    || reason === 'expired'
+  ) {
+    return true;
+  }
+  return /^AJ-/i.test(String(movement.referenceNumber || '').trim());
+}
+
+function documentGroupKey(movement: StockMovement): string {
+  const refId = String(movement.referenceId || '').trim();
+  if (refId) return refId;
+  const refNo = String(movement.referenceNumber || '').trim();
+  const branchId = String(movement.branchId || '').trim();
+  const day = String(movement.createdAt || '').slice(0, 16);
+  return `${refNo}|${branchId}|${movement.type}|${day}`;
+}
+
+export function groupStockAdjustmentDocuments(movements: StockMovement[]): StockAdjustmentDocument[] {
+  const adjustmentMovements = movements.filter(isStockAdjustmentMovement);
+  const groups = new Map<string, StockMovement[]>();
+
+  for (const movement of adjustmentMovements) {
+    const key = documentGroupKey(movement);
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(movement);
+    else groups.set(key, [movement]);
+  }
+
+  const documents: StockAdjustmentDocument[] = [];
+
+  for (const [key, lines] of groups) {
+    const sorted = [...lines].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+    const first = sorted[0];
+    const direction = (first.type === 'OUT' ? 'OUT' : 'IN') as 'IN' | 'OUT';
+    const mappedLines: StockAdjustmentLine[] = sorted.map((m) => {
+      const unitCost = Number(m.costAtTime) || 0;
+      const quantity = Number(m.quantity) || 0;
+      return {
+        id: m.id,
+        productId: m.productId,
+        sku: m.sku,
+        productName: m.productName,
+        quantity,
+        unitCost,
+        lineValue: Math.round(unitCost * quantity * 100) / 100,
+      };
+    });
+    const totalQuantity = mappedLines.reduce((sum, line) => sum + line.quantity, 0);
+    const totalValue = Math.round(
+      mappedLines.reduce((sum, line) => sum + line.lineValue, 0) * 100,
+    ) / 100;
+
+    documents.push({
+      id: String(first.referenceId || key),
+      referenceNumber: first.referenceNumber || first.referenceId || key,
+      direction,
+      branchId: first.branchId,
+      branchName: first.branchName || first.branchId,
+      reason: first.reason,
+      notes: first.notes || '',
+      createdAt: first.createdAt,
+      createdBy: first.createdBy || '',
+      createdByName: first.createdByName || first.createdBy || '',
+      lineCount: mappedLines.length,
+      totalQuantity,
+      totalValue,
+      lines: mappedLines,
+    });
+  }
+
+  return documents.sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
+export function filterStockAdjustmentDocuments(
+  documents: StockAdjustmentDocument[],
+  opts: {
+    dateFrom?: string;
+    dateTo?: string;
+    direction?: 'all' | 'IN' | 'OUT';
+    branchId?: string;
+    searchTerm?: string;
+  },
+): StockAdjustmentDocument[] {
+  let result = [...documents];
+
+  if (opts.dateFrom) {
+    const from = new Date(opts.dateFrom);
+    result = result.filter((doc) => new Date(doc.createdAt) >= from);
+  }
+  if (opts.dateTo) {
+    const to = new Date(`${opts.dateTo}T23:59:59`);
+    result = result.filter((doc) => new Date(doc.createdAt) <= to);
+  }
+  if (opts.direction && opts.direction !== 'all') {
+    result = result.filter((doc) => doc.direction === opts.direction);
+  }
+  if (opts.branchId) {
+    result = result.filter((doc) => String(doc.branchId) === String(opts.branchId));
+  }
+  if (opts.searchTerm?.trim()) {
+    const q = opts.searchTerm.trim().toLowerCase();
+    result = result.filter((doc) =>
+      doc.referenceNumber.toLowerCase().includes(q)
+      || doc.notes.toLowerCase().includes(q)
+      || doc.createdByName.toLowerCase().includes(q)
+      || doc.lines.some(
+        (line) =>
+          line.sku.toLowerCase().includes(q)
+          || line.productName.toLowerCase().includes(q),
+      ),
+    );
+  }
+
+  return result;
+}
+
+export function printStockAdjustmentDocument(
+  doc: StockAdjustmentDocument,
+  labels: {
+    title: string;
+    reference: string;
+    date: string;
+    branch: string;
+    direction: string;
+    directionIn: string;
+    directionOut: string;
+    reason: string;
+    user: string;
+    notes: string;
+    sku: string;
+    product: string;
+    quantity: string;
+    unitCost: string;
+    lineTotal: string;
+    documentTotal: string;
+    printedAt: string;
+  },
+  formatMoney: (value: number) => string,
+  formatDate: (iso: string) => string,
+  getReasonLabel: (reason: string) => string,
+): void {
+  const rows = doc.lines
+    .map(
+      (line) => `
+      <tr>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;font-family:monospace;">${line.sku}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;">${line.productName}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right;">${line.quantity}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right;">${formatMoney(line.unitCost)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right;">${formatMoney(line.lineValue)}</td>
+      </tr>`,
+    )
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${labels.title} — ${doc.referenceNumber}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #111; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .meta { margin: 12px 0 20px; font-size: 13px; line-height: 1.6; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px; border-bottom: 2px solid #999; background: #f5f5f5; }
+    th.right, td.right { text-align: right; }
+    .total { margin-top: 12px; font-size: 14px; font-weight: bold; text-align: right; }
+    .footer { margin-top: 24px; font-size: 11px; color: #666; }
+  </style>
+</head>
+<body>
+  <h1>${labels.title}</h1>
+  <div class="meta">
+    <div><strong>${labels.reference}:</strong> ${doc.referenceNumber}</div>
+    <div><strong>${labels.date}:</strong> ${formatDate(doc.createdAt)}</div>
+    <div><strong>${labels.branch}:</strong> ${doc.branchName}</div>
+    <div><strong>${labels.direction}:</strong> ${doc.direction === 'IN' ? labels.directionIn : labels.directionOut}</div>
+    <div><strong>${labels.reason}:</strong> ${getReasonLabel(doc.reason)}</div>
+    <div><strong>${labels.user}:</strong> ${doc.createdByName || '—'}</div>
+    ${doc.notes ? `<div><strong>${labels.notes}:</strong> ${doc.notes}</div>` : ''}
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>${labels.sku}</th>
+        <th>${labels.product}</th>
+        <th class="right">${labels.quantity}</th>
+        <th class="right">${labels.unitCost}</th>
+        <th class="right">${labels.lineTotal}</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="total">${labels.documentTotal}: ${formatMoney(doc.totalValue)} (${doc.lineCount} ${labels.product.toLowerCase()})</div>
+  <div class="footer">${labels.printedAt}</div>
+</body>
+</html>`;
+
+  const printWindow = window.open('', '_blank', 'width=900,height=700');
+  if (!printWindow) return;
+  printWindow.document.write(html);
+  printWindow.document.close();
+  setTimeout(() => {
+    printWindow.focus();
+    printWindow.print();
+  }, 300);
+}

@@ -127,6 +127,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
   const { balanceMap, totalDebit, totalCredit, finalBalance } = useMemo(() => {
     const reversedForBalance = [...filtered].reverse();
     let runningBalance = openingBalance;
+    let closing = openingBalance;
     const map = new Map<string, number>();
 
     reversedForBalance.forEach((e) => {
@@ -138,13 +139,11 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
         runningBalance += credit - debit;
       }
       map.set(e.id, runningBalance);
+      closing = runningBalance;
     });
 
     const debitTotal = filtered.reduce((s, e) => s + (Number(e.debit_amount) || 0), 0);
     const creditTotal = filtered.reduce((s, e) => s + (Number(e.credit_amount) || 0), 0);
-    const closing = map.size > 0
-      ? map.get(filtered[filtered.length - 1]?.id) || 0
-      : openingBalance;
 
     return {
       balanceMap: map,

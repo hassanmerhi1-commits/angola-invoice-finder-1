@@ -4,7 +4,6 @@ import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import QRCode from 'qrcode';
 import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
-import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
@@ -1255,8 +1254,7 @@ export default function PurchaseInvoices() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
-  const { currentBranch, branches } = useBranchContext();
-  const { apiBranchId } = useBranchScope();
+  const { apiBranchId, currentBranch, isConsolidatedView, allBranches: branches } = useBranchScope();
   const { suppliers, refreshSuppliers, createSupplier } = useSuppliers();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -1291,6 +1289,7 @@ export default function PurchaseInvoices() {
   const [openReturnCreateSignal, setOpenReturnCreateSignal] = useState(0);
   const [returnPreselectInvoiceId, setReturnPreselectInvoiceId] = useState<string | null>(null);
   // List mode state
+  const [listLoadError, setListLoadError] = useState<string | null>(null);
   const [listTab, setListTab] = useState<'faturas' | 'encomendas' | 'devolucoes'>('faturas');
   const [returnCount, setReturnCount] = useState(0);
   const [filterSupplier, setFilterSupplier] = useState('');
@@ -1429,10 +1428,21 @@ export default function PurchaseInvoices() {
   }, [fillFromPoId, supplierPurchaseOrders]);
 
   const loadInvoiceList = useCallback(async () => {
-    const piInvoices = await getPurchaseInvoices(apiBranchId, branches);
-    setInvoices(piInvoices);
-    setCachedList(`purchaseInvoices:${apiBranchId ?? 'all'}`, piInvoices);
-  }, [apiBranchId, branches]);
+    try {
+      setListLoadError(null);
+      const piInvoices = await getPurchaseInvoices(apiBranchId, branches);
+      setInvoices(piInvoices);
+      setCachedList(`purchaseInvoices:${apiBranchId ?? 'all'}`, piInvoices);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setListLoadError(msg);
+      toast({
+        title: t.purchaseInvoicesUi.listLoadFailedTitle,
+        description: msg,
+        variant: 'destructive',
+      });
+    }
+  }, [apiBranchId, branches, toast, t]);
 
   const refreshReturnMetrics = useCallback(async () => {
     try {
@@ -2880,6 +2890,25 @@ export default function PurchaseInvoices() {
             </Button>
           </div>
         </div>
+
+        {(listLoadError || !isConsolidatedView) && (
+          <Alert variant={listLoadError ? 'destructive' : 'default'} className="rounded-xl">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>
+              {listLoadError
+                ? t.purchaseInvoicesUi.listLoadFailedTitle
+                : t.purchaseInvoicesUi.branchScopeTitle}
+            </AlertTitle>
+            <AlertDescription>
+              {listLoadError
+                ? listLoadError
+                : t.purchaseInvoicesUi.branchScopeDesc.replace(
+                    '{branch}',
+                    currentBranch?.name || apiBranchId || '—',
+                  )}
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Tabs: Faturas / Encomendas */}
         <Tabs value={listTab} onValueChange={v => setListTab(v as any)}>

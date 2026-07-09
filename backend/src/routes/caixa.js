@@ -80,7 +80,11 @@ module.exports = function caixaRouter(broadcastTable) {
       const params = [];
       let sql = 'SELECT * FROM caixas';
       if (branchId) {
-        sql += ' WHERE branch_id = $1';
+        if (db.engine === 'postgres') {
+          sql += ' WHERE branch_id::text = $1';
+        } else {
+          sql += ' WHERE CAST(branch_id AS TEXT) = $1';
+        }
         params.push(branchId);
       }
       const orderBy = db.engine === 'postgres'
@@ -107,8 +111,8 @@ module.exports = function caixaRouter(broadcastTable) {
 
       const existing = await db.query(
         db.engine === 'postgres'
-          ? 'SELECT * FROM caixas WHERE branch_id = $1 ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1'
-          : 'SELECT * FROM caixas WHERE branch_id = $1 ORDER BY updated_at DESC, created_at DESC LIMIT 1',
+          ? 'SELECT * FROM caixas WHERE branch_id::text = $1 ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1'
+          : 'SELECT * FROM caixas WHERE CAST(branch_id AS TEXT) = $1 ORDER BY updated_at DESC, created_at DESC LIMIT 1',
         [branchId],
       );
       if (existing.rows[0]) {
@@ -163,9 +167,12 @@ module.exports = function caixaRouter(broadcastTable) {
       if (!branchId) return res.status(400).json({ error: 'branchId required' });
 
       const orderBy = db.engine === 'postgres' ? 'opened_at DESC NULLS LAST' : 'opened_at DESC';
+      const branchFilter = db.engine === 'postgres'
+        ? 'branch_id::text = $1'
+        : 'CAST(branch_id AS TEXT) = $1';
       const result = await db.query(
         `SELECT * FROM caixa_sessions
-         WHERE branch_id = $1 AND status = 'open'
+         WHERE ${branchFilter} AND status = 'open'
          ORDER BY ${orderBy}
          LIMIT 1`,
         [branchId],

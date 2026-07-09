@@ -34,6 +34,11 @@ function ipFileSaysServerMachine(): boolean {
   }
 }
 
+/** Server PC (hosts DB per IP file) — use Express/Postgres API, not empty local Electron SQLite. */
+export function isServerDatabaseHost(): boolean {
+  return ipFileSaysServerMachine();
+}
+
 export function invalidateIpFileRoleCache(): void {
   _ipServerMemo = { until: 0, isServerDb: false };
 }

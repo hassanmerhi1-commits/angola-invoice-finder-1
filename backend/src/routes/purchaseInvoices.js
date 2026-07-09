@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { toRow, fromRow } = require('../purchaseInvoiceMappers');
 const { requirePermission } = require('../middleware/requirePermission');
+const { buildPurchaseInvoiceBranchFilter } = require('../lib/branchIdMatch');
 
 const UPSERT_SQL = `
   INSERT INTO purchase_invoices (
@@ -174,9 +175,12 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       const params = [];
       let idx = 1;
       if (branchId) {
-        query += ` AND (branch_id = $${idx} OR warehouse_id = $${idx})`;
-        params.push(branchId);
-        idx += 1;
+        const branchFilter = await buildPurchaseInvoiceBranchFilter(db, branchId, idx);
+        if (branchFilter.sql) {
+          query += branchFilter.sql;
+          params.push(...branchFilter.params);
+          idx += branchFilter.params.length;
+        }
       }
       if (status) {
         query += ` AND status = $${idx++}`;

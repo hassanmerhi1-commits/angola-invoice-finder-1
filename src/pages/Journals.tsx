@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
-import { useBranchScope } from '@/hooks/useBranchScope';
+import { branchIdsEqual } from '@/lib/branchAccess';
 import { useAuth } from '@/hooks/useERP';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -93,15 +93,14 @@ function useJournalEntries(branchId: string | undefined, labels: JournalDisplayL
     const allEntries: JournalDisplayEntry[] = [];
 
     try {
-      const response = await api.journalEntries.list();
+      const response = await api.journalEntries.list(branchId ? { branchId } : undefined);
       if (response.error) {
         console.warn('[Journals] Failed to load journal entries:', response.error);
       }
       const rows = Array.isArray(response.data) ? response.data : [];
       const journalEntries = branchId
-        ? rows.filter(
-            (je: Record<string, unknown>) =>
-              String(je.branch_id ?? je.branchId) === branchId,
+        ? rows.filter((je: Record<string, unknown>) =>
+            branchIdsEqual(String(je.branch_id ?? je.branchId), branchId),
           )
         : rows;
       for (const je of journalEntries) {
@@ -113,7 +112,7 @@ function useJournalEntries(branchId: string | undefined, labels: JournalDisplayL
         const raw = localStorage.getItem('kwanzaerp_journal_entries');
         const journalEntries = raw ? JSON.parse(raw) : [];
       for (const je of journalEntries) {
-          if (branchId && je.branchId !== branchId) continue;
+          if (branchId && !branchIdsEqual(je.branchId, branchId)) continue;
           allEntries.push(mapJournalEntryFromApi({
             id: je.id,
             entry_number: je.entryNumber,
@@ -433,7 +432,7 @@ export default function Journals() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
-  const { currentBranch, apiBranchId } = useBranchScope();
+  const { currentBranch, apiBranchId, isConsolidatedView } = useBranchScope();
 
   const journalLabels = useMemo<JournalDisplayLabels>(() => ({
     systemUser: t.journalsUi.systemUser,
@@ -517,6 +516,9 @@ export default function Journals() {
       const matchesType =
         filterType === 'all'
         || e.type === filterType
+        || e.referenceType === filterType
+        || (filterType === 'ajuste' && (e.type === 'adjustment' || e.referenceType === 'adjustment'))
+        || (filterType === 'adjustment' && (e.type === 'adjustment' || e.referenceType === 'adjustment' || e.type === 'ajuste'))
         || (filterType === 'compra' && e.type === 'purchase_invoice')
         || (filterType === 'venda' && (e.type === 'sale' || e.type === 'cogs' || e.referenceType === 'sale'))
         || (filterType === 'recibo' && e.type === 'payment_receipt')

@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Package, ArrowRightLeft, Tags } from 'lucide-react';
+import { Package, ArrowRightLeft, Tags, ClipboardList } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
 import StockValuationReport from '@/components/reports/StockValuationReport';
 import StockByCategoryReport from '@/components/reports/StockByCategoryReport';
 import StockMovementReport from '@/components/reports/StockMovementReport';
+import StockAdjustmentHistoryReport from '@/components/reports/StockAdjustmentHistoryReport';
 
 export default function InventoryReports({
   view,
@@ -22,6 +23,7 @@ export default function InventoryReports({
     { value: 'valuation', label: t.reportsCenterUi.tabStock, icon: Package },
     { value: 'category', label: t.stockValuationUi.byCategory, icon: Tags },
     { value: 'movements', label: t.reportsCenterUi.tabMovements, icon: ArrowRightLeft },
+    { value: 'adjustments', label: t.adjustmentHistoryUi.title, icon: ClipboardList },
   ];
 
   return (
@@ -31,6 +33,7 @@ export default function InventoryReports({
         {tab === 'valuation' && <StockValuationReport />}
         {tab === 'category' && <StockByCategoryReport />}
         {tab === 'movements' && <StockMovementReport />}
+        {tab === 'adjustments' && <StockAdjustmentHistoryReport />}
       </div>
     </div>
   );
