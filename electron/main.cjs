@@ -3841,12 +3841,19 @@ function electronPrintWebContents(webContents, options = {}) {
       },
     },
   ];
+  // Some Windows thermal drivers reject the first Chromium pageSize. Retry with the
+  // SAME custom size (never drop pageSize — that falls back to A4/short form and
+  // cuts the QR + footer onto a second page the printer never prints).
   if (options.silent && deviceName) {
     attempts.push({
       silent: true,
       printBackground: true,
       deviceName,
       margins: { marginType: 'none' },
+      pageSize: {
+        width: Math.round(pageWidthMm * 1000),
+        height: pageHeightMicrons,
+      },
     });
   }
 
@@ -3958,7 +3965,7 @@ ipcMain.handle('print:html', async (_, html, options = {}) => {
             if (!h || h < 1) {
               // Layout unavailable — estimate from item count so we never cut at A4.
               const items = Number(document.body.getAttribute('data-items')) || 0;
-              h = 520 + items * 34; // ~137mm base (header/totals/QR/footer) + ~9mm/item
+              h = 620 + items * 36; // ~header/totals/QR/footer + ~9.5mm/item
             }
             resolve(Math.ceil(h));
           };
@@ -3977,8 +3984,8 @@ ipcMain.handle('print:html', async (_, html, options = {}) => {
         true,
       );
       if (measuredPx && Number.isFinite(measuredPx) && measuredPx > 0) {
-        // CSS px -> mm at 96dpi, plus a bottom buffer so the last line / cut clears.
-        const mm = (Number(measuredPx) * 25.4) / 96 + 12;
+        // CSS px -> mm at 96dpi, plus a bottom buffer so QR + hash + footer clear the cut.
+        const mm = (Number(measuredPx) * 25.4) / 96 + 28;
         pageHeightMicrons = Math.round(mm * 1000);
       }
     } catch {
@@ -3990,8 +3997,8 @@ ipcMain.handle('print:html', async (_, html, options = {}) => {
     if (options.pageWidthMm && !pageHeightMicrons) {
       const m = /data-items="(\d+)"/.exec(String(html));
       const items = m ? Number(m[1]) : 0;
-      const px = 520 + items * 34;
-      const mm = (px * 25.4) / 96 + 12;
+      const px = 620 + items * 36;
+      const mm = (px * 25.4) / 96 + 28;
       pageHeightMicrons = Math.round(mm * 1000);
     }
 

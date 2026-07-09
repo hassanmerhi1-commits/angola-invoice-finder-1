@@ -74,7 +74,7 @@ export function generateReceiptText(
   config: PrinterConfig = DEFAULT_PRINTER_CONFIG
 ): string {
   const company = getCompanySettings();
-  const width = config.paperWidth === 80 ? 48 : 32;
+  const width = Number(config.paperWidth) === 80 ? 48 : 32;
   const divider = '-'.repeat(width);
   const doubleDivider = '='.repeat(width);
   
@@ -397,7 +397,7 @@ function buildReceiptCopyBody(
   return `
   <div class="receipt-copy">
   ${copyLabel ? `<div class="center bold large" style="margin-bottom:6px;">*** ${copyLabel.toUpperCase()} ***</div>` : ''}
-  ${company.logo ? `<div class="center" style="margin-bottom: 5px;"><img src="${company.logo}" alt="Logo" style="max-height: 40px; max-width: ${paperWidth === 80 ? '60' : '40'}mm; object-fit: contain;"></div>` : ''}
+  ${company.logo ? `<div class="center" style="margin-bottom: 5px;"><img src="${company.logo}" alt="Logo" style="max-height: 40px; max-width: ${Number(paperWidth) === 80 ? '60' : '40'}mm; object-fit: contain;"></div>` : ''}
   <div class="center bold large">${company.tradeName || company.name || branch.name.toUpperCase()}</div>
   <div class="center small">${branch.address || ''}</div>
   <div class="center small">Tel: ${branch.phone || ''}</div>
@@ -503,21 +503,21 @@ async function buildReceiptBrowserHtml(
     console.warn('[thermal] QR code skipped for print:', error);
   }
   const company = getCompanySettings();
-  const paperMm = paperWidth === 80 ? 80 : 58;
+  const paperMm = Number(paperWidth) === 80 ? 80 : 58;
   // Thermal heads only print the inner area of the roll — the outer ~4mm (80mm) /
   // ~5mm (58mm) per side is a mechanical dead zone. Printing at the full paper width
   // pushes edge content (left labels / right values) into that dead zone, so it gets
   // clipped. Constrain content to the printable width and centre it on the page.
-  const printableMm = paperWidth === 80 ? 66 : 44;
+  const printableMm = paperMm === 80 ? 66 : 44;
   const width = `${paperMm}mm`;
   const contentWidth = `${printableMm}mm`;
   // Narrower 58mm paper needs smaller type to avoid clipping.
-  const baseFont = paperWidth === 80 ? 12 : 10;
-  const largeFont = paperWidth === 80 ? 14 : 11;
-  const totalFont = paperWidth === 80 ? 15 : 12;
-  const smallFont = paperWidth === 80 ? 10 : 9;
+  const baseFont = paperMm === 80 ? 12 : 10;
+  const largeFont = paperMm === 80 ? 14 : 11;
+  const totalFont = paperMm === 80 ? 15 : 12;
+  const smallFont = paperMm === 80 ? 10 : 9;
   const bodies = copyLabels.map((label) =>
-    buildReceiptCopyBody(sale, branch, paperWidth, company, qrCodeDataURL, label),
+    buildReceiptCopyBody(sale, branch, paperMm, company, qrCodeDataURL, label),
   );
 
   return `<!DOCTYPE html>
@@ -638,7 +638,7 @@ async function measureReceiptHeightMm(
   paperWidth: 58 | 80,
 ): Promise<number | null> {
   if (typeof document === 'undefined') return null;
-  const paperMm = paperWidth === 80 ? 80 : 58;
+  const paperMm = Number(paperWidth) === 80 ? 80 : 58;
   const iframe = document.createElement('iframe');
   iframe.setAttribute('aria-hidden', 'true');
   iframe.style.cssText = [
@@ -692,8 +692,9 @@ async function measureReceiptHeightMm(
       maxPx = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
     }
     if (maxPx < 1) return null;
-    // CSS px -> mm at 96dpi, plus a bottom buffer so the last line / cut clears.
-    return (maxPx * 25.4) / 96 + 12;
+    // CSS px -> mm at 96dpi, plus a generous bottom buffer so QR + hash + footer
+    // clear the cut (thermal drivers often clip the last ~15–20mm).
+    return (maxPx * 25.4) / 96 + 28;
   } finally {
     iframe.remove();
   }
@@ -709,13 +710,14 @@ export async function printViaBrowser(
   const labels = Array.isArray(copyLabelOrLabels)
     ? copyLabelOrLabels
     : [copyLabelOrLabels];
-  const html = await buildReceiptBrowserHtml(sale, branch, paperWidth, labels);
+  const html = await buildReceiptBrowserHtml(sale, branch, normalizePaperWidth(paperWidth), labels);
   const config = getPrinterConfig();
   const deviceName = options.deviceName ?? config.deviceName;
   const useSilent = !!(options.direct && deviceName?.trim());
+  const widthMm = normalizePaperWidth(paperWidth);
   let pageHeightMm: number | undefined;
   try {
-    const measured = await measureReceiptHeightMm(html, paperWidth);
+    const measured = await measureReceiptHeightMm(html, widthMm);
     if (measured && Number.isFinite(measured)) pageHeightMm = measured;
   } catch {
     pageHeightMm = undefined;
@@ -725,7 +727,7 @@ export async function printViaBrowser(
     direct: options.direct,
     silent: useSilent,
     deviceName,
-    pageWidthMm: paperWidth,
+    pageWidthMm: widthMm,
     pageHeightMm,
     allowDialogFallback: options.allowDialogFallback ?? !useSilent,
   });
@@ -740,17 +742,23 @@ function normalizePrintReceiptOptions(
   return openDrawerOrOptions;
 }
 
-/** POS auto-print: always thermal, 2 copies (original + customer). */
+/** POS auto-print: always thermal HTML path (QR + hash), 2 copies (original + customer). */
 export async function printPosThermalReceipts(
   sale: Sale,
   branch: Branch,
   options: { openDrawer?: boolean } = {},
 ): Promise<{ success: boolean; method: string; needsPrinterSetup?: boolean }> {
-  const config = getPrinterConfig();
-  const deviceName = config.deviceName?.trim();
+  const saved = getPrinterConfig();
+  const deviceName = saved.deviceName?.trim();
   if (!deviceName) {
     return { success: false, method: 'browser', needsPrinterSetup: true };
   }
+  // Force browser/Electron HTML print — USB ESC/POS has no QR code or hash block.
+  const config: PrinterConfig = {
+    ...saved,
+    type: 'browser',
+    paperWidth: normalizePaperWidth(saved.paperWidth),
+  };
   return printReceipt(sale, branch, config, {
     openDrawer: options.openDrawer ?? false,
     copies: POS_RECEIPT_COPY_LABELS.length,
@@ -867,23 +875,50 @@ export function isPosPrinterConfigured(): boolean {
   return !!getPrinterConfig().deviceName?.trim();
 }
 
+function normalizePaperWidth(value: unknown): 58 | 80 {
+  return Number(value) === 58 ? 58 : 80;
+}
+
+function normalizePrinterType(value: unknown): PrinterConfig['type'] {
+  return value === 'usb' || value === 'serial' || value === 'network' ? value : 'browser';
+}
+
 // Get saved printer configuration
 export function getPrinterConfig(): PrinterConfig {
   try {
     const saved = localStorage.getItem('kwanza_printer_config');
     if (saved) {
-      return JSON.parse(saved);
+      const parsed = JSON.parse(saved) as Partial<PrinterConfig>;
+      const paperWidth = normalizePaperWidth(parsed.paperWidth);
+      return {
+        ...DEFAULT_PRINTER_CONFIG,
+        ...parsed,
+        type: normalizePrinterType(parsed.type),
+        paperWidth,
+        characterWidth:
+          Number(parsed.characterWidth) > 0
+            ? Number(parsed.characterWidth)
+            : paperWidth === 80
+              ? 48
+              : 32,
+        deviceName: typeof parsed.deviceName === 'string' ? parsed.deviceName : undefined,
+        posAutoPrint: parsed.posAutoPrint,
+      };
     }
   } catch (error) {
     console.error('Error loading printer config:', error);
   }
-  return DEFAULT_PRINTER_CONFIG;
+  return { ...DEFAULT_PRINTER_CONFIG };
 }
 
 // Save printer configuration
 export function savePrinterConfig(config: PrinterConfig): void {
+  const paperWidth = normalizePaperWidth(config.paperWidth);
   const normalized: PrinterConfig = {
     ...config,
+    type: normalizePrinterType(config.type),
+    paperWidth,
+    characterWidth: paperWidth === 80 ? 48 : 32,
     posAutoPrint: config.deviceName?.trim() ? (config.posAutoPrint ?? true) : config.posAutoPrint,
   };
   localStorage.setItem('kwanza_printer_config', JSON.stringify(normalized));

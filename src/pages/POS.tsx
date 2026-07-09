@@ -4,7 +4,7 @@ import { useCart, useSales, useAuth, useClients } from '@/hooks/useERP';
 import { useCreditNotes } from '@/hooks/useFiscalDocuments';
 import { effectiveUnitPrice, clientPricing, normalizePriceLevel } from '@/lib/pricing';
 import { userHasPermission } from '@/lib/permissions';
-import { getCompanySettings, saveCompanySettings } from '@/lib/companySettings';
+import { companySettingsFromApiResponse, getCompanySettings, saveCompanySettings } from '@/lib/companySettings';
 import { api } from '@/lib/api/client';
 import {
   printPosThermalReceipts,
@@ -90,7 +90,8 @@ export default function POS() {
       .get()
       .then((res) => {
         if (cancelled) return;
-        const serverLevel = normalizePriceLevel(res?.data?.posDefaultPriceLevel ?? 1);
+        const remote = companySettingsFromApiResponse(res);
+        const serverLevel = normalizePriceLevel(remote?.posDefaultPriceLevel ?? 1);
         saveCompanySettings({ posDefaultPriceLevel: serverLevel });
         setCompanyDefaultLevel(serverLevel);
       })

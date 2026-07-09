@@ -149,6 +149,20 @@ export function applyServerCompanySettings(remote: Partial<CompanySettings>): Co
 }
 
 /**
+ * apiFetch returns `{ data: <HTTP JSON> }`. Company-settings routes wrap the
+ * profile again as `{ data: settings }`, so the real object is at `res.data.data`.
+ */
+function unwrapCompanySettingsPayload(res: unknown): Partial<CompanySettings> | null {
+  const outer = (res as { data?: unknown })?.data;
+  if (!outer || typeof outer !== 'object') return null;
+  const nested = (outer as { data?: unknown }).data;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    return nested as Partial<CompanySettings>;
+  }
+  return outer as Partial<CompanySettings>;
+}
+
+/**
  * Pull the shared company profile from the server into the local cache. Skips
  * applying when the server row has never been saved (no `updatedAt`), so an
  * unconfigured server can't clobber a correctly-configured client.
@@ -157,12 +171,17 @@ export async function hydrateCompanySettingsFromServer(): Promise<CompanySetting
   try {
     const { api } = await import('@/lib/api/client');
     const res = await api.companySettings.get();
-    const data = (res as { data?: Partial<CompanySettings> })?.data;
+    const data = unwrapCompanySettingsPayload(res);
     if (!data || typeof data !== 'object' || !data.updatedAt) return null;
     return applyServerCompanySettings(data);
   } catch {
     return null;
   }
+}
+
+/** Read company settings from the API response (handles nested `{ data }` envelope). */
+export function companySettingsFromApiResponse(res: unknown): Partial<CompanySettings> | null {
+  return unwrapCompanySettingsPayload(res);
 }
 
 /**

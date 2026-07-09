@@ -91,47 +91,91 @@ const STORAGE_KEYS = {
 
 // ==================== CAIXA FUNCTIONS ====================
 
-export async function getCaixas(branchId?: string, branchName?: string): Promise<Caixa[]> {
+export type GetCaixasOptions = {
+  /** Create a default register on the server when none exist for this branch. */
+  ensureIfEmpty?: boolean;
+};
+
+const caixaListCache = new Map<string, { until: number; data: Caixa[] }>();
+const CAIXA_CACHE_MS = 30_000;
+
+function caixaCacheKey(branchId: string, branchName: string): string {
+  return `${branchId}|${branchName}`.toLowerCase();
+}
+
+export function invalidateCaixaListCache(branchId?: string, branchName?: string): void {
+  if (!branchId) {
+    caixaListCache.clear();
+    return;
+  }
+  caixaListCache.delete(caixaCacheKey(String(branchId).trim(), String(branchName || '').trim()));
+}
+
+export async function getCaixas(
+  branchId?: string,
+  branchName?: string,
+  opts?: GetCaixasOptions,
+): Promise<Caixa[]> {
   const branchKey = String(branchId || '').trim();
   const branchLabel = String(branchName || '').trim();
+  const ensureIfEmpty = opts?.ensureIfEmpty ?? false;
+
+  if (branchKey) {
+    const cached = caixaListCache.get(caixaCacheKey(branchKey, branchLabel));
+    if (cached && Date.now() < cached.until) return cached.data;
+  }
 
   if (await shouldLoadCaixasFromServerApi()) {
     try {
-      let list: Caixa[] = [];
+      const [listRes, sessionRes] = await Promise.all([
+        api.caixa.listRegisters(branchKey || undefined),
+        branchKey ? api.caixa.getOpenSession(branchKey) : Promise.resolve({ data: null, error: undefined }),
+      ]);
 
-      const listRes = await api.caixa.listRegisters(branchKey || undefined);
+      let list: Caixa[] = [];
       if (!listRes.error && listRes.data) {
-        list = unwrapApiList<any>(listRes.data).map((row) => mapCaixaFromDb(row));
-      } else if (listRes.error && /authentication required|unauthorized|401/i.test(listRes.error)) {
-        console.warn('[caixas] server list auth failed:', listRes.error);
-        return [];
+        list = filterCaixasForBranch(
+          unwrapApiList<any>(listRes.data).map((row) => mapCaixaFromDb(row)),
+          branchKey,
+          branchLabel,
+        );
       }
 
-      list = filterCaixasForBranch(list, branchKey || undefined);
-      if (list.length > 0) return list;
-
-      if (branchKey) {
+      if (list.length === 0 && branchKey) {
         const allRes = await api.caixa.listRegisters();
         if (!allRes.error && allRes.data) {
           list = filterCaixasForBranch(
             unwrapApiList<any>(allRes.data).map((row) => mapCaixaFromDb(row)),
             branchKey,
+            branchLabel,
           );
-          if (list.length > 0) return list;
         }
+      }
 
-        const sessionRes = await api.caixa.getOpenSession(branchKey);
-        const fromSession = sessionRes.data
-          ? caixaFromOpenSessionRow(sessionRes.data as Record<string, unknown>, branchKey, branchLabel || branchKey)
-          : null;
-        if (fromSession) return [fromSession];
+      if (list.length === 0 && sessionRes.data) {
+        const fromSession = caixaFromOpenSessionRow(
+          sessionRes.data as Record<string, unknown>,
+          branchKey,
+          branchLabel || branchKey,
+        );
+        if (fromSession) list = [fromSession];
+      }
 
+      if (list.length === 0 && ensureIfEmpty && branchKey) {
         const ensureRes = await api.caixa.ensureRegister({
           branchId: branchKey,
           branchName: branchLabel || undefined,
         });
         const ensured = ensureRes.data ? unwrapApiItem<any>(ensureRes.data) : null;
-        if (ensured) return [mapCaixaFromDb(ensured)];
+        if (ensured) list = [mapCaixaFromDb(ensured)];
+      }
+
+      if (list.length > 0) {
+        caixaListCache.set(caixaCacheKey(branchKey, branchLabel), {
+          until: Date.now() + CAIXA_CACHE_MS,
+          data: list,
+        });
+        return list;
       }
     } catch (e) {
       console.warn('[caixas] server list failed:', e);
@@ -141,11 +185,11 @@ export async function getCaixas(branchId?: string, branchName?: string): Promise
   if (isElectronMode() && !isThinClientMode()) {
     const rows = await dbGetAll<any>('caixas');
     let caixas = rows.map(mapCaixaFromDb);
-    if (branchKey) caixas = caixas.filter((c) => branchIdsEqual(c.branchId, branchKey));
+    if (branchKey) caixas = filterCaixasForBranch(caixas, branchKey, branchLabel);
     return caixas;
   }
   const caixas = lsGet<Caixa[]>(STORAGE_KEYS.caixas, []);
-  return branchKey ? caixas.filter((c) => branchIdsEqual(c.branchId, branchKey)) : caixas;
+  return branchKey ? filterCaixasForBranch(caixas, branchKey, branchLabel) : caixas;
 }
 
 export async function getCaixaById(id: string): Promise<Caixa | undefined> {
@@ -204,18 +248,9 @@ export async function updateCaixaBalance(caixaId: string, amount: number, direct
 }
 
 export async function ensureBranchCaixa(branchId: string, branchName: string): Promise<Caixa> {
-  const existing = await getCaixas(branchId, branchName);
+  const existing = await getCaixas(branchId, branchName, { ensureIfEmpty: true });
   if (existing.length > 0) {
     return existing[0];
-  }
-  if (await shouldLoadCaixasFromServerApi()) {
-    try {
-      const res = await api.caixa.ensureRegister({ branchId, branchName });
-      const row = res.data ? unwrapApiItem<any>(res.data) : null;
-      if (row) return mapCaixaFromDb(row);
-    } catch (e) {
-      console.warn('[caixas] server ensure failed:', e);
-    }
   }
   return createCaixa(branchId, branchName, `Caixa Principal - ${branchName}`, 0);
 }
@@ -655,10 +690,21 @@ function caixaFromOpenSessionRow(
   };
 }
 
-function filterCaixasForBranch(caixas: Caixa[], branchId?: string): Caixa[] {
-  if (!branchId) return caixas;
-  const matched = caixas.filter((c) => branchIdsEqual(c.branchId, branchId));
-  return matched.length > 0 ? matched : caixas;
+function filterCaixasForBranch(caixas: Caixa[], branchId?: string, branchName?: string): Caixa[] {
+  if (!branchId && !branchName) return caixas;
+  if (branchId) {
+    const byId = caixas.filter((c) => branchIdsEqual(c.branchId, branchId));
+    if (byId.length > 0) return byId;
+  }
+  const normName = String(branchName || '').trim().toLowerCase();
+  if (normName) {
+    const byName = caixas.filter((c) => {
+      const caixaBranch = String(c.branchName || '').trim().toLowerCase();
+      return caixaBranch === normName || caixaBranch.includes(normName) || normName.includes(caixaBranch);
+    });
+    if (byName.length > 0) return byName;
+  }
+  return [];
 }
 
 /** Unwrap `{ data: T }` API envelopes from Express routes. */

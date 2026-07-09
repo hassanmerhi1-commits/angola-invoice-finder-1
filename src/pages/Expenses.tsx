@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
@@ -11,7 +11,6 @@ import {
   payExpense, 
   getCaixas, 
   getBankAccounts,
-  ensureBranchCaixa
 } from '@/lib/accountingStorage';
 import { Expense, ExpenseCategory, EXPENSE_CATEGORIES, Caixa, BankAccount } from '@/types/accounting';
 import { format } from 'date-fns';
@@ -117,6 +116,7 @@ export default function Expenses() {
   const [caixas, setCaixas] = useState<Caixa[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [caixaLoadHint, setCaixaLoadHint] = useState<string | null>(null);
+  const [caixaLoading, setCaixaLoading] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState<ExpenseFormData>(initialFormData);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -129,6 +129,38 @@ export default function Expenses() {
   const expenseBranchId = apiBranchId ?? currentBranch?.id;
   const expenseBranchName = currentBranch?.name || t.branchUi.headOffice;
 
+  const refreshCaixasForExpense = useCallback(async (ensureIfEmpty = false) => {
+    if (!expenseBranchId) {
+      setCaixaLoadHint(t.expensesUi.caixaNeedsBranch);
+      setCaixas([]);
+      return;
+    }
+    setCaixaLoading(true);
+    try {
+      const loggedIn = isJwtAuthToken(await ensureBackendAuthToken());
+      const loadedCaixas = await getCaixas(expenseBranchId, expenseBranchName, { ensureIfEmpty });
+      setCaixas(loadedCaixas);
+      setCaixaLoadHint(
+        loadedCaixas.length > 0
+          ? null
+          : !loggedIn
+            ? t.expensesUi.caixaNeedsLogin
+            : t.expensesUi.caixaEmptyHint,
+      );
+      if (loadedCaixas.length > 0) {
+        setFormData((fd) => (fd.caixaId ? fd : { ...fd, caixaId: loadedCaixas[0].id }));
+      }
+    } finally {
+      setCaixaLoading(false);
+    }
+  }, [
+    expenseBranchId,
+    expenseBranchName,
+    t.expensesUi.caixaEmptyHint,
+    t.expensesUi.caixaNeedsBranch,
+    t.expensesUi.caixaNeedsLogin,
+  ]);
+
   const loadData = async () => {
     if (!expenseBranchId) {
       setCaixaLoadHint(t.expensesUi.caixaNeedsBranch);
@@ -137,12 +169,15 @@ export default function Expenses() {
       setExpenses(await getExpenses(apiBranchId));
       return;
     }
-    await ensureBranchCaixa(expenseBranchId, expenseBranchName);
-    const loadedExpenses = await getExpenses(apiBranchId);
+    const loggedInPromise = ensureBackendAuthToken().then(isJwtAuthToken);
+    const [loadedExpenses, loadedCaixas, loadedBanks] = await Promise.all([
+      getExpenses(apiBranchId),
+      getCaixas(expenseBranchId, expenseBranchName, { ensureIfEmpty: false }),
+      getBankAccounts(apiBranchId),
+    ]);
+    const loggedIn = await loggedInPromise;
     setExpenses(loadedExpenses);
     setCachedList(`expenses:${apiBranchId ?? 'all'}`, loadedExpenses);
-    const loggedIn = isJwtAuthToken(await ensureBackendAuthToken());
-    const loadedCaixas = await getCaixas(expenseBranchId, expenseBranchName);
     setCaixas(loadedCaixas);
     setCaixaLoadHint(
       loadedCaixas.length > 0
@@ -151,7 +186,7 @@ export default function Expenses() {
           ? t.expensesUi.caixaNeedsLogin
           : t.expensesUi.caixaEmptyHint,
     );
-    setBankAccounts(await getBankAccounts(apiBranchId));
+    setBankAccounts(loadedBanks);
   };
 
   useEffect(() => {
@@ -175,19 +210,7 @@ export default function Expenses() {
     });
   }, [expenses, searchTerm, statusFilter, categoryFilter]);
 
-  const handleOpenDialog = async (expense?: Expense) => {
-    let caixaOptions = caixas;
-    let bankOptions = bankAccounts;
-    if (!expense && expenseBranchId) {
-      await ensureBranchCaixa(expenseBranchId, expenseBranchName);
-      caixaOptions = await getCaixas(expenseBranchId, expenseBranchName);
-      bankOptions = await getBankAccounts(apiBranchId);
-      setCaixas(caixaOptions);
-      setBankAccounts(bankOptions);
-      setCaixaLoadHint(
-        caixaOptions.length > 0 ? null : t.expensesUi.caixaEmptyHint,
-      );
-    }
+  const handleOpenDialog = (expense?: Expense) => {
     if (expense) {
       setEditingId(expense.id);
       setFormData({
@@ -207,9 +230,15 @@ export default function Expenses() {
       setEditingId(null);
       setFormData({
         ...initialFormData,
-        caixaId: caixaOptions[0]?.id || '',
-        bankAccountId: bankOptions[0]?.id || '',
+        caixaId: caixas[0]?.id || '',
+        bankAccountId: bankAccounts[0]?.id || '',
       });
+      setIsDialogOpen(true);
+      void refreshCaixasForExpense(true);
+      if (bankAccounts.length === 0) {
+        void getBankAccounts(apiBranchId).then(setBankAccounts);
+      }
+      return;
     }
     setIsDialogOpen(true);
   };
@@ -324,7 +353,7 @@ export default function Expenses() {
             {t.expensesUi.subtitle.replace('{branch}', String(currentBranch?.name || t.expensesUi.allBranches))}
           </p>
         </div>
-        <Button onClick={() => void handleOpenDialog()} className="gap-2">
+        <Button onClick={() => handleOpenDialog()} className="gap-2">
           <Plus className="w-4 h-4" />
           {t.expensesUi.newExpense}
         </Button>
@@ -557,17 +586,28 @@ export default function Expenses() {
             {formData.paymentSource === 'caixa' ? (
               <div className="space-y-2">
                 <Label>Caixa *</Label>
-                {caixaLoadHint && caixas.length === 0 && (
+                {caixaLoadHint && caixas.length === 0 && !caixaLoading && (
                   <p className="text-xs text-amber-700 dark:text-amber-300 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5">
                     {caixaLoadHint}
                   </p>
                 )}
-                <Select value={formData.caixaId} onValueChange={(v) => setFormData({ ...formData, caixaId: v })}>
+                {caixaLoading && (
+                  <p className="text-xs text-muted-foreground">{t.expensesUi.caixaLoading}</p>
+                )}
+                <Select
+                  value={formData.caixaId}
+                  onValueChange={(v) => setFormData({ ...formData, caixaId: v })}
+                  disabled={caixaLoading}
+                >
                   <SelectTrigger>
-                    <SelectValue placeholder={t.expensesUi.selectCashPlaceholder} />
+                    <SelectValue placeholder={caixaLoading ? t.expensesUi.caixaLoading : t.expensesUi.selectCashPlaceholder} />
                   </SelectTrigger>
                   <SelectContent>
-                    {caixas.length === 0 ? (
+                    {caixaLoading ? (
+                      <SelectItem value="__loading__" disabled>
+                        {t.expensesUi.caixaLoading}
+                      </SelectItem>
+                    ) : caixas.length === 0 ? (
                       <SelectItem value="__none__" disabled>
                         {t.expensesUi.noCashRegisters}
                       </SelectItem>

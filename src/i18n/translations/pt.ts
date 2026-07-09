@@ -2362,6 +2362,7 @@ export const pt: TranslationKeys = {
     newTitle: "Nova Despesa",
     dialogDescription: "Preencha os dados da despesa operacional",
     selectCashPlaceholder: "Seleccione a caixa",
+    caixaLoading: "A carregar caixas…",
     noCashRegisters: "Nenhuma caixa disponível",
     caixaEmptyHint: "Nenhuma caixa encontrada para esta filial. Inicie sessão no servidor, instale a última actualização no servidor e neste PC, abra a caixa no POS uma vez e actualize.",
     caixaNeedsLogin: "Termine sessão e volte a iniciar (conta do servidor). As despesas precisam de login válido para carregar as caixas.",

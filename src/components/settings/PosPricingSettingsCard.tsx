@@ -6,7 +6,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
-import { getCompanySettings, saveCompanySettings } from '@/lib/companySettings';
+import {
+  companySettingsFromApiResponse,
+  getCompanySettings,
+  saveCompanySettings,
+} from '@/lib/companySettings';
 import { normalizePriceLevel, PRICE_LEVELS } from '@/lib/pricing';
 
 /**
@@ -27,7 +31,8 @@ export function PosPricingSettingsCard() {
       .get()
       .then((res) => {
         if (cancelled) return;
-        setLevel(normalizePriceLevel(res?.data?.posDefaultPriceLevel ?? 1));
+        const remote = companySettingsFromApiResponse(res);
+        setLevel(normalizePriceLevel(remote?.posDefaultPriceLevel ?? 1));
       })
       .catch(() => {});
     return () => {

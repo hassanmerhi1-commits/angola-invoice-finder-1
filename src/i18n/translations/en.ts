@@ -2360,6 +2360,7 @@ export const en = {
     newTitle: "New expense",
     dialogDescription: "Fill in the operational expense details",
     selectCashPlaceholder: "Select cash register",
+    caixaLoading: "Loading cash registers…",
     noCashRegisters: "No cash registers available",
     caixaEmptyHint: "No cash register found for this branch. Log in to the server, install the latest update on server + this PC, open caixa in POS once, then refresh.",
     caixaNeedsLogin: "Log out and log in again (server account). Expenses need a valid login to load cash registers.",

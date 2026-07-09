@@ -66,6 +66,7 @@ export function useRealtimeSyncBridge(enabled: boolean) {
       if (detail?.state === 'restarted' || detail?.state === 'healthy') {
         invalidateElectronApiBaseCache();
         realtimeSocket.connect();
+        void hydrateCompanySettingsFromServer();
         refreshAllSyncedTables();
       }
     };
@@ -76,6 +77,7 @@ export function useRealtimeSyncBridge(enabled: boolean) {
       const connected = realtimeSocket.isConnected();
       if (!wasConnected && connected) {
         invalidateElectronApiBaseCache();
+        void hydrateCompanySettingsFromServer();
         refreshAllSyncedTables();
       }
       wasConnected = connected;
@@ -91,6 +93,7 @@ export function useRealtimeSyncBridge(enabled: boolean) {
 
     const softRefresh = window.setInterval(() => {
       if (!isLanClient()) return;
+      void hydrateCompanySettingsFromServer();
       refreshAllSyncedTables();
     }, SOFT_REFRESH_MS);
 

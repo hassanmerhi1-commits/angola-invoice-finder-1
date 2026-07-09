@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
+const { resolveBranchFilterId } = require('../lib/branchIdMatch');
 const { requirePermission } = require('../middleware/requirePermission');
 const { buildCaixaReconciliation } = require('../lib/caixaReconciliation');
 const { applyCaixaClose } = require('../sync/caixaIngest');
@@ -80,12 +81,14 @@ module.exports = function caixaRouter(broadcastTable) {
       const params = [];
       let sql = 'SELECT * FROM caixas';
       if (branchId) {
+        const resolved = await resolveBranchFilterId(db, branchId);
+        const matchId = resolved || branchId;
         if (db.engine === 'postgres') {
           sql += ' WHERE branch_id::text = $1';
         } else {
           sql += ' WHERE CAST(branch_id AS TEXT) = $1';
         }
-        params.push(branchId);
+        params.push(matchId);
       }
       const orderBy = db.engine === 'postgres'
         ? 'updated_at DESC NULLS LAST, created_at DESC'
@@ -109,11 +112,13 @@ module.exports = function caixaRouter(broadcastTable) {
       const branchName = String(req.body?.branchName || '').trim();
       if (!branchId) return res.status(400).json({ error: 'branchId required' });
 
+      const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
+
       const existing = await db.query(
         db.engine === 'postgres'
           ? 'SELECT * FROM caixas WHERE branch_id::text = $1 ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1'
           : 'SELECT * FROM caixas WHERE CAST(branch_id AS TEXT) = $1 ORDER BY updated_at DESC, created_at DESC LIMIT 1',
-        [branchId],
+        [resolvedBranchId],
       );
       if (existing.rows[0]) {
         return res.json({ data: mapCaixaRow(existing.rows[0]) });
@@ -121,13 +126,13 @@ module.exports = function caixaRouter(broadcastTable) {
 
       const id = crypto.randomUUID();
       const now = new Date().toISOString();
-      const name = `Caixa Principal - ${branchName || branchId}`;
+      const name = `Caixa Principal - ${branchName || resolvedBranchId}`;
       await db.query(
         `INSERT INTO caixas (
           id, branch_id, branch_name, name, opening_balance, current_balance,
           status, requires_approval, created_at, updated_at
         ) VALUES ($1,$2,$3,$4,0,0,'closed',false,$5,$5)`,
-        [id, branchId, branchName || '', name, now],
+        [id, resolvedBranchId, branchName || '', name, now],
       );
       const row = await db.query('SELECT * FROM caixas WHERE id = $1', [id]);
       if (broadcastTable) await broadcastTable('caixas');
@@ -166,6 +171,7 @@ module.exports = function caixaRouter(broadcastTable) {
       const branchId = String(req.query.branchId || '').trim();
       if (!branchId) return res.status(400).json({ error: 'branchId required' });
 
+      const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
       const orderBy = db.engine === 'postgres' ? 'opened_at DESC NULLS LAST' : 'opened_at DESC';
       const branchFilter = db.engine === 'postgres'
         ? 'branch_id::text = $1'
@@ -175,7 +181,7 @@ module.exports = function caixaRouter(broadcastTable) {
          WHERE ${branchFilter} AND status = 'open'
          ORDER BY ${orderBy}
          LIMIT 1`,
-        [branchId],
+        [resolvedBranchId],
       );
       res.json(mapSessionRow(result.rows[0]));
     } catch (error) {
