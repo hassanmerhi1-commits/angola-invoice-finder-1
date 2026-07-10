@@ -150,7 +150,25 @@ function buildPurchaseInvoiceFreightAllocations(lines, totalLandingCosts) {
   return allocations;
 }
 
-function rowParams(r) {
+function normalizePurchaseLines(lines) {
+  return (Array.isArray(lines) ? lines : []).map((line) => ({
+    ...line,
+    productId: String(line.productId || line.product_id || '').trim(),
+    productCode: line.productCode || line.product_code || '',
+    description: line.description || '',
+    totalQty: Number(line.totalQty ?? line.total_qty ?? line.quantity ?? 0),
+    quantity: Number(line.quantity ?? line.totalQty ?? line.total_qty ?? 0),
+    unitPrice: Number(line.unitPrice ?? line.unit_price ?? 0),
+    price1: line.price1 ?? line.price_1,
+    total: Number(line.total ?? 0),
+  }));
+}
+
+function purchaseInvoiceHasStockLines(lines) {
+  return normalizePurchaseLines(lines).some(
+    (l) => l.productId && Number(l.totalQty || l.quantity || 0) > 0,
+  );
+}
   return [
     r.id, r.invoice_number, r.supplier_account_code, r.supplier_name, r.supplier_id,
     r.supplier_nif, r.supplier_phone, r.supplier_balance, r.ref, r.supplier_invoice_no,
@@ -224,11 +242,10 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   async function postPurchaseAccountingIfNeeded(client, inv) {
     const status = String(inv.status || 'confirmed').toLowerCase();
     if (['cancelled', 'voided', 'draft'].includes(status)) return null;
-    const lines = Array.isArray(inv.lines) ? inv.lines : [];
-    const hasStockLines = lines.some(
-      (l) => l.productId && Number(l.totalQty || l.quantity || 0) > 0,
-    );
-    if (!hasStockLines) return null;
+    const lines = normalizePurchaseLines(inv.lines);
+    if (!purchaseInvoiceHasStockLines(lines)) return null;
+
+    const invForTx = { ...inv, lines };
 
     const stockCheck = await client.query(
       `SELECT id FROM stock_movements
@@ -245,7 +262,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       if (openCheck.rows[0]) return null;
 
       const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
-      const repaired = await ensurePurchaseInvoicePayable(client, inv);
+      const repaired = await ensurePurchaseInvoicePayable(client, invForTx);
       return {
         success: true,
         stockMovementIds: stockCheck.rows.map((r) => r.id),
@@ -255,7 +272,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
     }
 
     const { processTransactionBody } = require('../transactionProcessor');
-    const txResult = await processTransactionBody(client, buildPurchaseInvoiceTransactionBody(inv));
+    const txResult = await processTransactionBody(client, buildPurchaseInvoiceTransactionBody(invForTx));
 
     const warehouseId = inv.warehouseId || inv.branchId;
     if (warehouseId && txResult?.stockMovementIds?.length > 0) {
@@ -288,27 +305,56 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
 
       const skipAccounting = req.body?.skipAccounting === true || req.body?.metadataOnly === true;
 
-      await client.query('BEGIN');
-      await client.query(UPSERT_SQL, rowParams(row));
-      const saved = await client.query('SELECT * FROM purchase_invoices WHERE id = $1', [row.id]);
-      const inv = fromRow(saved.rows[0]);
-
-      let txResult = null;
-      if (!skipAccounting) {
-        txResult = await postPurchaseAccountingIfNeeded(client, inv);
-        if (!txResult?.openItemId) {
-          const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
-          const repaired = await ensurePurchaseInvoicePayable(client, inv);
-          if (repaired?.openItemId) {
-            txResult = {
-              ...(txResult || { success: true, stockMovementIds: [] }),
-              openItemId: repaired.openItemId,
-            };
+      const { resolveBranchFilterId } = require('../lib/branchIdMatch');
+      const warehouseRaw = String(row.warehouse_id || row.branch_id || '').trim();
+      if (warehouseRaw) {
+        const resolvedWh = await resolveBranchFilterId(db, warehouseRaw);
+        if (resolvedWh) {
+          row.warehouse_id = resolvedWh;
+          row.branch_id = resolvedWh;
+          const meta = await db.query(
+            db.engine === 'postgres'
+              ? `SELECT name FROM branches WHERE id::text = $1 LIMIT 1`
+              : `SELECT name FROM branches WHERE CAST(id AS TEXT) = $1 LIMIT 1`,
+            [resolvedWh],
+          );
+          if (meta.rows[0]?.name && !row.warehouse_name) {
+            row.warehouse_name = meta.rows[0].name;
+            row.branch_name = meta.rows[0].name;
           }
         }
       }
 
+      await client.query('BEGIN');
+      await client.query(UPSERT_SQL, rowParams(row));
       await client.query('COMMIT');
+
+      const saved = await client.query('SELECT * FROM purchase_invoices WHERE id = $1', [row.id]);
+      const inv = fromRow(saved.rows[0]);
+
+      let txResult = null;
+      let accountingError = null;
+      if (!skipAccounting) {
+        try {
+          await client.query('BEGIN');
+          txResult = await postPurchaseAccountingIfNeeded(client, inv);
+          if (!txResult?.openItemId) {
+            const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
+            const repaired = await ensurePurchaseInvoicePayable(client, inv);
+            if (repaired?.openItemId) {
+              txResult = {
+                ...(txResult || { success: true, stockMovementIds: [] }),
+                openItemId: repaired.openItemId,
+              };
+            }
+          }
+          await client.query('COMMIT');
+        } catch (accErr) {
+          try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+          accountingError = accErr.message || String(accErr);
+          console.error('[PURCHASE INVOICES] accounting post failed:', accErr);
+        }
+      }
 
       await broadcastTable?.('purchase_invoices');
       if (txResult?.stockMovementIds?.length) {
@@ -322,12 +368,17 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       }
 
       const payload = fromRow(saved.rows[0]);
-      if (txResult) {
+      const hasStock = (txResult?.stockMovementIds?.length ?? 0) > 0;
+      const hasPayable = !!txResult?.openItemId;
+      if (txResult || accountingError || !skipAccounting) {
         payload.accounting = {
-          success: true,
-          stockMovementIds: txResult.stockMovementIds || [],
-          openItemId: txResult.openItemId || null,
-          journalEntryId: txResult.journalEntryId || null,
+          success: !accountingError && hasStock && hasPayable,
+          stockMovementIds: txResult?.stockMovementIds || [],
+          openItemId: txResult?.openItemId || null,
+          journalEntryId: txResult?.journalEntryId || null,
+          error: accountingError || (!hasStock || !hasPayable
+            ? 'Stock or supplier payable was not posted — use Re-post accounting on the invoice.'
+            : null),
         };
       }
       res.status(201).json(payload);
@@ -427,7 +478,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   });
 
   function buildPurchaseInvoiceTransactionBody(inv) {
-    const lines = Array.isArray(inv.lines) ? inv.lines : [];
+    const lines = normalizePurchaseLines(inv.lines);
     const warehouseId = inv.warehouseId || inv.branchId;
     const totalLandingCosts = resolvePurchaseInvoiceLandingCosts(inv);
     const landedUnitCosts = buildPurchaseInvoiceFreightAllocations(lines, totalLandingCosts);

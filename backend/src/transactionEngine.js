@@ -83,17 +83,19 @@ async function resolveWarehouseId(client, value) {
   if (!trimmed) return null;
 
   const uuid = normalizeUuid(trimmed);
-  if (uuid) return uuid;
+  if (uuid) {
+    const check = await client.query(
+      db.engine === 'postgres'
+        ? `SELECT id::text AS id FROM branches WHERE id::text = $1 LIMIT 1`
+        : `SELECT CAST(id AS TEXT) AS id FROM branches WHERE CAST(id AS TEXT) = $1 LIMIT 1`,
+      [uuid],
+    );
+    if (check.rows[0]?.id) return String(check.rows[0].id);
+  }
 
-  // The embedded SQLite database uses stable text ids such as "branch-main".
-  // PostgreSQL migrations use UUID columns, so keep non-UUID ids SQLite-only.
-  if (db.engine !== 'sqlite') return null;
-
-  const branchResult = await client.query(
-    `SELECT id FROM branches WHERE id = $1 AND ${activeFlagWhere(db, 'is_active')} LIMIT 1`,
-    [trimmed]
-  );
-  return branchResult.rows[0]?.id || null;
+  const { resolveBranchFilterId } = require('./lib/branchIdMatch');
+  const resolved = await resolveBranchFilterId(db, trimmed);
+  return resolved || null;
 }
 
 function requireParam(value, name) {

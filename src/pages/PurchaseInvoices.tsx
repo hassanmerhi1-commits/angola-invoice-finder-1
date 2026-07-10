@@ -1439,7 +1439,17 @@ export default function PurchaseInvoices() {
         const extra = await fetchPurchaseInvoiceFromServer(includeId);
         if (extra) piInvoices = [extra, ...piInvoices];
       }
-      setInvoices(piInvoices);
+      setInvoices((prev) => {
+        const byId = new Map<string, PurchaseInvoice>();
+        for (const inv of piInvoices) byId.set(inv.id, inv);
+        if (includeId && prev.some((i) => i.id === includeId) && !byId.has(includeId)) {
+          const kept = prev.find((i) => i.id === includeId);
+          if (kept) byId.set(includeId, kept);
+        }
+        return [...byId.values()].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        );
+      });
       setCachedList(`purchaseInvoices:${apiBranchId ?? 'all'}`, piInvoices);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1690,8 +1700,8 @@ export default function PurchaseInvoices() {
         console.warn('[PurchaseInvoices] repairFilialStock:', repairErr);
       });
     }
-    void Promise.all([refreshProducts(), refreshSuppliers(), loadInvoiceList()]).catch(() => {});
-  }, [loadInvoiceList, refreshProducts, refreshSuppliers]);
+    void Promise.all([refreshProducts(), refreshSuppliers()]).catch(() => {});
+  }, [refreshProducts, refreshSuppliers]);
 
   const ensurePurchaseAccountingPosted = useCallback(async (
     invoiceId: string,
@@ -2613,15 +2623,15 @@ export default function PurchaseInvoices() {
       const serverPostedPayable = !!serverAccounting?.openItemId;
 
       let txResult: Awaited<ReturnType<typeof processTransaction>> = {
-        success: serverPostedStock || serverPostedPayable || serverAccounting?.success === true,
-        errors: [],
+        success: serverPostedStock && serverPostedPayable,
+        errors: serverAccounting?.error ? [serverAccounting.error] : [],
         stockMovementIds: serverAccounting?.stockMovementIds || [],
         openItemId: serverAccounting?.openItemId || undefined,
         journalEntryId: serverAccounting?.journalEntryId || undefined,
         documentLinkIds: [],
       };
 
-      if (!serverPostedStock && !serverPostedPayable) {
+      if (!serverPostedStock || !serverPostedPayable) {
       console.log('[PurchaseInvoices] Server save did not post stock/payable — calling processTransaction...', {
         type: 'purchase_invoice',
         docId: invoice.id,
@@ -2854,7 +2864,12 @@ export default function PurchaseInvoices() {
       resetCreateFormState();
       clearPurchaseCreateIntent();
       urlCreateAppliedRef.current = false;
-      setViewInvoice(invoice);
+      setSelectedListInvoiceId(invoice.id);
+      if (!stillNoStock && !stillNoPayable) {
+        setViewInvoice(invoice);
+      } else {
+        setViewInvoice(null);
+      }
       setMode('list');
       goToPurchaseListRoute();
     } catch (error: any) {
