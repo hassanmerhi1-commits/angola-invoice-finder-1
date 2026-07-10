@@ -9,9 +9,9 @@ import {
   type RefreshableTable,
 } from '@/lib/realtime/tableRefreshBridge';
 
-const SOCKET_WATCH_MS = 5_000;
+const SOCKET_WATCH_MS = 30_000;
 const RECONNECT_POLL_MS = 15_000;
-const SOFT_REFRESH_MS = 120_000;
+const SOFT_REFRESH_MS = 600_000;
 
 function isLanClient(): boolean {
   if (typeof window === 'undefined') return false;
@@ -93,7 +93,6 @@ export function useRealtimeSyncBridge(enabled: boolean) {
 
     const softRefresh = window.setInterval(() => {
       if (!isLanClient()) return;
-      void hydrateCompanySettingsFromServer();
       refreshAllSyncedTables();
     }, SOFT_REFRESH_MS);
 

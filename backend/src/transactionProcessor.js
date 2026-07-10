@@ -183,6 +183,26 @@ async function processTransactionBody(client, body) {
             'SELECT id FROM open_items WHERE document_id = $1 LIMIT 1',
             [documentId],
           );
+
+          if (
+            transactionType === 'purchase_invoice'
+            && openItem
+            && !openItemRow.rows[0]
+          ) {
+            const invRow = await client.query(
+              'SELECT * FROM purchase_invoices WHERE id = $1 LIMIT 1',
+              [documentId],
+            );
+            if (invRow.rows[0]) {
+              const { fromRow } = require('./purchaseInvoiceMappers');
+              const { ensurePurchaseInvoicePayable } = require('./supplierBalanceRepair');
+              const repaired = await ensurePurchaseInvoicePayable(client, fromRow(invRow.rows[0]));
+              if (repaired?.openItemId) {
+                openItemRow.rows[0] = { id: repaired.openItemId };
+              }
+            }
+          }
+
           const skipped = {
             success: true,
             stockMovementIds: existingStock.rows.map((r) => r.id),

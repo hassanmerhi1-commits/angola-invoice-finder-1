@@ -329,6 +329,10 @@ export function invoiceBelongsToBranch(
   if (branchCatalog?.length) {
     const target = branchCatalog.find((b) => branchRefMatchesId(b, want));
     if (!target) return false;
+    const targetName = (target.name || '').trim().toLowerCase();
+    const invNames = [inv.branchName, inv.warehouseName]
+      .map((s) => String(s || '').trim().toLowerCase())
+      .filter(Boolean);
     for (const id of allIds) {
       const meta = branchCatalog.find((b) => branchRefMatchesId(b, id));
       if (!meta) continue;
@@ -337,6 +341,7 @@ export function invoiceBelongsToBranch(
       const c2 = (target.code || '').trim();
       if (c1 && c2 && c1 === c2) return true;
       if (meta.isMain && target.isMain) return true;
+      if (targetName && invNames.some((n) => n === targetName)) return true;
     }
   }
 
@@ -382,8 +387,24 @@ export async function getPurchaseInvoices(
 }
 
 export async function getPurchaseInvoiceById(id: string): Promise<PurchaseInvoice | undefined> {
+  if (usePurchaseInvoiceApi()) {
+    const direct = await fetchPurchaseInvoiceFromServer(id);
+    if (direct) return direct;
+  }
   const all = await getPurchaseInvoices();
   return all.find(d => d.id === id);
+}
+
+/** Fetch one purchase invoice by id from the server API (no list scan). */
+export async function fetchPurchaseInvoiceFromServer(id: string): Promise<PurchaseInvoice | null> {
+  if (!usePurchaseInvoiceApi()) return null;
+  try {
+    const res = await api.purchaseInvoices.get(id);
+    if (res.error || !res.data) return null;
+    return normalizeInvoiceWarehouse(mapPIFromApiRow(res.data));
+  } catch {
+    return null;
+  }
 }
 
 /** Allocate next FC number from server sequence (FC-BRANCH-YYYY-NNNNN). */

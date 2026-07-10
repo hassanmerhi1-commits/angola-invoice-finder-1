@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ensureBranchCaixa,
-  getOpenCaixaSession,
+  getCaixas,
   openCaixaSession,
   closeCaixaSession,
 } from '@/lib/accountingStorage';
@@ -82,6 +82,18 @@ async function fetchRemoteOpenSession(branchId: string): Promise<CaixaSession | 
   }
 }
 
+/** Load register metadata without blocking the open-caixa dialog. */
+async function loadBranchCaixaMeta(
+  branchId: string,
+  branchName: string,
+  ensureIfEmpty: boolean,
+): Promise<Caixa | null> {
+  const list = await getCaixas(branchId, branchName, { ensureIfEmpty: false });
+  if (list.length > 0) return list[0];
+  if (!ensureIfEmpty) return null;
+  return ensureBranchCaixa(branchId, branchName, { ensureIfEmpty: true });
+}
+
 /**
  * Cash-register (caixa) session state for the POS, scoped to the active branch.
  * Open session persists until end-of-day close — not re-prompted on POS navigation.
@@ -96,6 +108,7 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
   );
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  const metaLoadRef = useRef(0);
 
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!branchId) {
@@ -107,44 +120,65 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
 
     const cached = readPosCaixaCache(branchId);
     const prior = sessionRef.current;
-    const sticky = cached ?? prior;
+    const sticky = cached ?? (prior?.status === 'open' ? prior : null);
 
-    if (sticky) {
+    if (sticky?.status === 'open') {
       setSession(sticky);
-      if (!options?.silent) setLoading(false);
-    } else if (!options?.silent) {
-      setLoading(true);
+      setLoading(false);
+      if (!options?.silent) {
+        void fetchRemoteOpenSession(branchId).then((remote) => {
+          if (remote?.status === 'open') {
+            const merged =
+              cached && remote.id === cached.id ? mergeSessionTotals(remote, cached) : remote;
+            setSession(merged);
+            writePosCaixaCache(branchId, merged);
+          }
+        });
+      }
+      const metaToken = ++metaLoadRef.current;
+      void loadBranchCaixaMeta(branchId, branchName || branchId, false)
+        .then((cx) => {
+          if (metaToken === metaLoadRef.current && cx) setCaixa(cx);
+        })
+        .catch(() => {});
+      return;
     }
 
+    if (!options?.silent) setLoading(true);
+
     try {
-      const [cx, remoteSess] = await Promise.all([
-        ensureBranchCaixa(branchId, branchName || branchId),
-        fetchRemoteOpenSession(branchId),
-      ]);
-      setCaixa(cx);
-
-      const localSess = await getOpenCaixaSession(cx.id);
-      let resolved = remoteSess ?? localSess ?? cached ?? prior ?? null;
-
-      if (resolved && cached && resolved.id === cached.id) {
-        resolved = mergeSessionTotals(resolved, cached);
-      } else if (resolved && prior && resolved.id === prior.id) {
-        resolved = mergeSessionTotals(resolved, prior);
+      const remoteSess = await fetchRemoteOpenSession(branchId);
+      if (remoteSess?.status === 'open') {
+        setSession(remoteSess);
+        writePosCaixaCache(branchId, remoteSess);
+        setLoading(false);
+        const metaToken = ++metaLoadRef.current;
+        void loadBranchCaixaMeta(branchId, branchName || branchId, false)
+          .then((cx) => {
+            if (metaToken === metaLoadRef.current && cx) setCaixa(cx);
+          })
+          .catch(() => {});
+        return;
       }
 
-      if (resolved?.status === 'open') {
-        setSession(resolved);
-        writePosCaixaCache(branchId, resolved);
-      } else if (!sticky) {
-        setSession(null);
-        clearPosCaixaCache(branchId);
-      }
+      // No open session on server — unblock UI immediately so the open-caixa dialog shows.
+      setSession(null);
+      clearPosCaixaCache(branchId);
+      setLoading(false);
+
+      const metaToken = ++metaLoadRef.current;
+      void loadBranchCaixaMeta(branchId, branchName || branchId, true)
+        .then((cx) => {
+          if (metaToken === metaLoadRef.current && cx) setCaixa(cx);
+        })
+        .catch((err) => {
+          console.warn('[usePosCaixa] register metadata load:', err);
+        });
     } catch (err) {
       console.error('[usePosCaixa] load failed:', err);
       if (sticky) {
         setSession(sticky);
       }
-    } finally {
       setLoading(false);
     }
   }, [branchId, branchName]);
@@ -161,7 +195,7 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
   const openSession = useCallback(
     async (openingCash: number, openedBy: string) => {
       if (!branchId) return null;
-      const cx = caixa ?? (await ensureBranchCaixa(branchId, branchName || branchId));
+      const cx = caixa ?? (await ensureBranchCaixa(branchId, branchName || branchId, { ensureIfEmpty: true }));
       setCaixa(cx);
 
       const remoteExisting = await fetchRemoteOpenSession(branchId);
@@ -169,13 +203,6 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
         setSession(remoteExisting);
         writePosCaixaCache(branchId, remoteExisting);
         return remoteExisting;
-      }
-
-      const existing = await getOpenCaixaSession(cx.id);
-      if (existing) {
-        setSession(existing);
-        writePosCaixaCache(branchId, existing);
-        return existing;
       }
 
       const cached = readPosCaixaCache(branchId);

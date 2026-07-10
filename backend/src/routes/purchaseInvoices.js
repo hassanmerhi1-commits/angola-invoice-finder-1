@@ -237,7 +237,22 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
        LIMIT 1`,
       [inv.id],
     );
-    if (stockCheck.rows.length > 0) return null;
+    if (stockCheck.rows.length > 0) {
+      const openCheck = await client.query(
+        `SELECT id FROM open_items WHERE document_id = $1 AND entity_type = 'supplier' LIMIT 1`,
+        [inv.id],
+      );
+      if (openCheck.rows[0]) return null;
+
+      const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
+      const repaired = await ensurePurchaseInvoicePayable(client, inv);
+      return {
+        success: true,
+        stockMovementIds: stockCheck.rows.map((r) => r.id),
+        openItemId: repaired?.openItemId || null,
+        journalEntryId: null,
+      };
+    }
 
     const { processTransactionBody } = require('../transactionProcessor');
     const txResult = await processTransactionBody(client, buildPurchaseInvoiceTransactionBody(inv));
@@ -281,6 +296,16 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       let txResult = null;
       if (!skipAccounting) {
         txResult = await postPurchaseAccountingIfNeeded(client, inv);
+        if (!txResult?.openItemId) {
+          const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
+          const repaired = await ensurePurchaseInvoicePayable(client, inv);
+          if (repaired?.openItemId) {
+            txResult = {
+              ...(txResult || { success: true, stockMovementIds: [] }),
+              openItemId: repaired.openItemId,
+            };
+          }
+        }
       }
 
       await client.query('COMMIT');
@@ -291,6 +316,9 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       }
       if (txResult?.journalEntryId) {
         await broadcastTable?.('journal_entries');
+      }
+      if (txResult?.openItemId) {
+        await broadcastTable?.('suppliers');
       }
 
       const payload = fromRow(saved.rows[0]);
@@ -480,7 +508,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   }
 
   /** Re-post stock / payables when header was saved but transaction engine failed earlier. */
-  router.post('/:id/repost-accounting', requirePermission('admin_settings'), async (req, res) => {
+  router.post('/:id/repost-accounting', requirePermission('purchase_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       const saved = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [req.params.id]);
@@ -520,8 +548,21 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
 
       let backfill = { created: 0, skipped: 0 };
       if (needsPayable || !txResult?.openItemId) {
-        const { backfillMissingSupplierOpenItems } = require('../supplierBalanceRepair');
-        backfill = await backfillMissingSupplierOpenItems();
+        const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
+        const repairClient = await db.pool.connect();
+        try {
+          await repairClient.query('BEGIN');
+          const repaired = await ensurePurchaseInvoicePayable(repairClient, inv);
+          await repairClient.query('COMMIT');
+          if (repaired?.openItemId) {
+            backfill = { created: repaired.created ? 1 : 0, skipped: repaired.created ? 0 : 1 };
+          }
+        } catch (repairErr) {
+          try { await repairClient.query('ROLLBACK'); } catch (_) { /* ignore */ }
+          console.warn('[PURCHASE INVOICES] ensure payable:', repairErr.message);
+        } finally {
+          repairClient.release();
+        }
       }
 
       const openAfter = await client.query(

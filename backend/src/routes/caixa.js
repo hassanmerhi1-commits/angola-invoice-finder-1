@@ -8,17 +8,21 @@ const { applyCaixaClose } = require('../sync/caixaIngest');
 const { postCaixaGlMovement, syncCaixaGlFromRecord } = require('../lib/caixaGlPosting');
 
 async function caixaTablesExist() {
+  if (caixaTablesExist.cached !== undefined) return caixaTablesExist.cached;
   try {
     const r = await db.query(
       db.engine === 'postgres'
         ? `SELECT 1 FROM information_schema.tables WHERE table_name = 'caixa_sessions' LIMIT 1`
         : `SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'caixa_sessions' LIMIT 1`,
     );
-    return r.rows.length > 0;
+    caixaTablesExist.cached = r.rows.length > 0;
+    return caixaTablesExist.cached;
   } catch {
+    caixaTablesExist.cached = false;
     return false;
   }
 }
+caixaTablesExist.cached = undefined;
 
 function mapSessionRow(row) {
   if (!row) return null;

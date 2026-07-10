@@ -2896,6 +2896,8 @@ export const en = {
     loadingOpenDocs: "Loading open documents...",
     noOpenDocsForEntity: "No open invoices for this customer. On-account (credit) POS sales appear here after the sale is completed.",
     noOpenDocsForSupplier: "No open payables for this supplier.",
+    noOpenPayablesPoHint:
+      "If you only received a purchase order (not a purchase invoice / FC), stock updates but no supplier payable is created. Record a purchase invoice (Compras → Nova Fatura de Compra) to open the amount to pay.",
     type: "Type",
     document: "Document",
     dueDate: "Due Date",
@@ -4392,6 +4394,9 @@ export const en = {
 
     // Save results
     purchaseInvoiceSavedTitle: "Purchase invoice saved",
+    savedToOtherWarehouseTitle: "Saved to another warehouse",
+    savedToOtherWarehouseDesc:
+      "This purchase was saved to {warehouse}. Stock was updated there. Switch the branch in the top bar to see it in journals and branch-filtered reports.",
     purchaseSavedPartialSync:
       "Invoice saved but stock or supplier payable may be missing. Open Inventory and Payments and press refresh, or contact support to repost.",
     repostStockPayable: "Repost stock & payable",

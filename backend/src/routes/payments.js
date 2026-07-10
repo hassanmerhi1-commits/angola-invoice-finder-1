@@ -103,7 +103,7 @@ module.exports = function(broadcastTable) {
   });
 
   // POST: Fast backfill — create missing supplier payables from saved purchase invoices only
-  router.post('/backfill-missing-payables', requirePermission('admin_settings'), async (req, res) => {
+  router.post('/backfill-missing-payables', requirePermission('purchase_create'), async (req, res) => {
     try {
       const { backfillMissingSupplierOpenItems } = require('../supplierBalanceRepair');
       const backfill = await backfillMissingSupplierOpenItems();
@@ -137,9 +137,34 @@ module.exports = function(broadcastTable) {
   router.get('/open-items/:entityType/:entityId', async (req, res) => {
     try {
       const { entityType, entityId } = req.params;
+      if (entityType === 'supplier') {
+        try {
+          const { ensurePayablesForSupplier } = require('../supplierBalanceRepair');
+          await ensurePayablesForSupplier(entityId);
+        } catch (repairErr) {
+          console.warn('[PAYMENTS] ensure payables for supplier:', repairErr.message);
+        }
+      }
+
+      const { resolveSupplierEntityIds } = require('../supplierBalanceRepair');
+      const entityIds =
+        entityType === 'supplier'
+          ? await resolveSupplierEntityIds(entityId)
+          : [String(entityId).trim()].filter(Boolean);
+      if (!entityIds.length) {
+        return res.json([]);
+      }
+
+      const entityCol =
+        db.engine === 'postgres' ? 'entity_id::text' : 'CAST(entity_id AS TEXT)';
+      const placeholders = entityIds.map((_, i) => `$${i + 2}`).join(', ');
       const result = await db.query(
-        `SELECT * FROM open_items WHERE entity_type = $1 AND entity_id = $2 AND status != 'cleared' ORDER BY document_date ASC`,
-        [entityType, entityId]
+        `SELECT * FROM open_items
+         WHERE entity_type = $1
+           AND ${entityCol} IN (${placeholders})
+           AND status != 'cleared'
+         ORDER BY document_date ASC`,
+        [entityType, ...entityIds],
       );
       res.json(result.rows);
     } catch (error) {

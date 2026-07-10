@@ -4,8 +4,7 @@ import { useCart, useSales, useAuth, useClients } from '@/hooks/useERP';
 import { useCreditNotes } from '@/hooks/useFiscalDocuments';
 import { effectiveUnitPrice, clientPricing, normalizePriceLevel } from '@/lib/pricing';
 import { userHasPermission } from '@/lib/permissions';
-import { companySettingsFromApiResponse, getCompanySettings, saveCompanySettings } from '@/lib/companySettings';
-import { api } from '@/lib/api/client';
+import { getCompanySettings } from '@/lib/companySettings';
 import {
   printPosThermalReceipts,
 } from '@/lib/thermalPrinter';
@@ -57,9 +56,9 @@ export default function POS() {
   const { user } = useAuth();
   const { t } = useTranslation();
   const cart = useCart();
-  const { completeSale, sales, refreshSales } = useSales(currentBranch?.id);
-  const { creditNotes, refreshCreditNotes } = useCreditNotes(currentBranch?.id);
-  const { clients } = useClients();
+  const { completeSale, sales, refreshSales } = useSales(branchId, true);
+  const { creditNotes, refreshCreditNotes } = useCreditNotes(branchId, true);
+  const { clients, refreshClients } = useClients(true);
 
   // Only admins/managers (anyone with `pos_price_change`) may pick the price tier.
   // Cashiers always get the admin-chosen default (or the selected client's level).
@@ -81,24 +80,15 @@ export default function POS() {
   );
   const adjustmentPct = clientPricing(selectedClient).adjustmentPct;
 
-  // Pull the company-wide default price level from the server and cache it. This is
-  // only the fallback — each branch's own level (set in Filiais) takes precedence,
-  // and a selected client's level wins over both.
+  // Company-wide default price level is hydrated by AppLayout; listen for updates only.
   useEffect(() => {
-    let cancelled = false;
-    void api.companySettings
-      .get()
-      .then((res) => {
-        if (cancelled) return;
-        const remote = companySettingsFromApiResponse(res);
-        const serverLevel = normalizePriceLevel(remote?.posDefaultPriceLevel ?? 1);
-        saveCompanySettings({ posDefaultPriceLevel: serverLevel });
-        setCompanyDefaultLevel(serverLevel);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
+    const syncFromCache = () => {
+      const level = normalizePriceLevel(getCompanySettings().posDefaultPriceLevel ?? 1);
+      setCompanyDefaultLevel(level);
     };
+    syncFromCache();
+    window.addEventListener('company-settings-updated', syncFromCache);
+    return () => window.removeEventListener('company-settings-updated', syncFromCache);
   }, []);
 
   // Effective ex-VAT unit price for the active price level + client % adjustment.
@@ -162,7 +152,7 @@ export default function POS() {
     recordCashRefund,
     recordCashExpense,
     refresh: refreshCaixa,
-  } = usePosCaixa(currentBranch?.id, currentBranch?.name);
+  } = usePosCaixa(branchId, currentBranch?.name || branchId);
   const [openingCaixa, setOpeningCaixa] = useState(false);
   const shiftInvoiceCount = useMemo(
     () => filterShiftSalesForCashier(sales, user, caixaSession).length,
@@ -178,11 +168,24 @@ export default function POS() {
     [currentBranch?.id, caixaSession?.id, bumpShiftIssues],
   );
   const caixaOpen = !!caixaSession;
+
+  // Defer non-critical POS data until the cash register is open (faster entry + open-caixa dialog).
+  useEffect(() => {
+    if (!caixaOpen || !branchId) return;
+    void refreshSales();
+    void refreshCreditNotes(branchId);
+    void refreshClients();
+  }, [caixaOpen, branchId, refreshSales, refreshCreditNotes, refreshClients]);
+
+  useEffect(() => {
+    if (!clientPickerOpen) return;
+    void refreshClients();
+  }, [clientPickerOpen, refreshClients]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const qtyInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!currentBranch?.id) {
+    if (!caixaOpen || !currentBranch?.id) {
       setShiftExpenses([]);
       return;
     }
@@ -200,7 +203,7 @@ export default function POS() {
     return () => {
       cancelled = true;
     };
-  }, [currentBranch?.id, endOfDayOpen, shiftIssuesVersion, refreshSales, refreshCreditNotes]);
+  }, [caixaOpen, currentBranch?.id, endOfDayOpen, shiftIssuesVersion, refreshSales, refreshCreditNotes]);
 
   useEffect(() => {
     const onCreditNotesChanged = (event: Event) => {
@@ -959,8 +962,8 @@ export default function POS() {
       />
 
       <PosOpenCaixaDialog
-        open={!!currentBranch && !caixaLoading && !caixaOpen}
-        branchName={currentBranch?.name}
+        open={!!branchId && !caixaLoading && !caixaOpen}
+        branchName={currentBranch?.name || branchId}
         cashierName={user?.name || user?.username}
         submitting={openingCaixa}
         onConfirm={handleOpenCaixa}

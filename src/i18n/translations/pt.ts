@@ -2899,6 +2899,8 @@ export const pt: TranslationKeys = {
     loadingOpenDocs: "A carregar documentos em aberto...",
     noOpenDocsForEntity: "Nenhuma factura em aberto para este cliente. Vendas a prazo no POS aparecem aqui após a venda ser concluída.",
     noOpenDocsForSupplier: "Nenhuma dívida em aberto para este fornecedor.",
+    noOpenPayablesPoHint:
+      "Se apenas recebeu uma encomenda (e não uma fatura de compra / FC), o stock actualiza mas não abre dívida ao fornecedor. Registe uma fatura de compra (Compras → Nova Fatura de Compra) para poder pagar.",
     type: "Tipo",
     document: "Documento",
     dueDate: "Vencimento",
@@ -4394,6 +4396,9 @@ export const pt: TranslationKeys = {
 
     // Save results
     purchaseInvoiceSavedTitle: "Fatura de Compra Guardada",
+    savedToOtherWarehouseTitle: "Gravada noutro armazém",
+    savedToOtherWarehouseDesc:
+      "Esta compra foi gravada em {warehouse}. O stock foi actualizado aí. Mude a filial na barra superior para a ver nos diários e relatórios filtrados por filial.",
     purchaseSavedPartialSync:
       "Fatura guardada mas o stock ou o valor a pagar ao fornecedor pode estar em falta. Abra Inventário e Pagamentos e actualize, ou peça suporte para repostar.",
     repostStockPayable: "Repostar stock e valor a pagar",

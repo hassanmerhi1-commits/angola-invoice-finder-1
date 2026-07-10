@@ -658,7 +658,7 @@ function mapSaleRow(s: any): Sale {
   };
 }
 
-export function useSales(branchId?: string) {
+export function useSales(branchId?: string, deferInitialLoad = false) {
   const salesCacheKey = `sales:${branchId ?? 'all'}`;
   const [sales, setSales] = useState<Sale[]>(() => getCachedList<Sale[]>(salesCacheKey) ?? []);
 
@@ -704,7 +704,10 @@ export function useSales(branchId?: string) {
     return () => window.removeEventListener(storage.SALES_CHANGED_EVENT, onSalesChanged);
   }, [refreshSales]);
 
-  useEffect(() => { refreshSales(); }, [refreshSales]);
+  useEffect(() => {
+    if (deferInitialLoad) return;
+    refreshSales();
+  }, [refreshSales, deferInitialLoad]);
 
   const completeSale = useCallback(async (
     cartItems: CartItem[],
@@ -1284,7 +1287,7 @@ function mapClientApiRow(c: any): Client {
   };
 }
 
-export function useClients() {
+export function useClients(deferInitialLoad = false) {
   const [clients, setClients] = useState<Client[]>(() => getCachedList<Client[]>('clients') ?? []);
 
   const refreshClients = useCallback(async () => {
@@ -1330,7 +1333,10 @@ export function useClients() {
     window.dispatchEvent(new CustomEvent(storage.CLIENTS_CHANGED_EVENT, { detail: {} }));
   }, []);
 
-  useEffect(() => { refreshClients(); }, [refreshClients]);
+  useEffect(() => {
+    if (deferInitialLoad) return;
+    refreshClients();
+  }, [refreshClients, deferInitialLoad]);
 
   // Keep every useClients instance (Clients page, Chart of Accounts dialog, POS, …)
   // in sync when a client is created/updated/deleted from anywhere.

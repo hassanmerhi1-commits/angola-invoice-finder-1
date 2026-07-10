@@ -723,8 +723,13 @@ export default function Payments() {
             )}
 
             {entityId && !entityOpenItemsLoading && entityPayableItems.length === 0 && (
-              <div className="rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">
-                {paymentType === 'receipt' ? t.paymentsUi.noOpenDocsForEntity : t.paymentsUi.noOpenDocsForSupplier}
+              <div className="rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground space-y-2">
+                <p>
+                  {paymentType === 'receipt' ? t.paymentsUi.noOpenDocsForEntity : t.paymentsUi.noOpenDocsForSupplier}
+                </p>
+                {paymentType === 'payment' && (
+                  <p className="text-xs">{t.paymentsUi.noOpenPayablesPoHint}</p>
+                )}
               </div>
             )}
 

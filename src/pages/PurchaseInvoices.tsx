@@ -5,6 +5,7 @@ import { useTranslation } from '@/i18n';
 import QRCode from 'qrcode';
 import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
 import { recordPurchaseInvoicePrint } from '@/lib/recordPrintAudit';
@@ -20,6 +21,8 @@ import {
   calculateInvoiceTotals,
   getPurchaseInvoices,
   getPurchaseInvoiceById,
+  fetchPurchaseInvoiceFromServer,
+  invoiceBelongsToBranch,
   savePurchaseInvoice,
   resolveSellingPriceFromPurchaseLine,
   allocatePurchaseInvoiceNumber,
@@ -1427,10 +1430,15 @@ export default function PurchaseInvoices() {
     if (!supplierPurchaseOrders.some((o) => o.id === fillFromPoId)) setFillFromPoId('');
   }, [fillFromPoId, supplierPurchaseOrders]);
 
-  const loadInvoiceList = useCallback(async () => {
+  const loadInvoiceList = useCallback(async (opts?: { includeInvoiceId?: string }) => {
     try {
       setListLoadError(null);
-      const piInvoices = await getPurchaseInvoices(apiBranchId, branches);
+      let piInvoices = await getPurchaseInvoices(apiBranchId, branches);
+      const includeId = String(opts?.includeInvoiceId || '').trim();
+      if (includeId && !piInvoices.some((i) => i.id === includeId)) {
+        const extra = await fetchPurchaseInvoiceFromServer(includeId);
+        if (extra) piInvoices = [extra, ...piInvoices];
+      }
       setInvoices(piInvoices);
       setCachedList(`purchaseInvoices:${apiBranchId ?? 'all'}`, piInvoices);
     } catch (err) {
@@ -1476,6 +1484,10 @@ export default function PurchaseInvoices() {
     };
     init();
   }, [apiBranchId, loadInvoiceList]);
+
+  useTableRefreshListener('purchase_invoices', () => {
+    void loadInvoiceList();
+  });
 
   useEffect(() => subscribeSupplierReturnsChanged(refreshReturnMetrics), [refreshReturnMetrics]);
 
@@ -2809,6 +2821,22 @@ export default function PurchaseInvoices() {
         setSaveError(txError || t.purchaseInvoicesUi.purchaseSavedPartialSync);
       }
 
+      await loadInvoiceList({ includeInvoiceId: invoice.id });
+
+      const toolbarBranch = String(apiBranchId || currentBranch?.id || '').trim();
+      if (
+        toolbarBranch
+        && !invoiceBelongsToBranch(invoice, toolbarBranch, branches)
+      ) {
+        toast({
+          title: t.purchaseInvoicesUi.savedToOtherWarehouseTitle,
+          description: t.purchaseInvoicesUi.savedToOtherWarehouseDesc.replace(
+            '{warehouse}',
+            invoice.warehouseName || invoice.branchName || toolbarBranch,
+          ),
+        });
+      }
+
       resetCreateFormState();
       clearPurchaseCreateIntent();
       urlCreateAppliedRef.current = false;
@@ -2827,7 +2855,7 @@ export default function PurchaseInvoices() {
       savingPurchaseRef.current = false;
       setSavingPurchase(false);
     }
-  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList, ensurePurchaseAccountingPosted, broadcastPurchaseAccountingSync]);
+  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList, ensurePurchaseAccountingPosted, broadcastPurchaseAccountingSync, apiBranchId]);
 
   // ═══════════════ RENDER ═══════════════
 

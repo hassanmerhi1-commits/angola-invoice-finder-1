@@ -247,8 +247,14 @@ export async function updateCaixaBalance(caixaId: string, amount: number, direct
   }
 }
 
-export async function ensureBranchCaixa(branchId: string, branchName: string): Promise<Caixa> {
-  const existing = await getCaixas(branchId, branchName, { ensureIfEmpty: true });
+export async function ensureBranchCaixa(
+  branchId: string,
+  branchName: string,
+  opts?: { ensureIfEmpty?: boolean },
+): Promise<Caixa> {
+  const existing = await getCaixas(branchId, branchName, {
+    ensureIfEmpty: opts?.ensureIfEmpty ?? true,
+  });
   if (existing.length > 0) {
     return existing[0];
   }

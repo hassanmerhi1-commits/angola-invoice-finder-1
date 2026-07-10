@@ -502,6 +502,149 @@ async function backfillMissingSupplierOpenItems() {
   return { created, skipped };
 }
 
+const { fromRow } = require('./purchaseInvoiceMappers');
+
+/** Create missing payable open item for one saved purchase invoice (stock may already exist). */
+async function ensurePurchaseInvoicePayable(client, inv) {
+  const invoice =
+    inv && inv.invoiceNumber != null
+      ? inv
+      : fromRow(
+          (
+            await client.query('SELECT * FROM purchase_invoices WHERE id = $1 LIMIT 1', [
+              typeof inv === 'string' ? inv : inv?.id,
+            ])
+          ).rows[0],
+        );
+  if (!invoice?.id) return null;
+
+  const status = String(invoice.status || 'confirmed').toLowerCase();
+  if (['cancelled', 'voided', 'draft'].includes(status)) return null;
+  const supplierId = String(invoice.supplierId || invoice.supplier_id || '').trim();
+  if (!supplierId) return null;
+  const total = Number(invoice.total || 0);
+  if (total <= 0.01) return null;
+
+  const openCheck = await client.query(
+    `SELECT id FROM open_items
+     WHERE entity_type = 'supplier' AND document_id = $1
+       AND ${OPEN_ITEM_IS_DEBIT_SQL}
+     LIMIT 1`,
+    [invoice.id],
+  );
+  if (openCheck.rows[0]?.id) {
+    return { openItemId: openCheck.rows[0].id, created: false };
+  }
+
+  const docDate = String(invoice.date || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const dueDate = invoice.paymentDate ? String(invoice.paymentDate).slice(0, 10) : null;
+  const oi = await createOpenItem(client, {
+    entityType: 'supplier',
+    entityId: supplierId,
+    documentType: 'invoice',
+    documentId: String(invoice.id),
+    documentNumber: String(invoice.invoiceNumber || invoice.id),
+    documentDate: docDate,
+    dueDate,
+    originalAmount: total,
+    isDebit: true,
+    branchId: invoice.branchId || invoice.warehouseId || null,
+    currency: invoice.currency === 'KZ' ? 'AOA' : invoice.currency || 'AOA',
+  });
+  await syncSupplierBalanceFromOpenItems(client, supplierId);
+  return { openItemId: oi.id, created: true };
+}
+
+/** Backfill missing payables for one supplier (used when opening Payments). */
+async function ensurePayablesForSupplier(supplierId) {
+  const raw = String(supplierId || '').trim();
+  if (!raw || !(await tableExists('open_items')) || !(await tableExists('purchase_invoices'))) {
+    return { created: 0, skipped: 0 };
+  }
+
+  const supplierIds = await resolveSupplierEntityIds(raw);
+  if (!supplierIds.length) return { created: 0, skipped: 0 };
+
+  const idCol = db.engine === 'postgres' ? 'supplier_id::text' : 'CAST(supplier_id AS TEXT)';
+  const placeholders = supplierIds.map((_, i) => `$${i + 1}`).join(', ');
+  const missing = await db.query(
+    `SELECT pi.id, pi.invoice_number, pi.supplier_id, pi.supplier_name, pi.date, pi.payment_date,
+            pi.total, pi.branch_id, pi.currency, pi.warehouse_id
+     FROM purchase_invoices pi
+     LEFT JOIN open_items oi ON oi.document_id = pi.id
+       AND oi.entity_type = 'supplier'
+       AND ${OPEN_ITEM_IS_DEBIT_SQL}
+     WHERE ${idCol} IN (${placeholders})
+       AND COALESCE(pi.status, 'confirmed') NOT IN ('cancelled', 'voided', 'draft')
+       AND COALESCE(pi.total, 0) > 0.01
+       AND oi.id IS NULL
+     ORDER BY pi.date ASC
+     LIMIT 100`,
+    supplierIds,
+  );
+
+  const rows = missing.rows || [];
+  if (!rows.length) return { created: 0, skipped: 0 };
+
+  const client = await db.pool.connect();
+  let created = 0;
+  let skipped = 0;
+  try {
+    await client.query('BEGIN');
+    for (const row of rows) {
+      try {
+        const result = await ensurePurchaseInvoicePayable(client, fromRow(row));
+        if (result?.created) created += 1;
+        else skipped += 1;
+      } catch (err) {
+        if (/já registado|already|duplicate/i.test(String(err.message || ''))) {
+          skipped += 1;
+          continue;
+        }
+        throw err;
+      }
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { created, skipped };
+}
+
+async function resolveSupplierEntityIds(entityId) {
+  const raw = String(entityId || '').trim();
+  if (!raw) return [];
+  const ids = new Set([raw]);
+  if (!(await tableExists('suppliers'))) return [...ids];
+
+  const idSql =
+    db.engine === 'postgres'
+      ? 'SELECT id::text AS id FROM suppliers WHERE id::text = $1 LIMIT 1'
+      : 'SELECT CAST(id AS TEXT) AS id FROM suppliers WHERE CAST(id AS TEXT) = $1 LIMIT 1';
+  const byId = await db.query(idSql, [raw]);
+  if (byId.rows[0]?.id) ids.add(String(byId.rows[0].id));
+
+  const metaSql =
+    db.engine === 'postgres'
+      ? `SELECT id::text AS id FROM suppliers
+         WHERE lower(trim(coalesce(nif, ''))) = lower($1)
+            OR lower(trim(name)) = lower($1)
+         LIMIT 3`
+      : `SELECT CAST(id AS TEXT) AS id FROM suppliers
+         WHERE lower(trim(coalesce(nif, ''))) = lower($1)
+            OR lower(trim(name)) = lower($1)
+         LIMIT 3`;
+  const byMeta = await db.query(metaSql, [raw]);
+  for (const row of byMeta.rows || []) {
+    if (row?.id) ids.add(String(row.id));
+  }
+  return [...ids];
+}
+
 async function runSupplierBalanceRepair() {
   try {
     const backfill = await backfillMissingSupplierOpenItems();
@@ -537,6 +680,9 @@ async function runSupplierBalanceRepair() {
 module.exports = {
   runSupplierBalanceRepair,
   backfillMissingSupplierOpenItems,
+  ensurePurchaseInvoicePayable,
+  ensurePayablesForSupplier,
+  resolveSupplierEntityIds,
   repairSupplierReturnOpenItems,
   repairUnallocatedSupplierPayments,
   backfillSupplierBalancesFromOpenItems,

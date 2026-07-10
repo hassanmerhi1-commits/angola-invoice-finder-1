@@ -32,7 +32,7 @@ async function resolveBranchName(branchId: string, cachedName?: string) {
 
 // ==================== CREDIT NOTES ====================
 
-export function useCreditNotes(branchId?: string) {
+export function useCreditNotes(branchId?: string, deferInitialLoad = false) {
   const [creditNotes, setCreditNotes] = useState<CreditNote[]>(
     () => getCachedList<CreditNote[]>(`creditNotes:${branchId ?? 'all'}`) ?? [],
   );
@@ -66,8 +66,9 @@ export function useCreditNotes(branchId?: string) {
   }, [branchId]);
 
   useEffect(() => {
+    if (deferInitialLoad) return;
     void refreshCreditNotes();
-  }, [refreshCreditNotes]);
+  }, [refreshCreditNotes, deferInitialLoad]);
 
   useEffect(() => {
     const onChanged = () => { void refreshCreditNotes(); };
