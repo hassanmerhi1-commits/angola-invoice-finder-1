@@ -151,24 +151,16 @@ function buildPurchaseInvoiceFreightAllocations(lines, totalLandingCosts) {
 }
 
 function normalizePurchaseLines(lines) {
-  return (Array.isArray(lines) ? lines : []).map((line) => ({
-    ...line,
-    productId: String(line.productId || line.product_id || '').trim(),
-    productCode: line.productCode || line.product_code || '',
-    description: line.description || '',
-    totalQty: Number(line.totalQty ?? line.total_qty ?? line.quantity ?? 0),
-    quantity: Number(line.quantity ?? line.totalQty ?? line.total_qty ?? 0),
-    unitPrice: Number(line.unitPrice ?? line.unit_price ?? 0),
-    price1: line.price1 ?? line.price_1,
-    total: Number(line.total ?? 0),
-  }));
+  const { normalizePurchaseLines: norm } = require('../lib/purchaseInvoicePosting');
+  return norm(lines);
 }
 
 function purchaseInvoiceHasStockLines(lines) {
-  return normalizePurchaseLines(lines).some(
-    (l) => l.productId && Number(l.totalQty || l.quantity || 0) > 0,
-  );
+  const { purchaseInvoiceHasStockLines: hasStock } = require('../lib/purchaseInvoicePosting');
+  return hasStock(lines);
 }
+
+function rowParams(r) {
   return [
     r.id, r.invoice_number, r.supplier_account_code, r.supplier_name, r.supplier_id,
     r.supplier_nif, r.supplier_phone, r.supplier_balance, r.ref, r.supplier_invoice_no,
@@ -228,6 +220,33 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
     }
   });
 
+  router.get('/:id/posting-status', async (req, res) => {
+    try {
+      const saved = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [req.params.id]);
+      if (!saved.rows[0]) return res.status(404).json({ error: 'Not found' });
+      const inv = fromRow(saved.rows[0]);
+      const client = await db.pool.connect();
+      try {
+        const { queryPostingStatus, purchaseInvoiceHasStockLines } = require('../lib/purchaseInvoicePosting');
+        const status = await queryPostingStatus(client, inv.id);
+        res.json({
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          warehouseId: inv.warehouseId,
+          branchId: inv.branchId,
+          hasStockLines: purchaseInvoiceHasStockLines(inv.lines),
+          ...status,
+          ok: status.stockMovementIds.length > 0 && !!status.openItemId,
+        });
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('[PURCHASE INVOICES] posting-status:', error);
+      res.status(500).json({ error: error.message || 'Failed to read posting status' });
+    }
+  });
+
   router.get('/:id', async (req, res) => {
     try {
       const result = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [req.params.id]);
@@ -240,51 +259,8 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   });
 
   async function postPurchaseAccountingIfNeeded(client, inv) {
-    const status = String(inv.status || 'confirmed').toLowerCase();
-    if (['cancelled', 'voided', 'draft'].includes(status)) return null;
-    const lines = normalizePurchaseLines(inv.lines);
-    if (!purchaseInvoiceHasStockLines(lines)) return null;
-
-    const invForTx = { ...inv, lines };
-
-    const stockCheck = await client.query(
-      `SELECT id FROM stock_movements
-       WHERE reference_id = $1
-         AND reference_type IN ('purchase_invoice', 'purchase')
-       LIMIT 1`,
-      [inv.id],
-    );
-    if (stockCheck.rows.length > 0) {
-      const openCheck = await client.query(
-        `SELECT id FROM open_items WHERE document_id = $1 AND entity_type = 'supplier' LIMIT 1`,
-        [inv.id],
-      );
-      if (openCheck.rows[0]) return null;
-
-      const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
-      const repaired = await ensurePurchaseInvoicePayable(client, invForTx);
-      return {
-        success: true,
-        stockMovementIds: stockCheck.rows.map((r) => r.id),
-        openItemId: repaired?.openItemId || null,
-        journalEntryId: null,
-      };
-    }
-
-    const { processTransactionBody } = require('../transactionProcessor');
-    const txResult = await processTransactionBody(client, buildPurchaseInvoiceTransactionBody(invForTx));
-
-    const warehouseId = inv.warehouseId || inv.branchId;
-    if (warehouseId && txResult?.stockMovementIds?.length > 0) {
-      try {
-        const { ensureFilialProductsForWarehouse } = require('../lib/filialStockRepair');
-        await ensureFilialProductsForWarehouse(warehouseId, client);
-      } catch (filialErr) {
-        console.warn('[PURCHASE INVOICES] filial stock repair:', filialErr.message);
-      }
-    }
-
-    return txResult;
+    const { postPurchaseInvoiceAccountingPhased } = require('../lib/purchaseInvoicePosting');
+    return postPurchaseInvoiceAccountingPhased(client, inv);
   }
 
   router.post('/', requirePermission('purchase_create'), async (req, res) => {
@@ -338,16 +314,6 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
         try {
           await client.query('BEGIN');
           txResult = await postPurchaseAccountingIfNeeded(client, inv);
-          if (!txResult?.openItemId) {
-            const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
-            const repaired = await ensurePurchaseInvoicePayable(client, inv);
-            if (repaired?.openItemId) {
-              txResult = {
-                ...(txResult || { success: true, stockMovementIds: [] }),
-                openItemId: repaired.openItemId,
-              };
-            }
-          }
           await client.query('COMMIT');
         } catch (accErr) {
           try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
@@ -370,15 +336,22 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       const payload = fromRow(saved.rows[0]);
       const hasStock = (txResult?.stockMovementIds?.length ?? 0) > 0;
       const hasPayable = !!txResult?.openItemId;
+      const detailErrors = [
+        ...(txResult?.errors || []),
+        ...(accountingError ? [accountingError] : []),
+      ].filter(Boolean);
       if (txResult || accountingError || !skipAccounting) {
         payload.accounting = {
           success: !accountingError && hasStock && hasPayable,
           stockMovementIds: txResult?.stockMovementIds || [],
           openItemId: txResult?.openItemId || null,
           journalEntryId: txResult?.journalEntryId || null,
-          error: accountingError || (!hasStock || !hasPayable
-            ? 'Stock or supplier payable was not posted — use Re-post accounting on the invoice.'
-            : null),
+          errors: detailErrors,
+          warnings: txResult?.warnings || [],
+          error: detailErrors[0]
+            || (!hasStock || !hasPayable
+              ? 'Stock or supplier payable was not posted.'
+              : null),
         };
       }
       res.status(201).json(payload);
@@ -566,83 +539,28 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       if (!saved.rows[0]) return res.status(404).json({ error: 'Not found' });
       const inv = fromRow(saved.rows[0]);
 
-      const stockCheck = await client.query(
-        `SELECT id FROM stock_movements
-         WHERE reference_id = $1
-           AND reference_type IN ('purchase_invoice', 'purchase')
-         LIMIT 1`,
-        [inv.id],
-      );
-      const openCheck = await client.query(
-        `SELECT id FROM open_items WHERE document_id = $1 LIMIT 1`,
-        [inv.id],
-      );
-
-      const needsStock = stockCheck.rows.length === 0;
-      const needsPayable = openCheck.rows.length === 0;
-      if (!needsStock && !needsPayable) {
-        return res.json({
-          success: true,
-          skipped: true,
-          stockMovementIds: stockCheck.rows.map((r) => r.id),
-          openItemId: openCheck.rows[0]?.id || null,
-        });
-      }
-
       let txResult = null;
-      if (needsStock) {
+      try {
         await client.query('BEGIN');
-        const { processTransactionBody } = require('../transactionProcessor');
-        txResult = await processTransactionBody(client, buildPurchaseInvoiceTransactionBody(inv));
+        txResult = await postPurchaseAccountingIfNeeded(client, inv);
         await client.query('COMMIT');
-      }
-
-      let backfill = { created: 0, skipped: 0 };
-      if (needsPayable || !txResult?.openItemId) {
-        const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
-        const repairClient = await db.pool.connect();
-        try {
-          await repairClient.query('BEGIN');
-          const repaired = await ensurePurchaseInvoicePayable(repairClient, inv);
-          await repairClient.query('COMMIT');
-          if (repaired?.openItemId) {
-            backfill = { created: repaired.created ? 1 : 0, skipped: repaired.created ? 0 : 1 };
-          }
-        } catch (repairErr) {
-          try { await repairClient.query('ROLLBACK'); } catch (_) { /* ignore */ }
-          console.warn('[PURCHASE INVOICES] ensure payable:', repairErr.message);
-        } finally {
-          repairClient.release();
-        }
-      }
-
-      const openAfter = await client.query(
-        `SELECT id FROM open_items WHERE document_id = $1 LIMIT 1`,
-        [inv.id],
-      );
-
-      const warehouseId = inv.warehouseId || inv.branchId;
-      if (warehouseId && (needsStock || txResult?.stockMovementIds?.length > 0)) {
-        try {
-          const { ensureFilialProductsForWarehouse } = require('../lib/filialStockRepair');
-          await ensureFilialProductsForWarehouse(warehouseId, client);
-        } catch (filialErr) {
-          console.warn('[PURCHASE INVOICES] filial stock repair:', filialErr.message);
-        }
+      } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+        throw err;
       }
 
       await broadcastTable?.('products');
       await broadcastTable?.('purchase_invoices');
-      if (broadcastTable && (txResult?.journalEntryId || backfill.created > 0)) {
-        await broadcastTable('journal_entries');
-      }
+      if (txResult?.journalEntryId) await broadcastTable?.('journal_entries');
+      if (txResult?.openItemId) await broadcastTable?.('suppliers');
 
       res.json({
-        success: true,
-        repostedStock: needsStock,
-        backfill,
+        success: !!txResult?.success,
         stockMovementIds: txResult?.stockMovementIds || [],
-        openItemId: txResult?.openItemId || openAfter.rows[0]?.id || null,
+        openItemId: txResult?.openItemId || null,
+        journalEntryId: txResult?.journalEntryId || null,
+        errors: txResult?.errors || [],
+        warnings: txResult?.warnings || [],
       });
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }

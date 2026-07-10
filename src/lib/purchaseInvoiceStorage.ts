@@ -436,6 +436,8 @@ export function generatePurchaseInvoiceNumber(branchCode: string): string {
 export type PurchaseInvoiceAccounting = {
   success: boolean;
   error?: string | null;
+  errors?: string[];
+  warnings?: string[];
   stockMovementIds: string[];
   openItemId?: string | null;
   journalEntryId?: string | null;

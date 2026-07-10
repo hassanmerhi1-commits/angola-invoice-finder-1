@@ -35,7 +35,6 @@ import {
   OPEN_ITEMS_CHANGED_EVENT,
 } from '@/lib/storage';
 import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
-import { processTransaction } from '@/lib/transactionEngine';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
 import { Supplier, Product, PurchaseOrder } from '@/types/erp';
 import { ProductDetailDialog } from '@/components/inventory/ProductDetailDialog';
@@ -2622,150 +2621,40 @@ export default function PurchaseInvoices() {
       const serverPostedStock = (serverAccounting?.stockMovementIds?.length ?? 0) > 0;
       const serverPostedPayable = !!serverAccounting?.openItemId;
 
-      let txResult: Awaited<ReturnType<typeof processTransaction>> = {
+      let txResult = {
         success: serverPostedStock && serverPostedPayable,
-        errors: serverAccounting?.error ? [serverAccounting.error] : [],
-        stockMovementIds: serverAccounting?.stockMovementIds || [],
+        errors: serverAccounting?.error ? [serverAccounting.error] : [] as string[],
+        stockMovementIds: serverAccounting?.stockMovementIds || [] as string[],
         openItemId: serverAccounting?.openItemId || undefined,
         journalEntryId: serverAccounting?.journalEntryId || undefined,
-        documentLinkIds: [],
+        pendingSync: false,
       };
 
+      if (serverAccounting?.errors?.length) {
+        txResult.errors.push(...serverAccounting.errors);
+      }
+
       if (!serverPostedStock || !serverPostedPayable) {
-      console.log('[PurchaseInvoices] Server save did not post stock/payable — calling processTransaction...', {
-        type: 'purchase_invoice',
-        docId: invoice.id,
-        docNumber: invoice.invoiceNumber,
-        branchId: invoice.branchId,
-        supplierId: resolvedSupplierId,
-        supplierAccountCode: resolvedSupplierAccountCode,
-        linesCount: invoice.lines.length,
-        total: invoice.total,
-      });
-      txResult = await processTransaction({
-        transactionType: 'purchase_invoice',
-        documentId: invoice.id,
-        documentNumber: invoice.invoiceNumber,
-        branchId: invoice.branchId,
-        branchName: invoice.branchName,
-        userId: user?.id || '',
-        userName: user?.name || '',
-        date: invoice.date,
-        currency: invoice.currency,
-        description: `Fatura de Compra ${invoice.invoiceNumber} — ${invoice.supplierName}`,
-        amount: invoice.total,
-        linkedPurchaseOrderNumber: String(invoice.orderNo || form.orderNo || form.ref || '').trim() || undefined,
-        offlineSyncPayload: { invoiceData: invoice as unknown as Record<string, unknown> },
-
-        // Angola Tax Engine: persist IVA (input) lines for IVA return + audit
-        taxLines: [
-          ...invoice.lines
-            .map((l, idx) => ({
-              lineNumber: idx + 1,
-              taxCode: ivaRateToTaxCode(l.ivaRate),
-              taxRate: l.ivaRate,
-              baseAmount: l.total,
-              taxAmount: l.ivaAmount,
-              isInclusive: false,
-            }))
-            .filter((tl) => Number(tl.baseAmount || 0) !== 0 || Number(tl.taxAmount || 0) !== 0),
-          ...(withholdingAmount > 0
-            ? [{
-                lineNumber: 10000,
-                taxCode: withholdingRateToTaxCode(withholdingRate),
-                taxRate: withholdingRate,
-                baseAmount: taxBaseSubtotalPlusFreight,
-                taxAmount: withholdingAmount,
-                isInclusive: false,
-              }]
-            : []),
-          ...(stampAmount > 0
-            ? [{
-                lineNumber: 10001,
-                taxCode: 'IS',
-                taxRate: stampRate,
-                baseAmount: taxBaseSubtotalPlusFreight,
-                taxAmount: stampAmount,
-                isInclusive: false,
-              }]
-            : []),
-        ].filter((tl) => !!tl.taxCode),
-
-        // Phase 1: Stock entries — scoped to the selected warehouse
-        stockEntries: invoice.lines
-          .filter(l => l.productId && (l.totalQty || l.quantity) > 0)
-          .map(l => ({
-            productId: l.productId,
-            productName: l.description,
-            productSku: l.productCode,
-            quantity: l.totalQty || l.quantity,
-            unitCost: l.unitPrice + (freightAllocations[l.productId] || 0),
-            direction: 'IN' as const,
-            warehouseId: invoice.warehouseId,
-          })),
-
-        changePrice: invoice.changePrice,
-        // Phase 2: Cost (WAC) + optional selling price when "Alterar preço" is checked
-        priceUpdates: invoice.lines
-          .filter(l => l.productId && (l.totalQty || l.quantity) > 0)
-          .map(l => {
-            const lineQty = l.totalQty || l.quantity;
-            const landed = l.unitPrice + (freightAllocations[l.productId] || 0);
-            const sellingPrice = resolveSellingPriceFromPurchaseLine(
-              l,
-              { price: l.price1 },
-              invoice.priceType,
-              landed,
-              landed,
-            );
-            const applySelling =
-              invoice.changePrice || (Number(l.price1) > 0 && sellingPrice > 0);
-            return {
-              productId: l.productId,
-              newUnitCost: landed,
-              quantityReceived: lineQty,
-              updateAvgCost: true,
-              ...(applySelling && sellingPrice > 0 ? { sellingPrice } : {}),
-            };
-          }),
-
-        // Phase 3: Journal entries
-        journalLines: invoice.journalLines.map((line) => ({
-          accountCode: line.accountCode,
-          accountName: line.accountName,
-          debit: line.debit,
-          credit: line.credit,
-          note: line.note,
-        })),
-
-        // Phase 4: Open item (payable to supplier) — use REAL supplier ID
-        openItem: {
-          entityType: 'supplier',
-          entityId: resolvedSupplierId,
-          entityName: invoice.supplierName,
-          documentType: 'invoice',
-          originalAmount: invoice.total,
-          isDebit: true,
-          dueDate: invoice.paymentDate,
-          currency: invoice.currency === 'KZ' ? 'AOA' : invoice.currency,
-        },
-
-        // Phase 6: Update supplier balance — use REAL supplier ID
-        entityBalanceUpdate: {
-          entityType: 'supplier',
-          entityId: resolvedSupplierId,
-          entityName: invoice.supplierName,
-          entityNif: invoice.supplierNif,
-          amount: invoice.total,
-        },
-      });
-
-      console.log('[PurchaseInvoices] Transaction result:', JSON.stringify(txResult));
-      } else {
-        console.log('[PurchaseInvoices] Stock/payable posted by server on save:', {
-          stock: serverPostedStock,
-          payable: serverPostedPayable,
-        });
+        try {
+          const repair = await api.purchaseInvoices.repostAccounting(invoice.id);
+          if (repair.data?.stockMovementIds?.length) {
+            txResult.stockMovementIds = repair.data.stockMovementIds;
+          }
+          if (repair.data?.openItemId) {
+            txResult.openItemId = repair.data.openItemId;
+          }
+          if (repair.data?.errors?.length) {
+            txResult.errors.push(...repair.data.errors);
+          }
+          if (repair.error) {
+            txResult.errors.push(repair.error);
+          }
+          txResult.success =
+            (txResult.stockMovementIds?.length ?? 0) > 0 && !!txResult.openItemId;
+        } catch (repairErr) {
+          const msg = repairErr instanceof Error ? repairErr.message : String(repairErr);
+          txResult.errors.push(msg);
+        }
       }
 
       if (txResult.pendingSync) {
@@ -2785,16 +2674,10 @@ export default function PurchaseInvoices() {
         console.error('[PurchaseInvoices] Transaction engine errors:', txResult.errors);
       }
 
-      const resolvedIds = txResult.resolvedProductIds;
-      if (resolvedIds && Object.keys(resolvedIds).length > 0) {
-        invoice.lines = invoice.lines.map((line) => {
-          const mapped = line.productId ? resolvedIds[line.productId] : undefined;
-          return mapped && mapped !== line.productId ? { ...line, productId: mapped } : line;
-        });
-        await savePurchaseInvoice(invoice, { metadataOnly: true });
-      }
-
-      const posted = await ensurePurchaseAccountingPosted(invoice.id, txResult);
+      const posted = {
+        stockMovementIds: txResult.stockMovementIds || [],
+        openItemId: txResult.openItemId,
+      };
 
       setInvoices((prev) => {
         const merged = [invoice, ...prev.filter((i) => i.id !== invoice.id)];

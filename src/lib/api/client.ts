@@ -1480,6 +1480,8 @@ export const api = {
         stockMovementIds?: string[];
         openItemId?: string | null;
         backfill?: { created: number; skipped: number };
+        errors?: string[];
+        warnings?: string[];
       }>(`/purchase-invoices/${encodeURIComponent(id)}/repost-accounting`, { method: 'POST' }, { timeoutMs: 120000 }),
     backfillAccounting: (limit = 100) =>
       apiFetch<{ posted: number; failed: number; errors?: { id: string; error: string }[] }>(
