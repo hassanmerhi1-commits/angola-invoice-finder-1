@@ -278,7 +278,8 @@ function normalizeApiErrorMessage(payload: unknown, status?: number): string {
 // ==================== HTTP FALLBACK (web preview/demo) ====================
 async function apiFetch<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  fetchOpts?: { timeoutMs?: number },
 ): Promise<ApiResponse<T>> {
   // In demo mode (cloud preview), skip network calls entirely — fall back to localStorage
   if (isDemoMode()) {
@@ -310,7 +311,7 @@ async function apiFetch<T>(
       method: options.method || 'GET',
       body,
       headers: headers as Record<string, string>,
-      timeoutMs: 25000,
+      timeoutMs: fetchOpts?.timeoutMs ?? 25000,
     });
     if (r.ok) {
       return { data: r.json as T, status: r.status };
@@ -1468,7 +1469,7 @@ export const api = {
       );
     },
     save: (invoice: any) =>
-      apiFetch<any>('/purchase-invoices', { method: 'POST', body: JSON.stringify(invoice) }),
+      apiFetch<any>('/purchase-invoices', { method: 'POST', body: JSON.stringify(invoice) }, { timeoutMs: 120000 }),
     delete: (id: string) =>
       apiFetch<any>(`/purchase-invoices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     repostAccounting: (id: string) =>
@@ -1479,7 +1480,7 @@ export const api = {
         stockMovementIds?: string[];
         openItemId?: string | null;
         backfill?: { created: number; skipped: number };
-      }>(`/purchase-invoices/${encodeURIComponent(id)}/repost-accounting`, { method: 'POST' }),
+      }>(`/purchase-invoices/${encodeURIComponent(id)}/repost-accounting`, { method: 'POST' }, { timeoutMs: 120000 }),
     backfillAccounting: (limit = 100) =>
       apiFetch<{ posted: number; failed: number; errors?: { id: string; error: string }[] }>(
         '/purchase-invoices/backfill-accounting',

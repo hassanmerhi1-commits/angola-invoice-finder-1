@@ -1433,8 +1433,8 @@ export default function PurchaseInvoices() {
   const loadInvoiceList = useCallback(async (opts?: { includeInvoiceId?: string }) => {
     try {
       setListLoadError(null);
-      let piInvoices = await getPurchaseInvoices(apiBranchId, branches);
       const includeId = String(opts?.includeInvoiceId || '').trim();
+      let piInvoices = await getPurchaseInvoices(apiBranchId, branches);
       if (includeId && !piInvoices.some((i) => i.id === includeId)) {
         const extra = await fetchPurchaseInvoiceFromServer(includeId);
         if (extra) piInvoices = [extra, ...piInvoices];
@@ -1535,8 +1535,12 @@ export default function PurchaseInvoices() {
   // ─────── Create mode ───────
   const resetCreateFormState = useCallback(() => {
     const now = new Date().toISOString();
-    const defaultBranch = branches.find((b) => b.id === currentBranch?.id) || branches[0];
-    const wid = defaultBranch?.id || currentBranch?.id || '';
+    const scopeId = String(apiBranchId || currentBranch?.id || '').trim();
+    const defaultBranch =
+      branches.find((b) => String(b.id) === scopeId)
+      || branches.find((b) => b.id === currentBranch?.id)
+      || branches[0];
+    const wid = defaultBranch?.id || scopeId || currentBranch?.id || '';
     const wname = defaultBranch?.name || currentBranch?.name || '';
     setSaveError(null);
     createInvoiceSessionRef.current = null;
@@ -1579,7 +1583,7 @@ export default function PurchaseInvoices() {
     setFreightSourceName('Caixa');
     setFillFromPoId('');
     setActiveTab('fatura');
-  }, [currentBranch, branches]);
+  }, [apiBranchId, currentBranch, branches]);
 
   const startCreate = useCallback(() => {
     resetCreateFormState();
@@ -1682,13 +1686,11 @@ export default function PurchaseInvoices() {
     );
     window.dispatchEvent(new CustomEvent(SUPPLIERS_CHANGED_EVENT, { detail: {} }));
     if (warehouseId) {
-      try {
-        await api.products.repairFilialStock(warehouseId);
-      } catch (repairErr) {
+      void api.products.repairFilialStock(warehouseId).catch((repairErr) => {
         console.warn('[PurchaseInvoices] repairFilialStock:', repairErr);
-      }
+      });
     }
-    await Promise.all([refreshProducts(), refreshSuppliers(), loadInvoiceList()]);
+    void Promise.all([refreshProducts(), refreshSuppliers(), loadInvoiceList()]).catch(() => {});
   }, [loadInvoiceList, refreshProducts, refreshSuppliers]);
 
   const ensurePurchaseAccountingPosted = useCallback(async (
@@ -1697,7 +1699,7 @@ export default function PurchaseInvoices() {
   ) => {
     const stockIds = [...(txResult.stockMovementIds || [])];
     let openItemId = txResult.openItemId;
-    const needsRepair = !txResult.success || stockIds.length === 0 || !openItemId;
+    const needsRepair = stockIds.length === 0 || !openItemId;
 
     if (needsRepair) {
       try {
@@ -1710,13 +1712,6 @@ export default function PurchaseInvoices() {
         }
       } catch (repairErr) {
         console.warn('[PurchaseInvoices] repost-accounting:', repairErr);
-      }
-    }
-    if (!openItemId) {
-      try {
-        await api.payments.backfillMissingPayables();
-      } catch (backfillErr) {
-        console.warn('[PurchaseInvoices] backfill payables:', backfillErr);
       }
     }
     return { stockMovementIds: stockIds, openItemId };
@@ -2393,7 +2388,10 @@ export default function PurchaseInvoices() {
 
     // Warehouse = stock location, document branch, FC sequence, and accounting branch for this FC.
     const resolvedWarehouseId =
-      String(form.warehouseId ?? '').trim() || String(currentBranch?.id ?? '').trim() || '';
+      String(form.warehouseId ?? '').trim()
+      || String(apiBranchId ?? '').trim()
+      || String(currentBranch?.id ?? '').trim()
+      || '';
     const whMeta = branches.find((b) => String(b.id) === String(resolvedWarehouseId));
     const resolvedWarehouseName =
       String(form.warehouseName ?? '').trim() || whMeta?.name || currentBranch?.name || '';
@@ -2606,21 +2604,25 @@ export default function PurchaseInvoices() {
 
       const saveResult = await savePurchaseInvoice(invoice);
       invoice = saveResult.invoice;
-      await syncPurchaseInvoiceDocument(invoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix);
+      void syncPurchaseInvoiceDocument(invoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix).catch((docErr) => {
+        console.warn('[PurchaseInvoices] document sync:', docErr);
+      });
+
+      const serverAccounting = saveResult.accounting;
+      const serverPostedStock = (serverAccounting?.stockMovementIds?.length ?? 0) > 0;
+      const serverPostedPayable = !!serverAccounting?.openItemId;
 
       let txResult: Awaited<ReturnType<typeof processTransaction>> = {
-        success: false,
+        success: serverPostedStock || serverPostedPayable || serverAccounting?.success === true,
         errors: [],
-        stockMovementIds: saveResult.accounting?.stockMovementIds || [],
-        openItemId: saveResult.accounting?.openItemId || undefined,
-        journalEntryId: saveResult.accounting?.journalEntryId || undefined,
+        stockMovementIds: serverAccounting?.stockMovementIds || [],
+        openItemId: serverAccounting?.openItemId || undefined,
+        journalEntryId: serverAccounting?.journalEntryId || undefined,
         documentLinkIds: [],
       };
-      if (saveResult.accounting?.success && (txResult.stockMovementIds?.length ?? 0) > 0) {
-        txResult.success = true;
-        console.log('[PurchaseInvoices] Stock posted by server on save:', txResult.stockMovementIds?.length);
-      } else {
-      console.log('[PurchaseInvoices] Server save did not post stock — calling processTransaction...', {
+
+      if (!serverPostedStock && !serverPostedPayable) {
+      console.log('[PurchaseInvoices] Server save did not post stock/payable — calling processTransaction...', {
         type: 'purchase_invoice',
         docId: invoice.id,
         docNumber: invoice.invoiceNumber,
@@ -2749,6 +2751,11 @@ export default function PurchaseInvoices() {
       });
 
       console.log('[PurchaseInvoices] Transaction result:', JSON.stringify(txResult));
+      } else {
+        console.log('[PurchaseInvoices] Stock/payable posted by server on save:', {
+          stock: serverPostedStock,
+          payable: serverPostedPayable,
+        });
       }
 
       if (txResult.pendingSync) {
@@ -2778,7 +2785,14 @@ export default function PurchaseInvoices() {
       }
 
       const posted = await ensurePurchaseAccountingPosted(invoice.id, txResult);
-      await broadcastPurchaseAccountingSync(resolvedWarehouseId, resolvedBranchId);
+
+      setInvoices((prev) => {
+        const merged = [invoice, ...prev.filter((i) => i.id !== invoice.id)];
+        merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        return merged;
+      });
+
+      void broadcastPurchaseAccountingSync(resolvedWarehouseId, resolvedBranchId);
 
       const orderNoRef = String(invoice.orderNo || form.orderNo || form.ref || '').trim();
       if (orderNoRef && resolvedSupplierId) {

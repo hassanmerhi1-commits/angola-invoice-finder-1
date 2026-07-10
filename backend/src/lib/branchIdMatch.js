@@ -40,12 +40,39 @@ function castText(columnExpr) {
 async function buildPurchaseInvoiceBranchFilter(db, branchId, startParamIdx) {
   const resolved = await resolveBranchFilterId(db, branchId);
   if (!resolved) return { sql: '', params: [] };
-  const p = `$${startParamIdx}`;
+
   const branchCol = castText('branch_id')(db);
   const whCol = castText('warehouse_id')(db);
+
+  const matchValues = new Set([resolved]);
+  try {
+    const meta = await db.query(
+      db.engine === 'postgres'
+        ? `SELECT id::text AS id, code, name FROM branches WHERE id::text = $1 LIMIT 1`
+        : `SELECT CAST(id AS TEXT) AS id, code, name FROM branches WHERE CAST(id AS TEXT) = $1 LIMIT 1`,
+      [resolved],
+    );
+    const row = meta.rows[0];
+    if (row?.code) matchValues.add(String(row.code).trim());
+    if (row?.name) matchValues.add(String(row.name).trim());
+  } catch {
+    /* optional */
+  }
+
+  const params = [];
+  const clauses = [];
+  let idx = startParamIdx;
+  for (const val of matchValues) {
+    if (!val) continue;
+    const p = `$${idx++}`;
+    params.push(val);
+    clauses.push(`${branchCol} = ${p}`, `${whCol} = ${p}`);
+  }
+  if (!clauses.length) return { sql: '', params: [] };
+
   return {
-    sql: ` AND (${branchCol} = ${p} OR ${whCol} = ${p})`,
-    params: [resolved],
+    sql: ` AND (${clauses.join(' OR ')})`,
+    params,
   };
 }
 
