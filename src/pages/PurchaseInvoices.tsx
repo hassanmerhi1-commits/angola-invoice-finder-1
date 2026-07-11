@@ -4,7 +4,7 @@ import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import QRCode from 'qrcode';
 import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
-import { resolveUserBranch } from '@/lib/branchAccess';
+import { resolveUserBranch, branchIdsEquivalent } from '@/lib/branchAccess';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import { api } from '@/lib/api/client';
@@ -1612,10 +1612,11 @@ export default function PurchaseInvoices() {
     const now = new Date().toISOString();
     const scopeId = String(listBranchId || currentBranch?.id || '').trim();
     const defaultBranch =
-      branches.find((b) => String(b.id) === scopeId)
-      || branches.find((b) => b.id === currentBranch?.id)
+      resolveUserBranch(branches, scopeId)
+      || resolveUserBranch(branches, currentBranch?.id)
+      || currentBranch
       || branches[0];
-    const wid = defaultBranch?.id || scopeId || currentBranch?.id || '';
+    const wid = defaultBranch?.id || scopeId || '';
     const wname = defaultBranch?.name || currentBranch?.name || '';
     setSaveError(null);
     createInvoiceSessionRef.current = null;
@@ -1831,15 +1832,17 @@ export default function PurchaseInvoices() {
     if (mode !== 'create') return;
     if (!branches.length) return;
     const id = form.warehouseId != null && form.warehouseId !== '' ? String(form.warehouseId) : '';
-    const ok = id.length > 0 && branches.some((b) => b.id != null && String(b.id) === id);
+    const ok = id.length > 0 && branches.some((b) => branchIdsEquivalent(b.id, id));
     if (!ok) {
       const b =
-        branches.find((x) => x.id != null && String(x.id) === String(currentBranch?.id)) || branches[0];
+        resolveUserBranch(branches, listBranchId || currentBranch?.id)
+        || resolveUserBranch(branches, currentBranch?.id)
+        || branches[0];
       if (b?.id != null && b.id !== '') {
         setForm((p) => ({ ...p, warehouseId: b.id, warehouseName: b.name }));
       }
     }
-  }, [mode, branches, currentBranch?.id, form.warehouseId]);
+  }, [mode, branches, currentBranch?.id, form.warehouseId, listBranchId]);
 
   useLayoutEffect(() => {
     const fromRouter = searchParams.get('mode');
@@ -2462,17 +2465,24 @@ export default function PurchaseInvoices() {
     }
 
     // Warehouse = stock location, document branch, FC sequence, and accounting branch for this FC.
+    const scopeBranch =
+      resolveUserBranch(branches, String(form.warehouseId ?? '').trim())
+      || resolveUserBranch(branches, listBranchId)
+      || resolveUserBranch(branches, currentBranch?.id);
     const resolvedWarehouseId =
-      String(form.warehouseId ?? '').trim()
+      scopeBranch?.id
+      || String(form.warehouseId ?? '').trim()
       || String(listBranchId ?? '').trim()
       || String(currentBranch?.id ?? '').trim()
       || '';
-    const whMeta = branches.find((b) => String(b.id) === String(resolvedWarehouseId));
     const resolvedWarehouseName =
-      String(form.warehouseName ?? '').trim() || whMeta?.name || currentBranch?.name || '';
+      String(form.warehouseName ?? '').trim()
+      || scopeBranch?.name
+      || currentBranch?.name
+      || '';
 
-    const resolvedBranchId = String(resolvedWarehouseId).trim();
-    const resolvedBranchName = resolvedWarehouseName || whMeta?.name || '';
+    const resolvedBranchId = resolvedWarehouseId;
+    const resolvedBranchName = resolvedWarehouseName;
 
     if (!resolvedBranchId) {
       setSaveError(t.purchaseInvoicesUi.noActiveBranchSelectWarehouse);
@@ -2636,7 +2646,11 @@ export default function PurchaseInvoices() {
       freightOtherCosts,
       freightSourceAccount,
       freightSourceName,
-      lines,
+      lines: lines.map((line) => ({
+        ...line,
+        warehouseId: resolvedWarehouseId,
+        warehouseName: resolvedWarehouseName,
+      })),
       journalLines: [],
       subtotal: totals.subtotal,
       ivaTotal: totals.ivaTotal,
@@ -3701,9 +3715,9 @@ export default function PurchaseInvoices() {
               className="flex h-7 w-full rounded-md border border-input bg-background px-2 py-0 text-xs ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50"
               value={(() => {
                 const withIds = branches.filter((b) => b.id != null && String(b.id) !== '');
-                const ids = withIds.map((b) => String(b.id));
                 const cur = form.warehouseId != null && form.warehouseId !== '' ? String(form.warehouseId) : '';
-                return ids.includes(cur) ? cur : String(withIds[0]!.id);
+                const matched = withIds.find((b) => branchIdsEquivalent(b.id, cur));
+                return matched ? String(matched.id) : String(withIds[0]?.id ?? '');
               })()}
               onChange={(e) => {
                 const v = e.target.value;

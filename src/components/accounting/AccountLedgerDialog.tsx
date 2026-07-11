@@ -27,6 +27,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { api } from '@/lib/api/client';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { Account } from '@/types/accounting';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
@@ -61,6 +62,7 @@ interface Props {
 export default function AccountLedgerDialog({ account, open, onOpenChange }: Props) {
   const { t, language } = useTranslation();
   const navigate = useNavigate();
+  const { listBranchId } = useBranchScope();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -88,7 +90,12 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     if (!account) return;
     setIsLoading(true);
     try {
-      const res = await api.chartOfAccounts.getLedger(account.id, startDate || undefined, endDate || undefined);
+      const res = await api.chartOfAccounts.getLedger(
+        account.id,
+        startDate || undefined,
+        endDate || undefined,
+        listBranchId,
+      );
       setEntries(res.data || []);
     } catch (e) {
       console.error('Failed to fetch ledger:', e);
@@ -96,7 +103,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     } finally {
       setIsLoading(false);
     }
-  }, [account, startDate, endDate]);
+  }, [account, startDate, endDate, listBranchId]);
 
   useEffect(() => {
     if (open && account) {

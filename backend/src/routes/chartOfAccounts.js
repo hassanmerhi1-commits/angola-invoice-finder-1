@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
+const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -104,14 +105,24 @@ module.exports = function(broadcastTable) {
 
   router.get('/reports/trial-balance', async (req, res) => {
     try {
-      const { start_date, end_date } = req.query;
+      const { start_date, end_date, branchId } = req.query;
 
       let dateFilter = '';
       const params = [];
+      let paramIndex = 1;
 
       if (start_date && end_date) {
-        dateFilter = 'AND je.entry_date BETWEEN $1 AND $2';
+        dateFilter = `AND je.entry_date BETWEEN $${paramIndex++} AND $${paramIndex++}`;
         params.push(start_date, end_date);
+      }
+
+      let branchFilter = '';
+      if (branchId) {
+        const branchClause = await buildJournalBranchFilter(db, branchId, paramIndex);
+        if (branchClause.sql) {
+          branchFilter = branchClause.sql;
+          params.push(...branchClause.params);
+        }
       }
 
       const result = await db.query(`
@@ -133,7 +144,7 @@ module.exports = function(broadcastTable) {
             END as closing_balance
         FROM chart_of_accounts coa
         LEFT JOIN journal_entry_lines jel ON jel.account_id = coa.id
-        LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true ${dateFilter}
+        LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true ${dateFilter} ${branchFilter}
         WHERE coa.is_active = true
         GROUP BY coa.id
         ORDER BY coa.code
@@ -324,14 +335,24 @@ module.exports = function(broadcastTable) {
   router.get('/:id/ledger', async (req, res) => {
     try {
       const { id } = req.params;
-      const { start_date, end_date } = req.query;
+      const { start_date, end_date, branchId } = req.query;
 
       let dateFilter = '';
       const params = [id];
+      let paramIndex = 2;
 
       if (start_date && end_date) {
-        dateFilter = 'AND je.entry_date BETWEEN $2 AND $3';
+        dateFilter = `AND je.entry_date BETWEEN $${paramIndex++} AND $${paramIndex++}`;
         params.push(start_date, end_date);
+      }
+
+      let branchFilter = '';
+      if (branchId) {
+        const branchClause = await buildJournalBranchFilter(db, branchId, paramIndex);
+        if (branchClause.sql) {
+          branchFilter = branchClause.sql;
+          params.push(...branchClause.params);
+        }
       }
 
       const result = await db.query(`
@@ -351,7 +372,7 @@ module.exports = function(broadcastTable) {
           je.created_at as journal_created_at
         FROM journal_entry_lines jel
         INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-        WHERE jel.account_id = $1 AND je.is_posted = true ${dateFilter}
+        WHERE jel.account_id = $1 AND je.is_posted = true ${dateFilter} ${branchFilter}
         ORDER BY je.entry_date DESC, je.created_at DESC
       `, params);
 

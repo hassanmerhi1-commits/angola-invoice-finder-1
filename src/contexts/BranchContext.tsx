@@ -6,6 +6,7 @@ import * as storage from '@/lib/storage';
 import {
   ALL_BRANCHES_SCOPE_ID,
   applyUserBranchLockOnLogin,
+  branchIdsEquivalent,
   canUserSwitchBranch,
   mapBranchRow,
   persistBranchScope,
@@ -67,8 +68,8 @@ export function BranchProvider({ children }: { children: ReactNode }) {
       const nextScope =
         prevScope === ALL_BRANCHES_SCOPE_ID
           ? resolveStoredBranchScopeId(mapped, canSwitch)
-          : prevScope && mapped.some((b) => b.id === prevScope)
-            ? prevScope
+          : prevScope && mapped.some((b) => branchIdsEquivalent(b.id, prevScope))
+            ? (resolveBranchFromScope(mapped, prevScope)?.id || prevScope)
             : resolveStoredBranchScopeId(mapped, canSwitch);
       const nextBranch = resolveBranchFromScope(mapped, nextScope);
       if (nextBranch) persistCurrentBranch(nextScope, nextBranch);

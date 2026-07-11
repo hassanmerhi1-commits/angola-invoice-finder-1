@@ -11,6 +11,7 @@ import {
   isHeadOfficeScope,
   resolveOperatingBranch,
   resolveEffectiveUserBranch,
+  resolveUserBranch,
 } from '@/lib/branchAccess';
 
 /**
@@ -36,7 +37,11 @@ export function useBranchScope() {
 
   const isHeadOffice = isHeadOfficeScope(canSwitchBranch, scopeId);
   const isConsolidatedView = isConsolidatedBranchScope(canSwitchBranch, scopeId);
-  const apiBranchId = effectiveApiBranchId(canSwitchBranch, scopeId, user);
+  const rawApiBranchId = effectiveApiBranchId(canSwitchBranch, scopeId, user);
+  const apiBranchId = useMemo(() => {
+    if (!rawApiBranchId) return undefined;
+    return resolveUserBranch(branches, rawApiBranchId)?.id || rawApiBranchId;
+  }, [rawApiBranchId, branches]);
 
   const visibleBranches = useMemo(
     () => branchesVisibleToUser(branches, canSwitchBranch, userBranch, operatingBranch),

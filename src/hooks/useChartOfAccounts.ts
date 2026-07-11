@@ -343,7 +343,7 @@ export function useBalanceSheet(asOf: string, previousAsOf?: string) {
   return { rows, isLoading, error, refetch: fetchBalanceSheet };
 }
 
-export function useTrialBalance(startDate?: string, endDate?: string) {
+export function useTrialBalance(startDate?: string, endDate?: string, branchId?: string) {
   const [data, setData] = useState<TrialBalanceRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -351,7 +351,7 @@ export function useTrialBalance(startDate?: string, endDate?: string) {
   const fetchTrialBalance = useCallback(async () => {
     try {
       setIsLoading(true);
-      const response = await api.chartOfAccounts.getTrialBalance(startDate, endDate);
+      const response = await api.chartOfAccounts.getTrialBalance(startDate, endDate, branchId);
       if (response.error) throw new Error(response.error);
       setData(response.data || []);
       setError(null);
@@ -361,7 +361,7 @@ export function useTrialBalance(startDate?: string, endDate?: string) {
     } finally {
       setIsLoading(false);
     }
-  }, [startDate, endDate]);
+  }, [startDate, endDate, branchId]);
 
   useEffect(() => {
     fetchTrialBalance();

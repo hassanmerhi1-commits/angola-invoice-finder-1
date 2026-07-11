@@ -58,7 +58,7 @@ interface InventoryAdjustmentDialogProps {
     notes: string,
     receiptNumber: string,
     warehouseId: string,
-  ) => void;
+  ) => void | Promise<void>;
 }
 
 export function InventoryAdjustmentDialog({
@@ -191,8 +191,10 @@ export function InventoryAdjustmentDialog({
     setReceiptNumber('');
   };
 
+  const [applying, setApplying] = useState(false);
+
   // Apply adjustments
-  const handleApply = () => {
+  const handleApply = async () => {
     const itemsToAdjust = adjustmentItems
       .filter(i => i.isModified && i.difference !== 0)
       .map(i => ({
@@ -220,16 +222,25 @@ export function InventoryAdjustmentDialog({
     }
 
     const reasonLabel = ADJUSTMENT_REASONS.find(r => r.value === adjustmentReason)?.label || adjustmentReason;
-    
-    onApplyAdjustments(itemsToAdjust, reasonLabel, notes, receiptNumber.trim(), branchId);
-    
-    toast({
-      title: t.inventoryAdjustUi.appliedTitle,
-      description: t.inventoryAdjustUi.appliedDesc.replace('{count}', String(itemsToAdjust.length)),
-    });
 
-    handleClearAll();
-    onOpenChange(false);
+    setApplying(true);
+    try {
+      await onApplyAdjustments(itemsToAdjust, reasonLabel, notes, receiptNumber.trim(), branchId);
+      toast({
+        title: t.inventoryAdjustUi.appliedTitle,
+        description: t.inventoryAdjustUi.appliedDesc.replace('{count}', String(itemsToAdjust.length)),
+      });
+      handleClearAll();
+      onOpenChange(false);
+    } catch (error) {
+      toast({
+        title: t.stockEntryUi.saveFailed,
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      });
+    } finally {
+      setApplying(false);
+    }
   };
 
   // Import from Excel
@@ -545,10 +556,10 @@ export function InventoryAdjustmentDialog({
             variant="outline"
             className="text-foreground border-foreground hover:bg-muted"
             onClick={handleApply}
-            disabled={summary.withDifferenceCount === 0 || !branchId}
+            disabled={summary.withDifferenceCount === 0 || !branchId || applying}
           >
             <Save className="w-4 h-4 mr-2" />
-            {t.inventoryAdjustUi.applyCount.replace('{count}', String(summary.withDifferenceCount))}
+            {applying ? t.common.saving : t.inventoryAdjustUi.applyCount.replace('{count}', String(summary.withDifferenceCount))}
           </Button>
         </DialogFooter>
       </DialogContent>

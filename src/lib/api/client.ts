@@ -1538,10 +1538,11 @@ export const api = {
         `/chart-of-accounts/reports/balance-sheet?${params}`,
       );
     },
-    getTrialBalance: async (startDate?: string, endDate?: string) => {
+    getTrialBalance: async (startDate?: string, endDate?: string, branchId?: string) => {
       const params = new URLSearchParams();
       if (startDate) params.append('start_date', startDate);
       if (endDate) params.append('end_date', endDate);
+      if (branchId) params.append('branchId', branchId);
       const qs = params.toString();
       const apiResult = await apiFetch<any[]>(
         `/chart-of-accounts/reports/trial-balance${qs ? `?${qs}` : ''}`,
@@ -1589,10 +1590,11 @@ export const api = {
       '/chart-of-accounts/reseed',
       { method: 'POST' },
     ),
-    getLedger: async (id: string, startDate?: string, endDate?: string) => {
+    getLedger: async (id: string, startDate?: string, endDate?: string, branchId?: string) => {
       const p = new URLSearchParams();
       if (startDate) p.append('start_date', startDate);
       if (endDate) p.append('end_date', endDate);
+      if (branchId) p.append('branchId', branchId);
       const qs = p.toString();
       const apiResult = await apiFetch<any[]>(
         `/chart-of-accounts/${encodeURIComponent(id)}/ledger${qs ? `?${qs}` : ''}`,
@@ -2713,7 +2715,7 @@ export const api = {
         journalEntryId: string | null;
         totalValue: number;
         direction: string;
-      }>('/transactions/stock-adjustment', { method: 'POST', body: JSON.stringify(data) });
+      }>('/transactions/stock-adjustment', { method: 'POST', body: JSON.stringify(data) }, { timeoutMs: 90000 });
     },
     voidStockAdjustment: (documentId: string, body?: { reason?: string; createdBy?: string }) =>
       apiFetch<{

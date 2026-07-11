@@ -59,16 +59,13 @@ async function resolveSequenceScopeForRequest(client, documentType, branchId) {
   if (!bid) {
     throw new Error('branchId é obrigatório para numeração por filial');
   }
-  const result = await client.query(
-    'SELECT id, code FROM branches WHERE id = $1 LIMIT 1',
-    [bid]
-  );
-  const row = result.rows[0];
-  if (!row) {
-    throw new Error('Filial não encontrada');
+  const { resolveBranchRow } = require('../lib/branchIdMatch');
+  const row = await resolveBranchRow(client, bid);
+  if (!row?.id) {
+    throw new Error(`Filial não encontrada: ${bid}`);
   }
   return {
-    branchId: row.id,
+    branchId: String(row.id),
     branchCode: normalizeBranchCode(row.code),
   };
 }

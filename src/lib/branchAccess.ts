@@ -129,7 +129,7 @@ export function resolveBranchFromScope(branches: Branch[], scopeId: string): Bra
   if (scopeId === ALL_BRANCHES_SCOPE_ID) {
     return branches.find((b) => normalizeIsMain(b.isMain)) || branches[0] || null;
   }
-  return branches.find((b) => String(b.id) === String(scopeId)) || null;
+  return resolveUserBranch(branches, scopeId);
 }
 
 /** Restore global scope (top nav / dashboard): physical branches only, default main. */
@@ -144,11 +144,15 @@ export function resolveStoredBranchScopeId(
   const main = branches.find((b) => normalizeIsMain(b.isMain));
   const savedScope = String(localStorage.getItem(SCOPE_STORAGE_KEY) || '').trim();
   if (savedScope === ALL_BRANCHES_SCOPE_ID && main) return main.id;
-  if (savedScope && branches.some((b) => String(b.id) === savedScope)) return savedScope;
+  if (savedScope) {
+    const matched = resolveUserBranch(branches, savedScope);
+    if (matched) return matched.id;
+  }
 
   const savedBranchId = String(localStorage.getItem('kwanza_current_branch_id') || '').trim();
-  if (savedBranchId && branches.some((b) => String(b.id) === savedBranchId)) {
-    return savedBranchId;
+  if (savedBranchId) {
+    const matched = resolveUserBranch(branches, savedBranchId);
+    if (matched) return matched.id;
   }
 
   return main?.id || branches[0]?.id || '';

@@ -818,73 +818,7 @@ export default function Inventory() {
     await reloadInventoryList();
   };
 
-  // Handle stock adjustments from physical count
-  const handleApplyAdjustments = (
-    adjustments: { productId: string; newStock: number; difference: number }[],
-    reason: string,
-    notes: string,
-    receiptNumber: string,
-    warehouseId: string,
-  ) => {
-    const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
-    const noteParts = [
-      reason,
-      receiptNumber ? `${t.inventoryAdjustUi.receiptNumber}: ${receiptNumber}` : null,
-      notes || null,
-    ].filter(Boolean);
-    const movementNotes = noteParts.join(' — ');
-    
-    adjustments.forEach(adj => {
-      const product = adjustmentProducts.find(p => p.id === adj.productId)
-        ?? inventoryRows.find(p => p.id === adj.productId);
-      if (product) {
-        // Update product stock
-        const updatedProduct = {
-          ...product,
-          stock: adj.newStock,
-          updatedAt: new Date().toISOString(),
-        };
-        updateProduct(updatedProduct);
-
-        // Create stock movement record
-        saveStockMovement({
-          id: `sm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          productId: adj.productId,
-          productName: product.name,
-          sku: product.sku,
-          branchId: warehouseId || currentBranch?.id || '',
-          type: adj.difference > 0 ? 'IN' : 'OUT',
-          quantity: Math.abs(adj.difference),
-          reason: 'adjustment',
-          createdBy: currentUser?.id || 'system',
-          notes: movementNotes,
-          createdAt: new Date().toISOString(),
-        });
-
-        // Log transaction
-        logTransaction({
-          category: 'inventory',
-          action: 'stock_adjusted',
-          entityType: 'Produto',
-          entityId: adj.productId,
-          entityNumber: product.sku,
-          entityName: product.name,
-          description: `Stock ajustado de ${product.stock} para ${adj.newStock} (${adj.difference > 0 ? '+' : ''}${adj.difference}) - ${reason}`,
-          details: {
-            previousStock: product.stock,
-            newStock: adj.newStock,
-            difference: adj.difference,
-            reason,
-            notes,
-          },
-          previousValue: product.stock,
-          newValue: adj.newStock,
-        });
-      }
-    });
-
-    void reloadInventoryList();
-  };
+  // Handle stock adjustments from physical count — defined after refreshInventoryAfterStockAdjust below.
 
   const entryReferenceType = (reason: StockEntryReason): string => {
     if (reason === 'purchase') return 'purchase';
@@ -908,6 +842,108 @@ export default function Inventory() {
     },
     [reloadInventoryList, loadStockMovements],
   );
+
+  const handleApplyAdjustments = useCallback(async (
+    adjustments: { productId: string; newStock: number; difference: number }[],
+    reason: string,
+    notes: string,
+    receiptNumber: string,
+    warehouseId: string,
+  ) => {
+    const targetWarehouseId = warehouseId || listBranchId || currentBranch?.id || '';
+    if (!targetWarehouseId) {
+      toast.error(t.inventoryAdjustUi.branchRequiredDesc);
+      throw new Error(t.inventoryAdjustUi.branchRequiredDesc);
+    }
+
+    const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
+    const noteParts = [
+      reason,
+      receiptNumber ? `${t.inventoryAdjustUi.receiptNumber}: ${receiptNumber}` : null,
+      notes || null,
+    ].filter(Boolean);
+    const movementNotes = noteParts.join(' — ');
+    const docRef = receiptNumber.trim() || `CNT-${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12)}`;
+
+    const mapLine = (adj: { productId: string; difference: number }) => {
+      const product = adjustmentProducts.find((p) => p.id === adj.productId)
+        ?? inventoryRows.find((p) => p.id === adj.productId);
+      return {
+        productId: adj.productId,
+        sku: product?.sku ?? adj.productId,
+        name: product?.name ?? '',
+        quantity: Math.abs(adj.difference),
+        unitCost: product?.cost ?? 0,
+      };
+    };
+
+    const increases = adjustments.filter((a) => a.difference > 0);
+    const decreases = adjustments.filter((a) => a.difference < 0);
+    const allErrors: string[] = [];
+    let totalApplied = 0;
+
+    if (increases.length > 0) {
+      const result = await applyStockAdjustmentLines({
+        lines: increases.map(mapLine),
+        warehouseId: targetWarehouseId,
+        movementType: 'IN',
+        referenceType: 'adjustment',
+        referenceNumber: docRef,
+        notes: movementNotes,
+        createdBy: currentUser?.id || currentUser?.name || 'system',
+      });
+      totalApplied += result.applied;
+      allErrors.push(...result.errors);
+    }
+
+    if (decreases.length > 0) {
+      const result = await applyStockAdjustmentLines({
+        lines: decreases.map(mapLine),
+        warehouseId: targetWarehouseId,
+        movementType: 'OUT',
+        referenceType: 'adjustment',
+        referenceNumber: `${docRef}-OUT`,
+        notes: movementNotes,
+        createdBy: currentUser?.id || currentUser?.name || 'system',
+      });
+      totalApplied += result.applied;
+      allErrors.push(...result.errors);
+    }
+
+    for (const adj of adjustments) {
+      const product = adjustmentProducts.find((p) => p.id === adj.productId)
+        ?? inventoryRows.find((p) => p.id === adj.productId);
+      if (!product) continue;
+      logTransaction({
+        category: 'inventory',
+        action: 'stock_adjusted',
+        entityType: 'Produto',
+        entityId: adj.productId,
+        entityNumber: product.sku,
+        entityName: product.name,
+        description: `Stock ajustado de ${product.stock} para ${adj.newStock} (${adj.difference > 0 ? '+' : ''}${adj.difference}) - ${reason}`,
+        details: { previousStock: product.stock, newStock: adj.newStock, difference: adj.difference, reason, notes },
+        previousValue: product.stock,
+        newValue: adj.newStock,
+      });
+    }
+
+    await refreshInventoryAfterStockAdjust(targetWarehouseId);
+
+    if (totalApplied === 0) {
+      throw new Error(allErrors.slice(0, 3).join('; ') || t.stockEntryUi.saveFailed);
+    }
+    if (allErrors.length > 0) {
+      toast.error(allErrors.slice(0, 3).join('; '));
+    }
+  }, [
+    adjustmentProducts,
+    inventoryRows,
+    listBranchId,
+    currentBranch?.id,
+    refreshInventoryAfterStockAdjust,
+    t,
+  ]);
 
   const handleApplyStockEntry = useCallback(
     async (
@@ -965,8 +1001,6 @@ export default function Inventory() {
         entryDate: meta.entryDate,
         notes: noteParts.join(' — ') || meta.reference,
         createdBy: currentUser?.id || currentUser?.name || 'system',
-        productsById,
-        fallbackUpdateProduct: updateProduct,
         landingCosts: meta.totalLandingCosts,
         freightSourceAccount: meta.freightSourceAccount,
         freightSourceName: meta.freightSourceName,
@@ -990,22 +1024,18 @@ export default function Inventory() {
       }
 
       await refreshInventoryAfterStockAdjust(targetWarehouseId);
-      if (result.errors.length > 0 && result.applied === 0) {
-        throw new Error(result.errors.slice(0, 3).join('; '));
-      }
       if (result.applied === 0) {
-        throw new Error(t.stockEntryUi.saveFailed);
+        throw new Error(result.errors.slice(0, 3).join('; ') || t.stockEntryUi.saveFailed);
       }
       if (result.errors.length > 0) {
-        toast.error(result.errors.slice(0, 3).join('; '));
-      } else {
-        const msg = t.stockEntryUi.productsAddedDesc.replace('{count}', String(result.applied));
-        toast.success(
-          result.journalEntryId ? `${msg} (${t.stockEntryUi.journalPosted})` : msg,
-        );
+        throw new Error(result.errors.slice(0, 3).join('; '));
       }
+      const msg = t.stockEntryUi.productsAddedDesc.replace('{count}', String(result.applied));
+      toast.success(
+        result.journalEntryId ? `${msg} (${t.stockEntryUi.journalPosted})` : msg,
+      );
     },
-    [warehouseId, productsById, updateProduct, refreshInventoryAfterStockAdjust, t],
+    [warehouseId, productsById, refreshInventoryAfterStockAdjust, t],
   );
 
   const handleApplyStockExit = useCallback(
@@ -1062,8 +1092,6 @@ export default function Inventory() {
         entryDate: meta.exitDate,
         notes,
         createdBy: currentUser?.id || currentUser?.name || 'system',
-        productsById,
-        fallbackUpdateProduct: updateProduct,
       });
 
       for (const item of items) {
@@ -1090,22 +1118,18 @@ export default function Inventory() {
       }
 
       await refreshInventoryAfterStockAdjust(targetWarehouseId);
-      if (result.errors.length > 0 && result.applied === 0) {
-        throw new Error(result.errors.slice(0, 3).join('; '));
-      }
       if (result.applied === 0) {
-        throw new Error(t.stockExitUi.saveFailed);
+        throw new Error(result.errors.slice(0, 3).join('; ') || t.stockExitUi.saveFailed);
       }
       if (result.errors.length > 0) {
-        toast.error(result.errors.slice(0, 3).join('; '));
-      } else {
-        const msg = t.stockExitUi.productsRemovedDesc.replace('{count}', String(result.applied));
-        toast.success(
-          result.journalEntryId ? `${msg} (${t.stockExitUi.journalPosted})` : msg,
-        );
+        throw new Error(result.errors.slice(0, 3).join('; '));
       }
+      const msg = t.stockExitUi.productsRemovedDesc.replace('{count}', String(result.applied));
+      toast.success(
+        result.journalEntryId ? `${msg} (${t.stockExitUi.journalPosted})` : msg,
+      );
     },
-    [warehouseId, productsById, updateProduct, refreshInventoryAfterStockAdjust, t],
+    [warehouseId, productsById, refreshInventoryAfterStockAdjust, t],
   );
 
   // Get existing SKUs for duplicate detection

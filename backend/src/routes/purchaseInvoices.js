@@ -281,24 +281,38 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
 
       const skipAccounting = req.body?.skipAccounting === true || req.body?.metadataOnly === true;
 
-      const { resolveBranchFilterId } = require('../lib/branchIdMatch');
+      const { resolveBranchRow } = require('../lib/branchIdMatch');
       const warehouseRaw = String(row.warehouse_id || row.branch_id || '').trim();
-      if (warehouseRaw) {
-        const resolvedWh = await resolveBranchFilterId(db, warehouseRaw);
-        if (resolvedWh) {
-          row.warehouse_id = resolvedWh;
-          row.branch_id = resolvedWh;
-          const meta = await db.query(
-            db.engine === 'postgres'
-              ? `SELECT name FROM branches WHERE id::text = $1 LIMIT 1`
-              : `SELECT name FROM branches WHERE CAST(id AS TEXT) = $1 LIMIT 1`,
-            [resolvedWh],
+      if (!warehouseRaw) {
+        return res.status(400).json({ error: 'warehouseId / branchId é obrigatório para fatura de compra' });
+      }
+      const branchRow = await resolveBranchRow(db, warehouseRaw);
+      if (!branchRow?.id) {
+        return res.status(400).json({
+          error: `Filial inválida para fatura de compra: ${warehouseRaw}`,
+          code: 'INVALID_PURCHASE_BRANCH',
+        });
+      }
+      row.warehouse_id = String(branchRow.id);
+      row.branch_id = String(branchRow.id);
+      if (!row.warehouse_name) row.warehouse_name = branchRow.name || '';
+      if (!row.branch_name) row.branch_name = branchRow.name || '';
+
+      try {
+        const lines = JSON.parse(row.lines_json || '[]');
+        if (Array.isArray(lines) && lines.length > 0) {
+          row.lines_json = JSON.stringify(
+            lines.map((line) => ({
+              ...line,
+              warehouseId: String(branchRow.id),
+              warehouse_id: String(branchRow.id),
+              warehouseName: line.warehouseName || line.warehouse_name || branchRow.name || '',
+              warehouse_name: line.warehouseName || line.warehouse_name || branchRow.name || '',
+            })),
           );
-          if (meta.rows[0]?.name && !row.warehouse_name) {
-            row.warehouse_name = meta.rows[0].name;
-            row.branch_name = meta.rows[0].name;
-          }
         }
+      } catch {
+        /* keep original lines_json */
       }
 
       await client.query('BEGIN');
@@ -307,6 +321,9 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
 
       const saved = await client.query('SELECT * FROM purchase_invoices WHERE id = $1', [row.id]);
       const inv = fromRow(saved.rows[0]);
+      console.log(
+        `[PURCHASE INVOICES] Saved ${row.invoice_number} id=${row.id} branch=${row.branch_id} warehouse=${row.warehouse_id}`,
+      );
 
       let txResult = null;
       let accountingError = null;

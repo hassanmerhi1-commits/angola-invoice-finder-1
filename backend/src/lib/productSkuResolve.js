@@ -5,6 +5,7 @@
 
 const db = require('../db');
 const { headOfficeBranchWhere, orderByActiveDesc, emptyBranchIdClause } = require('./sqlDialect');
+const { branchKeysEqual, normalizeBranchIdKey } = require('./branchIdMatch');
 
 let mainBranchIdsCache = null;
 let mainBranchIdsCacheAt = 0;
@@ -26,14 +27,15 @@ async function loadMainBranchIds(clientOrDb) {
 
 function isCatalogBranchScope(branchId, mainBranchIds) {
   if (branchId == null || String(branchId).trim() === '') return true;
-  return mainBranchIds.includes(String(branchId).trim());
+  const key = String(branchId).trim();
+  return mainBranchIds.some((mid) => branchKeysEqual(mid, key));
 }
 
 /** branch_id stored on products for sede/catalog (UNIQUE with sku). */
 function normalizeStoredBranchId(branchId, mainBranchIds) {
   const key = branchId == null ? '' : String(branchId).trim();
   if (!key) return null;
-  if (mainBranchIds.includes(key)) return null;
+  if (mainBranchIds.some((mid) => branchKeysEqual(mid, key))) return null;
   return key;
 }
 
@@ -94,17 +96,22 @@ async function findProductBySkuAndBranch(client, sku, branchId) {
     }
   }
 
-  // Raw warehouse id (may differ from stored NULL for sede)
+  // Raw warehouse id (may differ from stored NULL for sede) — exact + dashless UUID
   const byWarehouse = await client.query(
     `SELECT id, name, sku, branch_id, is_active
      FROM products
      WHERE LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
-       AND branch_id = $2
+       AND (
+         branch_id = $2
+         OR REPLACE(LOWER(TRIM(COALESCE(${db.engine === 'postgres' ? 'branch_id::text' : 'CAST(branch_id AS TEXT)'}, ''))), '-', '') = $3
+       )
      ORDER BY ${orderByActiveDesc(db, 'is_active')} DESC, updated_at DESC, created_at DESC
      LIMIT 1`,
-    [skuTrim, toBranch],
+    [skuTrim, toBranch, normalizeBranchIdKey(toBranch)],
   );
-  return pick(byWarehouse.rows);
+  if (byWarehouse.rows.length > 0) return pick(byWarehouse.rows);
+
+  return null;
 }
 
 function isUniqueSkuBranchError(err) {

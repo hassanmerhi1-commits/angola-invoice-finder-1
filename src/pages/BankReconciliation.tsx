@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
 import { getBankAccounts, getBankTransactions } from '@/lib/accountingStorage';
 import { BankAccount, BankTransaction } from '@/types/accounting';
@@ -63,7 +63,7 @@ const RECON_STORAGE_KEY = 'kwanzaerp_bank_reconciliations';
 
 export default function BankReconciliation() {
   const { t, language } = useTranslation();
-  const { currentBranch } = useBranchContext();
+  const { listBranchId } = useBranchScope();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -82,9 +82,9 @@ export default function BankReconciliation() {
   const [allTransactions, setAllTransactions] = useState<BankTransaction[]>([]);
 
   useEffect(() => {
-    getBankAccounts(currentBranch?.id).then(setAccounts);
+    getBankAccounts(listBranchId).then(setAccounts);
     getBankTransactions().then(setAllTransactions);
-  }, [currentBranch?.id]);
+  }, [listBranchId]);
 
   const selectedAccount = useMemo(
     () => accounts.find(a => a.id === selectedAccountId),

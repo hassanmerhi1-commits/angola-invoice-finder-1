@@ -94,7 +94,7 @@ async function resolveWarehouseId(client, value) {
   }
 
   const { resolveBranchFilterId } = require('./lib/branchIdMatch');
-  const resolved = await resolveBranchFilterId(db, trimmed);
+  const resolved = await resolveBranchFilterId(client, trimmed);
   return resolved || null;
 }
 
@@ -934,6 +934,12 @@ async function validatePeriod(client, date) {
 async function resolveStockProductId(client, productIdOrCode, warehouseId) {
   if (isUuid(productIdOrCode)) return productIdOrCode;
 
+  const { resolveBranchFilterId } = require('./lib/branchIdMatch');
+  const resolvedWh = String(
+    (await resolveBranchFilterId(client, warehouseId)) || warehouseId || '',
+  ).trim();
+  const whKey = resolvedWh.replace(/-/g, '').toLowerCase();
+
   const code = String(productIdOrCode).trim();
   const lookup = await client.query(
     `SELECT id
@@ -943,10 +949,19 @@ async function resolveStockProductId(client, productIdOrCode, warehouseId) {
          LOWER(TRIM(COALESCE(sku, ''))) = LOWER($1)
          OR TRIM(COALESCE(barcode, '')) = $2
        )
-       AND (branch_id = $3 OR branch_id IS NULL)
-     ORDER BY CASE WHEN branch_id = $3 THEN 0 WHEN branch_id IS NULL THEN 1 ELSE 2 END, created_at ASC
+       AND (
+         branch_id = $3
+         OR branch_id IS NULL
+         OR REPLACE(LOWER(TRIM(COALESCE(branch_id::text, ''))), '-', '') = $4
+       )
+     ORDER BY CASE
+       WHEN branch_id = $3 THEN 0
+       WHEN REPLACE(LOWER(TRIM(COALESCE(branch_id::text, ''))), '-', '') = $4 THEN 1
+       WHEN branch_id IS NULL THEN 2
+       ELSE 3
+     END, created_at ASC
      LIMIT 1`,
-    [code, code, warehouseId]
+    [code, code, resolvedWh, whKey]
   );
 
   if (lookup.rows.length > 0) {
@@ -962,10 +977,13 @@ async function resolveStockProductId(client, productIdOrCode, warehouseId) {
  */
 async function resolveOrCloneProductForBranch(client, src, branchId, options = {}) {
   const { reuseExistingBySku = false } = options;
-  const toBranch = String(branchId || '').trim();
+  const { branchKeysEqual, resolveBranchFilterId } = require('./lib/branchIdMatch');
+  const toBranch = String(
+    (await resolveBranchFilterId(client, branchId)) || branchId || '',
+  ).trim();
   if (!toBranch) throw new Error('branchId inválido para produto de destino');
 
-  if (src.branch_id && String(src.branch_id) === toBranch) {
+  if (src.branch_id && branchKeysEqual(src.branch_id, toBranch)) {
     return src.id;
   }
 
@@ -1339,7 +1357,8 @@ async function resolveProductForWarehouse(client, productId, warehouseId) {
     return resolvedId;
   }
 
-  if (src.branch_id && String(src.branch_id) === branchKey) {
+  const { branchKeysEqual } = require('./lib/branchIdMatch');
+  if (src.branch_id && branchKeysEqual(src.branch_id, branchKey)) {
     return resolvedId;
   }
 

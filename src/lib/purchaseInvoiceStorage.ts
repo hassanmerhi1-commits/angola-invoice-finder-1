@@ -473,9 +473,22 @@ export async function savePurchaseInvoice(
     const res = await api.purchaseInvoices.save(body);
     if (res.error) throw new Error(res.error);
     const row = res.data as Record<string, unknown> | undefined;
+    if (!row?.id) {
+      const verify = await api.purchaseInvoices.get(payload.id);
+      if (verify.error || !verify.data) {
+        throw new Error(
+          'A fatura de compra não foi gravada no servidor. Verifique a filial (armazém) e tente novamente.',
+        );
+      }
+      const accounting = (verify.data as Record<string, unknown>)?.accounting as PurchaseInvoiceAccounting | undefined;
+      return {
+        invoice: mapPIFromApiRow(verify.data as Record<string, unknown>),
+        accounting,
+      };
+    }
     const accounting = row?.accounting as PurchaseInvoiceAccounting | undefined;
     return {
-      invoice: row ? mapPIFromApiRow(row) : payload,
+      invoice: mapPIFromApiRow(row),
       accounting,
     };
   }

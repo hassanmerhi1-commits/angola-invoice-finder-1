@@ -11,7 +11,7 @@ const {
 } = require('../transactionEngine');
 const { createJournalEntry } = require('../accounting');
 const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
-const { resolveBranchFilterId } = require('./branchIdMatch');
+const { resolveBranchFilterId, resolveBranchRow } = require('./branchIdMatch');
 const db = require('../db');
 
 function normalizePurchaseLines(lines) {
@@ -37,10 +37,12 @@ function purchaseInvoiceHasStockLines(lines) {
 async function resolveWarehouseForInvoice(client, inv) {
   const raw = String(inv.warehouseId || inv.branchId || inv.branch_id || '').trim();
   if (!raw) return null;
+  const row = await resolveBranchRow(client, raw);
+  if (row?.id) return String(row.id);
   const { resolveWarehouseId } = require('../transactionEngine');
   const viaEngine = await resolveWarehouseId(client, raw);
   if (viaEngine) return viaEngine;
-  return resolveBranchFilterId(db, raw);
+  return resolveBranchFilterId(client, raw);
 }
 
 async function queryPostingStatus(client, invoiceId) {

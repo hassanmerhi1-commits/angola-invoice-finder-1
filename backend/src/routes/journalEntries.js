@@ -127,22 +127,26 @@ module.exports = function(broadcastTable) {
           COUNT(*) as entry_count,
           SUM(total_debit) as total_debit,
           SUM(total_credit) as total_credit
-        FROM journal_entries
-        WHERE is_posted = true
+        FROM journal_entries je
+        WHERE je.is_posted = true
       `;
       const params = [];
       let paramIndex = 1;
 
       if (branchId) {
-        query += ` AND branch_id = $${paramIndex++}`;
-        params.push(branchId);
+        const branchFilter = await buildJournalBranchFilter(db, branchId, paramIndex);
+        if (branchFilter.sql) {
+          query += branchFilter.sql;
+          params.push(...branchFilter.params);
+          paramIndex += branchFilter.params.length;
+        }
       }
       if (startDate) {
-        query += ` AND entry_date >= $${paramIndex++}`;
+        query += ` AND je.entry_date >= $${paramIndex++}`;
         params.push(startDate);
       }
       if (endDate) {
-        query += ` AND entry_date <= $${paramIndex++}`;
+        query += ` AND je.entry_date <= $${paramIndex++}`;
         params.push(endDate);
       }
 

@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
-import { branchIdsEqual } from '@/lib/branchAccess';
+import { branchIdsEquivalent } from '@/lib/branchAccess';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
 import { Button } from '@/components/ui/button';
@@ -101,7 +101,7 @@ function useJournalEntries(branchId: string | undefined, labels: JournalDisplayL
       const rows = Array.isArray(response.data) ? response.data : [];
       const journalEntries = branchId
         ? rows.filter((je: Record<string, unknown>) =>
-            branchIdsEqual(String(je.branch_id ?? je.branchId), branchId),
+            branchIdsEquivalent(String(je.branch_id ?? je.branchId), branchId),
           )
         : rows;
       for (const je of journalEntries) {
@@ -113,7 +113,7 @@ function useJournalEntries(branchId: string | undefined, labels: JournalDisplayL
         const raw = localStorage.getItem('kwanzaerp_journal_entries');
         const journalEntries = raw ? JSON.parse(raw) : [];
       for (const je of journalEntries) {
-          if (branchId && !branchIdsEqual(je.branchId, branchId)) continue;
+          if (branchId && !branchIdsEquivalent(je.branchId, branchId)) continue;
           allEntries.push(mapJournalEntryFromApi({
             id: je.id,
             entry_number: je.entryNumber,
@@ -139,6 +139,7 @@ function useJournalEntries(branchId: string | undefined, labels: JournalDisplayL
         
         for (let idx = 0; idx < Math.min(sales.length, 50); idx++) {
           const sale = sales[idx];
+          if (branchId && !branchIdsEquivalent(sale.branchId ?? sale.branch_id, branchId)) continue;
           const id = `sale_je_${sale.id || idx}`;
           if (existingIds.has(id)) continue;
           
@@ -182,6 +183,12 @@ function useJournalEntries(branchId: string | undefined, labels: JournalDisplayL
 
   useEffect(() => { void loadAll(); }, [loadAll]);
 
+  useEffect(() => {
+    const onScope = () => { void loadAll(); };
+    window.addEventListener('nexor:branch-scope-changed', onScope);
+    return () => window.removeEventListener('nexor:branch-scope-changed', onScope);
+  }, [loadAll]);
+
   useEffect(() => subscribeSupplierReturnsChanged(() => { void loadAll(); }), [loadAll]);
 
   return { entries, refetch: loadAll };
@@ -197,14 +204,14 @@ interface NewEntryLine {
   credit: string;
 }
 
-function JournalsTrialBalancePanel() {
+function JournalsTrialBalancePanel({ branchId }: { branchId?: string }) {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const monthStart = new Date();
   monthStart.setDate(1);
   const [startDate, setStartDate] = useState(monthStart.toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
-  const { data, isLoading, error, refetch, totals } = useTrialBalance(startDate, endDate);
+  const { data, isLoading, error, refetch, totals } = useTrialBalance(startDate, endDate, branchId);
 
   const rows = data.filter(r => !r.is_header && (Number(r.total_debits) > 0 || Number(r.total_credits) > 0));
 
@@ -433,7 +440,7 @@ export default function Journals() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
-  const { currentBranch, apiBranchId, isConsolidatedView } = useBranchScope();
+  const { currentBranch, listBranchId, isConsolidatedView } = useBranchScope();
 
   const journalLabels = useMemo<JournalDisplayLabels>(() => ({
     systemUser: t.journalsUi.systemUser,
@@ -472,7 +479,7 @@ export default function Journals() {
     fieldNif: t.journalsUi.detailNif,
   }), [t]);
 
-  const { entries, refetch } = useJournalEntries(apiBranchId, journalLabels);
+  const { entries, refetch } = useJournalEntries(listBranchId, journalLabels);
 
   const [activeTab, setActiveTab] = useState('diarios');
   const [searchTerm, setSearchTerm] = useState('');
@@ -822,7 +829,7 @@ export default function Journals() {
         </TabsContent>
 
         <TabsContent value="balancete" className="flex-1 m-0 overflow-hidden">
-          <JournalsTrialBalancePanel />
+          <JournalsTrialBalancePanel branchId={listBranchId} />
         </TabsContent>
 
         <TabsContent value="auditoria" className="flex-1 m-0 overflow-hidden">
@@ -830,7 +837,7 @@ export default function Journals() {
         </TabsContent>
 
         <TabsContent value="cashiers" className="flex-1 m-0 overflow-hidden">
-          <JournalsCashiersPanel branchId={currentBranch?.id} />
+          <JournalsCashiersPanel branchId={listBranchId} />
         </TabsContent>
       </Tabs>
 

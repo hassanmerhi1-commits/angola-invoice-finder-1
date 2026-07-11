@@ -7,6 +7,15 @@ function normalizeBranchIdKey(id) {
   return String(id || '').trim().toLowerCase().replace(/-/g, '');
 }
 
+/** True when two branch ids refer to the same filial (dashless UUID / legacy keys). */
+function branchKeysEqual(a, b) {
+  const left = normalizeBranchIdKey(a);
+  const right = normalizeBranchIdKey(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return left.length >= 8 && right.length >= 8 && left === right;
+}
+
 function normalizeBranchNameKey(name) {
   return String(name || '')
     .trim()
@@ -74,6 +83,43 @@ async function resolveBranchFilterId(db, branchId) {
   }
 
   return raw;
+}
+
+/**
+ * Resolve branchId param to a branches table row (canonical id, code, name).
+ */
+async function resolveBranchRow(db, branchId) {
+  const resolved = await resolveBranchFilterId(db, branchId);
+  if (!resolved) return null;
+
+  const key = normalizeBranchIdKey(resolved);
+  const byId = await db.query(
+    db.engine === 'postgres'
+      ? `SELECT id::text AS id, code, name FROM branches
+         WHERE id::text = $1
+            OR REPLACE(LOWER(id::text), '-', '') = $2
+         LIMIT 1`
+      : `SELECT CAST(id AS TEXT) AS id, code, name FROM branches
+         WHERE CAST(id AS TEXT) = $1
+            OR REPLACE(LOWER(CAST(id AS TEXT)), '-', '') = $2
+         LIMIT 1`,
+    [resolved, key],
+  );
+  if (byId.rows[0]?.id) return byId.rows[0];
+
+  const byMeta = await db.query(
+    db.engine === 'postgres'
+      ? `SELECT id::text AS id, code, name FROM branches
+         WHERE lower(trim(coalesce(code, ''))) = lower($1)
+            OR lower(trim(name)) = lower($1)
+         LIMIT 1`
+      : `SELECT CAST(id AS TEXT) AS id, code, name FROM branches
+         WHERE lower(trim(coalesce(code, ''))) = lower($1)
+            OR lower(trim(name)) = lower($1)
+         LIMIT 1`,
+    [resolved],
+  );
+  return byMeta.rows[0] || null;
 }
 
 function castText(columnExpr) {
@@ -177,7 +223,9 @@ async function buildJournalBranchFilter(db, branchId, startParamIdx) {
 module.exports = {
   normalizeBranchIdKey,
   normalizeBranchNameKey,
+  branchKeysEqual,
   resolveBranchFilterId,
+  resolveBranchRow,
   buildPurchaseInvoiceBranchFilter,
   buildJournalBranchFilter,
 };
