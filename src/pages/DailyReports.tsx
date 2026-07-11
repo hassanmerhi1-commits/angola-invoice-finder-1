@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useDailyReports, useAuth } from '@/hooks/useERP';
-import { useBranchScope } from '@/hooks/useBranchScope';
+import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
+import { ALL_BRANCHES_SCOPE_ID } from '@/lib/branchAccess';
 import { toast } from 'sonner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,15 +31,15 @@ export default function DailyReports() {
   const {
     branches,
     currentBranch,
-    listBranchId,
     canPickBranch,
     allBranchesScopeId,
-  } = useBranchScope();
-  const [selectedBranch, setSelectedBranch] = useState<string>(
-    () => listBranchId || currentBranch?.id || allBranchesScopeId,
-  );
-  const apiListBranchId =
-    canPickBranch && selectedBranch === allBranchesScopeId ? undefined : (listBranchId ?? selectedBranch);
+    selectedBranch,
+    setSelectedBranch,
+    apiBranchId: apiListBranchId,
+  } = useSyncedBranchFilter({
+    allValue: ALL_BRANCHES_SCOPE_ID,
+    defaultWhenPicker: 'current',
+  });
   const { reports, generateReport, closeDay, refreshReports } = useDailyReports(apiListBranchId);
 
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
@@ -83,7 +84,7 @@ export default function DailyReports() {
       if (selectedBranch === allBranchesScopeId) return undefined;
       return selectedBranch;
     }
-    return listBranchId || currentBranch?.id;
+    return apiListBranchId || currentBranch?.id;
   };
 
   const resolveDetailReportParams = () => {

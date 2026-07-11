@@ -205,6 +205,7 @@ async function auditLog(client, params) {
         await client.query(`RELEASE SAVEPOINT ${savepointName}`);
       } catch (rollbackError) {
         console.error('[AUDIT] Failed to recover savepoint:', rollbackError.message);
+        throw e;
       }
     }
     console.warn('[AUDIT] Log skipped:', e.message);

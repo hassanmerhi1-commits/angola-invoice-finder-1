@@ -154,6 +154,11 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     persistCurrentBranch(nextScopeId, branch);
     setScopeIdState(nextScopeId);
     setCurrentBranchState(branch);
+    window.dispatchEvent(
+      new CustomEvent('nexor:branch-scope-changed', {
+        detail: { scopeId: nextScopeId, branchId: branch.id, branch },
+      }),
+    );
   }, [branches]);
 
   const setCurrentBranch = useCallback((branch: Branch) => {

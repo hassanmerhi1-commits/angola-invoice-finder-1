@@ -86,6 +86,10 @@ export default function StockTransfer() {
   const [receivedQtyDrafts, setReceivedQtyDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    if (currentBranch?.id) setFromBranchId(currentBranch.id);
+  }, [scopeId, currentBranch?.id]);
+
+  useEffect(() => {
     const onAll = () => {
       setDialogOpen(false);
       setReceiveDialogOpen(false);
@@ -94,6 +98,10 @@ export default function StockTransfer() {
     window.addEventListener(NEXOR_TOOLBAR.ALL, onAll);
     return () => window.removeEventListener(NEXOR_TOOLBAR.ALL, onAll);
   }, []);
+
+  useEffect(() => {
+    if (currentBranch?.id) setFromBranchId(currentBranch.id);
+  }, [scopeId, currentBranch?.id]);
 
   // Load products from the selected SOURCE branch
   const { products: sourceProducts } = useProducts(fromBranchId || undefined);

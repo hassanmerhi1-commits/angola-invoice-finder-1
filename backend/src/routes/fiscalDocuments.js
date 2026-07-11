@@ -180,12 +180,12 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
         branchId: req.body.branchId || req.user.branchId,
       };
       const note = await processCreditNote(client, body);
+      await client.query('COMMIT');
       try {
-        await enqueueCreditNoteCreated(client, note.id, body.branchId);
+        await enqueueCreditNoteCreated(null, note.id, body.branchId);
       } catch (enqueueErr) {
         console.warn('[FISCAL] credit note AGT enqueue:', enqueueErr.message);
       }
-      await client.query('COMMIT');
       try {
         await signFiscalDocument('credit_notes', note.id, 'document_number', 'saft_hash');
       } catch (e) {
@@ -218,7 +218,7 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       }
       res.status(201).json(full);
     } catch (err) {
-      await client.query('ROLLBACK');
+      try { await client.query('ROLLBACK'); } catch (_) { /* tx may already be aborted */ }
       console.error('[FISCAL credit-notes create]', err);
       res.status(400).json({ error: err.message || 'Failed to create credit note' });
     } finally {
@@ -279,12 +279,12 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
         branchId: req.body.branchId || req.user.branchId,
       };
       const note = await processDebitNote(client, body);
+      await client.query('COMMIT');
       try {
-        await enqueueDebitNoteCreated(client, note.id, body.branchId);
+        await enqueueDebitNoteCreated(null, note.id, body.branchId);
       } catch (enqueueErr) {
         console.warn('[FISCAL] debit note AGT enqueue:', enqueueErr.message);
       }
-      await client.query('COMMIT');
       try {
         await signFiscalDocument('debit_notes', note.id, 'document_number', 'saft_hash');
       } catch (e) {
@@ -304,7 +304,7 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       await broadcastTable('debit_notes');
       res.status(201).json(full);
     } catch (err) {
-      await client.query('ROLLBACK');
+      try { await client.query('ROLLBACK'); } catch (_) { /* tx may already be aborted */ }
       res.status(400).json({ error: err.message || 'Failed to create debit note' });
     } finally {
       client.release();

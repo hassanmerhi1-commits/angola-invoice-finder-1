@@ -1,10 +1,11 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
 import { useSales } from '@/hooks/useERP';
 import { Download, TrendingUp, Calendar, Package, Tags, Building2, Users, Truck, User, FileText } from 'lucide-react';
 import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, eachWeekOfInterval,
@@ -30,22 +31,18 @@ export default function SalesAnalysisReport({
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const dfLocale = language === 'pt' ? pt : enUS;
-  const { branches, currentBranch, apiBranchId, canPickBranch } = useBranchScope();
+  const { apiBranchId } = useBranchScope();
+  const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter();
   const { sales } = useSales(apiBranchId);
   const pivotCtx = useSalesPivotContext(apiBranchId);
 
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [selectedBranch, setSelectedBranch] = useState<string>('all');
   const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month'>('day');
   const [internalViewTab, setInternalViewTab] = useState('summary');
   const viewTab = view ?? internalViewTab;
   const setViewTab = onViewChange ?? setInternalViewTab;
   const [dailyOpen, setDailyOpen] = useState(false);
-
-  useEffect(() => {
-    if (!canPickBranch && currentBranch?.id) setSelectedBranch(currentBranch.id);
-  }, [canPickBranch, currentBranch?.id]);
 
   const filteredSales = useMemo(() => {
     return sales.filter((sale) => {

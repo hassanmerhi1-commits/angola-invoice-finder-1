@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
 import { useSales } from '@/hooks/useERP';
 import { Trophy, Users, Package, Truck, User } from 'lucide-react';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
@@ -21,20 +22,16 @@ export default function StatisticsReports({
   onViewChange?: (value: string) => void;
 }) {
   const { t } = useTranslation();
-  const { branches, currentBranch, apiBranchId, canPickBranch } = useBranchScope();
+  const { apiBranchId } = useBranchScope();
+  const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter();
   const { sales } = useSales(apiBranchId);
   const pivotCtx = useSalesPivotContext(apiBranchId);
 
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [selectedBranch, setSelectedBranch] = useState<string>('all');
   const [internalTab, setInternalTab] = useState('top-customers');
   const tab = view ?? internalTab;
   const setTab = onViewChange ?? setInternalTab;
-
-  useEffect(() => {
-    if (!canPickBranch && currentBranch?.id) setSelectedBranch(currentBranch.id);
-  }, [canPickBranch, currentBranch?.id]);
 
   const filteredSales = useMemo(() => {
     return sales.filter((sale) => {

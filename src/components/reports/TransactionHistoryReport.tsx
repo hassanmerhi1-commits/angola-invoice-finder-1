@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useTranslation } from '@/i18n';
@@ -50,6 +50,7 @@ import {
   CATEGORY_COLORS,
 } from '@/lib/transactionHistory';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
 import { useUsers } from '@/hooks/useUsers';
 
 const ITEMS_PER_PAGE = 50;
@@ -76,35 +77,32 @@ const CATEGORY_ICONS: Record<TransactionCategory, React.ReactNode> = {
 export function TransactionHistoryReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { branches, currentBranch, apiBranchId, canPickBranch } = useBranchScope();
+  const { apiBranchId: scopeBranchId } = useBranchScope();
+  const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter({
+    allValue: '',
+    defaultWhenPicker: 'current',
+  });
   const { users } = useUsers();
   
   // Filters
   const [dateFrom, setDateFrom] = useState<Date>();
   const [dateTo, setDateTo] = useState<Date>();
   const [selectedUser, setSelectedUser] = useState<string>('');
-  const [selectedBranch, setSelectedBranch] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedRecord, setSelectedRecord] = useState<TransactionRecord | null>(null);
   const [showFilters, setShowFilters] = useState(false);
 
-  useEffect(() => {
-    if (!canPickBranch && currentBranch?.id) {
-      setSelectedBranch(currentBranch.id);
-    }
-  }, [canPickBranch, currentBranch?.id]);
-
   // Build filter object
   const filter: TransactionFilter = useMemo(() => ({
     dateFrom: dateFrom ? format(dateFrom, 'yyyy-MM-dd') : undefined,
     dateTo: dateTo ? format(dateTo, 'yyyy-MM-dd') : undefined,
     userId: selectedUser || undefined,
-    branchId: selectedBranch || apiBranchId || undefined,
+    branchId: selectedBranch || scopeBranchId || undefined,
     category: selectedCategory as TransactionCategory || undefined,
     searchTerm: searchTerm || undefined,
-  }), [dateFrom, dateTo, selectedUser, selectedBranch, selectedCategory, searchTerm, apiBranchId]);
+  }), [dateFrom, dateTo, selectedUser, selectedBranch, selectedCategory, searchTerm, scopeBranchId]);
 
   // Get filtered records
   const filteredRecords = useMemo(() => {

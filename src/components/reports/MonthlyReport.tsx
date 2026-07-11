@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
 import { useSales, useProducts } from '@/hooks/useERP';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { Calendar, Download, Printer, FileDown } from 'lucide-react';
@@ -36,19 +37,15 @@ interface MonthRow {
 export default function MonthlyReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { branches, currentBranch, apiBranchId, canPickBranch } = useBranchScope();
+  const { apiBranchId } = useBranchScope();
+  const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter();
   const { sales } = useSales(apiBranchId);
   const { products } = useProducts(apiBranchId);
   const { companyName } = useCompanyLogo();
 
   const [dateFrom, setDateFrom] = useState(format(startOfYear(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfYear(new Date()), 'yyyy-MM-dd'));
-  const [selectedBranch, setSelectedBranch] = useState<string>('all');
   const [purchases, setPurchases] = useState<any[]>([]);
-
-  useEffect(() => {
-    if (!canPickBranch && currentBranch?.id) setSelectedBranch(currentBranch.id);
-  }, [canPickBranch, currentBranch?.id]);
 
   useEffect(() => {
     let cancelled = false;

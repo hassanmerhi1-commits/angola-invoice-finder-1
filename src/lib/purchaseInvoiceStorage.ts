@@ -2,9 +2,10 @@
  * Purchase Invoice (Fatura de Compra) Storage — API-First
  */
 
-import { Product } from '@/types/erp';
+import { Product, Branch } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
+import { branchIdsEquivalent, resolveUserBranch } from '@/lib/branchAccess';
 import { lsGet, lsSet } from '@/lib/dbHelper';
 
 const STORAGE_KEY = 'kwanzaerp_purchase_invoices';
@@ -134,7 +135,7 @@ export interface PurchaseInvoice {
 
 // ---------- Branch scope (works for any number of filiais) ----------
 
-export type BranchRef = { id: string; code?: string; isMain?: boolean };
+export type BranchRef = { id: string; code?: string; name?: string; isMain?: boolean };
 
 function normId(s: string | undefined | null): string {
   return (s ?? '').trim();
@@ -248,9 +249,11 @@ function branchRefMatchesId(ref: BranchRef | undefined, id: string): boolean {
   if (!ref) return false;
   const nid = normId(id);
   if (!nid) return false;
-  if (normId(ref.id) === nid || normId(ref.id).toLowerCase() === nid.toLowerCase()) return true;
+  if (branchIdsEquivalent(ref.id, nid)) return true;
   const code = (ref.code || '').trim();
   if (code && (code === nid || code.toLowerCase() === nid.toLowerCase())) return true;
+  const name = (ref.name || '').trim();
+  if (name && name.toLowerCase() === nid.toLowerCase()) return true;
   return false;
 }
 
@@ -322,25 +325,27 @@ export function invoiceBelongsToBranch(
   const allIds = new Set([...headerIds, ...lineIds]);
 
   for (const id of allIds) {
-    if (id === want) return true;
-    if (id.toLowerCase() === want.toLowerCase()) return true;
+    if (branchIdsEquivalent(id, want)) return true;
   }
+
+  const invNames = [inv.branchName, inv.warehouseName]
+    .map((s) => String(s || '').trim().toLowerCase())
+    .filter(Boolean);
 
   if (branchCatalog?.length) {
     const target = branchCatalog.find((b) => branchRefMatchesId(b, want));
-    if (!target) return false;
-    const targetName = (target.name || '').trim().toLowerCase();
-    const invNames = [inv.branchName, inv.warehouseName]
-      .map((s) => String(s || '').trim().toLowerCase())
-      .filter(Boolean);
-    for (const id of allIds) {
-      const meta = branchCatalog.find((b) => branchRefMatchesId(b, id));
-      if (!meta) continue;
-      if (meta.id === target.id) return true;
-      const c1 = (meta.code || '').trim();
-      const c2 = (target.code || '').trim();
-      if (c1 && c2 && c1 === c2) return true;
-      if (meta.isMain && target.isMain) return true;
+    if (target) {
+      const targetName = (target.name || '').trim().toLowerCase();
+      for (const id of allIds) {
+        const meta = branchCatalog.find((b) => branchRefMatchesId(b, id));
+        if (!meta) continue;
+        if (branchIdsEquivalent(meta.id, target.id)) return true;
+        const c1 = (meta.code || '').trim();
+        const c2 = (target.code || '').trim();
+        if (c1 && c2 && c1 === c2) return true;
+        if (meta.isMain && target.isMain) return true;
+        if (targetName && invNames.some((n) => n === targetName)) return true;
+      }
       if (targetName && invNames.some((n) => n === targetName)) return true;
     }
   }
@@ -354,9 +359,14 @@ export async function getPurchaseInvoices(
   branchId?: string,
   branchCatalog?: BranchRef[],
 ): Promise<PurchaseInvoice[]> {
+  const catalog = branchCatalog as Branch[] | undefined;
+  const resolvedBranch = branchId
+    ? (resolveUserBranch(catalog || [], branchId)?.id || branchId)
+    : undefined;
+
   if (usePurchaseInvoiceApi()) {
     await migrateLegacyPurchaseInvoicesToApi();
-    const res = await api.purchaseInvoices.list(branchId ? { branchId } : undefined);
+    const res = await api.purchaseInvoices.list(resolvedBranch ? { branchId: resolvedBranch } : undefined);
     if (res.error) {
       console.error('[PurchaseInvoice] API list failed:', res.error);
       throw new Error(res.error);
@@ -364,15 +374,14 @@ export async function getPurchaseInvoices(
     let docs = (res.data || []).map((row) =>
       normalizeInvoiceWarehouse(mapPIFromApiRow(row)),
     );
-    if (branchId) {
-      docs = docs.filter((d) => invoiceBelongsToBranch(d, branchId, branchCatalog));
-      // If strict server filter missed rows (branch id drift), retry without filter once.
+    if (resolvedBranch) {
+      docs = docs.filter((d) => invoiceBelongsToBranch(d, resolvedBranch, branchCatalog));
       if (docs.length === 0) {
         const allRes = await api.purchaseInvoices.list();
         if (!allRes.error && allRes.data?.length) {
           docs = allRes.data
             .map((row) => normalizeInvoiceWarehouse(mapPIFromApiRow(row)))
-            .filter((d) => invoiceBelongsToBranch(d, branchId, branchCatalog));
+            .filter((d) => invoiceBelongsToBranch(d, resolvedBranch, branchCatalog));
         }
       }
     }
@@ -380,8 +389,8 @@ export async function getPurchaseInvoices(
   }
 
   let docs = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []).map(normalizeInvoiceWarehouse);
-  if (branchId) {
-    docs = docs.filter((d) => invoiceBelongsToBranch(d, branchId, branchCatalog));
+  if (resolvedBranch) {
+    docs = docs.filter((d) => invoiceBelongsToBranch(d, resolvedBranch, branchCatalog));
   }
   return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }

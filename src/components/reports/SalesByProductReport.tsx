@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
 import { useSales, useProducts } from '@/hooks/useERP';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { Download, Printer, FileDown, Package } from 'lucide-react';
@@ -56,18 +57,20 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const embedded = !!props.embedded;
-  const { branches, currentBranch, apiBranchId, canPickBranch } = useBranchScope();
+  const { apiBranchId } = useBranchScope();
+  const {
+    branches,
+    currentBranch,
+    canPickBranch,
+    selectedBranch: branchState,
+    setSelectedBranch,
+  } = useSyncedBranchFilter();
   const { sales } = useSales(apiBranchId);
   const { products } = useProducts(apiBranchId);
   const { companyName } = useCompanyLogo();
 
   const [dateFromState, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateToState, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [branchState, setSelectedBranch] = useState<string>('all');
-
-  useEffect(() => {
-    if (!embedded && !canPickBranch && currentBranch?.id) setSelectedBranch(currentBranch.id);
-  }, [embedded, canPickBranch, currentBranch?.id]);
 
   // When embedded, the parent owns the filters.
   const dateFrom = embedded ? props.dateFrom ?? dateFromState : dateFromState;

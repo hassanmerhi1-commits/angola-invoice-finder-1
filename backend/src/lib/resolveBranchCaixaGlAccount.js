@@ -5,6 +5,10 @@
 
 const GLOBAL_PETTY_CASH_CODE = '451';
 
+function isPgPoolClient(dbOrClient) {
+  return Boolean(dbOrClient && typeof dbOrClient.release === 'function');
+}
+
 function getDb() {
   // Lazy load so unit tests can mock query clients without touching SQLite.
   // eslint-disable-next-line global-require
@@ -102,6 +106,9 @@ async function linkOrphanBranchCaixaAccounts(dbOrClient) {
       console.log(`[branchCaixa] Linked ${row.code} → branch ${row.branch_name} (${branchKey})${from}`);
     }
   } catch (err) {
+    if (isPgPoolClient(dbOrClient)) {
+      throw err;
+    }
     console.warn('[branchCaixa] link orphan accounts:', err.message);
   }
 

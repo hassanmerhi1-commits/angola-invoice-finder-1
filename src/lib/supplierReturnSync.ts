@@ -90,10 +90,10 @@ export async function syncPurchaseInvoiceReturnStatus(
 }
 
 export async function syncAllPurchaseInvoiceReturnStatuses(branchId?: string): Promise<void> {
-  const [invoices, returns] = await Promise.all([
-    getPurchaseInvoices(branchId),
-    getSupplierReturns(branchId),
-  ]);
+  const returns = await getSupplierReturns(branchId);
+  if (!returns.length) return;
+
+  const invoices = await getPurchaseInvoices(branchId);
 
   await Promise.all(
     invoices

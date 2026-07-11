@@ -68,12 +68,27 @@ function securityHeaders(req, res, next) {
   next();
 }
 
+function normalizeClientIp(ip) {
+  return String(ip || '').replace(/^::ffff:/, '').trim();
+}
+
+function isPrivateLanIp(ip) {
+  const s = normalizeClientIp(ip);
+  if (!s || s === '127.0.0.1' || s === '::1') return true;
+  if (s.startsWith('192.168.')) return true;
+  if (s.startsWith('10.')) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(s)) return true;
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(s)) return true;
+  return false;
+}
+
 /**
  * Simple in-memory rate limiter
  * @param {number} windowMs - Time window in ms
- * @param {number} maxRequests - Max requests per IP per window
+ * @param {number} maxRequests - Max requests per IP per window (public / unknown IPs)
+ * @param {number} lanMaxRequests - Higher cap for private LAN / Tailscale clients
  */
-function rateLimiter(windowMs = 60000, maxRequests = 200) {
+function rateLimiter(windowMs = 60000, maxRequests = 200, lanMaxRequests = 2000) {
   const hits = new Map();
 
   // Cleanup every windowMs
@@ -85,11 +100,8 @@ function rateLimiter(windowMs = 60000, maxRequests = 200) {
   }, windowMs);
 
   function isLocalRequest(req) {
-    const ip = String(req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || '');
-    return ip === '127.0.0.1'
-      || ip === '::1'
-      || ip === '::ffff:127.0.0.1'
-      || ip.endsWith('127.0.0.1');
+    const ip = normalizeClientIp(req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || '');
+    return ip === '127.0.0.1' || ip === '::1';
   }
 
   return (req, res, next) => {
@@ -97,7 +109,8 @@ function rateLimiter(windowMs = 60000, maxRequests = 200) {
       return next();
     }
 
-    const ip = req.ip || req.connection.remoteAddress;
+    const ip = normalizeClientIp(req.ip || req.connection?.remoteAddress || 'unknown');
+    const cap = isPrivateLanIp(ip) ? lanMaxRequests : maxRequests;
     const now = Date.now();
     const record = hits.get(ip);
 
@@ -107,8 +120,8 @@ function rateLimiter(windowMs = 60000, maxRequests = 200) {
     }
 
     record.count++;
-    if (record.count > maxRequests) {
-      console.warn(`[RATE LIMIT] ${ip}: ${record.count}/${maxRequests}`);
+    if (record.count > cap) {
+      console.warn(`[RATE LIMIT] ${ip}: ${record.count}/${cap}`);
       return res.status(429).json({ error: 'Too many requests. Please slow down.' });
     }
 

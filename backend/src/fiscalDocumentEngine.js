@@ -14,6 +14,7 @@ const {
   linkDocuments,
 } = require('./transactionEngine');
 const { ensureCreditNoteRestoreStockColumn } = require('./lib/ensurePhaseSchema');
+const { resolveBranchFilterId } = require('./lib/branchIdMatch');
 const { isCashPaymentMethod, recordCashRefundOnOpenSession } = require('./lib/caixaCashRefund');
 const { resolveBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('./lib/resolveBranchCaixaGlAccount');
 const db = require('./db');
@@ -96,7 +97,9 @@ async function processCreditNote(client, data) {
     throw new Error('Fatura original está cancelada');
   }
 
-  const branchId = branchIdInput || sale.branch_id;
+  const branchIdRaw = branchIdInput || sale.branch_id;
+  const resolvedBranchId = await resolveBranchFilterId(db, String(branchIdRaw || '').trim());
+  const branchId = resolvedBranchId || branchIdRaw;
   requireParam(branchId, 'branchId');
   const branchCode = branchCodeInput || sale.branch_code || 'SEDE';
   const branchName = branchNameInput || sale.branch_name || '';
@@ -203,7 +206,18 @@ async function processCreditNote(client, data) {
   // Credit the SAME treasury account the sale debited (branch 45x or bank 431).
   let refundAccountCode = '431';
   if (isCashPaymentMethod(sale.payment_method)) {
-    await linkOrphanBranchCaixaAccounts(client);
+    const linkSp = 'branch_caixa_link';
+    await client.query(`SAVEPOINT ${linkSp}`);
+    try {
+      await linkOrphanBranchCaixaAccounts(client);
+      await client.query(`RELEASE SAVEPOINT ${linkSp}`);
+    } catch (linkErr) {
+      try {
+        await client.query(`ROLLBACK TO SAVEPOINT ${linkSp}`);
+        await client.query(`RELEASE SAVEPOINT ${linkSp}`);
+      } catch (_) { /* ignore */ }
+      console.warn('[FISCAL] branch caixa link skipped:', linkErr.message);
+    }
     refundAccountCode = await resolveBranchCaixaGlAccountCode(client, {
       branchId,
       branchName,

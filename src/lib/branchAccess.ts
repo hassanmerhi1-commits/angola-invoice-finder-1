@@ -32,17 +32,36 @@ export function mapBranchRow(b: Record<string, unknown>): Branch {
   };
 }
 
+export function normalizeBranchIdKey(id: string | null | undefined): string {
+  return String(id ?? '').trim().toLowerCase().replace(/-/g, '');
+}
+
+export function branchIdsEquivalent(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const left = String(a ?? '').trim();
+  const right = String(b ?? '').trim();
+  if (!left || !right) return false;
+  if (left === right) return true;
+  if (left.toLowerCase() === right.toLowerCase()) return true;
+  const lk = normalizeBranchIdKey(left);
+  const rk = normalizeBranchIdKey(right);
+  return lk.length >= 8 && lk === rk;
+}
+
 export function resolveUserBranch(branches: Branch[], branchId?: string | null): Branch | null {
   const id = String(branchId ?? '').trim();
   if (!id || branches.length === 0) return null;
 
-  const byId = branches.find((b) => String(b.id) === id);
+  const byId = branches.find((b) => branchIdsEquivalent(b.id, id));
   if (byId) return byId;
 
   const lower = id.toLowerCase();
   return (
     branches.find((b) => String(b.code || '').trim().toLowerCase() === lower) ??
     branches.find((b) => String(b.name || '').trim().toLowerCase() === lower) ??
+    branches.find((b) => normalizeBranchIdKey(b.id) === normalizeBranchIdKey(id)) ??
     null
   );
 }

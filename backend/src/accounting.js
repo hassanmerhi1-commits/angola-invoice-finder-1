@@ -120,6 +120,7 @@ async function generateSequenceNumber(client, documentType, prefix, scope = {}) 
         await client.query(`RELEASE SAVEPOINT ${savepointName}`);
       } catch (rollbackError) {
         console.error('[ACCOUNTING] Failed to recover sequence savepoint:', rollbackError.message);
+        throw e;
       }
     }
 

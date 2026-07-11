@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useDataSync, useAuth } from '@/hooks/useERP';
-import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { SyncPackage } from '@/types/erp';
 // ImportResult type defined inline
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,7 +27,7 @@ export default function DataSync() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
   const { user } = useAuth();
-  const { branches, currentBranch } = useBranchContext();
+  const { branches, currentBranch, scopeId } = useBranchScope();
   const { exportData, downloadSyncPackage } = useDataSync();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -35,6 +35,11 @@ export default function DataSync() {
   const [dateFrom, setDateFrom] = useState(new Date().toISOString().split('T')[0]);
   const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
   const [selectedBranch, setSelectedBranch] = useState(currentBranch?.id || '');
+
+  useEffect(() => {
+    const next = String(scopeId || currentBranch?.id || '').trim();
+    if (next) setSelectedBranch(next);
+  }, [scopeId, currentBranch?.id]);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [syncPackage, setSyncPackage] = useState<SyncPackage | null>(null);
