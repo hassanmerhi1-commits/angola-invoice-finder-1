@@ -13,11 +13,66 @@ const fs = require('fs');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 require('dotenv').config({ path: 'C:\\NEXOR ERP\\database.env' });
 
+// Assigned by loadModules() after the database location is decided —
+// requiring db.js earlier would lock in the wrong engine.
+let db;
+let resolveBranchRow;
+let normalizeBranchIdKey;
+let postPurchaseInvoiceAccountingPhased;
+let queryPostingStatus;
+let fromRow;
+
+/** `--db postgres://...` CLI override. */
+function cliDatabaseUrl() {
+  const i = process.argv.indexOf('--db');
+  if (i >= 0 && process.argv[i + 1]) return process.argv[i + 1];
+  return null;
+}
+
+async function tryPostgresUrl(url, label) {
+  const { Client } = require('pg');
+  const client = new Client({ connectionString: url, connectionTimeoutMillis: 5000 });
+  try {
+    await client.connect();
+    const r = await client.query('SELECT COUNT(*) AS n FROM products');
+    console.log(`[diagnose] PostgreSQL encontrado (${label}) — produtos=${r.rows[0].n}`);
+    return true;
+  } catch (e) {
+    console.log(`[diagnose] PostgreSQL ${label}: ${e.message}`);
+    return false;
+  } finally {
+    try { await client.end(); } catch { /* ignore */ }
+  }
+}
+
 /**
- * No PostgreSQL configured (no database.env / DATABASE_URL) → the server runs on
- * a local SQLite file. Find the live one BEFORE loading db.js (it reads SQLITE_PATH).
+ * Decide where the live database is, in this order:
+ *  1. DATABASE_URL (database.env / environment / --db)
+ *  2. Docker PostgreSQL on this PC (default port + password from docker-compose)
+ *  3. Biggest local SQLite file (IP file path, install dir, AppData)
  */
-if (!process.env.DATABASE_URL && (process.env.DB_ENGINE || '').toLowerCase() !== 'postgres') {
+async function detectDatabase() {
+  const cliUrl = cliDatabaseUrl();
+  if (cliUrl) {
+    process.env.DATABASE_URL = cliUrl;
+    process.env.DB_ENGINE = 'postgres';
+  }
+  if (process.env.DATABASE_URL || (process.env.DB_ENGINE || '').toLowerCase() === 'postgres') {
+    return;
+  }
+
+  // Docker PostgreSQL publishes 5432 on the host (docker-compose.yml defaults).
+  const dockerDefaults = [
+    `postgres://postgres:${process.env.POSTGRES_PASSWORD || 'yel3an7azi'}@127.0.0.1:5432/kwanza_erp`,
+  ];
+  for (const url of dockerDefaults) {
+    if (await tryPostgresUrl(url, 'Docker local 127.0.0.1:5432')) {
+      process.env.DATABASE_URL = url;
+      process.env.DB_ENGINE = 'postgres';
+      return;
+    }
+  }
+
   const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
   let ipDbPath = null;
   try {
@@ -44,34 +99,35 @@ if (!process.env.DATABASE_URL && (process.env.DB_ENGINE || '').toLowerCase() !==
   if (best) {
     process.env.SQLITE_PATH = best.path;
     process.env.DB_ENGINE = 'sqlite';
-    console.log(`[diagnose] Sem database.env — a usar SQLite: ${best.path} (${Math.round(best.size / 1024 / 1024 * 10) / 10} MB)`);
+    console.log(`[diagnose] Sem PostgreSQL — a usar SQLite: ${best.path} (${Math.round(best.size / 1024 / 1024 * 10) / 10} MB)`);
   } else {
-    console.error('[diagnose] Nem PostgreSQL (database.env) nem ficheiro SQLite encontrado neste PC.');
+    console.error('[diagnose] Nem PostgreSQL (database.env / Docker) nem ficheiro SQLite encontrado neste PC.');
     console.error('[diagnose] Este PC parece não ser o servidor da base de dados.');
     process.exit(1);
   }
 }
 
-let db;
-try {
-  db = require('../src/db');
-} catch (e) {
-  if (/NODE_MODULE_VERSION|ERR_DLOPEN_FAILED|better_sqlite3/i.test(String(e.message || e))) {
-    console.error('');
-    console.error('[ERRO] A base de dados é SQLite e o Node instalado não consegue abri-la.');
-    console.error('Use o fix-purchases.cmd (usa o executável do NEXOR automaticamente), ou corra:');
-    console.error('  set ELECTRON_RUN_AS_NODE=1');
-    console.error('  "C:\\Users\\<user>\\AppData\\Local\\Programs\\NEXOR ERP\\NEXOR ERP.exe" scripts\\diagnose-repair-purchases.js');
-    process.exit(1);
+function loadModules() {
+  try {
+    db = require('../src/db');
+  } catch (e) {
+    if (/NODE_MODULE_VERSION|ERR_DLOPEN_FAILED|better_sqlite3/i.test(String(e.message || e))) {
+      console.error('');
+      console.error('[ERRO] A base de dados é SQLite e o Node instalado não consegue abri-la.');
+      console.error('Use o fix-purchases.cmd (usa o executável do NEXOR automaticamente), ou corra:');
+      console.error('  set ELECTRON_RUN_AS_NODE=1');
+      console.error('  "C:\\Users\\<user>\\AppData\\Local\\Programs\\NEXOR ERP\\NEXOR ERP.exe" scripts\\diagnose-repair-purchases.js');
+      process.exit(1);
+    }
+    throw e;
   }
-  throw e;
+  ({ resolveBranchRow, normalizeBranchIdKey } = require('../src/lib/branchIdMatch'));
+  ({
+    postPurchaseInvoiceAccountingPhased,
+    queryPostingStatus,
+  } = require('../src/lib/purchaseInvoicePosting'));
+  ({ fromRow } = require('../src/purchaseInvoiceMappers'));
 }
-const { resolveBranchRow, normalizeBranchIdKey } = require('../src/lib/branchIdMatch');
-const {
-  postPurchaseInvoiceAccountingPhased,
-  queryPostingStatus,
-} = require('../src/lib/purchaseInvoicePosting');
-const { fromRow } = require('../src/purchaseInvoiceMappers');
 
 const REPAIR = process.argv.includes('--repair');
 const ONLY_INVOICE = process.argv.find((a) => /^FC-/i.test(a)) || null;
@@ -139,6 +195,8 @@ async function resolveInvoiceBranch(inv) {
 }
 
 async function main() {
+  await detectDatabase();
+  loadModules();
   await db.query('SELECT 1');
 
   console.log('==================================================================');
