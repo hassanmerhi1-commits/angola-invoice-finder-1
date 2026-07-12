@@ -33,6 +33,8 @@ services:
       PORT: 3000
       NODE_ENV: production
       BACKUP_DIR: /app/backups
+      # Shown in /api/health appVersion — bump on release so deploys are verifiable.
+      NEXOR_APP_VERSION: 1.1.12
     ports:
       - "3000:3000"
     volumes:
