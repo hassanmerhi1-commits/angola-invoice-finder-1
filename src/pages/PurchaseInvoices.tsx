@@ -1437,6 +1437,7 @@ export default function PurchaseInvoices() {
   }, [fillFromPoId, supplierPurchaseOrders]);
 
   const loadInvoiceListRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const returnMetricsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadInvoiceInFlightRef = useRef<Promise<void> | null>(null);
 
   const loadInvoiceList = useCallback(async (opts?: { includeInvoiceId?: string; keepInvoice?: PurchaseInvoice }) => {
@@ -1501,7 +1502,7 @@ export default function PurchaseInvoices() {
     loadInvoiceListRef.current = setTimeout(() => {
       loadInvoiceListRef.current = null;
       void loadInvoiceList(opts);
-    }, 350);
+    }, 600);
   }, [loadInvoiceList]);
 
   const refreshReturnMetrics = useCallback(async () => {
@@ -1509,13 +1510,11 @@ export default function PurchaseInvoices() {
       await syncAllPurchaseInvoiceReturnStatuses(listBranchId);
       const returns = await getSupplierReturns(listBranchId);
       setReturnCount(returns.length);
-      await loadInvoiceList();
-      await refreshProducts();
-      refreshSuppliers();
+      scheduleLoadInvoiceList();
     } catch {
       setReturnCount(0);
     }
-  }, [listBranchId, loadInvoiceList, refreshProducts, refreshSuppliers]);
+  }, [listBranchId, scheduleLoadInvoiceList]);
 
   useEffect(() => {
     if (editingInvoiceRef.current) return;
@@ -1562,9 +1561,16 @@ export default function PurchaseInvoices() {
 
   useEffect(() => () => {
     if (loadInvoiceListRef.current) clearTimeout(loadInvoiceListRef.current);
+    if (returnMetricsTimerRef.current) clearTimeout(returnMetricsTimerRef.current);
   }, []);
 
-  useEffect(() => subscribeSupplierReturnsChanged(refreshReturnMetrics), [refreshReturnMetrics]);
+  useEffect(() => subscribeSupplierReturnsChanged(() => {
+    if (returnMetricsTimerRef.current) clearTimeout(returnMetricsTimerRef.current);
+    returnMetricsTimerRef.current = setTimeout(() => {
+      returnMetricsTimerRef.current = null;
+      void refreshReturnMetrics();
+    }, 2000);
+  }), [refreshReturnMetrics]);
 
   useEffect(() => {
     const nav = location.state as { openReturns?: boolean; returnInvoiceId?: string } | null;

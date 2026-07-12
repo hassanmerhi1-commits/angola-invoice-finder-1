@@ -109,6 +109,11 @@ function rateLimiter(windowMs = 60000, maxRequests = 200, lanMaxRequests = 2000)
       return next();
     }
 
+    // Read-only list/detail GETs are cheap — do not count toward the cap (purchase page opens many in parallel).
+    if (req.method === 'GET' && req.path.startsWith('/api/')) {
+      return next();
+    }
+
     const ip = normalizeClientIp(req.ip || req.connection?.remoteAddress || 'unknown');
     const cap = isPrivateLanIp(ip) ? lanMaxRequests : maxRequests;
     const now = Date.now();

@@ -376,14 +376,6 @@ export async function getPurchaseInvoices(
     );
     if (resolvedBranch) {
       docs = docs.filter((d) => invoiceBelongsToBranch(d, resolvedBranch, branchCatalog));
-      if (docs.length === 0) {
-        const allRes = await api.purchaseInvoices.list();
-        if (!allRes.error && allRes.data?.length) {
-          docs = allRes.data
-            .map((row) => normalizeInvoiceWarehouse(mapPIFromApiRow(row)))
-            .filter((d) => invoiceBelongsToBranch(d, resolvedBranch, branchCatalog));
-        }
-      }
     }
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }

@@ -67,7 +67,7 @@ const discoveryBroadcaster = new DiscoveryBroadcaster(PORT, {
 
 app.use(lanCors);
 app.use(securityHeaders);
-app.use(rateLimiter(60000, 600, 2500));
+app.use(rateLimiter(60000, 800, 8000));
 app.use(express.json({ limit: '10mb' }));
 
 const webappPath = path.join(__dirname, '../webapp');

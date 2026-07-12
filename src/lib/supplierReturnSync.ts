@@ -89,27 +89,36 @@ export async function syncPurchaseInvoiceReturnStatus(
   }, { metadataOnly: true });
 }
 
+let lastFullReturnSyncAt = 0;
+const FULL_RETURN_SYNC_MIN_MS = 45_000;
+
 export async function syncAllPurchaseInvoiceReturnStatuses(branchId?: string): Promise<void> {
+  const now = Date.now();
+  if (now - lastFullReturnSyncAt < FULL_RETURN_SYNC_MIN_MS) return;
+
   const returns = await getSupplierReturns(branchId);
   if (!returns.length) return;
 
   const invoices = await getPurchaseInvoices(branchId);
+  const toUpdate = invoices.filter((inv) => {
+    if (inv.status !== 'confirmed') return false;
+    const status = computePurchaseReturnStatus(inv, returns);
+    return status !== inv.purchaseReturnsStatus;
+  });
 
-  await Promise.all(
-    invoices
-      .filter((inv) => inv.status === 'confirmed')
-      .map(async (inv) => {
-        const status = computePurchaseReturnStatus(inv, returns);
-        if (status === inv.purchaseReturnsStatus) return;
-        await savePurchaseInvoice({
-          ...inv,
-          purchaseReturnsStatus: status,
-          purchaseReturnsClosedAt:
-            status === 'full' ? new Date().toISOString() : inv.purchaseReturnsClosedAt,
-          updatedAt: new Date().toISOString(),
-        }, { metadataOnly: true });
-      }),
-  );
+  lastFullReturnSyncAt = now;
+  if (toUpdate.length === 0) return;
+
+  for (const inv of toUpdate) {
+    const status = computePurchaseReturnStatus(inv, returns);
+    await savePurchaseInvoice({
+      ...inv,
+      purchaseReturnsStatus: status,
+      purchaseReturnsClosedAt:
+        status === 'full' ? new Date().toISOString() : inv.purchaseReturnsClosedAt,
+      updatedAt: new Date().toISOString(),
+    }, { metadataOnly: true });
+  }
 }
 
 export async function afterSupplierReturnMutation(options?: {
