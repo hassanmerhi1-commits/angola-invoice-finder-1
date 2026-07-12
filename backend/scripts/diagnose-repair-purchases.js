@@ -9,10 +9,63 @@
  *   node scripts/diagnose-repair-purchases.js --repair FC-SOYO05-2026-00003   → fix one invoice
  */
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 require('dotenv').config({ path: 'C:\\NEXOR ERP\\database.env' });
 
-const db = require('../src/db');
+/**
+ * No PostgreSQL configured (no database.env / DATABASE_URL) → the server runs on
+ * a local SQLite file. Find the live one BEFORE loading db.js (it reads SQLITE_PATH).
+ */
+if (!process.env.DATABASE_URL && (process.env.DB_ENGINE || '').toLowerCase() !== 'postgres') {
+  const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
+  let ipDbPath = null;
+  try {
+    const ip = fs.readFileSync(path.join(installDir, 'IP'), 'utf8').trim().replace(/^\uFEFF/, '');
+    if (/^[A-Za-z]:\\.+\.db$/i.test(ip)) ipDbPath = ip;
+  } catch { /* no IP file */ }
+
+  const candidates = [
+    process.env.SQLITE_PATH,
+    ipDbPath,
+    path.join(installDir, 'data', 'erp.db'),
+    process.env.APPDATA ? path.join(process.env.APPDATA, 'NEXOR ERP', 'erp.db') : null,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'NEXOR ERP', 'erp.db') : null,
+    'C:\\nexor\\erp.db',
+  ].filter(Boolean);
+
+  let best = null;
+  for (const p of candidates) {
+    try {
+      const st = fs.statSync(p);
+      if (st.isFile() && (!best || st.size > best.size)) best = { path: p, size: st.size };
+    } catch { /* candidate missing */ }
+  }
+  if (best) {
+    process.env.SQLITE_PATH = best.path;
+    process.env.DB_ENGINE = 'sqlite';
+    console.log(`[diagnose] Sem database.env — a usar SQLite: ${best.path} (${Math.round(best.size / 1024 / 1024 * 10) / 10} MB)`);
+  } else {
+    console.error('[diagnose] Nem PostgreSQL (database.env) nem ficheiro SQLite encontrado neste PC.');
+    console.error('[diagnose] Este PC parece não ser o servidor da base de dados.');
+    process.exit(1);
+  }
+}
+
+let db;
+try {
+  db = require('../src/db');
+} catch (e) {
+  if (/NODE_MODULE_VERSION|ERR_DLOPEN_FAILED|better_sqlite3/i.test(String(e.message || e))) {
+    console.error('');
+    console.error('[ERRO] A base de dados é SQLite e o Node instalado não consegue abri-la.');
+    console.error('Use o fix-purchases.cmd (usa o executável do NEXOR automaticamente), ou corra:');
+    console.error('  set ELECTRON_RUN_AS_NODE=1');
+    console.error('  "C:\\Users\\<user>\\AppData\\Local\\Programs\\NEXOR ERP\\NEXOR ERP.exe" scripts\\diagnose-repair-purchases.js');
+    process.exit(1);
+  }
+  throw e;
+}
 const { resolveBranchRow, normalizeBranchIdKey } = require('../src/lib/branchIdMatch');
 const {
   postPurchaseInvoiceAccountingPhased,
@@ -93,8 +146,26 @@ async function main() {
   console.log('==================================================================');
   console.log('DB engine        :', db.engine);
   if (db.engine === 'sqlite') {
-    console.log('!! AVISO: ligado a SQLite local, NÃO ao PostgreSQL do servidor.');
-    console.log('!! Corra este script no PC SERVIDOR com C:\\NEXOR ERP\\database.env');
+    console.log('Ficheiro         :', db.dbPath);
+    if (fs.existsSync('C:\\NEXOR ERP\\database.env')) {
+      console.log('!! AVISO: existe database.env (PostgreSQL) mas este diagnóstico está em SQLite.');
+      console.log('!! Pode haver DUAS bases de dados neste PC — confirme qual é a que a app usa.');
+    }
+  }
+
+  // Row counts identify whether this is the live database with real data.
+  const counts = {};
+  for (const table of ['products', 'sales', 'suppliers', 'purchase_invoices']) {
+    try {
+      const r = await db.query(`SELECT COUNT(*) AS n FROM ${table}`);
+      counts[table] = Number(r.rows[0]?.n || 0);
+    } catch {
+      counts[table] = null;
+    }
+  }
+  console.log(`Dados            : produtos=${counts.products} vendas=${counts.sales} fornecedores=${counts.suppliers} faturas de compra=${counts.purchase_invoices}`);
+  if ((counts.products || 0) === 0 && (counts.sales || 0) === 0) {
+    console.log('!! Esta base de dados está VAZIA — provavelmente não é a base de dados real.');
   }
 
   const appVer = await readMeta('app_version');

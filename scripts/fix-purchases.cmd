@@ -36,23 +36,28 @@ pause
 exit /b 1
 
 :run
-if not exist "%INSTALL_DIR%database.env" (
-  if not exist "C:\NEXOR ERP\database.env" (
-    echo [ERRO] database.env nao encontrado.
-    echo Este script e para o PC SERVIDOR com PostgreSQL.
-    pause
-    exit /b 1
-  )
-  set "NEXOR_INSTALL_DIR=C:\NEXOR ERP"
-) else (
-  set "NEXOR_INSTALL_DIR=%INSTALL_DIR%"
+set "NEXOR_INSTALL_DIR=C:\NEXOR ERP"
+if exist "%INSTALL_DIR%database.env" set "NEXOR_INSTALL_DIR=%INSTALL_DIR%"
+if not exist "%NEXOR_INSTALL_DIR%\database.env" (
+  echo [AVISO] database.env nao encontrado - o servidor usa SQLite local.
+  echo O diagnostico vai localizar o ficheiro da base de dados automaticamente.
+  echo.
+)
+
+:: SQLite native module is built for Electron - run the script with the app's
+:: own binary (ELECTRON_RUN_AS_NODE) when available, else plain node.
+set "RUNNER=node"
+if exist "%BACKEND%\..\..\NEXOR ERP.exe" (
+  set "RUNNER=%BACKEND%\..\..\NEXOR ERP.exe"
+  set "ELECTRON_RUN_AS_NODE=1"
 )
 
 echo Backend: %BACKEND%
+echo Runner : %RUNNER%
 echo.
 echo ================= PASSO 1: DIAGNOSTICO =================
 cd /d "%BACKEND%"
-node scripts\diagnose-repair-purchases.js
+"%RUNNER%" scripts\diagnose-repair-purchases.js
 echo.
 echo ================= PASSO 2: REPARACAO ===================
 set /p CONFIRM="Reparar as faturas com problemas? (S/N): "
@@ -61,7 +66,7 @@ if /I not "%CONFIRM%"=="S" (
   pause
   exit /b 0
 )
-node scripts\diagnose-repair-purchases.js --repair
+"%RUNNER%" scripts\diagnose-repair-purchases.js --repair
 set ERR=%ERRORLEVEL%
 echo.
 if %ERR% NEQ 0 (
