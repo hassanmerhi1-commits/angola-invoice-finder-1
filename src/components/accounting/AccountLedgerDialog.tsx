@@ -27,7 +27,6 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { api } from '@/lib/api/client';
-import { useBranchScope } from '@/hooks/useBranchScope';
 import { Account } from '@/types/accounting';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
@@ -62,7 +61,6 @@ interface Props {
 export default function AccountLedgerDialog({ account, open, onOpenChange }: Props) {
   const { t, language } = useTranslation();
   const navigate = useNavigate();
-  const { listBranchId } = useBranchScope();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -90,11 +88,13 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     if (!account) return;
     setIsLoading(true);
     try {
+      // Chart balances are company-wide — ledger must not hide movements behind the
+      // active branch filter (that made drill-down look empty while the balance was non-zero).
       const res = await api.chartOfAccounts.getLedger(
         account.id,
         startDate || undefined,
         endDate || undefined,
-        listBranchId,
+        undefined,
       );
       setEntries(res.data || []);
     } catch (e) {
@@ -103,7 +103,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     } finally {
       setIsLoading(false);
     }
-  }, [account, startDate, endDate, listBranchId]);
+  }, [account, startDate, endDate]);
 
   useEffect(() => {
     if (open && account) {

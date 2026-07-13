@@ -1492,6 +1492,39 @@ async function recordStockMovement(client, params) {
     );
   }
 
+  // Purchase/receipt IN: keep cost in sync and fill missing selling price from same SKU.
+  if (normalizedMovementType === 'IN') {
+    const cost = Number(unitCost || 0);
+    if (cost > 0) {
+      await client.query(
+        `UPDATE products SET
+           last_cost = $1,
+           cost = CASE WHEN COALESCE(cost, 0) <= 0.0001 THEN $1 ELSE cost END,
+           first_cost = CASE WHEN COALESCE(first_cost, 0) <= 0.0001 THEN $1 ELSE first_cost END,
+           avg_cost = CASE WHEN COALESCE(avg_cost, 0) <= 0.0001 THEN $1 ELSE avg_cost END,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2`,
+        [cost, resolvedProductId],
+      );
+    }
+    const skuKeyExpr = sqlMovementSkuKey('products');
+    const peerSkuKeyExpr = sqlMovementSkuKey('p2');
+    await client.query(
+      `UPDATE products SET
+         price = COALESCE((
+           SELECT MAX(COALESCE(p2.price, 0))
+           FROM products p2
+           WHERE ${coalesceActiveNotZero(db, 'p2.is_active')}
+             AND ${peerSkuKeyExpr} = ${skuKeyExpr}
+             AND p2.id != products.id
+             AND COALESCE(p2.price, 0) > 0
+         ), price),
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND COALESCE(price, 0) <= 0`,
+      [resolvedProductId],
+    );
+  }
+
   return { id: movementId, product_id: resolvedProductId, movement_type: normalizedMovementType, quantity: qty };
 }
 

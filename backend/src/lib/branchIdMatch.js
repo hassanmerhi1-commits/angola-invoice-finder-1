@@ -24,8 +24,11 @@ function normalizeBranchNameKey(name) {
 }
 
 function branchIdSqlNorm(columnExpr, db) {
-  const col = db.engine === 'postgres' ? columnExpr : columnExpr;
-  return `REPLACE(LOWER(TRIM(COALESCE(${col}, ''))), '-', '')`;
+  // PostgreSQL UUID columns cannot TRIM/COALESCE with '' — cast to text first.
+  if (db && db.engine === 'postgres') {
+    return `REPLACE(LOWER(TRIM(COALESCE(${columnExpr}::text, ''))), '-', '')`;
+  }
+  return `REPLACE(LOWER(TRIM(COALESCE(${columnExpr}, ''))), '-', '')`;
 }
 
 async function resolveBranchFilterId(db, branchId) {

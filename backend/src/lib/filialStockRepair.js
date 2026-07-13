@@ -126,7 +126,47 @@ async function ensureFilialProductsForWarehouse(warehouseId, clientOrDb = null) 
     }
   }
 
-  return { reactivated, merged, reconciled };
+  // Backfill missing selling price / cost on filial rows that now have stock.
+  let pricesFilled = 0;
+  try {
+    const skuExpr = sqlMovementSkuKey('p');
+    const peerExpr = sqlMovementSkuKey('p2');
+    const filled = await q.query(
+      `UPDATE products p SET
+         price = COALESCE((
+           SELECT MAX(COALESCE(p2.price, 0))
+           FROM products p2
+           WHERE ${coalesceActiveNotZero(db, 'p2.is_active')}
+             AND ${peerExpr} = ${skuExpr}
+             AND p2.id != p.id
+             AND COALESCE(p2.price, 0) > 0
+         ), p.price),
+         last_cost = COALESCE(NULLIF(p.last_cost, 0), (
+           SELECT sm.unit_cost FROM stock_movements sm
+           WHERE sm.product_id = p.id AND sm.warehouse_id = $1 AND sm.movement_type = 'IN'
+           ORDER BY sm.created_at DESC LIMIT 1
+         ), p.last_cost),
+         cost = CASE
+           WHEN COALESCE(p.cost, 0) > 0 THEN p.cost
+           ELSE COALESCE((
+             SELECT sm.unit_cost FROM stock_movements sm
+             WHERE sm.product_id = p.id AND sm.warehouse_id = $1 AND sm.movement_type = 'IN'
+             ORDER BY sm.created_at DESC LIMIT 1
+           ), p.cost)
+         END,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE ${coalesceActiveNotZero(db, 'p.is_active')}
+         AND p.branch_id = $1
+         AND COALESCE(p.stock, 0) > 0
+         AND (COALESCE(p.price, 0) <= 0 OR COALESCE(p.cost, 0) <= 0)`,
+      [wh],
+    );
+    pricesFilled = filled.rowCount || 0;
+  } catch (err) {
+    console.warn(`[filialStockRepair] price backfill @ ${wh}:`, err.message);
+  }
+
+  return { reactivated, merged, reconciled, pricesFilled };
 }
 
 async function ensureFilialProductsFromAllMovements() {
