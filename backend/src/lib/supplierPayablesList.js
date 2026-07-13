@@ -34,8 +34,8 @@ async function listSupplierPayables(db, options = {}) {
   const openLimit = options.openLimit ?? 500;
   const orphanLimit = options.orphanLimit ?? 500;
 
-  const supplierJoinOi = `${idAsText(db, 's.id')} = NULLIF(TRIM(oi.entity_id), '')`;
-  const supplierJoinPi = `${idAsText(db, 's.id')} = NULLIF(TRIM(pi.supplier_id), '')`;
+  const supplierJoinOi = `${idAsText(db, 's.id')} = NULLIF(TRIM(${idAsText(db, 'oi.entity_id')}), '')`;
+  const supplierJoinPi = `${idAsText(db, 's.id')} = NULLIF(TRIM(COALESCE(pi.supplier_id, '')), '')`;
 
   const payablesParams = [];
   let payablesQuery = `
