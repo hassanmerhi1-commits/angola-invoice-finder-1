@@ -3,7 +3,7 @@
  */
 
 const db = require('../db');
-const { coalesceActiveNotZero } = require('./sqlDialect');
+const { coalesceActiveNotZero, emptyBranchIdClause } = require('./sqlDialect');
 const {
   isCatalogBranchScope,
   loadMainBranchIds,
@@ -54,7 +54,7 @@ async function mergeDupProductMovementsAtWarehouse(warehouseId, clientOrDb = nul
          AND LOWER(TRIM(sku)) = LOWER($2)
        ORDER BY
          CASE WHEN branch_id = $3 THEN 0
-              WHEN branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = '' THEN 1
+              WHEN ${emptyBranchIdClause(db, 'branch_id')} THEN 1
               ELSE 2 END,
          updated_at DESC
        LIMIT 1`,
@@ -109,9 +109,14 @@ async function ensureFilialProductsForWarehouse(warehouseId, clientOrDb = null) 
 
   const { reconcileSkuStockAtWarehouse } = require('../transactionEngine');
   const reactivated = await reactivateFilialProductsWithMovements(wh, q);
-  const { merged } = isCatalog
-    ? { merged: 0 }
-    : await mergeDupProductMovementsAtWarehouse(wh, q);
+  let merged = 0;
+  if (!isCatalog) {
+    try {
+      ({ merged } = await mergeDupProductMovementsAtWarehouse(wh, q));
+    } catch (err) {
+      console.warn(`[filialStockRepair] merge DUP @ ${wh}:`, err.message);
+    }
+  }
   const skus = await listSkusWithLedgerAtWarehouse(q, wh);
   let reconciled = 0;
 
@@ -170,11 +175,16 @@ async function ensureFilialProductsForWarehouse(warehouseId, clientOrDb = null) 
 }
 
 async function ensureFilialProductsFromAllMovements() {
+  // warehouse_id is UUID on Postgres — never TRIM/COALESCE with ''.
   const warehouses = await db.query(
-    `SELECT DISTINCT sm.warehouse_id AS id
-     FROM stock_movements sm
-     WHERE sm.warehouse_id IS NOT NULL
-       AND TRIM(sm.warehouse_id) != ''`,
+    db.engine === 'postgres'
+      ? `SELECT DISTINCT sm.warehouse_id::text AS id
+         FROM stock_movements sm
+         WHERE sm.warehouse_id IS NOT NULL`
+      : `SELECT DISTINCT sm.warehouse_id AS id
+         FROM stock_movements sm
+         WHERE sm.warehouse_id IS NOT NULL
+           AND TRIM(COALESCE(sm.warehouse_id, '')) != ''`,
   );
 
   let reactivated = 0;
