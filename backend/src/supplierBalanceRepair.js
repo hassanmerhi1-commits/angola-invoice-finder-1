@@ -3,7 +3,7 @@
  * Fixes stale suppliers.balance after purchase returns posted before open-item linking.
  */
 const db = require('./db');
-const { OPEN_ITEM_IS_DEBIT_SQL } = require('./lib/openItemsSql');
+const { OPEN_ITEM_IS_DEBIT_SQL, openItemIsDebitSql } = require('./lib/openItemsSql');
 const { createOpenItem, syncSupplierBalanceFromOpenItems } = require('./transactionEngine');
 
 const UPDATE_OPEN_ITEM_REMAINING = `
@@ -528,7 +528,7 @@ async function ensurePurchaseInvoicePayable(client, inv) {
   const openCheck = await client.query(
     `SELECT id FROM open_items
      WHERE entity_type = 'supplier' AND document_id = $1
-       AND ${OPEN_ITEM_IS_DEBIT_SQL}
+       AND ${openItemIsDebitSql(db, '')}
      LIMIT 1`,
     [invoice.id],
   );
