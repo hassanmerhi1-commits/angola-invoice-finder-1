@@ -428,13 +428,19 @@ async function main() {
       await c.query('BEGIN');
       const result = await postPurchaseInvoiceAccountingPhased(c, inv);
       await c.query('COMMIT');
-      const stockOk = result.stockMovementIds.length > 0;
-      const payableOk = !!result.openItemId;
+
+      // Trust only what is actually in the database after COMMIT (not in-memory IDs).
+      const verified = await queryPostingStatus(c, inv.id);
+      const stockOk = verified.stockMovementIds.length > 0;
+      const payableOk = !!verified.openItemId;
+      const journalOk = !!verified.journalEntryId;
       if (stockOk && payableOk) {
-        console.log(`  ${inv.invoiceNumber}: REPARADA — stock=${result.stockMovementIds.length} movimento(s), conta a pagar=ok${result.journalEntryId ? ', diário=ok' : ''}`);
+        console.log(
+          `  ${inv.invoiceNumber}: REPARADA — stock=${verified.stockMovementIds.length} movimento(s), conta a pagar=ok${journalOk ? ', diário=ok' : ', diário=FALTA'}`,
+        );
         posted += 1;
       } else {
-        console.log(`  ${inv.invoiceNumber}: PARCIAL — stock=${stockOk ? 'ok' : 'FALTA'}, pagar=${payableOk ? 'ok' : 'FALTA'}`);
+        console.log(`  ${inv.invoiceNumber}: PARCIAL — stock=${stockOk ? 'ok' : 'FALTA'}, pagar=${payableOk ? 'ok' : 'FALTA'}, diário=${journalOk ? 'ok' : 'FALTA'}`);
         for (const err of result.errors || []) console.log(`      erro: ${err}`);
         for (const warn of result.warnings || []) console.log(`      aviso: ${warn}`);
         failed += 1;

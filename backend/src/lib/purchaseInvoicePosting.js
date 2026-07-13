@@ -1,6 +1,7 @@
 /**
  * Reliable purchase-invoice posting: stock + payable first, journal last.
- * Journal/GL failures must not block inventory or supplier payables.
+ * Each phase uses a SAVEPOINT so a payable/journal SQL error cannot abort
+ * the transaction and silently roll back stock that already posted.
  */
 const { fromRow } = require('../purchaseInvoiceMappers');
 const {
@@ -69,6 +70,28 @@ async function queryPostingStatus(client, invoiceId) {
     openItemId: openItem.rows[0]?.id || null,
     journalEntryId: journal.rows[0]?.id || null,
   };
+}
+
+/**
+ * Run work inside a SAVEPOINT so SQL errors do not abort the outer transaction.
+ * Critical on PostgreSQL: one failed INSERT aborts the whole txn until ROLLBACK.
+ */
+async function withSavepoint(client, name, work) {
+  const sp = String(name || 'sp').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 40);
+  await client.query(`SAVEPOINT ${sp}`);
+  try {
+    const value = await work();
+    await client.query(`RELEASE SAVEPOINT ${sp}`);
+    return { ok: true, value };
+  } catch (err) {
+    try {
+      await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+      await client.query(`RELEASE SAVEPOINT ${sp}`);
+    } catch (rollbackErr) {
+      throw err;
+    }
+    return { ok: false, error: err };
+  }
 }
 
 async function ensureSupplierJournalAccounts(client, journalLines, inv) {
@@ -148,10 +171,11 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
   result.journalEntryId = existing.journalEntryId;
 
   if (!result.stockMovementIds.length) {
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
       if (!line.productId || Number(line.totalQty || line.quantity || 0) <= 0) continue;
-      try {
-        const movement = await recordStockMovement(client, {
+      const stockSp = await withSavepoint(client, `pi_stock_${i}`, async () =>
+        recordStockMovement(client, {
           productId: line.productId,
           warehouseId,
           movementType: 'IN',
@@ -162,47 +186,53 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
           referenceNumber: inv.invoiceNumber,
           notes: `Fatura de Compra ${inv.invoiceNumber} — ${inv.supplierName || ''}`.trim(),
           createdBy: inv.createdBy || inv.created_by || null,
-        });
-        result.stockMovementIds.push(movement.id);
-      } catch (err) {
+        }),
+      );
+      if (stockSp.ok && stockSp.value?.id) {
+        result.stockMovementIds.push(stockSp.value.id);
+      } else {
         result.errors.push(
-          `Stock ${line.productCode || line.productId}: ${err.message || String(err)}`,
+          `Stock ${line.productCode || line.productId}: ${stockSp.error?.message || String(stockSp.error)}`,
         );
       }
     }
   }
 
   if (!result.openItemId) {
-    try {
+    const payableSp = await withSavepoint(client, 'pi_payable', async () => {
       const repaired = await ensurePurchaseInvoicePayable(client, inv);
-      if (repaired?.openItemId) {
-        result.openItemId = repaired.openItemId;
-      } else if (inv.supplierId || inv.supplier_id) {
-        const supplierId = String(inv.supplierId || inv.supplier_id).trim();
-        const docDate = normalizeSqlDate(inv.date, { allowNull: false });
-        const dueDate = normalizeSqlDate(inv.paymentDate || inv.payment_date);
-        const oi = await createOpenItem(client, {
-          entityType: 'supplier',
-          entityId: supplierId,
-          documentType: 'invoice',
-          documentId: String(inv.id),
-          documentNumber: String(inv.invoiceNumber || inv.id),
-          documentDate: docDate,
-          dueDate,
-          originalAmount: Number(inv.total || 0),
-          isDebit: true,
-          branchId: warehouseId,
-          currency: inv.currency === 'KZ' ? 'AOA' : (inv.currency || 'AOA'),
-        });
-        result.openItemId = oi.id;
-        await syncSupplierBalanceFromOpenItems(client, supplierId);
-      } else {
-        result.errors.push(
-          `Payable: invoice has no supplier_id (supplier "${inv.supplierName || inv.supplier_name || '?'}" not linked) — payable cannot be created`,
+      if (repaired?.openItemId) return repaired.openItemId;
+
+      if (!(inv.supplierId || inv.supplier_id)) {
+        throw new Error(
+          `invoice has no supplier_id (supplier "${inv.supplierName || inv.supplier_name || '?'}" not linked)`,
         );
       }
-    } catch (err) {
-      result.errors.push(`Payable: ${err.message || String(err)}`);
+
+      const supplierId = String(inv.supplierId || inv.supplier_id).trim();
+      const docDate = normalizeSqlDate(inv.date, { allowNull: false });
+      const dueDate = normalizeSqlDate(inv.paymentDate || inv.payment_date);
+      const oi = await createOpenItem(client, {
+        entityType: 'supplier',
+        entityId: supplierId,
+        documentType: 'invoice',
+        documentId: String(inv.id),
+        documentNumber: String(inv.invoiceNumber || inv.id),
+        documentDate: docDate,
+        dueDate,
+        originalAmount: Number(inv.total || 0),
+        isDebit: true,
+        branchId: warehouseId,
+        currency: inv.currency === 'KZ' ? 'AOA' : (inv.currency || 'AOA'),
+      });
+      await syncSupplierBalanceFromOpenItems(client, supplierId);
+      return oi.id;
+    });
+
+    if (payableSp.ok && payableSp.value) {
+      result.openItemId = payableSp.value;
+    } else {
+      result.errors.push(`Payable: ${payableSp.error?.message || String(payableSp.error)}`);
     }
   }
 
@@ -211,7 +241,7 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
     result.warnings.push('Journal: invoice has no journal lines — nothing posted to chart of accounts');
   }
   if (journalLines.length > 0 && !result.journalEntryId) {
-    try {
+    const journalSp = await withSavepoint(client, 'pi_journal', async () => {
       await ensureSupplierJournalAccounts(client, journalLines, inv);
       const entry = await createJournalEntry(client, {
         description: `Fatura de Compra ${inv.invoiceNumber} — ${inv.supplierName || ''}`.trim(),
@@ -227,14 +257,17 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
           credit: Number(l.credit || 0),
         })),
       });
-      result.journalEntryId = entry.id;
-    } catch (err) {
-      result.warnings.push(`Journal: ${err.message || String(err)}`);
+      return entry.id;
+    });
+    if (journalSp.ok && journalSp.value) {
+      result.journalEntryId = journalSp.value;
+    } else {
+      result.warnings.push(`Journal: ${journalSp.error?.message || String(journalSp.error)}`);
     }
   }
 
   if (result.stockMovementIds.length > 0) {
-    try {
+    const linkSp = await withSavepoint(client, 'pi_supplier_link', async () => {
       const productIds = lines.map((l) => l.productId).filter(Boolean);
       const skuKeys = lines.map((l) => l.productCode).filter(Boolean);
       if (inv.supplierId || inv.supplier_id) {
@@ -245,18 +278,25 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
           skuKeys,
         });
       }
-    } catch (err) {
-      result.warnings.push(`Supplier-product link: ${err.message || String(err)}`);
+    });
+    if (!linkSp.ok) {
+      result.warnings.push(`Supplier-product link: ${linkSp.error?.message || String(linkSp.error)}`);
     }
 
-    try {
+    const filialSp = await withSavepoint(client, 'pi_filial_stock', async () => {
       const { ensureFilialProductsForWarehouse } = require('./filialStockRepair');
       await ensureFilialProductsForWarehouse(warehouseId, client);
-    } catch (err) {
-      result.warnings.push(`Filial stock repair: ${err.message || String(err)}`);
+    });
+    if (!filialSp.ok) {
+      result.warnings.push(`Filial stock repair: ${filialSp.error?.message || String(filialSp.error)}`);
     }
   }
 
+  // Re-read from DB so callers never trust in-memory IDs that might not have committed.
+  const confirmed = await queryPostingStatus(client, inv.id);
+  result.stockMovementIds = confirmed.stockMovementIds;
+  result.openItemId = confirmed.openItemId;
+  result.journalEntryId = confirmed.journalEntryId;
   result.success = result.stockMovementIds.length > 0 && !!result.openItemId;
   return result;
 }
@@ -267,4 +307,5 @@ module.exports = {
   resolveWarehouseForInvoice,
   queryPostingStatus,
   postPurchaseInvoiceAccountingPhased,
+  withSavepoint,
 };
