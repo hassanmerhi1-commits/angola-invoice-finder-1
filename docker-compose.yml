@@ -34,11 +34,13 @@ services:
       NODE_ENV: production
       BACKUP_DIR: /app/backups
       # Shown in /api/health appVersion — bump on release so deploys are verifiable.
-      NEXOR_APP_VERSION: 1.1.14
+      NEXOR_APP_VERSION: 1.1.15
     ports:
       - "3000:3000"
     volumes:
-      # Drop belas.db here to run the one-time SQLite -> Postgres migration.
+      # Hot-reload source from the host so repair/verify scripts stay current without rebuild.
+      - ./backend/src:/app/src
+      - ./backend/scripts:/app/scripts
       - ./import:/import:ro
       - nexor_backups:/app/backups
 

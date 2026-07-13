@@ -428,29 +428,28 @@ async function main() {
       await c.query('BEGIN');
       const result = await postPurchaseInvoiceAccountingPhased(c, inv);
       await c.query('COMMIT');
-
-      // Trust only what is actually in the database after COMMIT (not in-memory IDs).
-      const verified = await queryPostingStatus(c, inv.id);
-      const stockOk = verified.stockMovementIds.length > 0;
-      const payableOk = !!verified.openItemId;
-      const journalOk = !!verified.journalEntryId;
-      if (stockOk && payableOk) {
-        console.log(
-          `  ${inv.invoiceNumber}: REPARADA — stock=${verified.stockMovementIds.length} movimento(s), conta a pagar=ok${journalOk ? ', diário=ok' : ', diário=FALTA'}`,
-        );
-        posted += 1;
-      } else {
-        console.log(`  ${inv.invoiceNumber}: PARCIAL — stock=${stockOk ? 'ok' : 'FALTA'}, pagar=${payableOk ? 'ok' : 'FALTA'}, diário=${journalOk ? 'ok' : 'FALTA'}`);
-        for (const err of result.errors || []) console.log(`      erro: ${err}`);
-        for (const warn of result.warnings || []) console.log(`      aviso: ${warn}`);
-        failed += 1;
-      }
     } catch (e) {
       try { await c.query('ROLLBACK'); } catch (_) { /* ignore */ }
       console.log(`  ${inv.invoiceNumber}: FALHOU — ${e.message}`);
       failed += 1;
+      continue;
     } finally {
       c.release();
+    }
+
+    // Fresh connection after COMMIT so we never read a half-aborted session.
+    const verified = await queryPostingStatus(db, inv.id);
+    const stockOk = verified.stockMovementIds.length > 0;
+    const payableOk = !!verified.openItemId;
+    const journalOk = !!verified.journalEntryId;
+    if (stockOk && payableOk) {
+      console.log(
+        `  ${inv.invoiceNumber}: REPARADA — stock=${verified.stockMovementIds.length} movimento(s), conta a pagar=ok${journalOk ? ', diário=ok' : ', diário=FALTA'}`,
+      );
+      posted += 1;
+    } else {
+      console.log(`  ${inv.invoiceNumber}: PARCIAL — stock=${stockOk ? 'ok' : 'FALTA'}, pagar=${payableOk ? 'ok' : 'FALTA'}, diário=${journalOk ? 'ok' : 'FALTA'}`);
+      failed += 1;
     }
   }
 

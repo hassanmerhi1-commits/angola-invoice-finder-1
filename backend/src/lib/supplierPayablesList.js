@@ -2,7 +2,6 @@
  * Supplier accounts-payable rows for reports, payments UI, and daily briefing.
  */
 const { OPEN_ITEM_IS_DEBIT_SQL } = require('./openItemsSql');
-const { emptyBranchIdClause } = require('./sqlDialect');
 
 function daysAgoIso(days) {
   const d = new Date();
@@ -20,7 +19,7 @@ function mergePayableRows(openRows, orphanRows) {
   return [...byDoc.values()];
 }
 
-function branchIdTextExpr(db, column) {
+function idAsText(db, column) {
   return db.engine === 'postgres' ? `${column}::text` : `CAST(${column} AS TEXT)`;
 }
 
@@ -35,6 +34,9 @@ async function listSupplierPayables(db, options = {}) {
   const openLimit = options.openLimit ?? 500;
   const orphanLimit = options.orphanLimit ?? 500;
 
+  const supplierJoinOi = `${idAsText(db, 's.id')} = NULLIF(TRIM(oi.entity_id), '')`;
+  const supplierJoinPi = `${idAsText(db, 's.id')} = NULLIF(TRIM(pi.supplier_id), '')`;
+
   const payablesParams = [];
   let payablesQuery = `
     SELECT oi.id, oi.entity_id, oi.document_id, oi.document_number, oi.document_date, oi.due_date,
@@ -43,7 +45,7 @@ async function listSupplierPayables(db, options = {}) {
            COALESCE(s.nif, pi.supplier_nif, '') AS supplier_nif,
            COALESCE(s.payment_terms, '30_days') AS payment_terms
     FROM open_items oi
-    LEFT JOIN suppliers s ON s.id = oi.entity_id
+    LEFT JOIN suppliers s ON ${supplierJoinOi}
     LEFT JOIN purchase_invoices pi ON pi.id = oi.document_id
     WHERE oi.entity_type = 'supplier'
       AND ${OPEN_ITEM_IS_DEBIT_SQL}
@@ -56,10 +58,8 @@ async function listSupplierPayables(db, options = {}) {
   }
   if (branchId) {
     payablesParams.push(branchId);
-    // open_items.branch_id is UUID on PostgreSQL — never TRIM(uuid).
-    const emptyBranch = emptyBranchIdClause(db, 'oi.branch_id');
-    const branchText = branchIdTextExpr(db, 'oi.branch_id');
-    payablesQuery += ` AND (${branchText} = $${payablesParams.length} OR ${emptyBranch})`;
+    // Never TRIM/COALESCE uuid with '' — that throws: invalid input syntax for type uuid: ""
+    payablesQuery += ` AND (oi.branch_id IS NULL OR ${idAsText(db, 'oi.branch_id')} = $${payablesParams.length})`;
   }
   payablesQuery += ` ORDER BY oi.due_date ASC NULLS LAST, supplier_name, oi.document_date ASC LIMIT ${openLimit}`;
 
@@ -71,13 +71,13 @@ async function listSupplierPayables(db, options = {}) {
            COALESCE(s.nif, pi.supplier_nif, '') AS supplier_nif,
            COALESCE(s.payment_terms, '30_days') AS payment_terms
     FROM purchase_invoices pi
-    LEFT JOIN suppliers s ON s.id = pi.supplier_id
+    LEFT JOIN suppliers s ON ${supplierJoinPi}
     LEFT JOIN open_items oi ON oi.document_id = pi.id
       AND oi.entity_type = 'supplier'
       AND ${OPEN_ITEM_IS_DEBIT_SQL}
     WHERE COALESCE(pi.status, 'confirmed') NOT IN ('cancelled', 'voided', 'draft')
       AND COALESCE(pi.total, 0) > 0.01
-      AND TRIM(COALESCE(pi.supplier_id, '')) != ''
+      AND NULLIF(TRIM(COALESCE(pi.supplier_id, '')), '') IS NOT NULL
       AND oi.id IS NULL`;
 
   const payablesOrphanParams = [];
@@ -88,9 +88,7 @@ async function listSupplierPayables(db, options = {}) {
   if (branchId) {
     payablesOrphanParams.push(branchId);
     const p = `$${payablesOrphanParams.length}`;
-    const piBranch = branchIdTextExpr(db, 'pi.branch_id');
-    const piWh = branchIdTextExpr(db, 'pi.warehouse_id');
-    payablesOrphanQuery += ` AND (${piBranch} = ${p} OR ${piWh} = ${p})`;
+    payablesOrphanQuery += ` AND (${idAsText(db, 'pi.branch_id')} = ${p} OR ${idAsText(db, 'pi.warehouse_id')} = ${p})`;
   }
   payablesOrphanQuery += ` ORDER BY pi.date DESC LIMIT ${orphanLimit}`;
 
