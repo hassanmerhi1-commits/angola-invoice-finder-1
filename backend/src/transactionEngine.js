@@ -33,6 +33,7 @@ const {
   sqlMovementSkuKey,
 } = require('./lib/productSkuResolve');
 const { randomUUID } = require('crypto');
+const { normalizeSqlDate } = require('./lib/dateSql');
 const { resolveBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlAccount');
 
 // ==================== PGC (novo com IVA) POSTING ACCOUNT CODES ====================
@@ -1557,13 +1558,15 @@ async function createOpenItem(client, params) {
   }
 
   const oiId = randomUUID();
+  const docDate = normalizeSqlDate(documentDate, { allowNull: false });
+  const due = normalizeSqlDate(dueDate);
   await client.query(
     `INSERT INTO open_items 
      (id, entity_type, entity_id, document_type, document_id, document_number,
       document_date, due_date, currency, original_amount, remaining_amount, is_debit, branch_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12)`,
     [oiId, entityType, entityId, documentType, documentId, documentNumber,
-     documentDate, dueDate, currency || 'AOA', amount, isDebit, branchId]
+     docDate, due, currency || 'AOA', amount, isDebit, branchId]
   );
 
   return { id: oiId };

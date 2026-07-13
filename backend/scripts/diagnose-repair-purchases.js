@@ -127,6 +127,7 @@ function loadModules() {
     queryPostingStatus,
   } = require('../src/lib/purchaseInvoicePosting'));
   ({ fromRow } = require('../src/purchaseInvoiceMappers'));
+  ({ normalizeSqlDate } = require('../src/lib/dateSql'));
 }
 
 const REPAIR = process.argv.includes('--repair');
@@ -355,6 +356,13 @@ async function main() {
 
   // Pre-posting normalization: link supplier + rebuild journal lines when missing.
   for (const row of toPost.values()) {
+    const docDate = normalizeSqlDate(row.date, { allowNull: false });
+    const payDate = normalizeSqlDate(row.payment_date);
+    await db.query(
+      'UPDATE purchase_invoices SET date = $1, payment_date = $2 WHERE id = $3',
+      [docDate, payDate, row.id],
+    );
+
     const supplierId = String(row.supplier_id || '').trim();
     if (!supplierId) {
       const name = String(row.supplier_name || '').trim();
