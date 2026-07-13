@@ -50,7 +50,10 @@ async function listCustomerReceivables(db, options = {}) {
   }
   if (branchId) {
     openParams.push(branchId);
-    openQuery += ` AND (oi.branch_id = $${openParams.length} OR oi.branch_id IS NULL OR TRIM(COALESCE(oi.branch_id, '')) = '')`;
+    const { emptyBranchIdClause } = require('./sqlDialect');
+    const emptyBranch = emptyBranchIdClause(db, 'oi.branch_id');
+    const branchText = db.engine === 'postgres' ? 'oi.branch_id::text' : 'CAST(oi.branch_id AS TEXT)';
+    openQuery += ` AND (${branchText} = $${openParams.length} OR ${emptyBranch})`;
   }
   openQuery += ` ORDER BY oi.due_date ASC NULLS LAST, client_name, oi.document_date ASC LIMIT ${openLimit}`;
 

@@ -181,7 +181,19 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   router.get('/', async (req, res) => {
     try {
       const { branchId, status } = req.query;
-      let query = 'SELECT * FROM purchase_invoices WHERE 1=1';
+      // List payload omits heavy JSON blobs so LAN clients do not time out / hang.
+      let query = `SELECT id, invoice_number, supplier_account_code, supplier_name, supplier_id,
+        supplier_nif, supplier_phone, supplier_balance, ref, supplier_invoice_no,
+        contact, department, ref2, date, payment_date, project, currency,
+        warehouse_id, warehouse_name, price_type, address,
+        purchase_account_code, iva_account_code, transaction_type, currency_rate,
+        tax_rate_2, order_no, surcharge_percent, change_price, is_pending, extra_note,
+        freight_cost, freight_other_costs, freight_source_account, freight_source_name,
+        NULL AS lines_json, NULL AS journal_lines_json,
+        subtotal, iva_total, total, status,
+        purchase_returns_status, purchase_returns_closed_at,
+        branch_id, branch_name, created_by, created_by_name, created_at, updated_at
+        FROM purchase_invoices WHERE 1=1`;
       const params = [];
       let idx = 1;
       if (branchId) {

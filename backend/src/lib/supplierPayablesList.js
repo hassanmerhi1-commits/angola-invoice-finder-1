@@ -2,6 +2,7 @@
  * Supplier accounts-payable rows for reports, payments UI, and daily briefing.
  */
 const { OPEN_ITEM_IS_DEBIT_SQL } = require('./openItemsSql');
+const { emptyBranchIdClause } = require('./sqlDialect');
 
 function daysAgoIso(days) {
   const d = new Date();
@@ -17,6 +18,10 @@ function mergePayableRows(openRows, orphanRows) {
     byDoc.set(key, row);
   }
   return [...byDoc.values()];
+}
+
+function branchIdTextExpr(db, column) {
+  return db.engine === 'postgres' ? `${column}::text` : `CAST(${column} AS TEXT)`;
 }
 
 /**
@@ -51,7 +56,10 @@ async function listSupplierPayables(db, options = {}) {
   }
   if (branchId) {
     payablesParams.push(branchId);
-    payablesQuery += ` AND (oi.branch_id = $${payablesParams.length} OR oi.branch_id IS NULL OR TRIM(COALESCE(oi.branch_id, '')) = '')`;
+    // open_items.branch_id is UUID on PostgreSQL — never TRIM(uuid).
+    const emptyBranch = emptyBranchIdClause(db, 'oi.branch_id');
+    const branchText = branchIdTextExpr(db, 'oi.branch_id');
+    payablesQuery += ` AND (${branchText} = $${payablesParams.length} OR ${emptyBranch})`;
   }
   payablesQuery += ` ORDER BY oi.due_date ASC NULLS LAST, supplier_name, oi.document_date ASC LIMIT ${openLimit}`;
 
@@ -79,7 +87,10 @@ async function listSupplierPayables(db, options = {}) {
   }
   if (branchId) {
     payablesOrphanParams.push(branchId);
-    payablesOrphanQuery += ` AND (pi.branch_id = $${payablesOrphanParams.length} OR pi.warehouse_id = $${payablesOrphanParams.length})`;
+    const p = `$${payablesOrphanParams.length}`;
+    const piBranch = branchIdTextExpr(db, 'pi.branch_id');
+    const piWh = branchIdTextExpr(db, 'pi.warehouse_id');
+    payablesOrphanQuery += ` AND (${piBranch} = ${p} OR ${piWh} = ${p})`;
   }
   payablesOrphanQuery += ` ORDER BY pi.date DESC LIMIT ${orphanLimit}`;
 

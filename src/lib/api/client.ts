@@ -1456,7 +1456,7 @@ export const api = {
       if (params?.branchId) sp.append('branchId', params.branchId);
       if (params?.status) sp.append('status', params.status);
       const qs = sp.toString();
-      return apiFetch<any[]>(`/purchase-invoices${qs ? `?${qs}` : ''}`);
+      return apiFetch<any[]>(`/purchase-invoices${qs ? `?${qs}` : ''}`, undefined, { timeoutMs: 90000 });
     },
     get: (id: string) => apiFetch<any>(`/purchase-invoices/${encodeURIComponent(id)}`),
     checkDuplicate: (params: { supplierId: string; supplierInvoiceNo: string; excludeId?: string }) => {
