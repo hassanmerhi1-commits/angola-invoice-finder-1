@@ -197,6 +197,10 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
         });
         result.openItemId = oi.id;
         await syncSupplierBalanceFromOpenItems(client, supplierId);
+      } else {
+        result.errors.push(
+          `Payable: invoice has no supplier_id (supplier "${inv.supplierName || inv.supplier_name || '?'}" not linked) — payable cannot be created`,
+        );
       }
     } catch (err) {
       result.errors.push(`Payable: ${err.message || String(err)}`);
@@ -204,6 +208,9 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
   }
 
   const journalLines = Array.isArray(inv.journalLines) ? inv.journalLines : [];
+  if (journalLines.length === 0 && !result.journalEntryId && Number(inv.total || 0) > 0) {
+    result.warnings.push('Journal: invoice has no journal lines — nothing posted to chart of accounts');
+  }
   if (journalLines.length > 0 && !result.journalEntryId) {
     try {
       await ensureSupplierJournalAccounts(client, journalLines, inv);

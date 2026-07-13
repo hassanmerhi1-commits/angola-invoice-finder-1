@@ -272,19 +272,23 @@ async function main() {
 
       const stockOk = posting.stockMovementIds.length > 0;
       const payableOk = !!posting.openItemId;
+      const journalOk = !!posting.journalEntryId;
+      const supplierLinked = String(row.supplier_id || '').trim() !== '';
       const problems = [];
       if (!branch) problems.push('FILIAL INVÁLIDA');
       if (active && !stockOk) problems.push('SEM STOCK');
       if (active && !payableOk) problems.push('SEM CONTA A PAGAR');
+      if (active && !journalOk && Number(row.total || 0) > 0) problems.push('SEM DIÁRIO');
+      if (active && !supplierLinked) problems.push('SEM FORNECEDOR LIGADO');
 
       console.log(
         `  ${row.invoice_number}  ${String(row.created_at).slice(0, 16)}  filial=${branch ? branch.name : `?? (${row.branch_id || row.warehouse_id || 'vazio'})`}  estado=${status}` +
-        `  stock=${stockOk ? 'ok' : 'FALTA'}  pagar=${payableOk ? 'ok' : 'FALTA'}  diário=${posting.journalEntryId ? 'ok' : '-'}` +
+        `  stock=${stockOk ? 'ok' : 'FALTA'}  pagar=${payableOk ? 'ok' : 'FALTA'}  diário=${journalOk ? 'ok' : 'FALTA'}` +
         (problems.length ? `   <<< ${problems.join(' + ')}` : ''),
       );
 
       if (!branch && active) badBranch.push(row);
-      if (active && (!stockOk || !payableOk)) missingPosting.push(row);
+      if (active && (!stockOk || !payableOk || (!journalOk && Number(row.total || 0) > 0))) missingPosting.push(row);
     }
   } finally {
     client.release();
@@ -341,6 +345,62 @@ async function main() {
   // Re-read every invoice that needs posting (branch fixes above may have unblocked them)
   const toPost = new Map();
   for (const row of [...missingPosting, ...badBranch]) toPost.set(row.id, row);
+
+  // Pre-posting normalization: link supplier + rebuild journal lines when missing.
+  for (const row of toPost.values()) {
+    const supplierId = String(row.supplier_id || '').trim();
+    if (!supplierId) {
+      const name = String(row.supplier_name || '').trim();
+      const nif = String(row.supplier_nif || '').trim();
+      const idSel = db.engine === 'postgres' ? 'id::text AS id' : 'CAST(id AS TEXT) AS id';
+      const bySupplier = await db.query(
+        `SELECT ${idSel}, name FROM suppliers
+         WHERE ($1 <> '' AND lower(trim(name)) = lower($2))
+            OR ($3 <> '' AND lower(trim(coalesce(nif, ''))) = lower($4))
+         LIMIT 1`,
+        [name, name, nif, nif],
+      );
+      if (bySupplier.rows[0]?.id) {
+        await db.query('UPDATE purchase_invoices SET supplier_id = $1 WHERE id = $2', [bySupplier.rows[0].id, row.id]);
+        console.log(`  ${row.invoice_number}: fornecedor ligado → ${bySupplier.rows[0].name} (${bySupplier.rows[0].id})`);
+      } else {
+        console.log(`  ${row.invoice_number}: SEM FORNECEDOR — "${name}" não existe na tabela de fornecedores; conta a pagar não pode ser criada.`);
+      }
+    }
+
+    const journalLines = parseJson(row.journal_lines_json, []);
+    const subtotal = Number(row.subtotal || 0);
+    const ivaTotal = Number(row.iva_total || 0);
+    if ((!Array.isArray(journalLines) || journalLines.length === 0) && subtotal > 0) {
+      const supplierAccount = String(row.supplier_account_code || '').trim() || '321';
+      const rebuilt = [];
+      rebuilt.push({
+        accountCode: String(row.purchase_account_code || '212').trim() || '212',
+        accountName: 'Compra de Mercadorias',
+        note: `FC ${row.invoice_number} - ${row.supplier_name || ''}`.trim(),
+        debit: subtotal,
+        credit: 0,
+      });
+      if (ivaTotal > 0) {
+        rebuilt.push({
+          accountCode: String(row.iva_account_code || '3451').trim() || '3451',
+          accountName: 'IVA Dedutível',
+          note: `IVA - FC ${row.invoice_number}`,
+          debit: ivaTotal,
+          credit: 0,
+        });
+      }
+      rebuilt.push({
+        accountCode: supplierAccount,
+        accountName: row.supplier_name || 'Fornecedor',
+        note: `FC ${row.invoice_number}`,
+        debit: 0,
+        credit: subtotal + ivaTotal,
+      });
+      await db.query('UPDATE purchase_invoices SET journal_lines_json = $1 WHERE id = $2', [JSON.stringify(rebuilt), row.id]);
+      console.log(`  ${row.invoice_number}: linhas de diário reconstruídas (${rebuilt.length} linhas)`);
+    }
+  }
 
   let posted = 0;
   let failed = 0;
