@@ -1,4 +1,5 @@
 /** Map purchase invoice records between API JSON and SQLite rows. */
+const { normalizeSqlDate } = require('./lib/dateSql');
 
 /** SQLite stores JSON in TEXT; PostgreSQL JSONB columns arrive already parsed. */
 function parseJsonColumn(val, fallback = []) {
@@ -29,8 +30,8 @@ function fromRow(row) {
     contact: row.contact || '',
     department: row.department || '',
     ref2: row.ref2 || '',
-    date: row.date || '',
-    paymentDate: row.payment_date || '',
+    date: normalizeSqlDate(row.date) || '',
+    paymentDate: normalizeSqlDate(row.payment_date) || '',
     project: row.project || '',
     currency: row.currency || 'KZ',
     warehouseId: row.warehouse_id || row.branch_id || '',

@@ -4,6 +4,7 @@
  */
 const db = require('./db');
 const { OPEN_ITEM_IS_DEBIT_SQL, openItemIsDebitSql } = require('./lib/openItemsSql');
+const { normalizeSqlDate } = require('./lib/dateSql');
 const { createOpenItem, syncSupplierBalanceFromOpenItems } = require('./transactionEngine');
 
 const UPDATE_OPEN_ITEM_REMAINING = `
@@ -447,8 +448,8 @@ async function backfillMissingSupplierOpenItems() {
   try {
     await client.query('BEGIN');
     for (const pi of rows) {
-      const docDate = String(pi.date || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
-      const dueDate = pi.payment_date ? String(pi.payment_date).slice(0, 10) : null;
+      const docDate = normalizeSqlDate(pi.date, { allowNull: false });
+      const dueDate = normalizeSqlDate(pi.payment_date);
       try {
         await createOpenItem(client, {
           entityType: 'supplier',
@@ -536,8 +537,8 @@ async function ensurePurchaseInvoicePayable(client, inv) {
     return { openItemId: openCheck.rows[0].id, created: false };
   }
 
-  const docDate = String(invoice.date || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
-  const dueDate = invoice.paymentDate ? String(invoice.paymentDate).slice(0, 10) : null;
+  const docDate = normalizeSqlDate(invoice.date, { allowNull: false });
+  const dueDate = normalizeSqlDate(invoice.paymentDate);
   const oi = await createOpenItem(client, {
     entityType: 'supplier',
     entityId: supplierId,

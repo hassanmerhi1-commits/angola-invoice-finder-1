@@ -11,6 +11,7 @@ const {
 } = require('../transactionEngine');
 const { createJournalEntry } = require('../accounting');
 const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
+const { normalizeSqlDate } = require('./dateSql');
 const { resolveBranchFilterId, resolveBranchRow } = require('./branchIdMatch');
 const db = require('../db');
 
@@ -178,10 +179,8 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
         result.openItemId = repaired.openItemId;
       } else if (inv.supplierId || inv.supplier_id) {
         const supplierId = String(inv.supplierId || inv.supplier_id).trim();
-        const docDate = String(inv.date || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
-        const dueDate = inv.paymentDate || inv.payment_date
-          ? String(inv.paymentDate || inv.payment_date).slice(0, 10)
-          : null;
+        const docDate = normalizeSqlDate(inv.date, { allowNull: false });
+        const dueDate = normalizeSqlDate(inv.paymentDate || inv.payment_date);
         const oi = await createOpenItem(client, {
           entityType: 'supplier',
           entityId: supplierId,
@@ -220,7 +219,7 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
         referenceId: inv.id,
         branchId: warehouseId,
         createdBy: inv.createdBy || inv.created_by || null,
-        entryDate: inv.date,
+        entryDate: normalizeSqlDate(inv.date, { allowNull: false }),
         lines: journalLines.map((l) => ({
           accountCode: l.accountCode || l.account_code,
           description: l.note || l.description || inv.invoiceNumber,
