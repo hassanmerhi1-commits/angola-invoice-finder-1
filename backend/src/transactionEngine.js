@@ -2788,6 +2788,7 @@ module.exports = {
   voidStockAdjustment,
   replaceStockAdjustment,
   // Helpers
+  resolveWarehouseId,
   auditLog,
   getEntityAccountCode,
   ensureInventoryShrinkageAccount,

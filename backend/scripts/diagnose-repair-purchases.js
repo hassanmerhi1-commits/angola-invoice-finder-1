@@ -180,7 +180,7 @@ function branchMatches(branches, rawId) {
 }
 
 /** Try every identifier on the invoice until one resolves to a real branch row. */
-async function resolveInvoiceBranch(inv) {
+async function resolveInvoiceBranch(inv, branches) {
   const candidates = [
     inv.branch_id,
     inv.warehouse_id,
@@ -190,6 +190,13 @@ async function resolveInvoiceBranch(inv) {
   for (const cand of candidates) {
     const row = await resolveBranchRow(db, cand);
     if (row?.id) return row;
+  }
+  // Legacy SQLite ids ("branch-main", "main") → the main branch row on PostgreSQL.
+  const legacyMainKeys = new Set(['branchmain', 'main', 'mainbranch', 'sede', 'principal']);
+  const hasLegacyMain = candidates.some((c) => legacyMainKeys.has(normalizeBranchIdKey(c)));
+  if (hasLegacyMain) {
+    const main = (branches || []).find((b) => b.is_main === true || b.is_main === 1 || b.is_main === '1');
+    if (main) return main;
   }
   return null;
 }
@@ -317,7 +324,7 @@ async function main() {
 
   let branchFixed = 0;
   for (const row of badBranch) {
-    const resolved = await resolveInvoiceBranch(row);
+    const resolved = await resolveInvoiceBranch(row, branches);
     if (!resolved) {
       console.log(`  ${row.invoice_number}: não foi possível identificar a filial (branch_id=${row.branch_id}, nome=${row.branch_name || row.warehouse_name || '-'}) — corrija manualmente.`);
       continue;
