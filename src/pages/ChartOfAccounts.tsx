@@ -859,10 +859,13 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
   const hasChildren = children.length > 0;
   const isSelected = selectedId === account.id;
   
+  // Roll up children AND keep postings on the parent itself (payments often landed
+  // on 321 before supplier leaves existed — dropping own balance made them vanish).
   const computeBalance = (acc: Account): number => {
     const kids = allAccounts.filter(a => a.parent_id === acc.id);
-    if (kids.length === 0) return Number(acc.current_balance) || 0;
-    return kids.reduce((sum, kid) => sum + computeBalance(kid), 0);
+    const own = Number(acc.current_balance) || 0;
+    if (kids.length === 0) return own;
+    return own + kids.reduce((sum, kid) => sum + computeBalance(kid), 0);
   };
   
   const balance = hasChildren || account.is_header ? computeBalance(account) : (Number(account.current_balance) || 0);

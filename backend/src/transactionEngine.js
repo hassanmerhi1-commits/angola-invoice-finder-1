@@ -35,6 +35,7 @@ const {
 const { randomUUID } = require('crypto');
 const { normalizeSqlDate } = require('./lib/dateSql');
 const { resolveBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlAccount');
+const { resolveEntityAccountCode } = require('./lib/entityCoaAccounts');
 
 // ==================== PGC (novo com IVA) POSTING ACCOUNT CODES ====================
 // Angola Plano Geral de Contabilidade with no-dot numbering (main 11 → first sub 111).
@@ -216,33 +217,9 @@ async function auditLog(client, params) {
 // ==================== ENTITY ACCOUNT LOOKUP ====================
 
 async function getEntityAccountCode(client, entityType, entityId, entityName) {
-  const prefix = entityType === 'supplier' ? ACC.SUPPLIERS_CURRENT : ACC.CLIENTS_CURRENT;
-  const fallback = entityType === 'supplier' ? ACC.SUPPLIERS_CURRENT : ACC.CLIENTS_CURRENT;
-
-  if (!entityId && !entityName) return fallback;
-
-  try {
-    if (entityName) {
-      const byName = await client.query(
-        `SELECT code FROM chart_of_accounts 
-         WHERE code LIKE $1 AND level = 3 AND is_header = false AND is_active = true AND name = $2 LIMIT 1`,
-        [prefix + '%', entityName]
-      );
-      if (byName.rows.length > 0) return byName.rows[0].code;
-    }
-    if (entityId) {
-      const byNif = await client.query(
-        `SELECT code FROM chart_of_accounts 
-         WHERE code LIKE $1 AND level = 3 AND is_header = false AND is_active = true 
-           AND description LIKE '%' || $2 || '%' LIMIT 1`,
-        [prefix + '%', entityId]
-      );
-      if (byNif.rows.length > 0) return byNif.rows[0].code;
-    }
-  } catch (e) {
-    console.warn(`[TX ENGINE] Entity account lookup failed:`, e.message);
-  }
-  return fallback;
+  // Resolve (and create if needed) the 8-digit leaf under 311/321 — never post
+  // payments/purchases to the parent once a supplier/client leaf exists.
+  return resolveEntityAccountCode(client, entityType, entityId, entityName);
 }
 
 /** Resolve the 311xx client receivable account for a registered customer (credit sales). */

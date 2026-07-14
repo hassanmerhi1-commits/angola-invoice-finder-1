@@ -2,125 +2,12 @@
 const express = require('express');
 const db = require('../db');
 const { auditErpSafe } = require('../lib/erpAudit');
-
-// Angola PGC (novo com IVA): Clientes group is account 31; client
-// sub-accounts default to 311 (Clientes - correntes). Auto codes are 8 digits
-// (e.g. 31100001) so each client gets its own receivables ledger account.
-const CLIENT_GROUP_CODE = '31';
-const CLIENT_PARENT_CODE = '311';
-const ENTITY_ACCOUNT_CODE_LENGTH = 8;
-
-function cleanText(value) {
-  return typeof value === 'string' ? value.trim() : '';
-}
+const {
+  ensureClientSubAccount,
+} = require('../lib/entityCoaAccounts');
 
 function normalizeNif(nif) {
   return String(nif || '').replace(/\s/g, '').trim();
-}
-
-// Build the next free 8-digit code under a parent (parent "311" -> "31100001").
-function nextEntityAccountCode(parentCode, existingCodes) {
-  const suffixLen = ENTITY_ACCOUNT_CODE_LENGTH - parentCode.length;
-  const maxSeq = existingCodes.reduce((max, code) => {
-    if (!code || !code.startsWith(parentCode) || code.length <= parentCode.length) return max;
-    const parsed = Number(code.slice(parentCode.length));
-    return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
-  }, 0);
-  return `${parentCode}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
-}
-
-/**
- * Auto-create an 8-digit sub-account in chart_of_accounts for a client.
- * Idempotent — skips if an account with the same name/NIF already exists in the
- * Clientes group. Mirrors the supplier sub-account behaviour so that "New customer
- * account" and "New client" both register the client ledger entry.
- */
-async function ensureClientSubAccount(client, clientName, clientNif, parentCode) {
-  const normalizedName = cleanText(clientName);
-  const normalizedNif = normalizeNif(clientNif);
-
-  // Validate the requested parent (must be in the 31 group); else fall back to 311.
-  let requestedParentCode = cleanText(parentCode) || CLIENT_PARENT_CODE;
-  if (!requestedParentCode.startsWith(CLIENT_GROUP_CODE)) {
-    requestedParentCode = CLIENT_PARENT_CODE;
-  }
-
-  // Skip if it already exists anywhere in the client group (avoid duplicates).
-  const existing = normalizedNif
-    ? await client.query(
-        `SELECT code
-         FROM chart_of_accounts
-         WHERE code LIKE '${CLIENT_GROUP_CODE}%'
-           AND level >= 3
-           AND is_header = false
-           AND (
-             lower(name) = lower($1)
-             OR description ILIKE '%' || $2::text || '%'
-           )
-         LIMIT 1`,
-        [normalizedName, normalizedNif]
-      )
-    : await client.query(
-        `SELECT code
-         FROM chart_of_accounts
-         WHERE code LIKE '${CLIENT_GROUP_CODE}%'
-           AND level >= 3
-           AND is_header = false
-           AND lower(name) = lower($1)
-         LIMIT 1`,
-        [normalizedName]
-      );
-  if (existing.rows.length > 0) return existing.rows[0].code;
-
-  // Find the chosen parent, falling back to 311 then the 31 group.
-  let resolvedParentCode = requestedParentCode;
-  let parent = await client.query(
-    `SELECT id, level FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
-    [resolvedParentCode]
-  );
-  if (parent.rows.length === 0 && resolvedParentCode !== CLIENT_PARENT_CODE) {
-    resolvedParentCode = CLIENT_PARENT_CODE;
-    parent = await client.query(
-      `SELECT id, level FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
-      [resolvedParentCode]
-    );
-  }
-  if (parent.rows.length === 0) {
-    resolvedParentCode = CLIENT_GROUP_CODE;
-    parent = await client.query(
-      `SELECT id, level FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
-      [resolvedParentCode]
-    );
-  }
-  if (parent.rows.length === 0) {
-    console.warn(`[CLIENTS] Parent account ${CLIENT_PARENT_CODE}/${CLIENT_GROUP_CODE} not found — skipping sub-account`);
-    return null;
-  }
-  const parentId = parent.rows[0].id;
-  const childLevel = (parseInt(parent.rows[0].level, 10) || 2) + 1;
-
-  const seqResult = await client.query(
-    `SELECT code FROM chart_of_accounts WHERE code LIKE '${resolvedParentCode}%' AND is_header = false`
-  );
-  const code = nextEntityAccountCode(resolvedParentCode, seqResult.rows.map((r) => r.code));
-
-  await client.query(
-    `INSERT INTO chart_of_accounts
-     (code, name, description, account_type, account_nature, parent_id, level, is_header, opening_balance, current_balance)
-     VALUES ($1, $2, $3, 'asset', 'debit', $4, $5, false, 0, 0)
-     ON CONFLICT (code) DO NOTHING`,
-    [code, normalizedName, normalizedNif ? `NIF: ${normalizedNif}` : '', parentId, childLevel]
-  );
-
-  await client.query(
-    `UPDATE chart_of_accounts SET children_count = (
-       SELECT COUNT(*) FROM chart_of_accounts WHERE parent_id = $1 AND is_active = true
-     ) WHERE id = $1`,
-    [parentId]
-  );
-
-  console.log(`[CLIENTS] Created sub-account ${code} — ${normalizedName}`);
-  return code;
 }
 
 function validateClientNif(nif) {

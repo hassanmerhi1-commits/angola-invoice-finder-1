@@ -114,6 +114,7 @@ export function refreshAllSyncedTables() {
     'caixas',
     'caixa_sessions',
     'purchase_invoices',
+    'chart_of_accounts',
   ];
   for (const table of all) {
     dispatchTableRefresh(table);

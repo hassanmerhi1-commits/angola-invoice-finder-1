@@ -59,6 +59,7 @@ export function useRealtimeSyncBridge(enabled: boolean) {
       onTableSync('purchase_invoices', (p) => scheduleTableRefresh('purchase_invoices', p.entityId)),
       onTableSync('caixas', (p) => scheduleTableRefresh('caixas', p.entityId)),
       onTableSync('caixa_sessions', (p) => scheduleTableRefresh('caixa_sessions', p.entityId)),
+      onTableSync('chart_of_accounts', (p) => scheduleTableRefresh('chart_of_accounts', p.entityId)),
     ];
 
     const onBackendStatus = (event: Event) => {

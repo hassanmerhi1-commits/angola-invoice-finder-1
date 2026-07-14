@@ -6,6 +6,7 @@ import { Account, AccountFormData, TrialBalanceRow, BalanceSheetAccountRow, Acco
 import { ensureBranchCaixaAccounts } from '@/lib/chartOfAccountsEngine';
 import { PGC_ACCOUNTS } from '@/lib/pgcChartOfAccounts';
 import { useTranslation } from '@/i18n';
+import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 
 const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts';
 
@@ -106,28 +107,46 @@ export function useChartOfAccounts() {
       if (response.error) throw new Error(response.error);
       let remoteAccounts = sortAccountsByCode(response.data || []);
       if (remoteAccounts.length === 0) {
-        const local = loadLocalAccounts(t);
-        if (local.length > 0) remoteAccounts = local;
+        // Only seed locally when the server genuinely has no chart yet.
+        // Never replace a previously loaded live chart with zeroed PGC seed.
+        if (!hasRowsRef.current) {
+          const local = loadLocalAccounts(t);
+          if (local.length > 0) remoteAccounts = local;
+        } else {
+          return;
+        }
+      } else {
+        saveLocalAccounts(remoteAccounts);
       }
       setAccounts(remoteAccounts);
       setCachedList('chartOfAccounts', remoteAccounts);
       hasRowsRef.current = remoteAccounts.length > 0;
       setError(null);
     } catch (err: any) {
-      const local = loadLocalAccounts(t);
-      if (local.length > 0) {
-        setAccounts(local);
-        setCachedList('chartOfAccounts', local);
-        hasRowsRef.current = true;
+      // Keep last good server data — don't flash zeroed seed over live balances.
+      if (hasRowsRef.current) {
         setError(null);
+        console.warn('[useChartOfAccounts] Refresh failed; keeping cached accounts:', err?.message || err);
       } else {
-        setError(err.message || 'Failed to fetch accounts');
-        console.error('[useChartOfAccounts] Error:', err);
+        const local = loadLocalAccounts(t);
+        if (local.length > 0) {
+          setAccounts(local);
+          setCachedList('chartOfAccounts', local);
+          hasRowsRef.current = true;
+          setError(null);
+        } else {
+          setError(err.message || 'Failed to fetch accounts');
+          console.error('[useChartOfAccounts] Error:', err);
+        }
       }
     } finally {
       setIsLoading(false);
     }
   }, [t]);
+
+  useTableRefreshListener(['chart_of_accounts', 'journal_entries', 'payments'], () => {
+    void fetchAccounts();
+  });
 
   // Auto-seed branch caixa accounts once after first load
   useEffect(() => {
@@ -149,15 +168,12 @@ export function useChartOfAccounts() {
         const branches = raw ? JSON.parse(raw) : [];
         if (branches.length > 0) {
           ensureBranchCaixaAccounts(branches.map((b: any) => ({ id: b.id, name: b.name }))).then(() => {
-            const updated = loadLocalAccounts(t);
-            if (updated.length > accounts.length) {
-              setAccounts(sortAccountsByCode(updated));
-            }
+            void fetchAccounts();
           });
         }
       } catch { /* ignore */ }
     });
-  }, [isLoading, accounts.length, t]);
+  }, [isLoading, accounts.length, t, fetchAccounts]);
 
   useEffect(() => {
     fetchAccounts();
