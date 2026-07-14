@@ -2646,6 +2646,24 @@ async function processPayment(client, paymentData) {
   requireParam(createdBy, 'createdBy');
   const paymentAmount = requirePositive(amount, 'amount');
 
+  let resolvedEntityName = String(entityName || '').trim();
+  if (!resolvedEntityName && entityId) {
+    try {
+      if (entityType === 'supplier') {
+        const r = await client.query(`SELECT name FROM suppliers WHERE id = $1 LIMIT 1`, [entityId]);
+        resolvedEntityName = String(r.rows[0]?.name || '').trim();
+      } else if (entityType === 'customer') {
+        const r = await client.query(`SELECT name FROM clients WHERE id = $1 LIMIT 1`, [entityId]);
+        resolvedEntityName = String(r.rows[0]?.name || '').trim();
+      }
+    } catch (err) {
+      console.warn('[TX ENGINE] entity name lookup failed:', err.message);
+    }
+  }
+  if (!resolvedEntityName) {
+    resolvedEntityName = entityType === 'supplier' ? 'Fornecedor' : 'Cliente';
+  }
+
   const today = new Date().toISOString().split('T')[0];
   await validatePeriod(client, today);
 
@@ -2653,13 +2671,14 @@ async function processPayment(client, paymentData) {
   const seqType = paymentType === 'receipt' ? 'payment_receipt' : 'payment_out';
   const prefix = paymentType === 'receipt' ? 'REC' : 'PAG';
   const paymentNumber = await generateSequenceNumber(client, seqType, prefix);
+  const journalRefType = paymentType === 'receipt' ? 'payment_receipt' : 'payment_out';
 
   const paymentId = randomUUID();
   await client.query(
     `INSERT INTO payments (id, payment_number, payment_type, entity_type, entity_id, entity_name,
      payment_method, amount, bank_account, reference, notes, branch_id, created_by, posted_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,CURRENT_TIMESTAMP)`,
-    [paymentId, paymentNumber, paymentType, entityType, entityId, entityName,
+    [paymentId, paymentNumber, paymentType, entityType, entityId, resolvedEntityName,
      paymentMethod, paymentAmount, bankAccount || '', reference || '', notes || '', branchId, createdBy]
   );
 
@@ -2760,29 +2779,29 @@ async function processPayment(client, paymentData) {
     }
     cashAccountCode = ACC.CASH;
   }
-  const entityAccountCode = await getEntityAccountCode(client, entityType, entityId, entityName);
+  const entityAccountCode = await getEntityAccountCode(client, entityType, entityId, resolvedEntityName);
 
   const lines = paymentType === 'receipt'
     ? [
         { accountCode: cashAccountCode, description: `Recebimento ${paymentNumber}`, debit: paymentAmount, credit: 0 },
-        { accountCode: entityAccountCode, description: entityName, debit: 0, credit: paymentAmount },
+        { accountCode: entityAccountCode, description: resolvedEntityName, debit: 0, credit: paymentAmount },
       ]
     : [
-        { accountCode: entityAccountCode, description: entityName, debit: paymentAmount, credit: 0 },
+        { accountCode: entityAccountCode, description: resolvedEntityName, debit: paymentAmount, credit: 0 },
         { accountCode: cashAccountCode, description: `Pagamento ${paymentNumber}`, debit: 0, credit: paymentAmount },
       ];
 
   await createJournalEntry(client, {
-    description: `${paymentType === 'receipt' ? 'Recebimento' : 'Pagamento'} ${paymentNumber} - ${entityName}`,
-    referenceType: paymentType, referenceId: paymentId,
+    description: `${paymentType === 'receipt' ? 'Recebimento' : 'Pagamento'} ${paymentNumber} - ${resolvedEntityName}`,
+    referenceType: journalRefType, referenceId: paymentId,
     branchId, createdBy, lines,
   });
 
   await auditLog(client, {
     tableName: 'payments', recordId: paymentId, action: 'create',
     userId: createdBy, branchId,
-    newValues: { paymentNumber, paymentType, entityName, amount: paymentAmount, paymentMethod },
-    description: `${paymentType === 'receipt' ? 'Recebimento' : 'Pagamento'} ${paymentNumber} - ${entityName} - ${paymentAmount} AOA`,
+    newValues: { paymentNumber, paymentType, entityName: resolvedEntityName, amount: paymentAmount, paymentMethod },
+    description: `${paymentType === 'receipt' ? 'Recebimento' : 'Pagamento'} ${paymentNumber} - ${resolvedEntityName} - ${paymentAmount} AOA`,
   });
 
   console.log(`[TX ENGINE] Payment ${paymentNumber} ✓`);

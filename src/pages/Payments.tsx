@@ -331,18 +331,29 @@ export default function Payments() {
       return;
     }
 
-    const entity = entities.find(e => String(e.id) === String(entityId));
+    const entity = entities.find(e => String(e.id) === String(entityId))
+      || (paymentType === 'payment'
+        ? suppliers.find((s) => String(s.id) === String(entityId))
+        : clients.find((c) => String(c.id) === String(entityId)));
     const selected = entityPayableItems.filter(oi => selectedOpenItems.has(oi.id));
 
     const branchId = currentBranch?.id || user?.branchId || 'branch-main';
     const createdBy = user?.id || user?.email || 'user-admin';
+    const resolvedName = String(
+      entity?.name
+      || resolveEntityName(paymentType === 'receipt' ? 'customer' : 'supplier', entityId, '')
+      || entitySearch
+      || '',
+    ).trim();
+    // resolveEntityName falls back to raw id — don't treat that as a display name
+    const entityName = resolvedName && resolvedName !== String(entityId) ? resolvedName : (entity?.name || '');
 
     try {
       await createPayment({
         paymentType,
         entityType: paymentType === 'receipt' ? 'customer' : 'supplier',
         entityId,
-        entityName: entity?.name || '',
+        entityName,
         paymentMethod,
         amount: Number(amount),
         branchId,

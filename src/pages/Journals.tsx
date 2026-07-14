@@ -56,8 +56,10 @@ const ENTRY_TYPES = [
   { value: 'debit_note', labelKey: 'debitNote', color: 'text-rose-700' },
   { value: 'recibo', labelKey: 'receipt', color: 'text-green-600' },
   { value: 'payment_receipt', labelKey: 'receipt', color: 'text-green-600' },
+  { value: 'receipt', labelKey: 'receipt', color: 'text-green-600' },
   { value: 'pagamento', labelKey: 'payment', color: 'text-red-600' },
   { value: 'payment_out', labelKey: 'payment', color: 'text-red-600' },
+  { value: 'payment', labelKey: 'payment', color: 'text-red-600' },
   { value: 'ajuste', labelKey: 'adjustment', color: 'text-purple-600' },
   { value: 'adjustment', labelKey: 'adjustment', color: 'text-purple-600' },
   { value: 'abertura', labelKey: 'opening', color: 'text-muted-foreground' },
@@ -529,8 +531,8 @@ export default function Journals() {
         || (filterType === 'adjustment' && (e.type === 'adjustment' || e.referenceType === 'adjustment' || e.type === 'ajuste'))
         || (filterType === 'compra' && e.type === 'purchase_invoice')
         || (filterType === 'venda' && (e.type === 'sale' || e.type === 'cogs' || e.referenceType === 'sale'))
-        || (filterType === 'recibo' && e.type === 'payment_receipt')
-        || (filterType === 'pagamento' && e.type === 'payment_out');
+        || (filterType === 'recibo' && (e.type === 'payment_receipt' || e.type === 'receipt' || e.referenceType === 'receipt'))
+        || (filterType === 'pagamento' && (e.type === 'payment_out' || e.type === 'payment' || e.referenceType === 'payment'));
       const sortDate = e.entryDate || e.createdAt;
       const matchesDateFrom = !dateFrom || sortDate >= dateFrom;
       const matchesDateTo = !dateTo || sortDate <= dateTo + 'T23:59:59';

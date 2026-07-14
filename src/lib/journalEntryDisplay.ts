@@ -173,13 +173,19 @@ export function isCogsJournalDescription(description: string): boolean {
 
 export function resolveJournalDisplayType(referenceType: string, description: string): string {
   if (isCogsJournalDescription(description)) return 'cogs';
+  const ref = String(referenceType || '').toLowerCase();
+  if (ref === 'payment' || ref === 'pagamento') return 'payment_out';
+  if (ref === 'receipt' || ref === 'recibo') return 'payment_receipt';
   return referenceType || 'manual';
 }
 
 function extractDocumentNumber(description: string, context: JournalContext | null): string {
   if (context?.documentNumber) return context.documentNumber;
   const patterns = [
-    /(?:venda|sale|cmv|nc|nd|rec|pag)\s*[-–]?\s*([A-Z]{0,3}-?[A-Z0-9][\w-]+)/i,
+    // Prefer full words — bare "pag"/"rec" wrongly match inside "Pagamento"/"Recebimento"
+    /(?:pagamento|recebimento|payment|receipt)\s+([A-Z]{2,4}-[\w-]+)/i,
+    /\b(?:venda|sale|cmv|nc|nd)\s*[-–]?\s*([A-Z]{0,3}-?[A-Z0-9][\w-]+)/i,
+    /\b((?:PAG|REC|FS|FC|CP|VD|NC|ND)-[\w-]+)\b/i,
     /(FS-[A-Z0-9]+-\d{4}-\d+)/i,
     /(VD-\d{4}-\d+)/i,
   ];
@@ -194,9 +200,15 @@ export function resolveCustomerDisplay(
   context: JournalContext | null | undefined,
   labels: JournalDisplayLabels,
 ): string {
-  const name = String(
-    context?.customerName || context?.entityName || context?.supplierName || '',
-  ).trim();
+  const entityType = String(context?.entityType || '').toLowerCase();
+  const supplierName = String(context?.supplierName || '').trim();
+  const customerName = String(context?.customerName || '').trim();
+  const entityName = String(context?.entityName || '').trim();
+
+  if (entityType === 'supplier' || supplierName) {
+    return supplierName || entityName || labels.fieldSupplier || 'Supplier';
+  }
+  const name = customerName || entityName || '';
   return name || labels.walkInCustomer;
 }
 
@@ -261,7 +273,7 @@ function buildReadableText(
   }
 
   if (ref === 'receipt' || ref === 'payment_receipt' || ref === 'recibo') {
-    const entity = context?.entityName || customerName;
+    const entity = context?.entityName || context?.customerName || customerName;
     return {
       title: docNo ? `${labels.descReceipt} — ${docNo}` : labels.descReceipt,
       subtitle: [entity !== labels.walkInCustomer ? entity : '', payment].filter(Boolean).join(' · '),
@@ -270,7 +282,7 @@ function buildReadableText(
   }
 
   if (ref === 'payment' || ref === 'payment_out' || ref === 'pagamento') {
-    const entity = context?.entityName || context?.supplierName || customerName;
+    const entity = context?.supplierName || context?.entityName || customerName;
     return {
       title: docNo ? `${labels.descPayment} — ${docNo}` : labels.descPayment,
       subtitle: [entity !== labels.walkInCustomer ? entity : '', payment].filter(Boolean).join(' · '),
@@ -382,7 +394,10 @@ export function buildJournalDetailRows(
   if (ctx?.customerNif) rows.push({ label: labels.fieldNif, value: ctx.customerNif });
   if (ctx?.supplierName) rows.push({ label: labels.fieldSupplier, value: ctx.supplierName });
   if (ctx?.entityName && !ctx.customerName && !ctx.supplierName) {
-    rows.push({ label: labels.fieldCustomer, value: ctx.entityName });
+    const entityLabel = String(ctx.entityType || '').toLowerCase() === 'supplier'
+      ? labels.fieldSupplier
+      : labels.fieldCustomer;
+    rows.push({ label: entityLabel, value: ctx.entityName });
   }
   if (ctx?.paymentMethod) {
     rows.push({ label: labels.fieldPayment, value: formatPaymentMethod(ctx.paymentMethod, labels) });

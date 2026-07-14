@@ -126,22 +126,36 @@ async function loadDebitNoteContext(db, referenceId) {
 
 async function loadPaymentContext(db, referenceId) {
   const res = await db.query(
-    `SELECT payment_number, payment_type, entity_type, entity_name, payment_method,
-            amount, reference, notes, created_at, posted_at,
+    `SELECT p.payment_number, p.payment_type, p.entity_type, p.entity_id,
+            COALESCE(
+              NULLIF(TRIM(p.entity_name), ''),
+              CASE
+                WHEN p.entity_type = 'supplier' THEN s.name
+                WHEN p.entity_type = 'customer' THEN c.name
+                ELSE NULL
+              END
+            ) AS entity_name,
+            p.payment_method, p.amount, p.reference, p.notes, p.created_at, p.posted_at,
             b.name AS branch_name
      FROM payments p
      LEFT JOIN branches b ON p.branch_id = b.id
+     LEFT JOIN suppliers s ON p.entity_type = 'supplier' AND s.id = p.entity_id
+     LEFT JOIN clients c ON p.entity_type = 'customer' AND c.id = p.entity_id
      WHERE p.id = $1 LIMIT 1`,
     [referenceId],
   );
   if (!res.rows.length) return null;
   const p = res.rows[0];
+  const entityType = String(p.entity_type || '').toLowerCase();
+  const entityName = String(p.entity_name || '').trim();
   return {
     documentType: p.payment_type === 'receipt' ? 'payment_receipt' : 'payment_out',
     documentNumber: p.payment_number,
     documentDate: p.posted_at || p.created_at,
-    entityType: p.entity_type,
-    entityName: p.entity_name,
+    entityType,
+    entityName,
+    supplierName: entityType === 'supplier' ? entityName : undefined,
+    customerName: entityType === 'customer' ? entityName : undefined,
     paymentMethod: p.payment_method,
     total: Number(p.amount) || 0,
     reference: p.reference,
