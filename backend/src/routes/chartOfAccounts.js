@@ -331,7 +331,8 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // Get account ledger (all journal entry lines for an account)
+  // Get account ledger (posted lines for this account + all descendants —
+  // chart headers roll up child balances, so drill-down must include children).
   router.get('/:id/ledger', async (req, res) => {
     try {
       const { id } = req.params;
@@ -356,10 +357,19 @@ module.exports = function(broadcastTable) {
       }
 
       const result = await db.query(`
+        WITH RECURSIVE account_tree AS (
+          SELECT id, code, name FROM chart_of_accounts WHERE id = $1
+          UNION ALL
+          SELECT c.id, c.code, c.name
+          FROM chart_of_accounts c
+          INNER JOIN account_tree t ON c.parent_id = t.id
+        )
         SELECT 
           jel.id,
           jel.journal_entry_id,
           jel.account_id,
+          atree.code AS account_code,
+          atree.name AS account_name,
           jel.description,
           jel.debit_amount,
           jel.credit_amount,
@@ -372,9 +382,48 @@ module.exports = function(broadcastTable) {
           je.created_at as journal_created_at
         FROM journal_entry_lines jel
         INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-        WHERE jel.account_id = $1 AND je.is_posted = true ${dateFilter} ${branchFilter}
+        INNER JOIN account_tree atree ON atree.id = jel.account_id
+        WHERE je.is_posted = true ${dateFilter} ${branchFilter}
         ORDER BY je.entry_date DESC, je.created_at DESC
       `, params);
+
+      // Leaf with opening balance only: surface it as a synthetic line so drill-down
+      // is not empty while the chart still shows a non-zero balance.
+      if ((result.rows || []).length === 0) {
+        const acc = await db.query(
+          `SELECT id, code, name, opening_balance, current_balance, is_header
+           FROM chart_of_accounts WHERE id = $1`,
+          [id],
+        );
+        const row = acc.rows[0];
+        const opening = Number(row?.opening_balance) || 0;
+        const current = Number(row?.current_balance) || 0;
+        const kids = await db.query(
+          `SELECT COUNT(*) AS n FROM chart_of_accounts WHERE parent_id = $1`,
+          [id],
+        );
+        const childCount = Number(kids.rows[0]?.n || kids.rows[0]?.count || 0);
+        if (row && !row.is_header && childCount === 0 && (opening !== 0 || current !== 0)) {
+          const amt = opening !== 0 ? opening : current;
+          return res.json([{
+            id: `opening-${id}`,
+            journal_entry_id: null,
+            account_id: id,
+            account_code: row.code,
+            account_name: row.name,
+            description: 'Saldo de abertura',
+            debit_amount: amt > 0 ? amt : 0,
+            credit_amount: amt < 0 ? Math.abs(amt) : 0,
+            entry_number: 'OPEN',
+            entry_date: null,
+            journal_description: 'Opening balance',
+            reference_type: 'opening',
+            reference_id: null,
+            is_posted: true,
+            journal_created_at: null,
+          }]);
+        }
+      }
 
       res.json(result.rows);
     } catch (error) {

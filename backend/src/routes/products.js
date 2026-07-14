@@ -468,6 +468,36 @@ function sqlGridRowPriceExpr(alias = 'p') {
   return `COALESCE(${alias}.price, 0)`;
 }
 
+/** Inventory-grid display price: keep real price1; only fill zeros from siblings / price2. */
+function sqlGridDisplayPriceExpr(alias = 'p') {
+  return `CASE
+    WHEN COALESCE(${alias}.price, 0) > 0.0001 THEN COALESCE(${alias}.price, 0)
+    ELSE ${sqlGridSellingPriceExpr(alias)}
+  END`;
+}
+
+/** Latest purchase/transfer IN unit cost for this product at the active warehouse ($1). */
+function sqlLastInUnitCostExpr(alias = 'p') {
+  return `(
+    SELECT sm.unit_cost
+    FROM stock_movements sm
+    WHERE sm.product_id = ${alias}.id
+      AND sm.warehouse_id = $1
+      AND sm.movement_type = 'IN'
+      AND COALESCE(sm.unit_cost, 0) > 0.0001
+    ORDER BY sm.created_at DESC
+    LIMIT 1
+  )`;
+}
+
+/** Cost column for inventory grid — fill zeros from last stock IN. */
+function sqlGridDisplayCostExpr(alias, field) {
+  return `CASE
+    WHEN COALESCE(${alias}.${field}, 0) > 0.0001 THEN ${alias}.${field}
+    ELSE COALESCE(${sqlLastInUnitCostExpr(alias)}, ${alias}.cost, 0)
+  END`;
+}
+
 /** Best selling price for this SKU across catalog + filial rows (fixes Qtd > 0 filial-only rows). */
 function sqlGridSellingPriceExpr(alias = 'p') {
   const rowPvp = sqlScalarMax(db, `COALESCE(${alias}.price, 0)`, `COALESCE(${alias}.price2, 0)`);
@@ -495,7 +525,11 @@ function sqlGridSellingPriceExpr(alias = 'p') {
 /** Inventory grid filial: show every SKU with stock movements at this warehouse (transfer receive). */
 async function listProductsForBranchInventoryGrid(branchKey) {
   const mainBranchIds = await loadMainBranchIds();
-  const rowPrice = sqlGridRowPriceExpr('p');
+  const rowPrice = sqlGridDisplayPriceExpr('p');
+  const rowCost = sqlGridDisplayCostExpr('p', 'cost');
+  const rowFirstCost = sqlGridDisplayCostExpr('p', 'first_cost');
+  const rowLastCost = sqlGridDisplayCostExpr('p', 'last_cost');
+  const rowAvgCost = sqlGridDisplayCostExpr('p', 'avg_cost');
   const mainIn =
     mainBranchIds.length > 0
       ? mainBranchIds.map((_, i) => `$${i + 2}`).join(', ')
@@ -521,10 +555,10 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             p.price2,
             p.price3,
             p.price4,
-            p.cost,
-            p.first_cost,
-            p.last_cost,
-            p.avg_cost,
+            ${rowCost} AS cost,
+            ${rowFirstCost} AS first_cost,
+            ${rowLastCost} AS last_cost,
+            ${rowAvgCost} AS avg_cost,
             COALESCE(ms.ledger_stock, sbs.ledger_stock, 0) AS stock,
             p.unit,
             p.tax_rate,
@@ -550,10 +584,10 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             p.price2,
             p.price3,
             p.price4,
-            p.cost,
-            p.first_cost,
-            p.last_cost,
-            p.avg_cost,
+            ${rowCost} AS cost,
+            ${rowFirstCost} AS first_cost,
+            ${rowLastCost} AS last_cost,
+            ${rowAvgCost} AS avg_cost,
             ${sqlGridStockExpr('p')} AS stock,
             p.unit,
             p.tax_rate,
@@ -583,10 +617,10 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             p.price2,
             p.price3,
             p.price4,
-            p.cost,
-            p.first_cost,
-            p.last_cost,
-            p.avg_cost,
+            ${rowCost} AS cost,
+            ${rowFirstCost} AS first_cost,
+            ${rowLastCost} AS last_cost,
+            ${rowAvgCost} AS avg_cost,
             ${sqlGridStockExpr('p')} AS stock,
             p.unit,
             p.tax_rate,
@@ -1206,6 +1240,13 @@ module.exports = function(broadcastTable) {
         count: rows.length,
         sellingPrices: Object.fromEntries(priceBySku),
       });
+      // Persist zero price1 rows in background so next load / POS see DB prices.
+      void persistSellingPricesFromHints(priceBySku).then((n) => {
+        if (n > 0) {
+          invalidateSellingHintsCache();
+          if (typeof onProductsTableChange === 'function') onProductsTableChange();
+        }
+      }).catch((err) => console.warn('[PRODUCTS inventory-grid] persist prices:', err.message));
     } catch (error) {
       console.error('[PRODUCTS inventory-grid]', error);
       res.status(500).json({ error: 'Failed to load inventory grid' });

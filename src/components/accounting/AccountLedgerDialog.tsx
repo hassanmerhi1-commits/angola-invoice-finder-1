@@ -41,6 +41,8 @@ interface LedgerEntry {
   id: string;
   journal_entry_id: string;
   account_id: string;
+  account_code?: string;
+  account_name?: string;
   description: string;
   debit_amount: number;
   credit_amount: number;
@@ -452,7 +454,14 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
                     <tr key={entry.id} className="hover:bg-accent/30 transition-colors">
                       <td className="px-3 py-2 font-mono text-muted-foreground">{fmtDate(entry.entry_date)}</td>
                       <td className="px-3 py-2 font-mono">{entry.entry_number}</td>
-                      <td className="px-3 py-2">{entry.description || entry.journal_description}</td>
+                      <td className="px-3 py-2">
+                        {entry.account_code && entry.account_code !== account?.code ? (
+                          <span className="mr-1 font-mono text-[11px] text-muted-foreground">
+                            [{entry.account_code}]
+                          </span>
+                        ) : null}
+                        {entry.description || entry.journal_description}
+                      </td>
                       <td className="px-3 py-2 text-center">
                         {entry.reference_type && (
                           <Badge variant="outline" className="text-[10px]">

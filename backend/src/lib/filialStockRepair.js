@@ -131,24 +131,30 @@ async function ensureFilialProductsForWarehouse(warehouseId, clientOrDb = null) 
     }
   }
 
-  // Backfill missing selling price / cost on filial rows that now have stock.
+  // Backfill missing selling price / cost on filial rows that have stock or movements.
   let pricesFilled = 0;
   try {
     const skuExpr = sqlMovementSkuKey('p');
     const peerExpr = sqlMovementSkuKey('p2');
+    // Prefer GREATEST(price, price2) from peers (PG) / MAX for SQLite.
+    const peerBestPrice =
+      db.engine === 'postgres'
+        ? `GREATEST(COALESCE(p2.price, 0), COALESCE(p2.price2, 0))`
+        : `MAX(COALESCE(p2.price, 0), COALESCE(p2.price2, 0))`;
     const filled = await q.query(
       `UPDATE products p SET
          price = COALESCE((
-           SELECT MAX(COALESCE(p2.price, 0))
+           SELECT MAX(${peerBestPrice})
            FROM products p2
            WHERE ${coalesceActiveNotZero(db, 'p2.is_active')}
              AND ${peerExpr} = ${skuExpr}
              AND p2.id != p.id
-             AND COALESCE(p2.price, 0) > 0
+             AND (${peerBestPrice}) > 0
          ), p.price),
          last_cost = COALESCE(NULLIF(p.last_cost, 0), (
            SELECT sm.unit_cost FROM stock_movements sm
            WHERE sm.product_id = p.id AND sm.warehouse_id = $1 AND sm.movement_type = 'IN'
+             AND COALESCE(sm.unit_cost, 0) > 0
            ORDER BY sm.created_at DESC LIMIT 1
          ), p.last_cost),
          cost = CASE
@@ -156,14 +162,43 @@ async function ensureFilialProductsForWarehouse(warehouseId, clientOrDb = null) 
            ELSE COALESCE((
              SELECT sm.unit_cost FROM stock_movements sm
              WHERE sm.product_id = p.id AND sm.warehouse_id = $1 AND sm.movement_type = 'IN'
+               AND COALESCE(sm.unit_cost, 0) > 0
              ORDER BY sm.created_at DESC LIMIT 1
            ), p.cost)
+         END,
+         first_cost = CASE
+           WHEN COALESCE(p.first_cost, 0) > 0 THEN p.first_cost
+           ELSE COALESCE((
+             SELECT sm.unit_cost FROM stock_movements sm
+             WHERE sm.product_id = p.id AND sm.warehouse_id = $1 AND sm.movement_type = 'IN'
+               AND COALESCE(sm.unit_cost, 0) > 0
+             ORDER BY sm.created_at ASC LIMIT 1
+           ), p.first_cost)
+         END,
+         avg_cost = CASE
+           WHEN COALESCE(p.avg_cost, 0) > 0 THEN p.avg_cost
+           ELSE COALESCE((
+             SELECT sm.unit_cost FROM stock_movements sm
+             WHERE sm.product_id = p.id AND sm.warehouse_id = $1 AND sm.movement_type = 'IN'
+               AND COALESCE(sm.unit_cost, 0) > 0
+             ORDER BY sm.created_at DESC LIMIT 1
+           ), p.avg_cost)
          END,
          updated_at = CURRENT_TIMESTAMP
        WHERE ${coalesceActiveNotZero(db, 'p.is_active')}
          AND p.branch_id = $1
-         AND COALESCE(p.stock, 0) > 0
-         AND (COALESCE(p.price, 0) <= 0 OR COALESCE(p.cost, 0) <= 0)`,
+         AND (
+           COALESCE(p.stock, 0) > 0
+           OR EXISTS (
+             SELECT 1 FROM stock_movements sm
+             WHERE sm.product_id = p.id AND sm.warehouse_id = $1
+           )
+         )
+         AND (
+           COALESCE(p.price, 0) <= 0
+           OR COALESCE(p.cost, 0) <= 0
+           OR COALESCE(p.last_cost, 0) <= 0
+         )`,
       [wh],
     );
     pricesFilled = filled.rowCount || 0;
