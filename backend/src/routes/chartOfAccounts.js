@@ -314,6 +314,14 @@ module.exports = function(broadcastTable) {
         newValues: { code, name, is_active, opening_balance },
       });
       res.json(result.rows[0]);
+    } catch (error) {
+      console.error('[CHART OF ACCOUNTS ERROR]', error);
+      res.status(500).json({ error: 'Failed to update account' });
+    }
+  });
+
+  // Delete (soft) account
+  router.delete('/:id', async (req, res) => {
     try {
       const { id } = req.params;
       
