@@ -2614,7 +2614,8 @@ async function processPayment(client, paymentData) {
   const {
     paymentType, entityType, entityId, entityName,
     paymentMethod, amount, branchId, createdBy,
-    bankAccount, reference, notes, invoiceIds
+    bankAccount, reference, notes, invoiceIds,
+    paymentSource, caixaId, bankAccountId,
   } = paymentData;
 
   requireParam(paymentType, 'paymentType');
@@ -2650,13 +2651,23 @@ async function processPayment(client, paymentData) {
   const paymentNumber = await generateSequenceNumber(client, seqType, prefix);
   const journalRefType = paymentType === 'receipt' ? 'payment_receipt' : 'payment_out';
 
+  // Treasury source: explicit paymentSource, else infer from paymentMethod
+  const source = String(paymentSource || '').trim().toLowerCase();
+  const wantsCaixa = source === 'caixa'
+    || (!source && String(paymentMethod || '').toLowerCase() === 'cash');
+  const treasuryRef = wantsCaixa
+    ? (String(caixaId || '').trim() || bankAccount || '')
+    : (String(bankAccountId || bankAccount || '').trim());
+  const resolvedMethod = paymentMethod
+    || (wantsCaixa ? 'cash' : 'transfer');
+
   const paymentId = randomUUID();
   await client.query(
     `INSERT INTO payments (id, payment_number, payment_type, entity_type, entity_id, entity_name,
      payment_method, amount, bank_account, reference, notes, branch_id, created_by, posted_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,CURRENT_TIMESTAMP)`,
     [paymentId, paymentNumber, paymentType, entityType, entityId, resolvedEntityName,
-     paymentMethod, paymentAmount, bankAccount || '', reference || '', notes || '', branchId, createdBy]
+     resolvedMethod, paymentAmount, treasuryRef, reference || '', notes || '', branchId, createdBy]
   );
 
   // Create open item (credit side)
@@ -2746,15 +2757,22 @@ async function processPayment(client, paymentData) {
     await syncSupplierBalanceFromOpenItems(client, entityId);
   }
 
-  // Journal entry — prefer bank account for non-cash; fall back to caixa if bank not in COA
-  let cashAccountCode = paymentMethod === 'cash' ? ACC.CASH : ACC.BANK;
+  // Treasury GL: honour explicit caixa/bank source when provided; else infer from paymentMethod.
+  let cashAccountCode;
+  if (wantsCaixa) {
+    cashAccountCode = await resolveBranchCaixaGlAccountCode(client, { branchId });
+  } else {
+    cashAccountCode = ACC.BANK;
+  }
   const preferredCash = await findAccountByCode(client, cashAccountCode);
   if (!preferredCash) {
-    const caixa = await findAccountByCode(client, ACC.CASH);
-    if (!caixa) {
+    const fallbackCode = wantsCaixa ? ACC.CASH : ACC.BANK;
+    const fallback = await findAccountByCode(client, fallbackCode)
+      || await findAccountByCode(client, ACC.CASH);
+    if (!fallback) {
       throw new Error(`Conta de tesouraria não encontrada no plano de contas (${cashAccountCode} / ${ACC.CASH})`);
     }
-    cashAccountCode = ACC.CASH;
+    cashAccountCode = fallback.code || fallbackCode;
   }
   const entityAccountCode = await getEntityAccountCode(client, entityType, entityId, resolvedEntityName);
 
@@ -2774,10 +2792,32 @@ async function processPayment(client, paymentData) {
     branchId, createdBy, lines,
   });
 
+  // Operational caixa balance (register drawer) when paying/receiving cash from a specific caixa
+  const resolvedCaixaId = String(caixaId || '').trim();
+  if (wantsCaixa && resolvedCaixaId) {
+    try {
+      const delta = paymentType === 'receipt' ? paymentAmount : -paymentAmount;
+      await client.query(
+        `UPDATE caixas
+         SET current_balance = COALESCE(current_balance, 0) + $1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2`,
+        [delta, resolvedCaixaId],
+      );
+    } catch (e) {
+      console.warn('[TX ENGINE] Caixa balance update skipped:', e.message);
+    }
+  }
+
   await auditLog(client, {
     tableName: 'payments', recordId: paymentId, action: 'create',
     userId: createdBy, branchId,
-    newValues: { paymentNumber, paymentType, entityName: resolvedEntityName, amount: paymentAmount, paymentMethod },
+    newValues: {
+      paymentNumber, paymentType, entityName: resolvedEntityName, amount: paymentAmount,
+      paymentMethod: resolvedMethod, paymentSource: wantsCaixa ? 'caixa' : 'bank',
+      caixaId: resolvedCaixaId || null, bankAccountId: String(bankAccountId || '').trim() || null,
+      treasuryGl: cashAccountCode,
+    },
     description: `${paymentType === 'receipt' ? 'Recebimento' : 'Pagamento'} ${paymentNumber} - ${resolvedEntityName} - ${paymentAmount} AOA`,
   });
 

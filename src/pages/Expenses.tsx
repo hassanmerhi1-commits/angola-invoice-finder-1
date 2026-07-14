@@ -11,6 +11,7 @@ import {
   payExpense, 
   getCaixas, 
   getBankAccounts,
+  invalidateCaixaListCache,
 } from '@/lib/accountingStorage';
 import { Expense, ExpenseCategory, EXPENSE_CATEGORIES, Caixa, BankAccount } from '@/types/accounting';
 import { format } from 'date-fns';
@@ -126,7 +127,7 @@ export default function Expenses() {
   const [statusFilter, setStatusFilter] = useState<string>('__all__');
   const [categoryFilter, setCategoryFilter] = useState<string>('__all__');
 
-  const expenseBranchId = apiBranchId ?? currentBranch?.id;
+  const expenseBranchId = apiBranchId || currentBranch?.id || user?.branchId;
   const expenseBranchName = currentBranch?.name || t.branchUi.headOffice;
 
   const refreshCaixasForExpense = useCallback(async (ensureIfEmpty = false) => {
@@ -137,6 +138,7 @@ export default function Expenses() {
     }
     setCaixaLoading(true);
     try {
+      invalidateCaixaListCache(expenseBranchId, expenseBranchName);
       const loggedIn = isJwtAuthToken(await ensureBackendAuthToken());
       const loadedCaixas = await getCaixas(expenseBranchId, expenseBranchName, { ensureIfEmpty });
       setCaixas(loadedCaixas);
@@ -170,10 +172,11 @@ export default function Expenses() {
       return;
     }
     const loggedInPromise = ensureBackendAuthToken().then(isJwtAuthToken);
+    invalidateCaixaListCache(expenseBranchId, expenseBranchName);
     const [loadedExpenses, loadedCaixas, loadedBanks] = await Promise.all([
       getExpenses(apiBranchId),
-      getCaixas(expenseBranchId, expenseBranchName, { ensureIfEmpty: false }),
-      getBankAccounts(apiBranchId),
+      getCaixas(expenseBranchId, expenseBranchName, { ensureIfEmpty: true }),
+      getBankAccounts(apiBranchId || expenseBranchId),
     ]);
     const loggedIn = await loggedInPromise;
     setExpenses(loadedExpenses);
@@ -190,8 +193,8 @@ export default function Expenses() {
   };
 
   useEffect(() => {
-    loadData();
-  }, [apiBranchId]);
+    void loadData();
+  }, [apiBranchId, expenseBranchId]);
 
   useEffect(() => {
     const onRefresh = () => { void loadData(); };

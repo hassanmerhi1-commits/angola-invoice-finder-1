@@ -31,6 +31,9 @@ import * as storage from '@/lib/storage';
 import { OPEN_ITEMS_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import { isOpenItemDebit, signedOpenItemBalance } from '@/lib/openItems';
 import { userHasPermission } from '@/lib/permissions';
+import { getCaixas, getBankAccounts, invalidateCaixaListCache } from '@/lib/accountingStorage';
+import { ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
+import type { Caixa, BankAccount } from '@/types/accounting';
 
 // Demo data for localStorage mode
 function mapPaymentRow(p: any): Payment {
@@ -159,13 +162,23 @@ export default function Payments() {
   const [entityId, setEntityId] = useState('');
   const [entitySearch, setEntitySearch] = useState('');
   const [entityPickerOpen, setEntityPickerOpen] = useState(false);
+  const [paymentSource, setPaymentSource] = useState<'caixa' | 'bank'>('caixa');
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'transfer' | 'cheque'>('cash');
+  const [caixaId, setCaixaId] = useState('');
+  const [bankAccountId, setBankAccountId] = useState('');
+  const [caixas, setCaixas] = useState<Caixa[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [caixaLoading, setCaixaLoading] = useState(false);
+  const [caixaLoadHint, setCaixaLoadHint] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [selectedOpenItems, setSelectedOpenItems] = useState<Set<string>>(new Set());
   const [entityDialogOpenItems, setEntityDialogOpenItems] = useState<OpenItem[]>([]);
   const [entityOpenItemsLoading, setEntityOpenItemsLoading] = useState(false);
+
+  const paymentBranchId = apiBranchId || currentBranch?.id || user?.branchId;
+  const paymentBranchName = currentBranch?.name || '';
 
   const canRecordReceipt = !!user && (
     userHasPermission(user.role, user.permissionOverrides, 'accounting_receipt')
@@ -276,12 +289,61 @@ export default function Payments() {
     setEntityPickerOpen(false);
     setEntityDialogOpenItems([]);
     setEntityOpenItemsLoading(false);
+    setPaymentSource('caixa');
     setPaymentMethod('cash');
+    setCaixaId('');
+    setBankAccountId('');
     setAmount('');
     setReference('');
     setNotes('');
     setSelectedOpenItems(new Set());
   };
+
+  const refreshTreasurySources = useCallback(async () => {
+    if (!paymentBranchId) {
+      setCaixas([]);
+      setBankAccounts([]);
+      setCaixaLoadHint(t.paymentsUi.caixaNeedsBranch);
+      return;
+    }
+    setCaixaLoading(true);
+    try {
+      invalidateCaixaListCache(paymentBranchId, paymentBranchName);
+      const loggedIn = isJwtAuthToken(await ensureBackendAuthToken());
+      const [loadedCaixas, loadedBanks] = await Promise.all([
+        getCaixas(paymentBranchId, paymentBranchName, { ensureIfEmpty: true }),
+        getBankAccounts(paymentBranchId),
+      ]);
+      setCaixas(loadedCaixas);
+      setBankAccounts(loadedBanks);
+      setCaixaLoadHint(
+        loadedCaixas.length > 0
+          ? null
+          : !loggedIn
+            ? t.paymentsUi.caixaNeedsLogin
+            : t.paymentsUi.caixaEmptyHint,
+      );
+      if (loadedCaixas.length > 0) {
+        setCaixaId((prev) => prev || loadedCaixas[0].id);
+      }
+      if (loadedBanks.length > 0) {
+        setBankAccountId((prev) => prev || loadedBanks[0].id);
+      }
+    } finally {
+      setCaixaLoading(false);
+    }
+  }, [
+    paymentBranchId,
+    paymentBranchName,
+    t.paymentsUi.caixaEmptyHint,
+    t.paymentsUi.caixaNeedsBranch,
+    t.paymentsUi.caixaNeedsLogin,
+  ]);
+
+  useEffect(() => {
+    if (!showNewDialog) return;
+    void refreshTreasurySources();
+  }, [showNewDialog, refreshTreasurySources]);
 
   useEffect(() => {
     if (!showNewDialog || !entityId) {
@@ -330,6 +392,18 @@ export default function Payments() {
       toast.error(t.paymentsUi.requiredFields);
       return;
     }
+    if (!paymentBranchId) {
+      toast.error(t.paymentsUi.caixaNeedsBranch);
+      return;
+    }
+    if (paymentSource === 'caixa' && !caixaId) {
+      toast.error(t.paymentsUi.selectCaixaRequired);
+      return;
+    }
+    if (paymentSource === 'bank' && bankAccounts.length > 0 && !bankAccountId) {
+      toast.error(t.paymentsUi.selectBankRequired);
+      return;
+    }
 
     const entity = entities.find(e => String(e.id) === String(entityId))
       || (paymentType === 'payment'
@@ -337,7 +411,7 @@ export default function Payments() {
         : clients.find((c) => String(c.id) === String(entityId)));
     const selected = entityPayableItems.filter(oi => selectedOpenItems.has(oi.id));
 
-    const branchId = currentBranch?.id || user?.branchId || 'branch-main';
+    const branchId = paymentBranchId;
     const createdBy = user?.id || user?.email || 'user-admin';
     const resolvedName = String(
       entity?.name
@@ -347,6 +421,7 @@ export default function Payments() {
     ).trim();
     // resolveEntityName falls back to raw id — don't treat that as a display name
     const entityName = resolvedName && resolvedName !== String(entityId) ? resolvedName : (entity?.name || '');
+    const method = paymentSource === 'caixa' ? 'cash' : (paymentMethod === 'cash' ? 'transfer' : paymentMethod);
 
     try {
       await createPayment({
@@ -354,7 +429,13 @@ export default function Payments() {
         entityType: paymentType === 'receipt' ? 'customer' : 'supplier',
         entityId,
         entityName,
-        paymentMethod,
+        paymentSource,
+        paymentMethod: method,
+        caixaId: paymentSource === 'caixa' ? caixaId : undefined,
+        bankAccountId: paymentSource === 'bank' ? bankAccountId : undefined,
+        bankAccount: paymentSource === 'bank'
+          ? (bankAccounts.find((b) => b.id === bankAccountId)?.accountNumber || bankAccountId || '')
+          : undefined,
         amount: Number(amount),
         branchId,
         createdBy,
@@ -744,17 +825,22 @@ export default function Payments() {
               </div>
             )}
 
-            {/* Payment Details */}
+            {/* Payment source + details */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>{t.paymentsUi.paymentMethod}</Label>
-                <Select value={paymentMethod} onValueChange={v => setPaymentMethod(v as any)}>
+                <Label>{t.paymentsUi.paymentSource}</Label>
+                <Select
+                  value={paymentSource}
+                  onValueChange={(v) => {
+                    const next = v as 'caixa' | 'bank';
+                    setPaymentSource(next);
+                    setPaymentMethod(next === 'caixa' ? 'cash' : 'transfer');
+                  }}
+                >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="cash">{t.paymentsUi.methods.cash}</SelectItem>
-                    <SelectItem value="card">{t.paymentsUi.methods.card}</SelectItem>
-                    <SelectItem value="transfer">{t.paymentsUi.bankTransfer}</SelectItem>
-                    <SelectItem value="cheque">{t.paymentsUi.methods.cheque}</SelectItem>
+                    <SelectItem value="caixa">{t.paymentsUi.sourceCaixa}</SelectItem>
+                    <SelectItem value="bank">{t.paymentsUi.sourceBank}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -765,6 +851,68 @@ export default function Payments() {
                 />
               </div>
             </div>
+
+            {paymentSource === 'caixa' ? (
+              <div>
+                <Label>{t.paymentsUi.selectCaixa} *</Label>
+                {caixaLoadHint && caixas.length === 0 && !caixaLoading && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 mt-1 mb-1">
+                    {caixaLoadHint}
+                  </p>
+                )}
+                <Select value={caixaId} onValueChange={setCaixaId} disabled={caixaLoading}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={caixaLoading ? t.paymentsUi.caixaLoading : t.paymentsUi.selectCaixaPlaceholder} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {caixaLoading ? (
+                      <SelectItem value="__loading__" disabled>{t.paymentsUi.caixaLoading}</SelectItem>
+                    ) : caixas.length === 0 ? (
+                      <SelectItem value="__none__" disabled>{t.paymentsUi.noCaixas}</SelectItem>
+                    ) : (
+                      caixas.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name} ({Number(c.currentBalance || 0).toLocaleString(locale)} Kz)
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>{t.paymentsUi.selectBank}</Label>
+                  <Select value={bankAccountId} onValueChange={setBankAccountId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={t.paymentsUi.selectBankPlaceholder} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bankAccounts.length === 0 ? (
+                        <SelectItem value="__none__" disabled>{t.paymentsUi.noBanks}</SelectItem>
+                      ) : (
+                        bankAccounts.map((a) => (
+                          <SelectItem key={a.id} value={a.id}>
+                            {a.bankName} - {a.accountNumber}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>{t.paymentsUi.paymentMethod}</Label>
+                  <Select value={paymentMethod} onValueChange={v => setPaymentMethod(v as any)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="transfer">{t.paymentsUi.bankTransfer}</SelectItem>
+                      <SelectItem value="card">{t.paymentsUi.methods.card}</SelectItem>
+                      <SelectItem value="cheque">{t.paymentsUi.methods.cheque}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
 
             <div>
               <Label>{t.paymentsUi.reference} ({t.paymentsUi.optional})</Label>

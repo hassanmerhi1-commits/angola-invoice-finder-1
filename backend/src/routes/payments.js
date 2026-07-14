@@ -57,6 +57,7 @@ module.exports = function(broadcastTable) {
       await broadcastTable('payments');
       try { await broadcastTable('journal_entries'); } catch (_) { /* non-fatal */ }
       try { await broadcastTable('chart_of_accounts'); } catch (_) { /* non-fatal */ }
+      try { await broadcastTable('caixas'); } catch (_) { /* non-fatal */ }
       if (req.body.entityType === 'supplier') {
         await broadcastTable('suppliers');
       }
