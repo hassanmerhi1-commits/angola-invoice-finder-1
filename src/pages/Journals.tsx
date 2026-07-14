@@ -60,6 +60,7 @@ const ENTRY_TYPES = [
   { value: 'pagamento', labelKey: 'payment', color: 'text-red-600' },
   { value: 'payment_out', labelKey: 'payment', color: 'text-red-600' },
   { value: 'payment', labelKey: 'payment', color: 'text-red-600' },
+  { value: 'expense', labelKey: 'adjustment', color: 'text-amber-700' },
   { value: 'ajuste', labelKey: 'adjustment', color: 'text-purple-600' },
   { value: 'adjustment', labelKey: 'adjustment', color: 'text-purple-600' },
   { value: 'abertura', labelKey: 'opening', color: 'text-muted-foreground' },

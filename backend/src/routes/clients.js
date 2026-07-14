@@ -1,6 +1,7 @@
 // Clients API routes — with auto Chart of Accounts sub-account creation
 const express = require('express');
 const db = require('../db');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 // Angola PGC (novo com IVA): Clientes group is account 31; client
 // sub-accounts default to 311 (Clientes - correntes). Auto codes are 8 digits
@@ -197,6 +198,13 @@ module.exports = function(broadcastTable) {
       await broadcastTable('chart_of_accounts');
 
       if (created) created._accountCode = accountCode;
+      auditErpSafe(req, {
+        table: 'clients',
+        id: created?.id,
+        action: 'create',
+        description: `Cliente criado: ${name.trim()}${normalizedNif ? ` (${normalizedNif})` : ''}`,
+        newValues: { name: name.trim(), nif: normalizedNif, accountCode },
+      });
       res.status(201).json(created);
     } catch (error) {
       try { await conn.query('ROLLBACK'); } catch (_) {}
@@ -237,6 +245,13 @@ module.exports = function(broadcastTable) {
       );
       
       await broadcastTable('clients');
+      auditErpSafe(req, {
+        table: 'clients',
+        id,
+        action: 'update',
+        description: `Cliente actualizado: ${name.trim()}`,
+        newValues: { name: name.trim(), nif: normalizedNif, isActive },
+      });
       res.json(result.rows[0]);
     } catch (error) {
       console.error('[CLIENTS ERROR]', error);
@@ -251,6 +266,12 @@ module.exports = function(broadcastTable) {
       await db.query('UPDATE clients SET is_active = false WHERE id = $1', [id]);
       
       await broadcastTable('clients');
+      auditErpSafe(req, {
+        table: 'clients',
+        id,
+        action: 'delete',
+        description: `Cliente desactivado: ${id}`,
+      });
       res.json({ success: true });
     } catch (error) {
       console.error('[CLIENTS ERROR]', error);

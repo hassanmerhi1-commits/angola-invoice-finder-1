@@ -2,6 +2,7 @@ const express = require('express');
 const { randomUUID } = require('crypto');
 const db = require('../db');
 const { postCaixaGlMovement } = require('../lib/caixaGlPosting');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 const EXPENSE_GL_ACCOUNTS = {
   staff: '722',
@@ -202,6 +203,19 @@ module.exports = function expensesRouter(broadcastTable) {
       }
 
       if (broadcastTable) await broadcastTable('expenses');
+      auditErpSafe(req, {
+        table: 'expenses',
+        id: row.id,
+        action: row.status === 'paid' ? 'create_and_pay' : 'create',
+        branchId: row.branchId || undefined,
+        description: `Despesa ${row.expenseNumber || row.id}: ${row.description} (${row.totalAmount} AOA)`,
+        newValues: {
+          category: row.category,
+          totalAmount: row.totalAmount,
+          status: row.status,
+          paymentSource: row.paymentSource,
+        },
+      });
       res.status(201).json({ data: row });
     } catch (error) {
       console.error('[EXPENSES] create:', error);
@@ -243,6 +257,14 @@ module.exports = function expensesRouter(broadcastTable) {
       }
 
       if (broadcastTable) await broadcastTable('expenses');
+      auditErpSafe(req, {
+        table: 'expenses',
+        id: row.id,
+        action: 'pay',
+        branchId: row.branchId || undefined,
+        description: `Despesa paga ${row.expenseNumber || row.id}: ${row.description} (${row.totalAmount} AOA)`,
+        newValues: { paidBy, paidAt, glError },
+      });
       res.json({ data: row, glError });
     } catch (error) {
       res.status(500).json({ error: error.message || 'Failed to pay expense' });

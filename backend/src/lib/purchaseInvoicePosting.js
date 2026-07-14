@@ -9,6 +9,7 @@ const {
   applyPurchaseSupplierToProducts,
   createOpenItem,
   syncSupplierBalanceFromOpenItems,
+  auditLog,
 } = require('../transactionEngine');
 const { createJournalEntry } = require('../accounting');
 const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
@@ -298,6 +299,29 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
   result.openItemId = confirmed.openItemId;
   result.journalEntryId = confirmed.journalEntryId;
   result.success = result.stockMovementIds.length > 0 && !!result.openItemId;
+
+  try {
+    await auditLog(client, {
+      tableName: 'purchase_invoices',
+      recordId: String(inv.id),
+      action: 'post',
+      userId: inv.createdBy || inv.created_by || null,
+      branchId: warehouseId,
+      newValues: {
+        invoiceNumber: inv.invoiceNumber || inv.invoice_number,
+        supplierName: inv.supplierName || inv.supplier_name,
+        total: Number(inv.total || 0),
+        stockMovements: result.stockMovementIds.length,
+        openItemId: result.openItemId,
+        journalEntryId: result.journalEntryId,
+        success: result.success,
+      },
+      description: `FC ${inv.invoiceNumber || inv.invoice_number || inv.id} posted — stock=${result.stockMovementIds.length} payable=${result.openItemId ? 'ok' : 'no'} journal=${result.journalEntryId ? 'ok' : 'no'}`,
+    });
+  } catch (auditErr) {
+    console.warn('[PURCHASE POST] audit skipped:', auditErr.message);
+  }
+
   return result;
 }
 

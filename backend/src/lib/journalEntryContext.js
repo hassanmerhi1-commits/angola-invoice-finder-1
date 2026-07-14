@@ -305,6 +305,32 @@ async function loadAdjustmentContext(db, referenceId) {
   };
 }
 
+async function loadExpenseContext(db, referenceId) {
+  try {
+    const res = await db.query(
+      `SELECT id, expense_number, description, category, total_amount, amount,
+              payment_source, payee_name, status, branch_name, paid_at, created_at
+       FROM expenses WHERE id = $1 LIMIT 1`,
+      [referenceId],
+    );
+    if (!res.rows.length) return null;
+    const e = res.rows[0];
+    return {
+      documentType: 'expense',
+      documentNumber: e.expense_number || e.id,
+      documentDate: e.paid_at || e.created_at,
+      entityName: e.payee_name || e.description,
+      notes: e.description,
+      paymentMethod: e.payment_source,
+      total: Number(e.total_amount ?? e.amount) || 0,
+      branchName: e.branch_name,
+      itemsSummary: e.category ? String(e.category) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function enrichJournalEntryContext(db, entry) {
   const referenceId = entry.reference_id || entry.referenceId;
   const referenceType = String(entry.reference_type || entry.referenceType || '').toLowerCase();
@@ -337,6 +363,9 @@ async function enrichJournalEntryContext(db, entry) {
       case 'adjustment':
       case 'ajuste':
         return await loadAdjustmentContext(db, referenceId);
+      case 'expense':
+      case 'despesa':
+        return await loadExpenseContext(db, referenceId);
       default:
         return null;
     }

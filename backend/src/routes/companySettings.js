@@ -1,6 +1,7 @@
 const express = require('express');
 const { getCompanySettings, saveCompanySettings } = require('../agt/companySettings');
 const { requirePermission } = require('../middleware/requirePermission');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 module.exports = function companySettingsRouter(broadcastTable) {
   const router = express.Router();
@@ -22,6 +23,16 @@ module.exports = function companySettingsRouter(broadcastTable) {
       if (typeof broadcastTable === 'function') {
         try { broadcastTable('company_settings'); } catch (_) { /* non-fatal */ }
       }
+      auditErpSafe(req, {
+        table: 'company_settings',
+        id: 'company',
+        action: 'update',
+        description: 'Definições da empresa actualizadas',
+        newValues: {
+          name: settings?.name || settings?.companyName,
+          nif: settings?.nif || settings?.taxId,
+        },
+      });
       res.json({ data: settings });
     } catch (error) {
       console.error('[COMPANY SETTINGS]', error);

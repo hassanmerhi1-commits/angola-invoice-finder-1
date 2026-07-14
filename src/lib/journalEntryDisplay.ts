@@ -176,6 +176,7 @@ export function resolveJournalDisplayType(referenceType: string, description: st
   const ref = String(referenceType || '').toLowerCase();
   if (ref === 'payment' || ref === 'pagamento') return 'payment_out';
   if (ref === 'receipt' || ref === 'recibo') return 'payment_receipt';
+  if (ref === 'expense' || ref === 'despesa') return 'expense';
   return referenceType || 'manual';
 }
 

@@ -9,6 +9,7 @@ const { listCustomerReceivables } = require('../lib/customerReceivablesList');
 const { listChecklistDues } = require('../lib/openItemsBriefing');
 const { requirePermission } = require('../middleware/requirePermission');
 const { ensureYearPeriods, fetchPeriods, getPeriodById } = require('../lib/accountingPeriods');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -290,6 +291,14 @@ module.exports = function(broadcastTable) {
       );
       await client.query('COMMIT');
       if (broadcastTable) await broadcastTable('accounting_periods');
+      auditErpSafe(req, {
+        table: 'accounting_periods',
+        id,
+        action: 'close',
+        description: `Período fechado: ${period.name || period.year + '/' + period.month}`,
+        newValues: { status: 'closed', closedBy },
+        oldValues: { status: period.status },
+      });
       res.json({ success: true });
     } catch (error) {
       await client.query('ROLLBACK');
@@ -324,6 +333,14 @@ module.exports = function(broadcastTable) {
       );
       await client.query('COMMIT');
       if (broadcastTable) await broadcastTable('accounting_periods');
+      auditErpSafe(req, {
+        table: 'accounting_periods',
+        id,
+        action: 'lock',
+        description: `Período bloqueado: ${period.name || period.year + '/' + period.month}`,
+        newValues: { status: 'locked' },
+        oldValues: { status: period.status },
+      });
       res.json({ success: true });
     } catch (error) {
       await client.query('ROLLBACK');
@@ -358,6 +375,14 @@ module.exports = function(broadcastTable) {
       );
       await client.query('COMMIT');
       if (broadcastTable) await broadcastTable('accounting_periods');
+      auditErpSafe(req, {
+        table: 'accounting_periods',
+        id,
+        action: 'reopen',
+        description: `Período reaberto: ${period.name || period.year + '/' + period.month}`,
+        newValues: { status: 'open' },
+        oldValues: { status: period.status },
+      });
       res.json({ success: true });
     } catch (error) {
       await client.query('ROLLBACK');

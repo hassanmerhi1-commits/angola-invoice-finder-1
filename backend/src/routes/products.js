@@ -27,6 +27,7 @@ const {
   sqlCanonicalSkuText,
 } = require('../lib/productSkuResolve');
 const { ensureFilialProductsForWarehouse } = require('../lib/filialStockRepair');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 /** Avoid running full filial reconcile on every grid poll (locks SQLite, trips health checks). */
 const filialGridReconcileAt = new Map();
@@ -1451,6 +1452,14 @@ module.exports = function(broadcastTable) {
           ],
         );
         await broadcastTable('products');
+        auditErpSafe(req, {
+          table: 'products',
+          id: result.rows[0]?.id,
+          action: 'update',
+          branchId: storedBranchId || undefined,
+          description: `Produto actualizado: ${name || canonicalSku} (${canonicalSku || ''})`,
+          newValues: { name, sku: canonicalSku, price: Number(price) || 0, branchId: storedBranchId },
+        });
         return res.status(200).json(result.rows[0]);
       }
 
@@ -1500,6 +1509,20 @@ module.exports = function(broadcastTable) {
       }
 
       await broadcastTable('products');
+      auditErpSafe(req, {
+        table: 'products',
+        id: result.rows[0]?.id,
+        action: 'create',
+        branchId: storedBranchId || undefined,
+        description: `Produto criado: ${name || skuTrim} (${skuTrim || ''})`,
+        newValues: {
+          name,
+          sku: skuTrim,
+          price: Number(price) || 0,
+          stock: stock ?? null,
+          branchId: storedBranchId,
+        },
+      });
       res.status(result.rows[0] ? 200 : 201).json(result.rows[0]);
     } catch (error) {
       console.error('[PRODUCTS ERROR]', error);
@@ -1656,6 +1679,19 @@ module.exports = function(broadcastTable) {
 
       invalidateSellingHintsCache();
       await broadcastTable('products');
+      auditErpSafe(req, {
+        table: 'products',
+        id,
+        action: 'update',
+        branchId: updated?.branch_id || undefined,
+        description: `Produto actualizado: ${updated?.name || ''} (${updated?.sku || id})`,
+        newValues: {
+          name: updated?.name,
+          sku: updated?.sku,
+          price: Number(updated?.price) || 0,
+          stock: Number(updated?.stock) || 0,
+        },
+      });
       res.json(updated);
     } catch (error) {
       console.error('[PRODUCTS ERROR]', error);
@@ -1799,6 +1835,13 @@ module.exports = function(broadcastTable) {
 
       console.log(`[PRODUCTS IMPORT] inserted=${inserted} updated=${updated} failed=${failed}`);
       await broadcastTable('products');
+      auditErpSafe(req, {
+        table: 'products',
+        id: null,
+        action: 'import',
+        description: `Importação de produtos: +${inserted} / ~${updated} / fail ${failed}`,
+        newValues: { inserted, updated, failed },
+      });
       res.status(201).json({ imported: inserted, updated, failed, errors: errors.slice(0, 50) });
     } catch (error) {
       console.error('[PRODUCTS BATCH ERROR]', error);
@@ -1821,6 +1864,12 @@ module.exports = function(broadcastTable) {
       await db.query('UPDATE products SET is_active = false WHERE id = $1', [id]);
 
       await broadcastTable('products');
+      auditErpSafe(req, {
+        table: 'products',
+        id,
+        action: 'delete',
+        description: `Produto desactivado: ${id}`,
+      });
       res.json({ success: true });
     } catch (error) {
       console.error('[PRODUCTS ERROR]', error);

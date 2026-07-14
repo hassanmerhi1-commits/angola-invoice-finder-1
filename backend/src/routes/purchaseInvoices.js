@@ -4,6 +4,7 @@ const db = require('../db');
 const { toRow, fromRow } = require('../purchaseInvoiceMappers');
 const { requirePermission } = require('../middleware/requirePermission');
 const { buildPurchaseInvoiceBranchFilter } = require('../lib/branchIdMatch');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 const UPSERT_SQL = `
   INSERT INTO purchase_invoices (
@@ -383,6 +384,19 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
               : null),
         };
       }
+      auditErpSafe(req, {
+        table: 'purchase_invoices',
+        id: row.id,
+        action: skipAccounting ? 'create' : 'create_and_post',
+        branchId: row.branch_id,
+        description: `FC ${row.invoice_number} — ${row.supplier_name || ''} (${Number(row.total) || 0} AOA)${skipAccounting ? ' [header only]' : ''}`,
+        newValues: {
+          invoiceNumber: row.invoice_number,
+          supplierName: row.supplier_name,
+          total: row.total,
+          accounting: payload.accounting || null,
+        },
+      });
       res.status(201).json(payload);
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }

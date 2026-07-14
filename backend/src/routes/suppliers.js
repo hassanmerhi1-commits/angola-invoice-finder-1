@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { openItemDebitAmountCase } = require('../lib/sqlDialect');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 // Angola PGC (novo com IVA): Fornecedores group is account 32; supplier
 // sub-accounts default to 321 (Fornecedores - correntes) but can be created
@@ -183,6 +184,13 @@ module.exports = function(broadcastTable) {
       await broadcastTable('chart_of_accounts');
 
       supplier._accountCode = accountCode;
+      auditErpSafe(req, {
+        table: 'suppliers',
+        id: supplier.id,
+        action: 'create',
+        description: `Fornecedor criado: ${normalizedName}${normalizedNif ? ` (${normalizedNif})` : ''}`,
+        newValues: { name: normalizedName, nif: normalizedNif, accountCode },
+      });
       res.status(201).json(supplier);
     } catch (error) {
       await client.query('ROLLBACK');
@@ -284,6 +292,13 @@ module.exports = function(broadcastTable) {
       await broadcastTable('chart_of_accounts');
 
       console.log(`[SUPPLIERS] Batch import: ${imported} imported, ${failed} failed`);
+      auditErpSafe(req, {
+        table: 'suppliers',
+        id: null,
+        action: 'import',
+        description: `Importação de fornecedores: +${imported} / fail ${failed}`,
+        newValues: { imported, failed },
+      });
       res.json({ imported, failed, errors });
     } catch (error) {
       await client.query('ROLLBACK');
@@ -306,6 +321,13 @@ module.exports = function(broadcastTable) {
         [name, nif, email, phone, address, city, country, contactPerson, paymentTerms, notes, isActive, id]
       );
       await broadcastTable('suppliers');
+      auditErpSafe(req, {
+        table: 'suppliers',
+        id,
+        action: 'update',
+        description: `Fornecedor actualizado: ${name || id}`,
+        newValues: { name, nif, isActive },
+      });
       res.json(result.rows[0]);
     } catch (error) {
       console.error('[SUPPLIERS ERROR]', error);
@@ -332,6 +354,12 @@ module.exports = function(broadcastTable) {
       const { id } = req.params;
       await db.query('UPDATE suppliers SET is_active = false WHERE id = $1', [id]);
       await broadcastTable('suppliers');
+      auditErpSafe(req, {
+        table: 'suppliers',
+        id,
+        action: 'delete',
+        description: `Fornecedor desactivado: ${id}`,
+      });
       res.json({ success: true });
     } catch (error) {
       console.error('[SUPPLIERS ERROR]', error);

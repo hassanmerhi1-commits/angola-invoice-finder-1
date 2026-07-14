@@ -7,6 +7,7 @@ const db = require('../db');
 const { createPostgresBackup, restorePostgresBackup } = require('../lib/pgBackupCli');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 let restoreInProgress = false;
 
@@ -147,6 +148,14 @@ module.exports = function backupRoutes() {
       const stats = fs.statSync(filepath);
       console.log(`[BACKUP] Created: ${filename} (${(stats.size / 1024).toFixed(1)} KB)`);
 
+      auditErpSafe(req, {
+        table: 'backup',
+        id: filename,
+        action: 'create',
+        description: `Backup criado: ${filename} (${(stats.size / 1024).toFixed(1)} KB)`,
+        newValues: { filename, size: stats.size, engine: db.engine },
+      });
+
       res.json({
         success: true,
         filename,
@@ -211,6 +220,12 @@ module.exports = function backupRoutes() {
         }
 
         console.log(`[BACKUP] Restored from upload (${originalName})`);
+        auditErpSafe(req, {
+          table: 'backup',
+          id: originalName,
+          action: 'restore',
+          description: `Backup restaurado (upload): ${originalName}`,
+        });
         res.json({
           success: true,
           requiresRestart: db.engine === 'sqlite',
@@ -284,6 +299,12 @@ module.exports = function backupRoutes() {
       }
 
       console.log(`[BACKUP] Restored: ${safe}`);
+      auditErpSafe(req, {
+        table: 'backup',
+        id: safe,
+        action: 'restore',
+        description: `Backup restaurado: ${safe}`,
+      });
       res.json({
         success: true,
         filename: safe,

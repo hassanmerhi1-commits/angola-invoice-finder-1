@@ -1,6 +1,7 @@
 // Workflow Approval API Routes
 const express = require('express');
 const db = require('../db');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -184,6 +185,19 @@ module.exports = function(broadcastTable) {
       broadcastTable('approval_requests');
 
       const updated = await db.query('SELECT * FROM approval_requests WHERE id = $1', [id]);
+      auditErpSafe(req, {
+        table: 'approval_requests',
+        id,
+        action,
+        description: `Aprovação ${action}: ${request.document_type || ''} ${request.document_number || request.document_id || id}`,
+        newValues: {
+          status: updated.rows[0]?.status,
+          documentType: request.document_type,
+          documentId: request.document_id,
+          userName,
+          comments,
+        },
+      });
       res.json(updated.rows[0]);
     } catch (error) {
       await client.query('ROLLBACK');

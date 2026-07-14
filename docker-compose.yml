@@ -34,7 +34,7 @@ services:
       NODE_ENV: production
       BACKUP_DIR: /app/backups
       # Shown in /api/health appVersion — bump on release so deploys are verifiable.
-      NEXOR_APP_VERSION: 1.1.19
+      NEXOR_APP_VERSION: 1.1.20
     ports:
       - "3000:3000"
     volumes:

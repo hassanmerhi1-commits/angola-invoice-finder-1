@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
 const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -252,6 +253,13 @@ module.exports = function(broadcastTable) {
       `, [code, name, description, account_type, account_nature, parent_id, level || 1, is_header || false, opening_balance || 0, branch_id]);
 
       await broadcastTable('chart_of_accounts');
+      auditErpSafe(req, {
+        table: 'chart_of_accounts',
+        id: result.rows[0]?.id,
+        action: 'create',
+        description: `Conta criada: ${code} — ${name}`,
+        newValues: { code, name, account_type, account_nature, opening_balance },
+      });
       res.status(201).json(result.rows[0]);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
@@ -298,15 +306,14 @@ module.exports = function(broadcastTable) {
       }
 
       await broadcastTable('chart_of_accounts');
+      auditErpSafe(req, {
+        table: 'chart_of_accounts',
+        id,
+        action: 'update',
+        description: `Conta actualizada: ${result.rows[0]?.code || id} — ${result.rows[0]?.name || ''}`,
+        newValues: { code, name, is_active, opening_balance },
+      });
       res.json(result.rows[0]);
-    } catch (error) {
-      console.error('[CHART OF ACCOUNTS ERROR]', error);
-      res.status(500).json({ error: 'Failed to update account' });
-    }
-  });
-
-  // Delete (soft) account
-  router.delete('/:id', async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -324,6 +331,12 @@ module.exports = function(broadcastTable) {
 
       await db.query('UPDATE chart_of_accounts SET is_active = false WHERE id = $1', [id]);
       await broadcastTable('chart_of_accounts');
+      auditErpSafe(req, {
+        table: 'chart_of_accounts',
+        id,
+        action: 'delete',
+        description: `Conta desactivada: ${id}`,
+      });
       res.json({ success: true });
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);

@@ -6,6 +6,7 @@ const { requirePermission } = require('../middleware/requirePermission');
 const { buildCaixaReconciliation } = require('../lib/caixaReconciliation');
 const { applyCaixaClose } = require('../sync/caixaIngest');
 const { postCaixaGlMovement, syncCaixaGlFromRecord } = require('../lib/caixaGlPosting');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 async function caixaTablesExist() {
   if (caixaTablesExist.cached !== undefined) return caixaTablesExist.cached;
@@ -249,6 +250,14 @@ module.exports = function caixaRouter(broadcastTable) {
 
       if (broadcastTable) await broadcastTable('caixa_sessions');
       const row = await db.query(`SELECT * FROM caixa_sessions WHERE id = $1`, [sessionId]);
+      auditErpSafe(req, {
+        table: 'caixa_sessions',
+        id: sessionId,
+        action: 'open',
+        branchId,
+        description: `Caixa aberta — ${branchName || branchId} (saldo ${openBal})`,
+        newValues: { openingBalance: openBal, openedBy },
+      });
       res.status(201).json(mapSessionRow(row.rows[0]));
     } catch (error) {
       console.error('[CAIXA] session open:', error);
@@ -264,6 +273,14 @@ module.exports = function caixaRouter(broadcastTable) {
       if (broadcastTable) {
         try { await broadcastTable('journal_entries'); } catch (_) { /* non-fatal */ }
       }
+      auditErpSafe(req, {
+        table: 'caixa_gl',
+        id: result?.journalEntryId || result?.id || null,
+        action: 'gl_post',
+        branchId: req.body?.branchId,
+        description: `Caixa GL: ${req.body?.description || req.body?.referenceType || 'movimento'} (${Number(req.body?.amount) || 0} AOA)`,
+        newValues: req.body || {},
+      });
       if (result.alreadyPosted) {
         return res.json(result);
       }
@@ -327,6 +344,17 @@ module.exports = function caixaRouter(broadcastTable) {
         await broadcastTable('caixa_sessions');
         await broadcastTable('caixas');
       }
+      auditErpSafe(req, {
+        table: 'caixa_sessions',
+        id,
+        action: 'close',
+        branchId: body.branchId,
+        description: `Caixa fechada — ${body.branchId || id}`,
+        newValues: {
+          closingBalance: body.closingBalance ?? body.countedCash,
+          closedBy: body.closedBy,
+        },
+      });
       res.json(result);
     } catch (error) {
       console.error('[CAIXA] session close:', error);
