@@ -33,7 +33,7 @@ export default function StockByCategoryReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
-  const { products } = useProducts(apiBranchId);
+  const { products } = useProducts(apiBranchId, { light: true });
   const { companyName } = useCompanyLogo();
 
   const { rows, totals } = useMemo(() => {

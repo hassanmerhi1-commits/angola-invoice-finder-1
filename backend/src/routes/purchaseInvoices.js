@@ -5,6 +5,7 @@ const { toRow, fromRow } = require('../purchaseInvoiceMappers');
 const { requirePermission } = require('../middleware/requirePermission');
 const { buildPurchaseInvoiceBranchFilter } = require('../lib/branchIdMatch');
 const { auditErpSafe } = require('../lib/erpAudit');
+const { parseListPagination } = require('../lib/listPagination');
 
 const UPSERT_SQL = `
   INSERT INTO purchase_invoices (
@@ -212,6 +213,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   router.get('/', async (req, res) => {
     try {
       const { branchId, status } = req.query;
+      const { limit, offset } = parseListPagination(req, { defaultLimit: 300, maxLimit: 1000 });
       // List payload omits heavy JSON blobs so LAN clients do not time out / hang.
       let query = `SELECT id, invoice_number, supplier_account_code, supplier_name, supplier_id,
         supplier_nif, supplier_phone, supplier_balance, ref, supplier_invoice_no,
@@ -220,6 +222,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
         purchase_account_code, iva_account_code, transaction_type, currency_rate,
         tax_rate_2, order_no, surcharge_percent, change_price, is_pending, extra_note,
         freight_cost, freight_other_costs, freight_source_account, freight_source_name,
+        freight_payment_source, freight_caixa_id, freight_bank_account_id,
         NULL AS lines_json, NULL AS journal_lines_json,
         subtotal, iva_total, total, status,
         purchase_returns_status, purchase_returns_closed_at,
@@ -239,9 +242,15 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
         query += ` AND status = $${idx++}`;
         params.push(status);
       }
-      query += ' ORDER BY created_at DESC';
+      query += ` ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
+      params.push(limit, offset);
       const result = await db.query(query, params);
-      res.json((result.rows || []).map(fromRow));
+      res.json({
+        items: (result.rows || []).map(fromRow),
+        limit,
+        offset,
+        hasMore: (result.rows || []).length === limit,
+      });
     } catch (error) {
       console.error('[PURCHASE INVOICES]', error);
       res.status(500).json({ error: 'Failed to list purchase invoices' });

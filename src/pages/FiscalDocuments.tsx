@@ -63,7 +63,7 @@ export default function FiscalDocuments() {
   const canExportSaft = hasPermission('saft_export');
   const { currentBranch, apiBranchId, branches } = useBranchScope();
   const { sales } = useSales(apiBranchId);
-  const { products } = useProducts(apiBranchId);
+  const { products } = useProducts(apiBranchId, { light: true });
   const { orders } = usePurchaseOrders(apiBranchId);
   const { creditNotes, createCreditNote, refreshCreditNotes } = useCreditNotes(apiBranchId);
   const { transmit: transmitAgt, transmitting: agtTransmitting } = useAgtTransmit();

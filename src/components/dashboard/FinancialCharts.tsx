@@ -50,7 +50,7 @@ function useChartSales(): Sale[] {
 
 function useChartProducts(): Product[] {
   const { apiBranchId } = useBranchScope();
-  const { products } = useProducts(apiBranchId);
+  const { products } = useProducts(apiBranchId, { light: true });
   return products;
 }
 

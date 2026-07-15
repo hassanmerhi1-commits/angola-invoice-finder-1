@@ -5,7 +5,6 @@ import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
-import { useProducts } from '@/hooks/useERP';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -21,7 +20,6 @@ import {
   PieChart, Truck, CheckCircle, Search, BookOpen, ArrowRightLeft,
   Users, Calendar, AlertTriangle, CreditCard, GitBranch,
 } from 'lucide-react';
-import { Product } from '@/types/erp';
 import { NEXOR_STAT_CARD, NEXOR_SECTION_LABEL, NEXOR_TONE_TILE, type NexorTone } from '@/lib/nexorToneStyles';
 import { NEXOR_FEATURE_SHORTCUT_BTN } from '@/lib/nexorToolbarStyles';
 
@@ -42,7 +40,14 @@ export default function Dashboard() {
   const { language, t } = useTranslation();
   const d = t.dashboardUi;
   const { companyName, logo } = useCompanyLogo();
-  const { products } = useProducts(apiBranchId);
+  const [lowStockProducts, setLowStockProducts] = useState<Array<{
+    id: string;
+    name: string;
+    sku: string;
+    stock: number;
+    minStock: number;
+    unit: string;
+  }>>([]);
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
 
   // Fetch real KPIs
@@ -58,23 +63,32 @@ export default function Dashboard() {
     })();
   }, [apiBranchId]);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const { api } = await import('@/lib/api/client');
+        const result = await api.products.lowStock(apiBranchId);
+        if (!result.data) return;
+        setLowStockProducts(
+          (result.data as Array<Record<string, unknown>>)
+            .slice(0, 10)
+            .map((row) => ({
+              id: String(row.id || ''),
+              name: String(row.name || ''),
+              sku: String(row.sku || ''),
+              stock: Number(row.stock || 0),
+              minStock: Number(row.min_stock ?? row.minStock ?? 0),
+              unit: String(row.unit || ''),
+            })),
+        );
+      } catch {
+        setLowStockProducts([]);
+      }
+    })();
+  }, [apiBranchId]);
+
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const fmt = (n: number) => (n || 0).toLocaleString(locale);
-
-  // Low stock alerts from actual product data
-  const lowStockProducts = useMemo(() => {
-    return products
-      .filter(p => p.isActive && p.minStock && p.minStock > 0 && p.stock <= p.minStock)
-      .sort((a, b) => a.stock - b.stock)
-      .slice(0, 10);
-  }, [products]);
-
-  const overstockProducts = useMemo(() => {
-    return products
-      .filter(p => p.isActive && p.maxStock && p.maxStock > 0 && p.stock > p.maxStock)
-      .sort((a, b) => b.stock - a.stock)
-      .slice(0, 5);
-  }, [products]);
 
   const documentFlow = useMemo(() => [
     { label: t.documents.proforma, icon: ClipboardList, path: '/proforma' },
@@ -174,16 +188,10 @@ export default function Dashboard() {
 
         {/* Alerts Row */}
         <div className="flex gap-2 flex-wrap">
-          {lowStockProducts.length > 0 && (
+          {((kpis?.lowStockCount ?? 0) > 0 || lowStockProducts.length > 0) && (
             <Badge variant="outline" className="cursor-pointer gap-1.5 py-1 bg-amber-50/80 border-amber-200/80 text-amber-800 hover:bg-amber-100/80" onClick={() => navigate('/inventory')}>
               <AlertTriangle className="w-3 h-3" />
-              {d.lowStockBadge.replace('{count}', String(lowStockProducts.length))}
-            </Badge>
-          )}
-          {overstockProducts.length > 0 && (
-            <Badge variant="outline" className="cursor-pointer gap-1.5 py-1 bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100" onClick={() => navigate('/inventory')}>
-              <Package className="w-3 h-3" />
-              {d.overstockBadge.replace('{count}', String(overstockProducts.length))}
+              {d.lowStockBadge.replace('{count}', String(kpis?.lowStockCount ?? lowStockProducts.length))}
             </Badge>
           )}
           {(kpis?.pendingApprovals ?? 0) > 0 && (

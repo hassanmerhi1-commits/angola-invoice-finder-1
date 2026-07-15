@@ -30,7 +30,7 @@ export default function TopCustomersReport() {
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
   const { sales } = useSales(apiBranchId);
-  const { products } = useProducts(apiBranchId);
+  const { products } = useProducts(apiBranchId, { light: true });
 
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));

@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api/client';
+import { unwrapListPayload } from '@/lib/listCache';
 import { getTransactionHistory } from '@/lib/transactionHistory';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useBranchContext } from '@/contexts/BranchContext';
@@ -385,11 +386,11 @@ export function InventoryPurchasePricePanel({
         if (branchIds.length > 0) {
           for (const branchId of branchIds) {
             const result = await api.purchaseInvoices.list({ branchId, status: 'confirmed' });
-            addInvoices(result.data || []);
+            addInvoices(unwrapListPayload(result.data).items);
           }
         } else {
           const result = await api.purchaseInvoices.list({ status: 'confirmed' });
-          addInvoices(result.data || []);
+          addInvoices(unwrapListPayload(result.data).items);
         }
 
         const rows: PurchasePriceRow[] = [];

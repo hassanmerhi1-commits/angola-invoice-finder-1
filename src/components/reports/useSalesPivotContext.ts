@@ -12,7 +12,7 @@ import type { ProductMeta, SalesPivotContext } from '@/lib/reports/salesPivot';
 export function useSalesPivotContext(apiBranchId?: string): SalesPivotContext {
   const { t } = useTranslation();
   const { branches, currentBranch } = useBranchScope();
-  const { products } = useProducts(apiBranchId);
+  const { products } = useProducts(apiBranchId, { light: true });
 
   const productMeta = useMemo(() => {
     const m = new Map<string, ProductMeta>();

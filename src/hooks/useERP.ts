@@ -208,13 +208,18 @@ export type ProductsListOptions = { light?: boolean; enabled?: boolean };
 
 export function useProducts(branchId?: string, listOptions?: ProductsListOptions) {
   const listEnabled = listOptions?.enabled !== false;
+  const productsCacheKey = `products:${branchId ?? 'all'}:${listOptions?.light ? 'light' : 'full'}`;
   const { branches } = useBranchContext();
   const catalogBranchIds = useMemo(
     () => branches.filter((b) => normalizeIsMain(b.isMain)).map((b) => b.id),
     [branches],
   );
-  const [products, setProducts] = useState<Product[]>([]);
-  const [productsLoading, setProductsLoading] = useState(listEnabled);
+  const [products, setProducts] = useState<Product[]>(
+    () => (listEnabled ? getCachedList<Product[]>(productsCacheKey) : null) ?? [],
+  );
+  const [productsLoading, setProductsLoading] = useState(
+    () => listEnabled && !(getCachedList<Product[]>(productsCacheKey)?.length),
+  );
   /** Ignores stale list fetches that finish after a newer write (e.g. add product). */
   const listGenerationRef = useRef(0);
 
@@ -317,6 +322,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
       const list = await fetchMergedProductList();
       if (generation === listGenerationRef.current) {
         setProducts(list);
+        setCachedList(productsCacheKey, list);
         try {
           const { syncProductsToLocalCache } = await import('@/lib/sync/offlineFirst');
           await syncProductsToLocalCache(
@@ -340,7 +346,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
         setProductsLoading(false);
       }
     }
-  }, [fetchMergedProductList, listEnabled]);
+  }, [fetchMergedProductList, listEnabled, productsCacheKey]);
 
   useEffect(() => {
     if (!listEnabled) {

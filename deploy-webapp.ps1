@@ -4,8 +4,8 @@
 Write-Host "`n=== Kwanza ERP - Build & Deploy ===" -ForegroundColor Cyan
 
 # 1. Build
-Write-Host "`n[1/2] Building frontend..." -ForegroundColor Yellow
-npm run build
+Write-Host "`n[1/2] Building frontend for /app..." -ForegroundColor Yellow
+npm run build:webapp
 if ($LASTEXITCODE -ne 0) { Write-Host "Build failed!" -ForegroundColor Red; exit 1 }
 
 # 2. Copy

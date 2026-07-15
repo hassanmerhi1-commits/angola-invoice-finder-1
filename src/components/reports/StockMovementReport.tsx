@@ -29,7 +29,7 @@ export default function StockMovementReport() {
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
   const branchFilter = apiBranchId;
-  const { products } = useProducts(branchFilter);
+  const { products } = useProducts(branchFilter, { light: true });
   
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [startDate, setStartDate] = useState(() => {

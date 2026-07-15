@@ -24,3 +24,23 @@ export function clearCachedList(key?: string): void {
   if (key) store.delete(key);
   else store.clear();
 }
+
+/** Normalize list API payloads — supports legacy arrays and paginated `{ items, hasMore }`. */
+export function unwrapListPayload<T>(data: unknown): {
+  items: T[];
+  hasMore: boolean;
+  limit?: number;
+  offset?: number;
+} {
+  if (Array.isArray(data)) return { items: data as T[], hasMore: false };
+  const obj = data as { items?: T[]; hasMore?: boolean; limit?: number; offset?: number } | null;
+  if (obj && Array.isArray(obj.items)) {
+    return {
+      items: obj.items,
+      hasMore: !!obj.hasMore,
+      limit: obj.limit,
+      offset: obj.offset,
+    };
+  }
+  return { items: [], hasMore: false };
+}

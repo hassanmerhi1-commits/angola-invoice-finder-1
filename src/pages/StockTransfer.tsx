@@ -104,7 +104,7 @@ export default function StockTransfer() {
   }, [scopeId, currentBranch?.id]);
 
   // Load products from the selected SOURCE branch
-  const { products: sourceProducts } = useProducts(fromBranchId || undefined);
+  const { products: sourceProducts } = useProducts(fromBranchId || undefined, { light: true });
 
   const pendingTransfers = transfers.filter(t => t.status === 'pending');
   const inTransitTransfers = transfers.filter(t => t.status === 'in_transit');

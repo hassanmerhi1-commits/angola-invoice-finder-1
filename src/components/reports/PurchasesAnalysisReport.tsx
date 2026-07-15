@@ -7,6 +7,7 @@ import { useProducts } from '@/hooks/useERP';
 import { ShoppingCart, Loader2, Truck, Package, Tags, Calendar } from 'lucide-react';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { api } from '@/lib/api/client';
+import { unwrapListPayload } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { buildPurchasesPivot, type PurchasesPivotContext } from '@/lib/reports/purchasesPivot';
@@ -23,7 +24,7 @@ export default function PurchasesAnalysisReport({
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
-  const { products } = useProducts(apiBranchId);
+  const { products } = useProducts(apiBranchId, { light: true });
 
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
@@ -39,7 +40,8 @@ export default function PurchasesAnalysisReport({
       setLoading(true);
       const res = await api.purchaseInvoices.list(apiBranchId ? { branchId: apiBranchId } : undefined);
       if (!cancelled) {
-        setPurchases(Array.isArray(res.data) ? res.data : []);
+        const { items } = unwrapListPayload(res.data);
+        setPurchases(items);
         setLoading(false);
       }
     })();

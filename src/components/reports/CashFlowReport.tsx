@@ -9,6 +9,7 @@ import { Download, ArrowUpCircle, ArrowDownCircle, Wallet, Loader2 } from 'lucid
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, parseISO } from 'date-fns';
 import { exportToExcel } from '@/lib/excel';
 import { api } from '@/lib/api/client';
+import { unwrapListPayload } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
@@ -29,7 +30,8 @@ export default function CashFlowReport() {
       setLoading(true);
       const res = await api.purchaseInvoices.list(apiBranchId ? { branchId: apiBranchId } : undefined);
       if (!cancelled) {
-        setPurchases(Array.isArray(res.data) ? res.data : []);
+        const { items } = unwrapListPayload(res.data);
+        setPurchases(items);
         setLoading(false);
       }
     })();

@@ -98,7 +98,7 @@ export default function Reports() {
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
   const { sales } = useSales(apiBranchId);
-  const { products } = useProducts(apiBranchId);
+  const { products } = useProducts(apiBranchId, { light: true });
 
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
 

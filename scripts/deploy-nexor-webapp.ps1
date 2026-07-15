@@ -4,8 +4,8 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repoRoot
 try {
-    Write-Host 'Building frontend (npm run build)...' -ForegroundColor Cyan
-    npm run build
+    Write-Host 'Building frontend (npm run build:webapp)...' -ForegroundColor Cyan
+    npm run build:webapp
 } finally {
     Pop-Location
 }

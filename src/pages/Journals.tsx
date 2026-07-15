@@ -31,7 +31,7 @@ import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Account } from '@/types/accounting';
 import { api } from '@/lib/api/client';
-import { getCachedList, setCachedList } from '@/lib/listCache';
+import { getCachedList, setCachedList, unwrapListPayload } from '@/lib/listCache';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
 import { useTrialBalance } from '@/hooks/useChartOfAccounts';
 import { useSales } from '@/hooks/useERP';
@@ -97,11 +97,15 @@ function useJournalEntries(branchId: string | undefined, labels: JournalDisplayL
     const allEntries: JournalDisplayEntry[] = [];
 
     try {
-      const response = await api.journalEntries.list(branchId ? { branchId } : undefined);
+      const response = await api.journalEntries.list({
+        ...(branchId ? { branchId } : {}),
+        limit: 200,
+        offset: 0,
+      });
       if (response.error) {
         console.warn('[Journals] Failed to load journal entries:', response.error);
       }
-      const rows = Array.isArray(response.data) ? response.data : [];
+      const { items: rows } = unwrapListPayload<Record<string, unknown>>(response.data);
       const journalEntries = branchId
         ? rows.filter((je: Record<string, unknown>) =>
             branchIdsEquivalent(String(je.branch_id ?? je.branchId), branchId),

@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { enrichJournalEntryContext, enrichJournalEntries } = require('../lib/journalEntryContext');
 const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
+const { parseListPagination, parseTruthyQuery } = require('../lib/listPagination');
 
 const ENTRY_HEADER_SELECT = `
   SELECT je.*,
@@ -33,6 +34,9 @@ module.exports = function(broadcastTable) {
   router.get('/', async (req, res) => {
     try {
       const { branchId, referenceType, startDate, endDate } = req.query;
+      const { limit, offset } = parseListPagination(req, { defaultLimit: 200, maxLimit: 500 });
+      const includeLines = parseTruthyQuery(req.query.includeLines);
+      const includeContext = parseTruthyQuery(req.query.includeContext);
       let query = `${ENTRY_HEADER_SELECT} WHERE 1=1`;
       const params = [];
       let paramIndex = 1;
@@ -58,15 +62,29 @@ module.exports = function(broadcastTable) {
         params.push(endDate);
       }
 
-      query += ' ORDER BY je.entry_date DESC, je.created_at DESC';
+      query += ` ORDER BY je.entry_date DESC, je.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+      params.push(limit, offset);
       const result = await db.query(query, params);
 
-      for (const entry of result.rows) {
-        entry.lines = await loadJournalLines(entry.id);
+      if (includeLines) {
+        for (const entry of result.rows) {
+          entry.lines = await loadJournalLines(entry.id);
+        }
+      } else {
+        for (const entry of result.rows) {
+          entry.lines = [];
+        }
       }
-      await enrichJournalEntries(db, result.rows);
+      if (includeContext) {
+        await enrichJournalEntries(db, result.rows);
+      }
 
-      res.json(result.rows);
+      res.json({
+        items: result.rows,
+        limit,
+        offset,
+        hasMore: result.rows.length === limit,
+      });
     } catch (error) {
       console.error('[JOURNAL ENTRIES ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch journal entries' });

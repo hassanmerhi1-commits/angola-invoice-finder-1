@@ -10,6 +10,7 @@ import { Download, Receipt, ArrowDownCircle, ArrowUpCircle, Scale, Loader2 } fro
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { exportToExcel } from '@/lib/excel';
 import { api } from '@/lib/api/client';
+import { unwrapListPayload } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
 
 interface RateBucket {
@@ -35,7 +36,8 @@ export default function VatSummaryReport() {
       setLoading(true);
       const res = await api.purchaseInvoices.list(apiBranchId ? { branchId: apiBranchId } : undefined);
       if (!cancelled) {
-        setPurchases(Array.isArray(res.data) ? res.data : []);
+        const { items } = unwrapListPayload(res.data);
+        setPurchases(items);
         setLoading(false);
       }
     })();

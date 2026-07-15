@@ -4,6 +4,7 @@ import { hydrateCompanySettingsFromServer } from '@/lib/companySettings';
 import { onTableSync, realtimeSocket } from '@/lib/realtime/socket';
 import {
   refreshAllSyncedTables,
+  refreshCoreSyncedTables,
   scheduleTableRefresh,
   TABLE_REFRESH_EVENT,
   type RefreshableTable,
@@ -11,7 +12,7 @@ import {
 
 const SOCKET_WATCH_MS = 30_000;
 const RECONNECT_POLL_MS = 15_000;
-const SOFT_REFRESH_MS = 600_000;
+const SOFT_REFRESH_MS = 1_800_000; // 30 min — light safety refresh (core tables only)
 
 function isLanClient(): boolean {
   if (typeof window === 'undefined') return false;
@@ -94,7 +95,7 @@ export function useRealtimeSyncBridge(enabled: boolean) {
 
     const softRefresh = window.setInterval(() => {
       if (!isLanClient()) return;
-      refreshAllSyncedTables();
+      refreshCoreSyncedTables();
     }, SOFT_REFRESH_MS);
 
   return () => {

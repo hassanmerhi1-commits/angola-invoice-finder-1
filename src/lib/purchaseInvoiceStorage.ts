@@ -6,6 +6,7 @@ import { Product, Branch } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
 import { branchIdsEquivalent, resolveUserBranch } from '@/lib/branchAccess';
+import { unwrapListPayload } from '@/lib/listCache';
 import { lsGet, lsSet } from '@/lib/dbHelper';
 
 const STORAGE_KEY = 'kwanzaerp_purchase_invoices';
@@ -26,8 +27,9 @@ async function migrateLegacyPurchaseInvoicesToApi(): Promise<void> {
     localStorage?.setItem(LEGACY_MIGRATED_KEY, '1');
     return;
   }
-  const existing = await api.purchaseInvoices.list();
-  if (existing.data && existing.data.length > 0) {
+  const existing = await api.purchaseInvoices.list({ limit: 1 });
+  const { items: existingItems } = unwrapListPayload(existing.data);
+  if (existingItems.length > 0) {
     localStorage?.setItem(LEGACY_MIGRATED_KEY, '1');
     return;
   }
@@ -361,6 +363,7 @@ export function invoiceBelongsToBranch(
 export async function getPurchaseInvoices(
   branchId?: string,
   branchCatalog?: BranchRef[],
+  opts?: { limit?: number; offset?: number },
 ): Promise<PurchaseInvoice[]> {
   const catalog = branchCatalog as Branch[] | undefined;
   const resolvedBranch = branchId
@@ -369,12 +372,17 @@ export async function getPurchaseInvoices(
 
   if (usePurchaseInvoiceApi()) {
     await migrateLegacyPurchaseInvoicesToApi();
-    const res = await api.purchaseInvoices.list(resolvedBranch ? { branchId: resolvedBranch } : undefined);
+    const res = await api.purchaseInvoices.list({
+      ...(resolvedBranch ? { branchId: resolvedBranch } : {}),
+      limit: opts?.limit ?? 300,
+      offset: opts?.offset ?? 0,
+    });
     if (res.error) {
       console.error('[PurchaseInvoice] API list failed:', res.error);
       throw new Error(res.error);
     }
-    let docs = (res.data || []).map((row) =>
+    const { items } = unwrapListPayload<Record<string, unknown>>(res.data);
+    let docs = items.map((row) =>
       normalizeInvoiceWarehouse(mapPIFromApiRow(row)),
     );
     if (resolvedBranch) {

@@ -94,6 +94,14 @@ export function scheduleTableRefresh(table: RefreshableTable, entityId?: string)
   flushTimer = window.setTimeout(flushPendingRefreshes, 250);
 }
 
+export function refreshCoreSyncedTables() {
+  if (typeof window === 'undefined') return;
+  const core: RefreshableTable[] = ['products', 'sales', 'clients', 'suppliers', 'categories'];
+  for (const table of core) {
+    dispatchTableRefresh(table);
+  }
+}
+
 export function refreshAllSyncedTables() {
   if (typeof window === 'undefined') return;
   const all: RefreshableTable[] = [

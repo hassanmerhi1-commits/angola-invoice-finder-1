@@ -25,10 +25,6 @@ import {
 import type { UpdateStatus } from "@/types/electron";
 import Login from "./pages/Login";
 import Setup from "./pages/Setup";
-import Dashboard from "./pages/Dashboard";
-import POS from "./pages/POS";
-import Invoices from "./pages/Invoices";
-const Inventory = React.lazy(() => import("./pages/Inventory"));
 
 function RouteLoadingFallback() {
   return (
@@ -37,39 +33,48 @@ function RouteLoadingFallback() {
     </div>
   );
 }
-import DailyReports from "./pages/DailyReports";
-import Clients from "./pages/Clients";
-import StockTransfer from "./pages/StockTransfer";
-import DataSync from "./pages/DataSync";
-import Suppliers from "./pages/Suppliers";
-import PurchaseOrders from "./pages/PurchaseOrders";
-import PurchaseInvoices from "./pages/PurchaseInvoices";
-import Categories from "./pages/Categories";
-import FiscalDocuments from "./pages/FiscalDocuments";
-import ProForma from "./pages/ProForma";
-import UserManagement from "./pages/UserManagement";
-import Reports from "./pages/Reports";
-import ChartOfAccounts from "./pages/ChartOfAccounts";
-import Journals from "./pages/Journals";
-import Extracto from "./pages/Extracto";
-import HRModule from "./pages/HRModule";
-import ProductionModule from "./pages/ProductionModule";
-import ImportModule from "./pages/ImportModule";
-import Branches from "./pages/Branches";
-import Settings from "./pages/Settings";
-import Expenses from "./pages/Expenses";
-import BankAccounts from "./pages/BankAccounts";
-import CaixaManagement from "./pages/CaixaManagement";
-import Vendas from "./pages/Vendas";
-import PaymentsPage from "./pages/Payments";
-import AccountingPeriods from "./pages/AccountingPeriods";
-import TaxManagement from "./pages/TaxManagement";
-import AuditTrail from "./pages/AuditTrail";
-import BudgetControl from "./pages/BudgetControl";
-import Approvals from "./pages/Approvals";
-import ExchangeRates from "./pages/ExchangeRates";
-import BankReconciliation from "./pages/BankReconciliation";
-import NotFound from "./pages/NotFound";
+
+function LazyRoute({ children }: { children: React.ReactNode }) {
+  return <Suspense fallback={<RouteLoadingFallback />}>{children}</Suspense>;
+}
+
+const Dashboard = React.lazy(() => import("./pages/Dashboard"));
+const POS = React.lazy(() => import("./pages/POS"));
+const Invoices = React.lazy(() => import("./pages/Invoices"));
+const Inventory = React.lazy(() => import("./pages/Inventory"));
+const DailyReports = React.lazy(() => import("./pages/DailyReports"));
+const Clients = React.lazy(() => import("./pages/Clients"));
+const StockTransfer = React.lazy(() => import("./pages/StockTransfer"));
+const DataSync = React.lazy(() => import("./pages/DataSync"));
+const Suppliers = React.lazy(() => import("./pages/Suppliers"));
+const PurchaseOrders = React.lazy(() => import("./pages/PurchaseOrders"));
+const PurchaseInvoices = React.lazy(() => import("./pages/PurchaseInvoices"));
+const Categories = React.lazy(() => import("./pages/Categories"));
+const FiscalDocuments = React.lazy(() => import("./pages/FiscalDocuments"));
+const ProForma = React.lazy(() => import("./pages/ProForma"));
+const UserManagement = React.lazy(() => import("./pages/UserManagement"));
+const Reports = React.lazy(() => import("./pages/Reports"));
+const ChartOfAccounts = React.lazy(() => import("./pages/ChartOfAccounts"));
+const Journals = React.lazy(() => import("./pages/Journals"));
+const Extracto = React.lazy(() => import("./pages/Extracto"));
+const HRModule = React.lazy(() => import("./pages/HRModule"));
+const ProductionModule = React.lazy(() => import("./pages/ProductionModule"));
+const ImportModule = React.lazy(() => import("./pages/ImportModule"));
+const Branches = React.lazy(() => import("./pages/Branches"));
+const Settings = React.lazy(() => import("./pages/Settings"));
+const Expenses = React.lazy(() => import("./pages/Expenses"));
+const BankAccounts = React.lazy(() => import("./pages/BankAccounts"));
+const CaixaManagement = React.lazy(() => import("./pages/CaixaManagement"));
+const Vendas = React.lazy(() => import("./pages/Vendas"));
+const PaymentsPage = React.lazy(() => import("./pages/Payments"));
+const AccountingPeriods = React.lazy(() => import("./pages/AccountingPeriods"));
+const TaxManagement = React.lazy(() => import("./pages/TaxManagement"));
+const AuditTrail = React.lazy(() => import("./pages/AuditTrail"));
+const BudgetControl = React.lazy(() => import("./pages/BudgetControl"));
+const Approvals = React.lazy(() => import("./pages/Approvals"));
+const ExchangeRates = React.lazy(() => import("./pages/ExchangeRates"));
+const BankReconciliation = React.lazy(() => import("./pages/BankReconciliation"));
+const NotFound = React.lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
 
@@ -142,6 +147,8 @@ function AppRoutes() {
   React.useEffect(() => {
     let isMounted = true;
 
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+
     const check = async () => {
       try {
         if (isElectron && window.electronAPI?.setup?.getConfig) {
@@ -197,6 +204,10 @@ function AppRoutes() {
           }
 
           setSetupComplete(complete);
+          if (complete && intervalId) {
+            clearInterval(intervalId);
+            intervalId = undefined;
+          }
           return;
         }
 
@@ -238,11 +249,11 @@ function AppRoutes() {
       }
     };
 
-    check();
-    const interval = setInterval(check, 700);
+    void check();
+    intervalId = setInterval(() => { void check(); }, 2500);
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (intervalId) clearInterval(intervalId);
     };
   }, [isElectron]);
 
@@ -280,59 +291,51 @@ function AppRoutes() {
           element={
             !setupComplete ? <Navigate to="/setup" replace />
             : user?.role === 'cashier' ? <Navigate to="/pos" replace />
-            : <Dashboard />
+            : <LazyRoute><Dashboard /></LazyRoute>
           }
         />
-        <Route path="/pos" element={<POS />} />
-        <Route path="/vendas" element={<Vendas />} />
-        <Route path="/invoices" element={<Invoices />} />
-        <Route
-          path="/inventory"
-          element={(
-            <Suspense fallback={<RouteLoadingFallback />}>
-              <Inventory />
-            </Suspense>
-          )}
-        />
-        <Route path="/categories" element={<Categories />} />
-        <Route path="/suppliers" element={<Suppliers />} />
-        <Route path="/purchase-orders" element={<PurchaseOrders />} />
-        {/* Must be before `/purchase-invoices` — distinct route gives reliable HashRouter navigation for “Nova fatura”. */}
-        <Route path="/purchase-invoices/new" element={<PurchaseInvoices />} />
-        <Route path="/purchase-invoices" element={<PurchaseInvoices />} />
-        <Route path="/daily-reports" element={<DailyReports />} />
-        <Route path="/clients" element={<Clients />} />
-        <Route path="/stock-transfer" element={<StockTransfer />} />
-        <Route path="/data-sync" element={<DataSync />} />
-        <Route path="/fiscal-documents" element={<FiscalDocuments />} />
-        <Route path="/proforma" element={<ProForma />} />
-        <Route path="/users" element={<UserManagement />} />
-        <Route path="/chart-of-accounts" element={<ChartOfAccounts />} />
-        <Route path="/journals" element={<Journals />} />
-        <Route path="/extracto" element={<Extracto />} />
-        <Route path="/accounting" element={<Branches />} />
-        <Route path="/customers" element={<Clients />} />
-        <Route path="/branches" element={<Branches />} />
-        <Route path="/reports" element={<Reports />} />
-        <Route path="/expenses" element={<Expenses />} />
-        <Route path="/bank-accounts" element={<BankAccounts />} />
-        <Route path="/caixa" element={<CaixaManagement />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/hr" element={<HRModule />} />
-        <Route path="/production" element={<ProductionModule />} />
-        <Route path="/import" element={<ImportModule />} />
-        <Route path="/payments" element={<PaymentsPage />} />
-        <Route path="/accounting-periods" element={<AccountingPeriods />} />
-        <Route path="/tax-management" element={<TaxManagement />} />
-        <Route path="/audit-trail" element={<AuditTrail />} />
-        <Route path="/budget-control" element={<BudgetControl />} />
-        <Route path="/approvals" element={<Approvals />} />
-        <Route path="/exchange-rates" element={<ExchangeRates />} />
-        <Route path="/bank-reconciliation" element={<BankReconciliation />} />
+        <Route path="/pos" element={<LazyRoute><POS /></LazyRoute>} />
+        <Route path="/vendas" element={<LazyRoute><Vendas /></LazyRoute>} />
+        <Route path="/invoices" element={<LazyRoute><Invoices /></LazyRoute>} />
+        <Route path="/inventory" element={<LazyRoute><Inventory /></LazyRoute>} />
+        <Route path="/categories" element={<LazyRoute><Categories /></LazyRoute>} />
+        <Route path="/suppliers" element={<LazyRoute><Suppliers /></LazyRoute>} />
+        <Route path="/purchase-orders" element={<LazyRoute><PurchaseOrders /></LazyRoute>} />
+        <Route path="/purchase-invoices/new" element={<LazyRoute><PurchaseInvoices /></LazyRoute>} />
+        <Route path="/purchase-invoices" element={<LazyRoute><PurchaseInvoices /></LazyRoute>} />
+        <Route path="/daily-reports" element={<LazyRoute><DailyReports /></LazyRoute>} />
+        <Route path="/clients" element={<LazyRoute><Clients /></LazyRoute>} />
+        <Route path="/stock-transfer" element={<LazyRoute><StockTransfer /></LazyRoute>} />
+        <Route path="/data-sync" element={<LazyRoute><DataSync /></LazyRoute>} />
+        <Route path="/fiscal-documents" element={<LazyRoute><FiscalDocuments /></LazyRoute>} />
+        <Route path="/proforma" element={<LazyRoute><ProForma /></LazyRoute>} />
+        <Route path="/users" element={<LazyRoute><UserManagement /></LazyRoute>} />
+        <Route path="/chart-of-accounts" element={<LazyRoute><ChartOfAccounts /></LazyRoute>} />
+        <Route path="/journals" element={<LazyRoute><Journals /></LazyRoute>} />
+        <Route path="/extracto" element={<LazyRoute><Extracto /></LazyRoute>} />
+        <Route path="/accounting" element={<LazyRoute><Branches /></LazyRoute>} />
+        <Route path="/customers" element={<LazyRoute><Clients /></LazyRoute>} />
+        <Route path="/branches" element={<LazyRoute><Branches /></LazyRoute>} />
+        <Route path="/reports" element={<LazyRoute><Reports /></LazyRoute>} />
+        <Route path="/expenses" element={<LazyRoute><Expenses /></LazyRoute>} />
+        <Route path="/bank-accounts" element={<LazyRoute><BankAccounts /></LazyRoute>} />
+        <Route path="/caixa" element={<LazyRoute><CaixaManagement /></LazyRoute>} />
+        <Route path="/settings" element={<LazyRoute><Settings /></LazyRoute>} />
+        <Route path="/hr" element={<LazyRoute><HRModule /></LazyRoute>} />
+        <Route path="/production" element={<LazyRoute><ProductionModule /></LazyRoute>} />
+        <Route path="/import" element={<LazyRoute><ImportModule /></LazyRoute>} />
+        <Route path="/payments" element={<LazyRoute><PaymentsPage /></LazyRoute>} />
+        <Route path="/accounting-periods" element={<LazyRoute><AccountingPeriods /></LazyRoute>} />
+        <Route path="/tax-management" element={<LazyRoute><TaxManagement /></LazyRoute>} />
+        <Route path="/audit-trail" element={<LazyRoute><AuditTrail /></LazyRoute>} />
+        <Route path="/budget-control" element={<LazyRoute><BudgetControl /></LazyRoute>} />
+        <Route path="/approvals" element={<LazyRoute><Approvals /></LazyRoute>} />
+        <Route path="/exchange-rates" element={<LazyRoute><ExchangeRates /></LazyRoute>} />
+        <Route path="/bank-reconciliation" element={<LazyRoute><BankReconciliation /></LazyRoute>} />
         </Route>
       </Route>
       <Route path="/purchase-invoices-window" element={<RedirectPreserveSearch to="/purchase-invoices" />} />
-      <Route path="*" element={<NotFound />} />
+      <Route path="*" element={<LazyRoute><NotFound /></LazyRoute>} />
     </Routes>
   );
 }

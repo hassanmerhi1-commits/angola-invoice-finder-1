@@ -235,6 +235,11 @@ export function getApiUrl(): string {
       if (!isLegacyDbString) return savedUrl;
       localStorage.removeItem('kwanza_api_url');
     }
+
+    // Browser UI served by Express at /app — API is same host/port.
+    if (window.location.pathname.startsWith('/app')) {
+      return window.location.origin;
+    }
   }
   return DEFAULT_API_URL;
 }

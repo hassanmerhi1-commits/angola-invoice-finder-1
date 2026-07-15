@@ -66,7 +66,7 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
     setSelectedBranch,
   } = useSyncedBranchFilter();
   const { sales } = useSales(apiBranchId);
-  const { products } = useProducts(apiBranchId);
+  const { products } = useProducts(apiBranchId, { light: true });
   const { companyName } = useCompanyLogo();
 
   const [dateFromState, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));

@@ -1451,12 +1451,18 @@ export const api = {
   },
 
   purchaseInvoices: {
-    list: (params?: { branchId?: string; status?: string }) => {
+    list: (params?: { branchId?: string; status?: string; limit?: number; offset?: number }) => {
       const sp = new URLSearchParams();
       if (params?.branchId) sp.append('branchId', params.branchId);
       if (params?.status) sp.append('status', params.status);
+      if (params?.limit != null) sp.append('limit', String(params.limit));
+      if (params?.offset != null) sp.append('offset', String(params.offset));
       const qs = sp.toString();
-      return apiFetch<any[]>(`/purchase-invoices${qs ? `?${qs}` : ''}`, undefined, { timeoutMs: 90000 });
+      return apiFetch<{ items: any[]; limit: number; offset: number; hasMore: boolean } | any[]>(
+        `/purchase-invoices${qs ? `?${qs}` : ''}`,
+        undefined,
+        { timeoutMs: 45000 },
+      );
     },
     get: (id: string) => apiFetch<any>(`/purchase-invoices/${encodeURIComponent(id)}`),
     checkDuplicate: (params: { supplierId: string; supplierInvoiceNo: string; excludeId?: string }) => {
@@ -1644,14 +1650,29 @@ export const api = {
 
   // Journal Entries — always read from Express API (journal data lives in embedded SQLite)
   journalEntries: {
-    list: (params?: { branchId?: string; referenceType?: string; startDate?: string; endDate?: string }) => {
+    list: (params?: {
+      branchId?: string;
+      referenceType?: string;
+      startDate?: string;
+      endDate?: string;
+      limit?: number;
+      offset?: number;
+      includeLines?: boolean;
+      includeContext?: boolean;
+    }) => {
       const searchParams = new URLSearchParams();
       if (params?.branchId) searchParams.append('branchId', params.branchId);
       if (params?.referenceType) searchParams.append('referenceType', params.referenceType);
       if (params?.startDate) searchParams.append('startDate', params.startDate);
       if (params?.endDate) searchParams.append('endDate', params.endDate);
+      if (params?.limit != null) searchParams.append('limit', String(params.limit));
+      if (params?.offset != null) searchParams.append('offset', String(params.offset));
+      if (params?.includeLines) searchParams.append('includeLines', '1');
+      if (params?.includeContext) searchParams.append('includeContext', '1');
       const qs = searchParams.toString();
-      return apiFetch<any[]>(`/journal-entries${qs ? `?${qs}` : ''}`);
+      return apiFetch<{ items: any[]; limit: number; offset: number; hasMore: boolean } | any[]>(
+        `/journal-entries${qs ? `?${qs}` : ''}`,
+      );
     },
     get: (id: string) => {
       return apiFetch<any>(`/journal-entries/${encodeURIComponent(id)}`);

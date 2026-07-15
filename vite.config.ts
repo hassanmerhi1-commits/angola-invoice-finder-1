@@ -5,8 +5,8 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
-  // Use relative paths for Electron production builds (file:// protocol)
-  base: mode === "production" ? "./" : "/",
+  // Electron production: relative paths (file://). Browser /app: absolute /app/ prefix.
+  base: mode === "webapp" ? "/app/" : mode === "production" ? "./" : "/",
   server: {
     host: "::",
     port: 18080,
@@ -16,6 +16,19 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("recharts")) return "vendor-charts";
+          if (id.includes("@radix-ui")) return "vendor-radix";
+          if (id.includes("react-dom") || id.includes("react-router")) return "vendor-react";
+          if (id.includes("date-fns") || id.includes("xlsx")) return "vendor-utils";
+        },
+      },
     },
   },
 }));

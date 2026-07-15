@@ -115,7 +115,7 @@ export default function ProductionModule() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
-  const { products } = useProducts(currentBranch?.id);
+  const { products } = useProducts(currentBranch?.id, { light: true });
   const [activeTab, setActiveTab] = useState('ordens');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);

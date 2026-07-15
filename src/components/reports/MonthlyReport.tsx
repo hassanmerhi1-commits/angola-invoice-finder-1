@@ -13,7 +13,7 @@ import { Calendar, Download, Printer, FileDown } from 'lucide-react';
 import { format, startOfYear, endOfYear } from 'date-fns';
 import { exportToExcel } from '@/lib/excel';
 import { printHtml } from '@/lib/printHtml';
-import { api } from '@/lib/api/client';
+import { unwrapListPayload } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -40,7 +40,7 @@ export default function MonthlyReport() {
   const { apiBranchId } = useBranchScope();
   const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter();
   const { sales } = useSales(apiBranchId);
-  const { products } = useProducts(apiBranchId);
+  const { products } = useProducts(apiBranchId, { light: true });
   const { companyName } = useCompanyLogo();
 
   const [dateFrom, setDateFrom] = useState(format(startOfYear(new Date()), 'yyyy-MM-dd'));
@@ -51,7 +51,10 @@ export default function MonthlyReport() {
     let cancelled = false;
     (async () => {
       const res = await api.purchaseInvoices.list(apiBranchId ? { branchId: apiBranchId } : undefined);
-      if (!cancelled) setPurchases(Array.isArray(res.data) ? res.data : []);
+      if (!cancelled) {
+        const { items } = unwrapListPayload(res.data);
+        setPurchases(items);
+      }
     })();
     return () => {
       cancelled = true;
