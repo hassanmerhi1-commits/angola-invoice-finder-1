@@ -205,12 +205,12 @@ export default function CaixaManagement() {
       formData.openingBalance,
       formData.pettyLimit,
       formData.dailyLimit
-    );
-
-    toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.cashRegisterCreated });
-    setIsCreateDialogOpen(false);
-    setFormData(initialFormData);
-    loadData();
+    ).then(() => {
+      toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.cashRegisterCreated });
+      setIsCreateDialogOpen(false);
+      setFormData(initialFormData);
+      void loadData();
+    });
   };
 
   // Edit Caixa settings

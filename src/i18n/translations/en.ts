@@ -504,6 +504,12 @@ export const en = {
     title: "Print preview",
     description: "Review the document below. When you continue, the Windows print dialog opens (choose your printer or Save as PDF).",
     confirmPrint: "Continue to print",
+    titlePdf: "PDF preview",
+    descriptionPdf: "Review the document below. When you continue, it will be saved as PDF (or use Save as PDF in the print dialog).",
+    confirmPdf: "Continue to save PDF",
+    titleExcel: "Excel export preview",
+    descriptionExcel: "Review the data below. When you continue, the Excel file will be downloaded.",
+    confirmExcel: "Download Excel",
   },
 
   errorBoundaryUi: {
@@ -2379,6 +2385,15 @@ export const en = {
 
     totalToPay: "Total to pay:",
     registerExpense: "Record expense",
+    registerAndPay: "Record & pay",
+    registerAndNew: "Record & add another",
+    expenseRecordedAndPaid: "Expense {number} recorded and paid",
+    saveFailed: "Could not save expense",
+    newCaixa: "New caixa",
+    newCaixaTitle: "New cash register",
+    newCaixaDescription: "Create a caixa for this branch — it will appear in the list immediately.",
+    newCaixaPlaceholder: "e.g. Caixa Loja 2",
+    createCaixa: "Create caixa",
   },
 
   fiscalDocumentsUi: {
@@ -3762,6 +3777,7 @@ export const en = {
     systemUser: "System",
 
     cashRegisterNameRequired: "Cash register name is required",
+    cashRegisterName: "Cash register name",
     cashRegisterCreated: "Cash register created successfully",
     settingsUpdated: "Settings updated",
 
@@ -4119,9 +4135,11 @@ export const en = {
 
     // New manual entry dialog
     newManualEntry: "New manual entry",
+    newManualEntryHint: "Debit must equal credit. Use Auto balance on the last line if needed.",
     branch: "Branch",
     entryDescriptionPlaceholder: "Entry description...",
     entryLines: "Entry lines",
+    entryLinesHint: "Pick an account per line — debit or credit, not both.",
     autoBalance: "Auto balance",
     line: "Line",
     account: "Account",

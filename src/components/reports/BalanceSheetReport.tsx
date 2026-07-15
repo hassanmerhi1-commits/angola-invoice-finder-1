@@ -8,10 +8,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { Printer, Scale, RefreshCw, Loader2 } from 'lucide-react';
+import { Printer, Scale, RefreshCw, Loader2, FileDown, FileSpreadsheet } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useBalanceSheet } from '@/hooks/useChartOfAccounts';
 import type { AccountType, BalanceSheetAccountRow } from '@/types/accounting';
+import { buildLineItemsTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 
 function previousYearDate(isoDate: string): string {
   const d = new Date(isoDate + 'T12:00:00');
@@ -166,8 +167,65 @@ export default function BalanceSheetReport() {
     return value.toLocaleString(locale, { minimumFractionDigits: 2 });
   };
 
-  const handlePrint = () => {
-    window.print();
+  const allItems = useMemo(() => [...assets, ...liabilitiesAndEquity], [assets, liabilitiesAndEquity]);
+
+  const buildExportHtml = () =>
+    buildLineItemsTableHtml(
+      allItems.map((item) => ({
+        code: item.code,
+        description: item.description,
+        value: item.isHeader ? '' : formatMoney(item.currentPeriod),
+        value2: item.isHeader ? '' : formatMoney(item.previousPeriod),
+        isHeader: item.isHeader,
+        isSubtotal: item.isSubtotal,
+        isTotal: item.isTotal,
+        indent: item.indent,
+      })),
+      {
+        title: t.balanceSheetUi.title,
+        subtitle: t.balanceSheetUi.asOf.replace('{date}', new Date(reportDate).toLocaleDateString(locale)),
+        colCode: t.incomeStatementUi.colCode,
+        colDescription: t.incomeStatementUi.colDescription,
+        colValue: t.balanceSheetUi.currentPeriod,
+        colValue2: t.balanceSheetUi.previousPeriod,
+      },
+    );
+
+  const handlePrint = async () => {
+    if (!hasData) return;
+    try {
+      await printReport(buildExportHtml());
+    } catch (e) {
+      console.error('[BalanceSheetReport] print failed:', e);
+    }
+  };
+
+  const handleSavePdf = async () => {
+    if (!hasData) return;
+    try {
+      await saveReportPdf(buildExportHtml(), `balanco_${reportDate}`);
+    } catch (e) {
+      console.error('[BalanceSheetReport] save pdf failed:', e);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    const data = allItems
+      .filter((item) => !item.isHeader)
+      .map((item) => ({
+        [t.incomeStatementUi.colCode]: item.code,
+        [t.incomeStatementUi.colDescription]: item.description,
+        [t.balanceSheetUi.currentPeriod]: item.currentPeriod,
+        [t.balanceSheetUi.previousPeriod]: item.previousPeriod,
+      }));
+    try {
+      await exportReportExcel(data, `balanco_${reportDate}`, {
+        title: t.balanceSheetUi.title,
+        subtitle: t.balanceSheetUi.asOf.replace('{date}', new Date(reportDate).toLocaleDateString(locale)),
+      });
+    } catch (e) {
+      console.error('[BalanceSheetReport] excel export failed:', e);
+    }
   };
 
   const renderSection = (items: BalanceItem[]) => (
@@ -231,9 +289,17 @@ export default function BalanceSheetReport() {
                 {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
                 {t.common.refresh}
               </Button>
-              <Button variant="outline" size="sm" onClick={handlePrint}>
+              <Button variant="outline" size="sm" onClick={() => void handlePrint()} disabled={!hasData}>
                 <Printer className="w-4 h-4 mr-2" />
                 {t.reportsUi.print}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void handleSavePdf()} disabled={!hasData}>
+                <FileDown className="w-4 h-4 mr-2" />
+                {t.reportsUi.savePdf}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void handleExportExcel()} disabled={!hasData}>
+                <FileSpreadsheet className="w-4 h-4 mr-2" />
+                Excel
               </Button>
             </div>
           </div>

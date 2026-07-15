@@ -24,7 +24,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Download, Printer, Package, FileSpreadsheet, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react';
+import { Download, Printer, Package, FileSpreadsheet, FileDown, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react';
+import { buildDataTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { useProducts } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
@@ -97,38 +98,45 @@ export default function StockValuationReport() {
 
   const formatMoney = (value: number) => value.toLocaleString(locale, { minimumFractionDigits: 2 });
 
-  const handlePrint = () => window.print();
+  const excelData = productsWithValues.map((p) => ({
+    SKU: p.sku,
+    [t.common.product]: p.name,
+    [t.stockValuationUi.category]: p.category,
+    [t.stockValuationUi.stock]: p.stock,
+    [t.stockValuationUi.unitCost]: p.cost,
+    [t.stockValuationUi.unitPrice]: p.price,
+    [t.stockValuationUi.costValue]: p.costValue,
+    [t.stockValuationUi.saleValue]: p.saleValue,
+    [t.stockValuationUi.marginPercent]: Number(p.margin.toFixed(1)),
+  }));
 
-  const handleExportExcel = () => {
-    const headers = [
-      'SKU',
-      t.common.product,
-      t.stockValuationUi.category,
-      t.stockValuationUi.stock,
-      t.stockValuationUi.unitCost,
-      t.stockValuationUi.unitPrice,
-      t.stockValuationUi.costValue,
-      t.stockValuationUi.saleValue,
-      t.stockValuationUi.marginPercent,
-    ];
-    const rows = productsWithValues.map(p => [
-      p.sku,
-      p.name,
-      p.category,
-      p.stock,
-      p.cost,
-      p.price,
-      p.costValue,
-      p.saleValue,
-      p.margin.toFixed(1),
-    ]);
-    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `valorizacao_stock_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
+  const previewMeta = { title: t.stockValuationUi.title, landscape: true as const };
+  const exportFilename = `valorizacao_stock_${new Date().toISOString().split('T')[0]}`;
+
+  const handlePrint = async () => {
+    if (excelData.length === 0) return;
+    try {
+      await printReport(buildDataTableHtml(excelData, previewMeta));
+    } catch (e) {
+      console.error('[StockValuationReport] print failed:', e);
+    }
+  };
+
+  const handleSavePdf = async () => {
+    if (excelData.length === 0) return;
+    try {
+      await saveReportPdf(buildDataTableHtml(excelData, previewMeta), exportFilename, { landscape: true });
+    } catch (e) {
+      console.error('[StockValuationReport] save pdf failed:', e);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      await exportReportExcel(excelData, exportFilename, previewMeta);
+    } catch (e) {
+      console.error('[StockValuationReport] excel export failed:', e);
+    }
   };
 
   return (
@@ -182,11 +190,15 @@ export default function StockValuationReport() {
               <Label htmlFor="showZero" className="text-xs">{t.stockValuationUi.showZeroStock}</Label>
             </div>
             <div className="flex gap-2 ml-auto">
-              <Button variant="outline" size="sm" onClick={handlePrint}>
+              <Button variant="outline" size="sm" onClick={() => void handlePrint()} disabled={excelData.length === 0}>
                 <Printer className="w-4 h-4 mr-2" />
                 {t.reportsUi.print}
               </Button>
-              <Button variant="outline" size="sm" onClick={handleExportExcel}>
+              <Button variant="outline" size="sm" onClick={() => void handleSavePdf()} disabled={excelData.length === 0}>
+                <FileDown className="w-4 h-4 mr-2" />
+                {t.reportsUi.savePdf}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void handleExportExcel()} disabled={excelData.length === 0}>
                 <FileSpreadsheet className="w-4 h-4 mr-2" />
                 Excel
               </Button>

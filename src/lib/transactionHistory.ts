@@ -2,6 +2,7 @@
 // Tracks all user actions across the ERP for full accountability
 
 import { getCurrentUser } from './storage';
+import { exportReportExcel } from '@/lib/reportExport';
 
 // Storage key for transaction history
 const STORAGE_KEY = 'kwanzaerp_transaction_history';
@@ -362,7 +363,7 @@ export const CATEGORY_COLORS: Record<TransactionCategory, string> = {
 };
 
 // Export transaction history to Excel
-export function exportTransactionHistoryToExcel(records: TransactionRecord[], filename = 'historico_transacoes') {
+export async function exportTransactionHistoryToExcel(records: TransactionRecord[], filename = 'historico_transacoes') {
   const data = records.map(r => ({
     'Data/Hora': new Date(r.timestamp).toLocaleString('pt-AO'),
     'Utilizador': r.userName,
@@ -377,17 +378,7 @@ export function exportTransactionHistoryToExcel(records: TransactionRecord[], fi
     'Valor': r.amount ? r.amount.toLocaleString('pt-AO') : '',
   }));
 
-  // Use xlsx library
-  import('xlsx').then(XLSX => {
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Histórico');
-    
-    const colWidths = Object.keys(data[0] || {}).map(key => ({ wch: Math.max(key.length, 15) }));
-    ws['!cols'] = colWidths;
-    
-    XLSX.writeFile(wb, `${filename}.xlsx`);
-  });
+  await exportReportExcel(data, filename, { title: 'Histórico de Transacções' });
 }
 
 // Clear old transactions (keep last N days)

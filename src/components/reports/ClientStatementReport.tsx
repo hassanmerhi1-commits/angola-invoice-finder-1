@@ -8,11 +8,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useClients, useSales } from '@/hooks/useERP';
-import { Download, Printer, FileText, Search, TrendingUp, TrendingDown } from 'lucide-react';
+import { Download, Printer, FileText, Search, TrendingUp, TrendingDown, FileDown } from 'lucide-react';
 import { format, parseISO, isWithinInterval, startOfMonth, endOfMonth } from 'date-fns';
 import { pt } from 'date-fns/locale';
-import { exportToExcel } from '@/lib/excel';
 import { useTranslation } from '@/i18n';
+import { buildReportHtml, escapeHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 
 interface StatementEntry {
   id: string;
@@ -104,10 +104,9 @@ export default function ClientStatementReport() {
     }).format(value);
   };
 
-  const handleExport = () => {
-    if (!selectedClientData) return;
-    
-    const data = statementEntries.map(entry => ({
+  const excelData = useMemo(() => {
+    if (!selectedClientData) return [];
+    return statementEntries.map((entry) => ({
       [t.reportsUi.date]: format(parseISO(entry.date), 'dd/MM/yyyy'),
       [t.reportsUi.type]:
         entry.type === 'invoice' ? t.reportsUi.invoice :
@@ -119,12 +118,81 @@ export default function ClientStatementReport() {
       [t.reportsUi.credit]: entry.credit,
       [t.reportsUi.balance]: entry.balance,
     }));
-    
-    exportToExcel(data, `Extracto_${selectedClientData.name}_${format(new Date(), 'yyyyMMdd')}`);
+  }, [statementEntries, selectedClientData, t]);
+
+  const buildPrintHtml = () => {
+    if (!selectedClientData) return '';
+    const rows = statementEntries
+      .map(
+        (entry) => `<tr>
+          <td>${escapeHtml(format(parseISO(entry.date), 'dd/MM/yyyy'))}</td>
+          <td>${escapeHtml(
+            entry.type === 'invoice' ? t.reportsUi.invoice :
+            entry.type === 'payment' ? t.reportsUi.payment :
+            entry.type === 'credit_note' ? t.reportsUi.creditNote : t.reportsUi.debitNote,
+          )}</td>
+          <td>${escapeHtml(entry.reference)}</td>
+          <td>${escapeHtml(entry.description)}</td>
+          <td class="r">${entry.debit > 0 ? escapeHtml(formatCurrency(entry.debit)) : '-'}</td>
+          <td class="r">${entry.credit > 0 ? escapeHtml(formatCurrency(entry.credit)) : '-'}</td>
+          <td class="r b">${escapeHtml(formatCurrency(entry.balance))}</td>
+        </tr>`,
+      )
+      .join('');
+    return buildReportHtml({
+      title: t.reportsUi.statementTitle,
+      subtitle: `${selectedClientData.name} (${selectedClientData.nif}) — ${dateFrom} — ${dateTo}`,
+      bodyHtml: `<table>
+        <thead><tr>
+          <th>${escapeHtml(t.reportsUi.date)}</th>
+          <th>${escapeHtml(t.reportsUi.type)}</th>
+          <th>${escapeHtml(t.reportsUi.reference)}</th>
+          <th>${escapeHtml(t.reportsUi.description)}</th>
+          <th class="r">${escapeHtml(t.reportsUi.debit)}</th>
+          <th class="r">${escapeHtml(t.reportsUi.credit)}</th>
+          <th class="r">${escapeHtml(t.reportsUi.balance)}</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr class="tot">
+          <td colspan="4">${escapeHtml(t.common.total)}</td>
+          <td class="r">${escapeHtml(formatCurrency(totals.debit))}</td>
+          <td class="r">${escapeHtml(formatCurrency(totals.credit))}</td>
+          <td class="r">${escapeHtml(formatCurrency(totals.debit - totals.credit))}</td>
+        </tr></tfoot>
+      </table>`,
+    });
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handleExport = async () => {
+    if (!selectedClientData || excelData.length === 0) return;
+    try {
+      await exportReportExcel(excelData, `Extracto_${selectedClientData.name}_${format(new Date(), 'yyyyMMdd')}`, {
+        title: t.reportsUi.statementTitle,
+        subtitle: `${selectedClientData.name} — ${dateFrom} — ${dateTo}`,
+      });
+    } catch (e) {
+      console.error('[ClientStatementReport] excel export failed:', e);
+    }
+  };
+
+  const handlePrint = async () => {
+    const html = buildPrintHtml();
+    if (!html) return;
+    try {
+      await printReport(html);
+    } catch (e) {
+      console.error('[ClientStatementReport] print failed:', e);
+    }
+  };
+
+  const handleSavePdf = async () => {
+    const html = buildPrintHtml();
+    if (!html) return;
+    try {
+      await saveReportPdf(html, `Extracto_${selectedClientData?.name}_${format(new Date(), 'yyyyMMdd')}`);
+    } catch (e) {
+      console.error('[ClientStatementReport] save pdf failed:', e);
+    }
   };
 
   return (
@@ -218,11 +286,15 @@ export default function ClientStatementReport() {
             <div className="flex justify-between items-center">
               <CardTitle>Movimentos</CardTitle>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={handleExport}>
+                <Button variant="outline" size="sm" onClick={() => void handleExport()} disabled={excelData.length === 0}>
                   <Download className="w-4 h-4 mr-2" />
                   Excel
                 </Button>
-                <Button variant="outline" size="sm" onClick={handlePrint}>
+                <Button variant="outline" size="sm" onClick={() => void handleSavePdf()} disabled={statementEntries.length === 0}>
+                  <FileDown className="w-4 h-4 mr-2" />
+                  {t.reportsUi.savePdf}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void handlePrint()} disabled={statementEntries.length === 0}>
                   <Printer className="w-4 h-4 mr-2" />
                   {t.reportsUi.print}
                 </Button>

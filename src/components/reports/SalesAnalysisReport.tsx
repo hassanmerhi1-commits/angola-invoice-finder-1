@@ -11,7 +11,7 @@ import { Download, TrendingUp, Calendar, Package, Tags, Building2, Users, Truck,
 import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, eachWeekOfInterval,
          eachMonthOfInterval, isSameDay, isSameWeek, isSameMonth, getWeek } from 'date-fns';
 import { enUS, pt } from 'date-fns/locale';
-import { exportToExcel } from '@/lib/excel';
+import { exportReportExcel } from '@/lib/reportExport';
 import { CartesianGrid, Tooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis } from 'recharts';
 import { useTranslation } from '@/i18n';
 import SalesByProductReport from '@/components/reports/SalesByProductReport';
@@ -106,17 +106,24 @@ export default function SalesAnalysisReport({
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
 
-  const handleExportSummary = () => {
+  const periodSuffix = `${dateFrom}_${dateTo}`;
+  const periodLabel = `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`;
+
+  const handleExportSummary = async () => {
     const data = salesByDate.map((d) => ({
       [t.salesAnalysisUi.colPeriod]: d.label,
       [t.salesAnalysisUi.colRevenue]: d.revenue,
       [t.salesAnalysisUi.colTransactions]: d.transactions,
     }));
-    exportToExcel(data, `Vendas_Resumo_${dateFrom}_${dateTo}`);
+    try {
+      await exportReportExcel(data, `Vendas_Resumo_${dateFrom}_${dateTo}`, {
+        title: t.salesAnalysisUi.tabSummary,
+        subtitle: periodLabel,
+      });
+    } catch (e) {
+      console.error('[SalesAnalysisReport] excel export failed:', e);
+    }
   };
-
-  const periodSuffix = `${dateFrom}_${dateTo}`;
-  const periodLabel = `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`;
 
   const viewOptions: ReportOption[] = [
     { value: 'summary', label: t.salesAnalysisUi.tabSummary, icon: Calendar },

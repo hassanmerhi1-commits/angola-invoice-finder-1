@@ -9,10 +9,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { Download, Printer, FileSpreadsheet, TrendingUp, TrendingDown } from 'lucide-react';
+import { Download, Printer, FileSpreadsheet, FileDown, TrendingUp, TrendingDown } from 'lucide-react';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales } from '@/hooks/useERP';
 import { useTranslation } from '@/i18n';
+import { buildLineItemsTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 
 interface LineItem {
   code: string;
@@ -97,20 +98,76 @@ export default function IncomeStatementReport() {
     { code: '', description: t.incomeStatementUi.netResult, value: netProfit, isTotal: true },
   ];
 
-  const handlePrint = () => {
-    window.print();
+  const handlePrint = async () => {
+    const html = buildLineItemsTableHtml(
+      lineItems.map((item) => ({
+        code: item.code,
+        description: item.description,
+        value: `${formatMoney(item.value)} Kz`,
+        isSubtotal: item.isSubtotal,
+        isTotal: item.isTotal,
+        indent: item.indent,
+      })),
+      {
+        title: t.incomeStatementUi.title,
+        subtitle: t.incomeStatementUi.periodLabel
+          .replace('{from}', new Date(startDate).toLocaleDateString(locale))
+          .replace('{to}', new Date(endDate).toLocaleDateString(locale)),
+        colCode: t.incomeStatementUi.colCode,
+        colDescription: t.incomeStatementUi.colDescription,
+        colValue: t.incomeStatementUi.colValueKz,
+      },
+    );
+    try {
+      await printReport(html);
+    } catch (e) {
+      console.error('[IncomeStatementReport] print failed:', e);
+    }
   };
 
-  const handleExportExcel = () => {
-    const headers = [t.incomeStatementUi.colCode, t.incomeStatementUi.colDescription, t.incomeStatementUi.colValueKz];
-    const rows = lineItems.map(item => [item.code, item.description, item.value]);
-    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `demonstracao_resultados_${startDate}_${endDate}.csv`;
-    a.click();
+  const handleSavePdf = async () => {
+    const html = buildLineItemsTableHtml(
+      lineItems.map((item) => ({
+        code: item.code,
+        description: item.description,
+        value: `${formatMoney(item.value)} Kz`,
+        isSubtotal: item.isSubtotal,
+        isTotal: item.isTotal,
+        indent: item.indent,
+      })),
+      {
+        title: t.incomeStatementUi.title,
+        subtitle: t.incomeStatementUi.periodLabel
+          .replace('{from}', new Date(startDate).toLocaleDateString(locale))
+          .replace('{to}', new Date(endDate).toLocaleDateString(locale)),
+        colCode: t.incomeStatementUi.colCode,
+        colDescription: t.incomeStatementUi.colDescription,
+        colValue: t.incomeStatementUi.colValueKz,
+      },
+    );
+    try {
+      await saveReportPdf(html, `demonstracao_resultados_${startDate}_${endDate}`);
+    } catch (e) {
+      console.error('[IncomeStatementReport] save pdf failed:', e);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    const data = lineItems.map((item) => ({
+      [t.incomeStatementUi.colCode]: item.code,
+      [t.incomeStatementUi.colDescription]: item.description,
+      [t.incomeStatementUi.colValueKz]: item.value,
+    }));
+    try {
+      await exportReportExcel(data, `demonstracao_resultados_${startDate}_${endDate}`, {
+        title: t.incomeStatementUi.title,
+        subtitle: t.incomeStatementUi.periodLabel
+          .replace('{from}', new Date(startDate).toLocaleDateString(locale))
+          .replace('{to}', new Date(endDate).toLocaleDateString(locale)),
+      });
+    } catch (e) {
+      console.error('[IncomeStatementReport] excel export failed:', e);
+    }
   };
 
   return (
@@ -141,11 +198,15 @@ export default function IncomeStatementReport() {
               />
             </div>
             <div className="flex gap-2 ml-auto">
-              <Button variant="outline" size="sm" onClick={handlePrint}>
+              <Button variant="outline" size="sm" onClick={() => void handlePrint()}>
                 <Printer className="w-4 h-4 mr-2" />
                 {t.reportsUi.print}
               </Button>
-              <Button variant="outline" size="sm" onClick={handleExportExcel}>
+              <Button variant="outline" size="sm" onClick={() => void handleSavePdf()}>
+                <FileDown className="w-4 h-4 mr-2" />
+                {t.reportsUi.savePdf}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void handleExportExcel()}>
                 <FileSpreadsheet className="w-4 h-4 mr-2" />
                 Excel
               </Button>

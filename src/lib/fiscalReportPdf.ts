@@ -1,5 +1,5 @@
 import { getCompanySettings } from '@/lib/companySettings';
-import { printHtml } from '@/lib/printHtml';
+import { printReport, saveReportPdf } from '@/lib/reportExport';
 
 export type FiscalReportKind = 'iva' | 'fiscal' | 'agt';
 
@@ -324,14 +324,10 @@ export function fiscalReportFilename(kind: FiscalReportKind, year: number, month
 
 export async function saveFiscalReportPdf(html: string, filename: string): Promise<boolean> {
   const el = typeof window !== 'undefined' ? (window as Window & { electronAPI?: { isElectron?: boolean; pdf?: { saveHtml: (h: string, o: { filename: string }) => Promise<void> } } }).electronAPI : null;
-  if (el?.isElectron && el.pdf?.saveHtml) {
-    await el.pdf.saveHtml(html, { filename });
-    return true;
-  }
-  await printHtml(html, { direct: true });
-  return false;
+  await saveReportPdf(html, filename.replace(/\.pdf$/i, ''));
+  return !!(el?.isElectron && el.pdf?.saveHtml);
 }
 
 export async function printFiscalReportPdf(html: string): Promise<void> {
-  await printHtml(html);
+  await printReport(html);
 }

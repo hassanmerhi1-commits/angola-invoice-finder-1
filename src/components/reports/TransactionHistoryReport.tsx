@@ -135,9 +135,9 @@ export function TransactionHistoryReport() {
   const hasActiveFilters = dateFrom || dateTo || selectedUser || selectedBranch || selectedCategory || searchTerm;
 
   // Export to Excel
-  const handleExport = () => {
+  const handleExport = async () => {
     const dateStr = format(new Date(), 'yyyy-MM-dd');
-    exportTransactionHistoryToExcel(filteredRecords, `historico_transacoes_${dateStr}`);
+    await exportTransactionHistoryToExcel(filteredRecords, `historico_transacoes_${dateStr}`);
   };
 
   return (

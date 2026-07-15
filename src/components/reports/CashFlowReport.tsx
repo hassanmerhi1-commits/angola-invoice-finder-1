@@ -5,12 +5,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales } from '@/hooks/useERP';
-import { Download, ArrowUpCircle, ArrowDownCircle, Wallet, Loader2 } from 'lucide-react';
+import { Download, ArrowUpCircle, ArrowDownCircle, Wallet, Loader2, Printer, FileDown } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, parseISO } from 'date-fns';
-import { exportToExcel } from '@/lib/excel';
 import { api } from '@/lib/api/client';
 import { unwrapListPayload } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
+import { buildDataTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 export default function CashFlowReport() {
@@ -92,14 +92,46 @@ export default function CashFlowReport() {
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
 
-  const handleExport = () => {
-    const rows = daily.map((d) => ({
-      [t.cashFlowUi.day]: d.label,
-      [t.cashFlowUi.inflow]: d.inflow,
-      [t.cashFlowUi.outflow]: d.outflow,
-      [t.cashFlowUi.net]: d.net,
-    }));
-    exportToExcel(rows, `CashFlow_${dateFrom}_${dateTo}`);
+  const excelData = useMemo(
+    () =>
+      daily.map((d) => ({
+        [t.cashFlowUi.day]: d.label,
+        [t.cashFlowUi.inflow]: d.inflow,
+        [t.cashFlowUi.outflow]: d.outflow,
+        [t.cashFlowUi.net]: d.net,
+      })),
+    [daily, t],
+  );
+
+  const previewMeta = {
+    title: t.cashFlowUi.title,
+    subtitle: `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`,
+  };
+
+  const handleExport = async () => {
+    try {
+      await exportReportExcel(excelData, `CashFlow_${dateFrom}_${dateTo}`, previewMeta);
+    } catch (e) {
+      console.error('[CashFlowReport] excel export failed:', e);
+    }
+  };
+
+  const handlePrint = async () => {
+    if (excelData.length === 0) return;
+    try {
+      await printReport(buildDataTableHtml(excelData, previewMeta));
+    } catch (e) {
+      console.error('[CashFlowReport] print failed:', e);
+    }
+  };
+
+  const handleSavePdf = async () => {
+    if (excelData.length === 0) return;
+    try {
+      await saveReportPdf(buildDataTableHtml(excelData, previewMeta), `CashFlow_${dateFrom}_${dateTo}`);
+    } catch (e) {
+      console.error('[CashFlowReport] save pdf failed:', e);
+    }
   };
 
   return (
@@ -114,10 +146,20 @@ export default function CashFlowReport() {
               </CardTitle>
               <CardDescription>{t.cashFlowUi.description}</CardDescription>
             </div>
-            <Button variant="outline" onClick={handleExport}>
-              <Download className="w-4 h-4 mr-2" />
-              {t.reportsUi.exportExcel}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => void handlePrint()} disabled={excelData.length === 0}>
+                <Printer className="w-4 h-4 mr-2" />
+                {t.reportsUi.print}
+              </Button>
+              <Button variant="outline" onClick={() => void handleSavePdf()} disabled={excelData.length === 0}>
+                <FileDown className="w-4 h-4 mr-2" />
+                {t.reportsUi.savePdf}
+              </Button>
+              <Button variant="outline" onClick={() => void handleExport()} disabled={excelData.length === 0}>
+                <Download className="w-4 h-4 mr-2" />
+                {t.reportsUi.exportExcel}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>

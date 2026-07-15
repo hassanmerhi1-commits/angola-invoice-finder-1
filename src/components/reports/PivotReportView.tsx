@@ -4,8 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Download, Printer, FileDown, Search, Layers, ChevronRight, ChevronDown } from 'lucide-react';
-import { exportToExcel } from '@/lib/excel';
-import { printHtml } from '@/lib/printHtml';
+import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { useTranslation } from '@/i18n';
 import type { PivotRow, PivotTotals } from '@/lib/reports/salesPivot';
@@ -183,21 +182,15 @@ export default function PivotReportView({
 
   const handlePrint = async () => {
     try {
-      await printHtml(buildPrintHtml());
+      await printReport(buildPrintHtml());
     } catch (e) {
       console.error('[PivotReportView] print failed:', e);
     }
   };
 
   const handleSavePdf = async () => {
-    const html = buildPrintHtml();
     try {
-      const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
-      if (el?.isElectron && el?.pdf?.saveHtml) {
-        await el.pdf.saveHtml(html, { filename: `${fileName}.pdf`, landscape: true });
-        return;
-      }
-      await printHtml(html, { direct: true });
+      await saveReportPdf(buildPrintHtml(), fileName, { landscape: true });
     } catch (e) {
       console.error('[PivotReportView] save pdf failed:', e);
     }
@@ -211,7 +204,7 @@ export default function PivotReportView({
     [filteredRows],
   );
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const data = filteredRows.map((r) => ({
       ...(r.group ? { [t.salesByProductUi.category]: r.group } : {}),
       [dimensionLabel]: r.label,
@@ -222,7 +215,14 @@ export default function PivotReportView({
       [t.salesByProductUi.profit]: Number(r.profit.toFixed(2)),
       [t.salesByProductUi.marginPct]: Number(r.marginPct.toFixed(2)),
     }));
-    exportToExcel(data, fileName);
+    try {
+      await exportReportExcel(data, fileName, {
+        title: dimensionLabel,
+        landscape: true,
+      });
+    } catch (e) {
+      console.error('[PivotReportView] excel export failed:', e);
+    }
   };
 
   return (

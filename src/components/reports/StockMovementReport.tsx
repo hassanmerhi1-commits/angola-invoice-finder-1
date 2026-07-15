@@ -16,7 +16,8 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Download, Printer, ArrowDownCircle, ArrowUpCircle, FileSpreadsheet, Package, Search } from 'lucide-react';
+import { Download, Printer, ArrowDownCircle, ArrowUpCircle, FileSpreadsheet, FileDown, Package, Search } from 'lucide-react';
+import { buildDataTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { useProducts } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { api } from '@/lib/api/client';
@@ -151,40 +152,50 @@ export default function StockMovementReport() {
 
   const formatMoney = (value: number) => value.toLocaleString(locale, { minimumFractionDigits: 2 });
 
-  const handlePrint = () => window.print();
+  const excelData = filteredMovements.map((m) => ({
+    [t.common.date]: new Date(m.createdAt).toLocaleDateString(locale),
+    [t.stockMovementUi.colType]: m.type === 'IN' ? t.stockMovementUi.typeIn : t.stockMovementUi.typeOut,
+    [t.stockMovementUi.colReason]: getReasonLabel(m.reason),
+    [t.stockMovementUi.colDocument]: m.referenceNumber || '',
+    SKU: m.sku,
+    [t.common.product]: m.productName,
+    [t.common.qty]: m.quantity,
+    [t.stockMovementUi.colUnitCost]: m.costAtTime || 0,
+    [t.stockMovementUi.colTotalValue]: (m.costAtTime || 0) * m.quantity,
+    [t.common.notes]: m.notes || '',
+  }));
 
-  const handleExportExcel = () => {
-    const headers = [
-      t.common.date,
-      t.stockMovementUi.colType,
-      t.stockMovementUi.colReason,
-      t.stockMovementUi.colDocument,
-      'SKU',
-      t.common.product,
-      t.common.qty,
-      t.stockMovementUi.colUnitCost,
-      t.stockMovementUi.colTotalValue,
-      t.common.notes,
-    ];
-    const rows = filteredMovements.map(m => [
-      new Date(m.createdAt).toLocaleDateString(locale),
-      m.type === 'IN' ? t.stockMovementUi.typeIn : t.stockMovementUi.typeOut,
-      getReasonLabel(m.reason),
-      m.referenceNumber || '',
-      m.sku,
-      m.productName,
-      m.quantity,
-      m.costAtTime || 0,
-      (m.costAtTime || 0) * m.quantity,
-      m.notes || '',
-    ]);
-    const csv = [headers.join(','), ...rows.map(r => r.map(v => `"${v}"`).join(','))].join('\n');
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `movimentos_stock_${startDate}_${endDate}.csv`;
-    a.click();
+  const previewMeta = {
+    title: t.stockMovementUi.title,
+    subtitle: `${t.reportsUi.dateFrom}: ${startDate} — ${t.reportsUi.dateTo}: ${endDate}`,
+    landscape: true as const,
+  };
+  const exportFilename = `movimentos_stock_${startDate}_${endDate}`;
+
+  const handlePrint = async () => {
+    if (excelData.length === 0) return;
+    try {
+      await printReport(buildDataTableHtml(excelData, previewMeta));
+    } catch (e) {
+      console.error('[StockMovementReport] print failed:', e);
+    }
+  };
+
+  const handleSavePdf = async () => {
+    if (excelData.length === 0) return;
+    try {
+      await saveReportPdf(buildDataTableHtml(excelData, previewMeta), exportFilename, { landscape: true });
+    } catch (e) {
+      console.error('[StockMovementReport] save pdf failed:', e);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      await exportReportExcel(excelData, exportFilename, previewMeta);
+    } catch (e) {
+      console.error('[StockMovementReport] excel export failed:', e);
+    }
   };
 
   return (
@@ -249,10 +260,13 @@ export default function StockMovementReport() {
               <Input placeholder={t.stockMovementUi.searchPlaceholder} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-9 h-8" />
             </div>
             <div className="flex gap-2 ml-auto">
-              <Button variant="outline" size="sm" onClick={handlePrint}>
+              <Button variant="outline" size="sm" onClick={() => void handlePrint()} disabled={excelData.length === 0}>
                 <Printer className="w-4 h-4 mr-2" /> {t.reportsUi.print}
               </Button>
-              <Button variant="outline" size="sm" onClick={handleExportExcel}>
+              <Button variant="outline" size="sm" onClick={() => void handleSavePdf()} disabled={excelData.length === 0}>
+                <FileDown className="w-4 h-4 mr-2" /> {t.reportsUi.savePdf}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void handleExportExcel()} disabled={excelData.length === 0}>
                 <FileSpreadsheet className="w-4 h-4 mr-2" /> Excel
               </Button>
             </div>

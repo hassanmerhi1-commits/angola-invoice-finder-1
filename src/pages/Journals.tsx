@@ -9,10 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import {
   Plus, Search, Edit2, Trash2, RefreshCw, FileText,
@@ -563,11 +562,11 @@ export default function Journals() {
 
   // Filtered accounts for picker
   const filteredAccounts = useMemo(() => {
-    if (!accountSearch) return accounts.slice(0, 30);
+    if (!accountSearch) return accounts.slice(0, 50);
     const term = accountSearch.toLowerCase();
     return accounts.filter(a => 
       a.code.toLowerCase().includes(term) || a.name.toLowerCase().includes(term)
-    ).slice(0, 30);
+    ).slice(0, 50);
   }, [accounts, accountSearch]);
 
   // Reset new entry form
@@ -862,83 +861,125 @@ export default function Journals() {
 
       {/* ============= NEW ENTRY DIALOG ============= */}
       <Dialog open={newEntryOpen} onOpenChange={setNewEntryOpen}>
-        <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Plus className="w-4 h-4" /> {t.journalsUi.newManualEntry}
-            </DialogTitle>
+        <DialogContent className="max-w-[96vw] w-[96vw] max-h-[94vh] h-[90vh] flex flex-col gap-0 p-0 overflow-hidden sm:rounded-xl">
+          <DialogHeader className="shrink-0 space-y-1 border-b bg-muted/30 px-5 py-4 sm:px-6">
+            <div className="flex flex-wrap items-start justify-between gap-3 pr-10">
+              <div className="space-y-1">
+                <DialogTitle className="flex items-center gap-2 text-xl">
+                  <Plus className="h-5 w-5" /> {t.journalsUi.newManualEntry}
+                </DialogTitle>
+                <DialogDescription className="text-sm">
+                  {t.journalsUi.newManualEntryHint}
+                </DialogDescription>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    'font-mono text-xs px-2.5 py-1',
+                    isBalanced && newEntryTotalDebit > 0
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                      : 'border-amber-300 bg-amber-50 text-amber-900',
+                  )}
+                >
+                  {isBalanced && newEntryTotalDebit > 0
+                    ? t.journalsUi.balanced
+                    : t.journalsUi.entryNotBalanced.replace(
+                        '{amount}',
+                        Math.abs(difference).toLocaleString(uiLocale),
+                      )}
+                </Badge>
+                <Badge variant="secondary" className="font-mono text-xs">
+                  {t.journalsUi.debit}: {newEntryTotalDebit.toLocaleString(uiLocale)} Kz
+                </Badge>
+                <Badge variant="secondary" className="font-mono text-xs">
+                  {t.journalsUi.credit}: {newEntryTotalCredit.toLocaleString(uiLocale)} Kz
+                </Badge>
+              </div>
+            </div>
           </DialogHeader>
 
-          <div className="space-y-4">
-            {/* Header fields */}
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <Label className="text-xs">{t.common.date}</Label>
-                <Input type="date" value={newEntryDate} onChange={e => setNewEntryDate(e.target.value)} className="h-8 text-sm" />
-              </div>
-              <div>
-                <Label className="text-xs">{t.common.type}</Label>
-                <Select value={newEntryType} onValueChange={setNewEntryType}>
-                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {ENTRY_TYPES.map(et => (
-                      <SelectItem key={et.value} value={et.value}>
-                        {t.journalsUi.entryTypes[et.labelKey as keyof typeof t.journalsUi.entryTypes] as string}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">{t.journalsUi.branch}</Label>
-                <Input value={currentBranch?.name || t.branchUi.headOffice} disabled className="h-8 text-sm bg-muted" />
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-5 py-4 sm:px-6">
+            <div className="shrink-0 rounded-lg border bg-card p-4 shadow-sm">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+                <div className="md:col-span-2">
+                  <Label className="text-sm font-medium">{t.common.date}</Label>
+                  <Input
+                    type="date"
+                    value={newEntryDate}
+                    onChange={e => setNewEntryDate(e.target.value)}
+                    className="mt-1.5 h-10"
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <Label className="text-sm font-medium">{t.common.type}</Label>
+                  <Select value={newEntryType} onValueChange={setNewEntryType}>
+                    <SelectTrigger className="mt-1.5 h-10"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {ENTRY_TYPES.map(et => (
+                        <SelectItem key={et.value} value={et.value}>
+                          {t.journalsUi.entryTypes[et.labelKey as keyof typeof t.journalsUi.entryTypes] as string}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="md:col-span-3">
+                  <Label className="text-sm font-medium">{t.journalsUi.branch}</Label>
+                  <Input
+                    value={currentBranch?.name || t.branchUi.headOffice}
+                    disabled
+                    className="mt-1.5 h-10 bg-muted"
+                  />
+                </div>
+                <div className="md:col-span-4">
+                  <Label className="text-sm font-medium">{t.common.description}</Label>
+                  <Input
+                    value={newEntryDescription}
+                    onChange={e => setNewEntryDescription(e.target.value)}
+                    placeholder={t.journalsUi.entryDescriptionPlaceholder}
+                    className="mt-1.5 h-10"
+                  />
+                </div>
               </div>
             </div>
 
-            <div>
-              <Label className="text-xs">{t.common.description}</Label>
-              <Textarea
-                value={newEntryDescription}
-                onChange={e => setNewEntryDescription(e.target.value)}
-                placeholder={t.journalsUi.entryDescriptionPlaceholder}
-                className="min-h-[40px] text-sm resize-none"
-              />
-            </div>
-
-            {/* Lines table */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label className="text-xs font-semibold">{t.journalsUi.entryLines}</Label>
-                <div className="flex gap-1">
-                  <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1" onClick={autoBalance}>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-muted/40 px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold">{t.journalsUi.entryLines}</p>
+                  <p className="text-xs text-muted-foreground">{t.journalsUi.entryLinesHint}</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" className="h-8 gap-1" onClick={autoBalance}>
                     {t.journalsUi.autoBalance}
                   </Button>
-                  <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1" onClick={addLine}>
-                    <Plus className="w-3 h-3" /> {t.journalsUi.line}
+                  <Button variant="outline" size="sm" className="h-8 gap-1" onClick={addLine}>
+                    <Plus className="h-4 w-4" /> {t.journalsUi.line}
                   </Button>
                 </div>
               </div>
 
-              <div className="border rounded-md overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-muted/60">
-                    <tr>
-                      <th className="px-2 py-1.5 text-left w-28">{t.journalsUi.account}</th>
-                      <th className="px-2 py-1.5 text-left">{t.journalsUi.accountName}</th>
-                      <th className="px-2 py-1.5 text-left w-40">{t.common.description}</th>
-                      <th className="px-2 py-1.5 text-right w-28">{t.journalsUi.debit}</th>
-                      <th className="px-2 py-1.5 text-right w-28">{t.journalsUi.credit}</th>
-                      <th className="px-2 py-1.5 w-8"></th>
+              <div className="min-h-0 flex-1 overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm">
+                    <tr className="border-b">
+                      <th className="px-3 py-2.5 text-left w-32 font-semibold">{t.journalsUi.account}</th>
+                      <th className="px-3 py-2.5 text-left min-w-[200px] font-semibold">{t.journalsUi.accountName}</th>
+                      <th className="px-3 py-2.5 text-left min-w-[180px] font-semibold">{t.common.description}</th>
+                      <th className="px-3 py-2.5 text-right w-36 font-semibold">{t.journalsUi.debit}</th>
+                      <th className="px-3 py-2.5 text-right w-36 font-semibold">{t.journalsUi.credit}</th>
+                      <th className="px-2 py-2.5 w-10" />
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {newEntryLines.map((line) => (
-                      <tr key={line.id} className="group">
-                        <td className="px-1 py-1 relative">
+                      <tr key={line.id} className="group hover:bg-muted/20">
+                        <td className="px-2 py-2 relative align-top">
                           <Input
                             value={line.accountCode}
                             placeholder={t.journalsUi.accountCodeExample}
-                            className="h-7 text-xs font-mono"
+                            className="h-9 font-mono"
                             onFocus={() => { setActiveLineId(line.id); setAccountSearch(''); }}
                             onChange={e => {
                               updateLine(line.id, 'accountCode', e.target.value);
@@ -946,35 +987,35 @@ export default function Journals() {
                               setActiveLineId(line.id);
                             }}
                           />
-                          {/* Account picker dropdown */}
                           {activeLineId === line.id && (
-                            <div className="absolute top-full left-0 z-50 w-72 bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
-                              <div className="p-1">
+                            <div className="absolute top-full left-0 z-50 mt-1 w-96 max-h-56 overflow-y-auto rounded-md border bg-popover shadow-lg">
+                              <div className="sticky top-0 border-b bg-popover p-2">
                                 <Input
                                   placeholder={t.journalsUi.searchAccountPlaceholder}
                                   value={accountSearch}
                                   onChange={e => setAccountSearch(e.target.value)}
-                                  className="h-6 text-xs mb-1"
+                                  className="h-8"
                                   autoFocus
                                 />
                               </div>
                               {filteredAccounts.length === 0 ? (
-                                <div className="px-2 py-3 text-center text-muted-foreground text-xs">
+                                <div className="px-3 py-4 text-center text-sm text-muted-foreground">
                                   {t.journalsUi.noAccountsFound}
                                 </div>
                               ) : (
                                 filteredAccounts.map(acct => (
                                   <button
                                     key={acct.id}
-                                    className="w-full text-left px-2 py-1 text-xs hover:bg-accent/50 flex items-center gap-2 rounded-sm"
+                                    type="button"
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent/50"
                                     onMouseDown={e => {
                                       e.preventDefault();
                                       selectAccount(line.id, acct);
                                     }}
                                   >
-                                    <span className="font-mono text-primary w-14 shrink-0">{acct.code}</span>
-                                    <span className="truncate">{acct.name}</span>
-                                    <span className="ml-auto text-muted-foreground">
+                                    <span className="w-16 shrink-0 font-mono text-primary">{acct.code}</span>
+                                    <span className="min-w-0 flex-1 truncate">{acct.name}</span>
+                                    <span className="shrink-0 text-xs text-muted-foreground">
                                       {(acct.current_balance || 0).toLocaleString(uiLocale)}
                                     </span>
                                   </button>
@@ -983,22 +1024,22 @@ export default function Journals() {
                             </div>
                           )}
                         </td>
-                        <td className="px-1 py-1">
+                        <td className="px-2 py-2 align-top">
                           <Input
                             value={line.accountName}
                             disabled
-                            className="h-7 text-xs bg-muted/30"
+                            className="h-9 bg-muted/40"
                           />
                         </td>
-                        <td className="px-1 py-1">
+                        <td className="px-2 py-2 align-top">
                           <Input
                             value={line.description}
                             placeholder={t.journalsUi.lineDescriptionPlaceholder}
                             onChange={e => updateLine(line.id, 'description', e.target.value)}
-                            className="h-7 text-xs"
+                            className="h-9"
                           />
                         </td>
-                        <td className="px-1 py-1">
+                        <td className="px-2 py-2 align-top">
                           <Input
                             type="number"
                             min="0"
@@ -1006,10 +1047,10 @@ export default function Journals() {
                             value={line.debit}
                             placeholder="0.00"
                             onChange={e => updateLine(line.id, 'debit', e.target.value)}
-                            className="h-7 text-xs text-right font-mono"
+                            className="h-9 text-right font-mono tabular-nums"
                           />
                         </td>
-                        <td className="px-1 py-1">
+                        <td className="px-2 py-2 align-top">
                           <Input
                             type="number"
                             min="0"
@@ -1017,55 +1058,59 @@ export default function Journals() {
                             value={line.credit}
                             placeholder="0.00"
                             onChange={e => updateLine(line.id, 'credit', e.target.value)}
-                            className="h-7 text-xs text-right font-mono"
+                            className="h-9 text-right font-mono tabular-nums"
                           />
                         </td>
-                        <td className="px-1 py-1">
+                        <td className="px-1 py-2 align-top">
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                            className="h-8 w-8 opacity-60 hover:opacity-100"
                             onClick={() => removeLine(line.id)}
                           >
-                            <Trash2 className="w-3 h-3 text-destructive" />
+                            <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="bg-muted/60">
-                    <tr className="font-bold text-xs">
-                      <td className="px-2 py-2" colSpan={3}>
-                        {t.common.total}
-                        {!isBalanced && newEntryTotalDebit + newEntryTotalCredit > 0 && (
-                          <span className="ml-2 text-destructive font-normal">
-                            {t.journalsUi.differenceLabel
-                              .replace('{amount}', Math.abs(difference).toLocaleString(uiLocale))
-                              .replace('{side}', difference > 0 ? t.journalsUi.debitSide : t.journalsUi.creditSide)}
-                          </span>
-                        )}
-                        {isBalanced && newEntryTotalDebit > 0 && (
-                          <span className="ml-2 text-green-600 font-normal">{t.journalsUi.balanced}</span>
-                        )}
-                      </td>
-                      <td className="px-2 py-2 text-right font-mono">{newEntryTotalDebit.toLocaleString(uiLocale)}</td>
-                      <td className="px-2 py-2 text-right font-mono">{newEntryTotalCredit.toLocaleString(uiLocale)}</td>
-                      <td></td>
-                    </tr>
-                  </tfoot>
                 </table>
+              </div>
+
+              <div className="shrink-0 border-t bg-muted/50 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                  <span className="font-semibold">{t.common.total}</span>
+                  <div className="flex flex-wrap items-center gap-4 font-mono tabular-nums">
+                    <span>
+                      {t.journalsUi.debit}: <strong>{newEntryTotalDebit.toLocaleString(uiLocale)}</strong> Kz
+                    </span>
+                    <span>
+                      {t.journalsUi.credit}: <strong>{newEntryTotalCredit.toLocaleString(uiLocale)}</strong> Kz
+                    </span>
+                    {!isBalanced && newEntryTotalDebit + newEntryTotalCredit > 0 && (
+                      <span className="text-destructive font-sans font-medium">
+                        {t.journalsUi.differenceLabel
+                          .replace('{amount}', Math.abs(difference).toLocaleString(uiLocale))
+                          .replace('{side}', difference > 0 ? t.journalsUi.debitSide : t.journalsUi.creditSide)}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
-          <DialogFooter className="mt-4 gap-2">
-            <Button variant="outline" onClick={() => setNewEntryOpen(false)}>{t.common.cancel}</Button>
+          <DialogFooter className="shrink-0 gap-2 border-t bg-muted/20 px-5 py-4 sm:px-6">
+            <Button variant="outline" size="lg" onClick={() => setNewEntryOpen(false)}>
+              {t.common.cancel}
+            </Button>
             <Button
+              size="lg"
               onClick={saveNewEntry}
               disabled={!isBalanced || newEntryTotalDebit === 0 || !newEntryDescription.trim()}
-              className="gap-1"
+              className="gap-2 min-w-[160px]"
             >
-              <CheckCircle className="w-4 h-4" /> {t.journalsUi.postEntry}
+              <CheckCircle className="h-4 w-4" /> {t.journalsUi.postEntry}
             </Button>
           </DialogFooter>
         </DialogContent>

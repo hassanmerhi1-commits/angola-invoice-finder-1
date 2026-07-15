@@ -11,8 +11,7 @@ import { useSales, useProducts } from '@/hooks/useERP';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { Calendar, Download, Printer, FileDown } from 'lucide-react';
 import { format, startOfYear, endOfYear } from 'date-fns';
-import { exportToExcel } from '@/lib/excel';
-import { printHtml } from '@/lib/printHtml';
+import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { unwrapListPayload } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -133,7 +132,7 @@ export default function MonthlyReport() {
     [rows],
   );
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const data = rows.map((r) => ({
       [t.monthlyUi.month]: r.month,
       [t.monthlyUi.sales]: Number(r.sales.toFixed(2)),
@@ -142,7 +141,15 @@ export default function MonthlyReport() {
       [t.monthlyUi.purchases]: Number(r.purchases.toFixed(2)),
       [t.monthlyUi.netCashFlow]: Number(r.net.toFixed(2)),
     }));
-    exportToExcel(data, `Mensal_${dateFrom}_${dateTo}`);
+    try {
+      await exportReportExcel(data, `Mensal_${dateFrom}_${dateTo}`, {
+        title: t.monthlyUi.title,
+        subtitle: `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`,
+        landscape: true,
+      });
+    } catch (e) {
+      console.error('[MonthlyReport] excel export failed:', e);
+    }
   };
 
   const buildPrintHtml = () => {
@@ -209,21 +216,15 @@ export default function MonthlyReport() {
 
   const handlePrint = async () => {
     try {
-      await printHtml(buildPrintHtml());
+      await printReport(buildPrintHtml());
     } catch (e) {
       console.error('[MonthlyReport] print failed:', e);
     }
   };
 
   const handleSavePdf = async () => {
-    const html = buildPrintHtml();
     try {
-      const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
-      if (el?.isElectron && el?.pdf?.saveHtml) {
-        await el.pdf.saveHtml(html, { filename: `mensal_${dateFrom}_${dateTo}.pdf`, landscape: true });
-        return;
-      }
-      await printHtml(html, { direct: true });
+      await saveReportPdf(buildPrintHtml(), `mensal_${dateFrom}_${dateTo}`, { landscape: true });
     } catch (e) {
       console.error('[MonthlyReport] save pdf failed:', e);
     }

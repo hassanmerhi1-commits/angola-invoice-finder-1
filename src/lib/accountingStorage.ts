@@ -244,6 +244,23 @@ export async function getCaixaById(id: string): Promise<Caixa | undefined> {
 }
 
 export async function saveCaixa(caixa: Caixa): Promise<void> {
+  if (await shouldLoadCaixasFromServerApi()) {
+    try {
+      const res = await api.caixa.updateRegister(caixa.id, {
+        name: caixa.name,
+        pettyLimit: caixa.pettyLimit,
+        dailyLimit: caixa.dailyLimit,
+        requiresApproval: caixa.requiresApproval,
+      });
+      if (!res.error) {
+        invalidateCaixaListCache(caixa.branchId, caixa.branchName);
+        return;
+      }
+      console.warn('[caixas] server update failed:', res.error);
+    } catch (e) {
+      console.warn('[caixas] server update failed:', e);
+    }
+  }
   if (isElectronMode()) {
     await dbInsert('caixas', mapCaixaToDb(caixa));
     return;
@@ -266,6 +283,29 @@ export async function createCaixa(
   pettyLimit?: number,
   dailyLimit?: number
 ): Promise<Caixa> {
+  if (await shouldLoadCaixasFromServerApi()) {
+    try {
+      const res = await api.caixa.createRegister({
+        branchId,
+        branchName,
+        name,
+        openingBalance,
+        pettyLimit,
+        dailyLimit,
+        requiresApproval: !!pettyLimit,
+      });
+      const row = res.data ? unwrapApiItem<any>(res.data) : null;
+      if (!res.error && row) {
+        const caixa = mapCaixaFromDb(row);
+        invalidateCaixaListCache(branchId, branchName);
+        return caixa;
+      }
+      console.warn('[caixas] server create failed:', res.error);
+    } catch (e) {
+      console.warn('[caixas] server create failed:', e);
+    }
+  }
+
   const caixa: Caixa = {
     id: `caixa_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     branchId,

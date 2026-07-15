@@ -8,20 +8,25 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Printer } from 'lucide-react';
+import { Download, FileDown, Printer } from 'lucide-react';
 import { useTranslation } from '@/i18n';
-import { registerPrintPreviewHandler, type PrintPreviewAction } from '@/lib/printPreview';
+import {
+  registerExportPreviewHandler,
+  type ExportPreviewAction,
+  type ExportPreviewKind,
+  type ExportPreviewRequest,
+} from '@/lib/printPreview';
 
 type PendingPreview = {
-  html: string;
-  resolve: (action: PrintPreviewAction) => void;
+  request: ExportPreviewRequest;
+  resolve: (action: ExportPreviewAction) => void;
 };
 
 export function PrintPreviewHost() {
   const { t } = useTranslation();
   const [pending, setPending] = useState<PendingPreview | null>(null);
 
-  const finish = useCallback((action: PrintPreviewAction) => {
+  const finish = useCallback((action: ExportPreviewAction) => {
     setPending((current) => {
       current?.resolve(action);
       return null;
@@ -29,14 +34,39 @@ export function PrintPreviewHost() {
   }, []);
 
   useEffect(() => {
-    registerPrintPreviewHandler(
-      (html) =>
-        new Promise<PrintPreviewAction>((resolve) => {
-          setPending({ html, resolve });
+    registerExportPreviewHandler(
+      (request) =>
+        new Promise<ExportPreviewAction>((resolve) => {
+          setPending({ request, resolve });
         }),
     );
-    return () => registerPrintPreviewHandler(null);
+    return () => registerExportPreviewHandler(null);
   }, []);
+
+  const kind: ExportPreviewKind = pending?.request.kind ?? 'print';
+
+  const title =
+    kind === 'pdf'
+      ? t.printPreviewUi.titlePdf
+      : kind === 'excel'
+        ? t.printPreviewUi.titleExcel
+        : t.printPreviewUi.title;
+
+  const description =
+    kind === 'pdf'
+      ? t.printPreviewUi.descriptionPdf
+      : kind === 'excel'
+        ? t.printPreviewUi.descriptionExcel
+        : t.printPreviewUi.description;
+
+  const confirmLabel =
+    kind === 'pdf'
+      ? t.printPreviewUi.confirmPdf
+      : kind === 'excel'
+        ? t.printPreviewUi.confirmExcel
+        : t.printPreviewUi.confirmPrint;
+
+  const ConfirmIcon = kind === 'excel' ? Download : kind === 'pdf' ? FileDown : Printer;
 
   return (
     <Dialog
@@ -45,16 +75,16 @@ export function PrintPreviewHost() {
         if (!open) finish('cancel');
       }}
     >
-      <DialogContent className="max-w-5xl max-h-[92vh] flex flex-col gap-3">
+      <DialogContent className="max-w-[96vw] w-[96vw] max-h-[92vh] flex flex-col gap-3">
         <DialogHeader>
-          <DialogTitle>{t.printPreviewUi.title}</DialogTitle>
-          <DialogDescription>{t.printPreviewUi.description}</DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
         {pending && (
           <iframe
-            title={t.printPreviewUi.title}
-            srcDoc={pending.html}
+            title={title}
+            srcDoc={pending.request.html}
             className="w-full flex-1 min-h-[60vh] rounded-md border bg-white"
           />
         )}
@@ -63,9 +93,9 @@ export function PrintPreviewHost() {
           <Button type="button" variant="outline" onClick={() => finish('cancel')}>
             {t.common.cancel}
           </Button>
-          <Button type="button" onClick={() => finish('print')}>
-            <Printer className="w-4 h-4 mr-2" />
-            {t.printPreviewUi.confirmPrint}
+          <Button type="button" onClick={() => finish('confirm')}>
+            <ConfirmIcon className="w-4 h-4 mr-2" />
+            {confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

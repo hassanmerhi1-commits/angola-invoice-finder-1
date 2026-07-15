@@ -34,7 +34,7 @@ import { Printer, FileDown, Eye, TrendingUp, DollarSign, Package, Filter, X } fr
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useTranslation } from '@/i18n';
-import { printHtml } from '@/lib/printHtml';
+import { printReport, saveReportPdf } from '@/lib/reportExport';
 
 interface SaleItemDetail extends SaleItem {
   cost: number;
@@ -325,7 +325,7 @@ export function DailySalesDetailReport({
     const html = buildReportPrintHtml();
     if (!html) return;
     try {
-      await printHtml(html);
+      await printReport(html);
     } catch (e) {
       console.error('[DailySalesDetailReport] print failed:', e);
     }
@@ -334,17 +334,11 @@ export function DailySalesDetailReport({
   const handleSavePDF = async () => {
     const html = buildReportPrintHtml();
     if (!html) return;
+    const dateLabel = isDateRange
+      ? `${format(new Date(startDate), 'dd-MM-yyyy')}_${format(new Date(endDate), 'dd-MM-yyyy')}`
+      : format(new Date(startDate), 'dd-MM-yyyy');
     try {
-      const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
-      if (el?.isElectron && el?.pdf?.saveHtml) {
-        const dateLabel = isDateRange
-          ? `${format(new Date(startDate), 'dd-MM-yyyy')}_${format(new Date(endDate), 'dd-MM-yyyy')}`
-          : format(new Date(startDate), 'dd-MM-yyyy');
-        await el.pdf.saveHtml(html, { filename: `daily-sales-report_${dateLabel}.pdf` });
-        return;
-      }
-      // Web fallback: user chooses "Save as PDF" in OS print dialog
-      await printHtml(html, { direct: true });
+      await saveReportPdf(html, `daily-sales-report_${dateLabel}`, { landscape: true });
     } catch (e) {
       console.error('[DailySalesDetailReport] save pdf failed:', e);
     }

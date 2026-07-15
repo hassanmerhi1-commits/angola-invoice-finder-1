@@ -22,10 +22,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Printer, FileSpreadsheet, RefreshCw, Loader2 } from 'lucide-react';
+import { Printer, FileSpreadsheet, FileDown, RefreshCw, Loader2 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useTrialBalance } from '@/hooks/useChartOfAccounts';
 import type { TrialBalanceRow } from '@/types/accounting';
+import { buildReportHtml, escapeHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 
 interface AccountBalance {
   accountCode: string;
@@ -135,42 +136,105 @@ export default function TrialBalanceReport() {
   const formatMoney = (value: number) => value.toLocaleString(locale, { minimumFractionDigits: 2 });
   const dash = t.common.dash;
 
-  const handlePrint = () => {
-    window.print();
+  const excelData = useMemo(
+    () =>
+      accounts.map((a) => ({
+        [t.trialBalanceUi.colCode]: a.accountCode,
+        [t.trialBalanceUi.colAccount]: a.accountName,
+        [t.trialBalanceUi.colType]: a.accountType,
+        [t.trialBalanceUi.openingDebit]: a.openingDebit,
+        [t.trialBalanceUi.openingCredit]: a.openingCredit,
+        [t.trialBalanceUi.periodDebit]: a.periodDebit,
+        [t.trialBalanceUi.periodCredit]: a.periodCredit,
+        [t.trialBalanceUi.closingDebit]: a.closingDebit,
+        [t.trialBalanceUi.closingCredit]: a.closingCredit,
+      })),
+    [accounts, t],
+  );
+
+  const buildPrintHtml = () => {
+    const body = accounts
+      .map(
+        (a) => `<tr>
+          <td>${escapeHtml(a.accountCode)}</td>
+          <td>${escapeHtml(a.accountName)}</td>
+          <td>${escapeHtml(a.accountType)}</td>
+          <td class="r">${formatMoney(a.openingDebit)}</td>
+          <td class="r">${formatMoney(a.openingCredit)}</td>
+          <td class="r">${formatMoney(a.periodDebit)}</td>
+          <td class="r">${formatMoney(a.periodCredit)}</td>
+          <td class="r">${formatMoney(a.closingDebit)}</td>
+          <td class="r">${formatMoney(a.closingCredit)}</td>
+        </tr>`,
+      )
+      .join('');
+    return buildReportHtml({
+      title: t.trialBalanceUi.title,
+      subtitle: `${t.reportsUi.dateFrom}: ${startDate} — ${t.reportsUi.dateTo}: ${endDate}`,
+      landscape: true,
+      bodyHtml: `<table>
+        <thead>
+          <tr>
+            <th rowspan="2">${escapeHtml(t.trialBalanceUi.colCode)}</th>
+            <th rowspan="2">${escapeHtml(t.trialBalanceUi.colAccount)}</th>
+            <th rowspan="2">${escapeHtml(t.trialBalanceUi.colType)}</th>
+            <th colspan="2" class="c">${escapeHtml(t.trialBalanceUi.openingBalance)}</th>
+            <th colspan="2" class="c">${escapeHtml(t.trialBalanceUi.periodMovement)}</th>
+            <th colspan="2" class="c">${escapeHtml(t.trialBalanceUi.closingBalance)}</th>
+          </tr>
+          <tr>
+            <th class="r">${escapeHtml(t.trialBalanceUi.debit)}</th>
+            <th class="r">${escapeHtml(t.trialBalanceUi.credit)}</th>
+            <th class="r">${escapeHtml(t.trialBalanceUi.debit)}</th>
+            <th class="r">${escapeHtml(t.trialBalanceUi.credit)}</th>
+            <th class="r">${escapeHtml(t.trialBalanceUi.debit)}</th>
+            <th class="r">${escapeHtml(t.trialBalanceUi.credit)}</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+        <tfoot>
+          <tr class="tot">
+            <td colspan="3">${escapeHtml(t.common.total)}</td>
+            <td class="r">${formatMoney(totals.openingDebit)}</td>
+            <td class="r">${formatMoney(totals.openingCredit)}</td>
+            <td class="r">${formatMoney(totals.periodDebit)}</td>
+            <td class="r">${formatMoney(totals.periodCredit)}</td>
+            <td class="r">${formatMoney(totals.closingDebit)}</td>
+            <td class="r">${formatMoney(totals.closingCredit)}</td>
+          </tr>
+        </tfoot>
+      </table>`,
+    });
   };
 
-  const handleExportExcel = () => {
-    const headers = [
-      t.trialBalanceUi.colCode,
-      t.trialBalanceUi.colAccount,
-      t.trialBalanceUi.colType,
-      t.trialBalanceUi.openingDebit,
-      t.trialBalanceUi.openingCredit,
-      t.trialBalanceUi.periodDebit,
-      t.trialBalanceUi.periodCredit,
-      t.trialBalanceUi.closingDebit,
-      t.trialBalanceUi.closingCredit,
-    ];
-    const rows = accounts.map((a) => [
-      a.accountCode,
-      a.accountName,
-      a.accountType,
-      a.openingDebit,
-      a.openingCredit,
-      a.periodDebit,
-      a.periodCredit,
-      a.closingDebit,
-      a.closingCredit,
-    ]);
+  const handlePrint = async () => {
+    if (accounts.length === 0) return;
+    try {
+      await printReport(buildPrintHtml());
+    } catch (e) {
+      console.error('[TrialBalanceReport] print failed:', e);
+    }
+  };
 
-    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `balancete_${startDate}_${endDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleSavePdf = async () => {
+    if (accounts.length === 0) return;
+    try {
+      await saveReportPdf(buildPrintHtml(), `balancete_${startDate}_${endDate}`, { landscape: true });
+    } catch (e) {
+      console.error('[TrialBalanceReport] save pdf failed:', e);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      await exportReportExcel(excelData, `balancete_${startDate}_${endDate}`, {
+        title: t.trialBalanceUi.title,
+        subtitle: `${t.reportsUi.dateFrom}: ${startDate} — ${t.reportsUi.dateTo}: ${endDate}`,
+        landscape: true,
+      });
+    } catch (e) {
+      console.error('[TrialBalanceReport] excel export failed:', e);
+    }
   };
 
   return (
@@ -220,11 +284,15 @@ export default function TrialBalanceReport() {
                 {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
                 {t.common.refresh}
               </Button>
-              <Button variant="outline" size="sm" onClick={handlePrint}>
+              <Button variant="outline" size="sm" onClick={() => void handlePrint()} disabled={accounts.length === 0}>
                 <Printer className="w-4 h-4 mr-2" />
                 {t.reportsUi.print}
               </Button>
-              <Button variant="outline" size="sm" onClick={handleExportExcel} disabled={accounts.length === 0}>
+              <Button variant="outline" size="sm" onClick={() => void handleSavePdf()} disabled={accounts.length === 0}>
+                <FileDown className="w-4 h-4 mr-2" />
+                {t.reportsUi.savePdf}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void handleExportExcel()} disabled={accounts.length === 0}>
                 <FileSpreadsheet className="w-4 h-4 mr-2" />
                 Excel
               </Button>

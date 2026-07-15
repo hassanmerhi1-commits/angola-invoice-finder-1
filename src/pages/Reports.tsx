@@ -10,7 +10,7 @@ import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales, useProducts } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
-import { exportToExcel } from '@/lib/excel';
+import { exportReportExcel } from '@/lib/reportExport';
 import { format, startOfMonth } from 'date-fns';
 import {
   BarChart3, Users, Truck, TrendingUp, Calendar,
@@ -157,18 +157,23 @@ export default function Reports() {
   const receivable = kpis?.openAR?.total ?? 0;
   const payable = kpis?.openAP?.total ?? 0;
 
-  const handleExportOverview = () => {
-    exportToExcel(
-      [
-        {
-          [t.reportsCenterUi.quickStats.salesMonth]: salesMonth,
-          [t.reportsCenterUi.quickStats.receivable]: receivable,
-          [t.reportsCenterUi.quickStats.payable]: payable,
-          [t.reportsCenterUi.quickStats.avgMargin]: `${avgMargin.toFixed(1)}%`,
-        },
-      ],
-      `Resumo_${format(new Date(), 'yyyyMMdd')}`,
-    );
+  const handleExportOverview = async () => {
+    try {
+      await exportReportExcel(
+        [
+          {
+            [t.reportsCenterUi.quickStats.salesMonth]: salesMonth,
+            [t.reportsCenterUi.quickStats.receivable]: receivable,
+            [t.reportsCenterUi.quickStats.payable]: payable,
+            [t.reportsCenterUi.quickStats.avgMargin]: `${avgMargin.toFixed(1)}%`,
+          },
+        ],
+        `Resumo_${format(new Date(), 'yyyyMMdd')}`,
+        { title: t.reportsCenterUi.title },
+      );
+    } catch (e) {
+      console.error('[Reports] overview export failed:', e);
+    }
   };
 
   const reportCategories = [

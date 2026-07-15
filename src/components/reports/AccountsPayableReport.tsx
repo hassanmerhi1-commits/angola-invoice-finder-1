@@ -8,7 +8,7 @@ import { toast } from '@/hooks/use-toast';
 import { isDemoMode } from '@/lib/api/config';
 import { format, differenceInDays, parseISO } from 'date-fns';
 import { pt } from 'date-fns/locale';
-import { exportToExcel } from '@/lib/excel';
+import { exportReportExcel } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
 
@@ -191,7 +191,7 @@ export default function AccountsPayableReport() {
     return <Badge variant="destructive">{t.reportsUi.veryLate}</Badge>;
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const data = payableReport.map((entry) => ({
       [t.reportsUi.supplier]: entry.supplierName,
       [t.reportsUi.nif]: entry.supplierNif,
@@ -202,7 +202,13 @@ export default function AccountsPayableReport() {
       [t.reportsUi.overdue60plus]: entry.days90,
       [t.reportsUi.total]: entry.total,
     }));
-    exportToExcel(data, `ContasPagar_${format(new Date(), 'yyyyMMdd')}`);
+    try {
+      await exportReportExcel(data, `ContasPagar_${format(new Date(), 'yyyyMMdd')}`, {
+        title: t.reportsUi.payablesTitle,
+      });
+    } catch (e) {
+      console.error('[AccountsPayableReport] excel export failed:', e);
+    }
   };
 
   if (loading) {

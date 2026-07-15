@@ -9,7 +9,7 @@ import { useClients, useSales } from '@/hooks/useERP';
 import { Download, Clock, AlertTriangle, AlertCircle, CheckCircle } from 'lucide-react';
 import { format, differenceInDays, parseISO } from 'date-fns';
 import { pt } from 'date-fns/locale';
-import { exportToExcel } from '@/lib/excel';
+import { exportReportExcel } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
 
 interface AgingEntry {
@@ -150,7 +150,7 @@ export default function AccountsReceivableReport() {
     }
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const data = agingReport.map(entry => ({
       [t.reportsUi.client]: entry.clientName,
       [t.reportsUi.nif]: entry.clientNif,
@@ -162,8 +162,14 @@ export default function AccountsReceivableReport() {
       [t.reportsUi.creditLimit]: entry.creditLimit,
       [t.reportsUi.percentUsed]: ((entry.total / entry.creditLimit) * 100).toFixed(1),
     }));
-    
-    exportToExcel(data, `ContasReceber_Aging_${format(new Date(), 'yyyyMMdd')}`);
+
+    try {
+      await exportReportExcel(data, `ContasReceber_Aging_${format(new Date(), 'yyyyMMdd')}`, {
+        title: t.reportsUi.receivablesTitle,
+      });
+    } catch (e) {
+      console.error('[AccountsReceivableReport] excel export failed:', e);
+    }
   };
 
   return (

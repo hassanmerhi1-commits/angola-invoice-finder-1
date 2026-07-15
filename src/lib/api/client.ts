@@ -1227,6 +1227,28 @@ export const api = {
     },
     ensureRegister: (body: { branchId: string; branchName?: string }) =>
       apiFetch<any>('/caixa/registers/ensure', { method: 'POST', body: JSON.stringify(body) }),
+    createRegister: (body: {
+      id?: string;
+      branchId: string;
+      branchName?: string;
+      name: string;
+      openingBalance?: number;
+      pettyLimit?: number;
+      dailyLimit?: number;
+      requiresApproval?: boolean;
+    }) => apiFetch<any>('/caixa/registers', { method: 'POST', body: JSON.stringify(body) }),
+    updateRegister: (
+      id: string,
+      body: {
+        name?: string;
+        pettyLimit?: number;
+        dailyLimit?: number;
+        requiresApproval?: boolean;
+      },
+    ) => apiFetch<any>(`/caixa/registers/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
     reconciliation: (params: {
       branchId: string;
       date: string;

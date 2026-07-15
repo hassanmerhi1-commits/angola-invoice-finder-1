@@ -12,6 +12,7 @@ import {
   getCaixas, 
   getBankAccounts,
   invalidateCaixaListCache,
+  createCaixa,
 } from '@/lib/accountingStorage';
 import { Expense, ExpenseCategory, EXPENSE_CATEGORIES, Caixa, BankAccount } from '@/types/accounting';
 import { format } from 'date-fns';
@@ -119,6 +120,10 @@ export default function Expenses() {
   const [caixaLoadHint, setCaixaLoadHint] = useState<string | null>(null);
   const [caixaLoading, setCaixaLoading] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showNewCaixaDialog, setShowNewCaixaDialog] = useState(false);
+  const [newCaixaName, setNewCaixaName] = useState('');
+  const [isCreatingCaixa, setIsCreatingCaixa] = useState(false);
   const [formData, setFormData] = useState<ExpenseFormData>(initialFormData);
   const [editingId, setEditingId] = useState<string | null>(null);
   
@@ -271,56 +276,143 @@ export default function Expenses() {
     setIsDialogOpen(true);
   };
 
-  const handleSave = () => {
+  const resetFormForNew = useCallback(() => {
+    setEditingId(null);
+    setFormData({
+      ...initialFormData,
+      category: formData.category,
+      paymentSource: formData.paymentSource,
+      caixaId: caixas[0]?.id || '',
+      bankAccountId: bankAccounts[0]?.id || '',
+    });
+  }, [formData.category, formData.paymentSource, caixas, bankAccounts]);
+
+  type ExpenseSubmitAction = 'save' | 'save_and_new' | 'save_and_pay' | 'save_pay_and_new';
+
+  const validateForm = (): boolean => {
     if (!formData.description.trim()) {
       toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.descriptionRequired, variant: 'destructive' });
-      return;
+      return false;
     }
     if (formData.amount <= 0) {
       toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.amountMustBeGreaterThanZero, variant: 'destructive' });
-      return;
+      return false;
     }
     if (formData.paymentSource === 'caixa' && !formData.caixaId) {
       toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.selectCashRegister, variant: 'destructive' });
-      return;
+      return false;
     }
     if (formData.paymentSource === 'bank' && !formData.bankAccountId) {
       toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.selectBankAccount, variant: 'destructive' });
+      return false;
+    }
+    return true;
+  };
+
+  const handleSubmit = async (action: ExpenseSubmitAction) => {
+    if (!validateForm()) return;
+
+    const payNow = action === 'save_and_pay' || action === 'save_pay_and_new';
+    const stayOpen = action === 'save_and_new' || action === 'save_pay_and_new';
+
+    setIsSubmitting(true);
+    try {
+      if (editingId) {
+        const existing = expenses.find(e => e.id === editingId);
+        if (existing) {
+          await saveExpense({
+            ...existing,
+            ...formData,
+            totalAmount: formData.amount + formData.taxAmount,
+          });
+          toast({ title: t.expensesUi.toastSuccessTitle, description: t.expensesUi.expenseUpdated });
+        }
+        setIsDialogOpen(false);
+      } else {
+        const expense = await createExpense(
+          expenseBranchId || currentBranch?.id || 'default',
+          expenseBranchName || currentBranch?.name || t.branchUi.headOffice,
+          currentBranch?.code || 'SEDE',
+          formData.category,
+          formData.description,
+          formData.amount,
+          formData.paymentSource,
+          user?.name || t.expensesUi.systemUser,
+          formData.caixaId || undefined,
+          formData.bankAccountId || undefined,
+          formData.payeeName || undefined,
+          formData.taxAmount || undefined,
+          formData.invoiceNumber || undefined,
+          formData.notes || undefined,
+        );
+
+        if (payNow) {
+          const result = await payExpense(expense.id, user?.name || t.expensesUi.systemUser);
+          if (result.glError) {
+            toast({
+              title: t.expensesUi.paidTitle,
+              description: `${t.expensesUi.expensePaid.replace('{number}', expense.expenseNumber)} — ${result.glError}`,
+              variant: 'destructive',
+            });
+          } else {
+            toast({
+              title: t.expensesUi.paidTitle,
+              description: t.expensesUi.expenseRecordedAndPaid.replace('{number}', expense.expenseNumber),
+            });
+          }
+        } else {
+          toast({ title: t.expensesUi.toastSuccessTitle, description: t.expensesUi.expenseRecorded });
+        }
+
+        if (stayOpen) {
+          resetFormForNew();
+          void refreshCaixasForExpense(false);
+        } else {
+          setIsDialogOpen(false);
+        }
+      }
+      await loadData();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nexor:expenses-changed'));
+      }
+    } catch (e) {
+      toast({
+        title: t.expensesUi.toastErrorTitle,
+        description: e instanceof Error ? e.message : t.expensesUi.saveFailed,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateCaixa = async () => {
+    const name = newCaixaName.trim();
+    if (!name) {
+      toast({ title: t.expensesUi.toastErrorTitle, description: t.caixaUi.cashRegisterNameRequired, variant: 'destructive' });
       return;
     }
-
-    if (editingId) {
-      const existing = expenses.find(e => e.id === editingId);
-      if (existing) {
-        saveExpense({
-          ...existing,
-          ...formData,
-          totalAmount: formData.amount + formData.taxAmount,
-        });
-        toast({ title: t.expensesUi.toastSuccessTitle, description: t.expensesUi.expenseUpdated });
-      }
-    } else {
-      createExpense(
-        currentBranch?.id || 'default',
-        currentBranch?.name || t.branchUi.headOffice,
-        currentBranch?.code || 'SEDE',
-        formData.category,
-        formData.description,
-        formData.amount,
-        formData.paymentSource,
-        user?.name || t.expensesUi.systemUser,
-        formData.caixaId || undefined,
-        formData.bankAccountId || undefined,
-        formData.payeeName || undefined,
-        formData.taxAmount || undefined,
-        formData.invoiceNumber || undefined,
-        formData.notes || undefined
-      );
-      toast({ title: t.expensesUi.toastSuccessTitle, description: t.expensesUi.expenseRecorded });
+    if (!expenseBranchId) {
+      toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.caixaNeedsBranch, variant: 'destructive' });
+      return;
     }
-
-    setIsDialogOpen(false);
-    loadData();
+    setIsCreatingCaixa(true);
+    try {
+      const caixa = await createCaixa(expenseBranchId, expenseBranchName, name);
+      await refreshCaixasForExpense(false);
+      setFormData((fd) => ({ ...fd, caixaId: caixa.id, paymentSource: 'caixa' }));
+      setShowNewCaixaDialog(false);
+      setNewCaixaName('');
+      toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.cashRegisterCreated });
+    } catch (e) {
+      toast({
+        title: t.expensesUi.toastErrorTitle,
+        description: e instanceof Error ? e.message : t.expensesUi.saveFailed,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsCreatingCaixa(false);
+    }
   };
 
   const handleApprove = (expense: Expense) => {
@@ -572,15 +664,16 @@ export default function Expenses() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editingId ? t.expensesUi.editTitle : t.expensesUi.newTitle}</DialogTitle>
-            <DialogDescription>
+        <DialogContent className="max-w-[96vw] w-[96vw] max-h-[94vh] h-[90vh] flex flex-col gap-0 p-0 overflow-hidden sm:rounded-xl">
+          <DialogHeader className="shrink-0 space-y-1 border-b bg-muted/30 px-5 py-4 sm:px-6">
+            <DialogTitle className="text-xl">{editingId ? t.expensesUi.editTitle : t.expensesUi.newTitle}</DialogTitle>
+            <DialogDescription className="text-sm">
               {t.expensesUi.dialogDescription}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-4 sm:px-6">
+          <div className="grid gap-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Categoria *</Label>
@@ -613,7 +706,19 @@ export default function Expenses() {
 
             {formData.paymentSource === 'caixa' ? (
               <div className="space-y-2">
-                <Label>Caixa *</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Caixa *</Label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs gap-1"
+                    onClick={() => setShowNewCaixaDialog(true)}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    {t.expensesUi.newCaixa}
+                  </Button>
+                </div>
                 {caixaLoadHint && caixas.length === 0 && !caixaLoading && (
                   <p className="text-xs text-amber-700 dark:text-amber-300 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5">
                     {caixaLoadHint}
@@ -769,13 +874,69 @@ export default function Expenses() {
               </div>
             </div>
           </div>
+          </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+          <DialogFooter className="shrink-0 flex-col gap-2 border-t bg-muted/20 px-5 py-4 sm:flex-row sm:justify-between sm:px-6">
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSubmitting}>
               {t.common.cancel}
             </Button>
-            <Button onClick={handleSave}>
-              {editingId ? t.common.saveChanges : t.expensesUi.registerExpense}
+            <div className="flex flex-wrap gap-2 justify-end">
+              {editingId ? (
+                <Button onClick={() => void handleSubmit('save')} disabled={isSubmitting}>
+                  {t.common.saveChanges}
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => void handleSubmit('save_and_new')}
+                    disabled={isSubmitting}
+                  >
+                    {t.expensesUi.registerAndNew}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void handleSubmit('save')}
+                    disabled={isSubmitting}
+                  >
+                    {t.expensesUi.registerExpense}
+                  </Button>
+                  <Button
+                    onClick={() => void handleSubmit('save_and_pay')}
+                    disabled={isSubmitting}
+                    className="gap-1"
+                  >
+                    <Receipt className="w-4 h-4" />
+                    {t.expensesUi.registerAndPay}
+                  </Button>
+                </>
+              )}
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showNewCaixaDialog} onOpenChange={setShowNewCaixaDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t.expensesUi.newCaixaTitle}</DialogTitle>
+            <DialogDescription>{t.expensesUi.newCaixaDescription}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label>{t.caixaUi.cashRegisterName}</Label>
+            <Input
+              value={newCaixaName}
+              onChange={(e) => setNewCaixaName(e.target.value)}
+              placeholder={t.expensesUi.newCaixaPlaceholder}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNewCaixaDialog(false)} disabled={isCreatingCaixa}>
+              {t.common.cancel}
+            </Button>
+            <Button onClick={() => void handleCreateCaixa()} disabled={isCreatingCaixa}>
+              {t.expensesUi.createCaixa}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -84,20 +84,26 @@ module.exports = function caixaRouter(broadcastTable) {
       }
       const branchId = String(req.query.branchId || '').trim();
       const params = [];
-      let sql = 'SELECT * FROM caixas';
+      const branchJoin = db.engine === 'postgres'
+        ? `LEFT JOIN branches b ON b.id::text = c.branch_id::text`
+        : `LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(c.branch_id AS TEXT)`;
+      const branchNameExpr = db.engine === 'postgres'
+        ? `COALESCE(NULLIF(TRIM(c.branch_name), ''), b.name, c.branch_id::text)`
+        : `COALESCE(NULLIF(TRIM(c.branch_name), ''), b.name, CAST(c.branch_id AS TEXT))`;
+      let sql = `SELECT c.*, ${branchNameExpr} AS branch_name FROM caixas c ${branchJoin}`;
       if (branchId) {
         const resolved = await resolveBranchFilterId(db, branchId);
         const matchId = resolved || branchId;
         if (db.engine === 'postgres') {
-          sql += ' WHERE branch_id::text = $1';
+          sql += ' WHERE c.branch_id::text = $1';
         } else {
-          sql += ' WHERE CAST(branch_id AS TEXT) = $1';
+          sql += ' WHERE CAST(c.branch_id AS TEXT) = $1';
         }
         params.push(matchId);
       }
       const orderBy = db.engine === 'postgres'
-        ? 'updated_at DESC NULLS LAST, created_at DESC'
-        : 'updated_at DESC, created_at DESC';
+        ? 'c.updated_at DESC NULLS LAST, c.created_at DESC'
+        : 'c.updated_at DESC, c.created_at DESC';
       sql += ` ORDER BY ${orderBy}`;
       const result = await db.query(sql, params);
       res.json({ data: (result.rows || []).map(mapCaixaRow).filter(Boolean) });
@@ -145,6 +151,103 @@ module.exports = function caixaRouter(broadcastTable) {
     } catch (error) {
       console.error('[CAIXA] registers ensure:', error);
       res.status(500).json({ error: error.message || 'Failed to ensure caixa' });
+    }
+  });
+
+  /** Create a named cash register for a branch (Gestão de Caixa). */
+  router.post('/registers', requirePermission('caixa_open', 'admin_settings'), async (req, res) => {
+    try {
+      if (!(await caixaTablesExist())) {
+        return res.status(503).json({ error: 'Caixa tables not available on server' });
+      }
+      const branchId = String(req.body?.branchId || '').trim();
+      const branchName = String(req.body?.branchName || '').trim();
+      const name = String(req.body?.name || '').trim();
+      if (!branchId) return res.status(400).json({ error: 'branchId required' });
+      if (!name) return res.status(400).json({ error: 'name required' });
+
+      const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
+      let resolvedBranchName = branchName;
+      if (!resolvedBranchName) {
+        const br = await db.query(
+          db.engine === 'postgres'
+            ? 'SELECT name FROM branches WHERE id::text = $1 LIMIT 1'
+            : 'SELECT name FROM branches WHERE CAST(id AS TEXT) = $1 LIMIT 1',
+          [resolvedBranchId],
+        );
+        resolvedBranchName = br.rows[0]?.name || '';
+      }
+
+      const id = String(req.body?.id || '').trim() || crypto.randomUUID();
+      const now = new Date().toISOString();
+      const openingBalance = Number(req.body?.openingBalance) || 0;
+      const pettyLimit = req.body?.pettyLimit != null ? Number(req.body.pettyLimit) : null;
+      const dailyLimit = req.body?.dailyLimit != null ? Number(req.body.dailyLimit) : null;
+      const requiresApproval = !!req.body?.requiresApproval;
+
+      await db.query(
+        `INSERT INTO caixas (
+          id, branch_id, branch_name, name, opening_balance, current_balance,
+          status, petty_limit, daily_limit, requires_approval, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$5,'closed',$6,$7,$8,$9,$9)
+        ON CONFLICT (id) DO NOTHING`,
+        [
+          id,
+          resolvedBranchId,
+          resolvedBranchName,
+          name,
+          openingBalance,
+          pettyLimit,
+          dailyLimit,
+          requiresApproval,
+          now,
+        ],
+      );
+      const row = await db.query('SELECT * FROM caixas WHERE id = $1', [id]);
+      if (!row.rows[0]) {
+        return res.status(409).json({ error: 'Caixa already exists with this id' });
+      }
+      if (broadcastTable) await broadcastTable('caixas');
+      res.status(201).json({ data: mapCaixaRow(row.rows[0]) });
+    } catch (error) {
+      console.error('[CAIXA] registers create:', error);
+      res.status(500).json({ error: error.message || 'Failed to create caixa' });
+    }
+  });
+
+  /** Update caixa settings (name, limits) — not for posting balances. */
+  router.put('/registers/:id', requirePermission('caixa_open', 'admin_settings'), async (req, res) => {
+    try {
+      if (!(await caixaTablesExist())) {
+        return res.status(503).json({ error: 'Caixa tables not available on server' });
+      }
+      const { id } = req.params;
+      const body = req.body || {};
+      const name = body.name != null ? String(body.name).trim() : null;
+      const pettyLimit = body.pettyLimit != null ? Number(body.pettyLimit) : null;
+      const dailyLimit = body.dailyLimit != null ? Number(body.dailyLimit) : null;
+      const requiresApproval = body.requiresApproval != null ? !!body.requiresApproval : null;
+
+      const existing = await db.query('SELECT * FROM caixas WHERE id = $1', [id]);
+      if (!existing.rows[0]) return res.status(404).json({ error: 'Caixa not found' });
+
+      const now = new Date().toISOString();
+      await db.query(
+        `UPDATE caixas SET
+          name = COALESCE($2, name),
+          petty_limit = COALESCE($3, petty_limit),
+          daily_limit = COALESCE($4, daily_limit),
+          requires_approval = COALESCE($5, requires_approval),
+          updated_at = $6
+         WHERE id = $1`,
+        [id, name, pettyLimit, dailyLimit, requiresApproval, now],
+      );
+      const row = await db.query('SELECT * FROM caixas WHERE id = $1', [id]);
+      if (broadcastTable) await broadcastTable('caixas');
+      res.json({ data: mapCaixaRow(row.rows[0]) });
+    } catch (error) {
+      console.error('[CAIXA] registers update:', error);
+      res.status(500).json({ error: error.message || 'Failed to update caixa' });
     }
   });
 

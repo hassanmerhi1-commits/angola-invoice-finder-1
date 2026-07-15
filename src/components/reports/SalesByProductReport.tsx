@@ -11,8 +11,7 @@ import { useSales, useProducts } from '@/hooks/useERP';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { Download, Printer, FileDown, Package } from 'lucide-react';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { exportToExcel } from '@/lib/excel';
-import { printHtml } from '@/lib/printHtml';
+import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
 
 interface ProductRow {
@@ -196,7 +195,7 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
       ? t.salesByProductUi.allWarehouses
       : branches.find((b) => b.id === selectedBranch)?.name || currentBranch?.name || '';
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const rows: Record<string, unknown>[] = [];
     groups.forEach((g) => {
       g.rows.forEach((r) => {
@@ -216,7 +215,15 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
         });
       });
     });
-    exportToExcel(rows, `Vendas_Produto_${dateFrom}_${dateTo}`);
+    try {
+      await exportReportExcel(rows, `Vendas_Produto_${dateFrom}_${dateTo}`, {
+        title: t.salesByProductUi.title,
+        subtitle: `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`,
+        landscape: true,
+      });
+    } catch (e) {
+      console.error('[SalesByProductReport] excel export failed:', e);
+    }
   };
 
   const buildPrintHtml = () => {
@@ -320,21 +327,15 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
 
   const handlePrint = async () => {
     try {
-      await printHtml(buildPrintHtml());
+      await printReport(buildPrintHtml());
     } catch (e) {
       console.error('[SalesByProductReport] print failed:', e);
     }
   };
 
   const handleSavePdf = async () => {
-    const html = buildPrintHtml();
     try {
-      const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
-      if (el?.isElectron && el?.pdf?.saveHtml) {
-        await el.pdf.saveHtml(html, { filename: `vendas-produto_${dateFrom}_${dateTo}.pdf`, landscape: true });
-        return;
-      }
-      await printHtml(html, { direct: true });
+      await saveReportPdf(buildPrintHtml(), `vendas-produto_${dateFrom}_${dateTo}`, { landscape: true });
     } catch (e) {
       console.error('[SalesByProductReport] save pdf failed:', e);
     }

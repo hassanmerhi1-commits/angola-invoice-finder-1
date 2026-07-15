@@ -6,8 +6,7 @@ import { Download, Tags, Printer, FileDown } from 'lucide-react';
 import { useProducts } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
-import { exportToExcel } from '@/lib/excel';
-import { printHtml } from '@/lib/printHtml';
+import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -83,7 +82,7 @@ export default function StockByCategoryReport() {
     [rows],
   );
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const data = rows.map((r) => ({
       [t.stockValuationUi.category]: r.category,
       [t.stockValuationUi.products]: r.count,
@@ -93,7 +92,14 @@ export default function StockByCategoryReport() {
       [t.stockValuationUi.potentialProfit]: Number(r.potentialProfit.toFixed(2)),
       [t.stockValuationUi.marginPercent]: Number(r.marginPct.toFixed(2)),
     }));
-    exportToExcel(data, `Stock_Categoria_${new Date().toISOString().slice(0, 10)}`);
+    try {
+      await exportReportExcel(data, `Stock_Categoria_${new Date().toISOString().slice(0, 10)}`, {
+        title: t.stockValuationUi.title,
+        landscape: true,
+      });
+    } catch (e) {
+      console.error('[StockByCategoryReport] excel export failed:', e);
+    }
   };
 
   const totalMargin = totals.saleValue > 0 ? (totals.potentialProfit / totals.saleValue) * 100 : 0;
@@ -163,21 +169,15 @@ export default function StockByCategoryReport() {
 
   const handlePrint = async () => {
     try {
-      await printHtml(buildPrintHtml());
+      await printReport(buildPrintHtml());
     } catch (e) {
       console.error('[StockByCategoryReport] print failed:', e);
     }
   };
 
   const handleSavePdf = async () => {
-    const html = buildPrintHtml();
     try {
-      const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
-      if (el?.isElectron && el?.pdf?.saveHtml) {
-        await el.pdf.saveHtml(html, { filename: `stock-categoria_${new Date().toISOString().slice(0, 10)}.pdf`, landscape: true });
-        return;
-      }
-      await printHtml(html, { direct: true });
+      await saveReportPdf(buildPrintHtml(), `stock-categoria_${new Date().toISOString().slice(0, 10)}`, { landscape: true });
     } catch (e) {
       console.error('[StockByCategoryReport] save pdf failed:', e);
     }

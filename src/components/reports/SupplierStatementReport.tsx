@@ -9,13 +9,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { useSuppliers } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { Download, Printer, Truck, Search, Loader2 } from 'lucide-react';
+import { Download, Printer, Truck, Search, Loader2, FileDown } from 'lucide-react';
 import { format, parseISO, subMonths } from 'date-fns';
 import { pt } from 'date-fns/locale';
-import { exportToExcel } from '@/lib/excel';
 import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
 import { formatDisplayDate } from '@/lib/formatDisplayDate';
+import { buildReportHtml, escapeHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 
 function isOiDebit(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true';
@@ -290,9 +290,9 @@ export default function SupplierStatementReport() {
     }
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!selectedSupplierData) return;
-    
+
     const data = statementEntries.map(entry => ({
       [t.common.date]: format(parseISO(entry.date), 'dd/MM/yyyy'),
       [t.reportsUi.type]:
@@ -307,81 +307,89 @@ export default function SupplierStatementReport() {
       [t.reportsUi.credit]: entry.credit,
       [t.reportsUi.balance]: entry.balance,
     }));
-    
-    exportToExcel(data, `ContaCorrente_${selectedSupplierData.name}_${format(new Date(), 'yyyyMMdd')}`);
+
+    try {
+      await exportReportExcel(data, `ContaCorrente_${selectedSupplierData.name}_${format(new Date(), 'yyyyMMdd')}`, {
+        title: t.supplierStatementUi.title,
+        subtitle: `${selectedSupplierData.name} — ${dateFrom} — ${dateTo}`,
+      });
+    } catch (e) {
+      console.error('[SupplierStatementReport] excel export failed:', e);
+    }
   };
 
-  const handlePrint = () => {
-    if (!selectedSupplierData || statementEntries.length === 0) return;
+  const buildPrintHtml = () => {
+    if (!selectedSupplierData || statementEntries.length === 0) return '';
 
     const rows = statementEntries.map(entry => `
       <tr>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;">${format(parseISO(entry.date.split('T')[0]), 'dd/MM/yyyy')}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;">${
-          entry.type === 'purchase' ? 'Compra' :
-          entry.type === 'payment' ? 'Pagamento' :
+        <td>${escapeHtml(format(parseISO(entry.date.split('T')[0]), 'dd/MM/yyyy'))}</td>
+        <td>${escapeHtml(
+          entry.type === 'purchase' ? t.supplierStatementUi.purchase :
+          entry.type === 'payment' ? t.supplierStatementUi.payment :
           entry.type === 'credit_note' ? t.supplierStatementUi.creditNoteShort :
-          entry.type === 'debit_note' ? t.supplierStatementUi.debitNoteShort : t.supplierStatementUi.advance
-        }</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;font-family:monospace;">${entry.reference}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;">${entry.description}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right;">${entry.debit > 0 ? formatCurrency(entry.debit) : '-'}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right;">${entry.credit > 0 ? formatCurrency(entry.credit) : '-'}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right;font-weight:bold;">${formatCurrency(entry.balance)}</td>
+          entry.type === 'debit_note' ? t.supplierStatementUi.debitNoteShort : t.supplierStatementUi.advance,
+        )}</td>
+        <td>${escapeHtml(entry.reference)}</td>
+        <td>${escapeHtml(entry.description)}</td>
+        <td class="r">${entry.debit > 0 ? escapeHtml(formatCurrency(entry.debit)) : '-'}</td>
+        <td class="r">${entry.credit > 0 ? escapeHtml(formatCurrency(entry.credit)) : '-'}</td>
+        <td class="r b">${escapeHtml(formatCurrency(entry.balance))}</td>
       </tr>
     `).join('');
 
-    const html = `
-      <html>
-      <head><title>${t.supplierStatementUi.title} - ${selectedSupplierData.name}</title></head>
-      <body style="font-family:Arial,sans-serif;padding:20px;color:#333;">
-        <h2 style="margin-bottom:4px;">${t.supplierStatementUi.title}</h2>
-        <p style="color:#666;margin-top:0;">${t.incomeStatementUi.periodLabel.replace('{from}', format(parseISO(dateFrom), 'dd/MM/yyyy')).replace('{to}', format(parseISO(dateTo), 'dd/MM/yyyy'))}</p>
-        
-        <div style="background:#f5f5f5;padding:12px;border-radius:6px;margin:16px 0;">
-          <table style="width:100%;">
-            <tr>
-              <td><strong>${t.supplierStatementUi.supplier}:</strong> ${selectedSupplierData.name}</td>
-              <td><strong>${t.reportsUi.nif}:</strong> ${selectedSupplierData.nif}</td>
-              <td><strong>${t.reportsUi.balance}:</strong> ${formatCurrency(currentBalance)}</td>
-            </tr>
-          </table>
-        </div>
-
-        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+    return buildReportHtml({
+      title: t.supplierStatementUi.title,
+      subtitle: t.incomeStatementUi.periodLabel
+        .replace('{from}', format(parseISO(dateFrom), 'dd/MM/yyyy'))
+        .replace('{to}', format(parseISO(dateTo), 'dd/MM/yyyy')),
+      bodyHtml: `
+        <p><strong>${escapeHtml(t.supplierStatementUi.supplier)}:</strong> ${escapeHtml(selectedSupplierData.name)}
+        &nbsp;|&nbsp; <strong>${escapeHtml(t.reportsUi.nif)}:</strong> ${escapeHtml(selectedSupplierData.nif)}
+        &nbsp;|&nbsp; <strong>${escapeHtml(t.reportsUi.balance)}:</strong> ${escapeHtml(formatCurrency(currentBalance))}</p>
+        <table>
           <thead>
-            <tr style="background:#f0f0f0;">
-              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">${t.common.date}</th>
-              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">${t.reportsUi.type}</th>
-              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">${t.reportsUi.reference}</th>
-              <th style="padding:8px;text-align:left;border-bottom:2px solid #999;">${t.common.description}</th>
-              <th style="padding:8px;text-align:right;border-bottom:2px solid #999;">${t.reportsUi.debit}</th>
-              <th style="padding:8px;text-align:right;border-bottom:2px solid #999;">${t.reportsUi.credit}</th>
-              <th style="padding:8px;text-align:right;border-bottom:2px solid #999;">${t.reportsUi.balance}</th>
+            <tr>
+              <th>${escapeHtml(t.common.date)}</th>
+              <th>${escapeHtml(t.reportsUi.type)}</th>
+              <th>${escapeHtml(t.reportsUi.reference)}</th>
+              <th>${escapeHtml(t.common.description)}</th>
+              <th class="r">${escapeHtml(t.reportsUi.debit)}</th>
+              <th class="r">${escapeHtml(t.reportsUi.credit)}</th>
+              <th class="r">${escapeHtml(t.reportsUi.balance)}</th>
             </tr>
           </thead>
-          <tbody>
-            ${rows}
-            <tr style="background:#f0f0f0;font-weight:bold;">
-              <td colspan="4" style="padding:8px;">${t.common.total}</td>
-              <td style="padding:8px;text-align:right;">${formatCurrency(totals.debit)}</td>
-              <td style="padding:8px;text-align:right;">${formatCurrency(totals.credit)}</td>
-              <td style="padding:8px;text-align:right;">${formatCurrency(totals.credit - totals.debit)}</td>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr class="tot">
+              <td colspan="4">${escapeHtml(t.common.total)}</td>
+              <td class="r">${escapeHtml(formatCurrency(totals.debit))}</td>
+              <td class="r">${escapeHtml(formatCurrency(totals.credit))}</td>
+              <td class="r">${escapeHtml(formatCurrency(totals.credit - totals.debit))}</td>
             </tr>
-          </tbody>
+          </tfoot>
         </table>
-        <p style="margin-top:24px;font-size:11px;color:#999;">${t.supplierStatementUi.printedAt.replace('{date}', format(new Date(), 'dd/MM/yyyy HH:mm'))}</p>
-      </body>
-      </html>
-    `;
+        <p class="muted">${escapeHtml(t.supplierStatementUi.printedAt.replace('{date}', format(new Date(), 'dd/MM/yyyy HH:mm')))}</p>`,
+    });
+  };
 
-    const printWindow = window.open('', '_blank', 'width=900,height=700');
-    if (printWindow) {
-      printWindow.document.write(html);
-      printWindow.document.close();
-      setTimeout(() => {
-        printWindow.print();
-      }, 300);
+  const handlePrint = async () => {
+    const html = buildPrintHtml();
+    if (!html) return;
+    try {
+      await printReport(html);
+    } catch (e) {
+      console.error('[SupplierStatementReport] print failed:', e);
+    }
+  };
+
+  const handleSavePdf = async () => {
+    const html = buildPrintHtml();
+    if (!html) return;
+    try {
+      await saveReportPdf(html, `ContaCorrente_${selectedSupplierData?.name}_${format(new Date(), 'yyyyMMdd')}`);
+    } catch (e) {
+      console.error('[SupplierStatementReport] save pdf failed:', e);
     }
   };
 
@@ -470,11 +478,15 @@ export default function SupplierStatementReport() {
             <div className="flex justify-between items-center">
               <CardTitle>{t.reportsUi.moves}</CardTitle>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={handleExport} className="no-print">
+                <Button variant="outline" size="sm" onClick={() => void handleExport()} className="no-print">
                   <Download className="w-4 h-4 mr-2" />
                   Excel
                 </Button>
-                <Button variant="outline" size="sm" onClick={handlePrint} className="no-print">
+                <Button variant="outline" size="sm" onClick={() => void handleSavePdf()} className="no-print" disabled={statementEntries.length === 0}>
+                  <FileDown className="w-4 h-4 mr-2" />
+                  {t.reportsUi.savePdf}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void handlePrint()} className="no-print" disabled={statementEntries.length === 0}>
                   <Printer className="w-4 h-4 mr-2" />
                   {t.reportsUi.print}
                 </Button>

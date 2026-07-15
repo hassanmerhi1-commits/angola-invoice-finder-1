@@ -31,8 +31,8 @@ import { Account } from '@/types/accounting';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
 import { resolveAccountDisplayName, resolveAccountTypeLabel } from '@/lib/chartOfAccountsDisplay';
-import { exportToExcel } from '@/lib/excel';
-import { printHtml } from '@/lib/printHtml';
+import { exportReportExcel } from '@/lib/reportExport';
+import { printReport, saveReportPdf } from '@/lib/reportExport';
 import { toast } from 'sonner';
 import { NEXOR_PILL_BTN, NEXOR_PILL_BTN_PRIMARY } from '@/lib/nexorToolbarStyles';
 import { NEXOR_STAT_CARD } from '@/lib/nexorToneStyles';
@@ -283,17 +283,9 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
       return;
     }
     try {
-      await printHtml(buildLedgerHtml(), { direct: true });
+      await printReport(buildLedgerHtml());
     } catch {
-      const win = window.open('', '_blank');
-      if (!win) {
-        toast.error(t.ledgerUi.printBlocked);
-        return;
-      }
-      win.document.write(buildLedgerHtml());
-      win.document.close();
-      win.focus();
-      win.print();
+      toast.error(t.ledgerUi.printBlocked);
     }
   };
 
@@ -303,20 +295,30 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
       return;
     }
     try {
-      await printHtml(buildLedgerHtml(), { direct: true });
+      await saveReportPdf(
+        buildLedgerHtml(),
+        `ledger_${account?.code || 'account'}_${new Date().toISOString().slice(0, 10)}`,
+      );
       toast.success(t.ledgerUi.exportSuccess);
     } catch {
       toast.error(t.ledgerUi.printBlocked);
     }
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     if (!exportRows.length) {
       toast.error(t.ledgerUi.exportEmpty);
       return;
     }
-    exportToExcel(exportRows, exportFilename);
-    toast.success(t.ledgerUi.exportSuccess);
+    try {
+      await exportReportExcel(exportRows, exportFilename, {
+        title: t.ledgerUi.accountLedgerTitle,
+        subtitle: account ? `${account.code} — ${resolveAccountDisplayName(account, language, t)}` : undefined,
+      });
+      toast.success(t.ledgerUi.exportSuccess);
+    } catch {
+      toast.error(t.ledgerUi.printBlocked);
+    }
   };
 
   const handleOpenReport = (tab: string) => {

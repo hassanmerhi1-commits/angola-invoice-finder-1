@@ -8,7 +8,7 @@ import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales } from '@/hooks/useERP';
 import { Download, Receipt, ArrowDownCircle, ArrowUpCircle, Scale, Loader2 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { exportToExcel } from '@/lib/excel';
+import { exportReportExcel } from '@/lib/reportExport';
 import { api } from '@/lib/api/client';
 import { unwrapListPayload } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
@@ -95,7 +95,7 @@ export default function VatSummaryReport() {
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const rows: Record<string, unknown>[] = output.buckets.map((b) => ({
       [t.vatReportUi.section]: t.vatReportUi.outputVat,
       [t.vatReportUi.rate]: `${b.rate}%`,
@@ -114,7 +114,14 @@ export default function VatSummaryReport() {
       [t.vatReportUi.taxableBase]: '',
       [t.vatReportUi.taxAmount]: netPayable,
     });
-    exportToExcel(rows, `IVA_${dateFrom}_${dateTo}`);
+    try {
+      await exportReportExcel(rows, `IVA_${dateFrom}_${dateTo}`, {
+        title: t.vatReportUi.title,
+        subtitle: `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`,
+      });
+    } catch (e) {
+      console.error('[VatSummaryReport] excel export failed:', e);
+    }
   };
 
   return (

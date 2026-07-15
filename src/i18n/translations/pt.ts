@@ -506,6 +506,12 @@ export const pt: TranslationKeys = {
     title: "Pré-visualização de impressão",
     description: "Revise o documento abaixo. Ao continuar, abre a caixa de impressão do Windows (escolha a impressora ou Guardar como PDF).",
     confirmPrint: "Continuar para imprimir",
+    titlePdf: "Pré-visualização PDF",
+    descriptionPdf: "Revise o documento abaixo. Ao continuar, será guardado como PDF (ou use Guardar como PDF na caixa de impressão).",
+    confirmPdf: "Continuar para guardar PDF",
+    titleExcel: "Pré-visualização Excel",
+    descriptionExcel: "Revise os dados abaixo. Ao continuar, o ficheiro Excel será transferido.",
+    confirmExcel: "Transferir Excel",
   },
 
   errorBoundaryUi: {
@@ -2381,6 +2387,15 @@ export const pt: TranslationKeys = {
 
     totalToPay: "Total a Pagar:",
     registerExpense: "Registar Despesa",
+    registerAndPay: "Registar e pagar",
+    registerAndNew: "Registar e nova",
+    expenseRecordedAndPaid: "Despesa {number} registada e paga",
+    saveFailed: "Não foi possível guardar a despesa",
+    newCaixa: "Nova caixa",
+    newCaixaTitle: "Nova caixa",
+    newCaixaDescription: "Crie uma caixa para esta filial — fica disponível na lista de imediato.",
+    newCaixaPlaceholder: "ex: Caixa Loja 2",
+    createCaixa: "Criar caixa",
   },
 
   fiscalDocumentsUi: {
@@ -3765,6 +3780,7 @@ export const pt: TranslationKeys = {
     systemUser: "Sistema",
 
     cashRegisterNameRequired: "Nome da caixa é obrigatório",
+    cashRegisterName: "Nome da caixa",
     cashRegisterCreated: "Caixa criada com sucesso",
     settingsUpdated: "Configurações actualizadas",
 
@@ -4122,9 +4138,11 @@ export const pt: TranslationKeys = {
 
     // New manual entry dialog
     newManualEntry: "Novo Lançamento Manual",
+    newManualEntryHint: "O débito deve ser igual ao crédito. Use Balancear Auto na última linha se necessário.",
     branch: "Filial",
     entryDescriptionPlaceholder: "Descrição do lançamento...",
     entryLines: "Linhas do Lançamento",
+    entryLinesHint: "Escolha uma conta por linha — débito ou crédito, não ambos.",
     autoBalance: "Balancear Auto",
     line: "Linha",
     account: "Conta",

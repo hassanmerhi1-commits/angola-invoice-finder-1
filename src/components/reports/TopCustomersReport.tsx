@@ -8,7 +8,7 @@ import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSales, useProducts } from '@/hooks/useERP';
 import { Download, Users, Trophy } from 'lucide-react';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { exportToExcel } from '@/lib/excel';
+import { exportReportExcel } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -82,7 +82,7 @@ export default function TopCustomersReport() {
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const rows = ranking.map((r, i) => ({
       '#': i + 1,
       [t.reportsUi.client]: r.name,
@@ -92,7 +92,14 @@ export default function TopCustomersReport() {
       [t.salesAnalysisUi.colProfit]: r.profit,
       [t.salesAnalysisUi.colMarginPercent]: r.margin.toFixed(2),
     }));
-    exportToExcel(rows, `TopCustomers_${dateFrom}_${dateTo}`);
+    try {
+      await exportReportExcel(rows, `TopCustomers_${dateFrom}_${dateTo}`, {
+        title: t.topCustomersUi.title,
+        subtitle: `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`,
+      });
+    } catch (e) {
+      console.error('[TopCustomersReport] excel export failed:', e);
+    }
   };
 
   return (

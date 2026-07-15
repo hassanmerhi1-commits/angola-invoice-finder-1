@@ -3,8 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Download, Printer, FileDown } from 'lucide-react';
-import { exportToExcel } from '@/lib/excel';
-import { printHtml } from '@/lib/printHtml';
+import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { useTranslation } from '@/i18n';
 import type { PurchaseRow, PurchaseTotals } from '@/lib/reports/purchasesPivot';
@@ -107,21 +106,15 @@ export default function PurchasesPivotView({
 
   const handlePrint = async () => {
     try {
-      await printHtml(buildPrintHtml());
+      await printReport(buildPrintHtml());
     } catch (e) {
       console.error('[PurchasesPivotView] print failed:', e);
     }
   };
 
   const handleSavePdf = async () => {
-    const html = buildPrintHtml();
     try {
-      const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
-      if (el?.isElectron && el?.pdf?.saveHtml) {
-        await el.pdf.saveHtml(html, { filename: `${fileName}.pdf` });
-        return;
-      }
-      await printHtml(html, { direct: true });
+      await saveReportPdf(buildPrintHtml(), fileName);
     } catch (e) {
       console.error('[PurchasesPivotView] save pdf failed:', e);
     }
@@ -135,14 +128,18 @@ export default function PurchasesPivotView({
     [rows],
   );
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const data = rows.map((r) => ({
       [dimensionLabel]: r.label,
       [t.purchasesReportUi.qty]: Number(r.qty.toFixed(2)),
       [t.purchasesReportUi.invoices]: r.invoices,
       [t.purchasesReportUi.totalSpend]: Number(r.total.toFixed(2)),
     }));
-    exportToExcel(data, fileName);
+    try {
+      await exportReportExcel(data, fileName, { title: dimensionLabel });
+    } catch (e) {
+      console.error('[PurchasesPivotView] excel export failed:', e);
+    }
   };
 
   return (
