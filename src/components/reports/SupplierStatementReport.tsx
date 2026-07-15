@@ -15,6 +15,7 @@ import { pt } from 'date-fns/locale';
 import { exportToExcel } from '@/lib/excel';
 import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
+import { formatDisplayDate } from '@/lib/formatDisplayDate';
 
 function isOiDebit(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true';
@@ -510,7 +511,7 @@ export default function SupplierStatementReport() {
                       {statementEntries.map((entry) => (
                         <TableRow key={entry.id}>
                           <TableCell>
-                            {format(parseISO(entry.date.split('T')[0]), 'dd/MM/yyyy', { locale: pt })}
+                            {formatDisplayDate(entry.date?.split('T')[0] || entry.date, 'pt-AO')}
                           </TableCell>
                           <TableCell>{getTypeBadge(entry.type)}</TableCell>
                           <TableCell className="font-mono text-sm">{entry.reference}</TableCell>

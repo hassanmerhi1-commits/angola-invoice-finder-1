@@ -15,13 +15,14 @@ const UPSERT_SQL = `
     purchase_account_code, iva_account_code, transaction_type, currency_rate,
     tax_rate_2, order_no, surcharge_percent, change_price, is_pending, extra_note,
     freight_cost, freight_other_costs, freight_source_account, freight_source_name,
+    freight_payment_source, freight_caixa_id, freight_bank_account_id,
     lines_json, journal_lines_json, subtotal, iva_total, total, status,
     purchase_returns_status, purchase_returns_closed_at,
     branch_id, branch_name, created_by, created_by_name, created_at, updated_at
   ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
     $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
-    $40,$41,$42,$43,$44,$45,$46,$47,$48,$49
+    $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52
   )
   ON CONFLICT(id) DO UPDATE SET
     invoice_number = excluded.invoice_number,
@@ -58,6 +59,9 @@ const UPSERT_SQL = `
     freight_other_costs = excluded.freight_other_costs,
     freight_source_account = excluded.freight_source_account,
     freight_source_name = excluded.freight_source_name,
+    freight_payment_source = excluded.freight_payment_source,
+    freight_caixa_id = excluded.freight_caixa_id,
+    freight_bank_account_id = excluded.freight_bank_account_id,
     lines_json = excluded.lines_json,
     journal_lines_json = excluded.journal_lines_json,
     subtotal = excluded.subtotal,
@@ -161,6 +165,31 @@ function purchaseInvoiceHasStockLines(lines) {
   return hasStock(lines);
 }
 
+function priorFreightStateFromRow(row) {
+  if (!row) return { landingCosts: 0, caixaId: null, paymentSource: 'caixa' };
+  const { roundMoney } = require('../lib/freightTreasury');
+  return {
+    landingCosts: roundMoney(Number(row.freight_cost || 0) + Number(row.freight_other_costs || 0)),
+    caixaId: String(row.freight_caixa_id || '').trim() || null,
+    paymentSource: String(row.freight_payment_source || 'caixa').toLowerCase(),
+  };
+}
+
+function shouldBroadcastFreightCaixas(rowOrInv, priorFreightState, txResult) {
+  if (!txResult?.journalEntryId) return false;
+  const pick = (snake, camel) => rowOrInv?.[snake] ?? rowOrInv?.[camel];
+  const src = String(pick('freight_payment_source', 'freightPaymentSource') || 'caixa').toLowerCase();
+  const caixaId = String(pick('freight_caixa_id', 'freightCaixaId') || '').trim();
+  if (src === 'caixa' && caixaId) return true;
+  if (priorFreightState?.caixaId && (priorFreightState?.landingCosts || 0) > 0) return true;
+  return false;
+}
+
+async function broadcastFreightCaixasIfNeeded(broadcastTable, rowOrInv, priorFreightState, txResult) {
+  if (!shouldBroadcastFreightCaixas(rowOrInv, priorFreightState, txResult)) return;
+  try { await broadcastTable('caixas'); } catch (_) { /* non-fatal */ }
+}
+
 function rowParams(r) {
   return [
     r.id, r.invoice_number, r.supplier_account_code, r.supplier_name, r.supplier_id,
@@ -170,6 +199,7 @@ function rowParams(r) {
     r.purchase_account_code, r.iva_account_code, r.transaction_type, r.currency_rate,
     r.tax_rate_2, r.order_no, r.surcharge_percent, r.change_price, r.is_pending, r.extra_note,
     r.freight_cost, r.freight_other_costs, r.freight_source_account, r.freight_source_name,
+    r.freight_payment_source, r.freight_caixa_id, r.freight_bank_account_id,
     r.lines_json, r.journal_lines_json, r.subtotal, r.iva_total, r.total, r.status,
     r.purchase_returns_status, r.purchase_returns_closed_at,
     r.branch_id, r.branch_name, r.created_by, r.created_by_name, r.created_at, r.updated_at,
@@ -271,10 +301,26 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
     }
   });
 
-  async function postPurchaseAccountingIfNeeded(client, inv) {
+  async function postPurchaseAccountingIfNeeded(client, inv, opts = {}) {
     const { postPurchaseInvoiceAccountingPhased } = require('../lib/purchaseInvoicePosting');
-    return postPurchaseInvoiceAccountingPhased(client, inv);
+    return postPurchaseInvoiceAccountingPhased(client, inv, opts);
   }
+
+  router.post('/resolve-freight-treasury', requirePermission('purchase_create'), async (req, res) => {
+    try {
+      const { resolveFreightTreasuryGl } = require('../lib/freightTreasury');
+      const client = await db.pool.connect();
+      try {
+        const treasury = await resolveFreightTreasuryGl(client, req.body || {});
+        res.json({ data: treasury });
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('[PURCHASE INVOICES] resolve-freight-treasury:', error);
+      res.status(500).json({ error: error.message || 'Failed to resolve freight treasury' });
+    }
+  });
 
   router.post('/', requirePermission('purchase_create'), async (req, res) => {
     const client = await db.pool.connect();
@@ -329,6 +375,11 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       }
 
       await client.query('BEGIN');
+      const priorSaved = await client.query(
+        'SELECT freight_cost, freight_other_costs, freight_payment_source, freight_caixa_id FROM purchase_invoices WHERE id = $1',
+        [row.id],
+      );
+      const priorFreightState = priorFreightStateFromRow(priorSaved.rows[0]);
       await client.query(UPSERT_SQL, rowParams(row));
       await client.query('COMMIT');
 
@@ -343,7 +394,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       if (!skipAccounting) {
         try {
           await client.query('BEGIN');
-          txResult = await postPurchaseAccountingIfNeeded(client, inv);
+          txResult = await postPurchaseAccountingIfNeeded(client, inv, { priorFreightState });
           await client.query('COMMIT');
         } catch (accErr) {
           try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
@@ -362,6 +413,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       if (txResult?.openItemId) {
         await broadcastTable?.('suppliers');
       }
+      await broadcastFreightCaixasIfNeeded(broadcastTable, row, priorFreightState, txResult);
 
       const payload = fromRow(saved.rows[0]);
       const hasStock = (txResult?.stockMovementIds?.length ?? 0) > 0;
@@ -370,15 +422,21 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
         ...(txResult?.errors || []),
         ...(accountingError ? [accountingError] : []),
       ].filter(Boolean);
+      const hasJournal = !!txResult?.journalEntryId;
+      const landingCosts = Number(row.freight_cost || 0) + Number(row.freight_other_costs || 0);
+      const journalRequired = landingCosts > 0;
       if (txResult || accountingError || !skipAccounting) {
         payload.accounting = {
-          success: !accountingError && hasStock && hasPayable,
+          success: !accountingError && hasStock && hasPayable && (!journalRequired || hasJournal),
           stockMovementIds: txResult?.stockMovementIds || [],
           openItemId: txResult?.openItemId || null,
           journalEntryId: txResult?.journalEntryId || null,
           errors: detailErrors,
           warnings: txResult?.warnings || [],
           error: detailErrors[0]
+            || (journalRequired && !hasJournal
+              ? 'Freight journal was not posted — check caixa/bank and chart of accounts.'
+              : null)
             || (!hasStock || !hasPayable
               ? 'Stock or supplier payable was not posted.'
               : null),
@@ -596,6 +654,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       await broadcastTable?.('purchase_invoices');
       if (txResult?.journalEntryId) await broadcastTable?.('journal_entries');
       if (txResult?.openItemId) await broadcastTable?.('suppliers');
+      await broadcastFreightCaixasIfNeeded(broadcastTable, inv, null, txResult);
 
       res.json({
         success: !!txResult?.success,

@@ -17,6 +17,33 @@ function expenseGlAccount(category) {
   return (category && EXPENSE_GL_ACCOUNTS[category]) || '758';
 }
 
+async function treasuryBranchFromCaixa(caixaId, fallbackBranchId) {
+  const id = String(caixaId || '').trim();
+  if (!id) return fallbackBranchId;
+  try {
+    const result = await db.query(
+      'SELECT branch_id FROM caixas WHERE id = $1 LIMIT 1',
+      [id],
+    );
+    const branchId = result.rows[0]?.branch_id;
+    return branchId ? String(branchId) : fallbackBranchId;
+  } catch {
+    return fallbackBranchId;
+  }
+}
+
+async function applyCaixaRegisterDelta(caixaId, delta) {
+  const id = String(caixaId || '').trim();
+  if (!id || !Number.isFinite(delta) || Math.abs(delta) < 0.001) return;
+  await db.query(
+    `UPDATE caixas
+     SET current_balance = COALESCE(current_balance, 0) + $1,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $2`,
+    [delta, id],
+  );
+}
+
 function mapRow(row) {
   if (!row) return null;
   return {
@@ -187,8 +214,9 @@ module.exports = function expensesRouter(broadcastTable) {
 
       if (row.status === 'paid' && row.paymentSource === 'caixa' && row.branchId) {
         try {
+          const glBranchId = await treasuryBranchFromCaixa(row.caixaId, row.branchId);
           await postCaixaGlMovement({
-            branchId: row.branchId,
+            branchId: glBranchId,
             amount: row.totalAmount,
             direction: 'out',
             counterAccountCode: expenseGlAccount(row.category),
@@ -197,6 +225,9 @@ module.exports = function expensesRouter(broadcastTable) {
             referenceId: row.id,
             createdBy: row.paidBy || row.requestedBy,
           });
+          if (row.caixaId) {
+            await applyCaixaRegisterDelta(row.caixaId, -row.totalAmount);
+          }
         } catch (glErr) {
           console.warn('[EXPENSES] GL post on save:', glErr.message);
         }
@@ -240,8 +271,9 @@ module.exports = function expensesRouter(broadcastTable) {
       let glError = null;
       if (row.paymentSource === 'caixa' && row.branchId && row.totalAmount > 0) {
         try {
+          const glBranchId = await treasuryBranchFromCaixa(row.caixaId, row.branchId);
           await postCaixaGlMovement({
-            branchId: row.branchId,
+            branchId: glBranchId,
             amount: row.totalAmount,
             direction: 'out',
             counterAccountCode: expenseGlAccount(row.category),
@@ -250,6 +282,9 @@ module.exports = function expensesRouter(broadcastTable) {
             referenceId: row.id,
             createdBy: paidBy,
           });
+          if (row.caixaId) {
+            await applyCaixaRegisterDelta(row.caixaId, -row.totalAmount);
+          }
         } catch (glErr) {
           glError = glErr.message;
           console.warn('[EXPENSES] GL post on pay:', glErr.message);

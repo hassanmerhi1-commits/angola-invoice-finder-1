@@ -391,7 +391,10 @@ module.exports = function(broadcastTable) {
           jel.debit_amount,
           jel.credit_amount,
           je.entry_number,
-          je.entry_date,
+          COALESCE(
+            je.entry_date::text,
+            CASE WHEN je.created_at IS NOT NULL THEN to_char(je.created_at::date, 'YYYY-MM-DD') END
+          ) AS entry_date,
           je.description as journal_description,
           je.reference_type,
           je.reference_id,
@@ -435,7 +438,7 @@ module.exports = function(broadcastTable) {
             debit_amount: amt > 0 ? amt : 0,
             credit_amount: amt < 0 ? Math.abs(amt) : 0,
             entry_number: 'OPEN',
-            entry_date: null,
+            entry_date: '',
             journal_description: 'Opening balance',
             reference_type: 'opening',
             reference_id: null,

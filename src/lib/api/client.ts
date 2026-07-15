@@ -1470,6 +1470,17 @@ export const api = {
     },
     save: (invoice: any) =>
       apiFetch<any>('/purchase-invoices', { method: 'POST', body: JSON.stringify(invoice) }, { timeoutMs: 120000 }),
+    resolveFreightTreasury: (body: Record<string, unknown>) =>
+      apiFetch<{
+        paymentSource: string;
+        accountCode: string;
+        accountName: string;
+        caixaId?: string | null;
+        bankAccountId?: string | null;
+      }>('/purchase-invoices/resolve-freight-treasury', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
     delete: (id: string) =>
       apiFetch<any>(`/purchase-invoices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     repostAccounting: (id: string) =>

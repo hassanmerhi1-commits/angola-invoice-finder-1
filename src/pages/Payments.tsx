@@ -18,6 +18,7 @@ import type { Client, Supplier } from '@/types/erp';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
+import { formatDisplayDate } from '@/lib/formatDisplayDate';
 import {
   Plus, Search, RefreshCw, CreditCard, Receipt,
   ArrowDownCircle, ArrowUpCircle, CheckCircle, Clock,
@@ -179,6 +180,7 @@ export default function Payments() {
 
   const paymentBranchId = apiBranchId || currentBranch?.id || user?.branchId;
   const paymentBranchName = currentBranch?.name || '';
+  const treasuryAllBranches = user?.role === 'admin';
 
   const canRecordReceipt = !!user && (
     userHasPermission(user.role, user.permissionOverrides, 'accounting_receipt')
@@ -300,7 +302,7 @@ export default function Payments() {
   };
 
   const refreshTreasurySources = useCallback(async () => {
-    if (!paymentBranchId) {
+    if (!treasuryAllBranches && !paymentBranchId) {
       setCaixas([]);
       setBankAccounts([]);
       setCaixaLoadHint(t.paymentsUi.caixaNeedsBranch);
@@ -308,11 +310,20 @@ export default function Payments() {
     }
     setCaixaLoading(true);
     try {
-      invalidateCaixaListCache(paymentBranchId, paymentBranchName);
+      if (treasuryAllBranches) {
+        invalidateCaixaListCache();
+      } else {
+        invalidateCaixaListCache(paymentBranchId, paymentBranchName);
+      }
       const loggedIn = isJwtAuthToken(await ensureBackendAuthToken());
       const [loadedCaixas, loadedBanks] = await Promise.all([
-        getCaixas(paymentBranchId, paymentBranchName, { ensureIfEmpty: true }),
-        getBankAccounts(paymentBranchId),
+        getCaixas(paymentBranchId, paymentBranchName, {
+          ensureIfEmpty: !treasuryAllBranches,
+          allBranches: treasuryAllBranches,
+        }),
+        getBankAccounts(treasuryAllBranches ? undefined : paymentBranchId, {
+          allBranches: treasuryAllBranches,
+        }),
       ]);
       setCaixas(loadedCaixas);
       setBankAccounts(loadedBanks);
@@ -321,7 +332,9 @@ export default function Payments() {
           ? null
           : !loggedIn
             ? t.paymentsUi.caixaNeedsLogin
-            : t.paymentsUi.caixaEmptyHint,
+            : treasuryAllBranches
+              ? t.paymentsUi.caixaEmptyHintAll
+              : t.paymentsUi.caixaEmptyHint,
       );
       if (loadedCaixas.length > 0) {
         setCaixaId((prev) => prev || loadedCaixas[0].id);
@@ -335,7 +348,9 @@ export default function Payments() {
   }, [
     paymentBranchId,
     paymentBranchName,
+    treasuryAllBranches,
     t.paymentsUi.caixaEmptyHint,
+    t.paymentsUi.caixaEmptyHintAll,
     t.paymentsUi.caixaNeedsBranch,
     t.paymentsUi.caixaNeedsLogin,
   ]);
@@ -619,7 +634,7 @@ export default function Payments() {
                 {filteredPayments.map(p => (
                   <tr key={p.id} className="hover:bg-accent/50 transition-colors">
                     <td className="px-3 py-2 font-mono text-xs">{p.paymentNumber}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{new Date(p.createdAt).toLocaleDateString(locale)}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{formatDisplayDate(p.createdAt, locale)}</td>
                     <td className="px-3 py-2 font-medium">
                       {resolveEntityName(p.entityType, p.entityId, p.entityName)}
                     </td>
@@ -678,8 +693,8 @@ export default function Payments() {
                     </Badge>
                   </td>
                   <td className="px-3 py-2 font-mono text-xs">{oi.documentNumber}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{new Date(oi.documentDate).toLocaleDateString(locale)}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{oi.dueDate ? new Date(oi.dueDate).toLocaleDateString(locale) : '—'}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{formatDisplayDate(oi.documentDate, locale)}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{formatDisplayDate(oi.dueDate, locale)}</td>
                   <td className="px-3 py-2 text-right font-mono">{oi.originalAmount.toLocaleString(locale)} Kz</td>
                   <td className="px-3 py-2 text-right font-mono font-medium">{formatSignedAmount(oi)} Kz</td>
                   <td className="px-3 py-2 text-center">
@@ -799,7 +814,7 @@ export default function Payments() {
                             />
                           </td>
                           <td className="px-2 py-1.5 font-mono">{oi.documentNumber}</td>
-                          <td className="px-2 py-1.5 text-muted-foreground">{new Date(oi.documentDate).toLocaleDateString(locale)}</td>
+                          <td className="px-2 py-1.5 text-muted-foreground">{formatDisplayDate(oi.documentDate, locale)}</td>
                           <td className="px-2 py-1.5 text-right font-mono">{formatSignedAmount(oi)} Kz</td>
                         </tr>
                       ))}
@@ -870,11 +885,21 @@ export default function Payments() {
                     ) : caixas.length === 0 ? (
                       <SelectItem value="__none__" disabled>{t.paymentsUi.noCaixas}</SelectItem>
                     ) : (
-                      caixas.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name} ({Number(c.currentBalance || 0).toLocaleString(locale)} Kz)
-                        </SelectItem>
-                      ))
+                      caixas.map((c) => {
+                        const balance = Number(c.currentBalance || 0).toLocaleString(locale);
+                        const branch = String(c.branchName || '').trim();
+                        const label = branch && treasuryAllBranches
+                          ? t.paymentsUi.treasuryCaixaOption
+                            .replace('{branch}', branch)
+                            .replace('{name}', c.name)
+                            .replace('{balance}', balance)
+                          : `${c.name} (${balance} Kz)`;
+                        return (
+                          <SelectItem key={c.id} value={c.id}>
+                            {label}
+                          </SelectItem>
+                        );
+                      })
                     )}
                   </SelectContent>
                 </Select>
@@ -891,11 +916,20 @@ export default function Payments() {
                       {bankAccounts.length === 0 ? (
                         <SelectItem value="__none__" disabled>{t.paymentsUi.noBanks}</SelectItem>
                       ) : (
-                        bankAccounts.map((a) => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.bankName} - {a.accountNumber}
-                          </SelectItem>
-                        ))
+                        bankAccounts.map((a) => {
+                          const branch = String(a.branchName || '').trim();
+                          const label = branch && treasuryAllBranches
+                            ? t.paymentsUi.treasuryBankOption
+                              .replace('{branch}', branch)
+                              .replace('{bank}', a.bankName)
+                              .replace('{account}', a.accountNumber)
+                            : `${a.bankName} - ${a.accountNumber}`;
+                          return (
+                            <SelectItem key={a.id} value={a.id}>
+                              {label}
+                            </SelectItem>
+                          );
+                        })
                       )}
                     </SelectContent>
                   </Select>

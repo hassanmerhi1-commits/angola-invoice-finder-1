@@ -36,6 +36,7 @@ import { printHtml } from '@/lib/printHtml';
 import { toast } from 'sonner';
 import { NEXOR_PILL_BTN, NEXOR_PILL_BTN_PRIMARY } from '@/lib/nexorToolbarStyles';
 import { NEXOR_STAT_CARD } from '@/lib/nexorToneStyles';
+import { formatDisplayDate } from '@/lib/formatDisplayDate';
 
 interface LedgerEntry {
   id: string;
@@ -47,7 +48,7 @@ interface LedgerEntry {
   debit_amount: number;
   credit_amount: number;
   entry_number: string;
-  entry_date: string;
+  entry_date: string | null;
   journal_description: string;
   reference_type: string;
   reference_id: string;
@@ -174,9 +175,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     [entries],
   );
 
-  const fmtDate = (d: string) => {
-    try { return new Date(d).toLocaleDateString(locale); } catch { return d; }
-  };
+  const fmtDate = (d: string | null | undefined) => formatDisplayDate(d, locale);
 
   const fmtMoney = (n: number) => `${n.toLocaleString(locale)} Kz`;
 

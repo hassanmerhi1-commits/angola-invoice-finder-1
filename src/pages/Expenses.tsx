@@ -129,25 +129,35 @@ export default function Expenses() {
 
   const expenseBranchId = apiBranchId || currentBranch?.id || user?.branchId;
   const expenseBranchName = currentBranch?.name || t.branchUi.headOffice;
+  const treasuryAllBranches = user?.role === 'admin';
 
   const refreshCaixasForExpense = useCallback(async (ensureIfEmpty = false) => {
-    if (!expenseBranchId) {
+    if (!treasuryAllBranches && !expenseBranchId) {
       setCaixaLoadHint(t.expensesUi.caixaNeedsBranch);
       setCaixas([]);
       return;
     }
     setCaixaLoading(true);
     try {
-      invalidateCaixaListCache(expenseBranchId, expenseBranchName);
+      if (treasuryAllBranches) {
+        invalidateCaixaListCache();
+      } else {
+        invalidateCaixaListCache(expenseBranchId, expenseBranchName);
+      }
       const loggedIn = isJwtAuthToken(await ensureBackendAuthToken());
-      const loadedCaixas = await getCaixas(expenseBranchId, expenseBranchName, { ensureIfEmpty });
+      const loadedCaixas = await getCaixas(expenseBranchId, expenseBranchName, {
+        ensureIfEmpty: treasuryAllBranches ? false : ensureIfEmpty,
+        allBranches: treasuryAllBranches,
+      });
       setCaixas(loadedCaixas);
       setCaixaLoadHint(
         loadedCaixas.length > 0
           ? null
           : !loggedIn
             ? t.expensesUi.caixaNeedsLogin
-            : t.expensesUi.caixaEmptyHint,
+            : treasuryAllBranches
+              ? t.expensesUi.caixaEmptyHintAll
+              : t.expensesUi.caixaEmptyHint,
       );
       if (loadedCaixas.length > 0) {
         setFormData((fd) => (fd.caixaId ? fd : { ...fd, caixaId: loadedCaixas[0].id }));
@@ -158,13 +168,15 @@ export default function Expenses() {
   }, [
     expenseBranchId,
     expenseBranchName,
+    treasuryAllBranches,
     t.expensesUi.caixaEmptyHint,
+    t.expensesUi.caixaEmptyHintAll,
     t.expensesUi.caixaNeedsBranch,
     t.expensesUi.caixaNeedsLogin,
   ]);
 
   const loadData = async () => {
-    if (!expenseBranchId) {
+    if (!treasuryAllBranches && !expenseBranchId) {
       setCaixaLoadHint(t.expensesUi.caixaNeedsBranch);
       setCaixas([]);
       setBankAccounts([]);
@@ -172,11 +184,20 @@ export default function Expenses() {
       return;
     }
     const loggedInPromise = ensureBackendAuthToken().then(isJwtAuthToken);
-    invalidateCaixaListCache(expenseBranchId, expenseBranchName);
+    if (treasuryAllBranches) {
+      invalidateCaixaListCache();
+    } else {
+      invalidateCaixaListCache(expenseBranchId, expenseBranchName);
+    }
     const [loadedExpenses, loadedCaixas, loadedBanks] = await Promise.all([
       getExpenses(apiBranchId),
-      getCaixas(expenseBranchId, expenseBranchName, { ensureIfEmpty: true }),
-      getBankAccounts(apiBranchId || expenseBranchId),
+      getCaixas(expenseBranchId, expenseBranchName, {
+        ensureIfEmpty: !treasuryAllBranches,
+        allBranches: treasuryAllBranches,
+      }),
+      getBankAccounts(treasuryAllBranches ? undefined : (apiBranchId || expenseBranchId), {
+        allBranches: treasuryAllBranches,
+      }),
     ]);
     const loggedIn = await loggedInPromise;
     setExpenses(loadedExpenses);
@@ -187,7 +208,9 @@ export default function Expenses() {
         ? null
         : !loggedIn
           ? t.expensesUi.caixaNeedsLogin
-          : t.expensesUi.caixaEmptyHint,
+          : treasuryAllBranches
+            ? t.expensesUi.caixaEmptyHintAll
+            : t.expensesUi.caixaEmptyHint,
     );
     setBankAccounts(loadedBanks);
   };
@@ -200,7 +223,7 @@ export default function Expenses() {
     const onRefresh = () => { void loadData(); };
     window.addEventListener('nexor:expenses-changed', onRefresh);
     return () => window.removeEventListener('nexor:expenses-changed', onRefresh);
-  }, [apiBranchId, expenseBranchId, expenseBranchName, t.expensesUi.caixaEmptyHint, t.expensesUi.caixaNeedsBranch, t.branchUi.headOffice]);
+  }, [apiBranchId, expenseBranchId, expenseBranchName, treasuryAllBranches, t.expensesUi.caixaEmptyHint, t.expensesUi.caixaEmptyHintAll, t.expensesUi.caixaNeedsBranch, t.branchUi.headOffice]);
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter(exp => {
@@ -239,7 +262,9 @@ export default function Expenses() {
       setIsDialogOpen(true);
       void refreshCaixasForExpense(true);
       if (bankAccounts.length === 0) {
-        void getBankAccounts(apiBranchId).then(setBankAccounts);
+        void getBankAccounts(treasuryAllBranches ? undefined : apiBranchId, {
+          allBranches: treasuryAllBranches,
+        }).then(setBankAccounts);
       }
       return;
     }
@@ -615,13 +640,23 @@ export default function Expenses() {
                         {t.expensesUi.noCashRegisters}
                       </SelectItem>
                     ) : (
-                      caixas.map(c => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {t.expensesUi.cashWithBalance
+                      caixas.map(c => {
+                        const balance = c.currentBalance.toLocaleString(uiLocale);
+                        const branch = String(c.branchName || '').trim();
+                        const label = branch && treasuryAllBranches
+                          ? t.expensesUi.treasuryCaixaOption
+                            .replace('{branch}', branch)
                             .replace('{name}', c.name)
-                            .replace('{balance}', c.currentBalance.toLocaleString(uiLocale))}
-                        </SelectItem>
-                      ))
+                            .replace('{balance}', balance)
+                          : t.expensesUi.cashWithBalance
+                            .replace('{name}', c.name)
+                            .replace('{balance}', balance);
+                        return (
+                          <SelectItem key={c.id} value={c.id}>
+                            {label}
+                          </SelectItem>
+                        );
+                      })
                     )}
                   </SelectContent>
                 </Select>
@@ -634,11 +669,20 @@ export default function Expenses() {
                     <SelectValue placeholder={t.expensesUi.selectBankPlaceholder} />
                   </SelectTrigger>
                   <SelectContent>
-                    {bankAccounts.map(a => (
-                      <SelectItem key={a.id} value={a.id}>
-                        {a.bankName} - {a.accountNumber} ({a.currency})
-                      </SelectItem>
-                    ))}
+                    {bankAccounts.map(a => {
+                      const branch = String(a.branchName || '').trim();
+                      const label = branch && treasuryAllBranches
+                        ? t.expensesUi.treasuryBankOption
+                          .replace('{branch}', branch)
+                          .replace('{bank}', a.bankName)
+                          .replace('{account}', a.accountNumber)
+                        : `${a.bankName} - ${a.accountNumber} (${a.currency})`;
+                      return (
+                        <SelectItem key={a.id} value={a.id}>
+                          {label}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>

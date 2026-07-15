@@ -94,7 +94,32 @@ const STORAGE_KEYS = {
 export type GetCaixasOptions = {
   /** Create a default register on the server when none exist for this branch. */
   ensureIfEmpty?: boolean;
+  /** Return registers from every branch (admin treasury picker). */
+  allBranches?: boolean;
 };
+
+export type GetBankAccountsOptions = {
+  /** Return accounts from every branch (admin treasury picker). */
+  allBranches?: boolean;
+};
+
+const CAIXA_ALL_BRANCHES_CACHE_KEY = '__all_branches__';
+
+function sortTreasuryCaixas(list: Caixa[]): Caixa[] {
+  return [...list].sort((a, b) => {
+    const byBranch = String(a.branchName || '').localeCompare(String(b.branchName || ''));
+    if (byBranch !== 0) return byBranch;
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
+}
+
+function sortTreasuryBankAccounts(list: BankAccount[]): BankAccount[] {
+  return [...list].sort((a, b) => {
+    const byBranch = String(a.branchName || '').localeCompare(String(b.branchName || ''));
+    if (byBranch !== 0) return byBranch;
+    return String(a.bankName || '').localeCompare(String(b.bankName || ''));
+  });
+}
 
 const caixaListCache = new Map<string, { until: number; data: Caixa[] }>();
 const CAIXA_CACHE_MS = 30_000;
@@ -109,6 +134,7 @@ export function invalidateCaixaListCache(branchId?: string, branchName?: string)
     return;
   }
   caixaListCache.delete(caixaCacheKey(String(branchId).trim(), String(branchName || '').trim()));
+  caixaListCache.delete(CAIXA_ALL_BRANCHES_CACHE_KEY);
 }
 
 export async function getCaixas(
@@ -119,14 +145,32 @@ export async function getCaixas(
   const branchKey = String(branchId || '').trim();
   const branchLabel = String(branchName || '').trim();
   const ensureIfEmpty = opts?.ensureIfEmpty ?? false;
+  const allBranches = opts?.allBranches ?? false;
 
-  if (branchKey) {
+  if (allBranches) {
+    const cachedAll = caixaListCache.get(CAIXA_ALL_BRANCHES_CACHE_KEY);
+    if (cachedAll && Date.now() < cachedAll.until) return cachedAll.data;
+  } else if (branchKey) {
     const cached = caixaListCache.get(caixaCacheKey(branchKey, branchLabel));
     if (cached && Date.now() < cached.until) return cached.data;
   }
 
   if (await shouldLoadCaixasFromServerApi()) {
     try {
+      if (allBranches) {
+        const allRes = await api.caixa.listRegisters();
+        if (!allRes.error && allRes.data) {
+          const list = sortTreasuryCaixas(
+            unwrapApiList<any>(allRes.data).map((row) => mapCaixaFromDb(row)),
+          );
+          caixaListCache.set(CAIXA_ALL_BRANCHES_CACHE_KEY, {
+            until: Date.now() + CAIXA_CACHE_MS,
+            data: list,
+          });
+          return list;
+        }
+      }
+
       const [listRes, sessionRes] = await Promise.all([
         api.caixa.listRegisters(branchKey || undefined),
         branchKey ? api.caixa.getOpenSession(branchKey) : Promise.resolve({ data: null, error: undefined }),
@@ -185,10 +229,12 @@ export async function getCaixas(
   if (isElectronMode() && !isThinClientMode()) {
     const rows = await dbGetAll<any>('caixas');
     let caixas = rows.map(mapCaixaFromDb);
+    if (allBranches) return sortTreasuryCaixas(caixas);
     if (branchKey) caixas = filterCaixasForBranch(caixas, branchKey, branchLabel);
     return caixas;
   }
   const caixas = lsGet<Caixa[]>(STORAGE_KEYS.caixas, []);
+  if (allBranches) return sortTreasuryCaixas(caixas);
   return branchKey ? filterCaixasForBranch(caixas, branchKey, branchLabel) : caixas;
 }
 
@@ -573,15 +619,20 @@ export async function closeCaixaSession(
 
 // ==================== BANK ACCOUNT FUNCTIONS ====================
 
-export async function getBankAccounts(branchId?: string): Promise<BankAccount[]> {
+export async function getBankAccounts(
+  branchId?: string,
+  opts?: GetBankAccountsOptions,
+): Promise<BankAccount[]> {
+  const allBranches = opts?.allBranches ?? false;
   if (isElectronMode()) {
     const rows = await dbGetAll<any>('bank_accounts');
     let accounts = rows.map(mapBankAccountFromDb);
-    if (branchId) accounts = accounts.filter(a => a.branchId === branchId);
-    return accounts;
+    if (!allBranches && branchId) accounts = accounts.filter((a) => a.branchId === branchId);
+    return allBranches ? sortTreasuryBankAccounts(accounts) : accounts;
   }
   const accounts = lsGet<BankAccount[]>(STORAGE_KEYS.bankAccounts, []);
-  return branchId ? accounts.filter(a => a.branchId === branchId) : accounts;
+  if (allBranches) return sortTreasuryBankAccounts(accounts);
+  return branchId ? accounts.filter((a) => a.branchId === branchId) : accounts;
 }
 
 export async function getBankAccountById(id: string): Promise<BankAccount | undefined> {

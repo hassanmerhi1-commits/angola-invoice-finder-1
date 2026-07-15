@@ -15,7 +15,65 @@ const { createJournalEntry } = require('../accounting');
 const { ensurePurchaseInvoicePayable } = require('../supplierBalanceRepair');
 const { normalizeSqlDate } = require('./dateSql');
 const { resolveBranchFilterId, resolveBranchRow } = require('./branchIdMatch');
+const {
+  landingCostsFromInvoice,
+  resolveFreightTreasuryGl,
+  applyFreightTreasuryToJournalLines,
+  syncFreightCaixaRegister,
+  roundMoney,
+} = require('./freightTreasury');
 const db = require('../db');
+
+function normalizeJournalLineForSig(line) {
+  return {
+    c: String(line.accountCode || line.account_code || '').trim(),
+    d: roundMoney(Number(line.debit || 0)),
+    cr: roundMoney(Number(line.credit || 0)),
+  };
+}
+
+function journalSignature(lines) {
+  return JSON.stringify(
+    (lines || [])
+      .map(normalizeJournalLineForSig)
+      .sort((a, b) => `${a.c}:${a.d}:${a.cr}`.localeCompare(`${b.c}:${b.d}:${b.cr}`)),
+  );
+}
+
+async function loadPostedJournalSignature(client, journalEntryId) {
+  const res = await client.query(
+    `SELECT coa.code, jel.debit_amount, jel.credit_amount
+     FROM journal_entry_lines jel
+     JOIN chart_of_accounts coa ON coa.id = jel.account_id
+     WHERE jel.journal_entry_id = $1`,
+    [journalEntryId],
+  );
+  const lines = (res.rows || []).map((r) => ({
+    accountCode: r.code,
+    debit: r.debit_amount,
+    credit: r.credit_amount,
+  }));
+  return journalSignature(lines);
+}
+
+async function reverseJournalEntry(client, journalEntryId) {
+  const linesRes = await client.query(
+    `SELECT jel.account_id, jel.debit_amount, jel.credit_amount
+     FROM journal_entry_lines jel WHERE jel.journal_entry_id = $1`,
+    [journalEntryId],
+  );
+  for (const line of linesRes.rows || []) {
+    const balanceChange = Number(line.debit_amount || 0) - Number(line.credit_amount || 0);
+    await client.query(
+      `UPDATE chart_of_accounts
+       SET current_balance = current_balance - $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
+      [balanceChange, line.account_id],
+    );
+  }
+  await client.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = $1', [journalEntryId]);
+  await client.query('DELETE FROM journal_entries WHERE id = $1', [journalEntryId]);
+}
 
 function normalizePurchaseLines(lines) {
   return (Array.isArray(lines) ? lines : []).map((line) => ({
@@ -133,9 +191,11 @@ async function ensureSupplierJournalAccounts(client, journalLines, inv) {
 }
 
 /**
- * Post stock, payable, then journal (best-effort). Returns detailed status for UI.
+ * Post stock, payable, then journal. Returns detailed status for UI.
+ * @param {object} [opts]
+ * @param {{ landingCosts?: number, caixaId?: string|null, paymentSource?: string }} [opts.priorFreightState]
  */
-async function postPurchaseInvoiceAccountingPhased(client, invInput) {
+async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) {
   const inv = invInput?.invoiceNumber != null ? invInput : fromRow(invInput);
   const result = {
     success: false,
@@ -237,35 +297,63 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
     }
   }
 
-  const journalLines = Array.isArray(inv.journalLines) ? inv.journalLines : [];
-  if (journalLines.length === 0 && !result.journalEntryId && Number(inv.total || 0) > 0) {
+  let journalLines = Array.isArray(inv.journalLines) ? [...inv.journalLines] : [];
+  const landing = landingCostsFromInvoice(inv);
+
+  if (journalLines.length === 0 && landing > 0) {
+    result.errors.push('Journal: freight entered but invoice has no journal lines');
+  } else if (journalLines.length === 0 && !result.journalEntryId && Number(inv.total || 0) > 0) {
     result.warnings.push('Journal: invoice has no journal lines — nothing posted to chart of accounts');
-  }
-  if (journalLines.length > 0 && !result.journalEntryId) {
-    const journalSp = await withSavepoint(client, 'pi_journal', async () => {
-      await ensureSupplierJournalAccounts(client, journalLines, inv);
-      const entry = await createJournalEntry(client, {
-        description: `Fatura de Compra ${inv.invoiceNumber} — ${inv.supplierName || ''}`.trim(),
-        referenceType: 'purchase_invoice',
-        referenceId: inv.id,
-        branchId: warehouseId,
-        createdBy: inv.createdBy || inv.created_by || null,
-        entryDate: normalizeSqlDate(inv.date, { allowNull: false }),
-        lines: journalLines.map((l) => ({
-          accountCode: l.accountCode || l.account_code,
-          description: l.note || l.description || inv.invoiceNumber,
-          debit: Number(l.debit || 0),
-          credit: Number(l.credit || 0),
-        })),
+  } else if (journalLines.length > 0) {
+    const treasury = await resolveFreightTreasuryGl(client, inv);
+    journalLines = applyFreightTreasuryToJournalLines(journalLines, treasury);
+
+    const expectedSig = journalSignature(journalLines);
+    let needsReplace = false;
+    if (result.journalEntryId) {
+      const postedSig = await loadPostedJournalSignature(client, result.journalEntryId);
+      needsReplace = postedSig !== expectedSig;
+    }
+
+    const shouldPostJournal = !result.journalEntryId || needsReplace;
+    if (shouldPostJournal) {
+      const priorFreight = opts.priorFreightState || {
+        landingCosts: 0,
+        caixaId: null,
+        paymentSource: 'caixa',
+      };
+      const journalSp = await withSavepoint(client, 'pi_journal', async () => {
+        if (needsReplace && result.journalEntryId) {
+          await reverseJournalEntry(client, result.journalEntryId);
+          result.journalEntryId = null;
+        }
+        await ensureSupplierJournalAccounts(client, journalLines, inv);
+        const entry = await createJournalEntry(client, {
+          description: `Fatura de Compra ${inv.invoiceNumber} — ${inv.supplierName || ''}`.trim(),
+          referenceType: 'purchase_invoice',
+          referenceId: inv.id,
+          branchId: warehouseId,
+          createdBy: inv.createdBy || inv.created_by || null,
+          entryDate: normalizeSqlDate(inv.date, { allowNull: false }),
+          lines: journalLines.map((l) => ({
+            accountCode: l.accountCode || l.account_code,
+            description: l.note || l.description || inv.invoiceNumber,
+            debit: Number(l.debit || 0),
+            credit: Number(l.credit || 0),
+          })),
+        });
+        await syncFreightCaixaRegister(client, inv, priorFreight);
+        return entry.id;
       });
-      return entry.id;
-    });
-    if (journalSp.ok && journalSp.value) {
-      result.journalEntryId = journalSp.value;
-    } else {
-      result.warnings.push(`Journal: ${journalSp.error?.message || String(journalSp.error)}`);
+      if (journalSp.ok && journalSp.value) {
+        result.journalEntryId = journalSp.value;
+      } else {
+        result.errors.push(`Journal: ${journalSp.error?.message || String(journalSp.error)}`);
+      }
     }
   }
+
+  const journalRequired = landing > 0 || journalLines.length > 0;
 
   if (result.stockMovementIds.length > 0) {
     const linkSp = await withSavepoint(client, 'pi_supplier_link', async () => {
@@ -293,12 +381,15 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput) {
     }
   }
 
-  // Re-read from DB so callers never trust in-memory IDs that might not have committed.
   const confirmed = await queryPostingStatus(client, inv.id);
   result.stockMovementIds = confirmed.stockMovementIds;
   result.openItemId = confirmed.openItemId;
-  result.journalEntryId = confirmed.journalEntryId;
-  result.success = result.stockMovementIds.length > 0 && !!result.openItemId;
+  result.journalEntryId = confirmed.journalEntryId || result.journalEntryId;
+  if (journalRequired && !result.journalEntryId) {
+    result.success = false;
+  } else {
+    result.success = result.stockMovementIds.length > 0 && !!result.openItemId;
+  }
 
   try {
     await auditLog(client, {

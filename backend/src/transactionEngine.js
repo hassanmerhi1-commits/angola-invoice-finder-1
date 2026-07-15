@@ -2758,9 +2758,24 @@ async function processPayment(client, paymentData) {
   }
 
   // Treasury GL: honour explicit caixa/bank source when provided; else infer from paymentMethod.
+  const resolvedCaixaId = String(caixaId || '').trim();
+  let treasuryBranchId = branchId;
+  if (wantsCaixa && resolvedCaixaId) {
+    try {
+      const cxRes = await client.query(
+        'SELECT branch_id FROM caixas WHERE id = $1 LIMIT 1',
+        [resolvedCaixaId],
+      );
+      const cxBranch = cxRes.rows[0]?.branch_id;
+      if (cxBranch) treasuryBranchId = String(cxBranch);
+    } catch (e) {
+      console.warn('[TX ENGINE] Caixa branch lookup skipped:', e.message);
+    }
+  }
+
   let cashAccountCode;
   if (wantsCaixa) {
-    cashAccountCode = await resolveBranchCaixaGlAccountCode(client, { branchId });
+    cashAccountCode = await resolveBranchCaixaGlAccountCode(client, { branchId: treasuryBranchId });
   } else {
     cashAccountCode = ACC.BANK;
   }
@@ -2793,7 +2808,6 @@ async function processPayment(client, paymentData) {
   });
 
   // Operational caixa balance (register drawer) when paying/receiving cash from a specific caixa
-  const resolvedCaixaId = String(caixaId || '').trim();
   if (wantsCaixa && resolvedCaixaId) {
     try {
       const delta = paymentType === 'receipt' ? paymentAmount : -paymentAmount;

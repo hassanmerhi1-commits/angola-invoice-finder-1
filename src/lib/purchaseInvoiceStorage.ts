@@ -116,6 +116,9 @@ export interface PurchaseInvoice {
   freightOtherCosts?: number;
   freightSourceAccount?: string;
   freightSourceName?: string;
+  freightPaymentSource?: 'caixa' | 'bank';
+  freightCaixaId?: string;
+  freightBankAccountId?: string;
   lines: PurchaseInvoiceLine[];
   journalLines: PurchaseInvoiceJournalLine[];
   subtotal: number;
@@ -827,6 +830,9 @@ function mapPIFromDb(row: any): PurchaseInvoice {
     freightOtherCosts: Number(row.freight_other_costs ?? row.freightOtherCosts ?? 0),
     freightSourceAccount: row.freight_source_account || row.freightSourceAccount || '',
     freightSourceName: row.freight_source_name || row.freightSourceName || '',
+    freightPaymentSource: (row.freight_payment_source || row.freightPaymentSource || 'caixa') as 'caixa' | 'bank',
+    freightCaixaId: row.freight_caixa_id || row.freightCaixaId || '',
+    freightBankAccountId: row.freight_bank_account_id || row.freightBankAccountId || '',
     lines: Array.isArray(row.lines)
       ? row.lines
       : row.lines_json
@@ -883,6 +889,9 @@ function mapPIToDb(invoice: PurchaseInvoice): any {
     freight_other_costs: Number(invoice.freightOtherCosts || 0),
     freight_source_account: invoice.freightSourceAccount || '',
     freight_source_name: invoice.freightSourceName || '',
+    freight_payment_source: invoice.freightPaymentSource || 'caixa',
+    freight_caixa_id: invoice.freightCaixaId || null,
+    freight_bank_account_id: invoice.freightBankAccountId || null,
     lines_json: JSON.stringify(invoice.lines),
     journal_lines_json: JSON.stringify(invoice.journalLines),
     subtotal: invoice.subtotal,

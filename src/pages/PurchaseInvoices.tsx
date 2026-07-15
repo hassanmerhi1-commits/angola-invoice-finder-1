@@ -30,6 +30,14 @@ import {
   peekPurchaseInvoiceNumber,
   resolvePurchaseInvoiceFreight,
 } from '@/lib/purchaseInvoiceStorage';
+import { getCaixas, getBankAccounts } from '@/lib/accountingStorage';
+import {
+  resolveFreightTreasuryGl,
+  formatFreightCaixaLabel,
+  formatFreightBankLabel,
+  type FreightPaymentSource,
+} from '@/lib/freightTreasury';
+import { Caixa, BankAccount } from '@/types/accounting';
 import {
   PRODUCTS_CHANGED_EVENT,
   SUPPLIERS_CHANGED_EVENT,
@@ -1321,8 +1329,15 @@ export default function PurchaseInvoices() {
   // Freight / Transport cost
   const [freightCost, setFreightCost] = useState(0);
   const [freightOtherCosts, setFreightOtherCosts] = useState(0);
-  const [freightSourceAccount, setFreightSourceAccount] = useState('451'); // default Cash
-  const [freightSourceName, setFreightSourceName] = useState('Cash');
+  const [freightPaymentSource, setFreightPaymentSource] = useState<FreightPaymentSource>('caixa');
+  const [freightCaixaId, setFreightCaixaId] = useState('');
+  const [freightBankAccountId, setFreightBankAccountId] = useState('');
+  const [freightCaixas, setFreightCaixas] = useState<Caixa[]>([]);
+  const [freightBankAccounts, setFreightBankAccounts] = useState<BankAccount[]>([]);
+  const [freightTreasuryLoading, setFreightTreasuryLoading] = useState(false);
+  const [freightSourceAccount, setFreightSourceAccount] = useState('451');
+  const [freightSourceName, setFreightSourceName] = useState('Caixa');
+  const treasuryAllBranches = user?.role === 'admin';
 
   const numberingBranchId = useMemo(() => {
     const wh = String(form.warehouseId ?? '').trim();
@@ -1395,6 +1410,79 @@ export default function PurchaseInvoices() {
   }, [poProductDropdownOpen]);
 
   const totalLandingCosts = freightCost + freightOtherCosts;
+
+  const refreshFreightTreasury = useCallback(async () => {
+    const branchId = String(purchaseWarehouseId || '').trim();
+    const branchName = String(form.warehouseName || currentBranch?.name || '').trim();
+    if (!treasuryAllBranches && !branchId) {
+      setFreightCaixas([]);
+      setFreightBankAccounts([]);
+      return;
+    }
+    setFreightTreasuryLoading(true);
+    try {
+      const [loadedCaixas, loadedBanks] = await Promise.all([
+        getCaixas(branchId, branchName, {
+          ensureIfEmpty: !treasuryAllBranches,
+          allBranches: treasuryAllBranches,
+        }),
+        getBankAccounts(treasuryAllBranches ? undefined : branchId, {
+          allBranches: treasuryAllBranches,
+        }),
+      ]);
+      setFreightCaixas(loadedCaixas);
+      setFreightBankAccounts(loadedBanks);
+      if (loadedCaixas.length > 0 && !freightCaixaId) {
+        setFreightCaixaId(loadedCaixas[0].id);
+      }
+      if (loadedBanks.length > 0 && !freightBankAccountId) {
+        setFreightBankAccountId(loadedBanks[0].id);
+      }
+    } finally {
+      setFreightTreasuryLoading(false);
+    }
+  }, [
+    purchaseWarehouseId,
+    form.warehouseName,
+    currentBranch?.name,
+    treasuryAllBranches,
+    freightCaixaId,
+    freightBankAccountId,
+  ]);
+
+  useEffect(() => {
+    if (mode !== 'create') return;
+    void refreshFreightTreasury();
+  }, [mode, refreshFreightTreasury]);
+
+  useEffect(() => {
+    if (totalLandingCosts <= 0) return;
+    const branchId = String(purchaseWarehouseId || '').trim();
+    let cancelled = false;
+    void resolveFreightTreasuryGl({
+      paymentSource: freightPaymentSource,
+      caixaId: freightCaixaId || undefined,
+      bankAccountId: freightBankAccountId || undefined,
+      branchId,
+      freightSourceAccount,
+      freightSourceName,
+      caixas: freightCaixas,
+      bankAccounts: freightBankAccounts,
+    }).then((treasury) => {
+      if (cancelled) return;
+      if (treasury.accountCode) setFreightSourceAccount(treasury.accountCode);
+      if (treasury.accountName) setFreightSourceName(treasury.accountName);
+    });
+    return () => { cancelled = true; };
+  }, [
+    totalLandingCosts,
+    freightPaymentSource,
+    freightCaixaId,
+    freightBankAccountId,
+    purchaseWarehouseId,
+    freightCaixas,
+    freightBankAccounts,
+  ]);
 
   // Freight allocation per product (proportional to value)
   const freightAllocations = useMemo(() => {
@@ -1661,6 +1749,9 @@ export default function PurchaseInvoices() {
     setJournalLines([]);
     setFreightCost(0);
     setFreightOtherCosts(0);
+    setFreightPaymentSource('caixa');
+    setFreightCaixaId('');
+    setFreightBankAccountId('');
     setFreightSourceAccount('451');
     setFreightSourceName('Caixa');
     setFillFromPoId('');
@@ -1722,9 +1813,13 @@ export default function PurchaseInvoices() {
       const freight = resolvePurchaseInvoiceFreight(full);
       setFreightCost(freight.freightCost);
       setFreightOtherCosts(freight.freightOtherCosts);
+      setFreightPaymentSource((full.freightPaymentSource as FreightPaymentSource) || 'caixa');
+      setFreightCaixaId(full.freightCaixaId || '');
+      setFreightBankAccountId(full.freightBankAccountId || '');
       if (freight.freightSourceAccount) setFreightSourceAccount(freight.freightSourceAccount);
       if (freight.freightSourceName) setFreightSourceName(freight.freightSourceName);
     }
+    void refreshFreightTreasury();
     setFillFromPoId('');
     setActiveTab('fatura');
     setSaveError(null);
@@ -2512,6 +2607,35 @@ export default function PurchaseInvoices() {
 
     console.log('[PurchaseInvoices] All validations passed, building invoice...');
 
+    let resolvedFreightAccount = freightSourceAccount;
+    let resolvedFreightName = freightSourceName;
+    if (totalLandingCosts > 0) {
+      if (freightPaymentSource === 'caixa' && !freightCaixaId) {
+        setSaveError(t.purchaseInvoicesUi.selectFreightCaixa);
+        toast({ title: t.common.error, description: t.purchaseInvoicesUi.selectFreightCaixa, variant: 'destructive' });
+        return;
+      }
+      if (freightPaymentSource === 'bank' && freightBankAccounts.length > 0 && !freightBankAccountId) {
+        setSaveError(t.purchaseInvoicesUi.selectFreightBank);
+        toast({ title: t.common.error, description: t.purchaseInvoicesUi.selectFreightBank, variant: 'destructive' });
+        return;
+      }
+      const treasury = await resolveFreightTreasuryGl({
+        paymentSource: freightPaymentSource,
+        caixaId: freightCaixaId || undefined,
+        bankAccountId: freightBankAccountId || undefined,
+        branchId: resolvedBranchId,
+        freightSourceAccount,
+        freightSourceName,
+        caixas: freightCaixas,
+        bankAccounts: freightBankAccounts,
+      });
+      resolvedFreightAccount = treasury.accountCode;
+      resolvedFreightName = treasury.accountName;
+      setFreightSourceAccount(treasury.accountCode);
+      setFreightSourceName(treasury.accountName);
+    }
+
     const editingOriginal = editingInvoiceRef.current;
     if (editingOriginal) {
       const now = new Date().toISOString();
@@ -2549,8 +2673,11 @@ export default function PurchaseInvoices() {
         extraNote: form.extraNote,
         freightCost,
         freightOtherCosts,
-        freightSourceAccount,
-        freightSourceName,
+        freightPaymentSource,
+        freightCaixaId: freightPaymentSource === 'caixa' ? freightCaixaId : undefined,
+        freightBankAccountId: freightPaymentSource === 'bank' ? freightBankAccountId : undefined,
+        freightSourceAccount: resolvedFreightAccount,
+        freightSourceName: resolvedFreightName,
         lines,
         journalLines: [],
         subtotal: totals.subtotal,
@@ -2574,13 +2701,27 @@ export default function PurchaseInvoices() {
         withholdingAmount,
         stampAmount,
         landingCosts: totalLandingCosts,
-        freightSourceAccount,
-        freightSourceName,
+        freightSourceAccount: resolvedFreightAccount,
+        freightSourceName: resolvedFreightName,
         manualLines: manualJournalLines,
         labelFreightLine: t.purchaseInvoicesUi.transportOnPurchases,
         labelDeductibleVat: t.purchaseInvoicesUi.deductibleVat,
       });
-      await savePurchaseInvoice(updatedInvoice, { metadataOnly: true });
+      const saveResult = await savePurchaseInvoice(updatedInvoice);
+      if (totalLandingCosts > 0 || saveResult.accounting?.journalEntryId) {
+        const repost = await api.purchaseInvoices.repostAccounting(updatedInvoice.id);
+        const journalOk = !!(repost.data?.journalEntryId || saveResult.accounting?.journalEntryId);
+        const journalErr = repost.data?.errors?.find((e) => String(e).toLowerCase().includes('journal'))
+          || saveResult.accounting?.errors?.find((e) => String(e).toLowerCase().includes('journal'))
+          || (totalLandingCosts > 0 && !journalOk ? t.purchaseInvoicesUi.freightJournalFailed : null);
+        if (journalErr) {
+          toast({
+            title: t.purchaseInvoicesUi.freightJournalFailedTitle,
+            description: String(journalErr),
+            variant: 'destructive',
+          });
+        }
+      }
       await syncPurchaseInvoiceDocument(updatedInvoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix);
       toast({
         title: t.purchaseInvoicesUi.purchaseInvoiceUpdatedTitle,
@@ -2650,8 +2791,11 @@ export default function PurchaseInvoices() {
       extraNote: form.extraNote,
       freightCost,
       freightOtherCosts,
-      freightSourceAccount,
-      freightSourceName,
+      freightPaymentSource,
+      freightCaixaId: freightPaymentSource === 'caixa' ? freightCaixaId : undefined,
+      freightBankAccountId: freightPaymentSource === 'bank' ? freightBankAccountId : undefined,
+      freightSourceAccount: resolvedFreightAccount,
+      freightSourceName: resolvedFreightName,
       lines: lines.map((line) => ({
         ...line,
         warehouseId: resolvedWarehouseId,
@@ -2685,8 +2829,8 @@ export default function PurchaseInvoices() {
       withholdingAmount,
       stampAmount,
       landingCosts: totalLandingCosts,
-      freightSourceAccount,
-      freightSourceName,
+      freightSourceAccount: resolvedFreightAccount,
+      freightSourceName: resolvedFreightName,
       manualLines: manualJournalLines,
       labelFreightLine: t.purchaseInvoicesUi.transportOnPurchases,
       labelDeductibleVat: t.purchaseInvoicesUi.deductibleVat,
@@ -2800,18 +2944,19 @@ export default function PurchaseInvoices() {
 
       const stillNoStock = (posted.stockMovementIds?.length ?? 0) === 0;
       const stillNoPayable = !posted.openItemId;
+      const stillNoJournal = totalLandingCosts > 0 && !txResult.journalEntryId;
       const txError = txResult.errors.join('; ');
       toast({
-        title: stillNoStock || stillNoPayable
+        title: stillNoStock || stillNoPayable || stillNoJournal
           ? t.purchaseInvoicesUi.transactionEngineFailureTitle
           : t.purchaseInvoicesUi.purchaseInvoiceSavedTitle,
-        description: stillNoStock || stillNoPayable
-          ? (txError || t.purchaseInvoicesUi.purchaseSavedPartialSync)
+        description: stillNoStock || stillNoPayable || stillNoJournal
+          ? (txError || (stillNoJournal ? t.purchaseInvoicesUi.freightJournalFailed : t.purchaseInvoicesUi.purchaseSavedPartialSync))
           : `${invoice.invoiceNumber} — ${invoice.supplierName} — ${invoice.total.toLocaleString(uiLocale)} ${invoice.currency}`,
-        variant: stillNoStock || stillNoPayable ? 'destructive' : undefined,
+        variant: stillNoStock || stillNoPayable || stillNoJournal ? 'destructive' : undefined,
       });
-      if (stillNoStock || stillNoPayable) {
-        setSaveError(txError || t.purchaseInvoicesUi.purchaseSavedPartialSync);
+      if (stillNoStock || stillNoPayable || stillNoJournal) {
+        setSaveError(txError || (stillNoJournal ? t.purchaseInvoicesUi.freightJournalFailed : t.purchaseInvoicesUi.purchaseSavedPartialSync));
       }
 
       await loadInvoiceList({ includeInvoiceId: invoice.id, keepInvoice: invoice });
@@ -3788,13 +3933,6 @@ export default function PurchaseInvoices() {
           <Input type="number" min="0" step="0.01" value={freightCost || ''} onChange={e => setFreightCost(parseFloat(e.target.value) || 0)} className="h-6 w-20 text-[10px] font-mono px-1" placeholder="0" />
           <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelOtherCosts}</span>
           <Input type="number" min="0" step="0.01" value={freightOtherCosts || ''} onChange={e => setFreightOtherCosts(parseFloat(e.target.value) || 0)} className="h-6 w-20 text-[10px] font-mono px-1" placeholder="0" />
-          <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelSourceOut}</span>
-          <div className="flex items-center gap-0.5">
-            <Input value={freightSourceAccount} onChange={e => setFreightSourceAccount(e.target.value)} className="h-6 w-14 text-[10px] font-mono px-1" />
-            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => { setFreightPickerOpen(true); setAccountPickerOpen(true); }}>
-              <Search className="h-2.5 w-2.5" />
-            </Button>
-          </div>
           {totalLandingCosts > 0 && (
             <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
               = {totalLandingCosts.toLocaleString(uiLocale)} Kz
@@ -3802,6 +3940,61 @@ export default function PurchaseInvoices() {
           )}
         </div>
       </div>
+      {totalLandingCosts > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-border bg-muted/20 shrink-0 text-[10px]">
+            <span className="text-muted-foreground">{t.purchaseInvoicesUi.freightPaymentSource}:</span>
+            <Select
+              value={freightPaymentSource}
+              onValueChange={(v) => setFreightPaymentSource(v as FreightPaymentSource)}
+            >
+              <SelectTrigger className="h-6 w-28 text-[10px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="caixa">{t.purchaseInvoicesUi.freightSourceCaixa}</SelectItem>
+                <SelectItem value="bank">{t.purchaseInvoicesUi.freightSourceBank}</SelectItem>
+              </SelectContent>
+            </Select>
+            {freightPaymentSource === 'caixa' ? (
+              <Select value={freightCaixaId} onValueChange={setFreightCaixaId} disabled={freightTreasuryLoading}>
+                <SelectTrigger className="h-6 min-w-[200px] max-w-[320px] text-[10px]">
+                  <SelectValue placeholder={freightTreasuryLoading ? t.purchaseInvoicesUi.freightTreasuryLoading : t.purchaseInvoicesUi.selectFreightCaixa} />
+                </SelectTrigger>
+                <SelectContent>
+                  {freightCaixas.length === 0 ? (
+                    <SelectItem value="__none__" disabled>{t.purchaseInvoicesUi.noFreightCaixas}</SelectItem>
+                  ) : (
+                    freightCaixas.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {formatFreightCaixaLabel(c, uiLocale, treasuryAllBranches)}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Select value={freightBankAccountId} onValueChange={setFreightBankAccountId} disabled={freightTreasuryLoading}>
+                <SelectTrigger className="h-6 min-w-[200px] max-w-[320px] text-[10px]">
+                  <SelectValue placeholder={t.purchaseInvoicesUi.selectFreightBank} />
+                </SelectTrigger>
+                <SelectContent>
+                  {freightBankAccounts.length === 0 ? (
+                    <SelectItem value="__none__" disabled>{t.purchaseInvoicesUi.noFreightBanks}</SelectItem>
+                  ) : (
+                    freightBankAccounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {formatFreightBankLabel(a, treasuryAllBranches)}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            )}
+            <span className="text-muted-foreground font-mono">
+              GL {freightSourceAccount}
+            </span>
+        </div>
+      )}
 
       {/* ═══ TABS: Fatura / Diário ═══ */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 min-h-0">
