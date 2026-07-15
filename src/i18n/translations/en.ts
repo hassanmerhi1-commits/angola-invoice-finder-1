@@ -1185,6 +1185,7 @@ export const en = {
     noSearchResults: "No results for the search",
     date: "Date",
     journalNo: "Journal No.",
+    branch: "Branch",
     description: "Description",
     type: "Type",
     debit: "Debit",

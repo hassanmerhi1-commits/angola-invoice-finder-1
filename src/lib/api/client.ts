@@ -1590,11 +1590,11 @@ export const api = {
       '/chart-of-accounts/reseed',
       { method: 'POST' },
     ),
-    getLedger: async (id: string, startDate?: string, endDate?: string, branchId?: string) => {
+    getLedger: async (id: string, startDate?: string, endDate?: string, _branchId?: string) => {
       const p = new URLSearchParams();
       if (startDate) p.append('start_date', startDate);
       if (endDate) p.append('end_date', endDate);
-      if (branchId) p.append('branchId', branchId);
+      // COA drill-down is company-wide — never send branchId (supplier AP spans filials).
       const qs = p.toString();
       const apiResult = await apiFetch<any[]>(
         `/chart-of-accounts/${encodeURIComponent(id)}/ledger${qs ? `?${qs}` : ''}`,
@@ -1602,11 +1602,22 @@ export const api = {
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       if (isElectronMode()) {
         let sql = `
-          SELECT jel.*, je.entry_number, je.entry_date, je.description as journal_description,
-                 je.reference_type, je.reference_id, je.is_posted, je.created_at as journal_created_at
+          WITH RECURSIVE account_tree AS (
+            SELECT id, code, name FROM chart_of_accounts WHERE id = $1
+            UNION ALL
+            SELECT c.id, c.code, c.name
+            FROM chart_of_accounts c
+            INNER JOIN account_tree t ON c.parent_id = t.id
+          )
+          SELECT jel.*, atree.code AS account_code, atree.name AS account_name,
+                 je.entry_number, je.entry_date, je.description as journal_description,
+                 je.reference_type, je.reference_id, je.branch_id,
+                 b.name AS branch_name, je.is_posted, je.created_at as journal_created_at
           FROM journal_entry_lines jel
           INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-          WHERE jel.account_id = $1 AND je.is_posted = true
+          INNER JOIN account_tree atree ON atree.id = jel.account_id
+          LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(je.branch_id AS TEXT)
+          WHERE je.is_posted = true
         `;
         const params: any[] = [id];
         if (startDate && endDate) {

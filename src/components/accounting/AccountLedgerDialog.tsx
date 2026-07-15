@@ -51,6 +51,8 @@ interface LedgerEntry {
   journal_description: string;
   reference_type: string;
   reference_id: string;
+  branch_id?: string | null;
+  branch_name?: string | null;
   is_posted: boolean;
 }
 
@@ -166,6 +168,11 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     const types = new Set(entries.map((e) => e.reference_type).filter(Boolean));
     return Array.from(types).sort();
   }, [entries]);
+
+  const showBranchColumn = useMemo(
+    () => entries.some((e) => String(e.branch_name || '').trim()),
+    [entries],
+  );
 
   const fmtDate = (d: string) => {
     try { return new Date(d).toLocaleDateString(locale); } catch { return d; }
@@ -437,6 +444,9 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
                 <tr>
                   <th className="px-3 py-2.5 text-left font-semibold w-28">{t.ledgerUi.date}</th>
                   <th className="px-3 py-2.5 text-left font-semibold w-32">{t.ledgerUi.journalNo}</th>
+                  {showBranchColumn && (
+                    <th className="px-3 py-2.5 text-left font-semibold w-28">{t.ledgerUi.branch}</th>
+                  )}
                   <th className="px-3 py-2.5 text-left font-semibold">{t.ledgerUi.description}</th>
                   <th className="px-3 py-2.5 text-center font-semibold w-28">{t.ledgerUi.type}</th>
                   <th className="px-3 py-2.5 text-right font-semibold w-32">{t.ledgerUi.debit}</th>
@@ -454,6 +464,11 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
                     <tr key={entry.id} className="hover:bg-accent/30 transition-colors">
                       <td className="px-3 py-2 font-mono text-muted-foreground">{fmtDate(entry.entry_date)}</td>
                       <td className="px-3 py-2 font-mono">{entry.entry_number}</td>
+                      {showBranchColumn && (
+                        <td className="px-3 py-2 text-muted-foreground text-xs">
+                          {entry.branch_name || '—'}
+                        </td>
+                      )}
                       <td className="px-3 py-2">
                         {entry.account_code && entry.account_code !== account?.code ? (
                           <span className="mr-1 font-mono text-[11px] text-muted-foreground">
@@ -484,7 +499,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
               </tbody>
               <tfoot className="bg-slate-50/95 border-t-2 border-slate-200/80 font-bold sticky bottom-0">
                 <tr>
-                  <td className="px-3 py-2.5" colSpan={4}>{t.ledgerUi.totalMovements.replace('{count}', String(filtered.length))}</td>
+                  <td className="px-3 py-2.5" colSpan={showBranchColumn ? 5 : 4}>{t.ledgerUi.totalMovements.replace('{count}', String(filtered.length))}</td>
                   <td className="px-3 py-2.5 text-right font-mono text-green-600">{totalDebit.toLocaleString(locale)} Kz</td>
                   <td className="px-3 py-2.5 text-right font-mono text-red-600">{totalCredit.toLocaleString(locale)} Kz</td>
                   <td className={cn('px-3 py-2.5 text-right font-mono', finalBalance >= 0 ? 'text-foreground' : 'text-destructive')}>

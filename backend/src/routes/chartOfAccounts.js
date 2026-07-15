@@ -354,10 +354,11 @@ module.exports = function(broadcastTable) {
 
   // Get account ledger (posted lines for this account + all descendants —
   // chart headers roll up child balances, so drill-down must include children).
+  // Supplier/client AP/AR spans all filials — never filter by toolbar branchId.
   router.get('/:id/ledger', async (req, res) => {
     try {
       const { id } = req.params;
-      const { start_date, end_date, branchId } = req.query;
+      const { start_date, end_date } = req.query;
 
       let dateFilter = '';
       const params = [id];
@@ -368,14 +369,9 @@ module.exports = function(broadcastTable) {
         params.push(start_date, end_date);
       }
 
-      let branchFilter = '';
-      if (branchId) {
-        const branchClause = await buildJournalBranchFilter(db, branchId, paramIndex);
-        if (branchClause.sql) {
-          branchFilter = branchClause.sql;
-          params.push(...branchClause.params);
-        }
-      }
+      const branchJoin = db.engine === 'postgres'
+        ? 'LEFT JOIN branches b ON b.id::text = je.branch_id::text'
+        : 'LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(je.branch_id AS TEXT)';
 
       const result = await db.query(`
         WITH RECURSIVE account_tree AS (
@@ -399,12 +395,15 @@ module.exports = function(broadcastTable) {
           je.description as journal_description,
           je.reference_type,
           je.reference_id,
+          je.branch_id,
+          b.name AS branch_name,
           je.is_posted,
           je.created_at as journal_created_at
         FROM journal_entry_lines jel
         INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
         INNER JOIN account_tree atree ON atree.id = jel.account_id
-        WHERE je.is_posted = true ${dateFilter} ${branchFilter}
+        ${branchJoin}
+        WHERE je.is_posted = true ${dateFilter}
         ORDER BY je.entry_date DESC, je.created_at DESC
       `, params);
 

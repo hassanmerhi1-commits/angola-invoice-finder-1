@@ -1187,6 +1187,7 @@ export const pt: TranslationKeys = {
     noSearchResults: "Nenhum resultado para a pesquisa",
     date: "Data",
     journalNo: "Nº Diário",
+    branch: "Filial",
     description: "Descrição",
     type: "Tipo",
     debit: "Débito",
