@@ -371,5 +371,24 @@ module.exports = function expensesRouter(broadcastTable) {
     }
   });
 
+  /** Repost GL for a paid expense when the initial post failed (e.g. legacy exp_* id). */
+  router.post('/:id/repost-gl', async (req, res) => {
+    try {
+      await ensureExpensesTable();
+      const existing = await db.query('SELECT * FROM expenses WHERE id = $1', [req.params.id]);
+      if (!existing.rows[0]) return res.status(404).json({ error: 'Expense not found' });
+      const row = mapRow(existing.rows[0]);
+      if (row.status !== 'paid') {
+        return res.status(400).json({ error: 'Expense must be paid before posting to ledger' });
+      }
+      const paidBy = req.body?.paidBy || row.paidBy || req.user?.name || req.user?.id || 'system';
+      const { glError } = await payExpenseTreasury(row, paidBy);
+      if (broadcastTable) await broadcastTable('expenses');
+      res.json({ data: row, glError, posted: !glError });
+    } catch (error) {
+      res.status(500).json({ error: error.message || 'Failed to repost expense GL' });
+    }
+  });
+
   return router;
 };

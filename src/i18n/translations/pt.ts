@@ -2398,6 +2398,11 @@ export const pt: TranslationKeys = {
     createCaixa: "Criar caixa",
     paymentFromCaixa: "Pagamento sairá da caixa {name} — saldo disponível: {balance} Kz",
     paymentFromBank: "Pagamento sairá de {bank} ({account}) — saldo disponível: {balance}",
+    paidGlFailedTitle: "Paga — não no diário",
+    expensePaidGlFailed: "Despesa {number} ficou como paga mas NÃO foi lançada na contabilidade: {error}",
+    expenseGlPosted: "Despesa {number} lançada no diário (contabilidade).",
+    repostToLedger: "Lançar no diário",
+    ledgerHint: "Ao pagar, o diário debita a conta de custo (752/758/722) e credita a caixa (45x) ou banco (431). Procure em Diário com prefixo DSP.",
   },
 
   fiscalDocumentsUi: {

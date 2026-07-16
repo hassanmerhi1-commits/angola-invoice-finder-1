@@ -9,6 +9,7 @@ import {
   createExpense, 
   saveExpense,
   payExpense, 
+  repostExpenseGl,
   getCaixas, 
   getBankAccounts,
   invalidateCaixaListCache,
@@ -370,8 +371,10 @@ export default function Expenses() {
           const result = await payExpense(expense.id, user?.name || t.expensesUi.systemUser);
           if (result.glError) {
             toast({
-              title: t.expensesUi.paidTitle,
-              description: `${t.expensesUi.expensePaid.replace('{number}', expense.expenseNumber)} — ${result.glError}`,
+              title: t.expensesUi.paidGlFailedTitle,
+              description: t.expensesUi.expensePaidGlFailed
+                .replace('{number}', expense.expenseNumber)
+                .replace('{error}', result.glError),
               variant: 'destructive',
             });
           } else {
@@ -452,14 +455,43 @@ export default function Expenses() {
     const result = await payExpense(expense.id, user?.name || t.expensesUi.systemUser);
     if (result.glError) {
       toast({
-        title: t.expensesUi.paidTitle,
-        description: `${t.expensesUi.expensePaid.replace('{number}', expense.expenseNumber)} — AVISO GL: ${result.glError}`,
+        title: t.expensesUi.paidGlFailedTitle,
+        description: t.expensesUi.expensePaidGlFailed
+          .replace('{number}', expense.expenseNumber)
+          .replace('{error}', result.glError),
         variant: 'destructive',
       });
     } else {
       toast({ title: t.expensesUi.paidTitle, description: t.expensesUi.expensePaid.replace('{number}', expense.expenseNumber) });
     }
     await loadData();
+  };
+
+  const handleRepostGl = async (expense: Expense) => {
+    try {
+      const result = await repostExpenseGl(expense.id, user?.name || t.expensesUi.systemUser);
+      if (result.glError) {
+        toast({
+          title: t.expensesUi.paidGlFailedTitle,
+          description: t.expensesUi.expensePaidGlFailed
+            .replace('{number}', expense.expenseNumber)
+            .replace('{error}', result.glError),
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: t.expensesUi.toastSuccessTitle,
+          description: t.expensesUi.expenseGlPosted.replace('{number}', expense.expenseNumber),
+        });
+      }
+      await loadData();
+    } catch (e) {
+      toast({
+        title: t.expensesUi.toastErrorTitle,
+        description: e instanceof Error ? e.message : t.expensesUi.saveFailed,
+        variant: 'destructive',
+      });
+    }
   };
 
   const handleSubmitForApproval = (expense: Expense) => {
@@ -680,6 +712,12 @@ export default function Expenses() {
                                 {t.expensesUi.markAsPaid}
                               </DropdownMenuItem>
                             )}
+                            {expense.status === 'paid' && (
+                              <DropdownMenuItem onClick={() => void handleRepostGl(expense)}>
+                                <Receipt className="w-4 h-4 mr-2" />
+                                {t.expensesUi.repostToLedger}
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -697,8 +735,9 @@ export default function Expenses() {
         <DialogContent className="max-w-[96vw] w-[96vw] max-h-[94vh] h-[90vh] flex flex-col gap-0 p-0 overflow-hidden sm:rounded-xl">
           <DialogHeader className="shrink-0 space-y-1 border-b bg-muted/30 px-5 py-4 sm:px-6">
             <DialogTitle className="text-xl">{editingId ? t.expensesUi.editTitle : t.expensesUi.newTitle}</DialogTitle>
-            <DialogDescription className="text-sm">
-              {t.expensesUi.dialogDescription}
+            <DialogDescription className="text-sm space-y-1">
+              <span>{t.expensesUi.dialogDescription}</span>
+              <span className="block text-xs text-muted-foreground">{t.expensesUi.ledgerHint}</span>
             </DialogDescription>
           </DialogHeader>
 

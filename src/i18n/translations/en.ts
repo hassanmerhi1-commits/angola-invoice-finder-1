@@ -2396,6 +2396,11 @@ export const en = {
     createCaixa: "Create caixa",
     paymentFromCaixa: "Paid from caixa {name} — available balance: {balance} Kz",
     paymentFromBank: "Paid from {bank} ({account}) — available balance: {balance}",
+    paidGlFailedTitle: "Paid — not in ledger",
+    expensePaidGlFailed: "Expense {number} is marked paid but was NOT posted to the chart of accounts: {error}",
+    expenseGlPosted: "Expense {number} posted to the chart of accounts (Diário).",
+    repostToLedger: "Post to ledger",
+    ledgerHint: "When paid, the journal debits the expense account (752/758/722) and credits caixa (45x) or bank (431). Find it in Diário with prefix DSP.",
   },
 
   fiscalDocumentsUi: {

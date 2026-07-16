@@ -1323,6 +1323,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ paidBy }),
       }),
+    repostGl: (id: string, paidBy?: string) =>
+      apiFetch<any>(`/expenses/${encodeURIComponent(id)}/repost-gl`, {
+        method: 'POST',
+        body: JSON.stringify({ paidBy }),
+      }),
   },
 
   // Daily Reports — always via HTTP API (aggregates sales on the server)

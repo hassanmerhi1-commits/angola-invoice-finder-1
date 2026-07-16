@@ -1014,7 +1014,7 @@ export async function createExpense(
   notes?: string
 ): Promise<Expense> {
   const expense: Expense = {
-    id: `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    id: crypto.randomUUID(),
     expenseNumber: generateExpenseNumber(branchCode),
     branchId,
     branchName,
@@ -1036,6 +1036,21 @@ export async function createExpense(
   };
   await saveExpense(expense);
   return expense;
+}
+
+export async function repostExpenseGl(
+  expenseId: string,
+  paidBy?: string,
+): Promise<{ glError?: string; posted?: boolean }> {
+  if (!(await canUseServerExpensesApi())) {
+    return { glError: 'Server API required', posted: false };
+  }
+  const res = await api.expenses.repostGl(expenseId, paidBy);
+  if (res.error) {
+    throw new Error(res.error);
+  }
+  const payload = res.data as { glError?: string; posted?: boolean } | undefined;
+  return { glError: payload?.glError, posted: payload?.posted ?? !payload?.glError };
 }
 
 export async function payExpense(
