@@ -59,6 +59,8 @@ const MIGRATION_FILES = [
   '052_branch_caixa_resolver.sql',
   '053_expenses_table.sql',
   '054_purchase_invoice_freight_treasury.sql',
+  '055_bank_accounts.sql',
+  '056_journal_reference_id_text.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */

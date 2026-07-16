@@ -484,6 +484,52 @@ async function ensurePgcChartOfAccounts(db) {
   }
 }
 
+async function ensureBankAccountsTable(db) {
+  if (db.engine !== 'postgres') return;
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS bank_accounts (
+        id VARCHAR(64) PRIMARY KEY,
+        branch_id VARCHAR(64) NOT NULL DEFAULT '',
+        branch_name VARCHAR(255) NOT NULL DEFAULT '',
+        bank_name VARCHAR(255) NOT NULL DEFAULT '',
+        name VARCHAR(255) NOT NULL DEFAULT '',
+        account_number VARCHAR(100) NOT NULL DEFAULT '',
+        iban VARCHAR(64) DEFAULT '',
+        swift VARCHAR(32) DEFAULT '',
+        currency VARCHAR(8) NOT NULL DEFAULT 'AOA',
+        balance NUMERIC(18, 2) NOT NULL DEFAULT 0,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await db.query('CREATE INDEX IF NOT EXISTS idx_bank_accounts_branch ON bank_accounts (branch_id)');
+  } catch (err) {
+    console.warn('[SCHEMA] bank_accounts table:', err.message);
+  }
+}
+
+async function ensureJournalReferenceIdText(db) {
+  if (db.engine !== 'postgres') return;
+  try {
+    const col = await db.query(
+      `SELECT data_type FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'journal_entries' AND column_name = 'reference_id'
+       LIMIT 1`,
+    );
+    if (col.rows[0]?.data_type === 'uuid') {
+      await db.query(
+        'ALTER TABLE journal_entries ALTER COLUMN reference_id TYPE TEXT USING reference_id::text',
+      );
+      console.log('[SCHEMA] journal_entries.reference_id widened to TEXT');
+    }
+  } catch (err) {
+    console.warn('[SCHEMA] journal_entries.reference_id:', err.message);
+  }
+}
+
 async function ensurePhaseSchema(db) {
   if (db.engine === 'postgres') {
     await ensureDocumentSequencesBranchScope(db);
@@ -505,6 +551,8 @@ async function ensurePhaseSchema(db) {
     await ensureBranchPricingColumn(db);
     await ensureSalesCreditPaymentMethod(db);
     await ensureCaixaTables(db);
+    await ensureBankAccountsTable(db);
+    await ensureJournalReferenceIdText(db);
     await ensureUserPermissionsColumn(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
@@ -557,6 +605,8 @@ async function ensurePhaseSchema(db) {
 }
 
 module.exports = {
+  ensureBankAccountsTable,
+  ensureJournalReferenceIdText,
   ensurePhaseSchema,
   ensurePgcChartOfAccounts,
   ensureDocumentSequencesBranchScope,
