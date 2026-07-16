@@ -46,6 +46,17 @@ const { buildSchemaChecks } = require('./lib/schemaChecks');
 
 const PORT = Number(process.env.PORT) || 3000;
 const APP_VERSION = readAppVersion();
+
+function readBackendPackageVersion() {
+  try {
+    const pkgPath = path.resolve(__dirname, '../package.json');
+    if (fs.existsSync(pkgPath)) {
+      return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || null;
+    }
+  } catch (_) {}
+  return null;
+}
+const BACKEND_PACKAGE_VERSION = readBackendPackageVersion();
 const app = express();
 const server = http.createServer(app);
 
@@ -97,8 +108,10 @@ app.get('/api/health', async (req, res) => {
       time: row.rows[0]?.now,
       unified: true,
       appVersion: APP_VERSION,
+      backendPackageVersion: BACKEND_PACKAGE_VERSION,
       shellVersion: process.env.NEXOR_APP_VERSION || null,
       backendEntry: process.env.NEXOR_BACKEND_ENTRY || null,
+      installDir: process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP',
       features: {
         certificationDemoProfile: hasCertificationDemoProfile,
       },
@@ -112,8 +125,16 @@ app.get('/api/health', async (req, res) => {
     };
     if (schema.stored != null && schema.stored < EXPECTED_SCHEMA_VERSION) {
       payload.schemaRepairHint = db.engine === 'postgres'
-        ? 'PostgreSQL schema is behind. On the SERVER PC run fix-server-schema.cmd in C:\\NEXOR ERP, then restart NEXOR. LAN clients: check health on the server IP, not localhost.'
+        ? 'PostgreSQL schema is behind. On the SERVER PC (not LAN clients): install the latest NEXOR-ERP-x64.exe, run fix-server-schema.cmd in C:\\NEXOR ERP, then restart NEXOR. Check health on the server IP (e.g. http://192.168.x.x:3000/api/health), not a client PC.'
         : 'Backend is using local SQLite (schema 42 is normal here). For production data, configure C:\\NEXOR ERP\\database.env and set C:\\NEXOR ERP\\IP to postgres, then restart.';
+    } else if (
+      BACKEND_PACKAGE_VERSION
+      && APP_VERSION
+      && String(BACKEND_PACKAGE_VERSION) !== String(APP_VERSION)
+      && !lite
+    ) {
+      payload.versionMismatchHint =
+        'Shell and backend package versions differ — restart NEXOR on the server PC after installing the latest build.';
     } else if (db.engine === 'sqlite' && fs.existsSync(path.join(process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP', 'database.env'))) {
       payload.schemaRepairHint = 'database.env exists but backend is on SQLite. Set C:\\NEXOR ERP\\IP to postgres (not a .db path) and restart NEXOR.';
     }

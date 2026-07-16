@@ -70,7 +70,7 @@ if %ERR% NEQ 0 (
 ) else (
   echo [OK] Restart NEXOR ERP, then open:
   echo   http://localhost:3001/api/health?lite=1
-  echo Expected: engine=postgres, schemaVersion=53
+  echo Expected: engine=postgres, appVersion=1.1.30+, schemaVersion=56, schemaVersionExpected=56
 )
 pause
 exit /b %ERR%
