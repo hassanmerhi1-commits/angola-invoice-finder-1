@@ -148,7 +148,7 @@ export default function Payments() {
   const deepLinkHandled = useRef(false);
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
-  const { apiBranchId } = useBranchScope();
+  const { apiBranchId, treasuryAllBranches } = useBranchScope();
   const { clients, refreshClients } = useClients();
   const { suppliers, refreshSuppliers } = useSuppliers();
   const { payments, openItems, loading, refresh, createPayment } = usePaymentsData(apiBranchId);
@@ -180,7 +180,6 @@ export default function Payments() {
 
   const paymentBranchId = apiBranchId || currentBranch?.id || user?.branchId;
   const paymentBranchName = currentBranch?.name || '';
-  const treasuryAllBranches = user?.role === 'admin';
 
   const canRecordReceipt = !!user && (
     userHasPermission(user.role, user.permissionOverrides, 'accounting_receipt')

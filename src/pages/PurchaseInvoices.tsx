@@ -1265,7 +1265,7 @@ export default function PurchaseInvoices() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
-  const { apiBranchId, currentBranch, isConsolidatedView, allBranches: branches } = useBranchScope();
+  const { apiBranchId, currentBranch, isConsolidatedView, allBranches: branches, treasuryAllBranches } = useBranchScope();
   const listBranchId = useMemo(
     () => resolveUserBranch(branches, apiBranchId || currentBranch?.id)?.id
       || apiBranchId
@@ -1337,7 +1337,6 @@ export default function PurchaseInvoices() {
   const [freightTreasuryLoading, setFreightTreasuryLoading] = useState(false);
   const [freightSourceAccount, setFreightSourceAccount] = useState('451');
   const [freightSourceName, setFreightSourceName] = useState('Caixa');
-  const treasuryAllBranches = user?.role === 'admin';
 
   const numberingBranchId = useMemo(() => {
     const wh = String(form.warehouseId ?? '').trim();

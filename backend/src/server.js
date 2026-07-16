@@ -189,6 +189,7 @@ app.use('/api/consistency', require('./routes/consistency')(broadcastTable));
 app.use('/api/budgets', require('./routes/budgets')(broadcastTable));
 app.use('/api/daily-reports', require('./routes/dailyReports')(broadcastTable));
 app.use('/api/caixa', require('./routes/caixa')(broadcastTable));
+app.use('/api/bank-accounts', require('./routes/bankAccounts')(broadcastTable));
 app.use('/api/expenses', require('./routes/expenses')(broadcastTable));
 app.use('/api/agt', require('./routes/agt')(broadcastTable));
 app.use('/api/signing', require('./routes/signing')());

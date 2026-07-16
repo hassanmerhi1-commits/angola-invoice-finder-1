@@ -6,7 +6,8 @@ import {
   getBankAccounts, 
   createBankAccount, 
   saveBankAccount,
-  getBankTransactions
+  getBankTransactions,
+  invalidateBankListCache,
 } from '@/lib/accountingStorage';
 import { BankAccount, BankTransaction } from '@/types/accounting';
 import { MoneyTransferDialog } from '@/components/accounting/MoneyTransferDialog';
@@ -75,7 +76,7 @@ interface AccountFormData {
 
 export default function BankAccounts() {
   const { t, language } = useTranslation();
-  const { currentBranch, apiBranchId } = useBranchScope();
+  const { currentBranch, apiBranchId, treasuryAllBranches, userBranch } = useBranchScope();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -130,13 +131,23 @@ export default function BankAccounts() {
   const [customBankName, setCustomBankName] = useState('');
 
   const loadData = async () => {
-    setAccounts(await getBankAccounts(apiBranchId));
+    if (treasuryAllBranches) invalidateBankListCache();
+    else if (apiBranchId) invalidateBankListCache(apiBranchId);
+    setAccounts(await getBankAccounts(treasuryAllBranches ? undefined : apiBranchId, {
+      allBranches: treasuryAllBranches,
+    }));
     setTransactions(await getBankTransactions());
   };
 
   useEffect(() => {
-    loadData();
-  }, [apiBranchId]);
+    void loadData();
+  }, [apiBranchId, treasuryAllBranches]);
+
+  useEffect(() => {
+    const onBanksChanged = () => { void loadData(); };
+    window.addEventListener('nexor:bank-accounts-changed', onBanksChanged);
+    return () => window.removeEventListener('nexor:bank-accounts-changed', onBanksChanged);
+  }, [apiBranchId, treasuryAllBranches]);
 
   const accountTransactions = useMemo(() => {
     if (!selectedAccount) return [];
@@ -189,7 +200,7 @@ export default function BankAccounts() {
     setIsViewDialogOpen(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const bankName = formData.bankName === t.bankAccountsUi.bankOther ? customBankName : formData.bankName;
     
     if (!bankName.trim()) {
@@ -201,10 +212,14 @@ export default function BankAccounts() {
       return;
     }
 
+    const accountBranchId = apiBranchId || userBranch?.id || currentBranch?.id || 'default';
+    const accountBranchName = userBranch?.name || currentBranch?.name || t.bankAccountsUi.headOffice;
+
+    try {
     if (editingId) {
       const existing = accounts.find(a => a.id === editingId);
       if (existing) {
-        saveBankAccount({
+        await saveBankAccount({
           ...existing,
           bankName,
           accountName: formData.accountName,
@@ -217,19 +232,19 @@ export default function BankAccounts() {
         
         // If setting as primary, unset others
         if (formData.isPrimary) {
-          accounts.forEach(a => {
-            if (a.id !== editingId && a.isPrimary && a.branchId === currentBranch?.id) {
-              saveBankAccount({ ...a, isPrimary: false });
+          for (const a of accounts) {
+            if (a.id !== editingId && a.isPrimary && a.branchId === existing.branchId) {
+              await saveBankAccount({ ...a, isPrimary: false });
             }
-          });
+          }
         }
         
         toast({ title: t.common.success, description: t.bankAccountsUi.updated });
       }
     } else {
-      createBankAccount(
-        currentBranch?.id || 'default',
-        currentBranch?.name || t.bankAccountsUi.headOffice,
+      await createBankAccount(
+        accountBranchId,
+        accountBranchName,
         bankName,
         formData.accountName,
         formData.accountNumber,
@@ -241,7 +256,14 @@ export default function BankAccounts() {
     }
 
     setIsDialogOpen(false);
-    loadData();
+    await loadData();
+    } catch (e) {
+      toast({
+        title: t.common.error,
+        description: e instanceof Error ? e.message : t.common.error,
+        variant: 'destructive',
+      });
+    }
   };
 
   const toggleAccountStatus = (account: BankAccount) => {

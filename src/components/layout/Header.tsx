@@ -25,6 +25,8 @@ import { ServerConnectionIndicator } from '@/components/layout/ServerConnectionI
 import { SyncPendingBadge } from '@/components/layout/SyncPendingBadge';
 import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { BranchScopeSelectItems } from '@/components/BranchScopeSelectItems';
+import { resolveBranchScopeDisplayLabel } from '@/lib/branchScopeDisplay';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 
 interface HeaderProps {
@@ -75,19 +77,12 @@ export function Header({
           <Select value={scopeId} onValueChange={setOperatingScope}>
             <SelectTrigger className="w-[180px] hidden sm:flex">
               <Building2 className="w-4 h-4 mr-2" />
-              <SelectValue placeholder={t.nav.dashboard} />
+              <SelectValue placeholder={t.nav.dashboard}>
+                {resolveBranchScopeDisplayLabel(canSwitchBranch, scopeId, currentBranch, t.branchUi.allBranches)}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {branches.map((branch) => (
-                <SelectItem key={branch.id} value={branch.id}>
-                  <div className="flex items-center gap-2">
-                    <span>{branch.name}</span>
-                    {branch.isMain && (
-                      <Badge variant="secondary" className="text-[10px]">Sede</Badge>
-                    )}
-                  </div>
-                </SelectItem>
-              ))}
+              <BranchScopeSelectItems branches={branches} showAllBranchesOption />
             </SelectContent>
           </Select>
         ) : currentBranch ? (

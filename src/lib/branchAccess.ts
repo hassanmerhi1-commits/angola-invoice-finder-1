@@ -141,9 +141,8 @@ export function resolveStoredBranchScopeId(
     return String(branches[0]?.id || '');
   }
 
-  const main = branches.find((b) => normalizeIsMain(b.isMain));
   const savedScope = String(localStorage.getItem(SCOPE_STORAGE_KEY) || '').trim();
-  if (savedScope === ALL_BRANCHES_SCOPE_ID && main) return main.id;
+  if (savedScope === ALL_BRANCHES_SCOPE_ID) return ALL_BRANCHES_SCOPE_ID;
   if (savedScope) {
     const matched = resolveUserBranch(branches, savedScope);
     if (matched) return matched.id;
@@ -155,7 +154,7 @@ export function resolveStoredBranchScopeId(
     if (matched) return matched.id;
   }
 
-  return main?.id || branches[0]?.id || '';
+  return ALL_BRANCHES_SCOPE_ID;
 }
 
 export function persistBranchScope(scopeId: string, displayBranch: Branch): void {

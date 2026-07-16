@@ -12,6 +12,7 @@ import {
   getCaixas, 
   getBankAccounts,
   invalidateCaixaListCache,
+  invalidateBankListCache,
   createCaixa,
 } from '@/lib/accountingStorage';
 import { Expense, ExpenseCategory, EXPENSE_CATEGORIES, Caixa, BankAccount } from '@/types/accounting';
@@ -108,7 +109,7 @@ export default function Expenses() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
-  const { currentBranch, apiBranchId } = useBranchScope();
+  const { currentBranch, apiBranchId, treasuryAllBranches, userBranch } = useBranchScope();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -132,9 +133,27 @@ export default function Expenses() {
   const [statusFilter, setStatusFilter] = useState<string>('__all__');
   const [categoryFilter, setCategoryFilter] = useState<string>('__all__');
 
-  const expenseBranchId = apiBranchId || currentBranch?.id || user?.branchId;
-  const expenseBranchName = currentBranch?.name || t.branchUi.headOffice;
-  const treasuryAllBranches = user?.role === 'admin';
+  const expenseBranchId = apiBranchId || userBranch?.id || currentBranch?.id || user?.branchId;
+  const expenseBranchName = userBranch?.name || currentBranch?.name || t.branchUi.headOffice;
+
+  const refreshBanksForExpense = useCallback(async () => {
+    if (!treasuryAllBranches && !expenseBranchId) {
+      setBankAccounts([]);
+      return;
+    }
+    if (treasuryAllBranches) {
+      invalidateBankListCache();
+    } else {
+      invalidateBankListCache(expenseBranchId);
+    }
+    const loadedBanks = await getBankAccounts(treasuryAllBranches ? undefined : (apiBranchId || expenseBranchId), {
+      allBranches: treasuryAllBranches,
+    });
+    setBankAccounts(loadedBanks);
+    if (loadedBanks.length > 0) {
+      setFormData((fd) => (fd.bankAccountId ? fd : { ...fd, bankAccountId: loadedBanks[0].id }));
+    }
+  }, [apiBranchId, expenseBranchId, treasuryAllBranches]);
 
   const refreshCaixasForExpense = useCallback(async (ensureIfEmpty = false) => {
     if (!treasuryAllBranches && !expenseBranchId) {
@@ -226,9 +245,14 @@ export default function Expenses() {
 
   useEffect(() => {
     const onRefresh = () => { void loadData(); };
+    const onBanksChanged = () => { void refreshBanksForExpense(); };
     window.addEventListener('nexor:expenses-changed', onRefresh);
-    return () => window.removeEventListener('nexor:expenses-changed', onRefresh);
-  }, [apiBranchId, expenseBranchId, expenseBranchName, treasuryAllBranches, t.expensesUi.caixaEmptyHint, t.expensesUi.caixaEmptyHintAll, t.expensesUi.caixaNeedsBranch, t.branchUi.headOffice]);
+    window.addEventListener('nexor:bank-accounts-changed', onBanksChanged);
+    return () => {
+      window.removeEventListener('nexor:expenses-changed', onRefresh);
+      window.removeEventListener('nexor:bank-accounts-changed', onBanksChanged);
+    };
+  }, [apiBranchId, expenseBranchId, expenseBranchName, treasuryAllBranches, t.expensesUi.caixaEmptyHint, t.expensesUi.caixaEmptyHintAll, t.expensesUi.caixaNeedsBranch, t.branchUi.headOffice, refreshBanksForExpense]);
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter(exp => {
@@ -266,11 +290,7 @@ export default function Expenses() {
       });
       setIsDialogOpen(true);
       void refreshCaixasForExpense(true);
-      if (bankAccounts.length === 0) {
-        void getBankAccounts(treasuryAllBranches ? undefined : apiBranchId, {
-          allBranches: treasuryAllBranches,
-        }).then(setBankAccounts);
-      }
+      void refreshBanksForExpense();
       return;
     }
     setIsDialogOpen(true);
@@ -367,6 +387,7 @@ export default function Expenses() {
         if (stayOpen) {
           resetFormForNew();
           void refreshCaixasForExpense(false);
+          void refreshBanksForExpense();
         } else {
           setIsDialogOpen(false);
         }
@@ -462,6 +483,15 @@ export default function Expenses() {
     const totalPending = expenses.filter(e => ['draft', 'pending_approval', 'approved'].includes(e.status)).reduce((sum, e) => sum + e.totalAmount, 0);
     return { pending, totalPaid, totalPending, total: expenses.length };
   }, [expenses]);
+
+  const selectedCaixa = useMemo(
+    () => caixas.find((c) => c.id === formData.caixaId),
+    [caixas, formData.caixaId],
+  );
+  const selectedBank = useMemo(
+    () => bankAccounts.find((a) => a.id === formData.bankAccountId),
+    [bankAccounts, formData.bankAccountId],
+  );
 
   return (
     <div className="space-y-6">
@@ -765,6 +795,13 @@ export default function Expenses() {
                     )}
                   </SelectContent>
                 </Select>
+                {selectedCaixa && (
+                  <p className="text-xs text-muted-foreground">
+                    {t.expensesUi.paymentFromCaixa
+                      .replace('{name}', selectedCaixa.name)
+                      .replace('{balance}', selectedCaixa.currentBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 }))}
+                  </p>
+                )}
               </div>
             ) : (
               <div className="space-y-2">
@@ -790,6 +827,14 @@ export default function Expenses() {
                     })}
                   </SelectContent>
                 </Select>
+                {selectedBank && (
+                  <p className="text-xs text-muted-foreground">
+                    {t.expensesUi.paymentFromBank
+                      .replace('{bank}', selectedBank.bankName)
+                      .replace('{account}', selectedBank.accountNumber)
+                      .replace('{balance}', `${selectedBank.currentBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} ${selectedBank.currency}`)}
+                  </p>
+                )}
               </div>
             )}
 

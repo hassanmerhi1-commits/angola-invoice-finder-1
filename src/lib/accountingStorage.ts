@@ -19,7 +19,7 @@ import { format } from 'date-fns';
 import { isElectronMode, dbGetAll, dbInsert, dbUpdate, dbDelete, lsGet, lsSet } from '@/lib/dbHelper';
 import { api, ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
 import { isThinClientMode, isServerDatabaseHost } from '@/lib/api/config';
-import { branchIdsEqual } from '@/lib/branchAccess';
+import { branchIdsEquivalent } from '@/lib/branchAccess';
 
 // Angola PGC expense accounts (class 7 = Custos). Used to book cash/bank expenses to the GL.
 const EXPENSE_GL_ACCOUNTS: Record<ExpenseCategory, string> = {
@@ -135,6 +135,33 @@ export function invalidateCaixaListCache(branchId?: string, branchName?: string)
   }
   caixaListCache.delete(caixaCacheKey(String(branchId).trim(), String(branchName || '').trim()));
   caixaListCache.delete(CAIXA_ALL_BRANCHES_CACHE_KEY);
+}
+
+const bankListCache = new Map<string, { until: number; data: BankAccount[] }>();
+const BANK_CACHE_MS = 30_000;
+const BANK_ALL_BRANCHES_CACHE_KEY = '__all_branches__';
+
+function bankCacheKey(branchId: string): string {
+  return String(branchId || '').trim().toLowerCase();
+}
+
+export function invalidateBankListCache(branchId?: string): void {
+  if (!branchId) {
+    bankListCache.clear();
+    return;
+  }
+  bankListCache.delete(bankCacheKey(branchId));
+  bankListCache.delete(BANK_ALL_BRANCHES_CACHE_KEY);
+}
+
+async function shouldLoadBankAccountsFromServerApi(): Promise<boolean> {
+  return shouldLoadCaixasFromServerApi();
+}
+
+function filterBankAccountsForBranch(accounts: BankAccount[], branchId?: string): BankAccount[] {
+  if (!branchId) return accounts;
+  const filtered = accounts.filter((a) => branchIdsEquivalent(a.branchId, branchId));
+  return filtered.length > 0 ? filtered : accounts.filter((a) => a.branchId === branchId);
 }
 
 export async function getCaixas(
@@ -300,9 +327,11 @@ export async function createCaixa(
         invalidateCaixaListCache(branchId, branchName);
         return caixa;
       }
-      console.warn('[caixas] server create failed:', res.error);
+      throw new Error(res.error || 'Failed to create caixa on server');
     } catch (e) {
+      if (e instanceof Error && e.message.includes('Failed to create caixa')) throw e;
       console.warn('[caixas] server create failed:', e);
+      throw e instanceof Error ? e : new Error('Failed to create caixa on server');
     }
   }
 
@@ -664,15 +693,73 @@ export async function getBankAccounts(
   opts?: GetBankAccountsOptions,
 ): Promise<BankAccount[]> {
   const allBranches = opts?.allBranches ?? false;
+  const branchKey = String(branchId || '').trim();
+
+  if (allBranches) {
+    const cachedAll = bankListCache.get(BANK_ALL_BRANCHES_CACHE_KEY);
+    if (cachedAll && Date.now() < cachedAll.until) return cachedAll.data;
+  } else if (branchKey) {
+    const cached = bankListCache.get(bankCacheKey(branchKey));
+    if (cached && Date.now() < cached.until) return cached.data;
+  }
+
+  if (await shouldLoadBankAccountsFromServerApi()) {
+    try {
+      if (allBranches) {
+        const allRes = await api.bankAccounts.list();
+        if (!allRes.error && allRes.data) {
+          const list = sortTreasuryBankAccounts(
+            unwrapApiList<any>(allRes.data).map((row) => mapBankAccountFromDb(row)),
+          );
+          bankListCache.set(BANK_ALL_BRANCHES_CACHE_KEY, {
+            until: Date.now() + BANK_CACHE_MS,
+            data: list,
+          });
+          return list;
+        }
+      }
+
+      const listRes = await api.bankAccounts.list(branchKey || undefined);
+      let list: BankAccount[] = [];
+      if (!listRes.error && listRes.data) {
+        list = filterBankAccountsForBranch(
+          unwrapApiList<any>(listRes.data).map((row) => mapBankAccountFromDb(row)),
+          branchKey,
+        );
+      }
+
+      if (list.length === 0 && branchKey) {
+        const allRes = await api.bankAccounts.list();
+        if (!allRes.error && allRes.data) {
+          list = filterBankAccountsForBranch(
+            unwrapApiList<any>(allRes.data).map((row) => mapBankAccountFromDb(row)),
+            branchKey,
+          );
+        }
+      }
+
+      if (list.length > 0 || branchKey) {
+        bankListCache.set(bankCacheKey(branchKey), {
+          until: Date.now() + BANK_CACHE_MS,
+          data: list,
+        });
+      }
+      return list;
+    } catch (e) {
+      console.warn('[bank] server list failed:', e);
+    }
+  }
+
   if (isElectronMode()) {
     const rows = await dbGetAll<any>('bank_accounts');
     let accounts = rows.map(mapBankAccountFromDb);
-    if (!allBranches && branchId) accounts = accounts.filter((a) => a.branchId === branchId);
-    return allBranches ? sortTreasuryBankAccounts(accounts) : accounts;
+    if (allBranches) return sortTreasuryBankAccounts(accounts);
+    if (branchKey) accounts = filterBankAccountsForBranch(accounts, branchKey);
+    return accounts;
   }
   const accounts = lsGet<BankAccount[]>(STORAGE_KEYS.bankAccounts, []);
   if (allBranches) return sortTreasuryBankAccounts(accounts);
-  return branchId ? accounts.filter((a) => a.branchId === branchId) : accounts;
+  return branchKey ? filterBankAccountsForBranch(accounts, branchKey) : accounts;
 }
 
 export async function getBankAccountById(id: string): Promise<BankAccount | undefined> {
@@ -681,8 +768,35 @@ export async function getBankAccountById(id: string): Promise<BankAccount | unde
 }
 
 export async function saveBankAccount(account: BankAccount): Promise<void> {
+  if (await shouldLoadBankAccountsFromServerApi()) {
+    const res = await api.bankAccounts.save({
+      id: account.id,
+      branchId: account.branchId,
+      branchName: account.branchName,
+      bankName: account.bankName,
+      accountName: account.accountName,
+      accountNumber: account.accountNumber,
+      iban: account.iban,
+      swift: account.swift,
+      currency: account.currency,
+      currentBalance: account.currentBalance,
+      isActive: account.isActive,
+      isPrimary: account.isPrimary,
+    });
+    if (!res.error) {
+      invalidateBankListCache(account.branchId);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nexor:bank-accounts-changed'));
+      }
+      return;
+    }
+    throw new Error(res.error || 'Failed to save bank account on server');
+  }
   if (isElectronMode()) {
     await dbInsert('bank_accounts', mapBankAccountToDb(account));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('nexor:bank-accounts-changed'));
+    }
     return;
   }
   const accounts = lsGet<BankAccount[]>(STORAGE_KEYS.bankAccounts, []);
@@ -693,6 +807,9 @@ export async function saveBankAccount(account: BankAccount): Promise<void> {
     accounts.push(account);
   }
   lsSet(STORAGE_KEYS.bankAccounts, accounts);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('nexor:bank-accounts-changed'));
+  }
 }
 
 export async function createBankAccount(
@@ -721,6 +838,7 @@ export async function createBankAccount(
     createdAt: new Date().toISOString(),
   };
   await saveBankAccount(account);
+  invalidateBankListCache(branchId);
   return account;
 }
 
@@ -790,7 +908,7 @@ function caixaFromOpenSessionRow(
 function filterCaixasForBranch(caixas: Caixa[], branchId?: string, branchName?: string): Caixa[] {
   if (!branchId && !branchName) return caixas;
   if (branchId) {
-    const byId = caixas.filter((c) => branchIdsEqual(c.branchId, branchId));
+    const byId = caixas.filter((c) => branchIdsEquivalent(c.branchId, branchId));
     if (byId.length > 0) return byId;
   }
   const normName = String(branchName || '').trim().toLowerCase();

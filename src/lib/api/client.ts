@@ -1297,6 +1297,20 @@ export const api = {
       apiFetch<any>('/caixa/gl/post', { method: 'POST', body: JSON.stringify(body) }),
   },
 
+  bankAccounts: {
+    list: (branchId?: string) => {
+      const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/bank-accounts${q}`);
+    },
+    save: (body: Record<string, unknown>) =>
+      apiFetch<any>('/bank-accounts', { method: 'POST', body: JSON.stringify(body) }),
+    adjustBalance: (id: string, delta: number) =>
+      apiFetch<any>(`/bank-accounts/${encodeURIComponent(id)}/balance`, {
+        method: 'PUT',
+        body: JSON.stringify({ delta }),
+      }),
+  },
+
   expenses: {
     list: (branchId?: string) => {
       const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';

@@ -3,7 +3,8 @@ import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { 
-  getCaixas, 
+  getCaixas,
+  invalidateCaixaListCache, 
   createCaixa, 
   saveCaixa,
   getCaixaSessions,
@@ -123,7 +124,7 @@ export default function CaixaManagement() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
-  const { currentBranch, apiBranchId } = useBranchScope();
+  const { currentBranch, apiBranchId, treasuryAllBranches, userBranch } = useBranchScope();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -151,18 +152,21 @@ export default function CaixaManagement() {
   const [closingNotes, setClosingNotes] = useState<string>('');
 
   const loadData = async () => {
-    // Auto-seed a default Caixa for the current branch if none exists
-    if (currentBranch?.id) {
-      await ensureBranchCaixa(currentBranch.id, currentBranch.name || t.branchUi.headOffice);
+    const branchId = apiBranchId || userBranch?.id || currentBranch?.id;
+    const branchName = userBranch?.name || currentBranch?.name || t.branchUi.headOffice;
+    if (!treasuryAllBranches && branchId) {
+      await ensureBranchCaixa(branchId, branchName);
     }
-    setCaixas(await getCaixas(apiBranchId));
+    if (treasuryAllBranches) invalidateCaixaListCache();
+    else if (branchId) invalidateCaixaListCache(branchId, branchName);
+    setCaixas(await getCaixas(branchId, branchName, { allBranches: treasuryAllBranches }));
     setSessions(await getCaixaSessions());
     setTransactions(await getCashTransactions());
   };
 
   useEffect(() => {
-    loadData();
-  }, [apiBranchId]);
+    void loadData();
+  }, [apiBranchId, treasuryAllBranches, currentBranch?.id]);
 
   // Get transactions for selected caixa
   const caixaTransactions = useMemo(() => {

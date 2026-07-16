@@ -2,7 +2,10 @@ const express = require('express');
 const { randomUUID } = require('crypto');
 const db = require('../db');
 const { postCaixaGlMovement } = require('../lib/caixaGlPosting');
+const { createJournalEntry } = require('../accounting');
 const { auditErpSafe } = require('../lib/erpAudit');
+
+const BANK_GL = '431';
 
 const EXPENSE_GL_ACCOUNTS = {
   staff: '722',
@@ -42,6 +45,103 @@ async function applyCaixaRegisterDelta(caixaId, delta) {
      WHERE id = $2`,
     [delta, id],
   );
+}
+
+async function applyBankAccountDelta(bankAccountId, delta) {
+  const id = String(bankAccountId || '').trim();
+  if (!id || !Number.isFinite(delta) || Math.abs(delta) < 0.001) return;
+  await db.query(
+    `UPDATE bank_accounts
+     SET balance = COALESCE(balance, 0) + $1,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $2`,
+    [delta, id],
+  );
+}
+
+async function postBankExpenseGl({ branchId, amount, category, description, referenceId, createdBy }) {
+  const expenseCode = expenseGlAccount(category);
+  const amt = Number(amount);
+  if (!branchId || !Number.isFinite(amt) || amt <= 0) {
+    throw new Error('Invalid bank expense GL params');
+  }
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existing = await client.query(
+      `SELECT id FROM journal_entries
+       WHERE reference_type = 'expense' AND reference_id = $1 LIMIT 1`,
+      [String(referenceId)],
+    );
+    if (existing.rows.length > 0) {
+      await client.query('COMMIT');
+      return { alreadyPosted: true };
+    }
+    await createJournalEntry(client, {
+      description: `Despesa (banco): ${description}`,
+      referenceType: 'expense',
+      referenceId: String(referenceId),
+      branchId,
+      createdBy,
+      lines: [
+        { accountCode: expenseCode, debit: amt, credit: 0, description },
+        { accountCode: BANK_GL, debit: 0, credit: amt, description: `Pagamento banco — ${description}` },
+      ],
+    });
+    await client.query('COMMIT');
+    return { alreadyPosted: false };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function payExpenseTreasury(row, paidBy) {
+  let glError = null;
+  if (!row.branchId || row.totalAmount <= 0) return { glError };
+
+  if (row.paymentSource === 'caixa') {
+    try {
+      const glBranchId = await treasuryBranchFromCaixa(row.caixaId, row.branchId);
+      await postCaixaGlMovement({
+        branchId: glBranchId,
+        amount: row.totalAmount,
+        direction: 'out',
+        counterAccountCode: expenseGlAccount(row.category),
+        description: `Despesa: ${row.description}`,
+        referenceType: 'expense',
+        referenceId: row.id,
+        createdBy: paidBy,
+      });
+      if (row.caixaId) {
+        await applyCaixaRegisterDelta(row.caixaId, -row.totalAmount);
+      }
+    } catch (glErr) {
+      glError = glErr.message;
+      console.warn('[EXPENSES] GL post (caixa):', glErr.message);
+    }
+    return { glError };
+  }
+
+  if (row.paymentSource === 'bank' && row.bankAccountId) {
+    try {
+      await postBankExpenseGl({
+        branchId: row.branchId,
+        amount: row.totalAmount,
+        category: row.category,
+        description: row.description,
+        referenceId: row.id,
+        createdBy: paidBy,
+      });
+      await applyBankAccountDelta(row.bankAccountId, -row.totalAmount);
+    } catch (glErr) {
+      glError = glErr.message;
+      console.warn('[EXPENSES] GL post (bank):', glErr.message);
+    }
+  }
+  return { glError };
 }
 
 function mapRow(row) {
@@ -212,24 +312,10 @@ module.exports = function expensesRouter(broadcastTable) {
       const saved = await db.query('SELECT * FROM expenses WHERE id = $1', [id]);
       const row = mapRow(saved.rows[0]);
 
-      if (row.status === 'paid' && row.paymentSource === 'caixa' && row.branchId) {
-        try {
-          const glBranchId = await treasuryBranchFromCaixa(row.caixaId, row.branchId);
-          await postCaixaGlMovement({
-            branchId: glBranchId,
-            amount: row.totalAmount,
-            direction: 'out',
-            counterAccountCode: expenseGlAccount(row.category),
-            description: `Despesa: ${row.description}`,
-            referenceType: 'expense',
-            referenceId: row.id,
-            createdBy: row.paidBy || row.requestedBy,
-          });
-          if (row.caixaId) {
-            await applyCaixaRegisterDelta(row.caixaId, -row.totalAmount);
-          }
-        } catch (glErr) {
-          console.warn('[EXPENSES] GL post on save:', glErr.message);
+      if (row.status === 'paid' && row.branchId && row.totalAmount > 0) {
+        const { glError } = await payExpenseTreasury(row, row.paidBy || row.requestedBy);
+        if (glError) {
+          console.warn('[EXPENSES] GL post on save:', glError);
         }
       }
 
@@ -268,28 +354,7 @@ module.exports = function expensesRouter(broadcastTable) {
       );
 
       const row = mapRow((await db.query('SELECT * FROM expenses WHERE id = $1', [req.params.id])).rows[0]);
-      let glError = null;
-      if (row.paymentSource === 'caixa' && row.branchId && row.totalAmount > 0) {
-        try {
-          const glBranchId = await treasuryBranchFromCaixa(row.caixaId, row.branchId);
-          await postCaixaGlMovement({
-            branchId: glBranchId,
-            amount: row.totalAmount,
-            direction: 'out',
-            counterAccountCode: expenseGlAccount(row.category),
-            description: `Despesa: ${row.description}`,
-            referenceType: 'expense',
-            referenceId: row.id,
-            createdBy: paidBy,
-          });
-          if (row.caixaId) {
-            await applyCaixaRegisterDelta(row.caixaId, -row.totalAmount);
-          }
-        } catch (glErr) {
-          glError = glErr.message;
-          console.warn('[EXPENSES] GL post on pay:', glErr.message);
-        }
-      }
+      const { glError } = await payExpenseTreasury(row, paidBy);
 
       if (broadcastTable) await broadcastTable('expenses');
       auditErpSafe(req, {

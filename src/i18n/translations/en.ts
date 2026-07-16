@@ -2394,6 +2394,8 @@ export const en = {
     newCaixaDescription: "Create a caixa for this branch — it will appear in the list immediately.",
     newCaixaPlaceholder: "e.g. Caixa Loja 2",
     createCaixa: "Create caixa",
+    paymentFromCaixa: "Paid from caixa {name} — available balance: {balance} Kz",
+    paymentFromBank: "Paid from {bank} ({account}) — available balance: {balance}",
   },
 
   fiscalDocumentsUi: {

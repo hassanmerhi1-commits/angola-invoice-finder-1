@@ -48,6 +48,8 @@ import { userHasPermission } from '@/lib/permissions';
 import { canAccessRoute } from '@/lib/routePermissions';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
+import { BranchScopeSelectItems } from '@/components/BranchScopeSelectItems';
+import { resolveBranchScopeDisplayLabel } from '@/lib/branchScopeDisplay';
 import { toast } from 'sonner';
 import defaultLogo from '/favicon.png?url';
 
@@ -646,14 +648,12 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
             <Select value={scopeId} onValueChange={setOperatingScope}>
               <SelectTrigger className="h-7 w-[140px] text-xs bg-sidebar-accent border-sidebar-border text-sidebar-foreground">
                 <Building2 className="w-3.5 h-3.5 mr-1.5 text-sidebar-primary" />
-                <SelectValue placeholder={t.topNav.toolbar.branchPlaceholder} />
+                <SelectValue placeholder={t.topNav.toolbar.branchPlaceholder}>
+                  {resolveBranchScopeDisplayLabel(canSwitchBranch, scopeId, currentBranch, t.branchUi.allBranches)}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {branches.map((branch) => (
-                  <SelectItem key={branch.id} value={branch.id} className="text-xs">
-                    {branch.name}
-                  </SelectItem>
-                ))}
+                <BranchScopeSelectItems branches={branches} compact showAllBranchesOption />
               </SelectContent>
             </Select>
           ) : currentBranch ? (
@@ -777,14 +777,12 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
             <Select value={scopeId} onValueChange={setOperatingScope}>
               <SelectTrigger className="h-8 w-[110px] text-xs bg-sidebar-accent border-sidebar-border text-sidebar-foreground">
                 <Building2 className="w-3 h-3 mr-1" />
-                <SelectValue />
+                <SelectValue>
+                  {resolveBranchScopeDisplayLabel(canSwitchBranch, scopeId, currentBranch, t.branchUi.allBranches)}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {branches.map((branch) => (
-                  <SelectItem key={branch.id} value={branch.id} className="text-xs">
-                    {branch.name}
-                  </SelectItem>
-                ))}
+                <BranchScopeSelectItems branches={branches} compact showAllBranchesOption />
               </SelectContent>
             </Select>
           ) : currentBranch ? (

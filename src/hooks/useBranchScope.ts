@@ -65,6 +65,8 @@ export function useBranchScope() {
     isHeadOffice,
     isConsolidatedView,
     canSwitchBranch,
+    /** HQ admin/manager at sede: treasury pickers show all filials. */
+    treasuryAllBranches: canSwitchBranch,
     setOperatingBranch,
     setOperatingScope,
     apiBranchId,

@@ -2396,6 +2396,8 @@ export const pt: TranslationKeys = {
     newCaixaDescription: "Crie uma caixa para esta filial — fica disponível na lista de imediato.",
     newCaixaPlaceholder: "ex: Caixa Loja 2",
     createCaixa: "Criar caixa",
+    paymentFromCaixa: "Pagamento sairá da caixa {name} — saldo disponível: {balance} Kz",
+    paymentFromBank: "Pagamento sairá de {bank} ({account}) — saldo disponível: {balance}",
   },
 
   fiscalDocumentsUi: {
