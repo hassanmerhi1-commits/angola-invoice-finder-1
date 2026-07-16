@@ -46,6 +46,10 @@
       "to": "fix-server-schema.cmd"
     },
     {
+      "from": "scripts/fix-server-schema.ps1",
+      "to": "fix-server-schema.ps1"
+    },
+    {
       "from": "public/splash.png",
       "to": "splash.png"
     },
