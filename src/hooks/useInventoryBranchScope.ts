@@ -94,13 +94,18 @@ export function useInventoryBranchScope() {
     }
   }, [canSwitchBranch, setOperatingScope]);
 
-  const isInventoryConsolidated = isConsolidatedBranchScope(canSwitchBranch, inventoryScopeId);
+  const scopeBranches = allBranches.length > 0 ? allBranches : branches;
+  const isInventoryConsolidated = isConsolidatedBranchScope(
+    canSwitchBranch,
+    inventoryScopeId,
+    scopeBranches,
+  );
 
   const inventoryBranch = useMemo(
-    () => resolveBranchFromScope(allBranches.length > 0 ? allBranches : branches, inventoryScopeId)
+    () => resolveBranchFromScope(scopeBranches, inventoryScopeId)
       || resolveBranchFromScope(branches, inventoryScopeId)
       || global.currentBranch,
-    [allBranches, branches, inventoryScopeId, global.currentBranch],
+    [scopeBranches, branches, inventoryScopeId, global.currentBranch],
   );
 
   const inventoryListBranchId = isInventoryConsolidated
@@ -109,7 +114,7 @@ export function useInventoryBranchScope() {
 
   return {
     ...global,
-    branches: allBranches.length > 0 ? allBranches : branches,
+    branches: scopeBranches,
     inventoryScopeId,
     setInventoryScope,
     isInventoryConsolidated,

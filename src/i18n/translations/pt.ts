@@ -2375,6 +2375,7 @@ export const pt: TranslationKeys = {
     caixaNeedsLogin: "Termine sessão e volte a iniciar (conta do servidor). As despesas precisam de login válido para carregar as caixas.",
     caixaNeedsBranch: "Seleccione uma filial na barra antes de registar despesas.",
     selectBankPlaceholder: "Seleccione a conta",
+    noBanks: "Nenhuma conta bancária encontrada. Crie em Contas Bancárias e reabra este formulário.",
     cashWithBalance: "{name} - Saldo: {balance} Kz",
     treasuryCaixaOption: "{branch} — {name} ({balance} Kz)",
     treasuryBankOption: "{branch} — {bank} ({account})",
@@ -3536,6 +3537,7 @@ export const pt: TranslationKeys = {
     emptyTitle: "Nenhuma conta bancária",
     emptyDescription: "Adicione contas bancárias para gerir os fundos da filial",
     addAccount: "Adicionar Conta",
+    branchRequired: "Seleccione uma filial real antes de criar a conta bancária (não Todas as filiais / default).",
 
     currentBalance: "Saldo Actual",
 

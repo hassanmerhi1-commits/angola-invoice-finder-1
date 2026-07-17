@@ -338,6 +338,7 @@ export default function StockTransfer() {
     scopeId,
     canSwitchBranch,
     userBranchId: userBranch?.id || user?.branchId,
+    branches,
   };
 
   return (
@@ -793,6 +794,7 @@ function TransferTable({
     scopeId?: string;
     canSwitchBranch?: boolean;
     userBranchId?: string;
+    branches?: { id: string; name?: string; code?: string; isMain?: boolean }[];
   };
 }) {
   if (transfers.length === 0) {

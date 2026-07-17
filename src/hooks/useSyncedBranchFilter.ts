@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { ALL_BRANCHES_SCOPE_ID } from '@/lib/branchAccess';
+import { isConsolidatedBranchScope } from '@/lib/branchAccess';
 
 type UseSyncedBranchFilterOptions = {
   /** Sentinel in this screen meaning "all branches" (default `all`). */
@@ -21,17 +21,19 @@ export function useSyncedBranchFilter(options: UseSyncedBranchFilterOptions = {}
     canPickBranch,
     listBranchId,
     branches,
+    allBranches,
     allBranchesScopeId,
   } = useBranchScope();
 
+  const scopeBranches = allBranches.length > 0 ? allBranches : branches;
   const lockedBranchId = listBranchId || currentBranch?.id || '';
 
   const [selectedBranch, setSelectedBranch] = useState<string>(() => {
     if (!canPickBranch) return lockedBranchId;
     if (defaultWhenPicker === 'all') return allValue;
     const global = String(scopeId || currentBranch?.id || '').trim();
-    if (global && global !== ALL_BRANCHES_SCOPE_ID) return global;
-    return allValue;
+    if (!global || isConsolidatedBranchScope(true, global, scopeBranches)) return allValue;
+    return global;
   });
 
   useEffect(() => {
@@ -40,17 +42,19 @@ export function useSyncedBranchFilter(options: UseSyncedBranchFilterOptions = {}
       return;
     }
     const global = String(scopeId || '').trim();
-    if (!global || global === ALL_BRANCHES_SCOPE_ID) {
-      if (defaultWhenPicker === 'all') setSelectedBranch(allValue);
+    // HQ / All branches in top nav → local filter = all (totals across filials).
+    if (!global || isConsolidatedBranchScope(canPickBranch, global, scopeBranches)) {
+      setSelectedBranch(allValue);
       return;
     }
     setSelectedBranch(global);
-  }, [canPickBranch, lockedBranchId, scopeId, allValue, defaultWhenPicker]);
+  }, [canPickBranch, lockedBranchId, scopeId, allValue, scopeBranches]);
 
   const isAllBranches =
     selectedBranch === allValue
     || selectedBranch === allBranchesScopeId
-    || selectedBranch === '';
+    || selectedBranch === ''
+    || isConsolidatedBranchScope(canPickBranch, selectedBranch, scopeBranches);
 
   const apiBranchId = canPickBranch && isAllBranches
     ? undefined

@@ -35,9 +35,9 @@ export function useBranchScope() {
     [canSwitchBranch, scopeId, branches, userBranch, user],
   );
 
-  const isHeadOffice = isHeadOfficeScope(canSwitchBranch, scopeId);
-  const isConsolidatedView = isConsolidatedBranchScope(canSwitchBranch, scopeId);
-  const rawApiBranchId = effectiveApiBranchId(canSwitchBranch, scopeId, user);
+  const isHeadOffice = isHeadOfficeScope(canSwitchBranch, scopeId, branches);
+  const isConsolidatedView = isConsolidatedBranchScope(canSwitchBranch, scopeId, branches);
+  const rawApiBranchId = effectiveApiBranchId(canSwitchBranch, scopeId, user, branches);
   const apiBranchId = useMemo(() => {
     if (!rawApiBranchId) return undefined;
     return resolveUserBranch(branches, rawApiBranchId)?.id || rawApiBranchId;

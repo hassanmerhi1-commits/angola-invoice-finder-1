@@ -26,46 +26,70 @@ function mapBankRow(row) {
 }
 
 async function bankAccountsTableExists() {
-  if (bankAccountsTableExists.cached !== undefined) return bankAccountsTableExists.cached;
+  // Only cache positive results. A sticky `false` from a race before schema
+  // ensure would make GET always return [] and POST always 503.
+  if (bankAccountsTableExists.cached === true) return true;
   try {
     const r = await db.query(
       db.engine === 'postgres'
-        ? `SELECT 1 FROM information_schema.tables WHERE table_name = 'bank_accounts' LIMIT 1`
+        ? `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'bank_accounts' LIMIT 1`
         : `SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'bank_accounts' LIMIT 1`,
     );
-    bankAccountsTableExists.cached = r.rows.length > 0;
-    return bankAccountsTableExists.cached;
+    const exists = r.rows.length > 0;
+    if (exists) bankAccountsTableExists.cached = true;
+    return exists;
   } catch {
-    bankAccountsTableExists.cached = false;
     return false;
   }
 }
 bankAccountsTableExists.cached = undefined;
 
 async function ensureBankAccountsTable() {
-  if (db.engine === 'postgres') return;
   try {
-    db.sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS bank_accounts (
-        id TEXT PRIMARY KEY,
-        branch_id TEXT NOT NULL DEFAULT '',
-        branch_name TEXT NOT NULL DEFAULT '',
-        bank_name TEXT NOT NULL DEFAULT '',
-        name TEXT NOT NULL DEFAULT '',
-        account_number TEXT NOT NULL DEFAULT '',
-        iban TEXT DEFAULT '',
-        swift TEXT DEFAULT '',
-        currency TEXT NOT NULL DEFAULT 'AOA',
-        balance REAL NOT NULL DEFAULT 0,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        is_primary INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-    `);
+    if (db.engine === 'postgres') {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS bank_accounts (
+          id VARCHAR(64) PRIMARY KEY,
+          branch_id VARCHAR(64) NOT NULL DEFAULT '',
+          branch_name VARCHAR(255) NOT NULL DEFAULT '',
+          bank_name VARCHAR(255) NOT NULL DEFAULT '',
+          name VARCHAR(255) NOT NULL DEFAULT '',
+          account_number VARCHAR(100) NOT NULL DEFAULT '',
+          iban VARCHAR(64) DEFAULT '',
+          swift VARCHAR(32) DEFAULT '',
+          currency VARCHAR(8) NOT NULL DEFAULT 'AOA',
+          balance NUMERIC(18, 2) NOT NULL DEFAULT 0,
+          is_active BOOLEAN NOT NULL DEFAULT TRUE,
+          is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await db.query('CREATE INDEX IF NOT EXISTS idx_bank_accounts_branch ON bank_accounts (branch_id)');
+    } else if (db.sqlite) {
+      db.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS bank_accounts (
+          id TEXT PRIMARY KEY,
+          branch_id TEXT NOT NULL DEFAULT '',
+          branch_name TEXT NOT NULL DEFAULT '',
+          bank_name TEXT NOT NULL DEFAULT '',
+          name TEXT NOT NULL DEFAULT '',
+          account_number TEXT NOT NULL DEFAULT '',
+          iban TEXT DEFAULT '',
+          swift TEXT DEFAULT '',
+          currency TEXT NOT NULL DEFAULT 'AOA',
+          balance REAL NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          is_primary INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    }
     bankAccountsTableExists.cached = true;
   } catch (e) {
     console.warn('[BANK] ensure table:', e.message);
+    bankAccountsTableExists.cached = undefined;
   }
 }
 

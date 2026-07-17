@@ -196,14 +196,22 @@ function mergeCaixasById(server: Caixa[], local: Caixa[]): Caixa[] {
   return sortTreasuryCaixas([...map.values()]);
 }
 
+/** Banks may briefly arrive with empty branchId (mapper/API skew); still list them. */
+function isListableBankAccount(account: BankAccount | null | undefined): boolean {
+  if (!account?.id) return false;
+  const branchId = String(account.branchId || '').trim();
+  if (!branchId) return true;
+  return isUsableTreasuryBranchId(branchId);
+}
+
 function mergeBankAccountsById(server: BankAccount[], local: BankAccount[]): BankAccount[] {
   const map = new Map<string, BankAccount>();
   for (const a of server) {
-    if (!a?.id || !isUsableTreasuryBranchId(a.branchId)) continue;
+    if (!isListableBankAccount(a)) continue;
     map.set(a.id, a);
   }
   for (const a of local) {
-    if (!a?.id || !isUsableTreasuryBranchId(a.branchId)) continue;
+    if (!isListableBankAccount(a)) continue;
     const prev = map.get(a.id);
     if (!prev) {
       map.set(a.id, a);
@@ -227,11 +235,23 @@ async function loadLocalCaixas(): Promise<Caixa[]> {
 }
 
 async function loadLocalBankAccounts(): Promise<BankAccount[]> {
-  if (isElectronMode()) {
+  // Thin clients must use localStorage (same as caixas). Reading Electron's empty
+  // shell DB made expense pickers look empty even after a successful create.
+  if (isElectronMode() && !isThinClientMode()) {
     const rows = await dbGetAll<any>('bank_accounts');
     return rows.map(mapBankAccountFromDb);
   }
   return lsGet<BankAccount[]>(STORAGE_KEYS.bankAccounts, []);
+}
+
+function persistLocalBankAccountMirror(account: BankAccount): void {
+  if (isElectronMode() && !isThinClientMode()) return;
+  const accounts = lsGet<BankAccount[]>(STORAGE_KEYS.bankAccounts, []);
+  const index = accounts.findIndex((a) => a.id === account.id);
+  const next = { ...account, updatedAt: new Date().toISOString() };
+  if (index >= 0) accounts[index] = next;
+  else accounts.push(next);
+  lsSet(STORAGE_KEYS.bankAccounts, accounts);
 }
 
 /** Push local-only caixas/banks into Postgres so expense pickers stop looking empty. */
@@ -849,22 +869,30 @@ export async function getBankAccounts(
   if (await shouldLoadBankAccountsFromServerApi()) {
     try {
       let serverList: BankAccount[] = [];
+      let serverOk = false;
       if (allBranches) {
         const allRes = await api.bankAccounts.list();
         if (!allRes.error && allRes.data) {
+          serverOk = true;
           serverList = unwrapApiList<any>(allRes.data).map((row) => mapBankAccountFromDb(row));
+        } else if (allRes.error) {
+          console.warn('[bank] server list failed:', allRes.error);
         }
       } else {
         const listRes = await api.bankAccounts.list(branchKey || undefined);
         if (!listRes.error && listRes.data) {
+          serverOk = true;
           serverList = filterBankAccountsForBranch(
             unwrapApiList<any>(listRes.data).map((row) => mapBankAccountFromDb(row)),
             branchKey,
           );
+        } else if (listRes.error) {
+          console.warn('[bank] server list failed:', listRes.error);
         }
         if (serverList.length === 0 && branchKey) {
           const allRes = await api.bankAccounts.list();
           if (!allRes.error && allRes.data) {
+            serverOk = true;
             serverList = filterBankAccountsForBranch(
               unwrapApiList<any>(allRes.data).map((row) => mapBankAccountFromDb(row)),
               branchKey,
@@ -882,26 +910,27 @@ export async function getBankAccounts(
 
       void pushLocalTreasuryToServer(await loadLocalCaixas(), localAll);
 
-      if (allBranches) {
-        bankListCache.set(BANK_ALL_BRANCHES_CACHE_KEY, {
-          until: Date.now() + BANK_CACHE_MS,
-          data: list,
-        });
-        return list;
+      // Only cache successful server reads — never pin an empty list after an API error.
+      if (serverOk) {
+        if (allBranches) {
+          bankListCache.set(BANK_ALL_BRANCHES_CACHE_KEY, {
+            until: Date.now() + BANK_CACHE_MS,
+            data: list,
+          });
+        } else if (list.length > 0 || branchKey) {
+          bankListCache.set(bankCacheKey(branchKey), {
+            until: Date.now() + BANK_CACHE_MS,
+            data: list,
+          });
+        }
       }
-      if (list.length > 0 || branchKey) {
-        bankListCache.set(bankCacheKey(branchKey), {
-          until: Date.now() + BANK_CACHE_MS,
-          data: list,
-        });
-      }
-      return list;
+      if (serverOk || list.length > 0) return list;
     } catch (e) {
       console.warn('[bank] server list failed:', e);
     }
   }
 
-  let accounts = localAll.filter((a) => isUsableTreasuryBranchId(a.branchId));
+  let accounts = localAll.filter((a) => isListableBankAccount(a));
   if (allBranches) return sortTreasuryBankAccounts(accounts);
   if (branchKey) accounts = filterBankAccountsForBranch(accounts, branchKey);
   return accounts;
@@ -929,7 +958,16 @@ export async function saveBankAccount(account: BankAccount): Promise<void> {
       isPrimary: account.isPrimary,
     });
     if (!res.error) {
-      invalidateBankListCache(account.branchId);
+      // Keep a client mirror so expense pickers still work if list/cache glitches.
+      persistLocalBankAccountMirror(account);
+      if (isElectronMode() && !isThinClientMode()) {
+        try {
+          await dbInsert('bank_accounts', mapBankAccountToDb(account));
+        } catch {
+          /* non-fatal */
+        }
+      }
+      invalidateBankListCache();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('nexor:bank-accounts-changed'));
       }
@@ -937,21 +975,16 @@ export async function saveBankAccount(account: BankAccount): Promise<void> {
     }
     throw new Error(res.error || 'Failed to save bank account on server');
   }
-  if (isElectronMode()) {
+  if (isElectronMode() && !isThinClientMode()) {
     await dbInsert('bank_accounts', mapBankAccountToDb(account));
+    invalidateBankListCache();
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('nexor:bank-accounts-changed'));
     }
     return;
   }
-  const accounts = lsGet<BankAccount[]>(STORAGE_KEYS.bankAccounts, []);
-  const index = accounts.findIndex(a => a.id === account.id);
-  if (index >= 0) {
-    accounts[index] = { ...account, updatedAt: new Date().toISOString() };
-  } else {
-    accounts.push(account);
-  }
-  lsSet(STORAGE_KEYS.bankAccounts, accounts);
+  persistLocalBankAccountMirror(account);
+  invalidateBankListCache();
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('nexor:bank-accounts-changed'));
   }
@@ -983,7 +1016,7 @@ export async function createBankAccount(
     createdAt: new Date().toISOString(),
   };
   await saveBankAccount(account);
-  invalidateBankListCache(branchId);
+  invalidateBankListCache();
   return account;
 }
 

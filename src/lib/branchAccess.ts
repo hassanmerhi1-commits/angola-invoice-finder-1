@@ -91,7 +91,8 @@ export function resolveEffectiveUserBranch(
   return null;
 }
 
-function looksLikeHeadOfficeBranch(branch: Branch | null): boolean {
+/** True for the HQ / Sede branch (is_main, code SEDE*, or name containing "sede"). */
+export function looksLikeHeadOfficeBranch(branch: Branch | null | undefined): boolean {
   if (!branch) return false;
   if (normalizeIsMain(branch.isMain)) return true;
   const code = String(branch.code || '').trim().toUpperCase();
@@ -123,19 +124,31 @@ export function branchesVisibleToUser(
   return [];
 }
 
+/**
+ * Consolidated read scope: explicit "All branches", or the HQ/Sede branch itself.
+ * Selecting Sede Soyo (Head Office badge) must show totals across all filials —
+ * not only stock/docs owned by the sede row.
+ */
 export function isConsolidatedBranchScope(
   canSwitch: boolean,
   scopeId: string | null | undefined,
+  branches: Branch[] = [],
 ): boolean {
-  return canSwitch && String(scopeId || '') === ALL_BRANCHES_SCOPE_ID;
+  if (!canSwitch) return false;
+  const id = String(scopeId || '').trim();
+  if (!id) return false;
+  if (id === ALL_BRANCHES_SCOPE_ID) return true;
+  if (branches.length === 0) return false;
+  return looksLikeHeadOfficeBranch(resolveUserBranch(branches, id));
 }
 
-/** Consolidated all-branch API scope (admin/manager with "All branches" selected). */
+/** Consolidated all-branch API scope (All branches or HQ/Sede selected). */
 export function isHeadOfficeScope(
   canSwitch: boolean,
   scopeId: string | null | undefined,
+  branches: Branch[] = [],
 ): boolean {
-  return isConsolidatedBranchScope(canSwitch, scopeId);
+  return isConsolidatedBranchScope(canSwitch, scopeId, branches);
 }
 
 export function resolveBranchFromScope(branches: Branch[], scopeId: string): Branch | null {
@@ -179,16 +192,18 @@ export function persistBranchScope(scopeId: string, displayBranch: Branch): void
 export function isSingleBranchUser(
   canSwitch: boolean,
   scopeId: string | null | undefined,
+  branches: Branch[] = [],
 ): boolean {
-  return !isHeadOfficeScope(canSwitch, scopeId);
+  return !isHeadOfficeScope(canSwitch, scopeId, branches);
 }
 
 export function effectiveApiBranchId(
   canSwitch: boolean,
   scopeId: string | null | undefined,
   user: BranchAccessUser,
+  branches: Branch[] = [],
 ): string | undefined {
-  if (isConsolidatedBranchScope(canSwitch, scopeId)) return undefined;
+  if (isConsolidatedBranchScope(canSwitch, scopeId, branches)) return undefined;
   const fromScope = String(scopeId || '').trim();
   if (fromScope && fromScope !== ALL_BRANCHES_SCOPE_ID) return fromScope;
   const fromUser = String(user?.branchId ?? '').trim();
@@ -225,13 +240,19 @@ export function canApproveStockTransfer(
     scopeId?: string | null;
     canSwitchBranch?: boolean;
     userBranchId?: string | null;
+    branches?: Branch[];
   },
 ): boolean {
   if (String(transfer.status || '').toLowerCase() !== 'pending') return false;
   const fromId = transfer.fromBranchId;
   if (branchIdsEqual(fromId, opts.scopeId)) return true;
   if (branchIdsEqual(fromId, opts.userBranchId)) return true;
-  if (opts.canSwitchBranch && String(opts.scopeId || '') === ALL_BRANCHES_SCOPE_ID) return true;
+  if (
+    opts.canSwitchBranch
+    && isConsolidatedBranchScope(true, opts.scopeId, opts.branches || [])
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -242,13 +263,19 @@ export function canReceiveStockTransfer(
     scopeId?: string | null;
     canSwitchBranch?: boolean;
     userBranchId?: string | null;
+    branches?: Branch[];
   },
 ): boolean {
   if (String(transfer.status || '').toLowerCase() !== 'in_transit') return false;
   const toId = transfer.toBranchId;
   if (branchIdsEqual(toId, opts.scopeId)) return true;
   if (branchIdsEqual(toId, opts.userBranchId)) return true;
-  if (opts.canSwitchBranch && String(opts.scopeId || '') === ALL_BRANCHES_SCOPE_ID) return true;
+  if (
+    opts.canSwitchBranch
+    && isConsolidatedBranchScope(true, opts.scopeId, opts.branches || [])
+  ) {
+    return true;
+  }
   return false;
 }
 

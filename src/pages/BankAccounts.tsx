@@ -212,8 +212,18 @@ export default function BankAccounts() {
       return;
     }
 
-    const accountBranchId = apiBranchId || userBranch?.id || currentBranch?.id || 'default';
+    const accountBranchId = String(
+      apiBranchId || userBranch?.id || currentBranch?.id || '',
+    ).trim();
     const accountBranchName = userBranch?.name || currentBranch?.name || t.bankAccountsUi.headOffice;
+    if (!accountBranchId || accountBranchId === 'default') {
+      toast({
+        title: t.common.error,
+        description: t.bankAccountsUi.branchRequired,
+        variant: 'destructive',
+      });
+      return;
+    }
 
     try {
     if (editingId) {

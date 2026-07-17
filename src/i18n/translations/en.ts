@@ -2373,6 +2373,7 @@ export const en = {
     caixaNeedsLogin: "Log out and log in again (server account). Expenses need a valid login to load cash registers.",
     caixaNeedsBranch: "Select a branch in the toolbar before recording expenses.",
     selectBankPlaceholder: "Select account",
+    noBanks: "No bank accounts found. Create one in Contas Bancárias, then reopen this form.",
     cashWithBalance: "{name} - Balance: {balance} Kz",
     treasuryCaixaOption: "{branch} — {name} ({balance} Kz)",
     treasuryBankOption: "{branch} — {bank} ({account})",
@@ -3533,6 +3534,7 @@ export const en = {
     emptyTitle: "No bank accounts",
     emptyDescription: "Add bank accounts to manage branch funds",
     addAccount: "Add account",
+    branchRequired: "Select a real branch before creating a bank account (not All branches / default).",
 
     currentBalance: "Current balance",
 

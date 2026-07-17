@@ -211,8 +211,10 @@ export default function Expenses() {
     const loggedInPromise = ensureBackendAuthToken().then(isJwtAuthToken);
     if (treasuryAllBranches) {
       invalidateCaixaListCache();
+      invalidateBankListCache();
     } else {
       invalidateCaixaListCache(expenseBranchId, expenseBranchName);
+      invalidateBankListCache(apiBranchId || expenseBranchId);
     }
     const [loadedExpenses, loadedCaixas, loadedBanks] = await Promise.all([
       getExpenses(apiBranchId),
@@ -863,20 +865,24 @@ export default function Expenses() {
                     <SelectValue placeholder={t.expensesUi.selectBankPlaceholder} />
                   </SelectTrigger>
                   <SelectContent>
-                    {bankAccounts.map(a => {
-                      const branch = String(a.branchName || '').trim();
-                      const label = branch && treasuryAllBranches
-                        ? t.expensesUi.treasuryBankOption
-                          .replace('{branch}', branch)
-                          .replace('{bank}', a.bankName)
-                          .replace('{account}', a.accountNumber)
-                        : `${a.bankName} - ${a.accountNumber} (${a.currency})`;
-                      return (
-                        <SelectItem key={a.id} value={a.id}>
-                          {label}
-                        </SelectItem>
-                      );
-                    })}
+                    {bankAccounts.length === 0 ? (
+                      <SelectItem value="__none__" disabled>{t.expensesUi.noBanks}</SelectItem>
+                    ) : (
+                      bankAccounts.map(a => {
+                        const branch = String(a.branchName || '').trim();
+                        const label = branch && treasuryAllBranches
+                          ? t.expensesUi.treasuryBankOption
+                            .replace('{branch}', branch)
+                            .replace('{bank}', a.bankName)
+                            .replace('{account}', a.accountNumber)
+                          : `${a.bankName} - ${a.accountNumber} (${a.currency})`;
+                        return (
+                          <SelectItem key={a.id} value={a.id}>
+                            {label}
+                          </SelectItem>
+                        );
+                      })
+                    )}
                   </SelectContent>
                 </Select>
                 {selectedBank && (
