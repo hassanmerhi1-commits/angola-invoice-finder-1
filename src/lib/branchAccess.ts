@@ -91,9 +91,14 @@ export function resolveEffectiveUserBranch(
   return null;
 }
 
-/** Only admin/manager at the head-office (main) branch may switch branches and see all filials. */
+/**
+ * Admin may always switch branches / use all-filial treasury (Sede or any shop login).
+ * Manager only when assigned to the head-office (is_main) branch.
+ */
 export function canUserSwitchBranch(user: BranchAccessUser, userBranch: Branch | null): boolean {
-  if (!isHeadOfficeRole(user?.role)) return false;
+  const role = String(user?.role || '').toLowerCase();
+  if (role === 'admin') return true;
+  if (role !== 'manager') return false;
   if (!userBranch) return true;
   return normalizeIsMain(userBranch.isMain);
 }

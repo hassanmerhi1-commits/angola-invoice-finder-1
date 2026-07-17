@@ -35,6 +35,21 @@ async function treasuryBranchFromCaixa(caixaId, fallbackBranchId) {
   }
 }
 
+async function treasuryBranchFromBank(bankAccountId, fallbackBranchId) {
+  const id = String(bankAccountId || '').trim();
+  if (!id) return fallbackBranchId;
+  try {
+    const result = await db.query(
+      'SELECT branch_id FROM bank_accounts WHERE id = $1 LIMIT 1',
+      [id],
+    );
+    const branchId = result.rows[0]?.branch_id;
+    return branchId ? String(branchId) : fallbackBranchId;
+  } catch {
+    return fallbackBranchId;
+  }
+}
+
 async function applyCaixaRegisterDelta(caixaId, delta) {
   const id = String(caixaId || '').trim();
   if (!id || !Number.isFinite(delta) || Math.abs(delta) < 0.001) return;
@@ -98,14 +113,21 @@ async function postBankExpenseGl({ branchId, amount, category, description, refe
   }
 }
 
-async function payExpenseTreasury(row, paidBy) {
+/**
+ * @param {object} row
+ * @param {string} paidBy
+ * @param {{ applyBalances?: boolean }} [opts]
+ *   applyBalances=false → GL-only (repost). Default true for first pay.
+ */
+async function payExpenseTreasury(row, paidBy, opts = {}) {
+  const applyBalances = opts.applyBalances !== false;
   let glError = null;
   if (!row.branchId || row.totalAmount <= 0) return { glError };
 
   if (row.paymentSource === 'caixa') {
     try {
       const glBranchId = await treasuryBranchFromCaixa(row.caixaId, row.branchId);
-      await postCaixaGlMovement({
+      const glResult = await postCaixaGlMovement({
         branchId: glBranchId,
         amount: row.totalAmount,
         direction: 'out',
@@ -115,7 +137,8 @@ async function payExpenseTreasury(row, paidBy) {
         referenceId: row.id,
         createdBy: paidBy,
       });
-      if (row.caixaId) {
+      // Only deduct cash when this call first posts GL (idempotent on re-pay).
+      if (applyBalances && row.caixaId && !glResult?.alreadyPosted) {
         await applyCaixaRegisterDelta(row.caixaId, -row.totalAmount);
       }
     } catch (glErr) {
@@ -127,15 +150,18 @@ async function payExpenseTreasury(row, paidBy) {
 
   if (row.paymentSource === 'bank' && row.bankAccountId) {
     try {
-      await postBankExpenseGl({
-        branchId: row.branchId,
+      const glBranchId = await treasuryBranchFromBank(row.bankAccountId, row.branchId);
+      const glResult = await postBankExpenseGl({
+        branchId: glBranchId,
         amount: row.totalAmount,
         category: row.category,
         description: row.description,
         referenceId: row.id,
         createdBy: paidBy,
       });
-      await applyBankAccountDelta(row.bankAccountId, -row.totalAmount);
+      if (applyBalances && !glResult?.alreadyPosted) {
+        await applyBankAccountDelta(row.bankAccountId, -row.totalAmount);
+      }
     } catch (glErr) {
       glError = glErr.message;
       console.warn('[EXPENSES] GL post (bank):', glErr.message);
@@ -249,6 +275,8 @@ module.exports = function expensesRouter(broadcastTable) {
       const body = req.body || {};
       const id = String(body.id || randomUUID());
       const now = new Date().toISOString();
+      const prior = await db.query('SELECT status FROM expenses WHERE id = $1 LIMIT 1', [id]);
+      const wasAlreadyPaid = String(prior.rows[0]?.status || '') === 'paid';
       await db.query(
         `INSERT INTO expenses (
           id, expense_number, branch_id, branch_name, category, description,
@@ -312,7 +340,9 @@ module.exports = function expensesRouter(broadcastTable) {
       const saved = await db.query('SELECT * FROM expenses WHERE id = $1', [id]);
       const row = mapRow(saved.rows[0]);
 
-      if (row.status === 'paid' && row.branchId && row.totalAmount > 0) {
+      // Treasury only on first transition to paid (create-and-pay). Re-saving a paid
+      // expense must not deduct caixa/bank again.
+      if (!wasAlreadyPaid && row.status === 'paid' && row.branchId && row.totalAmount > 0) {
         const { glError } = await payExpenseTreasury(row, row.paidBy || row.requestedBy);
         if (glError) {
           console.warn('[EXPENSES] GL post on save:', glError);
@@ -348,12 +378,16 @@ module.exports = function expensesRouter(broadcastTable) {
       const existing = await db.query('SELECT * FROM expenses WHERE id = $1', [req.params.id]);
       if (!existing.rows[0]) return res.status(404).json({ error: 'Expense not found' });
 
-      await db.query(
-        `UPDATE expenses SET status = 'paid', paid_by = $1, paid_at = $2, updated_at = $2 WHERE id = $3`,
-        [paidBy, paidAt, req.params.id],
-      );
+      const alreadyPaid = String(existing.rows[0].status || '') === 'paid';
+      if (!alreadyPaid) {
+        await db.query(
+          `UPDATE expenses SET status = 'paid', paid_by = $1, paid_at = $2, updated_at = $2 WHERE id = $3`,
+          [paidBy, paidAt, req.params.id],
+        );
+      }
 
       const row = mapRow((await db.query('SELECT * FROM expenses WHERE id = $1', [req.params.id])).rows[0]);
+      // Idempotent: GL skip + no balance delta when journal already exists.
       const { glError } = await payExpenseTreasury(row, paidBy);
 
       if (broadcastTable) await broadcastTable('expenses');
@@ -382,7 +416,8 @@ module.exports = function expensesRouter(broadcastTable) {
         return res.status(400).json({ error: 'Expense must be paid before posting to ledger' });
       }
       const paidBy = req.body?.paidBy || row.paidBy || req.user?.name || req.user?.id || 'system';
-      const { glError } = await payExpenseTreasury(row, paidBy);
+      // Never touch caixa/bank balances on repost — GL only.
+      const { glError } = await payExpenseTreasury(row, paidBy, { applyBalances: false });
       if (broadcastTable) await broadcastTable('expenses');
       res.json({ data: row, glError, posted: !glError });
     } catch (error) {

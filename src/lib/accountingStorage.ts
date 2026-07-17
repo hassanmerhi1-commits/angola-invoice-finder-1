@@ -1060,24 +1060,39 @@ export async function payExpense(
 ): Promise<{ glError?: string }> {
   const expense = await getExpenseById(expenseId);
   if (!expense) return {};
-  
+
+  // Server path: /pay owns status, GL, and treasury balances. Do not save-as-paid first
+  // (that re-ran treasury) and do not apply client-side balance deltas again.
+  if (await canUseServerExpensesApi()) {
+    const payRes = await api.expenses.pay(expenseId, paidBy);
+    if (payRes.error) {
+      throw new Error(payRes.error);
+    }
+    const payload = payRes.data as { data?: unknown; glError?: string } | undefined;
+    const glError = payload?.glError;
+    const row = (payload && 'data' in payload ? payload.data : payload) || expense;
+    const paid = mapExpenseFromDb(row);
+    if (typeof window !== 'undefined' && paid.paymentSource === 'caixa' && paid.caixaId) {
+      window.dispatchEvent(
+        new CustomEvent('nexor:pos-caixa-expense', {
+          detail: {
+            branchId: paid.branchId,
+            caixaId: paid.caixaId,
+            amount: paid.totalAmount,
+          },
+        }),
+      );
+    }
+    invalidateCaixaListCache();
+    invalidateBankListCache();
+    return glError ? { glError } : {};
+  }
+
   expense.status = 'paid';
   expense.paidBy = paidBy;
   expense.paidAt = new Date().toISOString();
   let glError: string | undefined;
 
-  if (await canUseServerExpensesApi()) {
-    await saveExpense(expense);
-    const payRes = await api.expenses.pay(expenseId, paidBy);
-    if (payRes.error) {
-      throw new Error(payRes.error);
-    }
-    glError = payRes.data?.glError;
-    if (payRes.data) {
-      Object.assign(expense, mapExpenseFromDb(payRes.data));
-    }
-  }
-  
   if (createTransaction) {
     if (expense.paymentSource === 'caixa' && expense.caixaId) {
       const transaction = await createCashTransaction(
@@ -1099,19 +1114,17 @@ export async function payExpense(
       if (openSession) {
         await updateCaixaSessionTotals(openSession.id, expense.totalAmount, 'expense');
       }
-      if (!(await canUseServerExpensesApi())) {
-        const glResult = await postCaixaGlEntry({
-          branchId: expense.branchId,
-          amount: expense.totalAmount,
-          direction: 'out',
-          counterAccountCode: expenseGlAccount(expense.category),
-          description: `Despesa: ${expense.description}`,
-          referenceType: 'expense',
-          referenceId: expense.id,
-          createdBy: paidBy,
-        });
-        if (!glResult.ok) glError = glResult.error;
-      }
+      const glResult = await postCaixaGlEntry({
+        branchId: expense.branchId,
+        amount: expense.totalAmount,
+        direction: 'out',
+        counterAccountCode: expenseGlAccount(expense.category),
+        description: `Despesa: ${expense.description}`,
+        referenceType: 'expense',
+        referenceId: expense.id,
+        createdBy: paidBy,
+      });
+      if (!glResult.ok) glError = glResult.error;
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('nexor:pos-caixa-expense', {
@@ -1145,7 +1158,7 @@ export async function payExpense(
       }
     }
   }
-  
+
   await saveExpense(expense);
   return glError ? { glError } : {};
 }
@@ -1525,14 +1538,21 @@ function mapCaixaSessionToDb(session: CaixaSession): any {
 }
 
 function mapBankAccountFromDb(row: any): BankAccount {
+  const activeRaw = row.is_active ?? row.isActive;
   return {
-    id: row.id, branchId: row.branch_id || '', branchName: row.branch_name || '',
-    bankName: row.bank_name || '', accountName: row.name || '',
-    accountNumber: row.account_number || '', iban: row.iban,
+    id: row.id,
+    branchId: row.branch_id || row.branchId || '',
+    branchName: row.branch_name || row.branchName || '',
+    bankName: row.bank_name || row.bankName || '',
+    accountName: row.name || row.accountName || '',
+    accountNumber: row.account_number || row.accountNumber || '',
+    iban: row.iban || '',
     currency: row.currency || 'AOA',
-    currentBalance: Number(row.balance || 0),
-    isActive: !!(row.is_active ?? true), isPrimary: !!row.is_primary,
-    createdAt: row.created_at || '', updatedAt: row.updated_at,
+    currentBalance: Number(row.balance ?? row.currentBalance ?? 0),
+    isActive: activeRaw === undefined || activeRaw === null ? true : !!(activeRaw === true || activeRaw === 1 || activeRaw === '1'),
+    isPrimary: !!(row.is_primary ?? row.isPrimary),
+    createdAt: row.created_at || row.createdAt || '',
+    updatedAt: row.updated_at || row.updatedAt,
   };
 }
 

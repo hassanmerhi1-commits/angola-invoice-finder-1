@@ -147,9 +147,9 @@ export default function Expenses() {
     } else {
       invalidateBankListCache(expenseBranchId);
     }
-    const loadedBanks = await getBankAccounts(treasuryAllBranches ? undefined : (apiBranchId || expenseBranchId), {
+    const loadedBanks = (await getBankAccounts(treasuryAllBranches ? undefined : (apiBranchId || expenseBranchId), {
       allBranches: treasuryAllBranches,
-    });
+    })).filter((a) => a.isActive !== false && a.id);
     setBankAccounts(loadedBanks);
     if (loadedBanks.length > 0) {
       setFormData((fd) => (fd.bankAccountId ? fd : { ...fd, bankAccountId: loadedBanks[0].id }));
@@ -237,7 +237,7 @@ export default function Expenses() {
             ? t.expensesUi.caixaEmptyHintAll
             : t.expensesUi.caixaEmptyHint,
     );
-    setBankAccounts(loadedBanks);
+    setBankAccounts(loadedBanks.filter((a) => a.isActive !== false && a.id));
   };
 
   useEffect(() => {
@@ -350,10 +350,23 @@ export default function Expenses() {
         }
         setIsDialogOpen(false);
       } else {
+        // Stamp expense on the treasury source branch when HQ picks another filial's caixa/bank.
+        const sourceCaixa = formData.paymentSource === 'caixa'
+          ? caixas.find((c) => c.id === formData.caixaId)
+          : undefined;
+        const sourceBank = formData.paymentSource === 'bank'
+          ? bankAccounts.find((a) => a.id === formData.bankAccountId)
+          : undefined;
+        const stampBranchId = sourceCaixa?.branchId || sourceBank?.branchId
+          || expenseBranchId || currentBranch?.id || 'default';
+        const stampBranchName = sourceCaixa?.branchName || sourceBank?.branchName
+          || expenseBranchName || currentBranch?.name || t.branchUi.headOffice;
+        const stampBranchCode = currentBranch?.code || 'SEDE';
+
         const expense = await createExpense(
-          expenseBranchId || currentBranch?.id || 'default',
-          expenseBranchName || currentBranch?.name || t.branchUi.headOffice,
-          currentBranch?.code || 'SEDE',
+          stampBranchId,
+          stampBranchName,
+          stampBranchCode,
           formData.category,
           formData.description,
           formData.amount,

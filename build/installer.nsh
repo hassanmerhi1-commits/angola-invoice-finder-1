@@ -55,12 +55,14 @@
     DetailPrint "  + Firewall rule added for UDP port 4546 (LAN discovery)"
   ${EndIf}
 
-  ; Copy schema repair helper to C:\NEXOR ERP (server database.env lives here)
+  ; Copy schema repair helpers to C:\NEXOR ERP (server database.env lives here)
   CreateDirectory "C:\NEXOR ERP"
   IfFileExists "$INSTDIR\resources\fix-server-schema.cmd" 0 +2
-    CopyFiles "$INSTDIR\resources\fix-server-schema.cmd" "C:\NEXOR ERP\fix-server-schema.cmd"
+    CopyFiles /SILENT "$INSTDIR\resources\fix-server-schema.cmd" "C:\NEXOR ERP\fix-server-schema.cmd"
   IfFileExists "$INSTDIR\resources\fix-server-schema.ps1" 0 +2
-    CopyFiles "$INSTDIR\resources\fix-server-schema.ps1" "C:\NEXOR ERP\fix-server-schema.ps1"
+    CopyFiles /SILENT "$INSTDIR\resources\fix-server-schema.ps1" "C:\NEXOR ERP\fix-server-schema.ps1"
+  IfFileExists "$INSTDIR\resources\repair-server-schema-now.ps1" 0 +2
+    CopyFiles /SILENT "$INSTDIR\resources\repair-server-schema-now.ps1" "C:\NEXOR ERP\repair-server-schema-now.ps1"
 
   ClearErrors
 !macroend

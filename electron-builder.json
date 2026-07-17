@@ -50,6 +50,10 @@
       "to": "fix-server-schema.ps1"
     },
     {
+      "from": "scripts/repair-server-schema-now.ps1",
+      "to": "repair-server-schema-now.ps1"
+    },
+    {
       "from": "public/splash.png",
       "to": "splash.png"
     },
