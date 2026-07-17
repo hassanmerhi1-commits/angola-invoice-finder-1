@@ -125,16 +125,16 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
     if (sticky?.status === 'open') {
       setSession(sticky);
       setLoading(false);
-      if (!options?.silent) {
-        void fetchRemoteOpenSession(branchId).then((remote) => {
-          if (remote?.status === 'open') {
-            const merged =
-              cached && remote.id === cached.id ? mergeSessionTotals(remote, cached) : remote;
-            setSession(merged);
-            writePosCaixaCache(branchId, merged);
-          }
-        });
-      }
+      // Always pull server totals (expenses/refunds), even on silent refresh — otherwise
+      // a stale localStorage cache hides caixa expenses paid after the session opened.
+      void fetchRemoteOpenSession(branchId).then((remote) => {
+        if (remote?.status === 'open') {
+          const merged =
+            cached && remote.id === cached.id ? mergeSessionTotals(remote, cached) : remote;
+          setSession(merged);
+          writePosCaixaCache(branchId, merged);
+        }
+      });
       const metaToken = ++metaLoadRef.current;
       void loadBranchCaixaMeta(branchId, branchName || branchId, false)
         .then((cx) => {

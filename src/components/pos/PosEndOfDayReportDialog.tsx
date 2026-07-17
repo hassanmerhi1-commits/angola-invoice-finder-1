@@ -168,7 +168,9 @@ export function PosEndOfDayReportDialog({
       byPayment[key] = (byPayment[key] || 0) + sale.total;
     }
     const cashRefundsTotal = shiftCashRefunds.reduce((sum, note) => sum + note.total, 0);
-    const cashExpensesTotal = shiftCashExpenses.reduce((sum, exp) => sum + exp.totalAmount, 0);
+    const listedExpensesTotal = shiftCashExpenses.reduce((sum, exp) => sum + exp.totalAmount, 0);
+    // Prefer session counter when list filter misses rows (cross-terminal / stale list).
+    const cashExpensesTotal = Math.max(listedExpensesTotal, session?.expensesTotal || 0);
     const netCash = (byPayment.cash || 0) - cashRefundsTotal - cashExpensesTotal;
     return {
       byPayment,
@@ -180,9 +182,9 @@ export function PosEndOfDayReportDialog({
       cashExpensesTotal,
       netCash,
       refundCount: shiftCashRefunds.length,
-      expenseCount: shiftCashExpenses.length,
+      expenseCount: shiftCashExpenses.length || (cashExpensesTotal > 0 ? 1 : 0),
     };
-  }, [cashierSales, shiftCashRefunds, shiftCashExpenses]);
+  }, [cashierSales, shiftCashRefunds, shiftCashExpenses, session?.expensesTotal]);
 
   const buildPrintHtml = () => {
     return `

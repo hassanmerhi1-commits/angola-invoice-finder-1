@@ -7,6 +7,7 @@ const { buildCaixaReconciliation } = require('../lib/caixaReconciliation');
 const { applyCaixaClose } = require('../sync/caixaIngest');
 const { postCaixaGlMovement, syncCaixaGlFromRecord } = require('../lib/caixaGlPosting');
 const { auditErpSafe } = require('../lib/erpAudit');
+const { syncOpenSessionExpensesFromLedger } = require('../lib/caixaCashRefund');
 
 async function caixaTablesExist() {
   if (caixaTablesExist.cached !== undefined) return caixaTablesExist.cached;
@@ -402,7 +403,20 @@ module.exports = function caixaRouter(broadcastTable) {
          LIMIT 1`,
         [resolvedBranchId],
       );
-      res.json(mapSessionRow(result.rows[0]));
+      let sessionRow = result.rows[0] || null;
+      if (sessionRow) {
+        try {
+          await syncOpenSessionExpensesFromLedger(null, resolvedBranchId);
+          const refreshed = await db.query(
+            'SELECT * FROM caixa_sessions WHERE id = $1',
+            [sessionRow.id],
+          );
+          sessionRow = refreshed.rows[0] || sessionRow;
+        } catch (syncErr) {
+          console.warn('[CAIXA] open session expense sync:', syncErr.message);
+        }
+      }
+      res.json(mapSessionRow(sessionRow));
     } catch (error) {
       console.error('[CAIXA] open session get:', error);
       res.status(500).json({ error: error.message || 'Failed to fetch open session' });

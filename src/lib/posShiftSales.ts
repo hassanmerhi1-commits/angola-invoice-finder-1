@@ -86,7 +86,9 @@ export function filterShiftCashRefunds(
   const saleById = new Map(sales.map((sale) => [sale.id, sale]));
   return creditNotes.filter((note) => {
     if (note.status !== 'issued') return false;
-    if (session.branchId && note.branchId !== session.branchId) return false;
+    if (session.branchId && note.branchId && !branchIdsEquivalent(note.branchId, session.branchId)) {
+      return false;
+    }
     const issuedDay = saleLocalDate(note.issuedAt || note.createdAt);
     if (issuedDay !== day) return false;
     if (!creditNoteInShift(note, session)) return false;
@@ -103,20 +105,24 @@ export function filterShiftCashRefunds(
  * Expenses paid from caixa during this shift (same branch).
  * Like credit notes: do NOT require expense.caixaId === session.caixaId —
  * users often open "Caixa Principal" but pay from the COA "Caixa - SOYO XX".
+ *
+ * Uses the open-shift window only (not calendar day) so overnight open registers
+ * still show expenses, matching how the drawer session counters work.
  */
 export function filterShiftCashExpenses(
   expenses: Expense[],
   session: CaixaSession | null | undefined,
   _caixaId?: string,
-  day = todayLocalDate(),
+  _day = todayLocalDate(),
 ): Expense[] {
   if (!session) return [];
   return expenses.filter((expense) => {
-    if (expense.status !== 'paid') return false;
-    if (expense.paymentSource !== 'caixa') return false;
+    if (String(expense.status || '').toLowerCase() !== 'paid') return false;
+    const source = String(expense.paymentSource || '').trim().toLowerCase();
+    if (source && source !== 'caixa') return false;
     if (!branchIdsEquivalent(expense.branchId, session.branchId)) return false;
-    if (!expense.paidAt) return false;
-    if (saleLocalDate(expense.paidAt) !== day) return false;
-    return eventInShift(expense.paidAt, session);
+    const paidAt = expense.paidAt || expense.updatedAt || expense.createdAt;
+    if (!paidAt) return false;
+    return eventInShift(paidAt, session);
   });
 }

@@ -4,8 +4,11 @@ const db = require('../db');
 const { postCaixaGlMovement } = require('../lib/caixaGlPosting');
 const { createJournalEntry } = require('../accounting');
 const { auditErpSafe } = require('../lib/erpAudit');
-const { recordExpenseOnOpenSession } = require('../lib/caixaCashRefund');
-const { resolveBranchFilterId } = require('../lib/branchIdMatch');
+const {
+  recordExpenseOnOpenSession,
+  syncOpenSessionExpensesFromLedger,
+} = require('../lib/caixaCashRefund');
+const { resolveBranchFilterId, normalizeBranchIdKey } = require('../lib/branchIdMatch');
 
 const BANK_GL = '431';
 
@@ -146,32 +149,45 @@ async function payExpenseTreasury(row, paidBy, opts = {}) {
       console.warn('[EXPENSES] GL post (caixa):', glErr.message);
     }
 
-    // Drawer/session must move like credit notes even when Diário GL fails.
+    // Drawer balance: skip when GL already posted (avoid double deduct on retry).
     if (applyBalances && row.caixaId && !alreadyPosted) {
       try {
         await applyCaixaRegisterDelta(row.caixaId, -row.totalAmount);
       } catch (balErr) {
         console.warn('[EXPENSES] caixa balance:', balErr.message);
       }
-      try {
-        const sessionHit = await recordExpenseOnOpenSession(null, {
-          caixaId: row.caixaId,
-          branchId: glBranchId || row.branchId,
-          amount: row.totalAmount,
-          expenseId: row.id,
-        });
-        if (!sessionHit.recorded) {
-          console.warn(
-            '[EXPENSES] open session not updated:',
-            sessionHit.reason,
-            'caixa=',
-            row.caixaId,
-            'branch=',
-            glBranchId || row.branchId,
-          );
+    }
+
+    // Open POS session: increment on first cash move, then idempotent ledger sync so
+    // GL-already-posted retries still fill expenses_total without double-counting.
+    if (applyBalances) {
+      const sessionBranch = glBranchId || row.branchId;
+      if (!alreadyPosted) {
+        try {
+          const sessionHit = await recordExpenseOnOpenSession(null, {
+            caixaId: row.caixaId,
+            branchId: sessionBranch,
+            amount: row.totalAmount,
+            expenseId: row.id,
+          });
+          if (!sessionHit.recorded) {
+            console.warn(
+              '[EXPENSES] open session not updated:',
+              sessionHit.reason,
+              'caixa=',
+              row.caixaId,
+              'branch=',
+              sessionBranch,
+            );
+          }
+        } catch (sessErr) {
+          console.warn('[EXPENSES] open session:', sessErr.message);
         }
-      } catch (sessErr) {
-        console.warn('[EXPENSES] open session:', sessErr.message);
+      }
+      try {
+        await syncOpenSessionExpensesFromLedger(null, sessionBranch);
+      } catch (syncErr) {
+        console.warn('[EXPENSES] session expense sync:', syncErr.message);
       }
     }
     return { glError };
@@ -285,12 +301,10 @@ module.exports = function expensesRouter(broadcastTable) {
       let sql = 'SELECT * FROM expenses';
       if (branchId) {
         const resolved = (await resolveBranchFilterId(db, branchId)) || branchId;
-        if (db.engine === 'postgres') {
-          sql += ' WHERE branch_id::text = $1';
-        } else {
-          sql += ' WHERE CAST(branch_id AS TEXT) = $1';
-        }
-        params.push(resolved);
+        const branchKey = normalizeBranchIdKey(resolved) || normalizeBranchIdKey(branchId);
+        const branchCol = db.engine === 'postgres' ? 'branch_id::text' : 'CAST(branch_id AS TEXT)';
+        sql += ` WHERE (${branchCol} = $1 OR REPLACE(LOWER(TRIM(COALESCE(${branchCol}, ''))), '-', '') = $2)`;
+        params.push(resolved, branchKey);
       }
       sql += ' ORDER BY created_at DESC';
       const result = await db.query(sql, params);

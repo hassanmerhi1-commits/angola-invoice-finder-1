@@ -1100,11 +1100,11 @@ export async function getExpenses(branchId?: string): Promise<Expense[]> {
   if (isElectronMode()) {
     const rows = await dbGetAll<any>('expenses');
     let expenses = rows.map(mapExpenseFromDb);
-    if (branchId) expenses = expenses.filter(e => e.branchId === branchId);
+    if (branchId) expenses = expenses.filter((e) => branchIdsEquivalent(e.branchId, branchId));
     return expenses;
   }
   const expenses = lsGet<Expense[]>(STORAGE_KEYS.expenses, []);
-  return branchId ? expenses.filter(e => e.branchId === branchId) : expenses;
+  return branchId ? expenses.filter((e) => branchIdsEquivalent(e.branchId, branchId)) : expenses;
 }
 
 export async function getExpenseById(id: string): Promise<Expense | undefined> {

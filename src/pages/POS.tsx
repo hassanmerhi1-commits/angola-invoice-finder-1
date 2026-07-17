@@ -48,6 +48,7 @@ import { useTranslation } from '@/i18n';
 import { readNexorPosNewSaleFlag, NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 import { CREDIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
+import { branchIdsEquivalent } from '@/lib/branchAccess';
 
 export default function POS() {
   const location = useLocation();
@@ -212,13 +213,17 @@ export default function POS() {
   useEffect(() => {
     const onCreditNotesChanged = (event: Event) => {
       const detail = (event as CustomEvent<{ branchId?: string }>).detail;
-      if (detail?.branchId && detail.branchId !== currentBranch?.id) return;
+      if (detail?.branchId && currentBranch?.id && !branchIdsEquivalent(detail.branchId, currentBranch.id)) {
+        return;
+      }
       void refreshCreditNotes(currentBranch?.id);
       void refreshCaixa();
     };
     const onCaixaRefund = (event: Event) => {
       const detail = (event as CustomEvent<{ branchId?: string; amount?: number }>).detail;
-      if (detail?.branchId && detail.branchId !== currentBranch?.id) return;
+      if (detail?.branchId && currentBranch?.id && !branchIdsEquivalent(detail.branchId, currentBranch.id)) {
+        return;
+      }
       if (detail?.amount && detail.amount > 0) recordCashRefund(detail.amount);
       void refreshCaixa();
     };
@@ -226,7 +231,9 @@ export default function POS() {
       const detail = (event as CustomEvent<{ branchId?: string; caixaId?: string; amount?: number }>).detail;
       // Same branch is enough (like credit notes) — open register may be "Caixa Principal"
       // while the expense was paid from "Caixa - SOYO XX".
-      if (detail?.branchId && detail.branchId !== currentBranch?.id) return;
+      if (detail?.branchId && currentBranch?.id && !branchIdsEquivalent(detail.branchId, currentBranch.id)) {
+        return;
+      }
       if (detail?.amount && detail.amount > 0) recordCashExpense(detail.amount);
       void refreshCaixa();
       if (currentBranch?.id) {
