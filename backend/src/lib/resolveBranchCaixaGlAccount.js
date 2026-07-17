@@ -53,10 +53,9 @@ async function linkOrphanBranchCaixaAccounts(dbOrClient) {
   let linked = 0;
 
   try {
+    // Postgres UUID columns reject COALESCE(..., '') — never compare uuid to ''.
     const branchIdMismatch = engine === 'postgres'
-      ? `(coa.branch_id IS NULL
-           OR TRIM(COALESCE(coa.branch_id, '')) = ''
-           OR coa.branch_id::text != b.id::text)`
+      ? `(coa.branch_id IS NULL OR coa.branch_id::text IS DISTINCT FROM b.id::text)`
       : `(coa.branch_id IS NULL
            OR TRIM(COALESCE(coa.branch_id, '')) = ''
            OR coa.branch_id != b.id)`;

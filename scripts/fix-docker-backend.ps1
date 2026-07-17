@@ -40,6 +40,27 @@ function Find-ComposeRoot {
   return $null
 }
 
+function Wait-BackendHealth {
+  param(
+    [string]$Url = 'http://localhost:3000/api/health?lite=1',
+    [int]$Attempts = 18,
+    [int]$DelaySec = 5
+  )
+  $lastErr = $null
+  for ($i = 1; $i -le $Attempts; $i++) {
+    try {
+      $h = Invoke-RestMethod -Uri $Url -TimeoutSec 15
+      if ($h -and $h.ok) { return $h }
+      $lastErr = "health ok=false"
+    } catch {
+      $lastErr = $_.Exception.Message
+    }
+    Write-Host "  health attempt $i/$Attempts failed: $lastErr" -ForegroundColor DarkYellow
+    if ($i -lt $Attempts) { Start-Sleep -Seconds $DelaySec }
+  }
+  throw "Backend health failed after $Attempts attempts: $lastErr"
+}
+
 if ($AutoFind -or -not $ProjectRoot) {
   $ProjectRoot = Find-ComposeRoot
 }
@@ -66,18 +87,43 @@ try {
   docker compose up -d --build backend
   if ($LASTEXITCODE -ne 0) { throw "docker compose failed ($LASTEXITCODE)" }
 
-  Start-Sleep -Seconds 5
+  Write-Host 'Waiting for container to stay up...' -ForegroundColor Yellow
+  Start-Sleep -Seconds 8
+  docker compose ps
 
   Write-Host 'Applying schema inside container...' -ForegroundColor Yellow
   docker exec nexor-backend node scripts/ensure-server-schema.js
   if ($LASTEXITCODE -ne 0) { throw "ensure-server-schema failed ($LASTEXITCODE)" }
 
+  # Schema work can restart/busy the API — wait before health.
+  Write-Host 'Restarting backend so /api/health is clean...' -ForegroundColor Yellow
+  docker compose restart backend
+  if ($LASTEXITCODE -ne 0) { throw "docker compose restart failed ($LASTEXITCODE)" }
+  Start-Sleep -Seconds 5
+
   Write-Host ''
   Write-Host 'Health:' -ForegroundColor Cyan
-  $h = Invoke-RestMethod 'http://localhost:3000/api/health?lite=1' -TimeoutSec 20
+  try {
+    $h = Wait-BackendHealth
+  } catch {
+    Write-Host ''
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host ''
+    Write-Host 'Container status:' -ForegroundColor Yellow
+    docker compose ps
+    Write-Host ''
+    Write-Host 'Last backend logs:' -ForegroundColor Yellow
+    docker logs nexor-backend --tail 80
+    Write-Host ''
+    Write-Host 'Manual check:' -ForegroundColor Yellow
+    Write-Host '  docker compose restart backend'
+    Write-Host '  curl http://localhost:3000/api/health?lite=1'
+    exit 1
+  }
+
   $h | Format-List ok, engine, appVersion, schemaVersion, schemaVersionExpected, schemaUpToDate
 
-  if ([int]$h.schemaVersionExpected -lt 56) {
+  if ($null -ne $h.schemaVersionExpected -and [int]$h.schemaVersionExpected -lt 56) {
     Write-Host ''
     Write-Host 'WARN: backend code on disk is still old (expected schema < 56).' -ForegroundColor Yellow
     Write-Host 'Copy the latest repo/USB to this PC, then run this script again.' -ForegroundColor Yellow
