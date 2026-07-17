@@ -4,6 +4,7 @@ const db = require('../db');
 const { postCaixaGlMovement } = require('../lib/caixaGlPosting');
 const { createJournalEntry } = require('../accounting');
 const { auditErpSafe } = require('../lib/erpAudit');
+const { recordExpenseOnOpenSession } = require('../lib/caixaCashRefund');
 
 const BANK_GL = '431';
 
@@ -140,6 +141,21 @@ async function payExpenseTreasury(row, paidBy, opts = {}) {
       // Only deduct cash when this call first posts GL (idempotent on re-pay).
       if (applyBalances && row.caixaId && !glResult?.alreadyPosted) {
         await applyCaixaRegisterDelta(row.caixaId, -row.totalAmount);
+        // Same as cash credit notes: hit the open POS session for EOD / drawer.
+        const sessionHit = await recordExpenseOnOpenSession(null, {
+          caixaId: row.caixaId,
+          branchId: glBranchId || row.branchId,
+          amount: row.totalAmount,
+          expenseId: row.id,
+        });
+        if (!sessionHit.recorded) {
+          console.warn(
+            '[EXPENSES] open session not updated:',
+            sessionHit.reason,
+            'caixa=',
+            row.caixaId,
+          );
+        }
       }
     } catch (glErr) {
       glError = glErr.message;
@@ -396,7 +412,10 @@ module.exports = function expensesRouter(broadcastTable) {
         await broadcastTable('expenses');
         await broadcastTable('journal_entries');
         await broadcastTable('chart_of_accounts');
-        if (row.paymentSource === 'caixa') await broadcastTable('caixas');
+        if (row.paymentSource === 'caixa') {
+          await broadcastTable('caixas');
+          await broadcastTable('caixa_sessions');
+        }
         if (row.paymentSource === 'bank') await broadcastTable('bank_accounts');
       }
       auditErpSafe(req, {
