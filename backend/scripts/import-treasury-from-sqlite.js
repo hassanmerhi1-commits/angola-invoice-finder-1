@@ -209,7 +209,13 @@ async function main() {
   console.log(`[TREASURY] SQLite: ${sqlitePath}`);
   console.log(`[TREASURY] Postgres: ${DATABASE_URL.replace(/:[^:@/]+@/, ':***@')}`);
 
-  const sqlite = new Database(sqlitePath, { readonly: true });
+  // fileMustExist avoids cryptic "unable to open" when path is wrong;
+  // readonly still needs a writable directory for some SQLite builds — prefer /tmp via docker cp.
+  if (!fs.existsSync(sqlitePath)) {
+    console.error(`[TREASURY] File not found inside container/host: ${sqlitePath}`);
+    process.exit(1);
+  }
+  const sqlite = new Database(sqlitePath, { readonly: true, fileMustExist: true });
   const pg = new Pool({ connectionString: DATABASE_URL });
 
   try {

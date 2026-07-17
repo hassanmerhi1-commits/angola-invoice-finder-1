@@ -41,7 +41,8 @@ services:
       # Hot-reload source from the host so repair/verify scripts stay current without rebuild.
       - ./backend/src:/app/src
       - ./backend/scripts:/app/scripts
-      - ./import:/import:ro
+      # Writable import drop folder (scripts may copy erp.db here). Prefer docker cp to /tmp.
+      - ./import:/import
       - nexor_backups:/app/backups
 
 volumes:

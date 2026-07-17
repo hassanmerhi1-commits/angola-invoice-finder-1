@@ -4,6 +4,9 @@
 # Usage:
 #   cd C:\Users\user\Documents\GitHub\angola-invoice-finder
 #   .\scripts\import-treasury-to-docker.ps1
+#
+# If NEXOR has the .db locked, close NEXOR first, or pass another copy:
+#   .\scripts\import-treasury-to-docker.ps1 -SqlitePath "C:\NEXOR ERP\data\erp.db"
 
 param(
   [string]$SqlitePath = '',
@@ -58,33 +61,36 @@ if (-not $SqlitePath -or -not (Test-Path $SqlitePath)) {
 Write-Host "Project: $ProjectRoot" -ForegroundColor Cyan
 Write-Host "SQLite:  $SqlitePath ($([math]::Round((Get-Item $SqlitePath).Length/1MB,1)) MB)" -ForegroundColor Cyan
 
-# Read password from database.env if present
-$dbEnv = 'C:\NEXOR ERP\database.env'
-$url = $env:DATABASE_URL
-if (-not $url -and (Test-Path $dbEnv)) {
-  Get-Content $dbEnv | ForEach-Object {
-    if ($_ -match '^\s*DATABASE_URL\s*=\s*(.+)$') { $url = $Matches[1].Trim().Trim('"') }
-  }
-}
-if (-not $url) {
-  # Default docker-compose postgres
-  $url = 'postgres://postgres:postgres@127.0.0.1:5432/kwanza_erp'
-  Write-Host "Using default DATABASE_URL (override with `$env:DATABASE_URL if needed)" -ForegroundColor Yellow
+# Ensure container is running
+$running = docker ps --filter "name=nexor-backend" --format "{{.Names}}" 2>$null
+if ($running -notmatch 'nexor-backend') {
+  Write-Host '[ERROR] nexor-backend container is not running. Start it first:' -ForegroundColor Red
+  Write-Host '  docker compose up -d backend'
+  exit 1
 }
 
 Push-Location $ProjectRoot
 try {
-  # Mounted as ./import:/import:ro in docker-compose.yml
-  $importDir = Join-Path $ProjectRoot 'import'
-  New-Item -ItemType Directory -Force -Path $importDir | Out-Null
-  $hostCopy = Join-Path $importDir 'erp.db'
-  Write-Host 'Copying SQLite into .\import\erp.db for container...' -ForegroundColor Yellow
-  Copy-Item -Force $SqlitePath $hostCopy
+  # Copy to a local temp file first (avoids lock if NEXOR has erp.db open)
+  $tempDb = Join-Path $env:TEMP ("nexor-import-" + [guid]::NewGuid().ToString('n') + '.db')
+  Write-Host "Copying SQLite to temp (unlock-safe): $tempDb" -ForegroundColor Yellow
+  try {
+    Copy-Item -Force $SqlitePath $tempDb
+  } catch {
+    Write-Host '[ERROR] Could not copy erp.db — close NEXOR ERP completely, then retry.' -ForegroundColor Red
+    throw
+  }
 
-  # DATABASE_URL inside container points at kwanza-postgres service
+  # IMPORTANT: do NOT use ./import:/import:ro — better-sqlite3 fails on read-only mounts.
+  # docker cp into /tmp inside the container (writable).
+  $containerSqlite = '/tmp/import-erp.db'
+  Write-Host "docker cp → nexor-backend:$containerSqlite" -ForegroundColor Yellow
+  docker cp $tempDb "nexor-backend:$containerSqlite"
+  if ($LASTEXITCODE -ne 0) { throw "docker cp failed ($LASTEXITCODE)" }
+
   Write-Host 'Importing caixas + bank_accounts...' -ForegroundColor Yellow
   docker exec `
-    -e 'SQLITE_PATH=/import/erp.db' `
+    -e "SQLITE_PATH=$containerSqlite" `
     nexor-backend `
     node scripts/import-treasury-from-sqlite.js
   if ($LASTEXITCODE -ne 0) { throw "import failed ($LASTEXITCODE)" }
@@ -96,5 +102,8 @@ try {
   Write-Host ''
   Write-Host 'OK — open Expenses again (or press F5). Banks and all caixas should appear.' -ForegroundColor Green
 } finally {
+  if ($tempDb -and (Test-Path $tempDb)) {
+    Remove-Item -Force $tempDb -EA SilentlyContinue
+  }
   Pop-Location
 }
