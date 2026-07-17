@@ -73,6 +73,95 @@ function mapCaixaRow(row) {
   };
 }
 
+/**
+ * Ensure SEDE / head-office branch has is_main=true so HQ scope works.
+ * Also create operational caixas from COA 45x leaf accounts (users often have
+ * many GL caixas but only auto "Caixa Principal" registers).
+ */
+async function ensureTreasuryRegistersFromCoa() {
+  try {
+    // Prefer a branch named/coded SEDE as head office (fixes Sede Soyo treated like a shop).
+    if (db.engine === 'postgres') {
+      const sede = await db.query(
+        `SELECT id FROM branches
+         WHERE name ILIKE '%sede%' OR code ILIKE 'SEDE%' OR UPPER(code) = 'MAIN'
+         ORDER BY CASE WHEN name ILIKE '%sede%' THEN 0 ELSE 1 END
+         LIMIT 1`,
+      );
+      if (sede.rows[0]?.id) {
+        await db.query('UPDATE branches SET is_main = FALSE WHERE id::text IS DISTINCT FROM $1', [
+          String(sede.rows[0].id),
+        ]);
+        await db.query('UPDATE branches SET is_main = TRUE WHERE id = $1', [sede.rows[0].id]);
+      }
+    }
+
+    if (!(await caixaTablesExist())) return;
+
+    const coa = await db.query(
+      `SELECT coa.id, coa.code, coa.name, coa.current_balance, coa.branch_id,
+              b.name AS branch_name
+       FROM chart_of_accounts coa
+       LEFT JOIN branches b ON b.id::text = coa.branch_id::text
+       WHERE coa.is_active = true
+         AND coa.is_header = false
+         AND coa.code LIKE '45%'
+         AND coa.code NOT IN ('45', '451')
+         AND coa.branch_id IS NOT NULL
+         AND LENGTH(TRIM(coa.code)) >= 3`,
+    );
+
+    const now = new Date().toISOString();
+    for (const row of coa.rows || []) {
+      const branchId = String(row.branch_id || '').trim();
+      if (!branchId || branchId === '22222222-2222-2222-2222-222222222222') continue;
+      const branchName = String(row.branch_name || '').trim() || branchId;
+      const name = String(row.name || '').trim() || `Caixa ${row.code}`;
+      const balance = Number(row.current_balance) || 0;
+      // Stable id from COA account so re-runs are idempotent.
+      const id = `caixa_coa_${String(row.id)}`;
+
+      const existingByName = await db.query(
+        db.engine === 'postgres'
+          ? `SELECT id FROM caixas
+             WHERE branch_id::text = $1 AND LOWER(TRIM(name)) = LOWER(TRIM($2))
+             LIMIT 1`
+          : `SELECT id FROM caixas
+             WHERE CAST(branch_id AS TEXT) = $1 AND LOWER(TRIM(name)) = LOWER(TRIM($2))
+             LIMIT 1`,
+        [branchId, name],
+      );
+      if (existingByName.rows?.[0]) continue;
+
+      await db.query(
+        `INSERT INTO caixas (
+          id, branch_id, branch_name, name, opening_balance, current_balance,
+          status, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$5,'closed',$6,$6)
+        ON CONFLICT (id) DO UPDATE SET
+          branch_name = EXCLUDED.branch_name,
+          name = EXCLUDED.name,
+          current_balance = EXCLUDED.current_balance,
+          updated_at = EXCLUDED.updated_at`,
+        [id, branchId, branchName, name, balance, now],
+      );
+    }
+
+    // Remove orphan seed caixa with UUID label when branch is gone.
+    await db.query(
+      `DELETE FROM caixas
+       WHERE branch_id::text = '22222222-2222-2222-2222-222222222222'
+         AND NOT EXISTS (
+           SELECT 1 FROM branches b WHERE b.id::text = '22222222-2222-2222-2222-222222222222'
+         )`,
+    );
+  } catch (err) {
+    console.warn('[CAIXA] ensureTreasuryRegistersFromCoa:', err.message);
+  }
+}
+
+let lastCoaSyncAt = 0;
+
 module.exports = function caixaRouter(broadcastTable) {
   const router = express.Router();
 
@@ -81,6 +170,11 @@ module.exports = function caixaRouter(broadcastTable) {
     try {
       if (!(await caixaTablesExist())) {
         return res.json({ data: [] });
+      }
+      // Refresh from COA at most once per 60s (expense dialog opens often).
+      if (Date.now() - lastCoaSyncAt > 60_000) {
+        lastCoaSyncAt = Date.now();
+        await ensureTreasuryRegistersFromCoa();
       }
       const branchId = String(req.query.branchId || '').trim();
       const params = [];
@@ -100,6 +194,9 @@ module.exports = function caixaRouter(broadcastTable) {
           sql += ' WHERE CAST(c.branch_id AS TEXT) = $1';
         }
         params.push(matchId);
+      } else if (db.engine === 'postgres') {
+        // Hide orphan seed UUID branch from all-branch pickers.
+        sql += ` WHERE c.branch_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222'`;
       }
       const orderBy = db.engine === 'postgres'
         ? 'c.updated_at DESC NULLS LAST, c.created_at DESC'

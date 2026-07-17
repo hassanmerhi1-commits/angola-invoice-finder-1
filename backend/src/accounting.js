@@ -285,7 +285,8 @@ async function createJournalEntry(client, params) {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, CURRENT_TIMESTAMP, $9, $10)`,
     [entryId, entryNumber, entryDate || new Date().toISOString().split('T')[0],
       description, referenceType, normalizeOptionalId(referenceId),
-      totalDebit, totalCredit, normalizeOptionalId(branchId), normalizeOptionalId(createdBy)]
+      // created_by is UUID in Postgres — never pass display names like "HUSSEIN MERHI"
+      totalDebit, totalCredit, normalizeOptionalId(branchId), normalizeUuid(createdBy)]
   );
 
   for (const line of lines) {

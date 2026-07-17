@@ -373,7 +373,9 @@ module.exports = function expensesRouter(broadcastTable) {
   router.post('/:id/pay', async (req, res) => {
     try {
       await ensureExpensesTable();
-      const paidBy = req.body?.paidBy || req.user?.name || req.user?.id || 'system';
+      // expenses.paid_by is TEXT (name OK). Journal created_by is UUID — use user id for GL.
+      const paidByLabel = req.body?.paidBy || req.user?.name || req.user?.id || 'system';
+      const paidByForGl = req.user?.id || req.body?.paidByUserId || null;
       const paidAt = new Date().toISOString();
       const existing = await db.query('SELECT * FROM expenses WHERE id = $1', [req.params.id]);
       if (!existing.rows[0]) return res.status(404).json({ error: 'Expense not found' });
@@ -382,13 +384,13 @@ module.exports = function expensesRouter(broadcastTable) {
       if (!alreadyPaid) {
         await db.query(
           `UPDATE expenses SET status = 'paid', paid_by = $1, paid_at = $2, updated_at = $2 WHERE id = $3`,
-          [paidBy, paidAt, req.params.id],
+          [paidByLabel, paidAt, req.params.id],
         );
       }
 
       const row = mapRow((await db.query('SELECT * FROM expenses WHERE id = $1', [req.params.id])).rows[0]);
       // Idempotent: GL skip + no balance delta when journal already exists.
-      const { glError } = await payExpenseTreasury(row, paidBy);
+      const { glError } = await payExpenseTreasury(row, paidByForGl || paidByLabel);
 
       if (broadcastTable) {
         await broadcastTable('expenses');
@@ -403,7 +405,7 @@ module.exports = function expensesRouter(broadcastTable) {
         action: 'pay',
         branchId: row.branchId || undefined,
         description: `Despesa paga ${row.expenseNumber || row.id}: ${row.description} (${row.totalAmount} AOA)`,
-        newValues: { paidBy, paidAt, glError },
+        newValues: { paidBy: paidByLabel, paidAt, glError },
       });
       res.json({ data: row, glError });
     } catch (error) {
@@ -421,9 +423,10 @@ module.exports = function expensesRouter(broadcastTable) {
       if (row.status !== 'paid') {
         return res.status(400).json({ error: 'Expense must be paid before posting to ledger' });
       }
-      const paidBy = req.body?.paidBy || row.paidBy || req.user?.name || req.user?.id || 'system';
+      const paidByLabel = req.body?.paidBy || row.paidBy || req.user?.name || req.user?.id || 'system';
+      const paidByForGl = req.user?.id || req.body?.paidByUserId || null;
       // Never touch caixa/bank balances on repost — GL only.
-      const { glError } = await payExpenseTreasury(row, paidBy, { applyBalances: false });
+      const { glError } = await payExpenseTreasury(row, paidByForGl || paidByLabel, { applyBalances: false });
       if (broadcastTable) {
         await broadcastTable('expenses');
         await broadcastTable('journal_entries');

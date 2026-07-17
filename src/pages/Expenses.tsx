@@ -381,7 +381,7 @@ export default function Expenses() {
         );
 
         if (payNow) {
-          const result = await payExpense(expense.id, user?.name || t.expensesUi.systemUser);
+          const result = await payExpense(expense.id, user?.id || user?.name || t.expensesUi.systemUser);
           if (result.glError) {
             toast({
               title: t.expensesUi.paidGlFailedTitle,
@@ -465,7 +465,7 @@ export default function Expenses() {
   };
 
   const handlePay = async (expense: Expense) => {
-    const result = await payExpense(expense.id, user?.name || t.expensesUi.systemUser);
+    const result = await payExpense(expense.id, user?.id || user?.name || t.expensesUi.systemUser);
     if (result.glError) {
       toast({
         title: t.expensesUi.paidGlFailedTitle,
@@ -482,7 +482,7 @@ export default function Expenses() {
 
   const handleRepostGl = async (expense: Expense) => {
     try {
-      const result = await repostExpenseGl(expense.id, user?.name || t.expensesUi.systemUser);
+      const result = await repostExpenseGl(expense.id, user?.id || user?.name || t.expensesUi.systemUser);
       if (result.glError) {
         toast({
           title: t.expensesUi.paidGlFailedTitle,

@@ -91,16 +91,24 @@ export function resolveEffectiveUserBranch(
   return null;
 }
 
+function looksLikeHeadOfficeBranch(branch: Branch | null): boolean {
+  if (!branch) return false;
+  if (normalizeIsMain(branch.isMain)) return true;
+  const code = String(branch.code || '').trim().toUpperCase();
+  const name = String(branch.name || '').trim().toLowerCase();
+  return code === 'MAIN' || code.startsWith('SEDE') || name.includes('sede');
+}
+
 /**
  * Admin may always switch branches / use all-filial treasury (Sede or any shop login).
- * Manager only when assigned to the head-office (is_main) branch.
+ * Manager only when assigned to head office (is_main or name/code SEDE).
  */
 export function canUserSwitchBranch(user: BranchAccessUser, userBranch: Branch | null): boolean {
   const role = String(user?.role || '').toLowerCase();
   if (role === 'admin') return true;
   if (role !== 'manager') return false;
   if (!userBranch) return true;
-  return normalizeIsMain(userBranch.isMain);
+  return looksLikeHeadOfficeBranch(userBranch);
 }
 
 export function branchesVisibleToUser(
