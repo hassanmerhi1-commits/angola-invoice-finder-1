@@ -390,7 +390,13 @@ module.exports = function expensesRouter(broadcastTable) {
       // Idempotent: GL skip + no balance delta when journal already exists.
       const { glError } = await payExpenseTreasury(row, paidBy);
 
-      if (broadcastTable) await broadcastTable('expenses');
+      if (broadcastTable) {
+        await broadcastTable('expenses');
+        await broadcastTable('journal_entries');
+        await broadcastTable('chart_of_accounts');
+        if (row.paymentSource === 'caixa') await broadcastTable('caixas');
+        if (row.paymentSource === 'bank') await broadcastTable('bank_accounts');
+      }
       auditErpSafe(req, {
         table: 'expenses',
         id: row.id,
@@ -418,7 +424,11 @@ module.exports = function expensesRouter(broadcastTable) {
       const paidBy = req.body?.paidBy || row.paidBy || req.user?.name || req.user?.id || 'system';
       // Never touch caixa/bank balances on repost — GL only.
       const { glError } = await payExpenseTreasury(row, paidBy, { applyBalances: false });
-      if (broadcastTable) await broadcastTable('expenses');
+      if (broadcastTable) {
+        await broadcastTable('expenses');
+        await broadcastTable('journal_entries');
+        await broadcastTable('chart_of_accounts');
+      }
       res.json({ data: row, glError, posted: !glError });
     } catch (error) {
       res.status(500).json({ error: error.message || 'Failed to repost expense GL' });

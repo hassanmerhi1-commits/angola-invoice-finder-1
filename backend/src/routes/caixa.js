@@ -190,7 +190,16 @@ module.exports = function caixaRouter(broadcastTable) {
           id, branch_id, branch_name, name, opening_balance, current_balance,
           status, petty_limit, daily_limit, requires_approval, created_at, updated_at
         ) VALUES ($1,$2,$3,$4,$5,$5,'closed',$6,$7,$8,$9,$9)
-        ON CONFLICT (id) DO NOTHING`,
+        ON CONFLICT (id) DO UPDATE SET
+          branch_id = EXCLUDED.branch_id,
+          branch_name = EXCLUDED.branch_name,
+          name = EXCLUDED.name,
+          opening_balance = EXCLUDED.opening_balance,
+          current_balance = EXCLUDED.current_balance,
+          petty_limit = EXCLUDED.petty_limit,
+          daily_limit = EXCLUDED.daily_limit,
+          requires_approval = EXCLUDED.requires_approval,
+          updated_at = EXCLUDED.updated_at`,
         [
           id,
           resolvedBranchId,
@@ -205,7 +214,7 @@ module.exports = function caixaRouter(broadcastTable) {
       );
       const row = await db.query('SELECT * FROM caixas WHERE id = $1', [id]);
       if (!row.rows[0]) {
-        return res.status(409).json({ error: 'Caixa already exists with this id' });
+        return res.status(500).json({ error: 'Failed to save caixa' });
       }
       if (broadcastTable) await broadcastTable('caixas');
       res.status(201).json({ data: mapCaixaRow(row.rows[0]) });

@@ -46,7 +46,7 @@ if ($ok) {
 
 Write-Host "OUT OF DATE — update the SERVER PC (PostgreSQL host), not only LAN clients:" -ForegroundColor Red
 Write-Host "  1. Close NEXOR on the server"
-  Write-Host "  2. Install NEXOR-ERP-1.1.33-x64.exe (or newer) on the SERVER"
+  Write-Host "  2. Install NEXOR-ERP-1.1.34-x64.exe (or newer) on the SERVER"
 Write-Host "  3. Run C:\NEXOR ERP\repair-server-schema-now.ps1 (or fix-server-schema.cmd)"
 Write-Host "  4. Restart NEXOR on the server"
 Write-Host "  5. Re-run: .\verify-server-health.ps1 -ServerIp $ServerIp"

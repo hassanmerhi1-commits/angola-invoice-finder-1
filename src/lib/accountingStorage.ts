@@ -164,6 +164,145 @@ function filterBankAccountsForBranch(accounts: BankAccount[], branchId?: string)
   return filtered.length > 0 ? filtered : accounts.filter((a) => a.branchId === branchId);
 }
 
+const SEED_ORPHAN_BRANCH_ID = '22222222-2222-2222-2222-222222222222';
+
+function isUsableTreasuryBranchId(branchId?: string): boolean {
+  const id = String(branchId || '').trim();
+  if (!id) return false;
+  if (branchIdsEquivalent(id, SEED_ORPHAN_BRANCH_ID)) return false;
+  return true;
+}
+
+function mergeCaixasById(server: Caixa[], local: Caixa[]): Caixa[] {
+  const map = new Map<string, Caixa>();
+  for (const c of server) {
+    if (!c?.id || !isUsableTreasuryBranchId(c.branchId)) continue;
+    map.set(c.id, c);
+  }
+  for (const c of local) {
+    if (!c?.id || !isUsableTreasuryBranchId(c.branchId)) continue;
+    const prev = map.get(c.id);
+    if (!prev) {
+      map.set(c.id, c);
+      continue;
+    }
+    // Prefer the row with a real balance / better label when ids collide.
+    const prevBal = Math.abs(Number(prev.currentBalance) || 0);
+    const nextBal = Math.abs(Number(c.currentBalance) || 0);
+    if (nextBal > prevBal || (nextBal === prevBal && String(c.name || '').length > String(prev.name || '').length)) {
+      map.set(c.id, { ...prev, ...c, currentBalance: nextBal >= prevBal ? c.currentBalance : prev.currentBalance });
+    }
+  }
+  return sortTreasuryCaixas([...map.values()]);
+}
+
+function mergeBankAccountsById(server: BankAccount[], local: BankAccount[]): BankAccount[] {
+  const map = new Map<string, BankAccount>();
+  for (const a of server) {
+    if (!a?.id || !isUsableTreasuryBranchId(a.branchId)) continue;
+    map.set(a.id, a);
+  }
+  for (const a of local) {
+    if (!a?.id || !isUsableTreasuryBranchId(a.branchId)) continue;
+    const prev = map.get(a.id);
+    if (!prev) {
+      map.set(a.id, a);
+      continue;
+    }
+    const prevBal = Math.abs(Number(prev.currentBalance) || 0);
+    const nextBal = Math.abs(Number(a.currentBalance) || 0);
+    if (nextBal > prevBal || !prev.bankName) {
+      map.set(a.id, { ...prev, ...a });
+    }
+  }
+  return sortTreasuryBankAccounts([...map.values()]);
+}
+
+async function loadLocalCaixas(): Promise<Caixa[]> {
+  if (isElectronMode() && !isThinClientMode()) {
+    const rows = await dbGetAll<any>('caixas');
+    return rows.map(mapCaixaFromDb);
+  }
+  return lsGet<Caixa[]>(STORAGE_KEYS.caixas, []);
+}
+
+async function loadLocalBankAccounts(): Promise<BankAccount[]> {
+  if (isElectronMode()) {
+    const rows = await dbGetAll<any>('bank_accounts');
+    return rows.map(mapBankAccountFromDb);
+  }
+  return lsGet<BankAccount[]>(STORAGE_KEYS.bankAccounts, []);
+}
+
+/** Push local-only caixas/banks into Postgres so expense pickers stop looking empty. */
+let treasuryPushInFlight: Promise<void> | null = null;
+async function pushLocalTreasuryToServer(localCaixas: Caixa[], localBanks: BankAccount[]): Promise<void> {
+  if (!(await shouldLoadCaixasFromServerApi())) return;
+  if (treasuryPushInFlight) return treasuryPushInFlight;
+  treasuryPushInFlight = (async () => {
+    try {
+      const [serverCaixasRes, serverBanksRes] = await Promise.all([
+        api.caixa.listRegisters(),
+        api.bankAccounts.list(),
+      ]);
+      const serverCaixaIds = new Set(
+        (!serverCaixasRes.error && serverCaixasRes.data
+          ? unwrapApiList<any>(serverCaixasRes.data).map((r) => String(r.id || ''))
+          : []
+        ).filter(Boolean),
+      );
+      const serverBankIds = new Set(
+        (!serverBanksRes.error && serverBanksRes.data
+          ? unwrapApiList<any>(serverBanksRes.data).map((r) => String(r.id || ''))
+          : []
+        ).filter(Boolean),
+      );
+
+      for (const c of localCaixas) {
+        if (!c?.id || serverCaixaIds.has(c.id) || !isUsableTreasuryBranchId(c.branchId)) continue;
+        try {
+          await api.caixa.createRegister({
+            id: c.id,
+            branchId: c.branchId,
+            branchName: c.branchName,
+            name: c.name,
+            openingBalance: c.openingBalance,
+            pettyLimit: c.pettyLimit,
+            dailyLimit: c.dailyLimit,
+            requiresApproval: c.requiresApproval,
+          });
+        } catch (e) {
+          console.warn('[treasury] push caixa failed:', c.id, e);
+        }
+      }
+
+      for (const a of localBanks) {
+        if (!a?.id || serverBankIds.has(a.id) || !isUsableTreasuryBranchId(a.branchId)) continue;
+        try {
+          await api.bankAccounts.save({
+            id: a.id,
+            branchId: a.branchId,
+            branchName: a.branchName,
+            bankName: a.bankName,
+            accountName: a.accountName,
+            accountNumber: a.accountNumber,
+            iban: a.iban,
+            currency: a.currency,
+            currentBalance: a.currentBalance,
+            isActive: a.isActive,
+            isPrimary: a.isPrimary,
+          });
+        } catch (e) {
+          console.warn('[treasury] push bank failed:', a.id, e);
+        }
+      }
+    } finally {
+      treasuryPushInFlight = null;
+    }
+  })();
+  return treasuryPushInFlight;
+}
+
 export async function getCaixas(
   branchId?: string,
   branchName?: string,
@@ -182,87 +321,89 @@ export async function getCaixas(
     if (cached && Date.now() < cached.until) return cached.data;
   }
 
+  const localAll = await loadLocalCaixas();
+
   if (await shouldLoadCaixasFromServerApi()) {
     try {
+      let serverList: Caixa[] = [];
       if (allBranches) {
         const allRes = await api.caixa.listRegisters();
         if (!allRes.error && allRes.data) {
-          const list = sortTreasuryCaixas(
-            unwrapApiList<any>(allRes.data).map((row) => mapCaixaFromDb(row)),
-          );
-          caixaListCache.set(CAIXA_ALL_BRANCHES_CACHE_KEY, {
-            until: Date.now() + CAIXA_CACHE_MS,
-            data: list,
-          });
-          return list;
+          serverList = unwrapApiList<any>(allRes.data).map((row) => mapCaixaFromDb(row));
         }
-      }
-
-      const [listRes, sessionRes] = await Promise.all([
-        api.caixa.listRegisters(branchKey || undefined),
-        branchKey ? api.caixa.getOpenSession(branchKey) : Promise.resolve({ data: null, error: undefined }),
-      ]);
-
-      let list: Caixa[] = [];
-      if (!listRes.error && listRes.data) {
-        list = filterCaixasForBranch(
-          unwrapApiList<any>(listRes.data).map((row) => mapCaixaFromDb(row)),
-          branchKey,
-          branchLabel,
-        );
-      }
-
-      if (list.length === 0 && branchKey) {
-        const allRes = await api.caixa.listRegisters();
-        if (!allRes.error && allRes.data) {
-          list = filterCaixasForBranch(
-            unwrapApiList<any>(allRes.data).map((row) => mapCaixaFromDb(row)),
+      } else {
+        const [listRes, sessionRes] = await Promise.all([
+          api.caixa.listRegisters(branchKey || undefined),
+          branchKey ? api.caixa.getOpenSession(branchKey) : Promise.resolve({ data: null, error: undefined }),
+        ]);
+        if (!listRes.error && listRes.data) {
+          serverList = filterCaixasForBranch(
+            unwrapApiList<any>(listRes.data).map((row) => mapCaixaFromDb(row)),
             branchKey,
             branchLabel,
           );
         }
+        if (serverList.length === 0 && branchKey) {
+          const allRes = await api.caixa.listRegisters();
+          if (!allRes.error && allRes.data) {
+            serverList = filterCaixasForBranch(
+              unwrapApiList<any>(allRes.data).map((row) => mapCaixaFromDb(row)),
+              branchKey,
+              branchLabel,
+            );
+          }
+        }
+        if (serverList.length === 0 && sessionRes.data) {
+          const fromSession = caixaFromOpenSessionRow(
+            sessionRes.data as Record<string, unknown>,
+            branchKey,
+            branchLabel || branchKey,
+          );
+          if (fromSession) serverList = [fromSession];
+        }
+        if (serverList.length === 0 && ensureIfEmpty && branchKey) {
+          const ensureRes = await api.caixa.ensureRegister({
+            branchId: branchKey,
+            branchName: branchLabel || undefined,
+          });
+          const ensured = ensureRes.data ? unwrapApiItem<any>(ensureRes.data) : null;
+          if (ensured) serverList = [mapCaixaFromDb(ensured)];
+        }
       }
 
-      if (list.length === 0 && sessionRes.data) {
-        const fromSession = caixaFromOpenSessionRow(
-          sessionRes.data as Record<string, unknown>,
-          branchKey,
-          branchLabel || branchKey,
-        );
-        if (fromSession) list = [fromSession];
-      }
+      const localScoped = allBranches
+        ? localAll
+        : branchKey
+          ? filterCaixasForBranch(localAll, branchKey, branchLabel)
+          : localAll;
+      const list = mergeCaixasById(serverList, localScoped);
 
-      if (list.length === 0 && ensureIfEmpty && branchKey) {
-        const ensureRes = await api.caixa.ensureRegister({
-          branchId: branchKey,
-          branchName: branchLabel || undefined,
-        });
-        const ensured = ensureRes.data ? unwrapApiItem<any>(ensureRes.data) : null;
-        if (ensured) list = [mapCaixaFromDb(ensured)];
-      }
+      // Heal split-brain: push local-only registers into Postgres in background.
+      void pushLocalTreasuryToServer(localAll, await loadLocalBankAccounts());
 
-      if (list.length > 0) {
-        caixaListCache.set(caixaCacheKey(branchKey, branchLabel), {
+      if (allBranches) {
+        caixaListCache.set(CAIXA_ALL_BRANCHES_CACHE_KEY, {
           until: Date.now() + CAIXA_CACHE_MS,
           data: list,
         });
         return list;
       }
+      if (list.length > 0 || branchKey) {
+        caixaListCache.set(caixaCacheKey(branchKey, branchLabel), {
+          until: Date.now() + CAIXA_CACHE_MS,
+          data: list,
+        });
+      }
+      return list;
     } catch (e) {
       console.warn('[caixas] server list failed:', e);
     }
   }
 
-  if (isElectronMode() && !isThinClientMode()) {
-    const rows = await dbGetAll<any>('caixas');
-    let caixas = rows.map(mapCaixaFromDb);
-    if (allBranches) return sortTreasuryCaixas(caixas);
-    if (branchKey) caixas = filterCaixasForBranch(caixas, branchKey, branchLabel);
-    return caixas;
-  }
-  const caixas = lsGet<Caixa[]>(STORAGE_KEYS.caixas, []);
-  if (allBranches) return sortTreasuryCaixas(caixas);
-  return branchKey ? filterCaixasForBranch(caixas, branchKey, branchLabel) : caixas;
+  let caixas = localAll;
+  if (allBranches) return sortTreasuryCaixas(caixas.filter((c) => isUsableTreasuryBranchId(c.branchId)));
+  if (branchKey) caixas = filterCaixasForBranch(caixas, branchKey, branchLabel);
+  return caixas.filter((c) => isUsableTreasuryBranchId(c.branchId));
 }
 
 export async function getCaixaById(id: string): Promise<Caixa | undefined> {
@@ -703,41 +844,51 @@ export async function getBankAccounts(
     if (cached && Date.now() < cached.until) return cached.data;
   }
 
+  const localAll = await loadLocalBankAccounts();
+
   if (await shouldLoadBankAccountsFromServerApi()) {
     try {
+      let serverList: BankAccount[] = [];
       if (allBranches) {
         const allRes = await api.bankAccounts.list();
         if (!allRes.error && allRes.data) {
-          const list = sortTreasuryBankAccounts(
-            unwrapApiList<any>(allRes.data).map((row) => mapBankAccountFromDb(row)),
-          );
-          bankListCache.set(BANK_ALL_BRANCHES_CACHE_KEY, {
-            until: Date.now() + BANK_CACHE_MS,
-            data: list,
-          });
-          return list;
+          serverList = unwrapApiList<any>(allRes.data).map((row) => mapBankAccountFromDb(row));
         }
-      }
-
-      const listRes = await api.bankAccounts.list(branchKey || undefined);
-      let list: BankAccount[] = [];
-      if (!listRes.error && listRes.data) {
-        list = filterBankAccountsForBranch(
-          unwrapApiList<any>(listRes.data).map((row) => mapBankAccountFromDb(row)),
-          branchKey,
-        );
-      }
-
-      if (list.length === 0 && branchKey) {
-        const allRes = await api.bankAccounts.list();
-        if (!allRes.error && allRes.data) {
-          list = filterBankAccountsForBranch(
-            unwrapApiList<any>(allRes.data).map((row) => mapBankAccountFromDb(row)),
+      } else {
+        const listRes = await api.bankAccounts.list(branchKey || undefined);
+        if (!listRes.error && listRes.data) {
+          serverList = filterBankAccountsForBranch(
+            unwrapApiList<any>(listRes.data).map((row) => mapBankAccountFromDb(row)),
             branchKey,
           );
         }
+        if (serverList.length === 0 && branchKey) {
+          const allRes = await api.bankAccounts.list();
+          if (!allRes.error && allRes.data) {
+            serverList = filterBankAccountsForBranch(
+              unwrapApiList<any>(allRes.data).map((row) => mapBankAccountFromDb(row)),
+              branchKey,
+            );
+          }
+        }
       }
 
+      const localScoped = allBranches
+        ? localAll
+        : branchKey
+          ? filterBankAccountsForBranch(localAll, branchKey)
+          : localAll;
+      const list = mergeBankAccountsById(serverList, localScoped);
+
+      void pushLocalTreasuryToServer(await loadLocalCaixas(), localAll);
+
+      if (allBranches) {
+        bankListCache.set(BANK_ALL_BRANCHES_CACHE_KEY, {
+          until: Date.now() + BANK_CACHE_MS,
+          data: list,
+        });
+        return list;
+      }
       if (list.length > 0 || branchKey) {
         bankListCache.set(bankCacheKey(branchKey), {
           until: Date.now() + BANK_CACHE_MS,
@@ -750,16 +901,10 @@ export async function getBankAccounts(
     }
   }
 
-  if (isElectronMode()) {
-    const rows = await dbGetAll<any>('bank_accounts');
-    let accounts = rows.map(mapBankAccountFromDb);
-    if (allBranches) return sortTreasuryBankAccounts(accounts);
-    if (branchKey) accounts = filterBankAccountsForBranch(accounts, branchKey);
-    return accounts;
-  }
-  const accounts = lsGet<BankAccount[]>(STORAGE_KEYS.bankAccounts, []);
+  let accounts = localAll.filter((a) => isUsableTreasuryBranchId(a.branchId));
   if (allBranches) return sortTreasuryBankAccounts(accounts);
-  return branchKey ? filterBankAccountsForBranch(accounts, branchKey) : accounts;
+  if (branchKey) accounts = filterBankAccountsForBranch(accounts, branchKey);
+  return accounts;
 }
 
 export async function getBankAccountById(id: string): Promise<BankAccount | undefined> {
