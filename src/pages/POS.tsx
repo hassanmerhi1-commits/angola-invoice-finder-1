@@ -199,11 +199,15 @@ export default function POS() {
     if (endOfDayOpen) {
       void refreshSales();
       void refreshCreditNotes(currentBranch.id);
+      void getExpenses(currentBranch.id).then((rows) => {
+        if (!cancelled) setShiftExpenses(rows);
+      });
+      void refreshCaixa();
     }
     return () => {
       cancelled = true;
     };
-  }, [caixaOpen, currentBranch?.id, endOfDayOpen, shiftIssuesVersion, refreshSales, refreshCreditNotes]);
+  }, [caixaOpen, currentBranch?.id, endOfDayOpen, shiftIssuesVersion, refreshSales, refreshCreditNotes, refreshCaixa]);
 
   useEffect(() => {
     const onCreditNotesChanged = (event: Event) => {

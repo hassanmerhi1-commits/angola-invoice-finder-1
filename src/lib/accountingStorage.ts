@@ -1217,16 +1217,22 @@ export async function payExpense(
     const glError = payload?.glError;
     const row = (payload && 'data' in payload ? payload.data : payload) || expense;
     const paid = mapExpenseFromDb(row);
-    if (typeof window !== 'undefined' && paid.paymentSource === 'caixa' && paid.caixaId) {
-      window.dispatchEvent(
-        new CustomEvent('nexor:pos-caixa-expense', {
-          detail: {
-            branchId: paid.branchId,
-            caixaId: paid.caixaId,
-            amount: paid.totalAmount,
-          },
-        }),
-      );
+    if (typeof window !== 'undefined') {
+      const branchForPos = paid.branchId || expense.branchId;
+      const caixaForPos = paid.caixaId || expense.caixaId;
+      const amountForPos = paid.totalAmount || expense.totalAmount;
+      if ((paid.paymentSource || expense.paymentSource) === 'caixa' && amountForPos > 0) {
+        window.dispatchEvent(
+          new CustomEvent('nexor:pos-caixa-expense', {
+            detail: {
+              branchId: branchForPos,
+              caixaId: caixaForPos,
+              amount: amountForPos,
+            },
+          }),
+        );
+      }
+      window.dispatchEvent(new CustomEvent('nexor:expenses-changed'));
     }
     invalidateCaixaListCache();
     invalidateBankListCache();
