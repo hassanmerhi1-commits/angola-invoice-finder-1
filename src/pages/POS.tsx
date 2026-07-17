@@ -220,23 +220,32 @@ export default function POS() {
     };
     const onCaixaExpense = (event: Event) => {
       const detail = (event as CustomEvent<{ branchId?: string; caixaId?: string; amount?: number }>).detail;
+      // Same branch is enough (like credit notes) — open register may be "Caixa Principal"
+      // while the expense was paid from "Caixa - SOYO XX".
       if (detail?.branchId && detail.branchId !== currentBranch?.id) return;
-      if (caixaSession?.caixaId && detail?.caixaId && detail.caixaId !== caixaSession.caixaId) return;
       if (detail?.amount && detail.amount > 0) recordCashExpense(detail.amount);
       void refreshCaixa();
       if (currentBranch?.id) {
         void getExpenses(currentBranch.id).then(setShiftExpenses);
       }
     };
+    const onExpensesChanged = () => {
+      if (currentBranch?.id) {
+        void getExpenses(currentBranch.id).then(setShiftExpenses);
+      }
+      void refreshCaixa();
+    };
     window.addEventListener(CREDIT_NOTES_CHANGED_EVENT, onCreditNotesChanged);
     window.addEventListener('nexor:pos-caixa-refund', onCaixaRefund);
     window.addEventListener('nexor:pos-caixa-expense', onCaixaExpense);
+    window.addEventListener('nexor:expenses-changed', onExpensesChanged);
     return () => {
       window.removeEventListener(CREDIT_NOTES_CHANGED_EVENT, onCreditNotesChanged);
       window.removeEventListener('nexor:pos-caixa-refund', onCaixaRefund);
       window.removeEventListener('nexor:pos-caixa-expense', onCaixaExpense);
+      window.removeEventListener('nexor:expenses-changed', onExpensesChanged);
     };
-  }, [currentBranch?.id, caixaSession?.caixaId, refreshCreditNotes, refreshCaixa, recordCashRefund, recordCashExpense]);
+  }, [currentBranch?.id, refreshCreditNotes, refreshCaixa, recordCashRefund, recordCashExpense]);
 
   const navigableSearchResults = useMemo(
     () => filterPosProductsBySearch(products, searchTerm),

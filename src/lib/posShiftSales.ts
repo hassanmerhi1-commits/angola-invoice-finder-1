@@ -2,6 +2,7 @@ import type { Sale, CreditNote } from '@/types/erp';
 import type { CaixaSession } from '@/types/accounting';
 import type { Expense } from '@/types/accounting';
 import type { User } from '@/types/erp';
+import { branchIdsEquivalent } from '@/lib/branchAccess';
 
 export function saleLocalDate(createdAt: string): string {
   const d = new Date(createdAt);
@@ -98,19 +99,22 @@ export function filterShiftCashRefunds(
   });
 }
 
-/** Expenses paid from the open caixa during this shift. */
+/**
+ * Expenses paid from caixa during this shift (same branch).
+ * Like credit notes: do NOT require expense.caixaId === session.caixaId —
+ * users often open "Caixa Principal" but pay from the COA "Caixa - SOYO XX".
+ */
 export function filterShiftCashExpenses(
   expenses: Expense[],
   session: CaixaSession | null | undefined,
-  caixaId?: string,
+  _caixaId?: string,
   day = todayLocalDate(),
 ): Expense[] {
   if (!session) return [];
   return expenses.filter((expense) => {
     if (expense.status !== 'paid') return false;
     if (expense.paymentSource !== 'caixa') return false;
-    if (expense.branchId !== session.branchId) return false;
-    if (caixaId && expense.caixaId !== caixaId) return false;
+    if (!branchIdsEquivalent(expense.branchId, session.branchId)) return false;
     if (!expense.paidAt) return false;
     if (saleLocalDate(expense.paidAt) !== day) return false;
     return eventInShift(expense.paidAt, session);

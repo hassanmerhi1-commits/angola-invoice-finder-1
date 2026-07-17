@@ -79,6 +79,10 @@ async function recordCashRefundOnOpenSession(
  * Record cash leaving the open drawer when an expense is paid from a caixa.
  * Updates session total_out + expenses_total (EOD / POS open register).
  * Does NOT change caixas.current_balance — caller applies that separately.
+ *
+ * Matches credit notes: prefer the open session for this caixa, else any open
+ * session on the same branch (users often open "Caixa Principal" but pay from
+ * the COA-synced "Caixa - SOYO XX" register).
  */
 async function recordExpenseOnOpenSession(
   client,
@@ -124,12 +128,6 @@ async function recordExpenseOnOpenSession(
   }
 
   const session = sessionRes.rows[0];
-  // If session is for another register, still record outflows on the matching branch session
-  // only when expense caixa matches or session has no caixa_id.
-  const sessionCaixa = session.caixa_id != null ? String(session.caixa_id) : '';
-  if (registerId && sessionCaixa && sessionCaixa !== registerId) {
-    return { recorded: false, reason: 'open_session_other_caixa', sessionId: session.id };
-  }
 
   await query(
     `UPDATE caixa_sessions
@@ -145,6 +143,7 @@ async function recordExpenseOnOpenSession(
     caixaId: session.caixa_id || registerId || null,
     amount: expenseAmount,
     expenseId,
+    matchedBy: registerId && String(session.caixa_id || '') === registerId ? 'caixa' : 'branch',
   };
 }
 
