@@ -20,6 +20,7 @@ function mapBankRow(row) {
     currentBalance: Number(row.balance) || 0,
     isActive: row.is_active !== false && row.is_active !== 0,
     isPrimary: !!row.is_primary,
+    glAccountCode: row.gl_account_code || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -162,6 +163,12 @@ module.exports = function bankAccountsRouter(broadcastTable) {
       const isActive = body.isActive !== false;
       const isPrimary = !!body.isPrimary;
 
+      const { ensureBankGlColumn, resolveBankGlAccountCode, postBankOpeningBalanceJournal } = require('../lib/bankGlAccounts');
+      await ensureBankGlColumn(db);
+
+      const existed = await db.query('SELECT id, gl_account_code FROM bank_accounts WHERE id = $1 LIMIT 1', [id]);
+      const isNew = !existed.rows[0];
+
       await db.query(
         `INSERT INTO bank_accounts (
           id, branch_id, branch_name, bank_name, name, account_number,
@@ -197,8 +204,38 @@ module.exports = function bankAccountsRouter(broadcastTable) {
         ],
       );
 
+      // Link to COA 431xxxx + opening journal for new accounts with opening balance.
+      if (db.pool) {
+        const client = await db.pool.connect();
+        try {
+          await client.query('BEGIN');
+          const bankRow = (await client.query('SELECT * FROM bank_accounts WHERE id = $1', [id])).rows[0];
+          const glCode = await resolveBankGlAccountCode(client, bankRow);
+          if (isNew && openingBalance > 0) {
+            await postBankOpeningBalanceJournal(client, {
+              bankId: id,
+              branchId: resolvedBranchId,
+              glAccountCode: glCode,
+              openingBalance,
+              createdBy: req.user?.id || null,
+              bankLabel: `${bankName} ${accountNumber}`,
+            });
+          }
+          await client.query('COMMIT');
+        } catch (glErr) {
+          try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+          console.warn('[BANK] GL link/opening:', glErr.message);
+        } finally {
+          client.release();
+        }
+      }
+
       const row = await db.query('SELECT * FROM bank_accounts WHERE id = $1', [id]);
-      if (broadcastTable) await broadcastTable('bank_accounts');
+      if (broadcastTable) {
+        await broadcastTable('bank_accounts');
+        await broadcastTable('journal_entries');
+        await broadcastTable('chart_of_accounts');
+      }
       auditErpSafe(req, {
         table: 'bank_accounts',
         id,

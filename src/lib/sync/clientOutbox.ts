@@ -61,6 +61,39 @@ export async function enqueuePurchaseInvoiceSync(payload: {
   });
 }
 
+export async function enqueuePaymentSync(payload: {
+  payment: Record<string, unknown>;
+}): Promise<boolean> {
+  const id = String(payload.payment?.id || '');
+  if (!id) return false;
+  return enqueueClientSyncEvent({
+    type: 'payment.created',
+    idempotencyKey: `payment:${id}`,
+    entityType: 'payment',
+    payload,
+  });
+}
+
+export async function enqueueStockMovementSync(payload: {
+  movement: Record<string, unknown>;
+}): Promise<boolean> {
+  const id = String(payload.movement?.id || cryptoRandomId());
+  return enqueueClientSyncEvent({
+    type: 'stock_movement',
+    idempotencyKey: `stock:${id}`,
+    entityType: 'stock_movement',
+    payload,
+  });
+}
+
+function cryptoRandomId(): string {
+  try {
+    return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  } catch {
+    return String(Date.now());
+  }
+}
+
 export function shouldQueueOnNetworkError(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error || '');
   return isNetworkError(msg);

@@ -2342,6 +2342,16 @@ ipcMain.handle('clientLocal:isEnabled', () => ({
   path: clientDb.CLIENT_DB_PATH,
 }));
 
+ipcMain.handle('clientLocal:ensureOfflineFirst', () => {
+  try {
+    clientDb.ensureOfflineFirstSyncEnv();
+    if (!isServerMode) clientDb.init();
+    return { ok: true, enabled: clientDb.isOfflineFirstEnabled() };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 ipcMain.handle('clientLocal:saveSale', (_, saleData) => {
   try {
     if (!clientDb.isOfflineFirstEnabled()) {

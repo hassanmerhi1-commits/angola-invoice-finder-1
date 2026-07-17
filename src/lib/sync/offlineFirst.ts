@@ -3,8 +3,15 @@ import { newClientRequestId } from '@/lib/sync/offlineSales';
 export function isOfflineFirstRole(): boolean {
   if (typeof window === 'undefined') return false;
   try {
-    return localStorage.getItem('nexor_installation_role') === 'shop_client'
-      && localStorage.getItem('nexor_offline_first') === 'true';
+    const role = localStorage.getItem('nexor_installation_role');
+    if (role !== 'shop_client') return false;
+    const flag = String(localStorage.getItem('nexor_offline_first') || '').toLowerCase();
+    // Shop clients default to offline-first unless explicitly disabled.
+    if (flag === 'false' || flag === '0' || flag === 'no') return false;
+    if (flag !== 'true') {
+      localStorage.setItem('nexor_offline_first', 'true');
+    }
+    return true;
   } catch {
     return false;
   }
@@ -68,6 +75,18 @@ export async function pullMasterDataFromCity(branchId: string): Promise<{ ok: bo
     return r?.ok ? { ok: true } : { ok: false, error: r?.error };
   } catch (e: any) {
     return { ok: false, error: e?.message };
+  }
+}
+
+/** After online login: pull city catalog into local SQLite (non-blocking). */
+export async function warmOfflineCatalog(branchId?: string): Promise<void> {
+  if (!(await isOfflineFirstEnabled())) return;
+  const id = String(branchId || '').trim();
+  if (!id) return;
+  try {
+    await pullMasterDataFromCity(id);
+  } catch {
+    /* non-fatal */
   }
 }
 

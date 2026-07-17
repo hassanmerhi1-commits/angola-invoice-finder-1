@@ -189,6 +189,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Phase B1 — local SQLite save-first (shop client)
   clientLocal: {
     isEnabled: () => ipcRenderer.invoke('clientLocal:isEnabled'),
+    ensureOfflineFirst: () => ipcRenderer.invoke('clientLocal:ensureOfflineFirst'),
     saveSale: (saleData) => ipcRenderer.invoke('clientLocal:saveSale', saleData),
     listSales: (branchId) => ipcRenderer.invoke('clientLocal:listSales', branchId),
     syncProducts: (products) => ipcRenderer.invoke('clientLocal:syncProducts', products),

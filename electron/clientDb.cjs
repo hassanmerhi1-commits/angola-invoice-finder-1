@@ -39,22 +39,62 @@ function loadBetterSqlite3() {
   return require('better-sqlite3');
 }
 
-function isOfflineFirstEnabled() {
-  const env = String(process.env.NEXOR_OFFLINE_FIRST || '').toLowerCase();
-  if (env === 'true' || env === '1' || env === 'yes') return true;
+function readSyncEnvFlag(key) {
   const syncEnv = path.join(INSTALL_DIR, 'sync.env');
   try {
-    if (fs.existsSync(syncEnv)) {
-      for (const line of fs.readFileSync(syncEnv, 'utf8').split(/\r?\n/)) {
-        const t = line.trim();
-        if (t.startsWith('NEXOR_OFFLINE_FIRST=')) {
-          const v = t.split('=')[1]?.trim().toLowerCase();
-          return v === 'true' || v === '1' || v === 'yes';
-        }
+    if (!fs.existsSync(syncEnv)) return null;
+    for (const line of fs.readFileSync(syncEnv, 'utf8').split(/\r?\n/)) {
+      const t = line.trim();
+      if (t.startsWith(`${key}=`)) {
+        return t.split('=').slice(1).join('=').trim().toLowerCase();
       }
     }
   } catch (_) {
     /* ignore */
+  }
+  return null;
+}
+
+function isLanClientInstall() {
+  try {
+    const ipPath = path.join(INSTALL_DIR, 'IP');
+    if (!fs.existsSync(ipPath)) return false;
+    const raw = fs.readFileSync(ipPath, 'utf8').trim();
+    if (!raw || /\.db$/i.test(raw)) return false;
+    // IP / host → client; path ending in .db → server/standalone
+    return /^[\w.-]+(?::\d+)?$/.test(raw) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(raw);
+  } catch (_) {
+    return false;
+  }
+}
+
+function ensureOfflineFirstSyncEnv() {
+  const syncEnv = path.join(INSTALL_DIR, 'sync.env');
+  try {
+    let body = '';
+    if (fs.existsSync(syncEnv)) body = fs.readFileSync(syncEnv, 'utf8');
+    if (/^NEXOR_OFFLINE_FIRST=/m.test(body)) {
+      body = body.replace(/^NEXOR_OFFLINE_FIRST=.*$/m, 'NEXOR_OFFLINE_FIRST=true');
+    } else {
+      body = `${body.replace(/\s*$/, '')}\nNEXOR_OFFLINE_FIRST=true\n`;
+    }
+    fs.writeFileSync(syncEnv, body, 'utf8');
+  } catch (e) {
+    console.warn('[clientDb] ensureOfflineFirstSyncEnv:', e.message);
+  }
+}
+
+function isOfflineFirstEnabled() {
+  const env = String(process.env.NEXOR_OFFLINE_FIRST || '').toLowerCase();
+  if (env === 'false' || env === '0' || env === 'no') return false;
+  if (env === 'true' || env === '1' || env === 'yes') return true;
+  const fileFlag = readSyncEnvFlag('NEXOR_OFFLINE_FIRST');
+  if (fileFlag === 'false' || fileFlag === '0' || fileFlag === 'no') return false;
+  if (fileFlag === 'true' || fileFlag === '1' || fileFlag === 'yes') return true;
+  // Default ON for LAN shop clients (IP file points at server host).
+  if (isLanClientInstall()) {
+    ensureOfflineFirstSyncEnv();
+    return true;
   }
   return false;
 }
@@ -349,6 +389,7 @@ module.exports = {
   init,
   getDb,
   isOfflineFirstEnabled,
+  ensureOfflineFirstSyncEnv,
   saveSale,
   syncProductsCache,
   getPendingOutboxEvents,

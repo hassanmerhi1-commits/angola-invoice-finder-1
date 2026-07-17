@@ -552,6 +552,12 @@ async function ensurePhaseSchema(db) {
     await ensureSalesCreditPaymentMethod(db);
     await ensureCaixaTables(db);
     await ensureBankAccountsTable(db);
+    try {
+      const { ensureBankGlColumn } = require('./bankGlAccounts');
+      await ensureBankGlColumn(db);
+    } catch (e) {
+      console.warn('[SCHEMA] bank_accounts.gl_account_code:', e.message);
+    }
     await ensureJournalReferenceIdText(db);
     await ensureUserPermissionsColumn(db);
     await ensureAuditLogActions(db);

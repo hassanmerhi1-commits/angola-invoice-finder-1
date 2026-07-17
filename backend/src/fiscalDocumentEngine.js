@@ -203,8 +203,9 @@ async function processCreditNote(client, data) {
   if (taxAmount > 0) {
     journalLines.push({ accountCode: '3452', description: `IVA NC ${documentNumber}`, debit: taxAmount, credit: 0 });
   }
-  // Credit the SAME treasury account the sale debited (branch 45x or bank 431).
+  // Credit the SAME account the sale debited: 45x cash, 311 credit AR, or 431 bank.
   let refundAccountCode = '431';
+  const salePayMethod = String(sale.payment_method || '').toLowerCase();
   if (isCashPaymentMethod(sale.payment_method)) {
     const linkSp = 'branch_caixa_link';
     await client.query(`SAVEPOINT ${linkSp}`);
@@ -224,6 +225,14 @@ async function processCreditNote(client, data) {
       branchCode,
       saleId: sale.id,
     });
+  } else if (salePayMethod === 'credit') {
+    const { resolveEntityAccountCode } = require('./lib/entityCoaAccounts');
+    refundAccountCode = await resolveEntityAccountCode(
+      client,
+      'client',
+      sale.client_id || null,
+      sale.customer_name || sale.customerName || '',
+    );
   }
   journalLines.push({
     accountCode: refundAccountCode,
@@ -414,9 +423,27 @@ async function processDebitNote(client, data) {
     );
   }
 
+  let debitAccountCode = '431';
+  if (originalInvoiceId) {
+    const payRes = await client.query(
+      `SELECT payment_method, client_id, customer_name FROM sales WHERE id = $1 LIMIT 1`,
+      [originalInvoiceId],
+    );
+    const orig = payRes.rows[0];
+    if (orig && String(orig.payment_method || '').toLowerCase() === 'credit') {
+      const { resolveEntityAccountCode } = require('./lib/entityCoaAccounts');
+      debitAccountCode = await resolveEntityAccountCode(
+        client,
+        'client',
+        orig.client_id || null,
+        orig.customer_name || customerName || '',
+      );
+    }
+  }
+
   const journalLines = [
     {
-      accountCode: '431',
+      accountCode: debitAccountCode,
       description: `ND ${documentNumber}`,
       debit: total,
       credit: 0,

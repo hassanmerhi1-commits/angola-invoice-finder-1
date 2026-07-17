@@ -79,7 +79,9 @@ async function applyBankAccountDelta(bankAccountId, delta) {
   );
 }
 
-async function postBankExpenseGl({ branchId, amount, category, description, referenceId, createdBy }) {
+async function postBankExpenseGl({
+  branchId, amount, category, description, referenceId, createdBy, bankAccountId,
+}) {
   const expenseCode = expenseGlAccount(category);
   const amt = Number(amount);
   if (!branchId || !Number.isFinite(amt) || amt <= 0) {
@@ -97,6 +99,19 @@ async function postBankExpenseGl({ branchId, amount, category, description, refe
       await client.query('COMMIT');
       return { alreadyPosted: true };
     }
+    let bankGl = BANK_GL;
+    if (bankAccountId) {
+      try {
+        const { ensureBankGlColumn, resolveBankGlAccountCode } = require('../lib/bankGlAccounts');
+        await ensureBankGlColumn(db);
+        const bankRes = await client.query('SELECT * FROM bank_accounts WHERE id = $1 LIMIT 1', [bankAccountId]);
+        if (bankRes.rows[0]) {
+          bankGl = await resolveBankGlAccountCode(client, bankRes.rows[0]);
+        }
+      } catch (e) {
+        console.warn('[EXPENSES] bank GL resolve:', e.message);
+      }
+    }
     await createJournalEntry(client, {
       description: `Despesa (banco): ${description}`,
       referenceType: 'expense',
@@ -105,7 +120,7 @@ async function postBankExpenseGl({ branchId, amount, category, description, refe
       createdBy,
       lines: [
         { accountCode: expenseCode, debit: amt, credit: 0, description },
-        { accountCode: BANK_GL, debit: 0, credit: amt, description: `Pagamento banco — ${description}` },
+        { accountCode: bankGl, debit: 0, credit: amt, description: `Pagamento banco — ${description}` },
       ],
     });
     await client.query('COMMIT');
@@ -149,18 +164,15 @@ async function payExpenseTreasury(row, paidBy, opts = {}) {
       console.warn('[EXPENSES] GL post (caixa):', glErr.message);
     }
 
-    // Drawer balance: skip when GL already posted (avoid double deduct on retry).
-    if (applyBalances && row.caixaId && !alreadyPosted) {
-      try {
-        await applyCaixaRegisterDelta(row.caixaId, -row.totalAmount);
-      } catch (balErr) {
-        console.warn('[EXPENSES] caixa balance:', balErr.message);
+    // Only touch drawer/session after a successful GL post (or when already posted).
+    if (!glError && applyBalances) {
+      if (row.caixaId && !alreadyPosted) {
+        try {
+          await applyCaixaRegisterDelta(row.caixaId, -row.totalAmount);
+        } catch (balErr) {
+          console.warn('[EXPENSES] caixa balance:', balErr.message);
+        }
       }
-    }
-
-    // Open POS session: increment on first cash move, then idempotent ledger sync so
-    // GL-already-posted retries still fill expenses_total without double-counting.
-    if (applyBalances) {
       const sessionBranch = glBranchId || row.branchId;
       if (!alreadyPosted) {
         try {
@@ -204,6 +216,7 @@ async function payExpenseTreasury(row, paidBy, opts = {}) {
         description: row.description,
         referenceId: row.id,
         createdBy: paidBy,
+        bankAccountId: row.bankAccountId,
       });
       alreadyPosted = !!glResult?.alreadyPosted;
       if (applyBalances && !alreadyPosted) {
@@ -212,13 +225,7 @@ async function payExpenseTreasury(row, paidBy, opts = {}) {
     } catch (glErr) {
       glError = glErr.message;
       console.warn('[EXPENSES] GL post (bank):', glErr.message);
-      if (applyBalances && !alreadyPosted) {
-        try {
-          await applyBankAccountDelta(row.bankAccountId, -row.totalAmount);
-        } catch (balErr) {
-          console.warn('[EXPENSES] bank balance:', balErr.message);
-        }
-      }
+      // Do not deduct bank balance when GL failed — pay will be rejected.
     }
   }
   return { glError };
@@ -402,7 +409,17 @@ module.exports = function expensesRouter(broadcastTable) {
       if (!wasAlreadyPaid && row.status === 'paid' && row.branchId && row.totalAmount > 0) {
         const { glError } = await payExpenseTreasury(row, row.paidBy || row.requestedBy);
         if (glError) {
-          console.warn('[EXPENSES] GL post on save:', glError);
+          // Do not leave a "paid" expense without a ledger entry.
+          await db.query(
+            `UPDATE expenses SET status = 'draft', paid_by = NULL, paid_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+            [row.id],
+          );
+          const reverted = mapRow((await db.query('SELECT * FROM expenses WHERE id = $1', [row.id])).rows[0]);
+          return res.status(422).json({
+            error: `Pagamento não concluído — falha no diário: ${glError}`,
+            glError,
+            data: reverted,
+          });
         }
       }
 
@@ -438,6 +455,7 @@ module.exports = function expensesRouter(broadcastTable) {
       if (!existing.rows[0]) return res.status(404).json({ error: 'Expense not found' });
 
       const alreadyPaid = String(existing.rows[0].status || '') === 'paid';
+      const priorStatus = String(existing.rows[0].status || 'draft');
       if (!alreadyPaid) {
         await db.query(
           `UPDATE expenses SET status = 'paid', paid_by = $1, paid_at = $2, updated_at = $2 WHERE id = $3`,
@@ -450,6 +468,19 @@ module.exports = function expensesRouter(broadcastTable) {
       const { glError } = await payExpenseTreasury(row, paidByForGl || paidByLabel, {
         applyBalances: !alreadyPaid,
       });
+
+      if (glError && !alreadyPaid) {
+        await db.query(
+          `UPDATE expenses SET status = $1, paid_by = NULL, paid_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          [priorStatus === 'paid' ? 'draft' : priorStatus, req.params.id],
+        );
+        const reverted = mapRow((await db.query('SELECT * FROM expenses WHERE id = $1', [req.params.id])).rows[0]);
+        return res.status(422).json({
+          error: `Pagamento não concluído — falha no diário: ${glError}`,
+          glError,
+          data: reverted,
+        });
+      }
 
       if (broadcastTable) {
         await broadcastTable('expenses');

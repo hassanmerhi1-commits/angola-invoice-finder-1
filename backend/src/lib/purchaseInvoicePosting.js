@@ -300,6 +300,50 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
   let journalLines = Array.isArray(inv.journalLines) ? [...inv.journalLines] : [];
   const landing = landingCostsFromInvoice(inv);
 
+  // Auto-build balanced purchase journal when UI omitted lines (stock + payable already posted).
+  if (journalLines.length === 0 && !result.journalEntryId && Number(inv.total || 0) > 0) {
+    try {
+      const { resolveEntityAccountCode } = require('./entityCoaAccounts');
+      const supplierId = String(inv.supplierId || inv.supplier_id || '').trim();
+      const supplierName = String(inv.supplierName || inv.supplier_name || '').trim();
+      const supplierCode = await resolveEntityAccountCode(
+        client,
+        'supplier',
+        supplierId || null,
+        supplierName,
+      );
+      const totalAmt = roundMoney(Number(inv.total || 0));
+      const taxAmt = roundMoney(Number(inv.taxAmount ?? inv.tax_amount ?? 0));
+      const goodsAmt = roundMoney(Math.max(0, totalAmt - taxAmt));
+      journalLines = [];
+      if (goodsAmt > 0) {
+        journalLines.push({
+          accountCode: '212',
+          debit: goodsAmt,
+          credit: 0,
+          description: `Mercadorias ${inv.invoiceNumber || ''}`.trim(),
+        });
+      }
+      if (taxAmt > 0) {
+        journalLines.push({
+          accountCode: '3451',
+          debit: taxAmt,
+          credit: 0,
+          description: `IVA dedutível ${inv.invoiceNumber || ''}`.trim(),
+        });
+      }
+      journalLines.push({
+        accountCode: supplierCode,
+        debit: 0,
+        credit: totalAmt,
+        description: supplierName || 'Fornecedor',
+      });
+      result.warnings.push('Journal: auto-built from invoice totals (UI had no journal lines)');
+    } catch (autoErr) {
+      result.warnings.push(`Journal auto-build failed: ${autoErr.message}`);
+    }
+  }
+
   if (journalLines.length === 0 && landing > 0) {
     result.errors.push('Journal: freight entered but invoice has no journal lines');
   } else if (journalLines.length === 0 && !result.journalEntryId && Number(inv.total || 0) > 0) {

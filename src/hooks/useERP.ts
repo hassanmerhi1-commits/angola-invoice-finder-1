@@ -410,11 +410,8 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     product: Product,
     options?: ProductWriteOptions,
   ): Promise<Product> => {
-    if (isOfflineModeActive()) {
-      throw new Error(
-        'Cannot save products while signed in offline. Connect to the server and log in again.',
-      );
-    }
+    const { assertOnlineForWrite } = await import('@/lib/offlineWriteGuard');
+    assertOnlineForWrite('save products');
 
     const writeGeneration = ++listGenerationRef.current;
     const normalizedBranch = normalizeProductBranchIdForApi(product.branchId);
@@ -1079,6 +1076,11 @@ export function useAuth() {
         window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
         setAuthState({ user });
         markElectronSessionAuthenticated();
+        if (!isOffline && user.branchId) {
+          void import('@/lib/sync/offlineFirst').then(({ warmOfflineCatalog }) => {
+            void warmOfflineCatalog(user.branchId);
+          }).catch(() => { /* non-fatal */ });
+        }
         return { ok: true, offline: isOffline };
       }
     } catch (e) {
@@ -1442,6 +1444,8 @@ export function useStockTransfers(branchId?: string) {
     items: { productId: string; productName: string; sku: string; quantity: number }[],
     requestedBy: string, notes?: string
   ): Promise<StockTransfer> => {
+    const { assertOnlineForWrite } = await import('@/lib/offlineWriteGuard');
+    assertOnlineForWrite('create stock transfers');
     const result = await api.stockTransfers.create({
       fromBranchId, toBranchId, items, requestedBy, notes,
     });

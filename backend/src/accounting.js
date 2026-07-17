@@ -244,6 +244,28 @@ async function findAccountByCode(client, code) {
  * @param {object} client - PostgreSQL client (from pool.connect())
  * @param {object} params - Journal entry parameters
  */
+/** Block posts into closed/locked months (shared by all JE creators). */
+async function assertPeriodOpenForJournal(client, entryDate) {
+  const d = new Date(entryDate || new Date().toISOString().split('T')[0]);
+  if (Number.isNaN(d.getTime())) return;
+  const year = d.getFullYear();
+  const month = d.getMonth() + 1;
+  try {
+    const result = await client.query(
+      `SELECT status FROM accounting_periods WHERE year = $1 AND month = $2`,
+      [year, month],
+    );
+    if (result.rows.length > 0 && result.rows[0].status !== 'open') {
+      throw new Error(
+        `Período contabilístico ${month}/${year} está ${result.rows[0].status}. Não é possível lançar.`,
+      );
+    }
+  } catch (e) {
+    if (String(e.message || '').includes('Período contabilístico')) throw e;
+    /* table may not exist on very old DBs — allow post */
+  }
+}
+
 async function createJournalEntry(client, params) {
   const {
     description, referenceType, referenceId, branchId,
@@ -256,6 +278,8 @@ async function createJournalEntry(client, params) {
   if (!description) {
     throw new Error('Journal entry description is required');
   }
+
+  await assertPeriodOpenForJournal(client, entryDate);
 
   const prefixMap = {
     sale: 'VD', purchase: 'CP', purchase_invoice: 'CP', transfer: 'TRF',

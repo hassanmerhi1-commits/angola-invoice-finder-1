@@ -232,6 +232,9 @@ export default function Setup() {
         localStorage.setItem('kwanza_is_server', 'false');
         localStorage.setItem('nexor_installation_role', 'shop_client');
         localStorage.setItem('nexor_offline_first', 'true');
+        try {
+          await window.electronAPI?.clientLocal?.ensureOfflineFirst?.();
+        } catch { /* non-fatal */ }
         localStorage.setItem(
           'kwanza_client_config',
           JSON.stringify({

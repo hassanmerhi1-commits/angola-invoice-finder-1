@@ -98,6 +98,7 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
     const paymentMethod = sale.payment_method || 'cash';
 
     let cashAccountCode = '431';
+    const payMethod = String(paymentMethod || '').toLowerCase();
     if (isCashPaymentMethod(paymentMethod)) {
       await linkOrphanBranchCaixaAccounts(client);
       cashAccountCode = await resolveBranchCaixaGlAccountCode(client, {
@@ -106,6 +107,14 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
         branchCode: sale.branch_code,
         saleId: invoiceId,
       });
+    } else if (payMethod === 'credit') {
+      const { resolveEntityAccountCode } = require('../lib/entityCoaAccounts');
+      cashAccountCode = await resolveEntityAccountCode(
+        client,
+        'client',
+        sale.client_id || null,
+        sale.customer_name || '',
+      );
     }
 
     const reverseLines = [
