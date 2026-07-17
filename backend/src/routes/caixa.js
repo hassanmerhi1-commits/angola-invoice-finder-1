@@ -118,31 +118,36 @@ async function ensureTreasuryRegistersFromCoa() {
       const branchName = String(row.branch_name || '').trim() || branchId;
       const name = String(row.name || '').trim() || `Caixa ${row.code}`;
       const balance = Number(row.current_balance) || 0;
-      // Stable id from COA account so re-runs are idempotent.
-      const id = `caixa_coa_${String(row.id)}`;
+      // caixas.id is UUID — reuse COA account id (stable 1:1).
+      const id = String(row.id);
 
-      const existingByName = await db.query(
+      const existing = await db.query(
         db.engine === 'postgres'
           ? `SELECT id FROM caixas
-             WHERE branch_id::text = $1 AND LOWER(TRIM(name)) = LOWER(TRIM($2))
+             WHERE id::text = $1
+                OR (branch_id::text = $2 AND LOWER(TRIM(name)) = LOWER(TRIM($3)))
              LIMIT 1`
           : `SELECT id FROM caixas
-             WHERE CAST(branch_id AS TEXT) = $1 AND LOWER(TRIM(name)) = LOWER(TRIM($2))
+             WHERE CAST(id AS TEXT) = $1
+                OR (CAST(branch_id AS TEXT) = $2 AND LOWER(TRIM(name)) = LOWER(TRIM($3)))
              LIMIT 1`,
-        [branchId, name],
+        [id, branchId, name],
       );
-      if (existingByName.rows?.[0]) continue;
+      if (existing.rows?.[0]) {
+        await db.query(
+          `UPDATE caixas
+           SET branch_name = $2, name = $3, current_balance = $4, updated_at = $5
+           WHERE id = $1`,
+          [existing.rows[0].id, branchName, name, balance, now],
+        );
+        continue;
+      }
 
       await db.query(
         `INSERT INTO caixas (
           id, branch_id, branch_name, name, opening_balance, current_balance,
           status, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$5,'closed',$6,$6)
-        ON CONFLICT (id) DO UPDATE SET
-          branch_name = EXCLUDED.branch_name,
-          name = EXCLUDED.name,
-          current_balance = EXCLUDED.current_balance,
-          updated_at = EXCLUDED.updated_at`,
+        ) VALUES ($1,$2,$3,$4,$5,$5,'closed',$6,$6)`,
         [id, branchId, branchName, name, balance, now],
       );
     }

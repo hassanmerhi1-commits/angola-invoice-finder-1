@@ -57,26 +57,34 @@ async function main() {
     const branchName = String(row.branch_name || '').trim() || branchId;
     const name = String(row.name || '').trim() || `Caixa ${row.code}`;
     const balance = Number(row.current_balance) || 0;
-    const id = `caixa_coa_${String(row.id)}`;
+    // caixas.id is UUID in Postgres — reuse the COA account id (1:1).
+    const id = String(row.id);
 
     const exists = await db.query(
       `SELECT id FROM caixas
-       WHERE branch_id::text = $1 AND LOWER(TRIM(name)) = LOWER(TRIM($2))
+       WHERE id::text = $1
+          OR (branch_id::text = $2 AND LOWER(TRIM(name)) = LOWER(TRIM($3)))
        LIMIT 1`,
-      [branchId, name],
+      [id, branchId, name],
     );
-    if (exists.rows[0]) continue;
+    if (exists.rows[0]) {
+      await db.query(
+        `UPDATE caixas
+         SET branch_name = $2,
+             name = $3,
+             current_balance = $4,
+             updated_at = $5
+         WHERE id = $1`,
+        [exists.rows[0].id, branchName, name, balance, now],
+      );
+      continue;
+    }
 
     await db.query(
       `INSERT INTO caixas (
         id, branch_id, branch_name, name, opening_balance, current_balance,
         status, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$5,'closed',$6,$6)
-      ON CONFLICT (id) DO UPDATE SET
-        name = EXCLUDED.name,
-        branch_name = EXCLUDED.branch_name,
-        current_balance = EXCLUDED.current_balance,
-        updated_at = EXCLUDED.updated_at`,
+      ) VALUES ($1,$2,$3,$4,$5,$5,'closed',$6,$6)`,
       [id, branchId, branchName, name, balance, now],
     );
     created += 1;
