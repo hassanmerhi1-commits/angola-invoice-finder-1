@@ -1,9 +1,12 @@
-# Repair expense treasury ON DOCKER POSTGRES (no local erp.db).
+# Repair expense treasury ON DOCKER POSTGRES.
 #
-# Usage (SERVER PC):
+# Usage:
 #   cd C:\Users\user\Documents\GitHub\angola-invoice-finder
 #   git pull origin main
 #   .\scripts\repair-docker-treasury.ps1
+#
+# Or paste this one-liner (same thing):
+#   docker exec -w /app nexor-backend node scripts/repair-docker-treasury.js
 
 $ErrorActionPreference = 'Continue'
 
@@ -13,8 +16,17 @@ if ($running -notmatch 'nexor-backend') {
   exit 1
 }
 
-Write-Host 'Running repair against Docker Postgres (cwd /app)...' -ForegroundColor Cyan
-# backend/scripts is mounted into the container at /app/scripts
+Write-Host 'Checking script inside container...' -ForegroundColor Cyan
+docker exec -w /app nexor-backend sh -c "ls -la scripts/repair-docker-treasury.js && head -n 5 scripts/repair-docker-treasury.js"
+if ($LASTEXITCODE -ne 0) {
+  Write-Host '[ERROR] scripts/repair-docker-treasury.js missing in container.' -ForegroundColor Red
+  Write-Host 'Run: git pull origin main' -ForegroundColor Yellow
+  Write-Host 'Then: docker compose up -d backend' -ForegroundColor Yellow
+  exit 1
+}
+
+Write-Host ''
+Write-Host 'Running: docker exec -w /app nexor-backend node scripts/repair-docker-treasury.js' -ForegroundColor Cyan
 docker exec -w /app nexor-backend node scripts/repair-docker-treasury.js
 $code = $LASTEXITCODE
 if ($code -ne 0) {
@@ -23,5 +35,4 @@ if ($code -ne 0) {
 }
 
 Write-Host ''
-Write-Host 'If banks=0: open NEXOR -> Contas Bancarias -> create each bank (saves into Docker).' -ForegroundColor Yellow
-Write-Host 'Then F5 and open New expense.' -ForegroundColor Yellow
+Write-Host 'If banks=0: open NEXOR -> Contas Bancarias -> create banks, then F5.' -ForegroundColor Yellow

@@ -7,7 +7,8 @@
  * Or from host:
  *   .\scripts\repair-docker-treasury.ps1
  */
-const db = require('../src/db');
+// Absolute path so this never breaks if cwd is wrong.
+const db = require('/app/src/db');
 const http = require('http');
 
 async function main() {
