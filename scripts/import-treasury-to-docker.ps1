@@ -1,12 +1,10 @@
 # Import local Electron caixas + bank_accounts into Docker PostgreSQL.
-# Run on the SERVER PC after Docker backend is up.
+# Tries several erp.db locations until one has treasury data.
 #
 # Usage:
 #   cd C:\Users\user\Documents\GitHub\angola-invoice-finder
 #   .\scripts\import-treasury-to-docker.ps1
-#
-# If NEXOR has the .db locked, close NEXOR first, or pass another copy:
-#   .\scripts\import-treasury-to-docker.ps1 -SqlitePath "C:\NEXOR ERP\data\erp.db"
+#   .\scripts\import-treasury-to-docker.ps1 -SqlitePath "D:\backup\erp.db"
 
 param(
   [string]$SqlitePath = '',
@@ -15,29 +13,47 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-function Find-LargestErpDb {
-  $candidates = @(
+function Get-CandidateErpDbs {
+  $candidates = [System.Collections.Generic.List[string]]::new()
+  $roots = @(
     'C:\nexor\erp.db',
-    'C:\NEXOR ERP\data\erp.db'
+    'C:\NEXOR ERP\data\erp.db',
+    (Join-Path $env:APPDATA 'nexor-erp\erp.db'),
+    (Join-Path $env:LOCALAPPDATA 'nexor-erp\erp.db')
   )
-  $dataDir = 'C:\NEXOR ERP\data'
-  if (Test-Path $dataDir) {
-    $candidates += Get-ChildItem -Path $dataDir -Filter '*.db' -File -EA SilentlyContinue | ForEach-Object { $_.FullName }
+  foreach ($p in $roots) {
+    if ($p -and (Test-Path $p)) { $candidates.Add((Resolve-Path $p).Path) }
   }
-  $appData = Join-Path $env:APPDATA 'nexor-erp\erp.db'
-  if (Test-Path $appData) { $candidates += $appData }
-
-  $best = $null
-  $bestSize = -1
-  foreach ($p in $candidates | Select-Object -Unique) {
-    if (-not (Test-Path $p)) { continue }
-    $size = (Get-Item $p).Length
-    if ($size -gt $bestSize) {
-      $best = $p
-      $bestSize = $size
+  foreach ($dir in @('C:\NEXOR ERP\data', 'C:\nexor', (Join-Path $env:APPDATA 'nexor-erp'))) {
+    if (-not (Test-Path $dir)) { continue }
+    Get-ChildItem -Path $dir -Filter '*.db' -File -EA SilentlyContinue | ForEach-Object {
+      $candidates.Add($_.FullName)
     }
   }
-  return $best
+  return $candidates | Select-Object -Unique | Sort-Object {
+    if (Test-Path $_) { (Get-Item $_).Length } else { 0 }
+  } -Descending
+}
+
+function Test-SqliteHasTreasury {
+  param([string]$ContainerPath)
+  $js = @'
+const Database=require("better-sqlite3");
+const db=new Database(process.env.SQLITE_PATH,{readonly:true,fileMustExist:true});
+const t=name=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
+const hasN=t("nexor_records"), hasC=t("caixas"), hasB=t("bank_accounts");
+let nC=0,nB=0;
+if(hasN){nC=db.prepare("SELECT COUNT(*) n FROM nexor_records WHERE table_name='caixas'").get().n;nB=db.prepare("SELECT COUNT(*) n FROM nexor_records WHERE table_name='bank_accounts'").get().n;}
+if(hasC){nC+=db.prepare("SELECT COUNT(*) n FROM caixas").get().n;}
+if(hasB){nB+=db.prepare("SELECT COUNT(*) n FROM bank_accounts").get().n;}
+console.log(JSON.stringify({hasNexor:hasN,hasCaixas:hasC,hasBanks:hasB,caixaCount:nC,bankCount:nB,tables:db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(r=>r.name)}));
+db.close();
+'@
+  $probeFile = '/tmp/probe-treasury.js'
+  $js | docker exec -i nexor-backend sh -c "cat > $probeFile"
+  $out = docker exec -e "SQLITE_PATH=$ContainerPath" nexor-backend node $probeFile 2>&1
+  if ($LASTEXITCODE -ne 0) { return $null }
+  try { return ($out | Out-String).Trim() | ConvertFrom-Json } catch { return $null }
 }
 
 if (-not $ProjectRoot) {
@@ -50,49 +66,93 @@ if (-not $ProjectRoot) {
   }
 }
 
-if (-not $SqlitePath) {
-  $SqlitePath = Find-LargestErpDb
+$running = docker ps --filter "name=nexor-backend" --format "{{.Names}}" 2>$null
+if ($running -notmatch 'nexor-backend') {
+  Write-Host '[ERROR] nexor-backend is not running. Start: docker compose up -d backend' -ForegroundColor Red
+  exit 1
 }
-if (-not $SqlitePath -or -not (Test-Path $SqlitePath)) {
-  Write-Host '[ERROR] No erp.db found. Pass -SqlitePath C:\path\to\erp.db' -ForegroundColor Red
+
+$toTry = @()
+if ($SqlitePath) {
+  if (-not (Test-Path $SqlitePath)) {
+    Write-Host "[ERROR] Not found: $SqlitePath" -ForegroundColor Red
+    exit 1
+  }
+  $toTry = @((Resolve-Path $SqlitePath).Path)
+} else {
+  $toTry = @(Get-CandidateErpDbs)
+}
+
+if (-not $toTry.Count) {
+  Write-Host '[ERROR] No erp.db candidates found.' -ForegroundColor Red
   exit 1
 }
 
 Write-Host "Project: $ProjectRoot" -ForegroundColor Cyan
-Write-Host "SQLite:  $SqlitePath ($([math]::Round((Get-Item $SqlitePath).Length/1MB,1)) MB)" -ForegroundColor Cyan
-
-# Ensure container is running
-$running = docker ps --filter "name=nexor-backend" --format "{{.Names}}" 2>$null
-if ($running -notmatch 'nexor-backend') {
-  Write-Host '[ERROR] nexor-backend container is not running. Start it first:' -ForegroundColor Red
-  Write-Host '  docker compose up -d backend'
-  exit 1
+Write-Host "Candidates:" -ForegroundColor Cyan
+foreach ($p in $toTry) {
+  $mb = [math]::Round((Get-Item $p).Length / 1MB, 2)
+  Write-Host ("  {0,6} MB  {1}" -f $mb, $p)
 }
 
 Push-Location $ProjectRoot
+$selected = $null
+$selectedInfo = $null
 try {
-  # Copy to a local temp file first (avoids lock if NEXOR has erp.db open)
-  $tempDb = Join-Path $env:TEMP ("nexor-import-" + [guid]::NewGuid().ToString('n') + '.db')
-  Write-Host "Copying SQLite to temp (unlock-safe): $tempDb" -ForegroundColor Yellow
-  try {
-    Copy-Item -Force $SqlitePath $tempDb
-  } catch {
-    Write-Host '[ERROR] Could not copy erp.db — close NEXOR ERP completely, then retry.' -ForegroundColor Red
-    throw
+  foreach ($candidate in $toTry) {
+    Write-Host ""
+    Write-Host "Probing: $candidate" -ForegroundColor Yellow
+    $tempDb = Join-Path $env:TEMP ("nexor-import-" + [guid]::NewGuid().ToString('n') + '.db')
+    try {
+      Copy-Item -Force $candidate $tempDb
+    } catch {
+      Write-Host "  skip — locked/copy failed (close NEXOR and retry): $($_.Exception.Message)" -ForegroundColor DarkYellow
+      continue
+    }
+    $containerSqlite = '/tmp/import-erp.db'
+    docker cp $tempDb "nexor-backend:$containerSqlite" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      Remove-Item -Force $tempDb -EA SilentlyContinue
+      Write-Host '  skip — docker cp failed' -ForegroundColor DarkYellow
+      continue
+    }
+    $info = Test-SqliteHasTreasury -ContainerPath $containerSqlite
+    Remove-Item -Force $tempDb -EA SilentlyContinue
+    if (-not $info) {
+      Write-Host '  skip — cannot read SQLite' -ForegroundColor DarkYellow
+      continue
+    }
+    Write-Host ("  tables: nexor={0} caixas={1} banks={2} | rows caixas={3} banks={4}" -f `
+      $info.hasNexor, $info.hasCaixas, $info.hasBanks, $info.caixaCount, $info.bankCount)
+    if ($info.hasNexor -or $info.hasCaixas -or $info.hasBanks) {
+      $selected = $candidate
+      $selectedInfo = $info
+      # Prefer a file that actually has rows
+      if (($info.caixaCount + $info.bankCount) -gt 0) { break }
+    }
   }
 
-  # IMPORTANT: do NOT use ./import:/import:ro — better-sqlite3 fails on read-only mounts.
-  # docker cp into /tmp inside the container (writable).
-  $containerSqlite = '/tmp/import-erp.db'
-  Write-Host "docker cp → nexor-backend:$containerSqlite" -ForegroundColor Yellow
-  docker cp $tempDb "nexor-backend:$containerSqlite"
-  if ($LASTEXITCODE -ne 0) { throw "docker cp failed ($LASTEXITCODE)" }
+  if (-not $selected) {
+    Write-Host ''
+    Write-Host '[ERROR] None of the erp.db files have treasury tables/data.' -ForegroundColor Red
+    Write-Host 'Your caixas/banks may only exist in Postgres COA already, or were never saved locally.' -ForegroundColor Yellow
+    Write-Host 'Next:' -ForegroundColor Yellow
+    Write-Host '  1) Open NEXOR → Contas Bancárias → create bank accounts again'
+    Write-Host '  2) Open New expense (v1.1.35+) — caixas sync from COA 45x accounts'
+    Write-Host '  3) If you have a backup .db from before Docker, pass it:'
+    Write-Host '     .\scripts\import-treasury-to-docker.ps1 -SqlitePath "D:\backup\erp.db"'
+    exit 1
+  }
+
+  Write-Host ''
+  Write-Host "Using: $selected" -ForegroundColor Green
+  $tempDb = Join-Path $env:TEMP ("nexor-import-" + [guid]::NewGuid().ToString('n') + '.db')
+  Copy-Item -Force $selected $tempDb
+  docker cp $tempDb 'nexor-backend:/tmp/import-erp.db' | Out-Null
+  Remove-Item -Force $tempDb -EA SilentlyContinue
 
   Write-Host 'Importing caixas + bank_accounts...' -ForegroundColor Yellow
-  docker exec `
-    -e "SQLITE_PATH=$containerSqlite" `
-    nexor-backend `
-    node scripts/import-treasury-from-sqlite.js
+  docker exec -e 'SQLITE_PATH=/tmp/import-erp.db' nexor-backend node scripts/import-treasury-from-sqlite.js
   if ($LASTEXITCODE -ne 0) { throw "import failed ($LASTEXITCODE)" }
 
   Write-Host ''
@@ -100,10 +160,7 @@ try {
   docker exec nexor-backend node -e "const db=require('./src/db');(async()=>{const c=await db.query('select count(*)::int n from caixas');const b=await db.query('select count(*)::int n from bank_accounts');console.log('caixas',c.rows[0].n,'banks',b.rows[0].n);process.exit(0)})().catch(e=>{console.error(e);process.exit(1)})"
 
   Write-Host ''
-  Write-Host 'OK — open Expenses again (or press F5). Banks and all caixas should appear.' -ForegroundColor Green
+  Write-Host 'OK — F5 in NEXOR, open New expense again.' -ForegroundColor Green
 } finally {
-  if ($tempDb -and (Test-Path $tempDb)) {
-    Remove-Item -Force $tempDb -EA SilentlyContinue
-  }
   Pop-Location
 }

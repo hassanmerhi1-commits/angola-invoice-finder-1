@@ -1,21 +1,12 @@
 /* eslint-disable no-console */
 /**
- * Import caixas + bank_accounts from Electron SQLite (nexor_records) into PostgreSQL.
+ * Import caixas + bank_accounts from Electron SQLite into PostgreSQL.
  *
- * This fixes empty bank pickers / only "Caixa Principal" in expenses when real tills
- * still live in local erp.db after switching to Docker Postgres.
+ * Supports both storage shapes:
+ *   1) nexor_records JSON rows (table_name = 'caixas' | 'bank_accounts')
+ *   2) native SQL tables caixas / bank_accounts
  *
- * Usage on SERVER PC (PowerShell):
- *   cd C:\Users\user\Documents\GitHub\angola-invoice-finder
- *   $env:SQLITE_PATH="C:\nexor\erp.db"   # or largest erp.db under C:\NEXOR ERP\data
- *   docker compose exec -e SQLITE_PATH=/host-sqlite.db backend node scripts/import-treasury-from-sqlite.js
- *
- * Simpler (host Node + Docker Postgres URL):
- *   $env:SQLITE_PATH="C:\nexor\erp.db"
- *   $env:DATABASE_URL="postgres://postgres:PASSWORD@127.0.0.1:5432/kwanza_erp"
- *   node backend/scripts/import-treasury-from-sqlite.js
- *
- * Or use the helper:
+ * Usage (via helper on SERVER):
  *   .\scripts\import-treasury-to-docker.ps1
  */
 const path = require('path');
@@ -43,6 +34,19 @@ function num(v, fallback = 0) {
 
 function str(v) {
   return v == null ? '' : String(v).trim();
+}
+
+function tableExists(sqlite, name) {
+  return !!sqlite
+    .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1")
+    .get(name);
+}
+
+function listTables(sqlite) {
+  return sqlite
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    .all()
+    .map((r) => r.name);
 }
 
 function pickSqlitePath() {
@@ -196,6 +200,55 @@ async function upsertBank(pg, row) {
   return true;
 }
 
+function loadCaixaRows(sqlite) {
+  const out = [];
+  if (tableExists(sqlite, 'nexor_records')) {
+    const rows = sqlite
+      .prepare("SELECT id, data FROM nexor_records WHERE table_name = 'caixas'")
+      .all();
+    for (const r of rows) {
+      const data = parseJson(r.data) || { id: r.id };
+      if (!data.id) data.id = r.id;
+      out.push(data);
+    }
+  }
+  if (tableExists(sqlite, 'caixas')) {
+    const rows = sqlite.prepare('SELECT * FROM caixas').all();
+    for (const r of rows) out.push(r);
+  }
+  // de-dupe by id
+  const map = new Map();
+  for (const r of out) {
+    const id = str(r.id);
+    if (id) map.set(id, r);
+  }
+  return [...map.values()];
+}
+
+function loadBankRows(sqlite) {
+  const out = [];
+  if (tableExists(sqlite, 'nexor_records')) {
+    const rows = sqlite
+      .prepare("SELECT id, data FROM nexor_records WHERE table_name = 'bank_accounts'")
+      .all();
+    for (const r of rows) {
+      const data = parseJson(r.data) || { id: r.id };
+      if (!data.id) data.id = r.id;
+      out.push(data);
+    }
+  }
+  if (tableExists(sqlite, 'bank_accounts')) {
+    const rows = sqlite.prepare('SELECT * FROM bank_accounts').all();
+    for (const r of rows) out.push(r);
+  }
+  const map = new Map();
+  for (const r of out) {
+    const id = str(r.id);
+    if (id) map.set(id, r);
+  }
+  return [...map.values()];
+}
+
 async function main() {
   if (!DATABASE_URL) {
     console.error('[TREASURY] Missing DATABASE_URL');
@@ -209,8 +262,6 @@ async function main() {
   console.log(`[TREASURY] SQLite: ${sqlitePath}`);
   console.log(`[TREASURY] Postgres: ${DATABASE_URL.replace(/:[^:@/]+@/, ':***@')}`);
 
-  // fileMustExist avoids cryptic "unable to open" when path is wrong;
-  // readonly still needs a writable directory for some SQLite builds — prefer /tmp via docker cp.
   if (!fs.existsSync(sqlitePath)) {
     console.error(`[TREASURY] File not found inside container/host: ${sqlitePath}`);
     process.exit(1);
@@ -221,38 +272,42 @@ async function main() {
   try {
     await ensureBankTable(pg);
 
-    const hasNexor = sqlite
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='nexor_records'")
-      .get();
-    if (!hasNexor) {
-      console.error('[TREASURY] nexor_records table not found in SQLite.');
+    const tables = listTables(sqlite);
+    console.log(`[TREASURY] SQLite tables (${tables.length}): ${tables.slice(0, 40).join(', ')}${tables.length > 40 ? '…' : ''}`);
+
+    const hasNexor = tableExists(sqlite, 'nexor_records');
+    const hasCaixas = tableExists(sqlite, 'caixas');
+    const hasBanks = tableExists(sqlite, 'bank_accounts');
+    console.log(`[TREASURY] has nexor_records=${hasNexor}, caixas=${hasCaixas}, bank_accounts=${hasBanks}`);
+
+    if (!hasNexor && !hasCaixas && !hasBanks) {
+      console.error('[TREASURY] No treasury tables in this SQLite file.');
+      console.error('[TREASURY] This erp.db is the wrong/empty file. Try another path, e.g.:');
+      console.error('  .\\scripts\\import-treasury-to-docker.ps1 -SqlitePath "C:\\nexor\\erp.db"');
+      console.error('  or AppData\\nexor-erp\\erp.db');
+      console.error('Also: open NEXOR → Gestão de Caixa / Contas Bancárias and recreate if data only lived in an old PC.');
       process.exit(1);
     }
 
-    const caixaRows = sqlite
-      .prepare("SELECT id, data FROM nexor_records WHERE table_name = 'caixas'")
-      .all();
-    const bankRows = sqlite
-      .prepare("SELECT id, data FROM nexor_records WHERE table_name = 'bank_accounts'")
-      .all();
-
+    const caixaRows = loadCaixaRows(sqlite);
+    const bankRows = loadBankRows(sqlite);
     console.log(`[TREASURY] Local caixas: ${caixaRows.length}, local banks: ${bankRows.length}`);
 
+    if (caixaRows.length === 0 && bankRows.length === 0) {
+      console.warn('[TREASURY] Tables exist but contain 0 caixas and 0 banks.');
+      console.warn('[TREASURY] Create banks in Contas Bancárias; caixas can sync from COA 45x on next expense open (v1.1.35+).');
+    }
+
     let caixaOk = 0;
-    for (const r of caixaRows) {
-      const data = parseJson(r.data) || { id: r.id };
-      if (!data.id) data.id = r.id;
+    for (const data of caixaRows) {
       if (await upsertCaixa(pg, data)) caixaOk += 1;
     }
 
     let bankOk = 0;
-    for (const r of bankRows) {
-      const data = parseJson(r.data) || { id: r.id };
-      if (!data.id) data.id = r.id;
+    for (const data of bankRows) {
       if (await upsertBank(pg, data)) bankOk += 1;
     }
 
-    // Drop orphan seed caixa tied to missing 22222222… branch when a real SEDE/SOYO exists.
     const orphan = await pg.query(
       `DELETE FROM caixas
        WHERE branch_id::text = '22222222-2222-2222-2222-222222222222'
