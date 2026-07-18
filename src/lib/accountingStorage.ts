@@ -181,6 +181,45 @@ function filterBankAccountsForBranch(
   return [];
 }
 
+/** Production SOYO 03 reuses the old seed branch UUID — older servers hide it from all-branch lists. */
+const LEGACY_SEED_BRANCH_ID = '22222222-2222-2222-2222-222222222222';
+
+function looksLikeUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
+/** Fix caixa rows whose branch_name/name were stored as the raw branch UUID. */
+function healCaixaDisplay(caixa: Caixa, preferredBranchName?: string): Caixa {
+  const branchId = String(caixa.branchId || '').trim();
+  if (!branchId) return caixa;
+  let branchName = String(caixa.branchName || '').trim();
+  let name = String(caixa.name || '').trim();
+  const preferred = String(preferredBranchName || '').trim();
+  const fallbackName =
+    preferred && !looksLikeUuid(preferred) && preferred !== branchId
+      ? preferred
+      : branchIdsEquivalent(branchId, LEGACY_SEED_BRANCH_ID)
+        ? 'SOYO 03'
+        : '';
+  if (fallbackName && (!branchName || looksLikeUuid(branchName) || branchName === branchId)) {
+    branchName = fallbackName;
+  }
+  if (
+    fallbackName
+    && (
+      !name
+      || looksLikeUuid(name)
+      || name === branchId
+      || name.toLowerCase() === `caixa principal - ${branchId}`.toLowerCase()
+      || name.includes(branchId)
+    )
+  ) {
+    name = `Caixa Principal - ${fallbackName}`;
+  }
+  if (branchName === caixa.branchName && name === caixa.name) return caixa;
+  return { ...caixa, branchName, name };
+}
+
 /** Any non-empty branch id is usable — including seed UUID 22222222-… (SOYO 03 in production). */
 function isUsableTreasuryBranchId(branchId?: string): boolean {
   return String(branchId || '').trim().length > 0;
@@ -374,6 +413,36 @@ export async function getCaixas(
         if (!allRes.error && allRes.data) {
           serverList = unwrapApiList<any>(allRes.data).map((row) => mapCaixaFromDb(row));
         }
+        // Older backends omit seed-UUID branch (SOYO 03) from the unfiltered list.
+        // Pull it (and the currently selected branch) explicitly so admin/HQ pickers see it in electron:dev.
+        const backfillIds = [LEGACY_SEED_BRANCH_ID];
+        if (branchKey) backfillIds.push(branchKey);
+        for (const id of [...new Set(backfillIds.map((x) => String(x || '').trim()).filter(Boolean))]) {
+          if (serverList.some((c) => branchIdsEquivalent(c.branchId, id))) continue;
+          try {
+            const oneRes = await api.caixa.listRegisters(id);
+            if (oneRes.error || !oneRes.data) continue;
+            const extra = unwrapApiList<any>(oneRes.data).map((row) => mapCaixaFromDb(row));
+            if (extra.length > 0) {
+              serverList = mergeCaixasById(serverList, extra);
+            } else if (branchIdsEquivalent(id, LEGACY_SEED_BRANCH_ID) || branchIdsEquivalent(id, branchKey)) {
+              const ensureRes = await api.caixa.ensureRegister({
+                branchId: id,
+                branchName: branchIdsEquivalent(id, branchKey) ? branchLabel || undefined : 'SOYO 03',
+              });
+              const ensured = ensureRes.data ? unwrapApiItem<any>(ensureRes.data) : null;
+              if (ensured) serverList = mergeCaixasById(serverList, [mapCaixaFromDb(ensured)]);
+            }
+          } catch (backfillErr) {
+            console.warn('[caixas] backfill branch registers failed:', id, backfillErr);
+          }
+        }
+        serverList = serverList.map((c) =>
+          healCaixaDisplay(
+            c,
+            branchIdsEquivalent(c.branchId, branchKey) ? branchLabel : undefined,
+          ),
+        );
       } else {
         const [listRes, sessionRes] = await Promise.all([
           api.caixa.listRegisters(branchKey || undefined),
@@ -412,6 +481,7 @@ export async function getCaixas(
           const ensured = ensureRes.data ? unwrapApiItem<any>(ensureRes.data) : null;
           if (ensured) serverList = [mapCaixaFromDb(ensured)];
         }
+        serverList = serverList.map((c) => healCaixaDisplay(c, branchLabel));
       }
 
       const localScoped = allBranches
