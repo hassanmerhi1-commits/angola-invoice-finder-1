@@ -125,17 +125,22 @@ export function branchesVisibleToUser(
 }
 
 /**
- * Consolidated read scope: only the explicit "Todas as filiais" sentinel.
- * Selecting the Sede/HQ branch means that warehouse only — use
- * ALL_BRANCHES_SCOPE_ID for company-wide stock totals.
+ * Consolidated read scope (company-wide lists: expenses, inventory, payments).
+ * - Explicit "Todas as filiais" sentinel, OR
+ * - Selected Sede / HQ branch (is_main / SEDE*) when the user can switch.
+ * The All-branches menu option stays hidden; picking Sede is enough for HQ views.
  */
 export function isConsolidatedBranchScope(
   canSwitch: boolean,
   scopeId: string | null | undefined,
-  _branches: Branch[] = [],
+  branches: Branch[] = [],
 ): boolean {
   if (!canSwitch) return false;
-  return String(scopeId || '').trim() === ALL_BRANCHES_SCOPE_ID;
+  const id = String(scopeId || '').trim();
+  if (!id) return false;
+  if (id === ALL_BRANCHES_SCOPE_ID) return true;
+  const branch = resolveBranchFromScope(branches, id);
+  return looksLikeHeadOfficeBranch(branch);
 }
 
 /** Consolidated all-branch API scope (All branches or HQ/Sede selected). */

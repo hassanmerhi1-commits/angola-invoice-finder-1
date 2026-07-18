@@ -269,9 +269,118 @@ async function postBankOpeningBalanceJournal(client, {
   });
 }
 
+/**
+ * Sync operational bank_accounts from COA bank leaves (43x), so expense/payment
+ * pickers show the same banks the Chart of Accounts "Banks" tab shows.
+ * Does not invent journals — only upserts picker rows linked via gl_account_code.
+ */
+async function ensureBankAccountsFromCoa(db) {
+  if (!db) return { upserted: 0 };
+  await ensureBankGlColumn(db);
+  let upserted = 0;
+  try {
+    const coa = await db.query(
+      db.engine === 'postgres'
+        ? `SELECT coa.id, coa.code, coa.name, coa.current_balance,
+                  COALESCE(coa.branch_id::text, b_name.id::text, sede.id::text) AS branch_id,
+                  COALESCE(b_link.name, b_name.name, sede.name, '') AS branch_name
+           FROM chart_of_accounts coa
+           LEFT JOIN branches b_link ON b_link.id::text = coa.branch_id::text
+           LEFT JOIN LATERAL (
+             SELECT b.id, b.name
+             FROM branches b
+             WHERE coa.branch_id IS NULL
+               AND (
+                 coa.name ILIKE '%' || b.name || '%'
+                 OR (NULLIF(TRIM(b.code), '') IS NOT NULL AND coa.name ILIKE '%' || b.code || '%')
+               )
+             ORDER BY LENGTH(b.name) DESC
+             LIMIT 1
+           ) b_name ON true
+           LEFT JOIN LATERAL (
+             SELECT b.id, b.name FROM branches b
+             WHERE b.is_main = true OR b.name ILIKE '%sede%' OR UPPER(TRIM(b.code)) LIKE 'SEDE%'
+             ORDER BY CASE WHEN b.is_main = true THEN 0 WHEN b.name ILIKE '%sede%' THEN 1 ELSE 2 END
+             LIMIT 1
+           ) sede ON true
+           WHERE coa.is_active = true
+             AND coa.is_header = false
+             AND coa.code LIKE '43%'
+             AND coa.code NOT IN ('43')
+             AND LENGTH(TRIM(coa.code)) >= 3`
+        : `SELECT coa.id, coa.code, coa.name, coa.current_balance,
+                  COALESCE(coa.branch_id, (
+                    SELECT b.id FROM branches b
+                    WHERE b.is_main = 1 OR LOWER(b.name) LIKE '%sede%'
+                    ORDER BY b.is_main DESC LIMIT 1
+                  )) AS branch_id,
+                  COALESCE((SELECT b.name FROM branches b WHERE CAST(b.id AS TEXT) = CAST(coa.branch_id AS TEXT) LIMIT 1), '') AS branch_name
+           FROM chart_of_accounts coa
+           WHERE COALESCE(coa.is_active, 1) != 0
+             AND COALESCE(coa.is_header, 0) = 0
+             AND coa.code LIKE '43%'
+             AND coa.code NOT IN ('43')
+             AND LENGTH(TRIM(coa.code)) >= 3`,
+    );
+
+    const now = new Date().toISOString();
+    for (const row of coa.rows || []) {
+      try {
+        const branchId = String(row.branch_id || '').trim();
+        if (!branchId || branchId === '22222222-2222-2222-2222-222222222222') continue;
+        const branchName = String(row.branch_name || '').trim() || branchId;
+        const code = String(row.code || '').trim();
+        const name = String(row.name || '').trim() || `Banco ${code}`;
+        const balance = Number(row.current_balance) || 0;
+        const id = String(row.id);
+
+        const existing = await db.query(
+          db.engine === 'postgres'
+            ? `SELECT id FROM bank_accounts
+               WHERE id::text = $1
+                  OR (gl_account_code = $2 AND TRIM(gl_account_code) <> '')
+                  OR (branch_id::text = $3 AND LOWER(TRIM(name)) = LOWER(TRIM($4)))
+               LIMIT 1`
+            : `SELECT id FROM bank_accounts
+               WHERE CAST(id AS TEXT) = $1
+                  OR (gl_account_code = $2 AND TRIM(COALESCE(gl_account_code,'')) <> '')
+                  OR (CAST(branch_id AS TEXT) = $3 AND LOWER(TRIM(name)) = LOWER(TRIM($4)))
+               LIMIT 1`,
+          [id, code, branchId, name],
+        );
+
+        if (existing.rows?.[0]) {
+          await db.query(
+            `UPDATE bank_accounts
+             SET branch_id = $2, branch_name = $3, bank_name = $4, name = $5,
+                 balance = $6, gl_account_code = $7, is_active = true, updated_at = $8
+             WHERE id = $1`,
+            [existing.rows[0].id, branchId, branchName, name, name, balance, code, now],
+          );
+        } else {
+          await db.query(
+            `INSERT INTO bank_accounts (
+              id, branch_id, branch_name, bank_name, name, account_number,
+              currency, balance, is_active, is_primary, gl_account_code, created_at, updated_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,'AOA',$7,true,false,$8,$9,$9)`,
+            [id, branchId, branchName, name, name, code, balance, code, now],
+          );
+        }
+        upserted += 1;
+      } catch (rowErr) {
+        console.warn('[BANK GL] sync from COA skipped:', row?.code || row?.id, rowErr.message);
+      }
+    }
+  } catch (err) {
+    console.warn('[BANK GL] ensureBankAccountsFromCoa:', err.message);
+  }
+  return { upserted };
+}
+
 module.exports = {
   BANK_PARENT_CODE,
   ensureBankGlColumn,
+  ensureBankAccountsFromCoa,
   resolveBankGlAccountCode,
   resolveBankGlAccountCodeById,
   resolveDefaultBranchBankGl,

@@ -236,7 +236,7 @@ async function ensureTreasuryRegistersFromCoa() {
 
 let lastCoaSyncAt = 0;
 
-module.exports = function caixaRouter(broadcastTable) {
+function caixaRouter(broadcastTable) {
   const router = express.Router();
 
   /** List cash registers (caixas) — used by LAN clients for expenses/POS dropdowns. */
@@ -671,4 +671,7 @@ module.exports = function caixaRouter(broadcastTable) {
   });
 
   return router;
-};
+}
+
+module.exports = caixaRouter;
+module.exports.ensureTreasuryRegistersFromCoa = ensureTreasuryRegistersFromCoa;

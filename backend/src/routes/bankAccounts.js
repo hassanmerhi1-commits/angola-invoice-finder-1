@@ -97,28 +97,55 @@ async function ensureBankAccountsTable() {
 module.exports = function bankAccountsRouter(broadcastTable) {
   const router = express.Router();
 
+  let lastBankCoaSyncAt = 0;
+
   router.get('/', async (req, res) => {
     try {
       await ensureBankAccountsTable();
       if (!(await bankAccountsTableExists())) {
         return res.json({ data: [] });
       }
-      const branchId = String(req.query.branchId || '').trim();
-      const params = [];
-      let sql = 'SELECT * FROM bank_accounts';
-      if (branchId) {
-        const resolved = (await resolveBranchFilterId(db, branchId)) || branchId;
-        if (db.engine === 'postgres') {
-          sql += ' WHERE branch_id::text = $1';
-        } else {
-          sql += ' WHERE CAST(branch_id AS TEXT) = $1';
+      const { ensureBankAccountsFromCoa } = require('../lib/bankGlAccounts');
+      // Keep operational bank_accounts in sync with COA 43x leaves (throttled).
+      if (Date.now() - lastBankCoaSyncAt > 30_000) {
+        lastBankCoaSyncAt = Date.now();
+        try {
+          await ensureBankAccountsFromCoa(db);
+        } catch (syncErr) {
+          console.warn('[BANK] COA sync:', syncErr.message);
         }
-        params.push(resolved);
       }
-      sql += db.engine === 'postgres'
-        ? ' ORDER BY is_primary DESC, updated_at DESC NULLS LAST, created_at DESC'
-        : ' ORDER BY is_primary DESC, updated_at DESC, created_at DESC';
-      const result = await db.query(sql, params);
+
+      async function queryBanks() {
+        const branchId = String(req.query.branchId || '').trim();
+        const params = [];
+        let sql = 'SELECT * FROM bank_accounts';
+        if (branchId) {
+          const resolved = (await resolveBranchFilterId(db, branchId)) || branchId;
+          if (db.engine === 'postgres') {
+            sql += ' WHERE branch_id::text = $1';
+          } else {
+            sql += ' WHERE CAST(branch_id AS TEXT) = $1';
+          }
+          params.push(resolved);
+        }
+        sql += db.engine === 'postgres'
+          ? ' ORDER BY is_primary DESC, updated_at DESC NULLS LAST, created_at DESC'
+          : ' ORDER BY is_primary DESC, updated_at DESC, created_at DESC';
+        return db.query(sql, params);
+      }
+
+      let result = await queryBanks();
+      // Empty picker after deploy: force COA→bank sync once.
+      if (!(result.rows || []).length) {
+        lastBankCoaSyncAt = Date.now();
+        try {
+          await ensureBankAccountsFromCoa(db);
+        } catch (syncErr) {
+          console.warn('[BANK] COA sync (empty):', syncErr.message);
+        }
+        result = await queryBanks();
+      }
       res.json({ data: (result.rows || []).map(mapBankRow).filter(Boolean) });
     } catch (error) {
       console.error('[BANK] list:', error);

@@ -74,35 +74,18 @@ async function linkOrphanBranchCaixaAccounts(dbOrClient) {
        ORDER BY coa.code, b.name`,
     );
 
-    const claimedBranches = new Set();
+    // Allow multiple 45x caixas per branch (e.g. "Soyo 03" + "Caixa Principal").
     for (const row of candidates.rows || []) {
       const branchKey = String(row.branch_id);
-      if (claimedBranches.has(branchKey)) continue;
-
-      const conflict = await queryClient(
-        dbOrClient,
-        `SELECT id, code FROM chart_of_accounts
-         WHERE branch_id = $1 AND is_active = true AND is_header = false
-           AND code LIKE '45%' AND code NOT IN ('45', '451')
-           AND id != $2
-         LIMIT 1`,
-        [branchKey, row.id],
-      );
-      if (conflict.rows?.length) {
-        claimedBranches.add(branchKey);
-        continue;
-      }
-
       await queryClient(
         dbOrClient,
         `UPDATE chart_of_accounts SET branch_id = $1, updated_at = CURRENT_TIMESTAMP
          WHERE id = $2`,
         [branchKey, row.id],
       );
-      claimedBranches.add(branchKey);
       linked += 1;
       const from = row.current_branch_id ? ` (was ${row.current_branch_id})` : '';
-      console.log(`[branchCaixa] Linked ${row.code} → branch ${row.branch_name} (${branchKey})${from}`);
+      console.log(`[branchCaixa] Linked ${row.code} -> branch ${row.branch_name} (${branchKey})${from}`);
     }
   } catch (err) {
     if (isPgPoolClient(dbOrClient)) {

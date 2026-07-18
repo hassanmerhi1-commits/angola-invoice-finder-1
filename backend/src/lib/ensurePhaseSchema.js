@@ -639,10 +639,14 @@ async function ensurePhaseSchema(db) {
     await ensureCaixaTables(db);
     await ensureBankAccountsTable(db);
     try {
-      const { ensureBankGlColumn } = require('./bankGlAccounts');
+      const { ensureBankGlColumn, ensureBankAccountsFromCoa } = require('./bankGlAccounts');
       await ensureBankGlColumn(db);
+      const bankSync = await ensureBankAccountsFromCoa(db);
+      if (bankSync.upserted > 0) {
+        console.log(`[SCHEMA] Synced ${bankSync.upserted} bank account(s) from COA 43x`);
+      }
     } catch (e) {
-      console.warn('[SCHEMA] bank_accounts.gl_account_code:', e.message);
+      console.warn('[SCHEMA] bank_accounts COA sync:', e.message);
     }
     await ensureJournalReferenceIdText(db);
     await ensureUserPermissionsColumn(db);
@@ -655,6 +659,14 @@ async function ensurePhaseSchema(db) {
     const caixaEnsure = await ensureAllBranchCaixaAccounts(db);
     if (caixaEnsure.created > 0) {
       console.log(`[SCHEMA] Created ${caixaEnsure.created} branch caixa account(s)`);
+    }
+    try {
+      const caixaMod = require('../routes/caixa');
+      if (typeof caixaMod.ensureTreasuryRegistersFromCoa === 'function') {
+        await caixaMod.ensureTreasuryRegistersFromCoa();
+      }
+    } catch (e) {
+      console.warn('[SCHEMA] caixa COA sync:', e.message);
     }
     await repairCreditNoteCaixaGlAccounts(db);
     console.log('[SCHEMA] PostgreSQL phase migrations applied');
