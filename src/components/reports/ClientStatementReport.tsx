@@ -47,8 +47,10 @@ export default function ClientStatementReport() {
     // Get sales for this client
     const clientSales = sales.filter(sale => {
       const saleDate = sale.createdAt.split('T')[0];
-      const matchesClient = sale.customerNif === selectedClientData?.nif || 
-                           sale.customerName === selectedClientData?.name;
+      const matchesClient =
+        (sale.clientId && selectedClientData?.id && sale.clientId === selectedClientData.id)
+        || (!!selectedClientData?.nif && sale.customerNif === selectedClientData.nif)
+        || (!!selectedClientData?.name && sale.customerName === selectedClientData.name);
       const matchesDate = saleDate >= dateFrom && saleDate <= dateTo;
       return matchesClient && matchesDate;
     });
@@ -57,12 +59,12 @@ export default function ClientStatementReport() {
     
     // Create statement entries from sales (debits - money owed by client)
     const entries: StatementEntry[] = clientSales
-      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-      .map(sale => {
-        // If payment was credit-based, it's a debit (they owe us)
-        const isCredit = sale.paymentMethod === 'transfer'; // Simplified logic
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .map(sale => {
+        const isOnAccount = sale.paymentMethod === 'credit';
         const debit = sale.total;
-        const credit = sale.amountPaid >= sale.total ? sale.total : 0;
+        // Cash/card/transfer paid at sale → credit the account; on-account stays open debit.
+        const credit = isOnAccount ? 0 : (sale.amountPaid >= sale.total ? sale.total : 0);
         runningBalance = runningBalance + debit - credit;
         
         return {

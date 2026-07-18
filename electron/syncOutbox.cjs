@@ -212,6 +212,25 @@ async function flushSqliteOutbox(apiBase, cdb) {
       || ev.entity_id
       || ev.id;
 
+    // Heal credit sales queued before clientId was included in the outbox payload.
+    if (
+      String(ev.event_type || '').includes('sale')
+      && payload?.saleData
+      && String(payload.saleData.paymentMethod || '').toLowerCase() === 'credit'
+      && !payload.saleData.clientId
+      && !payload.saleData.client_id
+      && ev.entity_id
+    ) {
+      try {
+        const database = cdb.getDb?.();
+        const row = database?.prepare?.('SELECT client_id FROM sales WHERE id = ?').get(ev.entity_id);
+        const healed = String(row?.client_id || '').trim();
+        if (healed) payload.saleData.clientId = healed;
+      } catch (_) {
+        /* best-effort */
+      }
+    }
+
     try {
       const res = await fetch(`${apiBase.replace(/\/$/, '')}/api/sync/client-ingest`, {
         method: 'POST',

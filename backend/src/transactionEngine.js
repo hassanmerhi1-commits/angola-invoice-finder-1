@@ -1870,11 +1870,12 @@ async function processSale(client, saleData) {
     branchId, cashierId, cashierName, items,
     subtotal, taxAmount, discount, total,
     amountPaid, change,
-    customerNif, customerName, clientId,
+    customerNif, customerName,
     clientRequestId, idempotencyKey,
     dueDate, invoiceType: requestedInvoiceType,
     parentProformaNumber, parentProformaId,
   } = saleData;
+  const clientId = String(saleData.clientId || saleData.client_id || '').trim() || null;
   const clientReqId = clientRequestId || idempotencyKey || null;
 
   // ── Validation ──

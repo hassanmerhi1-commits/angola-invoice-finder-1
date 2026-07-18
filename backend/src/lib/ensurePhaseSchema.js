@@ -530,6 +530,91 @@ async function ensureJournalReferenceIdText(db) {
   }
 }
 
+/** Soft-deactivate duplicate active NIFs (keep oldest) and add unique index. */
+async function ensureClientsUniqueNif(db) {
+  if (db.engine === 'postgres') {
+    try {
+      const deactivated = await db.query(`
+        WITH ranked AS (
+          SELECT id,
+            ROW_NUMBER() OVER (
+              PARTITION BY REPLACE(COALESCE(nif, ''), ' ', '')
+              ORDER BY created_at ASC NULLS LAST, id ASC
+            ) AS rn
+          FROM clients
+          WHERE COALESCE(is_active, true) = true
+            AND TRIM(COALESCE(nif, '')) <> ''
+        )
+        UPDATE clients c
+        SET is_active = false,
+            updated_at = CURRENT_TIMESTAMP,
+            name = CASE
+              WHEN c.name ILIKE '%(duplicado)%' THEN c.name
+              ELSE trim(c.name) || ' (duplicado)'
+            END
+        FROM ranked r
+        WHERE c.id = r.id AND r.rn > 1
+        RETURNING c.id
+      `);
+      const n = deactivated.rows?.length || 0;
+      if (n > 0) {
+        console.log(`[SCHEMA] Soft-deactivated ${n} duplicate client NIF row(s)`);
+      }
+      await db.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_nif_active_unique
+        ON clients (nif)
+        WHERE COALESCE(is_active, true) = true AND TRIM(COALESCE(nif, '')) <> ''
+      `);
+    } catch (err) {
+      console.warn('[SCHEMA] clients unique NIF:', err.message);
+    }
+    return;
+  }
+
+  if (db.sqlite) {
+    try {
+      const dups = db.sqlite.prepare(`
+        SELECT REPLACE(COALESCE(nif, ''), ' ', '') AS nif_key
+        FROM clients
+        WHERE COALESCE(is_active, 1) = 1 AND TRIM(COALESCE(nif, '')) <> ''
+        GROUP BY nif_key
+        HAVING COUNT(*) > 1
+      `).all();
+      const listByNif = db.sqlite.prepare(`
+        SELECT id, name FROM clients
+        WHERE REPLACE(COALESCE(nif, ''), ' ', '') = ?
+          AND COALESCE(is_active, 1) = 1
+        ORDER BY created_at ASC, id ASC
+      `);
+      const deactivate = db.sqlite.prepare(`
+        UPDATE clients
+        SET is_active = 0,
+            name = CASE
+              WHEN lower(name) LIKE '%(duplicado)%' THEN name
+              ELSE trim(name) || ' (duplicado)'
+            END
+        WHERE id = ?
+      `);
+      let n = 0;
+      for (const d of dups) {
+        const rows = listByNif.all(d.nif_key);
+        for (let i = 1; i < rows.length; i += 1) {
+          deactivate.run(rows[i].id);
+          n += 1;
+        }
+      }
+      if (n > 0) console.log(`[SCHEMA] Soft-deactivated ${n} duplicate client NIF row(s)`);
+      db.sqlite.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_nif_active_unique
+        ON clients (nif)
+        WHERE COALESCE(is_active, 1) = 1 AND TRIM(COALESCE(nif, '')) <> ''
+      `);
+    } catch (err) {
+      console.warn('[SCHEMA] clients unique NIF (sqlite):', err.message);
+    }
+  }
+}
+
 async function ensurePhaseSchema(db) {
   if (db.engine === 'postgres') {
     await ensureDocumentSequencesBranchScope(db);
@@ -548,6 +633,7 @@ async function ensurePhaseSchema(db) {
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
+    await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
     await ensureSalesCreditPaymentMethod(db);
     await ensureCaixaTables(db);
@@ -592,6 +678,7 @@ async function ensurePhaseSchema(db) {
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
+    await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
     await ensureSalesCreditPaymentMethod(db);
     await ensureCaixaTables(db);
@@ -618,6 +705,7 @@ module.exports = {
   ensureDocumentSequencesBranchScope,
   ensureCreditNoteRestoreStockColumn,
   ensureClientPricingColumns,
+  ensureClientsUniqueNif,
   ensureBranchPricingColumn,
   ensureSalesCreditPaymentMethod,
   ensureCaixaTables,

@@ -1072,7 +1072,8 @@ export const api = {
     create: async (data: any) => {
       const apiResult = await apiFetch<any>('/clients', { method: 'POST', body: JSON.stringify(data) });
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
-      if (isElectronMode() && shouldTryIpcAfterApiFailure(apiResult)) return ipcInsert('clients', { id: generateId(), ...data, created_at: new Date().toISOString() });
+      // Do not ipcInsert with a new id after a failed create — the server may already
+      // have the row (timeout after commit). Caller recovers by NIF via list().
       return apiResult;
     },
     update: async (id: string, data: any) => {

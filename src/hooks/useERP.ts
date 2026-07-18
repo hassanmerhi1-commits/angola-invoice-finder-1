@@ -665,6 +665,7 @@ function mapSaleRow(s: any): Sale {
     change: Number(s.change || s.change_amount || 0),
     customerNif: s.customerNif || s.customer_nif || '',
     customerName: s.customerName || s.customer_name || '',
+    clientId: s.clientId || s.client_id || undefined,
     status: s.status || 'completed',
     invoiceType: resolveSaleDocumentType({
       invoiceType: s.invoiceType || s.invoice_type,
@@ -823,6 +824,7 @@ export function useSales(branchId?: string, deferInitialLoad = false) {
       change: amountPaid - total,
       customerNif: normalizedCustomerNif,
       customerName,
+      clientId,
       status: 'completed',
       invoiceType: resolveSaleDocumentType({
         invoiceType: apiResult.data.invoice_type || apiResult.data.invoiceType || invoiceType,
@@ -1444,16 +1446,25 @@ export function useClients(deferInitialLoad = false) {
       notifyClientsChanged();
       return mapClientApiRow(row);
     }
-    const client: Client = {
-      ...payload,
-      id: `client_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    await storage.saveClient(client);
-    await refreshClients();
-    notifyClientsChanged();
-    return client;
+
+    // Network/timeout after server may already have inserted — recover by NIF, never mint a new id.
+    try {
+      const listed = await api.clients.list();
+      const match = (Array.isArray(listed.data) ? listed.data : []).find(
+        (c: any) => String(c?.nif || '').replace(/\s/g, '').trim() === nif,
+      );
+      if (match?.id) {
+        await refreshClients();
+        notifyClientsChanged();
+        return mapClientApiRow(match);
+      }
+    } catch {
+      /* ignore */
+    }
+
+    throw new Error(
+      result.error || 'Could not save the client. Check your connection and try again.',
+    );
   }, [refreshClients, notifyClientsChanged]);
 
   return { clients, saveClient, deleteClient, createClient, refreshClients };

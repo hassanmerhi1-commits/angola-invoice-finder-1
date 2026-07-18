@@ -44,7 +44,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // Create client
+  // Create client (idempotent by NIF — retry after network error must not duplicate)
   router.post('/', requirePermission('client_manage', 'invoice_create'), async (req, res) => {
     const { name, nif, email, phone, address, city, country, creditLimit, currentBalance, defaultPriceLevel, priceAdjustmentPct, paymentTermsDays, accountParentCode } = req.body;
 
@@ -64,14 +64,63 @@ module.exports = function(broadcastTable) {
     try {
       await conn.query('BEGIN');
 
-      const result = await conn.query(
-        `INSERT INTO clients (name, nif, email, phone, address, city, country, credit_limit, current_balance, default_price_level, price_adjustment_pct, payment_terms_days)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-         RETURNING *`,
-        [name.trim(), normalizedNif, email, phone, address, city, country || 'Angola', creditLimit || 0, currentBalance || 0, priceLevel, adjustment, termsDays]
+      const existingRes = await conn.query(
+        `SELECT * FROM clients
+         WHERE REPLACE(COALESCE(nif, ''), ' ', '') = $1
+         ORDER BY CASE WHEN COALESCE(is_active, true) THEN 0 ELSE 1 END,
+                  created_at ASC NULLS LAST, id ASC
+         LIMIT 1`,
+        [normalizedNif],
       );
+      if (existingRes.rows[0]) {
+        let existing = existingRes.rows[0];
+        if (existing.is_active === false || existing.is_active === 0) {
+          const revived = await conn.query(
+            `UPDATE clients
+             SET is_active = true, name = $1, email = COALESCE($2, email), phone = COALESCE($3, phone),
+                 address = COALESCE($4, address), city = COALESCE($5, city),
+                 country = COALESCE($6, country), credit_limit = COALESCE($7, credit_limit),
+                 default_price_level = $8, price_adjustment_pct = $9, payment_terms_days = $10,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $11
+             RETURNING *`,
+            [
+              name.trim(), email || null, phone || null, address || null, city || null,
+              country || 'Angola', creditLimit ?? null, priceLevel, adjustment, termsDays, existing.id,
+            ],
+          );
+          existing = revived.rows[0] || existing;
+        }
+        await conn.query('COMMIT');
+        await broadcastTable('clients');
+        existing._deduplicated = true;
+        return res.status(200).json(existing);
+      }
 
-      const created = result.rows[0];
+      let created;
+      try {
+        const result = await conn.query(
+          `INSERT INTO clients (name, nif, email, phone, address, city, country, credit_limit, current_balance, default_price_level, price_adjustment_pct, payment_terms_days)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           RETURNING *`,
+          [name.trim(), normalizedNif, email, phone, address, city, country || 'Angola', creditLimit || 0, currentBalance || 0, priceLevel, adjustment, termsDays]
+        );
+        created = result.rows[0];
+      } catch (insertErr) {
+        // Race: another request inserted the same NIF — return that row.
+        if (insertErr.code === '23505' || /unique/i.test(String(insertErr.message || ''))) {
+          const raced = await conn.query(
+            `SELECT * FROM clients WHERE REPLACE(COALESCE(nif, ''), ' ', '') = $1 LIMIT 1`,
+            [normalizedNif],
+          );
+          if (raced.rows[0]) {
+            await conn.query('COMMIT');
+            raced.rows[0]._deduplicated = true;
+            return res.status(200).json(raced.rows[0]);
+          }
+        }
+        throw insertErr;
+      }
 
       // Auto-create the 31x receivables sub-account (non-fatal — client row must still commit).
       let accountCode = null;
@@ -120,6 +169,20 @@ module.exports = function(broadcastTable) {
       const priceLevel = clampPriceLevel(defaultPriceLevel);
       const adjustment = Number(priceAdjustmentPct) || 0;
       const termsDays = clampPaymentTermsDays(paymentTermsDays);
+
+      const nifTaken = await db.query(
+        `SELECT id, name FROM clients
+         WHERE REPLACE(COALESCE(nif, ''), ' ', '') = $1
+           AND CAST(id AS TEXT) <> CAST($2 AS TEXT)
+           AND COALESCE(is_active, true) = true
+         LIMIT 1`,
+        [normalizedNif, id],
+      );
+      if (nifTaken.rows[0]) {
+        return res.status(409).json({
+          error: `Já existe um cliente activo com este NIF (${nifTaken.rows[0].name || normalizedNif})`,
+        });
+      }
 
       const result = await db.query(
         `UPDATE clients 

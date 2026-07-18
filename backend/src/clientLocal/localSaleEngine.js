@@ -116,6 +116,7 @@ function saveLocalSale(db, saleData) {
     change,
     customerNif,
     customerName,
+    clientId,
     clientRequestId,
     idempotencyKey,
     invoiceNumber: presetInvoice,
@@ -127,6 +128,11 @@ function saveLocalSale(db, saleData) {
   if (!items?.length) throw new Error('Venda deve ter pelo menos um item');
 
   const totalAmount = requirePositive(total, 'total');
+  const method = String(paymentMethod || 'cash').trim().toLowerCase();
+  const resolvedClientId = String(clientId || saleData.client_id || '').trim() || null;
+  if (method === 'credit' && !resolvedClientId) {
+    throw new Error('Venda a prazo exige cliente registado (clientId)');
+  }
   const clientReq = clientRequestId || idempotencyKey || crypto.randomUUID();
 
   const dup = db.prepare(
@@ -171,9 +177,9 @@ function saveLocalSale(db, saleData) {
       `INSERT INTO sales (
         id, invoice_number, branch_id, cashier_id, cashier_name,
         subtotal, tax_amount, discount, total, payment_method, amount_paid, change_amount,
-        customer_nif, customer_name, status, client_request_id, saft_hash, agt_status,
+        customer_nif, customer_name, client_id, status, client_request_id, saft_hash, agt_status,
         pending_sync, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, NULL, 'pending', 1, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, NULL, 'pending', 1, ?)`
     ).run(
       saleId,
       invoiceNumber,
@@ -184,11 +190,12 @@ function saveLocalSale(db, saleData) {
       Number(taxAmount) || 0,
       Number(discount) || 0,
       totalAmount,
-      paymentMethod || 'cash',
+      method || 'cash',
       Number(amountPaid) || totalAmount,
       Number(change) || 0,
       customerNif || '',
       customerName || '',
+      resolvedClientId,
       clientReq,
       createdAt
     );
@@ -248,11 +255,12 @@ function saveLocalSale(db, saleData) {
         taxAmount,
         discount: discount || 0,
         total: totalAmount,
-        paymentMethod,
+        paymentMethod: method,
         amountPaid,
         change,
         customerNif,
         customerName,
+        clientId: resolvedClientId || undefined,
         clientRequestId: clientReq,
         invoiceNumber,
       },

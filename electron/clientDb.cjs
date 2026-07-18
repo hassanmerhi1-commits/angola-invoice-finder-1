@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS sales (
   change_amount REAL DEFAULT 0,
   customer_nif TEXT,
   customer_name TEXT,
+  client_id TEXT,
   status TEXT DEFAULT 'completed',
   client_request_id TEXT UNIQUE,
   saft_hash TEXT,
@@ -210,6 +211,7 @@ function tryAlter(database, sql) {
 function migrateClientSchema(database) {
   tryAlter(database, 'ALTER TABLE agt_submissions ADD COLUMN next_retry_at TEXT');
   tryAlter(database, 'ALTER TABLE sales ADD COLUMN agt_validated_at TEXT');
+  tryAlter(database, 'ALTER TABLE sales ADD COLUMN client_id TEXT');
 }
 
 function migrateJsonOutboxToDb(database) {

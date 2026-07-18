@@ -73,6 +73,8 @@ export interface Sale {
   change: number;
   customerNif?: string;
   customerName?: string;
+  /** Registered ERP client id (required for on-account / credit sales). */
+  clientId?: string;
   dueDate?: string;
   status: 'completed' | 'voided' | 'pending';
   /** AGT fiscal document type: FT, FR, or FS */

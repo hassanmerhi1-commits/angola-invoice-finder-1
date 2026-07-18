@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Client } from '@/types/erp';
 import { useClients } from '@/hooks/useERP';
 import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
@@ -69,6 +69,7 @@ export function ClientFormDialog({
   const { accounts, createAccount, refetch: refetchAccounts } = useChartOfAccounts();
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [isAddingSub, setIsAddingSub] = useState(false);
   const [newSubName, setNewSubName] = useState('');
   const [creatingSub, setCreatingSub] = useState(false);
@@ -198,6 +199,8 @@ export function ClientFormDialog({
       return;
     }
 
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       const levelNum = Math.trunc(Number(formData.defaultPriceLevel));
@@ -241,10 +244,11 @@ export function ClientFormDialog({
       console.error('[ClientFormDialog] save failed', e);
       toast({
         title: t.clientsUi.toastErrorTitle,
-        description: t.clientsUi.saveOrCreateFailed,
+        description: e instanceof Error && e.message ? e.message : t.clientsUi.saveOrCreateFailed,
         variant: 'destructive',
       });
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
