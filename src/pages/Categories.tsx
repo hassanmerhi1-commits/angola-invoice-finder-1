@@ -61,7 +61,7 @@ const initialFormData = {
 export default function Categories() {
   const { t } = useTranslation();
   const { categories, saveCategory, deleteCategory, createCategory } = useCategories();
-  const { products } = useProducts();
+  const { products } = useProducts(undefined, { light: true });
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);

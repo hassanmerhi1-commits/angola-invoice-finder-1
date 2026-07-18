@@ -11,7 +11,7 @@ import { api, clearAuthSessionCache, ensureBackendAuthToken, isJwtAuthToken, set
 import { isDemoMode, isThinClientMode } from '@/lib/api/config';
 import { isOfflineModeActive } from '@/lib/offlineAuth';
 import { lanCatalogScopeKey, readLanProducts, readLanSuppliers, saveLanProducts, saveLanSuppliers } from '@/lib/lanCatalogCache';
-import { getCachedList, setCachedList } from '@/lib/listCache';
+import { getCachedList, isCachedListFresh, markCachedListStale, setCachedList } from '@/lib/listCache';
 import { TABLE_REFRESH_EVENT } from '@/lib/realtime/tableRefreshBridge';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
@@ -94,6 +94,7 @@ function mapProduct(p: any): Product {
     price2: p.price2 ?? p.price_2,
     price3: p.price3 ?? p.price_3,
     price4: p.price4 ?? p.price_4,
+    priceOverride: !!(p.priceOverride ?? p.price_override),
     cost: Number(p.cost) || 0,
     firstCost: Number(p.firstCost ?? p.first_cost ?? p.cost) || 0,
     lastCost: Number(p.lastCost ?? p.last_cost ?? p.cost) || 0,
@@ -328,13 +329,20 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     );
   }, [branchId, catalogBranchIds, listOptions?.light]);
 
-  const refreshProducts = useCallback(async () => {
+  const refreshProducts = useCallback(async (opts?: { force?: boolean }) => {
     if (!listEnabled) {
       setProductsLoading(false);
       return;
     }
+    const cachedLen = getCachedList<Product[]>(productsCacheKey)?.length ?? 0;
+    const hasRows = cachedLen > 0;
+    if (!opts?.force && isCachedListFresh(productsCacheKey) && hasRows) {
+      setProductsLoading(false);
+      return;
+    }
     const generation = ++listGenerationRef.current;
-    setProductsLoading(true);
+    // Never blank the UI when we already have rows to show.
+    if (!hasRows) setProductsLoading(true);
     try {
       const list = await fetchMergedProductList();
       if (generation === listGenerationRef.current) {
@@ -381,12 +389,13 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
       const changedBranchId = customEvent.detail?.branchId;
       const affectsAllBranches = !changedBranchId || changedBranchId === 'all';
       if (!branchId || affectsAllBranches || changedBranchId === branchId) {
-        refreshProducts();
+        markCachedListStale(productsCacheKey);
+        void refreshProducts({ force: true });
       }
     };
     window.addEventListener(storage.PRODUCTS_CHANGED_EVENT, handleProductsChanged as EventListener);
     return () => window.removeEventListener(storage.PRODUCTS_CHANGED_EVENT, handleProductsChanged as EventListener);
-  }, [branchId, refreshProducts]);
+  }, [branchId, refreshProducts, productsCacheKey]);
 
   type ProductWriteOptions = { skipListMerge?: boolean; lightweightChangedEvent?: boolean };
 
@@ -504,15 +513,16 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
   ]);
 
   const updateProduct = useCallback(async (
-    product: Product & { preserveStock?: boolean },
+    product: Product & { preserveStock?: boolean; propagatePrices?: boolean },
     options?: ProductWriteOptions,
   ): Promise<Product> => {
     const writeGeneration = ++listGenerationRef.current;
-    const { preserveStock, ...rest } = product;
+    const { preserveStock, propagatePrices, ...rest } = product;
     const payload = {
       ...rest,
       branchId: normalizeProductBranchIdForApi(product.branchId) ?? undefined,
       ...(preserveStock ? { preserveStock: true } : {}),
+      ...(propagatePrices ? { propagatePrices: true } : {}),
     };
     const result = await api.products.update(product.id, payload);
     let resolved = product;
@@ -683,13 +693,20 @@ export function useSales(branchId?: string, deferInitialLoad = false) {
   const salesCacheKey = `sales:${branchId ?? 'all'}`;
   const [sales, setSales] = useState<Sale[]>(() => getCachedList<Sale[]>(salesCacheKey) ?? []);
 
-  const refreshSales = useCallback(async () => {
+  const refreshSales = useCallback(async (opts?: { force?: boolean }) => {
+    if (!opts?.force && isCachedListFresh(salesCacheKey)) {
+      const cached = getCachedList<Sale[]>(salesCacheKey);
+      if (cached?.length) {
+        setSales(cached);
+        return;
+      }
+    }
     let data: any[] = [];
     let reachedServer = false;
     try {
-      const result = await api.sales.list(branchId);
+      const result = await api.sales.list(branchId, { limit: 200 });
       if (result.data !== undefined) {
-        data = result.data;
+        data = Array.isArray(result.data) ? result.data : (result.data as any)?.items ?? [];
         reachedServer = true;
       } else if (isDemoMode()) {
         data = await storage.getSales(branchId);
@@ -714,20 +731,21 @@ export function useSales(branchId?: string, deferInitialLoad = false) {
     if (!reachedServer && data.length === 0) return;
     const mapped = data.map(mapSaleRow);
     setSales(mapped);
-    setCachedList(`sales:${branchId ?? 'all'}`, mapped);
-  }, [branchId]);
+    setCachedList(salesCacheKey, mapped);
+  }, [branchId, salesCacheKey]);
 
   useEffect(() => {
     const onSalesChanged = () => {
-      void refreshSales();
+      markCachedListStale(salesCacheKey);
+      void refreshSales({ force: true });
     };
     window.addEventListener(storage.SALES_CHANGED_EVENT, onSalesChanged);
     return () => window.removeEventListener(storage.SALES_CHANGED_EVENT, onSalesChanged);
-  }, [refreshSales]);
+  }, [refreshSales, salesCacheKey]);
 
   useEffect(() => {
     if (deferInitialLoad) return;
-    refreshSales();
+    void refreshSales();
   }, [refreshSales, deferInitialLoad]);
 
   const completeSale = useCallback(async (
@@ -1323,9 +1341,17 @@ function mapClientApiRow(c: any): Client {
 }
 
 export function useClients(deferInitialLoad = false) {
-  const [clients, setClients] = useState<Client[]>(() => getCachedList<Client[]>('clients') ?? []);
+  const clientsCacheKey = 'clients';
+  const [clients, setClients] = useState<Client[]>(() => getCachedList<Client[]>(clientsCacheKey) ?? []);
 
-  const refreshClients = useCallback(async () => {
+  const refreshClients = useCallback(async (opts?: { force?: boolean }) => {
+    if (!opts?.force && isCachedListFresh(clientsCacheKey)) {
+      const cached = getCachedList<Client[]>(clientsCacheKey);
+      if (cached?.length) {
+        setClients(cached);
+        return;
+      }
+    }
     let apiRows: any[] = [];
     try {
       const response = await api.clients.list();
@@ -1346,11 +1372,8 @@ export function useClients(deferInitialLoad = false) {
     let fromOfflineCache: Client[] = [];
     if (apiRows.length === 0) {
       try {
-        const { readLocalClientsCache, syncClientsToLocalCache } = await import('@/lib/sync/offlineFirst');
+        const { readLocalClientsCache } = await import('@/lib/sync/offlineFirst');
         fromOfflineCache = (await readLocalClientsCache()).map((c) => mapClientApiRow(c));
-        if (fromOfflineCache.length === 0) {
-          /* keep storage */
-        }
       } catch {
         /* ignore */
       }
@@ -1384,7 +1407,7 @@ export function useClients(deferInitialLoad = false) {
       a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
     );
     setClients(sorted);
-    setCachedList('clients', sorted);
+    setCachedList(clientsCacheKey, sorted);
   }, []);
 
   const notifyClientsChanged = useCallback(() => {
@@ -1394,13 +1417,16 @@ export function useClients(deferInitialLoad = false) {
 
   useEffect(() => {
     if (deferInitialLoad) return;
-    refreshClients();
+    void refreshClients();
   }, [refreshClients, deferInitialLoad]);
 
   // Keep every useClients instance (Clients page, Chart of Accounts dialog, POS, …)
   // in sync when a client is created/updated/deleted from anywhere.
   useEffect(() => {
-    const onClientsChanged = () => { void refreshClients(); };
+    const onClientsChanged = () => {
+      markCachedListStale(clientsCacheKey);
+      void refreshClients({ force: true });
+    };
     window.addEventListener(storage.CLIENTS_CHANGED_EVENT, onClientsChanged);
     return () => window.removeEventListener(storage.CLIENTS_CHANGED_EVENT, onClientsChanged);
   }, [refreshClients]);
@@ -1415,14 +1441,16 @@ export function useClients(deferInitialLoad = false) {
     const payload = { ...client, name, nif };
     const result = await api.clients.update(client.id, payload);
     if (!result.data) await storage.saveClient(payload);
-    await refreshClients();
+    markCachedListStale(clientsCacheKey);
+    await refreshClients({ force: true });
     notifyClientsChanged();
   }, [refreshClients, notifyClientsChanged]);
 
   const deleteClient = useCallback(async (clientId: string) => {
     const result = await api.clients.delete(clientId);
     if (!result.data) await storage.deleteClient(clientId);
-    await refreshClients();
+    markCachedListStale(clientsCacheKey);
+    await refreshClients({ force: true });
     notifyClientsChanged();
   }, [refreshClients, notifyClientsChanged]);
 
@@ -1442,7 +1470,8 @@ export function useClients(deferInitialLoad = false) {
       (String((row as { id?: unknown }).id ?? '').length > 0 ||
         typeof (row as { name?: unknown }).name === 'string');
     if (apiOk) {
-      await refreshClients();
+      markCachedListStale(clientsCacheKey);
+      await refreshClients({ force: true });
       notifyClientsChanged();
       return mapClientApiRow(row);
     }
@@ -1454,7 +1483,8 @@ export function useClients(deferInitialLoad = false) {
         (c: any) => String(c?.nif || '').replace(/\s/g, '').trim() === nif,
       );
       if (match?.id) {
-        await refreshClients();
+        markCachedListStale(clientsCacheKey);
+        await refreshClients({ force: true });
         notifyClientsChanged();
         return mapClientApiRow(match);
       }
@@ -1557,10 +1587,18 @@ export function useStockTransfers(branchId?: string) {
 // ============================================
 // SUPPLIERS
 // ============================================
-export function useSuppliers() {
-  const [suppliers, setSuppliers] = useState<Supplier[]>(() => getCachedList<Supplier[]>('suppliers') ?? []);
+export function useSuppliers(deferInitialLoad = false) {
+  const suppliersCacheKey = 'suppliers';
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => getCachedList<Supplier[]>(suppliersCacheKey) ?? []);
 
-  const refreshSuppliers = useCallback(async () => {
+  const refreshSuppliers = useCallback(async (opts?: { force?: boolean }) => {
+    if (!opts?.force && isCachedListFresh(suppliersCacheKey)) {
+      const cached = getCachedList<Supplier[]>(suppliersCacheKey);
+      if (cached?.length) {
+        setSuppliers(cached);
+        return;
+      }
+    }
     let data: any[] = [];
     try {
       const result = await api.suppliers.list();
@@ -1596,9 +1634,8 @@ export function useSuppliers() {
     if (mapped.length && isThinClientMode()) {
       saveLanSuppliers(mapped);
     }
-    console.log(`[ERP] Suppliers loaded: ${mapped.length} total, ${mapped.filter(s => s.isActive).length} active`);
     setSuppliers(mapped);
-    setCachedList('suppliers', mapped);
+    setCachedList(suppliersCacheKey, mapped);
   }, []);
 
   const notifySuppliersChanged = useCallback(() => {
@@ -1606,10 +1643,16 @@ export function useSuppliers() {
     window.dispatchEvent(new CustomEvent(storage.SUPPLIERS_CHANGED_EVENT, { detail: {} }));
   }, []);
 
-  useEffect(() => { refreshSuppliers(); }, [refreshSuppliers]);
+  useEffect(() => {
+    if (deferInitialLoad) return;
+    void refreshSuppliers();
+  }, [refreshSuppliers, deferInitialLoad]);
 
   useEffect(() => {
-    const onSuppliersChanged = () => { void refreshSuppliers(); };
+    const onSuppliersChanged = () => {
+      markCachedListStale(suppliersCacheKey);
+      void refreshSuppliers({ force: true });
+    };
     window.addEventListener(storage.SUPPLIERS_CHANGED_EVENT, onSuppliersChanged);
     return () => window.removeEventListener(storage.SUPPLIERS_CHANGED_EVENT, onSuppliersChanged);
   }, [refreshSuppliers]);
@@ -1617,14 +1660,16 @@ export function useSuppliers() {
   const saveSupplier = useCallback(async (supplier: Supplier) => {
     const result = await api.suppliers.update(supplier.id, supplier);
     if (!result.data) await storage.saveSupplier(supplier);
-    await refreshSuppliers();
+    markCachedListStale(suppliersCacheKey);
+    await refreshSuppliers({ force: true });
     notifySuppliersChanged();
   }, [refreshSuppliers, notifySuppliersChanged]);
 
   const deleteSupplier = useCallback(async (supplierId: string) => {
     const result = await api.suppliers.delete(supplierId);
     if (!result.data) await storage.deleteSupplier(supplierId);
-    await refreshSuppliers();
+    markCachedListStale(suppliersCacheKey);
+    await refreshSuppliers({ force: true });
     notifySuppliersChanged();
   }, [refreshSuppliers, notifySuppliersChanged]);
 
@@ -1640,7 +1685,8 @@ export function useSuppliers() {
       } catch (e) {
         console.warn('[ERP] ensureSupplierAccount after create skipped:', e);
       }
-      await refreshSuppliers();
+      markCachedListStale(suppliersCacheKey);
+      await refreshSuppliers({ force: true });
       notifySuppliersChanged();
       return mapped;
     }
@@ -1675,7 +1721,8 @@ export function useSuppliers() {
     };
     storage.saveSupplierLocalFallback(supplier);
     await ensureSupplierAccount(supplier.id, supplier.name, supplier.nif, (data as { accountParentCode?: string }).accountParentCode);
-    await refreshSuppliers();
+    markCachedListStale(suppliersCacheKey);
+    await refreshSuppliers({ force: true });
     notifySuppliersChanged();
     return supplier;
   }, [refreshSuppliers, notifySuppliersChanged]);

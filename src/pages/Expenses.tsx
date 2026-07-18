@@ -142,11 +142,7 @@ export default function Expenses() {
       setBankAccounts([]);
       return;
     }
-    if (treasuryAllBranches) {
-      invalidateBankListCache();
-    } else {
-      invalidateBankListCache(expenseBranchId);
-    }
+    // Use 30s treasury cache — do not invalidate on dialog open.
     const loadedBanks = (await getBankAccounts(treasuryAllBranches ? undefined : (apiBranchId || expenseBranchId), {
       allBranches: treasuryAllBranches,
       branchName: expenseBranchName,
@@ -165,11 +161,6 @@ export default function Expenses() {
     }
     setCaixaLoading(true);
     try {
-      if (treasuryAllBranches) {
-        invalidateCaixaListCache();
-      } else {
-        invalidateCaixaListCache(expenseBranchId, expenseBranchName);
-      }
       const loggedIn = isJwtAuthToken(await ensureBackendAuthToken());
       const loadedCaixas = await getCaixas(expenseBranchId, expenseBranchName, {
         ensureIfEmpty: treasuryAllBranches ? false : ensureIfEmpty,
@@ -210,13 +201,6 @@ export default function Expenses() {
       return;
     }
     const loggedInPromise = ensureBackendAuthToken().then(isJwtAuthToken);
-    if (treasuryAllBranches) {
-      invalidateCaixaListCache();
-      invalidateBankListCache();
-    } else {
-      invalidateCaixaListCache(expenseBranchId, expenseBranchName);
-      invalidateBankListCache(apiBranchId || expenseBranchId);
-    }
     const [loadedExpenses, loadedCaixas, loadedBanks] = await Promise.all([
       getExpenses(apiBranchId),
       getCaixas(expenseBranchId, expenseBranchName, {

@@ -849,8 +849,13 @@ export const api = {
 
   // Sales
   sales: {
-    list: async (branchId?: string) => {
-      const endpoint = `/sales${branchId ? `?branchId=${branchId}` : ''}`;
+    list: async (branchId?: string, opts?: { limit?: number; offset?: number }) => {
+      const params = new URLSearchParams();
+      if (branchId) params.set('branchId', branchId);
+      if (opts?.limit != null) params.set('limit', String(opts.limit));
+      if (opts?.offset != null) params.set('offset', String(opts.offset));
+      const qs = params.toString();
+      const endpoint = `/sales${qs ? `?${qs}` : ''}`;
       const { mergeSaleRows, readPendingSalesCache } = await import('@/lib/sync/pendingSalesCache');
       const { getLocalSales } = await import('@/lib/sync/offlineFirst');
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
@@ -8,10 +8,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useSales, useProducts } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
 import { exportReportExcel } from '@/lib/reportExport';
-import { format, startOfMonth } from 'date-fns';
+import { format } from 'date-fns';
 import {
   BarChart3, Users, Truck, TrendingUp, Calendar,
   FileText, Download, DollarSign, Check, ChevronDown,
@@ -97,9 +96,6 @@ export default function Reports() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
-  const { sales } = useSales(apiBranchId);
-  const { products } = useProducts(apiBranchId, { light: true });
-
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
 
   const goToTarget = (target: FamilyTarget) => {
@@ -136,22 +132,8 @@ export default function Reports() {
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
 
-  // Average margin for the current month from completed sales and product costs.
-  const avgMargin = useMemo(() => {
-    const monthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd');
-    const costMap = new Map(products.map((p) => [p.id, p.avgCost || p.cost || 0]));
-    let base = 0;
-    let cost = 0;
-    sales
-      .filter((s) => s.status === 'completed' && s.createdAt.slice(0, 10) >= monthStart)
-      .forEach((s) => {
-        base += Number(s.subtotal || 0);
-        s.items.forEach((item) => {
-          cost += (costMap.get(item.productId) || 0) * Number(item.quantity || 0);
-        });
-      });
-    return base > 0 ? ((base - cost) / base) * 100 : 0;
-  }, [sales, products]);
+  // Overview uses dashboard KPIs only — avoid pulling full sales/products lists on mount.
+  const avgMargin = Number((kpis as { avgMargin?: number } | null)?.avgMargin) || 0;
 
   const salesMonth = kpis?.monthSales?.total ?? 0;
   const receivable = kpis?.openAR?.total ?? 0;

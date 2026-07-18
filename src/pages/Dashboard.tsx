@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
+  DashboardChartsProvider,
   RevenueExpensesChart, CashFlowChart, TopProductsChart,
   ARAgingChart, DailySalesChart, ProfitMarginWidget,
   PaymentMethodChart, StockValuationWidget,
@@ -279,40 +280,42 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Financial Charts */}
+        {/* Financial Charts — one shared sales/products load for all widgets */}
         <div>
           <h3 className={`${NEXOR_SECTION_LABEL} mb-4`}>{d.financialAnalysis}</h3>
-          <Tabs defaultValue="overview" className="space-y-4">
-            <TabsList>
-              <TabsTrigger value="overview">{d.tabOverview}</TabsTrigger>
-              <TabsTrigger value="cashflow">{d.tabCashflow}</TabsTrigger>
-              <TabsTrigger value="products">{d.tabProducts}</TabsTrigger>
-              <TabsTrigger value="aging">{d.tabAging}</TabsTrigger>
-              <TabsTrigger value="payments">{d.tabPayments}</TabsTrigger>
-            </TabsList>
-            <TabsContent value="overview" className="space-y-4">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <ProfitMarginWidget />
-                <StockValuationWidget />
-              </div>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <RevenueExpensesChart />
-                <DailySalesChart />
-              </div>
-            </TabsContent>
-            <TabsContent value="cashflow">
-              <CashFlowChart />
-            </TabsContent>
-            <TabsContent value="products">
-              <TopProductsChart />
-            </TabsContent>
-            <TabsContent value="aging">
-              <ARAgingChart />
-            </TabsContent>
-            <TabsContent value="payments">
-              <PaymentMethodChart />
-            </TabsContent>
-          </Tabs>
+          <DashboardChartsProvider>
+            <Tabs defaultValue="overview" className="space-y-4">
+              <TabsList>
+                <TabsTrigger value="overview">{d.tabOverview}</TabsTrigger>
+                <TabsTrigger value="cashflow">{d.tabCashflow}</TabsTrigger>
+                <TabsTrigger value="products">{d.tabProducts}</TabsTrigger>
+                <TabsTrigger value="aging">{d.tabAging}</TabsTrigger>
+                <TabsTrigger value="payments">{d.tabPayments}</TabsTrigger>
+              </TabsList>
+              <TabsContent value="overview" className="space-y-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <ProfitMarginWidget />
+                  <StockValuationWidget />
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <RevenueExpensesChart />
+                  <DailySalesChart />
+                </div>
+              </TabsContent>
+              <TabsContent value="cashflow">
+                <CashFlowChart />
+              </TabsContent>
+              <TabsContent value="products">
+                <TopProductsChart />
+              </TabsContent>
+              <TabsContent value="aging">
+                <ARAgingChart />
+              </TabsContent>
+              <TabsContent value="payments">
+                <PaymentMethodChart />
+              </TabsContent>
+            </Tabs>
+          </DashboardChartsProvider>
         </div>
 
         {/* Quick Checks */}

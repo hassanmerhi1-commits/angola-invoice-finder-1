@@ -499,7 +499,6 @@ export default function Journals() {
   const [newEntryOpen, setNewEntryOpen] = useState(false);
   const [newEntryDate, setNewEntryDate] = useState(new Date().toISOString().split('T')[0]);
   const [newEntryType, setNewEntryType] = useState('ajuste');
-  const [newEntryDescription, setNewEntryDescription] = useState('');
   const [newEntryLines, setNewEntryLines] = useState<NewEntryLine[]>([createEmptyLine(), createEmptyLine()]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountSearch, setAccountSearch] = useState('');
@@ -591,10 +590,18 @@ export default function Journals() {
     lastLineManualRef.current = false;
     setNewEntryDate(new Date().toISOString().split('T')[0]);
     setNewEntryType('ajuste');
-    setNewEntryDescription('');
     setNewEntryLines([createEmptyLine(), createEmptyLine()]);
     setAccountSearch('');
     setActiveLineId(null);
+  }
+
+  /** Line description is the journal entry title/name (no separate header description field). */
+  function entryTitleFromLines(lines: NewEntryLine[] = newEntryLines): string {
+    for (const line of lines) {
+      const text = String(line.description || '').trim();
+      if (text) return text;
+    }
+    return '';
   }
 
   function openNewEntry() {
@@ -656,8 +663,8 @@ export default function Journals() {
 
   // Save journal entry
   async function saveNewEntry() {
-    // Validate
-    if (!newEntryDescription.trim()) {
+    const entryTitle = entryTitleFromLines();
+    if (!entryTitle) {
       toast.error(t.journalsUi.fillEntryDescription);
       return;
     }
@@ -679,22 +686,25 @@ export default function Journals() {
       const lines = validLines.map((line) => ({
         accountCode: line.accountCode,
         accountName: line.accountName,
-        description: line.description || newEntryDescription,
+        description: String(line.description || '').trim() || entryTitle,
         debit: parseFloat(line.debit) || 0,
         credit: parseFloat(line.credit) || 0,
       }));
       
       const docId = `manual_${Date.now()}`;
+      // Branch is not shown on the form (accounts carry branch context). API still
+      // requires a branchId — use current scope silently without a picker.
+      const silentBranchId = currentBranch?.id || listBranchId || '';
       const response = await api.transactions.process({
         transactionType: 'adjustment',
         documentId: docId,
         documentNumber: `JE-${String(Date.now()).slice(-6)}`,
-        branchId: currentBranch?.id || '',
+        branchId: silentBranchId,
         branchName: currentBranch?.name || '',
         userId: user?.id || '',
         userName: user?.name || 'Sistema',
         date: newEntryDate,
-        description: newEntryDescription,
+        description: entryTitle,
         journalLines: lines,
       });
       
@@ -916,8 +926,8 @@ export default function Journals() {
 
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-5 py-4 sm:px-6">
             <div className="shrink-0 rounded-lg border bg-card p-4 shadow-sm">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
-                <div className="md:col-span-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
+                <div>
                   <Label className="text-sm font-medium">{t.common.date}</Label>
                   <Input
                     type="date"
@@ -926,7 +936,7 @@ export default function Journals() {
                     className="mt-1.5 h-10"
                   />
                 </div>
-                <div className="md:col-span-3">
+                <div>
                   <Label className="text-sm font-medium">{t.common.type}</Label>
                   <Select value={newEntryType} onValueChange={setNewEntryType}>
                     <SelectTrigger className="mt-1.5 h-10"><SelectValue /></SelectTrigger>
@@ -938,23 +948,6 @@ export default function Journals() {
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="md:col-span-3">
-                  <Label className="text-sm font-medium">{t.journalsUi.branch}</Label>
-                  <Input
-                    value={currentBranch?.name || t.branchUi.headOffice}
-                    disabled
-                    className="mt-1.5 h-10 bg-muted"
-                  />
-                </div>
-                <div className="md:col-span-4">
-                  <Label className="text-sm font-medium">{t.common.description}</Label>
-                  <Input
-                    value={newEntryDescription}
-                    onChange={e => setNewEntryDescription(e.target.value)}
-                    placeholder={t.journalsUi.entryDescriptionPlaceholder}
-                    className="mt-1.5 h-10"
-                  />
                 </div>
               </div>
             </div>
@@ -1049,7 +1042,7 @@ export default function Journals() {
                         <td className="px-2 py-2 align-top">
                           <Input
                             value={line.description}
-                            placeholder={t.journalsUi.lineDescriptionPlaceholder}
+                            placeholder={t.journalsUi.entryDescriptionPlaceholder}
                             onChange={e => updateLine(line.id, 'description', e.target.value)}
                             className="h-9"
                           />
@@ -1122,7 +1115,7 @@ export default function Journals() {
             <Button
               size="lg"
               onClick={saveNewEntry}
-              disabled={!isBalanced || newEntryTotalDebit === 0 || !newEntryDescription.trim()}
+              disabled={!isBalanced || newEntryTotalDebit === 0 || !entryTitleFromLines()}
               className="gap-2 min-w-[160px]"
             >
               <CheckCircle className="h-4 w-4" /> {t.journalsUi.postEntry}

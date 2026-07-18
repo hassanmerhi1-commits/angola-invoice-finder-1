@@ -6,18 +6,40 @@
  * leaving a tab and coming back triggers a slow re-fetch and a blank screen.
  *
  * This cache lets a hook seed its initial state with the last-known rows (instant
- * render) and then refresh in the background. It is intentionally in-memory only:
- * it survives tab/route navigation within a session but is cleared on a full
- * reload, where the app re-fetches from the server anyway.
+ * render) and then refresh in the background. Fresh TTL (~60s) skips network on
+ * quick revisits. Cleared on full reload.
  */
-const store = new Map<string, unknown>();
+
+export const LIST_CACHE_FRESH_MS = 60_000;
+
+type CacheEntry = { at: number; value: unknown };
+
+const store = new Map<string, CacheEntry>();
 
 export function getCachedList<T>(key: string): T | undefined {
-  return store.get(key) as T | undefined;
+  const entry = store.get(key);
+  return entry ? (entry.value as T) : undefined;
+}
+
+/** True when cache has rows and was written within maxAgeMs. */
+export function isCachedListFresh(key: string, maxAgeMs = LIST_CACHE_FRESH_MS): boolean {
+  const entry = store.get(key);
+  if (!entry) return false;
+  const value = entry.value;
+  const hasData = Array.isArray(value) ? value.length > 0 : value != null;
+  if (!hasData) return false;
+  return Date.now() - entry.at <= maxAgeMs;
 }
 
 export function setCachedList<T>(key: string, value: T): void {
-  store.set(key, value);
+  store.set(key, { at: Date.now(), value });
+}
+
+/** Mark cache stale so the next mount refreshes (keeps rows for warm paint). */
+export function markCachedListStale(key: string): void {
+  const entry = store.get(key);
+  if (!entry) return;
+  store.set(key, { at: 0, value: entry.value });
 }
 
 export function clearCachedList(key?: string): void {

@@ -151,14 +151,14 @@ export default function Payments() {
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const { apiBranchId, treasuryAllBranches } = useBranchScope();
-  const { clients, refreshClients } = useClients();
-  const { suppliers, refreshSuppliers } = useSuppliers();
-  const { payments, openItems, loading, refresh, createPayment } = usePaymentsData(apiBranchId);
-  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-
   const [activeTab, setActiveTab] = useState<'receipts' | 'payments' | 'open-items'>('receipts');
   const [searchTerm, setSearchTerm] = useState('');
   const [showNewDialog, setShowNewDialog] = useState(false);
+  // Defer party lists until the pay dialog opens (60s SWR still applies after first load).
+  const { clients, refreshClients } = useClients(!showNewDialog);
+  const { suppliers, refreshSuppliers } = useSuppliers(!showNewDialog);
+  const { payments, openItems, loading, refresh, createPayment } = usePaymentsData(apiBranchId);
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const [paymentType, setPaymentType] = useState<'receipt' | 'payment'>('receipt');
 
   // New payment form

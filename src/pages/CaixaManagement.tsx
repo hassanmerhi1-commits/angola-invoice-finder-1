@@ -4,7 +4,6 @@ import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { 
   getCaixas,
-  invalidateCaixaListCache, 
   createCaixa, 
   saveCaixa,
   getCaixaSessions,
@@ -157,8 +156,7 @@ export default function CaixaManagement() {
     if (!treasuryAllBranches && branchId) {
       await ensureBranchCaixa(branchId, branchName);
     }
-    if (treasuryAllBranches) invalidateCaixaListCache();
-    else if (branchId) invalidateCaixaListCache(branchId, branchName);
+    // Honor 30s caixa cache on revisit — invalidate only after mutations.
     setCaixas(await getCaixas(branchId, branchName, { allBranches: treasuryAllBranches }));
     setSessions(await getCaixaSessions());
     setTransactions(await getCashTransactions());

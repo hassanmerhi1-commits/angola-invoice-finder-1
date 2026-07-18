@@ -113,26 +113,60 @@ async function resolveAndPersistUserBranchId(userRow) {
   return scope.branchId;
 }
 
+/** Short-lived user row cache — avoids a second users SELECT on every products list. */
+const userScopeCache = new Map();
+const USER_SCOPE_CACHE_MS = 15_000;
+
+function getCachedUserRow(userId) {
+  const hit = userScopeCache.get(String(userId));
+  if (!hit) return null;
+  if (Date.now() - hit.at > USER_SCOPE_CACHE_MS) {
+    userScopeCache.delete(String(userId));
+    return null;
+  }
+  return hit.row;
+}
+
+function setCachedUserRow(userId, row) {
+  userScopeCache.set(String(userId), { at: Date.now(), row });
+}
+
 /**
  * Optional auth: attaches branch scope from JWT user when present.
  * Filial-assigned users always get forceBranchId set.
+ * Does NOT UPDATE users.branch_id on list traffic (persistFix only on login).
  */
 async function attachUserBranchScope(req, res, next) {
-  const token = getBearerToken(req);
-  if (!token) return next();
-
   try {
+    // Reuse requireAuth's user when present — skip extra DB round-trip.
+    if (req.user?.id) {
+      const userRow = {
+        id: req.user.id,
+        role: req.user.role,
+        branch_id: req.user.branchId ?? req.user.branch_id ?? null,
+      };
+      req.branchScope = await buildBranchScopeFromUser(userRow, { persistFix: false });
+      return next();
+    }
+
+    const token = getBearerToken(req);
+    if (!token) return next();
+
     const decoded = jwt.verify(token, JWT_SECRET);
-    const result = await db.query(
-      `SELECT u.id, u.role, u.branch_id
-       FROM users u
-       WHERE u.id = $1 AND COALESCE(u.is_active, 1) != 0`,
-      [decoded.userId],
-    );
+    let userRow = getCachedUserRow(decoded.userId);
+    if (!userRow) {
+      const result = await db.query(
+        `SELECT u.id, u.role, u.branch_id
+         FROM users u
+         WHERE u.id = $1 AND COALESCE(u.is_active, 1) != 0`,
+        [decoded.userId],
+      );
+      if (result.rows.length === 0) return next();
+      userRow = result.rows[0];
+      setCachedUserRow(decoded.userId, userRow);
+    }
 
-    if (result.rows.length === 0) return next();
-
-    req.branchScope = await buildBranchScopeFromUser(result.rows[0], { persistFix: true });
+    req.branchScope = await buildBranchScopeFromUser(userRow, { persistFix: false });
   } catch {
     /* ignore invalid token — route stays public */
   }

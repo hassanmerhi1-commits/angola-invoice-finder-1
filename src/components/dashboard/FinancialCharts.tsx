@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useTranslation } from '@/i18n';
 import { isDemoMode } from '@/lib/api/config';
@@ -9,6 +9,21 @@ import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+
+// ==================== SHARED DASHBOARD DATA ====================
+// One sales + one products fetch for all charts (avoids 7–8 duplicate /sales calls).
+
+type ChartsData = { sales: Sale[]; products: Product[] };
+
+const ChartsDataContext = createContext<ChartsData | null>(null);
+
+export function DashboardChartsProvider({ children }: { children: ReactNode }) {
+  const { apiBranchId } = useBranchScope();
+  const { sales } = useSales(apiBranchId);
+  const { products } = useProducts(apiBranchId, { light: true });
+  const value = useMemo(() => ({ sales, products }), [sales, products]);
+  return <ChartsDataContext.Provider value={value}>{children}</ChartsDataContext.Provider>;
+}
 
 // ==================== DATA HELPERS ====================
 
@@ -43,15 +58,18 @@ function saleLineRevenue(item: {
 }
 
 function useChartSales(): Sale[] {
+  const ctx = useContext(ChartsDataContext);
   const { apiBranchId } = useBranchScope();
-  const { sales } = useSales(apiBranchId);
-  return sales;
+  // When provider is present, skip the hook's network fetch (defer).
+  const { sales } = useSales(apiBranchId, !!ctx);
+  return ctx?.sales ?? sales;
 }
 
 function useChartProducts(): Product[] {
+  const ctx = useContext(ChartsDataContext);
   const { apiBranchId } = useBranchScope();
-  const { products } = useProducts(apiBranchId, { light: true });
-  return products;
+  const { products } = useProducts(apiBranchId, { light: true, enabled: !ctx });
+  return ctx?.products ?? products;
 }
 
 function getExpensesFromStorage() {

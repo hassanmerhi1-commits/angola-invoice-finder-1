@@ -4,6 +4,8 @@ import {
   cacheKey,
   fetchInventoryGrid,
   invalidateInventoryGridCache,
+  isInventoryGridCacheFresh,
+  readInventoryGridCache,
   readInventoryGridCacheStale,
   writeCache,
 } from '@/lib/inventoryGrid';
@@ -71,10 +73,19 @@ export function useInventoryGrid(opts: {
 
     void (async () => {
       try {
+        // Reuse fresh session cache on tab revisits / remounts (≤60s) — big win for Inventory.
+        if (isInventoryGridCacheFresh(opts.branchId, opts.consolidated, 60_000)) {
+          const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
+          if (cached?.length) {
+            if (gen !== generationRef.current) return;
+            setRows(cached);
+            return;
+          }
+        }
         const fresh = await fetchInventoryGrid({
           branchId: opts.branchId,
           consolidated: opts.consolidated,
-          bypassCache: true,
+          bypassCache: false,
         });
         if (gen !== generationRef.current) return;
         setRows(fresh);

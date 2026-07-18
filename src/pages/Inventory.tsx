@@ -212,13 +212,8 @@ export default function Inventory() {
   }, [canSwitchBranch, branches, allBranches, mapApiRowToProduct]);
 
   const reloadInventoryList = useCallback(async () => {
-    if (listBranchId && !isHeadOffice) {
-      try {
-        await api.products.repairFilialStock(listBranchId);
-      } catch {
-        /* non-blocking — grid still loads */
-      }
-    }
+    // Skip repairFilialStock on every reload — server inventory-grid already reconciles
+    // with a cooldown; calling repair here was a major Inventory open/tab lag source.
     invalidateInventoryGridCache(listBranchId, isHeadOffice);
     invalidateSellingPriceHintsCache();
     await fetchSellingPriceHints(true).then(setSellingPriceHints);
@@ -244,18 +239,30 @@ export default function Inventory() {
         return;
       }
       void reloadInventoryList();
-      if (canSwitchBranch) void loadPerBranchBreakdown();
+      // Detailed-qty breakdown is loaded by the qtd-detalhada tab effect, not here.
     };
     window.addEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
     return () => window.removeEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
-  }, [listBranchId, isHeadOffice, reloadInventoryList, canSwitchBranch, loadPerBranchBreakdown]);
+  }, [listBranchId, isHeadOffice, reloadInventoryList, refreshInventoryGrid]);
 
-  const loadStockMovements = useCallback(async () => {
+  const stockMovementsScopeRef = useRef<string>('');
+  const stockMovementsLoadedAtRef = useRef(0);
+
+  const loadStockMovements = useCallback(async (force = false) => {
+    const scopeKey = isHeadOffice ? 'hq' : String(currentBranch?.id || '');
+    if (
+      !force
+      && stockMovementsScopeRef.current === scopeKey
+      && Date.now() - stockMovementsLoadedAtRef.current < 60_000
+      && stockMovementsScopeRef.current !== ''
+    ) {
+      return;
+    }
     // Try API first (live DB), fall back to localStorage
     try {
       const result = await api.transactions.stockMovements({
         warehouseId: isHeadOffice ? undefined : currentBranch?.id,
-        limit: 2000,
+        limit: 500,
       });
       if (result.data && Array.isArray(result.data)) {
         const mapped: StockMovement[] = result.data.map((m: any) => ({
@@ -281,6 +288,8 @@ export default function Inventory() {
           createdAt: m.created_at || m.createdAt || '',
         }));
         setStockMovements(mapped);
+        stockMovementsScopeRef.current = scopeKey;
+        stockMovementsLoadedAtRef.current = Date.now();
         return;
       }
     } catch (e) {
@@ -288,6 +297,8 @@ export default function Inventory() {
     }
     const data = await localGetStockMovements(isHeadOffice ? undefined : currentBranch?.id);
     setStockMovements(data);
+    stockMovementsScopeRef.current = scopeKey;
+    stockMovementsLoadedAtRef.current = Date.now();
   }, [currentBranch?.id, isHeadOffice]);
 
   const MOVEMENT_TABS = useMemo(
@@ -473,22 +484,19 @@ export default function Inventory() {
   }, [showDetailedQtyTab, activeTab]);
 
   useEffect(() => {
-    if (canSwitchBranch) {
-      void loadPerBranchBreakdown();
-    }
-  }, [canSwitchBranch, loadPerBranchBreakdown, listBranchId, isHeadOffice]);
-
-  useEffect(() => {
     setSelectedProduct(null);
+    stockMovementsScopeRef.current = '';
+    stockMovementsLoadedAtRef.current = 0;
     const branchIds = (allBranches.length > 0 ? allBranches : branches).map((b) => b.id);
     invalidateInventoryGridCacheForBranches(branchIds);
   }, [inventoryScopeId, allBranches, branches]);
 
+  // Only fan out N× inventory-grid when the detailed-qty tab is open (not on every Inventory visit).
   useEffect(() => {
-    if (showDetailedQtyTab) {
+    if (showDetailedQtyTab && activeTab === 'qtd-detalhada') {
       void loadPerBranchBreakdown();
     }
-  }, [showDetailedQtyTab, loadPerBranchBreakdown, listBranchId, isHeadOffice]);
+  }, [showDetailedQtyTab, activeTab, loadPerBranchBreakdown, listBranchId, isHeadOffice]);
   const [stockListFilter, setStockListFilter] = useState<StockListFilter>('all');
   const [listSearch, setListSearch] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
@@ -723,9 +731,11 @@ export default function Inventory() {
       || inventoryBranch?.id
       || mainBranch?.id
       || '';
-    const gridProduct: Product = {
+    const gridProduct: Product & { propagatePrices?: boolean } = {
       ...product,
       branchId: targetBranchId,
+      // Sede/HQ edits push PVP to all filiais that have not set a local override.
+      ...(isHeadOffice ? { propagatePrices: true } : {}),
     };
     patchInventoryRow(gridProduct);
     const writeOpts = { skipListMerge: true, lightweightChangedEvent: false } as const;

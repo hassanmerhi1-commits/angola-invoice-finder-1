@@ -293,6 +293,36 @@ async function ensureBranchPricingColumn(db) {
   }
 }
 
+/** Filial can keep a local PVP; HQ cascade skips rows with price_override = true. */
+async function ensureProductPriceOverrideColumn(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query(
+        'ALTER TABLE products ADD COLUMN IF NOT EXISTS price_override BOOLEAN NOT NULL DEFAULT FALSE',
+      );
+    } catch (err) {
+      if (err.code !== '42701') console.warn('[SCHEMA] products.price_override:', err.message);
+    }
+    return;
+  }
+
+  if (db.sqlite) {
+    let cols = [];
+    try {
+      cols = db.sqlite.pragma('table_info(products)');
+    } catch (_) {
+      return;
+    }
+    if (!cols.length) return;
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has('price_override')) {
+      try {
+        db.sqlite.exec('ALTER TABLE products ADD COLUMN price_override INTEGER NOT NULL DEFAULT 0');
+      } catch (_) {}
+    }
+  }
+}
+
 /** Per-user permission overrides (grant/revoke deltas on top of the role), stored as JSON text. */
 async function ensureUserPermissionsColumn(db) {
   if (db.engine === 'postgres') {
@@ -635,6 +665,7 @@ async function ensurePhaseSchema(db) {
     await ensureClientPricingColumns(db);
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
+    await ensureProductPriceOverrideColumn(db);
     await ensureSalesCreditPaymentMethod(db);
     await ensureCaixaTables(db);
     await ensureBankAccountsTable(db);
@@ -692,6 +723,7 @@ async function ensurePhaseSchema(db) {
     await ensureClientPricingColumns(db);
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
+    await ensureProductPriceOverrideColumn(db);
     await ensureSalesCreditPaymentMethod(db);
     await ensureCaixaTables(db);
     await ensureUserPermissionsColumn(db);
@@ -719,6 +751,7 @@ module.exports = {
   ensureClientPricingColumns,
   ensureClientsUniqueNif,
   ensureBranchPricingColumn,
+  ensureProductPriceOverrideColumn,
   ensureSalesCreditPaymentMethod,
   ensureCaixaTables,
   ensureUserPermissionsColumn,

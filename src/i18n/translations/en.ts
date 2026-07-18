@@ -4154,7 +4154,7 @@ export const en = {
 
     // Validation / toasts
     minTwoLines: "The entry must have at least 2 lines",
-    fillEntryDescription: "Please fill in the entry description",
+    fillEntryDescription: "Please fill in the description (entry title) on a line",
     minTwoLinesWithAccountAndAmount: "The entry must have at least 2 lines with account and amount",
     entryNotBalanced: "Entry is not balanced. Difference: {amount} Kz",
     entryCreated: "Entry {number} created successfully",
@@ -4193,7 +4193,7 @@ export const en = {
     newManualEntry: "New manual entry",
     newManualEntryHint: "Debit must equal credit. Use Auto balance on the last line if needed.",
     branch: "Branch",
-    entryDescriptionPlaceholder: "Entry description...",
+    entryDescriptionPlaceholder: "Entry title / description...",
     entryLines: "Entry lines",
     entryLinesHint: "Pick an account per line — debit or credit, not both.",
     autoBalance: "Auto balance",

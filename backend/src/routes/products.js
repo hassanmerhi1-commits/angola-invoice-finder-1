@@ -22,6 +22,7 @@ const {
   isUniqueSkuBranchError,
   loadMainBranchIds,
   normalizeStoredBranchId,
+  isCatalogBranchScope,
   canonicalSkuString,
   sqlMovementSkuKey,
   sqlCanonicalSkuText,
@@ -73,11 +74,6 @@ function resolveProductBranchId(req, requestedBranchId) {
 
 function normalizeSkuKey(sku) {
   return canonicalSkuString(sku).toLowerCase();
-}
-
-function isCatalogBranchScope(branchId, mainBranchIds) {
-  if (branchId == null || String(branchId).trim() === '') return true;
-  return mainBranchIds.includes(String(branchId).trim());
 }
 
 function normalizeCatalogBranchKey(branchId, mainBranchIds = []) {
@@ -901,7 +897,13 @@ function enrichInventoryGridSellingPrices(rows, priceBySku) {
   });
 }
 
-/** Write hinted selling price onto all rows for this SKU when DB price is still zero. */
+function priceOverrideIsFalseSql() {
+  return db.engine === 'postgres'
+    ? 'COALESCE(price_override, false) = false'
+    : 'COALESCE(price_override, 0) = 0';
+}
+
+/** Seed hinted selling price only when price1 is still zero (never raise / fight HQ cuts). */
 async function persistSellingPricesFromHints(priceBySku) {
   if (!priceBySku?.size) return 0;
   let updated = 0;
@@ -912,13 +914,37 @@ async function persistSellingPricesFromHints(priceBySku) {
       `UPDATE products
        SET price = $1, updated_at = CURRENT_TIMESTAMP
        WHERE ${coalesceActiveNotZero(db, 'is_active')}
-         AND LOWER(TRIM(${sqlCanonicalSkuText('products')})) = LOWER($2)
-         AND COALESCE(price, 0) < $1`,
+         AND ${sqlMovementSkuKey('products')} = LOWER($2)
+         AND COALESCE(price, 0) <= 0
+         AND ${priceOverrideIsFalseSql()}`,
       [p, skuKey],
     );
     updated += result.rowCount || 0;
   }
   return updated;
+}
+
+/**
+ * Propagate price tiers from HQ/Sede to every active SKU sibling that has not opted into a local override.
+ * Uses canonical SKU (strips -DUP-…) so filial repair rows stay in sync.
+ */
+async function cascadeSkuPricesFromHq(skuRaw, price, price2, price3, price4) {
+  const canon = canonicalSkuString(skuRaw).toLowerCase();
+  if (!canon) return 0;
+  const skuTier = (v) => (Number(v) > 0 ? Number(v) : null);
+  const result = await db.query(
+    `UPDATE products
+     SET price = $1,
+         price2 = COALESCE($2, price2),
+         price3 = COALESCE($3, price3),
+         price4 = COALESCE($4, price4),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE ${coalesceActiveNotZero(db, 'is_active')}
+       AND ${sqlMovementSkuKey('products')} = $5
+       AND ${priceOverrideIsFalseSql()}`,
+    [Number(price), skuTier(price2), skuTier(price3), skuTier(price4), canon],
+  );
+  return result.rowCount || 0;
 }
 
 /** Set by module.exports — used after persisting selling prices from hints. */
@@ -944,19 +970,23 @@ function mergeFastPickerRowsIntoGrid(gridRows, fastRows) {
   return Array.from(bySku.values());
 }
 
-async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded) {
+async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded, { repair = false } = {}) {
   const mainBranchIds = await loadMainBranchIds();
   let rows;
   if (consolidated) {
-    const branchesResult = await db.query('SELECT id FROM branches ORDER BY name');
-    for (const b of branchesResult.rows || []) {
-      await ensureFilialForInventoryGrid(String(b.id).trim());
+    if (repair) {
+      const branchesResult = await db.query('SELECT id FROM branches ORDER BY name');
+      for (const b of branchesResult.rows || []) {
+        await ensureFilialForInventoryGrid(String(b.id).trim());
+      }
     }
     rows = await listInventoryConsolidatedByBranches();
   } else {
     const branchKey = String(branchId || '').trim();
     if (!branchKey) return [];
-    await ensureFilialForInventoryGrid(branchKey);
+    if (repair) {
+      await ensureFilialForInventoryGrid(branchKey);
+    }
     try {
       rows = await listProductsForBranchInventoryGrid(branchKey);
       const fastRows = await listProductsForBranchFast(branchKey);
@@ -1212,11 +1242,13 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  /** Inventory lista tab — slim JSON, single query, optional session cache on client. */
+  /** Inventory lista tab — slim JSON. Filial reconcile / price persist only with ?repair=1. */
   router.get('/inventory-grid', async (req, res) => {
     try {
       const wantConsolidated =
         req.query.consolidated === '1' || req.query.consolidated === 'true';
+      const repair =
+        req.query.repair === '1' || req.query.repair === 'true';
       let branchId = resolveListBranchId(req, req.query.branchId);
       if (wantConsolidated) {
         const scope = req.branchScope;
@@ -1228,20 +1260,22 @@ module.exports = function(broadcastTable) {
         return res.json({ rows: [], count: 0 });
       }
       const priceBySku = await loadSellingPriceHintsBySku();
-      const rows = await listInventoryGridRows(branchId, wantConsolidated, priceBySku);
+      const rows = await listInventoryGridRows(branchId, wantConsolidated, priceBySku, { repair });
       res.setHeader('Cache-Control', 'private, max-age=5');
       res.json({
         rows,
         count: rows.length,
         sellingPrices: Object.fromEntries(priceBySku),
       });
-      // Persist zero price1 rows in background so next load / POS see DB prices.
-      void persistSellingPricesFromHints(priceBySku).then((n) => {
-        if (n > 0) {
-          invalidateSellingHintsCache();
-          if (typeof onProductsTableChange === 'function') onProductsTableChange();
-        }
-      }).catch((err) => console.warn('[PRODUCTS inventory-grid] persist prices:', err.message));
+      // Expensive write-back only on explicit repair — not every grid open.
+      if (repair) {
+        void persistSellingPricesFromHints(priceBySku).then((n) => {
+          if (n > 0) {
+            invalidateSellingHintsCache();
+            if (typeof onProductsTableChange === 'function') onProductsTableChange();
+          }
+        }).catch((err) => console.warn('[PRODUCTS inventory-grid] persist prices:', err.message));
+      }
     } catch (error) {
       console.error('[PRODUCTS inventory-grid]', error);
       res.status(500).json({ error: 'Failed to load inventory grid' });
@@ -1627,35 +1661,54 @@ module.exports = function(broadcastTable) {
       
       const updated = result.rows[0];
       const skuKey = String(updated?.sku || '').trim();
+      const mainBranchIds = await loadMainBranchIds();
+      const propagatePrices = req.body?.propagatePrices === true || req.body?.propagatePrices === 'true';
+      const productIsHq = isCatalogBranchScope(updated?.branch_id, mainBranchIds);
+      const shouldCascadePrices = propagatePrices || productIsHq;
+
       if (skuKey) {
         if (taxRate != null && taxRate !== '') {
           await db.query(
             `UPDATE products
              SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP
              WHERE ${coalesceActiveNotZero(db, 'is_active')}
-               AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)`,
-            [Number(taxRate), skuKey]
+               AND ${sqlMovementSkuKey('products')} = LOWER($2)`,
+            [Number(taxRate), canonicalSkuString(skuKey)],
           );
         }
         if (price != null && price !== '') {
-          // Propagate the price tiers to every branch row sharing this SKU, but never
-          // overwrite an existing tier with 0/blank: routine updates (purchases, stock
-          // adjustments, physical counts) send price2-4 = 0 and would otherwise wipe them.
-          // Pass null (not 0) for "no value" so COALESCE keeps the stored tier. Do NOT use
-          // a `$n > 0` test: PostgreSQL infers such a param as integer and rejects decimal
-          // tiers (e.g. 739.98) with "invalid input syntax for type integer".
-          const skuTier = (v) => (Number(v) > 0 ? Number(v) : null);
-          await db.query(
-            `UPDATE products
-             SET price = $1,
-                 price2 = COALESCE($2, price2),
-                 price3 = COALESCE($3, price3),
-                 price4 = COALESCE($4, price4),
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE ${coalesceActiveNotZero(db, 'is_active')}
-               AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($5)`,
-            [Number(price), skuTier(price2), skuTier(price3), skuTier(price4), skuKey]
-          );
+          // HQ/Sede: cascade to all non-override rows (canonical SKU, incl. -DUP- siblings).
+          // Filial: keep local price and mark override so future HQ changes skip this row.
+          if (shouldCascadePrices) {
+            await cascadeSkuPricesFromHq(skuKey, price, price2, price3, price4);
+          } else {
+            const prevPrice = Number(existing.price) || 0;
+            const nextPrice = Number(price) || 0;
+            const tierChanged = (a, b) => {
+              const na = Number(a) || 0;
+              const nb = Number(b) || 0;
+              return Math.abs(na - nb) > 0.0001;
+            };
+            if (
+              tierChanged(prevPrice, nextPrice)
+              || (price2 != null && tierChanged(existing.price2, price2))
+              || (price3 != null && tierChanged(existing.price3, price3))
+              || (price4 != null && tierChanged(existing.price4, price4))
+            ) {
+              try {
+                await db.query(
+                  `UPDATE products
+                   SET price_override = ${db.engine === 'postgres' ? 'true' : '1'},
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE id = $1`,
+                  [id],
+                );
+                updated.price_override = true;
+              } catch (overrideErr) {
+                console.warn('[PRODUCTS] price_override mark failed:', overrideErr.message);
+              }
+            }
+          }
         }
         const costVal = cost != null && cost !== '' ? Number(cost) : null;
         if (costVal != null && !Number.isNaN(costVal)) {
@@ -1665,8 +1718,8 @@ module.exports = function(broadcastTable) {
             `UPDATE products
              SET cost = $1, last_cost = $2, avg_cost = $3, updated_at = CURRENT_TIMESTAMP
              WHERE ${coalesceActiveNotZero(db, 'is_active')}
-               AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($4)`,
-            [costVal, lastVal, avgVal, skuKey],
+               AND ${sqlMovementSkuKey('products')} = LOWER($4)`,
+            [costVal, lastVal, avgVal, canonicalSkuString(skuKey)],
           );
         }
       }

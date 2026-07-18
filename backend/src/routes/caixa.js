@@ -272,14 +272,14 @@ let lastCoaSyncAt = 0;
 function caixaRouter(broadcastTable) {
   const router = express.Router();
 
-  /** List cash registers (caixas) — used by LAN clients for expenses/POS dropdowns. */
+  /** List cash registers (caixas) — plain SELECT (COA sync runs at startup / ?sync=1). */
   router.get('/registers', async (req, res) => {
     try {
       if (!(await caixaTablesExist())) {
         return res.json({ data: [] });
       }
-      // Refresh from COA at most once per 30s (expense/supplier dialogs open often).
-      if (Date.now() - lastCoaSyncAt > 30_000) {
+      const forceSync = String(req.query.sync || '') === '1' || String(req.query.sync || '') === 'true';
+      if (forceSync && Date.now() - lastCoaSyncAt > 5_000) {
         lastCoaSyncAt = Date.now();
         await ensureTreasuryRegistersFromCoa();
       }
@@ -322,8 +322,8 @@ function caixaRouter(broadcastTable) {
       }
 
       let result = await queryRegisters();
-      // First open after deploy / empty DB: force COA→caixa sync once more.
-      if (!(result.rows || []).length) {
+      // Empty DB only: one COA→caixa heal (startup usually already did this).
+      if (!(result.rows || []).length && Date.now() - lastCoaSyncAt > 5_000) {
         lastCoaSyncAt = Date.now();
         await ensureTreasuryRegistersFromCoa();
         result = await queryRegisters();

@@ -37,21 +37,40 @@ async function commitSaleCreation(client, sale, body) {
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
-  // READ
+  // READ — default capped list; items loaded in one IN() query (no N+1).
   router.get('/', async (req, res) => {
     try {
+      const { parseListPagination } = require('../lib/listPagination');
       const { branchId } = req.query;
+      const { limit, offset } = parseListPagination(req, { defaultLimit: 200, maxLimit: 2000 });
       let query = 'SELECT * FROM sales';
       const params = [];
-      if (branchId) { query += ' WHERE branch_id = $1'; params.push(branchId); }
-      query += ' ORDER BY created_at DESC';
-      const result = await db.query(query, params);
-
-      for (let sale of result.rows) {
-        const itemsResult = await db.query('SELECT * FROM sale_items WHERE sale_id = $1', [sale.id]);
-        sale.items = itemsResult.rows;
+      if (branchId) {
+        query += ' WHERE branch_id = $1';
+        params.push(branchId);
       }
-      res.json(result.rows);
+      query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+      params.push(limit, offset);
+      const result = await db.query(query, params);
+      const sales = result.rows || [];
+      if (sales.length > 0) {
+        const ids = sales.map((s) => s.id);
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+        const itemsResult = await db.query(
+          `SELECT * FROM sale_items WHERE sale_id IN (${placeholders}) ORDER BY sale_id`,
+          ids,
+        );
+        const bySale = new Map();
+        for (const item of itemsResult.rows || []) {
+          const key = String(item.sale_id);
+          if (!bySale.has(key)) bySale.set(key, []);
+          bySale.get(key).push(item);
+        }
+        for (const sale of sales) {
+          sale.items = bySale.get(String(sale.id)) || [];
+        }
+      }
+      res.json(sales);
     } catch (error) {
       console.error('[SALES ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch sales' });

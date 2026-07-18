@@ -106,8 +106,9 @@ module.exports = function bankAccountsRouter(broadcastTable) {
         return res.json({ data: [] });
       }
       const { ensureBankAccountsFromCoa } = require('../lib/bankGlAccounts');
-      // Keep operational bank_accounts in sync with COA 43x leaves (throttled).
-      if (Date.now() - lastBankCoaSyncAt > 30_000) {
+      // Plain SELECT on hot path — COA sync at startup or ?sync=1 / empty list heal.
+      const forceSync = String(req.query.sync || '') === '1' || String(req.query.sync || '') === 'true';
+      if (forceSync && Date.now() - lastBankCoaSyncAt > 5_000) {
         lastBankCoaSyncAt = Date.now();
         try {
           await ensureBankAccountsFromCoa(db);
@@ -136,8 +137,8 @@ module.exports = function bankAccountsRouter(broadcastTable) {
       }
 
       let result = await queryBanks();
-      // Empty picker after deploy: force COA→bank sync once.
-      if (!(result.rows || []).length) {
+      // Empty picker after deploy: one COA→bank heal.
+      if (!(result.rows || []).length && Date.now() - lastBankCoaSyncAt > 5_000) {
         lastBankCoaSyncAt = Date.now();
         try {
           await ensureBankAccountsFromCoa(db);

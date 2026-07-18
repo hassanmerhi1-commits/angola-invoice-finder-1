@@ -4157,7 +4157,7 @@ export const pt: TranslationKeys = {
 
     // Validação / toasts
     minTwoLines: "O lançamento precisa de pelo menos 2 linhas",
-    fillEntryDescription: "Preencha a descrição do lançamento",
+    fillEntryDescription: "Preencha a descrição (título do lançamento) numa linha",
     minTwoLinesWithAccountAndAmount: "O lançamento precisa de pelo menos 2 linhas com conta e valor",
     entryNotBalanced: "Lançamento não está balanceado. Diferença: {amount} Kz",
     entryCreated: "Lançamento {number} criado com sucesso",
@@ -4196,7 +4196,7 @@ export const pt: TranslationKeys = {
     newManualEntry: "Novo Lançamento Manual",
     newManualEntryHint: "O débito deve ser igual ao crédito. Use Balancear Auto na última linha se necessário.",
     branch: "Filial",
-    entryDescriptionPlaceholder: "Descrição do lançamento...",
+    entryDescriptionPlaceholder: "Título / descrição do lançamento...",
     entryLines: "Linhas do Lançamento",
     entryLinesHint: "Escolha uma conta por linha — débito ou crédito, não ambos.",
     autoBalance: "Balancear Auto",

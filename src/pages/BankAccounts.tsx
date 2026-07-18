@@ -7,7 +7,6 @@ import {
   createBankAccount, 
   saveBankAccount,
   getBankTransactions,
-  invalidateBankListCache,
 } from '@/lib/accountingStorage';
 import { BankAccount, BankTransaction } from '@/types/accounting';
 import { MoneyTransferDialog } from '@/components/accounting/MoneyTransferDialog';
@@ -131,8 +130,7 @@ export default function BankAccounts() {
   const [customBankName, setCustomBankName] = useState('');
 
   const loadData = async () => {
-    if (treasuryAllBranches) invalidateBankListCache();
-    else if (apiBranchId) invalidateBankListCache(apiBranchId);
+    // Honor 30s bank list cache on revisit — invalidate only after mutations.
     setAccounts(await getBankAccounts(treasuryAllBranches ? undefined : apiBranchId, {
       allBranches: treasuryAllBranches,
     }));

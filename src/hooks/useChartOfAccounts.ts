@@ -1,7 +1,7 @@
 import { generateId } from '@/lib/utils';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/client';
-import { getCachedList, setCachedList } from '@/lib/listCache';
+import { getCachedList, isCachedListFresh, markCachedListStale, setCachedList } from '@/lib/listCache';
 import { Account, AccountFormData, TrialBalanceRow, BalanceSheetAccountRow, AccountType } from '@/types/accounting';
 import { ensureBranchCaixaAccounts } from '@/lib/chartOfAccountsEngine';
 import { PGC_ACCOUNTS } from '@/lib/pgcChartOfAccounts';
@@ -100,7 +100,11 @@ export function useChartOfAccounts() {
   // Once we have rows to show, background refreshes shouldn't flash the spinner.
   const hasRowsRef = useRef((cachedAccounts?.length ?? 0) > 0);
 
-  const fetchAccounts = useCallback(async () => {
+  const fetchAccounts = useCallback(async (opts?: { force?: boolean }) => {
+    if (!opts?.force && isCachedListFresh('chartOfAccounts') && hasRowsRef.current) {
+      setIsLoading(false);
+      return;
+    }
     try {
       if (!hasRowsRef.current) setIsLoading(true);
       const response = await api.chartOfAccounts.list();
@@ -145,10 +149,11 @@ export function useChartOfAccounts() {
   }, [t]);
 
   useTableRefreshListener(['chart_of_accounts', 'journal_entries', 'payments'], () => {
-    void fetchAccounts();
+    markCachedListStale('chartOfAccounts');
+    void fetchAccounts({ force: true });
   });
 
-  // Auto-seed branch caixa accounts once after first load
+  // Auto-seed branch caixa accounts once after first load (skip second CoA fetch if still fresh).
   useEffect(() => {
     if (isLoading || branchCaixaSeeded.current || accounts.length === 0) return;
     branchCaixaSeeded.current = true;
@@ -158,7 +163,8 @@ export function useChartOfAccounts() {
       const branches = response.data || [];
       if (branches.length > 0) {
         ensureBranchCaixaAccounts(branches.map((b: any) => ({ id: b.id, name: b.name }))).then(() => {
-          void fetchAccounts();
+          markCachedListStale('chartOfAccounts');
+          void fetchAccounts({ force: true });
         });
       }
     }).catch(() => {
@@ -168,7 +174,8 @@ export function useChartOfAccounts() {
         const branches = raw ? JSON.parse(raw) : [];
         if (branches.length > 0) {
           ensureBranchCaixaAccounts(branches.map((b: any) => ({ id: b.id, name: b.name }))).then(() => {
-            void fetchAccounts();
+            markCachedListStale('chartOfAccounts');
+            void fetchAccounts({ force: true });
           });
         }
       } catch { /* ignore */ }
@@ -176,14 +183,15 @@ export function useChartOfAccounts() {
   }, [isLoading, accounts.length, t, fetchAccounts]);
 
   useEffect(() => {
-    fetchAccounts();
+    void fetchAccounts();
   }, [fetchAccounts]);
 
   const createAccount = async (data: AccountFormData): Promise<Account> => {
     try {
       const response = await api.chartOfAccounts.create(data);
       if (response.error) throw new Error(response.error);
-      await fetchAccounts();
+      markCachedListStale('chartOfAccounts');
+      await fetchAccounts({ force: true });
       return response.data;
     } catch (err) {
       if (!isOfflineError(err)) throw err;
@@ -227,7 +235,8 @@ export function useChartOfAccounts() {
     try {
       const response = await api.chartOfAccounts.update(id, data);
       if (response.error) throw new Error(response.error);
-      await fetchAccounts();
+      markCachedListStale('chartOfAccounts');
+      await fetchAccounts({ force: true });
       return response.data;
     } catch (err) {
       if (!isOfflineError(err)) throw err;
@@ -265,7 +274,8 @@ export function useChartOfAccounts() {
     try {
       const response = await api.chartOfAccounts.delete(id);
       if (response.error) throw new Error(response.error);
-      await fetchAccounts();
+      markCachedListStale('chartOfAccounts');
+      await fetchAccounts({ force: true });
     } catch (err) {
       if (!isOfflineError(err)) throw err;
 

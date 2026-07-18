@@ -32,6 +32,8 @@ export interface Product {
   price2?: number;     // Price 2
   price3?: number;     // Price 3
   price4?: number;     // Price 4
+  /** When true, HQ/Sede price cascade skips this branch row. */
+  priceOverride?: boolean;
   cost: number;
   firstCost: number;
   lastCost: number;
