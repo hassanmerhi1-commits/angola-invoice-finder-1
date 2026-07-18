@@ -5,31 +5,26 @@ const fs = require('fs');
 const path = require('path');
 
 /** Bump when SQL migrations change (match highest migration number). */
-const EXPECTED_SCHEMA_VERSION = 56;
+const EXPECTED_SCHEMA_VERSION = 57;
 
 function readAppVersion() {
-  if (process.env.NEXOR_APP_VERSION) {
-    return String(process.env.NEXOR_APP_VERSION);
-  }
+  // Prefer package.json (real shipped code). NEXOR_APP_VERSION is only a deploy label
+  // and has repeatedly lagged behind releases in docker-compose.yml.
   const candidates = [
+    path.resolve(__dirname, '../../package.json'), // backend/package.json in Docker /app
     path.resolve(__dirname, '../../../package.json'),
     path.resolve(__dirname, '../../../../package.json'),
-    path.resolve(__dirname, '../../package.json'),
   ];
   for (const pkgPath of candidates) {
     try {
       if (fs.existsSync(pkgPath)) {
         const version = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version;
-        if (version && version !== '1.0.0') return version;
+        if (version && version !== '1.0.0') return String(version);
       }
     } catch (_) {}
   }
-  for (const pkgPath of candidates) {
-    try {
-      if (fs.existsSync(pkgPath)) {
-        return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || 'unknown';
-      }
-    } catch (_) {}
+  if (process.env.NEXOR_APP_VERSION) {
+    return String(process.env.NEXOR_APP_VERSION);
   }
   return 'unknown';
 }

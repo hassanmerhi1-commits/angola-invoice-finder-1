@@ -34,6 +34,7 @@ import {
   FolderOpen, BookOpen, Landmark, CreditCard, DollarSign,
   Shield, Wallet, PieChart, TrendingUp, Globe, Keyboard,
   Monitor, Bell, ListTodo, ClipboardCheck, CalendarCheck,
+  ArrowDownCircle, ArrowUpCircle,
   type LucideIcon,
 } from 'lucide-react';
 import { ensureDayTodos, todayKey } from '@/lib/dailyTodos';
@@ -228,6 +229,9 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { label: t.topNav.accounting.receipt, icon: Receipt, path: '/payments', state: { openReceipt: true } },
         { label: t.topNav.accounting.receiveMethod, icon: Wallet, path: '/payments' },
         { label: t.topNav.accounting.creditAmount, icon: CreditCard, path: '/payments' },
+        { label: 'separator' },
+        { label: t.topNav.accounting.receivables, icon: ArrowDownCircle, path: '/receivables' },
+        { label: t.topNav.accounting.payables, icon: ArrowUpCircle, path: '/payables' },
         { label: 'separator' },
         { label: t.topNav.accounting.payment, icon: DollarSign, path: '/expenses' },
         { label: t.topNav.accounting.chequePayment, icon: FileText, path: '/payments' },
@@ -653,7 +657,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <BranchScopeSelectItems branches={branches} compact showAllBranchesOption />
+                <BranchScopeSelectItems branches={branches} compact />
               </SelectContent>
             </Select>
           ) : currentBranch ? (
@@ -782,7 +786,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <BranchScopeSelectItems branches={branches} compact showAllBranchesOption />
+                <BranchScopeSelectItems branches={branches} compact />
               </SelectContent>
             </Select>
           ) : currentBranch ? (

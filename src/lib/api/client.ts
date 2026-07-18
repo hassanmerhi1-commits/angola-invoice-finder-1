@@ -1764,7 +1764,10 @@ export const api = {
         return { data: rows };
       });
     },
-    payablesAging: () => apiFetch<any[]>('/payments/payables-aging'),
+    payablesAging: (branchId?: string) => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/payments/payables-aging${qs}`);
+    },
     checklistDues: () =>
       apiFetch<{ receivables: any[]; payables: any[] }>('/payments/checklist-dues'),
     backfillMissingPayables: () =>
@@ -1777,7 +1780,10 @@ export const api = {
         '/payments/repair-supplier-payables',
         { method: 'POST' },
       ),
-    receivablesAging: () => apiFetch<any[]>('/payments/receivables-aging'),
+    receivablesAging: (branchId?: string) => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/payments/receivables-aging${qs}`);
+    },
     create: async (data: any) => {
       const {
         enqueuePaymentSync,

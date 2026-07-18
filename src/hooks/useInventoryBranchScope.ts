@@ -9,6 +9,11 @@ import { useBranchScope } from '@/hooks/useBranchScope';
 
 const INVENTORY_SCOPE_STORAGE_KEY = 'kwanza_inventory_scope_id';
 
+function defaultPhysicalBranchId(branches: Branch[]): string {
+  const main = branches.find((b) => b.isMain) || branches[0];
+  return String(main?.id || '');
+}
+
 function resolveStoredInventoryScopeId(
   branches: Branch[],
   canSwitch: boolean,
@@ -24,15 +29,16 @@ function resolveStoredInventoryScopeId(
   }
 
   const saved = String(localStorage.getItem(INVENTORY_SCOPE_STORAGE_KEY) || '').trim();
-  if (saved === ALL_BRANCHES_SCOPE_ID) return ALL_BRANCHES_SCOPE_ID;
-  if (saved && branches.some((b) => String(b.id) === saved)) return saved;
+  if (saved && saved !== ALL_BRANCHES_SCOPE_ID && branches.some((b) => String(b.id) === saved)) {
+    return saved;
+  }
 
-  return ALL_BRANCHES_SCOPE_ID;
+  return defaultPhysicalBranchId(branches);
 }
 
 /**
- * Inventory branch scope — follows global top-nav branch by default.
- * Inventory page may still pick "All branches" locally; top-nav change overrides that.
+ * Inventory branch scope — follows global top-nav branch.
+ * Consolidated "all branches" is not offered in the UI.
  */
 export function useInventoryBranchScope() {
   const global = useBranchScope();
@@ -66,26 +72,18 @@ export function useInventoryBranchScope() {
       return;
     }
 
-    const global = String(globalScopeId || '').trim();
-    if (global === ALL_BRANCHES_SCOPE_ID) {
+    const g = String(globalScopeId || '').trim();
+    if (g && g !== ALL_BRANCHES_SCOPE_ID) {
       setInventoryScopeIdState((prev) => {
-        if (prev === ALL_BRANCHES_SCOPE_ID) return prev;
-        localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, ALL_BRANCHES_SCOPE_ID);
-        return ALL_BRANCHES_SCOPE_ID;
-      });
-      return;
-    }
-    if (global) {
-      setInventoryScopeIdState((prev) => {
-        if (prev === global) return prev;
-        localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, global);
-        return global;
+        if (prev === g) return prev;
+        localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, g);
+        return g;
       });
       return;
     }
 
     setInventoryScopeIdState((prev) => {
-      if (prev === ALL_BRANCHES_SCOPE_ID || branches.some((b) => b.id === prev)) return prev;
+      if (prev && prev !== ALL_BRANCHES_SCOPE_ID && branches.some((b) => b.id === prev)) return prev;
       const next = resolveStoredInventoryScopeId(branches, true, globalScopeId);
       localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, next);
       return next;
@@ -93,12 +91,15 @@ export function useInventoryBranchScope() {
   }, [branches, canSwitchBranch, globalScopeId, global.currentBranch?.id, global.apiBranchId, userBranch?.id]);
 
   const setInventoryScope = useCallback((scopeId: string) => {
-    setInventoryScopeIdState(scopeId);
+    const next = scopeId === ALL_BRANCHES_SCOPE_ID
+      ? defaultPhysicalBranchId(allBranches.length > 0 ? allBranches : branches)
+      : scopeId;
+    setInventoryScopeIdState(next);
     if (canSwitchBranch) {
-      localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, scopeId);
-      setOperatingScope(scopeId);
+      localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, next);
+      setOperatingScope(next);
     }
-  }, [canSwitchBranch, setOperatingScope]);
+  }, [canSwitchBranch, setOperatingScope, allBranches, branches]);
 
   const scopeBranches = allBranches.length > 0 ? allBranches : branches;
   const isInventoryConsolidated = isConsolidatedBranchScope(

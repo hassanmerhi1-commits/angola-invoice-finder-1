@@ -67,6 +67,8 @@ const BankAccounts = React.lazy(() => import("./pages/BankAccounts"));
 const CaixaManagement = React.lazy(() => import("./pages/CaixaManagement"));
 const Vendas = React.lazy(() => import("./pages/Vendas"));
 const PaymentsPage = React.lazy(() => import("./pages/Payments"));
+const ReceivablesPage = React.lazy(() => import("./pages/Receivables"));
+const PayablesPage = React.lazy(() => import("./pages/Payables"));
 const AccountingPeriods = React.lazy(() => import("./pages/AccountingPeriods"));
 const TaxManagement = React.lazy(() => import("./pages/TaxManagement"));
 const AuditTrail = React.lazy(() => import("./pages/AuditTrail"));
@@ -325,6 +327,8 @@ function AppRoutes() {
         <Route path="/production" element={<LazyRoute><ProductionModule /></LazyRoute>} />
         <Route path="/import" element={<LazyRoute><ImportModule /></LazyRoute>} />
         <Route path="/payments" element={<LazyRoute><PaymentsPage /></LazyRoute>} />
+        <Route path="/receivables" element={<LazyRoute><ReceivablesPage /></LazyRoute>} />
+        <Route path="/payables" element={<LazyRoute><PayablesPage /></LazyRoute>} />
         <Route path="/accounting-periods" element={<LazyRoute><AccountingPeriods /></LazyRoute>} />
         <Route path="/tax-management" element={<LazyRoute><TaxManagement /></LazyRoute>} />
         <Route path="/audit-trail" element={<LazyRoute><AuditTrail /></LazyRoute>} />

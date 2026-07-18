@@ -223,7 +223,7 @@ async function getEntityAccountCode(client, entityType, entityId, entityName) {
   return resolveEntityAccountCode(client, entityType, entityId, entityName);
 }
 
-/** Resolve the 311xx client receivable account for a registered customer (credit sales). */
+/** Resolve the 311xxxx client receivable leaf for a registered customer (credit sales). */
 async function resolveCustomerReceivableAccount(client, clientId) {
   const result = await client.query(
     `SELECT id, name, nif, credit_limit, current_balance, payment_terms_days
@@ -235,21 +235,9 @@ async function resolveCustomerReceivableAccount(client, clientId) {
   }
   const row = result.rows[0];
   const name = String(row.name || '').trim();
-  const nif = String(row.nif || '').trim();
-
-  const accountLookup = await client.query(
-    `SELECT code FROM chart_of_accounts
-     WHERE code LIKE $1 AND is_header = false AND level >= 3 AND is_active = true
-       AND (
-         LOWER(TRIM(name)) = LOWER($2)
-         OR ($3 != '' AND LOWER(COALESCE(description, '')) LIKE '%' || LOWER($3) || '%')
-       )
-     ORDER BY LENGTH(code) DESC
-     LIMIT 1`,
-    [ACC.CLIENTS_PARENT + '%', name, nif],
-  );
-  const accountCode = accountLookup.rows[0]?.code || ACC.CLIENTS_CURRENT;
-  return { accountCode, client: row };
+  // Always resolve/create the 8-digit leaf (311xxxxx) — never post credit sales to header 311.
+  const accountCode = await resolveEntityAccountCode(client, 'customer', clientId, name);
+  return { accountCode: accountCode || ACC.CLIENTS_CURRENT, client: row };
 }
 
 const INVENTORY_MERCHANDISE_ACCOUNT = ACC.PURCHASES_MERCHANDISE;

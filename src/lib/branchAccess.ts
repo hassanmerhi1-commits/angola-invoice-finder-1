@@ -164,8 +164,8 @@ export function resolveStoredBranchScopeId(
   }
 
   const savedScope = String(localStorage.getItem(SCOPE_STORAGE_KEY) || '').trim();
-  if (savedScope === ALL_BRANCHES_SCOPE_ID) return ALL_BRANCHES_SCOPE_ID;
-  if (savedScope) {
+  // "Todas as filiais" is hidden in the UI — never restore/default to it (breaks bank pickers).
+  if (savedScope && savedScope !== ALL_BRANCHES_SCOPE_ID) {
     const matched = resolveUserBranch(branches, savedScope);
     if (matched) return matched.id;
   }
@@ -176,7 +176,8 @@ export function resolveStoredBranchScopeId(
     if (matched) return matched.id;
   }
 
-  return ALL_BRANCHES_SCOPE_ID;
+  const main = branches.find((b) => b.isMain) || branches[0];
+  return String(main?.id || '');
 }
 
 export function persistBranchScope(scopeId: string, displayBranch: Branch): void {
