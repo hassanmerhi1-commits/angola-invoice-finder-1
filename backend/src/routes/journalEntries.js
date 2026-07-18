@@ -4,6 +4,9 @@ const db = require('../db');
 const { enrichJournalEntryContext, enrichJournalEntries } = require('../lib/journalEntryContext');
 const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
 const { parseListPagination, parseTruthyQuery } = require('../lib/listPagination');
+const { requirePermission } = require('../middleware/requirePermission');
+const { reverseJournalEntry } = require('../lib/purchaseInvoicePosting');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 const ENTRY_HEADER_SELECT = `
   SELECT je.*,
@@ -132,6 +135,44 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       console.error('[JOURNAL ENTRIES ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch journal entries' });
+    }
+  });
+
+  /** Audit-safe reverse — posts opposite lines; does not delete the original. */
+  router.post('/:id/reverse', requirePermission('accounting_create', 'accounting_journal'), async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await reverseJournalEntry(client, req.params.id, {
+        createdBy: req.user?.id || req.body?.createdBy || null,
+        entryDate: req.body?.entryDate || null,
+      });
+      await client.query('COMMIT');
+      if (broadcastTable) {
+        await broadcastTable('journal_entries');
+        await broadcastTable('chart_of_accounts');
+      }
+      auditErpSafe(req, {
+        table: 'journal_entries',
+        id: req.params.id,
+        action: 'reverse',
+        description: `Diário revertido: ${req.params.id}`,
+        newValues: { reverseEntryId: result?.id || null, alreadyReversed: !!result?.alreadyReversed },
+      });
+      res.json({
+        success: true,
+        originalId: req.params.id,
+        reverseEntryId: result?.id || null,
+        alreadyReversed: !!result?.alreadyReversed,
+      });
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+      console.error('[JOURNAL ENTRIES reverse]', error);
+      const msg = error.message || 'Failed to reverse journal entry';
+      const status = /cannot reverse|no lines|not found/i.test(msg) ? 400 : 500;
+      res.status(status).json({ error: msg });
+    } finally {
+      client.release();
     }
   });
 

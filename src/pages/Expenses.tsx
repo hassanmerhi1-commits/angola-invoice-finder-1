@@ -149,12 +149,13 @@ export default function Expenses() {
     }
     const loadedBanks = (await getBankAccounts(treasuryAllBranches ? undefined : (apiBranchId || expenseBranchId), {
       allBranches: treasuryAllBranches,
+      branchName: expenseBranchName,
     })).filter((a) => a.isActive !== false && a.id);
     setBankAccounts(loadedBanks);
     if (loadedBanks.length > 0) {
       setFormData((fd) => (fd.bankAccountId ? fd : { ...fd, bankAccountId: loadedBanks[0].id }));
     }
-  }, [apiBranchId, expenseBranchId, treasuryAllBranches]);
+  }, [apiBranchId, expenseBranchId, expenseBranchName, treasuryAllBranches]);
 
   const refreshCaixasForExpense = useCallback(async (ensureIfEmpty = false) => {
     if (!treasuryAllBranches && !expenseBranchId) {
@@ -224,6 +225,7 @@ export default function Expenses() {
       }),
       getBankAccounts(treasuryAllBranches ? undefined : (apiBranchId || expenseBranchId), {
         allBranches: treasuryAllBranches,
+        branchName: expenseBranchName,
       }),
     ]);
     const loggedIn = await loggedInPromise;
@@ -244,7 +246,7 @@ export default function Expenses() {
 
   useEffect(() => {
     void loadData();
-  }, [apiBranchId, expenseBranchId]);
+  }, [apiBranchId, expenseBranchId, expenseBranchName, treasuryAllBranches]);
 
   useEffect(() => {
     const onRefresh = () => { void loadData(); };
@@ -291,12 +293,11 @@ export default function Expenses() {
         caixaId: caixas[0]?.id || '',
         bankAccountId: bankAccounts[0]?.id || '',
       });
-      setIsDialogOpen(true);
-      void refreshCaixasForExpense(true);
-      void refreshBanksForExpense();
-      return;
     }
     setIsDialogOpen(true);
+    // Always reload treasury when opening pay/create — avoids stale empty caches.
+    void refreshCaixasForExpense(true);
+    void refreshBanksForExpense();
   };
 
   const resetFormForNew = useCallback(() => {

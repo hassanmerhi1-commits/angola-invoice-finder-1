@@ -101,6 +101,8 @@ export type GetCaixasOptions = {
 export type GetBankAccountsOptions = {
   /** Return accounts from every branch (admin treasury picker). */
   allBranches?: boolean;
+  /** Fallback when branchId UUIDs don't match (same as caixas). */
+  branchName?: string;
 };
 
 const CAIXA_ALL_BRANCHES_CACHE_KEY = '__all_branches__';
@@ -158,10 +160,25 @@ async function shouldLoadBankAccountsFromServerApi(): Promise<boolean> {
   return shouldLoadCaixasFromServerApi();
 }
 
-function filterBankAccountsForBranch(accounts: BankAccount[], branchId?: string): BankAccount[] {
-  if (!branchId) return accounts;
-  const filtered = accounts.filter((a) => branchIdsEquivalent(a.branchId, branchId));
-  return filtered.length > 0 ? filtered : accounts.filter((a) => a.branchId === branchId);
+function filterBankAccountsForBranch(
+  accounts: BankAccount[],
+  branchId?: string,
+  branchName?: string,
+): BankAccount[] {
+  if (!branchId && !branchName) return accounts;
+  if (branchId) {
+    const byId = accounts.filter((a) => branchIdsEquivalent(a.branchId, branchId));
+    if (byId.length > 0) return byId;
+  }
+  const normName = String(branchName || '').trim().toLowerCase();
+  if (normName) {
+    const byName = accounts.filter((a) => {
+      const bankBranch = String(a.branchName || '').trim().toLowerCase();
+      return bankBranch === normName || bankBranch.includes(normName) || normName.includes(bankBranch);
+    });
+    if (byName.length > 0) return byName;
+  }
+  return [];
 }
 
 const SEED_ORPHAN_BRANCH_ID = '22222222-2222-2222-2222-222222222222';
@@ -173,14 +190,22 @@ function isUsableTreasuryBranchId(branchId?: string): boolean {
   return true;
 }
 
+/** Prefer real branch ids; still list named caixas with empty branch so pickers are not blank. */
+function isListableCaixa(caixa: Caixa | null | undefined): boolean {
+  if (!caixa?.id) return false;
+  const branchId = String(caixa.branchId || '').trim();
+  if (!branchId) return String(caixa.name || '').trim().length > 0;
+  return isUsableTreasuryBranchId(branchId);
+}
+
 function mergeCaixasById(server: Caixa[], local: Caixa[]): Caixa[] {
   const map = new Map<string, Caixa>();
   for (const c of server) {
-    if (!c?.id || !isUsableTreasuryBranchId(c.branchId)) continue;
+    if (!isListableCaixa(c)) continue;
     map.set(c.id, c);
   }
   for (const c of local) {
-    if (!c?.id || !isUsableTreasuryBranchId(c.branchId)) continue;
+    if (!isListableCaixa(c)) continue;
     const prev = map.get(c.id);
     if (!prev) {
       map.set(c.id, c);
@@ -335,10 +360,12 @@ export async function getCaixas(
 
   if (allBranches) {
     const cachedAll = caixaListCache.get(CAIXA_ALL_BRANCHES_CACHE_KEY);
-    if (cachedAll && Date.now() < cachedAll.until) return cachedAll.data;
+    if (cachedAll && Date.now() < cachedAll.until && cachedAll.data.length > 0) {
+      return cachedAll.data;
+    }
   } else if (branchKey) {
     const cached = caixaListCache.get(caixaCacheKey(branchKey, branchLabel));
-    if (cached && Date.now() < cached.until) return cached.data;
+    if (cached && Date.now() < cached.until && cached.data.length > 0) return cached.data;
   }
 
   const localAll = await loadLocalCaixas();
@@ -402,13 +429,15 @@ export async function getCaixas(
       void pushLocalTreasuryToServer(localAll, await loadLocalBankAccounts());
 
       if (allBranches) {
-        caixaListCache.set(CAIXA_ALL_BRANCHES_CACHE_KEY, {
-          until: Date.now() + CAIXA_CACHE_MS,
-          data: list,
-        });
+        if (list.length > 0) {
+          caixaListCache.set(CAIXA_ALL_BRANCHES_CACHE_KEY, {
+            until: Date.now() + CAIXA_CACHE_MS,
+            data: list,
+          });
+        }
         return list;
       }
-      if (list.length > 0 || branchKey) {
+      if (list.length > 0) {
         caixaListCache.set(caixaCacheKey(branchKey, branchLabel), {
           until: Date.now() + CAIXA_CACHE_MS,
           data: list,
@@ -420,10 +449,10 @@ export async function getCaixas(
     }
   }
 
-  let caixas = localAll;
-  if (allBranches) return sortTreasuryCaixas(caixas.filter((c) => isUsableTreasuryBranchId(c.branchId)));
+  let caixas = localAll.filter((c) => isListableCaixa(c));
+  if (allBranches) return sortTreasuryCaixas(caixas);
   if (branchKey) caixas = filterCaixasForBranch(caixas, branchKey, branchLabel);
-  return caixas.filter((c) => isUsableTreasuryBranchId(c.branchId));
+  return caixas.filter((c) => isListableCaixa(c));
 }
 
 export async function getCaixaById(id: string): Promise<Caixa | undefined> {
@@ -855,13 +884,17 @@ export async function getBankAccounts(
 ): Promise<BankAccount[]> {
   const allBranches = opts?.allBranches ?? false;
   const branchKey = String(branchId || '').trim();
+  const branchLabel = String(opts?.branchName || '').trim();
 
   if (allBranches) {
     const cachedAll = bankListCache.get(BANK_ALL_BRANCHES_CACHE_KEY);
-    if (cachedAll && Date.now() < cachedAll.until) return cachedAll.data;
+    // Never serve a sticky empty all-branch cache — banks often appear after create/sync.
+    if (cachedAll && Date.now() < cachedAll.until && cachedAll.data.length > 0) {
+      return cachedAll.data;
+    }
   } else if (branchKey) {
     const cached = bankListCache.get(bankCacheKey(branchKey));
-    if (cached && Date.now() < cached.until) return cached.data;
+    if (cached && Date.now() < cached.until && cached.data.length > 0) return cached.data;
   }
 
   const localAll = await loadLocalBankAccounts();
@@ -885,6 +918,7 @@ export async function getBankAccounts(
           serverList = filterBankAccountsForBranch(
             unwrapApiList<any>(listRes.data).map((row) => mapBankAccountFromDb(row)),
             branchKey,
+            branchLabel,
           );
         } else if (listRes.error) {
           console.warn('[bank] server list failed:', listRes.error);
@@ -896,6 +930,7 @@ export async function getBankAccounts(
             serverList = filterBankAccountsForBranch(
               unwrapApiList<any>(allRes.data).map((row) => mapBankAccountFromDb(row)),
               branchKey,
+              branchLabel,
             );
           }
         }
@@ -904,20 +939,20 @@ export async function getBankAccounts(
       const localScoped = allBranches
         ? localAll
         : branchKey
-          ? filterBankAccountsForBranch(localAll, branchKey)
+          ? filterBankAccountsForBranch(localAll, branchKey, branchLabel)
           : localAll;
       const list = mergeBankAccountsById(serverList, localScoped);
 
       void pushLocalTreasuryToServer(await loadLocalCaixas(), localAll);
 
-      // Only cache successful server reads — never pin an empty list after an API error.
-      if (serverOk) {
+      // Cache non-empty successes. Empty server+local is not pinned (avoids blank pickers).
+      if (serverOk && list.length > 0) {
         if (allBranches) {
           bankListCache.set(BANK_ALL_BRANCHES_CACHE_KEY, {
             until: Date.now() + BANK_CACHE_MS,
             data: list,
           });
-        } else if (list.length > 0 || branchKey) {
+        } else if (branchKey) {
           bankListCache.set(bankCacheKey(branchKey), {
             until: Date.now() + BANK_CACHE_MS,
             data: list,
@@ -932,7 +967,7 @@ export async function getBankAccounts(
 
   let accounts = localAll.filter((a) => isListableBankAccount(a));
   if (allBranches) return sortTreasuryBankAccounts(accounts);
-  if (branchKey) accounts = filterBankAccountsForBranch(accounts, branchKey);
+  if (branchKey) accounts = filterBankAccountsForBranch(accounts, branchKey, branchLabel);
   return accounts;
 }
 
@@ -1733,6 +1768,7 @@ function mapBankAccountFromDb(row: any): BankAccount {
     iban: row.iban || '',
     currency: row.currency || 'AOA',
     currentBalance: Number(row.balance ?? row.currentBalance ?? 0),
+    glAccountCode: String(row.gl_account_code || row.glAccountCode || '').trim() || undefined,
     isActive: activeRaw === undefined || activeRaw === null ? true : !!(activeRaw === true || activeRaw === 1 || activeRaw === '1'),
     isPrimary: !!(row.is_primary ?? row.isPrimary),
     createdAt: row.created_at || row.createdAt || '',
@@ -1746,6 +1782,7 @@ function mapBankAccountToDb(account: BankAccount): any {
     account_number: account.accountNumber, iban: account.iban || '',
     branch_id: account.branchId, branch_name: account.branchName || '',
     currency: account.currency, balance: account.currentBalance,
+    gl_account_code: account.glAccountCode || '',
     is_active: account.isActive ? 1 : 0, is_primary: account.isPrimary ? 1 : 0,
   };
 }

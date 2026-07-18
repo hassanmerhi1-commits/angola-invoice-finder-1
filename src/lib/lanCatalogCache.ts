@@ -2,6 +2,7 @@ import { Product, Supplier } from '@/types/erp';
 import { isThinClientMode } from '@/lib/api/config';
 
 const PRODUCTS_PREFIX = 'nexor:lan-products:v1:';
+const CLIENTS_KEY = 'nexor:lan-clients:v1';
 const SUPPLIERS_KEY = 'nexor:lan-suppliers:v1';
 const GRID_PREFIX = 'nexor:lan-inventory-grid:v1:';
 
@@ -46,6 +47,16 @@ export function readLanProducts(scopeKey: string): Product[] | null {
   return Array.isArray(data) && data.length > 0 ? data : null;
 }
 
+export function saveLanClients(clients: Array<Record<string, unknown>>): void {
+  if (!isLanCatalogCacheEnabled() || !clients.length) return;
+  writeEntry(CLIENTS_KEY, clients);
+}
+
+export function readLanClients(): Array<Record<string, unknown>> | null {
+  const data = readEntry<Array<Record<string, unknown>>>(CLIENTS_KEY);
+  return Array.isArray(data) && data.length > 0 ? data : null;
+}
+
 export function saveLanSuppliers(suppliers: Supplier[]): void {
   if (!isLanCatalogCacheEnabled() || !suppliers.length) return;
   writeEntry(SUPPLIERS_KEY, suppliers);
@@ -65,4 +76,40 @@ export function readLanInventoryGrid(scopeKey: string): Product[] | null {
   if (!scopeKey) return null;
   const data = readEntry<Product[]>(`${GRID_PREFIX}${scopeKey}`);
   return Array.isArray(data) && data.length > 0 ? data : null;
+}
+
+/** Drop LAN inventory grid cache for one scope, or all grid scopes when omitted. */
+export function invalidateLanInventoryGrid(scopeKey?: string): void {
+  try {
+    if (scopeKey) {
+      localStorage.removeItem(`${GRID_PREFIX}${scopeKey}`);
+      return;
+    }
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith(GRID_PREFIX)) keys.push(k);
+    }
+    keys.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Drop LAN product list caches (all scopes or one). */
+export function invalidateLanProducts(scopeKey?: string): void {
+  try {
+    if (scopeKey) {
+      localStorage.removeItem(`${PRODUCTS_PREFIX}${scopeKey}`);
+      return;
+    }
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith(PRODUCTS_PREFIX)) keys.push(k);
+    }
+    keys.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    /* ignore */
+  }
 }

@@ -206,6 +206,8 @@ export interface BankAccount {
   swift?: string;
   currency: 'AOA' | 'USD' | 'EUR';
   currentBalance: number;
+  /** Linked chart-of-accounts leaf code (e.g. 4310001). */
+  glAccountCode?: string;
   isActive: boolean;
   isPrimary?: boolean; // Primary account for this branch
   createdAt: string;

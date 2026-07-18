@@ -950,8 +950,10 @@ export const en = {
   },
 
   inventoryPageUi: {
-    headOfficeTitle: "Head office (global view):",
-    headOfficeDesc: "Stock column shows total quantity across all branches. Select a branch to see that branch only.",
+    headOfficeTitle: "All branches (total stock):",
+    headOfficeDesc: "Stock column sums every branch. Select Head Office or a shop to see that warehouse only.",
+    sedeStockOnlyTitle: "Head office — this warehouse only:",
+    sedeStockOnlyDesc: "Quantities are for the HQ warehouse only. Choose \"All branches (total stock)\" in the selector for company totals.",
     branchModeTitle: "Branch mode:",
     branchModeDesc: "Stock quantities are for {branch} only. Use the inventory branch dropdown and choose \"All branches (total stock)\" to see totals everywhere.",
 
@@ -3625,6 +3627,15 @@ export const en = {
     systemOnly: "System only",
     reconciledOk: "Reconciled ✓",
     difference: "Difference",
+
+    bankVsGlTitle: "Bank vs ledger (GL)",
+    bankBalance: "Bank balance",
+    glBalance: "GL balance",
+    glAccount: "GL account",
+    bankGlOk: "Bank matches GL",
+    bankGlDiff: "Bank ≠ GL",
+    noGlLink: "No GL account linked to this bank",
+    glLoadError: "Could not load GL balance",
 
     transactionsTitle: "Transactions",
     compareStatementVsSystem: "Compare bank statement with system transactions",

@@ -82,7 +82,7 @@ export function Header({
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              <BranchScopeSelectItems branches={branches} />
+              <BranchScopeSelectItems branches={branches} showAllBranchesOption />
             </SelectContent>
           </Select>
         ) : currentBranch ? (

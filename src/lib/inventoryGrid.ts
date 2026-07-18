@@ -1,6 +1,11 @@
 import { Product } from '@/types/erp';
 import { api } from '@/lib/api/client';
-import { saveLanInventoryGrid, readLanInventoryGrid } from '@/lib/lanCatalogCache';
+import {
+  saveLanInventoryGrid,
+  readLanInventoryGrid,
+  invalidateLanInventoryGrid,
+  lanCatalogScopeKey,
+} from '@/lib/lanCatalogCache';
 import { normalizeTaxRate } from '@/lib/taxUtils';
 import {
   buildSellingPriceBySku,
@@ -87,7 +92,9 @@ export function invalidateInventoryGridCacheForBranches(
 export function invalidateInventoryGridCache(branchId?: string, consolidated?: boolean): void {
   try {
     if (branchId != null || consolidated != null) {
-      sessionStorage.removeItem(CACHE_PREFIX + cacheKey(branchId, !!consolidated));
+      const key = cacheKey(branchId, !!consolidated);
+      sessionStorage.removeItem(CACHE_PREFIX + key);
+      invalidateLanInventoryGrid(lanCatalogScopeKey(branchId, !!consolidated));
       return;
     }
     const keys: string[] = [];
@@ -96,6 +103,7 @@ export function invalidateInventoryGridCache(branchId?: string, consolidated?: b
       if (k?.startsWith('nexor:inventory-grid:')) keys.push(k);
     }
     keys.forEach((k) => sessionStorage.removeItem(k));
+    invalidateLanInventoryGrid();
   } catch {
     /* ignore */
   }

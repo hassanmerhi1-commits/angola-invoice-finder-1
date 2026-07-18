@@ -134,7 +134,9 @@ function usePaymentsData(branchId?: string) {
   const createPayment = useCallback(async (paymentData: any) => {
     const res = await api.payments.create(paymentData);
     if (res.error) throw new Error(res.error);
-    await refresh();
+    if (!(res.data as { pendingSync?: boolean } | undefined)?.pendingSync) {
+      await refresh();
+    }
     return res.data;
   }, [refresh]);
 
@@ -322,6 +324,7 @@ export default function Payments() {
         }),
         getBankAccounts(treasuryAllBranches ? undefined : paymentBranchId, {
           allBranches: treasuryAllBranches,
+          branchName: paymentBranchName,
         }),
       ]);
       setCaixas(loadedCaixas);
@@ -438,7 +441,7 @@ export default function Payments() {
     const method = paymentSource === 'caixa' ? 'cash' : (paymentMethod === 'cash' ? 'transfer' : paymentMethod);
 
     try {
-      await createPayment({
+      const created = await createPayment({
         paymentType,
         entityType: paymentType === 'receipt' ? 'customer' : 'supplier',
         entityId,
@@ -457,7 +460,7 @@ export default function Payments() {
         notes,
         invoiceIds: selected.map(oi => oi.documentId),
       });
-      if (paymentType === 'payment') {
+      if (paymentType === 'payment' && !(created as { pendingSync?: boolean })?.pendingSync) {
         try {
           await api.suppliers.reconcileBalances();
         } catch (e) {
@@ -465,7 +468,15 @@ export default function Payments() {
         }
         window.dispatchEvent(new CustomEvent(storage.SUPPLIERS_CHANGED_EVENT, { detail: {} }));
       }
-      toast.success(paymentType === 'receipt' ? t.paymentsUi.receiptRecorded : t.paymentsUi.paymentRecorded);
+      if ((created as { pendingSync?: boolean })?.pendingSync) {
+        toast.success(
+          paymentType === 'receipt'
+            ? `${t.paymentsUi.receiptRecorded} (sync pendente)`
+            : `${t.paymentsUi.paymentRecorded} (sync pendente)`,
+        );
+      } else {
+        toast.success(paymentType === 'receipt' ? t.paymentsUi.receiptRecorded : t.paymentsUi.paymentRecorded);
+      }
       setShowNewDialog(false);
       resetForm();
     } catch (err: any) {

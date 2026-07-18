@@ -13,16 +13,30 @@ function isHeadOfficeRole(role) {
   return r === 'admin' || r === 'manager';
 }
 
+/** Match UI looksLikeHeadOfficeBranch: is_main, code MAIN/SEDE*, or name contains "sede". */
+function looksLikeHeadOfficeBranch(row) {
+  if (!row) return false;
+  if (normalizeIsMain(row.is_main)) return true;
+  const code = String(row.code || '').trim().toUpperCase();
+  const name = String(row.name || '').trim().toLowerCase();
+  return code === 'MAIN' || code.startsWith('SEDE') || name.includes('sede');
+}
+
 async function loadHeadOfficeBranch() {
   const result = await db.query(
-    `SELECT id, is_main
+    `SELECT id, is_main, code, name
      FROM branches
      WHERE ${headOfficeBranchWhere(db)}
+        OR UPPER(TRIM(COALESCE(code, ''))) = 'MAIN'
+        OR UPPER(TRIM(COALESCE(code, ''))) LIKE 'SEDE%'
+        OR LOWER(COALESCE(name, '')) LIKE '%sede%'
      ORDER BY
        CASE
-         WHEN UPPER(TRIM(COALESCE(code, ''))) = 'MAIN' THEN 0
-         WHEN name ILIKE '%main branch%' THEN 1
-         ELSE 2
+         WHEN ${headOfficeBranchWhere(db)} THEN 0
+         WHEN UPPER(TRIM(COALESCE(code, ''))) = 'MAIN' THEN 1
+         WHEN UPPER(TRIM(COALESCE(code, ''))) LIKE 'SEDE%' THEN 2
+         WHEN LOWER(COALESCE(name, '')) LIKE '%sede%' THEN 3
+         ELSE 4
        END,
        created_at
      LIMIT 1`,
@@ -34,7 +48,7 @@ async function branchExists(branchId) {
   const id = String(branchId || '').trim();
   if (!id) return null;
   const result = await db.query(
-    `SELECT id, is_main
+    `SELECT id, is_main, code, name
      FROM branches
      WHERE id = $1 AND ${branchExistsWhere(db)}`,
     [id],
@@ -45,11 +59,17 @@ async function branchExists(branchId) {
 /**
  * Resolve branch scope for a user row. Admin/manager with missing or stale branch_id
  * inherit head office so list APIs are not locked to a non-existent branch.
+ *
+ * Aligns with UI canUserSwitchBranch:
+ * - admin → never forceBranchId (may request consolidated / any branch)
+ * - manager on HQ-like branch (is_main or SEDE name/code) → consolidated OK
+ * - everyone else → locked to their branch
  */
 async function buildBranchScopeFromUser(userRow, opts = {}) {
   const { persistFix = false } = opts;
   const role = String(userRow.role || '').toLowerCase();
   const headOfficeRole = isHeadOfficeRole(role);
+  const isAdmin = role === 'admin';
   let branchId = userRow.branch_id ? String(userRow.branch_id).trim() : '';
   let branchRow = branchId ? await branchExists(branchId) : null;
 
@@ -69,9 +89,11 @@ async function buildBranchScopeFromUser(userRow, opts = {}) {
     }
   }
 
-  const isMain = normalizeIsMain(branchRow?.is_main);
-  const isHeadOffice = !!(branchId && isMain && headOfficeRole);
-  const isGlobalAdmin = role === 'admin' && !branchId;
+  const hqLike = looksLikeHeadOfficeBranch(branchRow);
+  const isHeadOffice = !!(branchId && hqLike && headOfficeRole);
+  const isGlobalAdmin = isAdmin && !branchId;
+  /** Admin always; HQ manager; admin with no branch. Matches UI switch/consolidated rights. */
+  const canUseConsolidated = isAdmin || isHeadOffice || isGlobalAdmin;
 
   return {
     userId: userRow.id,
@@ -79,8 +101,9 @@ async function buildBranchScopeFromUser(userRow, opts = {}) {
     branchId: branchId || null,
     isHeadOffice,
     isGlobalAdmin,
+    canUseConsolidated,
     /** Non–head-office users (incl. cashiers at sede): locked to their branch. */
-    forceBranchId: branchId && !isHeadOffice && !isGlobalAdmin ? branchId : null,
+    forceBranchId: branchId && !canUseConsolidated ? branchId : null,
   };
 }
 
@@ -139,7 +162,7 @@ function resolveListBranchId(req, requestedBranchId) {
     }
     return raw;
   }
-  if (scope?.isHeadOffice || scope?.isGlobalAdmin) return null;
+  if (scope?.canUseConsolidated || scope?.isHeadOffice || scope?.isGlobalAdmin) return null;
   if (scope?.branchId) return scope.branchId;
   if (scope) return undefined;
   return raw || undefined;
@@ -156,6 +179,7 @@ module.exports = {
   normalizeRequestedBranchId,
   resolveWarehouseId,
   normalizeIsMain,
+  looksLikeHeadOfficeBranch,
   buildBranchScopeFromUser,
   resolveAndPersistUserBranchId,
 };

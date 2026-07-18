@@ -4,6 +4,7 @@ const db = require('../db');
 const { postCaixaGlMovement } = require('../lib/caixaGlPosting');
 const { createJournalEntry } = require('../accounting');
 const { auditErpSafe } = require('../lib/erpAudit');
+const { requirePermission } = require('../middleware/requirePermission');
 const {
   recordExpenseOnOpenSession,
   syncOpenSessionExpensesFromLedger,
@@ -100,17 +101,15 @@ async function postBankExpenseGl({
       return { alreadyPosted: true };
     }
     let bankGl = BANK_GL;
-    if (bankAccountId) {
-      try {
-        const { ensureBankGlColumn, resolveBankGlAccountCode } = require('../lib/bankGlAccounts');
-        await ensureBankGlColumn(db);
-        const bankRes = await client.query('SELECT * FROM bank_accounts WHERE id = $1 LIMIT 1', [bankAccountId]);
-        if (bankRes.rows[0]) {
-          bankGl = await resolveBankGlAccountCode(client, bankRes.rows[0]);
-        }
-      } catch (e) {
-        console.warn('[EXPENSES] bank GL resolve:', e.message);
-      }
+    try {
+      const { ensureBankGlColumn, resolveBankGlForTreasury } = require('../lib/bankGlAccounts');
+      await ensureBankGlColumn(db);
+      bankGl = await resolveBankGlForTreasury(client, {
+        bankAccountId,
+        branchId,
+      });
+    } catch (e) {
+      console.warn('[EXPENSES] bank GL resolve:', e.message);
     }
     await createJournalEntry(client, {
       description: `Despesa (banco): ${description}`,
@@ -333,7 +332,7 @@ module.exports = function expensesRouter(broadcastTable) {
     }
   });
 
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('expense_create'), async (req, res) => {
     try {
       await ensureExpensesTable();
       const body = req.body || {};
@@ -444,7 +443,7 @@ module.exports = function expensesRouter(broadcastTable) {
     }
   });
 
-  router.post('/:id/pay', async (req, res) => {
+  router.post('/:id/pay', requirePermission('expense_create', 'expense_approve'), async (req, res) => {
     try {
       await ensureExpensesTable();
       // expenses.paid_by is TEXT (name OK). Journal created_by is UUID — use user id for GL.
@@ -507,7 +506,7 @@ module.exports = function expensesRouter(broadcastTable) {
   });
 
   /** Repost GL for a paid expense when the initial post failed (e.g. legacy exp_* id). */
-  router.post('/:id/repost-gl', async (req, res) => {
+  router.post('/:id/repost-gl', requirePermission('expense_create', 'accounting_create'), async (req, res) => {
     try {
       await ensureExpensesTable();
       const existing = await db.query('SELECT * FROM expenses WHERE id = $1', [req.params.id]);

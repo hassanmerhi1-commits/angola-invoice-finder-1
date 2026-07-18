@@ -185,6 +185,18 @@ CREATE TABLE IF NOT EXISTS products_cache (
   branch_id TEXT,
   updated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS clients_cache (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  nif TEXT,
+  phone TEXT,
+  email TEXT,
+  address TEXT,
+  credit_limit REAL DEFAULT 0,
+  payload_json TEXT,
+  updated_at TEXT
+);
 `;
 
 function tryAlter(database, sql) {
@@ -305,6 +317,122 @@ function syncProductsCache(products) {
   return { updated };
 }
 
+function listProductsCache(branchId) {
+  const database = getDb();
+  if (!database) return [];
+  try {
+    const bid = String(branchId || '').trim();
+    if (bid) {
+      return database.prepare(
+        `SELECT id, sku, name, price, cost, tax_rate AS taxRate, stock, branch_id AS branchId, updated_at AS updatedAt
+         FROM products_cache
+         WHERE branch_id = ? OR branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''
+         ORDER BY name`,
+      ).all(bid);
+    }
+    return database.prepare(
+      `SELECT id, sku, name, price, cost, tax_rate AS taxRate, stock, branch_id AS branchId, updated_at AS updatedAt
+       FROM products_cache ORDER BY name`,
+    ).all();
+  } catch (e) {
+    console.warn('[CLIENT DB] listProductsCache:', e.message);
+    return [];
+  }
+}
+
+function syncClientsCache(clients) {
+  const database = getDb();
+  if (!database || !Array.isArray(clients)) return { updated: 0 };
+  const upsert = database.prepare(
+    `INSERT INTO clients_cache (id, name, nif, phone, email, address, credit_limit, payload_json, updated_at)
+     VALUES (@id, @name, @nif, @phone, @email, @address, @credit_limit, @payload_json, @updated_at)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       nif = excluded.nif,
+       phone = excluded.phone,
+       email = excluded.email,
+       address = excluded.address,
+       credit_limit = excluded.credit_limit,
+       payload_json = excluded.payload_json,
+       updated_at = excluded.updated_at`,
+  );
+  let updated = 0;
+  const now = new Date().toISOString();
+  const tx = database.transaction((list) => {
+    for (const c of list) {
+      const id = String(c.id || '').trim();
+      if (!id) continue;
+      upsert.run({
+        id,
+        name: String(c.name || ''),
+        nif: String(c.nif || ''),
+        phone: String(c.phone || ''),
+        email: String(c.email || ''),
+        address: String(c.address || ''),
+        credit_limit: Number(c.creditLimit ?? c.credit_limit) || 0,
+        payload_json: JSON.stringify(c),
+        updated_at: now,
+      });
+      updated += 1;
+    }
+  });
+  tx(clients);
+  return { updated };
+}
+
+function listClientsCache() {
+  const database = getDb();
+  if (!database) return [];
+  try {
+    const rows = database.prepare(
+      `SELECT id, name, nif, phone, email, address, credit_limit AS creditLimit, payload_json, updated_at AS updatedAt
+       FROM clients_cache ORDER BY name`,
+    ).all();
+    return rows.map((r) => {
+      try {
+        if (r.payload_json) return { ...JSON.parse(r.payload_json), id: r.id };
+      } catch {
+        /* use columns */
+      }
+      return {
+        id: r.id,
+        name: r.name,
+        nif: r.nif,
+        phone: r.phone,
+        email: r.email,
+        address: r.address,
+        creditLimit: r.creditLimit,
+      };
+    });
+  } catch (e) {
+    console.warn('[CLIENT DB] listClientsCache:', e.message);
+    return [];
+  }
+}
+
+function setWarmBranchId(branchId) {
+  const database = getDb();
+  if (!database) return false;
+  const id = String(branchId || '').trim();
+  if (!id) return false;
+  database.prepare(
+    `INSERT INTO client_meta (key, value) VALUES ('warm_branch_id', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(id);
+  return true;
+}
+
+function getWarmBranchId() {
+  const database = getDb();
+  if (!database) return null;
+  try {
+    const row = database.prepare(`SELECT value FROM client_meta WHERE key = 'warm_branch_id'`).get();
+    return row?.value ? String(row.value) : null;
+  } catch {
+    return null;
+  }
+}
+
 function getPendingOutboxEvents(destination = 'CITY_SERVER') {
   const database = getDb();
   if (!database) return [];
@@ -392,6 +520,11 @@ module.exports = {
   ensureOfflineFirstSyncEnv,
   saveSale,
   syncProductsCache,
+  listProductsCache,
+  syncClientsCache,
+  listClientsCache,
+  setWarmBranchId,
+  getWarmBranchId,
   getPendingOutboxEvents,
   markOutboxSent,
   markOutboxFailed,

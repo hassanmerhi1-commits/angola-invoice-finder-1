@@ -10,17 +10,20 @@ const { auditErpSafe } = require('../lib/erpAudit');
 const { syncOpenSessionExpensesFromLedger } = require('../lib/caixaCashRefund');
 
 async function caixaTablesExist() {
-  if (caixaTablesExist.cached !== undefined) return caixaTablesExist.cached;
+  // Only cache positive results — a sticky false before migrations made
+  // GET /registers always return [] and hid every caixa from expense/supplier pay.
+  if (caixaTablesExist.cached === true) return true;
   try {
     const r = await db.query(
       db.engine === 'postgres'
-        ? `SELECT 1 FROM information_schema.tables WHERE table_name = 'caixa_sessions' LIMIT 1`
-        : `SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'caixa_sessions' LIMIT 1`,
+        ? `SELECT 1 FROM information_schema.tables
+           WHERE table_schema = 'public' AND table_name = 'caixas' LIMIT 1`
+        : `SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'caixas' LIMIT 1`,
     );
-    caixaTablesExist.cached = r.rows.length > 0;
-    return caixaTablesExist.cached;
+    const exists = r.rows.length > 0;
+    if (exists) caixaTablesExist.cached = true;
+    return exists;
   } catch {
-    caixaTablesExist.cached = false;
     return false;
   }
 }
@@ -99,58 +102,123 @@ async function ensureTreasuryRegistersFromCoa() {
 
     if (!(await caixaTablesExist())) return;
 
+    // Link orphan 45x COA leaves (e.g. "Soyo 03") to branches by name BEFORE syncing registers.
+    try {
+      const { linkOrphanBranchCaixaAccounts } = require('../lib/resolveBranchCaixaGlAccount');
+      await linkOrphanBranchCaixaAccounts(db);
+    } catch (linkErr) {
+      console.warn('[CAIXA] linkOrphanBranchCaixaAccounts:', linkErr.message);
+    }
+
+    // Linked COA leaves + name-matched orphans (multi-caixa filiais like "Soyo 03"
+    // often never get coa.branch_id when another 45x already claimed the branch).
     const coa = await db.query(
-      `SELECT coa.id, coa.code, coa.name, coa.current_balance, coa.branch_id,
-              b.name AS branch_name
-       FROM chart_of_accounts coa
-       LEFT JOIN branches b ON b.id::text = coa.branch_id::text
-       WHERE coa.is_active = true
-         AND coa.is_header = false
-         AND coa.code LIKE '45%'
-         AND coa.code NOT IN ('45', '451')
-         AND coa.branch_id IS NOT NULL
-         AND LENGTH(TRIM(coa.code)) >= 3`,
+      db.engine === 'postgres'
+        ? `SELECT coa.id, coa.code, coa.name, coa.current_balance,
+                  COALESCE(coa.branch_id, b_name.id) AS branch_id,
+                  COALESCE(b_link.name, b_name.name) AS branch_name
+           FROM chart_of_accounts coa
+           LEFT JOIN branches b_link ON b_link.id::text = coa.branch_id::text
+           LEFT JOIN LATERAL (
+             SELECT b.id, b.name
+             FROM branches b
+             WHERE coa.branch_id IS NULL
+               AND (
+                 coa.name ILIKE '%' || b.name || '%'
+                 OR (NULLIF(TRIM(b.code), '') IS NOT NULL AND coa.name ILIKE '%' || b.code || '%')
+               )
+             ORDER BY CASE
+               WHEN coa.name ILIKE 'Caixa - ' || b.name THEN 0
+               WHEN coa.name ILIKE '%' || b.name || '%' THEN 1
+               ELSE 2
+             END
+             LIMIT 1
+           ) b_name ON true
+           WHERE coa.is_active = true
+             AND coa.is_header = false
+             AND coa.code LIKE '45%'
+             AND coa.code NOT IN ('45', '451')
+             AND LENGTH(TRIM(coa.code)) >= 3
+             AND (coa.branch_id IS NOT NULL OR b_name.id IS NOT NULL)`
+        : `SELECT coa.id, coa.code, coa.name, coa.current_balance, coa.branch_id,
+                  b.name AS branch_name
+           FROM chart_of_accounts coa
+           LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(coa.branch_id AS TEXT)
+           WHERE COALESCE(coa.is_active, 1) != 0
+             AND COALESCE(coa.is_header, 0) = 0
+             AND coa.code LIKE '45%'
+             AND coa.code NOT IN ('45', '451')
+             AND coa.branch_id IS NOT NULL
+             AND LENGTH(TRIM(coa.code)) >= 3`,
     );
 
     const now = new Date().toISOString();
     for (const row of coa.rows || []) {
-      const branchId = String(row.branch_id || '').trim();
-      if (!branchId || branchId === '22222222-2222-2222-2222-222222222222') continue;
-      const branchName = String(row.branch_name || '').trim() || branchId;
-      const name = String(row.name || '').trim() || `Caixa ${row.code}`;
-      const balance = Number(row.current_balance) || 0;
-      // caixas.id is UUID — reuse COA account id (stable 1:1).
-      const id = String(row.id);
+      try {
+        const branchId = String(row.branch_id || '').trim();
+        if (!branchId || branchId === '22222222-2222-2222-2222-222222222222') continue;
+        const branchName = String(row.branch_name || '').trim() || branchId;
+        const name = String(row.name || '').trim() || `Caixa ${row.code}`;
+        const balance = Number(row.current_balance) || 0;
+        // caixas.id is UUID — reuse COA account id (stable 1:1).
+        const id = String(row.id);
 
-      const existing = await db.query(
-        db.engine === 'postgres'
-          ? `SELECT id FROM caixas
-             WHERE id::text = $1
-                OR (branch_id::text = $2 AND LOWER(TRIM(name)) = LOWER(TRIM($3)))
-             LIMIT 1`
-          : `SELECT id FROM caixas
-             WHERE CAST(id AS TEXT) = $1
-                OR (CAST(branch_id AS TEXT) = $2 AND LOWER(TRIM(name)) = LOWER(TRIM($3)))
-             LIMIT 1`,
-        [id, branchId, name],
-      );
-      if (existing.rows?.[0]) {
-        await db.query(
-          `UPDATE caixas
-           SET branch_name = $2, name = $3, current_balance = $4, updated_at = $5
-           WHERE id = $1`,
-          [existing.rows[0].id, branchName, name, balance, now],
+        const existing = await db.query(
+          db.engine === 'postgres'
+            ? `SELECT id FROM caixas
+               WHERE id::text = $1
+                  OR (branch_id::text = $2 AND LOWER(TRIM(name)) = LOWER(TRIM($3)))
+               LIMIT 1`
+            : `SELECT id FROM caixas
+               WHERE CAST(id AS TEXT) = $1
+                  OR (CAST(branch_id AS TEXT) = $2 AND LOWER(TRIM(name)) = LOWER(TRIM($3)))
+               LIMIT 1`,
+          [id, branchId, name],
         );
-        continue;
-      }
+        if (existing.rows?.[0]) {
+          await db.query(
+            `UPDATE caixas
+             SET branch_id = $2, branch_name = $3, name = $4, current_balance = $5, updated_at = $6
+             WHERE id = $1`,
+            [existing.rows[0].id, branchId, branchName, name, balance, now],
+          );
+          continue;
+        }
 
-      await db.query(
-        `INSERT INTO caixas (
-          id, branch_id, branch_name, name, opening_balance, current_balance,
-          status, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$5,'closed',$6,$6)`,
-        [id, branchId, branchName, name, balance, now],
-      );
+        await db.query(
+          `INSERT INTO caixas (
+            id, branch_id, branch_name, name, opening_balance, current_balance,
+            status, created_at, updated_at
+          ) VALUES ($1,$2,$3,$4,$5,$5,'closed',$6,$6)`,
+          [id, branchId, branchName, name, balance, now],
+        );
+      } catch (rowErr) {
+        console.warn('[CAIXA] sync register skipped:', row?.code || row?.id, rowErr.message);
+      }
+    }
+
+    // Heal operational caixas that lost branch_id but still have a branch_name / name match.
+    try {
+      if (db.engine === 'postgres') {
+        await db.query(
+          `UPDATE caixas c
+           SET branch_id = b.id,
+               branch_name = COALESCE(NULLIF(TRIM(c.branch_name), ''), b.name),
+               updated_at = CURRENT_TIMESTAMP
+           FROM branches b
+           WHERE (c.branch_id IS NULL
+                  OR c.branch_id = '22222222-2222-2222-2222-222222222222'::uuid)
+             AND (
+               (NULLIF(TRIM(c.branch_name), '') IS NOT NULL
+                 AND LOWER(TRIM(c.branch_name)) = LOWER(TRIM(b.name)))
+               OR LOWER(TRIM(c.name)) LIKE '%' || LOWER(TRIM(b.name)) || '%'
+               OR (NULLIF(TRIM(b.code), '') IS NOT NULL
+                   AND LOWER(TRIM(c.name)) LIKE '%' || LOWER(TRIM(b.code)) || '%')
+             )`,
+        );
+      }
+    } catch (healErr) {
+      console.warn('[CAIXA] heal branch_id:', healErr.message);
     }
 
     // Remove orphan seed caixa with UUID label when branch is gone.
@@ -177,38 +245,50 @@ module.exports = function caixaRouter(broadcastTable) {
       if (!(await caixaTablesExist())) {
         return res.json({ data: [] });
       }
-      // Refresh from COA at most once per 60s (expense dialog opens often).
-      if (Date.now() - lastCoaSyncAt > 60_000) {
+      // Refresh from COA at most once per 30s (expense/supplier dialogs open often).
+      if (Date.now() - lastCoaSyncAt > 30_000) {
         lastCoaSyncAt = Date.now();
         await ensureTreasuryRegistersFromCoa();
       }
+
       const branchId = String(req.query.branchId || '').trim();
-      const params = [];
       const branchJoin = db.engine === 'postgres'
         ? `LEFT JOIN branches b ON b.id::text = c.branch_id::text`
         : `LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(c.branch_id AS TEXT)`;
       const branchNameExpr = db.engine === 'postgres'
         ? `COALESCE(NULLIF(TRIM(c.branch_name), ''), b.name, c.branch_id::text)`
         : `COALESCE(NULLIF(TRIM(c.branch_name), ''), b.name, CAST(c.branch_id AS TEXT))`;
-      let sql = `SELECT c.*, ${branchNameExpr} AS branch_name FROM caixas c ${branchJoin}`;
-      if (branchId) {
-        const resolved = await resolveBranchFilterId(db, branchId);
-        const matchId = resolved || branchId;
-        if (db.engine === 'postgres') {
-          sql += ' WHERE c.branch_id::text = $1';
-        } else {
-          sql += ' WHERE CAST(c.branch_id AS TEXT) = $1';
-        }
-        params.push(matchId);
-      } else if (db.engine === 'postgres') {
-        // Hide orphan seed UUID branch from all-branch pickers.
-        sql += ` WHERE c.branch_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222'`;
-      }
       const orderBy = db.engine === 'postgres'
         ? 'c.updated_at DESC NULLS LAST, c.created_at DESC'
         : 'c.updated_at DESC, c.created_at DESC';
-      sql += ` ORDER BY ${orderBy}`;
-      const result = await db.query(sql, params);
+
+      async function queryRegisters() {
+        const params = [];
+        let sql = `SELECT c.*, ${branchNameExpr} AS branch_name FROM caixas c ${branchJoin}`;
+        if (branchId) {
+          const resolved = await resolveBranchFilterId(db, branchId);
+          const matchId = resolved || branchId;
+          if (db.engine === 'postgres') {
+            sql += ' WHERE c.branch_id::text = $1';
+          } else {
+            sql += ' WHERE CAST(c.branch_id AS TEXT) = $1';
+          }
+          params.push(matchId);
+        } else if (db.engine === 'postgres') {
+          // Hide orphan seed UUID branch from all-branch pickers.
+          sql += ` WHERE c.branch_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222'`;
+        }
+        sql += ` ORDER BY ${orderBy}`;
+        return db.query(sql, params);
+      }
+
+      let result = await queryRegisters();
+      // First open after deploy / empty DB: force COA→caixa sync once more.
+      if (!(result.rows || []).length) {
+        lastCoaSyncAt = Date.now();
+        await ensureTreasuryRegistersFromCoa();
+        result = await queryRegisters();
+      }
       res.json({ data: (result.rows || []).map(mapCaixaRow).filter(Boolean) });
     } catch (error) {
       console.error('[CAIXA] registers list:', error);

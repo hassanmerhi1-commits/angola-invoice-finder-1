@@ -56,23 +56,66 @@ async function loadPostedJournalSignature(client, journalEntryId) {
   return journalSignature(lines);
 }
 
-async function reverseJournalEntry(client, journalEntryId) {
-  const linesRes = await client.query(
-    `SELECT jel.account_id, jel.debit_amount, jel.credit_amount
-     FROM journal_entry_lines jel WHERE jel.journal_entry_id = $1`,
-    [journalEntryId],
-  );
-  for (const line of linesRes.rows || []) {
-    const balanceChange = Number(line.debit_amount || 0) - Number(line.credit_amount || 0);
-    await client.query(
-      `UPDATE chart_of_accounts
-       SET current_balance = current_balance - $1, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2`,
-      [balanceChange, line.account_id],
-    );
+/**
+ * Audit-safe reverse: post a balancing opposite journal and mark the original [REVERSED].
+ * Does not hard-delete the original entry (fiscal/audit trail).
+ */
+async function reverseJournalEntry(client, journalEntryId, opts = {}) {
+  const id = String(journalEntryId || '').trim();
+  if (!id) return null;
+
+  const entryRes = await client.query('SELECT * FROM journal_entries WHERE id = $1 LIMIT 1', [id]);
+  const entry = entryRes.rows[0];
+  if (!entry) return null;
+  if (String(entry.description || '').includes('[REVERSED]')) {
+    return { alreadyReversed: true, id };
   }
-  await client.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = $1', [journalEntryId]);
-  await client.query('DELETE FROM journal_entries WHERE id = $1', [journalEntryId]);
+  if (String(entry.reference_type || '') === 'journal_reversal') {
+    throw new Error('Cannot reverse a reversal journal entry');
+  }
+
+  const linesResult = await client.query(
+    `SELECT jel.debit_amount, jel.credit_amount, coa.code AS account_code
+     FROM journal_entry_lines jel
+     JOIN chart_of_accounts coa ON coa.id = jel.account_id
+     WHERE jel.journal_entry_id = $1`,
+    [id],
+  );
+  const reverseLines = (linesResult.rows || [])
+    .filter((l) => (Number(l.debit_amount) || 0) > 0 || (Number(l.credit_amount) || 0) > 0)
+    .map((l) => ({
+      accountCode: l.account_code,
+      description: `Reversão ${entry.entry_number || id}`,
+      debit: Number(l.credit_amount) || 0,
+      credit: Number(l.debit_amount) || 0,
+    }));
+  if (reverseLines.length === 0) {
+    throw new Error('Journal entry has no lines to reverse');
+  }
+
+  const { createJournalEntry } = require('../accounting');
+  const reverseEntry = await createJournalEntry(client, {
+    description: `Reversão: ${entry.description || entry.entry_number || id}`,
+    referenceType: 'journal_reversal',
+    referenceId: id,
+    branchId: entry.branch_id || opts.branchId || null,
+    createdBy: opts.createdBy || entry.created_by || null,
+    entryDate: opts.entryDate || entry.entry_date || new Date().toISOString().slice(0, 10),
+    lines: reverseLines,
+  });
+
+  await client.query(
+    `UPDATE journal_entries
+     SET description = CASE
+       WHEN COALESCE(description, '') LIKE '%[REVERSED]%' THEN description
+       ELSE trim(COALESCE(description, '') || ' [REVERSED]')
+     END,
+     updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [id],
+  );
+
+  return reverseEntry;
 }
 
 function normalizePurchaseLines(lines) {
@@ -121,7 +164,12 @@ async function queryPostingStatus(client, invoiceId) {
     [invoiceId],
   );
   const journal = await client.query(
-    `SELECT id FROM journal_entries WHERE reference_id = $1 LIMIT 1`,
+    `SELECT id FROM journal_entries
+     WHERE reference_id = $1
+       AND COALESCE(reference_type, '') <> 'journal_reversal'
+       AND COALESCE(description, '') NOT LIKE '%[REVERSED]%'
+     ORDER BY created_at DESC
+     LIMIT 1`,
     [invoiceId],
   );
   return {
@@ -465,6 +513,7 @@ module.exports = {
   purchaseInvoiceHasStockLines,
   resolveWarehouseForInvoice,
   queryPostingStatus,
+  reverseJournalEntry,
   postPurchaseInvoiceAccountingPhased,
   withSavepoint,
 };

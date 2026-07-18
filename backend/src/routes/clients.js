@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { auditErpSafe } = require('../lib/erpAudit');
+const { requirePermission } = require('../middleware/requirePermission');
 const {
   ensureClientSubAccount,
 } = require('../lib/entityCoaAccounts');
@@ -44,7 +45,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Create client
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('client_manage', 'invoice_create'), async (req, res) => {
     const { name, nif, email, phone, address, city, country, creditLimit, currentBalance, defaultPriceLevel, priceAdjustmentPct, paymentTermsDays, accountParentCode } = req.body;
 
     if (!String(name || '').trim()) {
@@ -103,7 +104,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Update client
-  router.put('/:id', async (req, res) => {
+  router.put('/:id', requirePermission('client_manage', 'invoice_create'), async (req, res) => {
     try {
       const { id } = req.params;
       const { name, nif, email, phone, address, city, country, creditLimit, currentBalance, isActive, defaultPriceLevel, priceAdjustmentPct, paymentTermsDays } = req.body;
@@ -147,7 +148,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Delete client (soft delete)
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', requirePermission('client_manage', 'invoice_create'), async (req, res) => {
     try {
       const { id } = req.params;
       await db.query('UPDATE clients SET is_active = false WHERE id = $1', [id]);

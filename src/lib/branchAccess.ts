@@ -125,21 +125,17 @@ export function branchesVisibleToUser(
 }
 
 /**
- * Consolidated read scope: explicit "All branches", or the HQ/Sede branch itself.
- * Selecting Sede Soyo (Head Office badge) must show totals across all filials —
- * not only stock/docs owned by the sede row.
+ * Consolidated read scope: only the explicit "Todas as filiais" sentinel.
+ * Selecting the Sede/HQ branch means that warehouse only — use
+ * ALL_BRANCHES_SCOPE_ID for company-wide stock totals.
  */
 export function isConsolidatedBranchScope(
   canSwitch: boolean,
   scopeId: string | null | undefined,
-  branches: Branch[] = [],
+  _branches: Branch[] = [],
 ): boolean {
   if (!canSwitch) return false;
-  const id = String(scopeId || '').trim();
-  if (!id) return false;
-  if (id === ALL_BRANCHES_SCOPE_ID) return true;
-  if (branches.length === 0) return false;
-  return looksLikeHeadOfficeBranch(resolveUserBranch(branches, id));
+  return String(scopeId || '').trim() === ALL_BRANCHES_SCOPE_ID;
 }
 
 /** Consolidated all-branch API scope (All branches or HQ/Sede selected). */

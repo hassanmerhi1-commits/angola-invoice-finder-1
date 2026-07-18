@@ -3,6 +3,7 @@ import { getApiUrlAsync, isDemoMode, isThinClientMode } from '@/lib/api/config';
 import { electronAwareJsonRequest } from '@/lib/electronHttp';
 import { isOfflineModeActive, setOfflineModeActive } from '@/lib/offlineAuth';
 import { getOfflinePendingCount } from '@/lib/sync/offlineSales';
+import { setLanServerReachable } from '@/lib/lanReachability';
 
 type OfflineBannerState = {
   visible: boolean;
@@ -41,6 +42,7 @@ export function useOfflineBanner(): OfflineBannerState {
     if (!isThinClientMode() && !isOfflineModeActive()) {
       failStreak.current = 0;
       setServerReachable(null);
+      setLanServerReachable(null);
       return;
     }
 
@@ -48,6 +50,7 @@ export function useOfflineBanner(): OfflineBannerState {
     if (reachable) {
       failStreak.current = 0;
       setServerReachable(true);
+      setLanServerReachable(true);
       if (isOfflineModeActive()) {
         setOfflineModeActive(false);
         setOfflineLogin(false);
@@ -59,6 +62,7 @@ export function useOfflineBanner(): OfflineBannerState {
     failStreak.current += 1;
     if (failStreak.current >= OFFLINE_FAIL_THRESHOLD) {
       setServerReachable(false);
+      setLanServerReachable(false);
       // Mark offline so sales/other writes queue immediately instead of waiting on
       // a full network timeout each time. Cleared automatically on the next good ping.
       if (isThinClientMode() && !isOfflineModeActive()) {

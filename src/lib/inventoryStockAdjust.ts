@@ -1,8 +1,10 @@
 import { api } from '@/lib/api/client';
 import { PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
+import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 
 function notifyProductsChanged(warehouseId: string) {
   if (typeof window === 'undefined') return;
+  invalidateInventoryGridCacheForBranches([warehouseId]);
   window.dispatchEvent(
     new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: warehouseId } }),
   );

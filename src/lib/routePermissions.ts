@@ -17,7 +17,7 @@ export const ROUTE_PERMISSIONS: Record<string, string | string[]> = {
   '/inventory': 'inventory_view',
   '/categories': 'inventory_view',
   '/suppliers': 'inventory_view',
-  '/clients': 'invoice_view',
+  '/clients': ['client_manage', 'invoice_view'],
   '/customers': 'invoice_view',
   '/purchase-orders': 'purchase_create',
   '/purchase-invoices': 'purchase_create',

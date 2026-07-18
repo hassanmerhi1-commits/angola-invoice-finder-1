@@ -115,6 +115,9 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
         sale.client_id || null,
         sale.customer_name || '',
       );
+    } else {
+      const { resolveBankGlForTreasury } = require('../lib/bankGlAccounts');
+      cashAccountCode = await resolveBankGlForTreasury(client, { branchId });
     }
 
     const reverseLines = [

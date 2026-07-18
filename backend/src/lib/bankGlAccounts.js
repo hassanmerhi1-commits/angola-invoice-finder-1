@@ -1,11 +1,15 @@
 /**
  * Link operational bank_accounts rows to chart of accounts (431 / 431xxxx leaves).
+ * Uses parent_id (schema), never parent_code.
  */
 const crypto = require('crypto');
 const { findAccountByCode } = require('../accounting');
 
 const BANK_PARENT_CODE = '431';
-const OPENING_EQUITY_CODE = '51'; // Capital — counterpart for bank opening balances
+/** Prefer a real equity leaf; created under 51 if missing. */
+const OPENING_EQUITY_LEAF = '511';
+const OPENING_EQUITY_PARENT = '51';
+const OPENING_EQUITY_FALLBACK = '561'; // Reservas de reavaliação — legais (non-header)
 
 function cleanName(name) {
   return String(name || '')
@@ -34,66 +38,146 @@ async function ensureBankGlColumn(db) {
 
 async function nextBankLeafCode(client) {
   const res = await client.query(
-    `SELECT code FROM chart_of_accounts WHERE code LIKE $1 ORDER BY code DESC LIMIT 80`,
+    `SELECT code FROM chart_of_accounts WHERE code LIKE $1 AND is_header = false`,
     [`${BANK_PARENT_CODE}%`],
   );
-  let max = Number(`${BANK_PARENT_CODE}0000`);
-  for (const row of res.rows || []) {
-    const raw = String(row.code || '').trim();
-    if (!/^\d+$/.test(raw) || raw === BANK_PARENT_CODE) continue;
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > max) max = n;
+  const codes = (res.rows || []).map((r) => String(r.code || '').trim());
+  let maxSeq = 0;
+  for (const code of codes) {
+    if (!code.startsWith(BANK_PARENT_CODE) || code === BANK_PARENT_CODE) continue;
+    const parsed = Number(code.slice(BANK_PARENT_CODE.length));
+    if (Number.isFinite(parsed) && parsed > maxSeq) maxSeq = parsed;
   }
-  const next = String(max + 1);
-  if (!next.startsWith(BANK_PARENT_CODE) || next === BANK_PARENT_CODE) {
-    return `${BANK_PARENT_CODE}0001`;
-  }
-  return next;
+  return `${BANK_PARENT_CODE}${String(maxSeq + 1).padStart(4, '0')}`;
 }
 
 async function ensureBankLeafAccount(client, bankName, accountNumber) {
   const label = cleanName(
     [bankName, accountNumber].filter(Boolean).join(' — ') || 'Conta bancária',
   );
+
+  const parent = await client.query(
+    `SELECT id, level, code FROM chart_of_accounts
+     WHERE code = $1 AND is_active = true LIMIT 1`,
+    [BANK_PARENT_CODE],
+  );
+  if (!parent.rows[0]) {
+    console.warn('[BANK GL] parent 431 missing — using pooled 431');
+    return BANK_PARENT_CODE;
+  }
+  const parentId = parent.rows[0].id;
+
   const existing = await client.query(
     `SELECT code FROM chart_of_accounts
-     WHERE parent_code = $1 AND is_header = false AND is_active = true
+     WHERE parent_id = $1 AND is_header = false AND is_active = true
        AND LOWER(TRIM(name)) = LOWER($2)
      LIMIT 1`,
-    [BANK_PARENT_CODE, label],
+    [parentId, label],
   );
   if (existing.rows[0]?.code) return String(existing.rows[0].code);
 
-  const parent = await findAccountByCode(client, BANK_PARENT_CODE);
-  if (!parent) return BANK_PARENT_CODE;
-
   const code = await nextBankLeafCode(client);
   const id = crypto.randomUUID();
+  const childLevel = (parseInt(parent.rows[0].level, 10) || 2) + 1;
   try {
     await client.query(
       `INSERT INTO chart_of_accounts (
-        id, code, name, account_type, account_nature, level, is_header, parent_code,
+        id, code, name, account_type, account_nature, level, is_header, parent_id,
         opening_balance, current_balance, is_active, description
-      ) VALUES ($1,$2,$3,'asset','debit',$4,false,$5,0,0,true,$6)`,
+      ) VALUES ($1,$2,$3,'asset','debit',$4,false,$5,0,0,true,$6)
+      ON CONFLICT (code) DO NOTHING`,
       [
         id,
         code,
         label,
-        Number(parent.level || 2) + 1,
-        BANK_PARENT_CODE,
+        childLevel,
+        parentId,
         `Conta bancária operacional: ${label}`,
       ],
     );
+    try {
+      await client.query(
+        `UPDATE chart_of_accounts SET children_count = (
+           SELECT COUNT(*) FROM chart_of_accounts WHERE parent_id = $1 AND is_active = true
+         ) WHERE id = $1`,
+        [parentId],
+      );
+    } catch (_) {
+      /* children_count optional */
+    }
   } catch (e) {
     console.warn('[BANK GL] create leaf:', e.message);
   }
+
   const created = await findAccountByCode(client, code);
-  return created?.code || BANK_PARENT_CODE;
+  if (created?.code) return String(created.code);
+
+  const again = await client.query(
+    `SELECT code FROM chart_of_accounts
+     WHERE parent_id = $1 AND is_header = false AND is_active = true
+       AND LOWER(TRIM(name)) = LOWER($2)
+     LIMIT 1`,
+    [parentId, label],
+  );
+  return again.rows[0]?.code ? String(again.rows[0].code) : BANK_PARENT_CODE;
+}
+
+/** Equity leaf for bank opening balances (never post to header 51). */
+async function resolveOpeningEquityAccountCode(client) {
+  const preferred = await findAccountByCode(client, OPENING_EQUITY_LEAF);
+  const preferredIsHeader = preferred
+    && (preferred.is_header === true || preferred.is_header === 1 || preferred.is_header === 't');
+  if (preferred && !preferredIsHeader) {
+    return OPENING_EQUITY_LEAF;
+  }
+
+  const parent = await client.query(
+    `SELECT id, level FROM chart_of_accounts WHERE code = $1 AND is_active = true LIMIT 1`,
+    [OPENING_EQUITY_PARENT],
+  );
+  if (parent.rows[0]) {
+    const parentId = parent.rows[0].id;
+    const child = await client.query(
+      `SELECT code FROM chart_of_accounts
+       WHERE parent_id = $1 AND is_header = false AND is_active = true
+       ORDER BY code ASC LIMIT 1`,
+      [parentId],
+    );
+    if (child.rows[0]?.code) return String(child.rows[0].code);
+
+    // Create 511 under Capital
+    try {
+      const id = crypto.randomUUID();
+      const childLevel = (parseInt(parent.rows[0].level, 10) || 1) + 1;
+      await client.query(
+        `INSERT INTO chart_of_accounts (
+          id, code, name, account_type, account_nature, level, is_header, parent_id,
+          opening_balance, current_balance, is_active, description
+        ) VALUES ($1,$2,$3,'equity','credit',$4,false,$5,0,0,true,$6)
+        ON CONFLICT (code) DO NOTHING`,
+        [
+          id,
+          OPENING_EQUITY_LEAF,
+          'Capital subscrito — saldos de abertura',
+          childLevel,
+          parentId,
+          'Contrapartida de saldos iniciais de bancos/caixa',
+        ],
+      );
+      const created = await findAccountByCode(client, OPENING_EQUITY_LEAF);
+      if (created) return OPENING_EQUITY_LEAF;
+    } catch (e) {
+      console.warn('[BANK GL] ensure equity 511:', e.message);
+    }
+  }
+
+  const fallback = await findAccountByCode(client, OPENING_EQUITY_FALLBACK);
+  if (fallback) return OPENING_EQUITY_FALLBACK;
+  return OPENING_EQUITY_FALLBACK;
 }
 
 /**
  * Resolve (and optionally create) the GL leaf for a bank account row.
- * Persists gl_account_code on the bank_accounts table when db handle is given.
  */
 async function resolveBankGlAccountCode(client, bankRow, opts = {}) {
   const existing = String(bankRow?.gl_account_code || bankRow?.glAccountCode || '').trim();
@@ -120,6 +204,46 @@ async function resolveBankGlAccountCode(client, bankRow, opts = {}) {
   return code;
 }
 
+async function resolveBankGlAccountCodeById(client, bankAccountId) {
+  const id = String(bankAccountId || '').trim();
+  if (!id) return BANK_PARENT_CODE;
+  const res = await client.query('SELECT * FROM bank_accounts WHERE id = $1 LIMIT 1', [id]);
+  if (!res.rows[0]) return BANK_PARENT_CODE;
+  return resolveBankGlAccountCode(client, res.rows[0]);
+}
+
+/** Primary (or first active) bank for a branch → GL leaf; else pooled 431. */
+async function resolveDefaultBranchBankGl(client, branchId) {
+  const bid = String(branchId || '').trim();
+  if (!bid) return BANK_PARENT_CODE;
+  try {
+    const res = await client.query(
+      `SELECT * FROM bank_accounts
+       WHERE CAST(branch_id AS TEXT) = $1
+         AND (is_active = true OR is_active = 1 OR is_active IS NULL)
+       ORDER BY is_primary DESC, updated_at DESC, created_at DESC
+       LIMIT 1`,
+      [bid],
+    );
+    if (res.rows[0]) return resolveBankGlAccountCode(client, res.rows[0]);
+  } catch (e) {
+    console.warn('[BANK GL] default branch bank:', e.message);
+  }
+  return BANK_PARENT_CODE;
+}
+
+/**
+ * Resolve bank GL for a movement: explicit bankAccountId → that leaf;
+ * else primary bank of branch; else 431.
+ */
+async function resolveBankGlForTreasury(client, { bankAccountId, branchId } = {}) {
+  const explicit = String(bankAccountId || '').trim();
+  if (explicit) {
+    return resolveBankGlAccountCodeById(client, explicit);
+  }
+  return resolveDefaultBranchBankGl(client, branchId);
+}
+
 async function postBankOpeningBalanceJournal(client, {
   bankId,
   branchId,
@@ -131,9 +255,7 @@ async function postBankOpeningBalanceJournal(client, {
   const amount = Number(openingBalance) || 0;
   if (amount <= 0) return null;
   const { createJournalEntry } = require('../accounting');
-  const equity = (await findAccountByCode(client, OPENING_EQUITY_CODE))
-    ? OPENING_EQUITY_CODE
-    : '51';
+  const equity = await resolveOpeningEquityAccountCode(client);
   return createJournalEntry(client, {
     description: `Saldo inicial banco ${bankLabel || bankId}`,
     referenceType: 'adjustment',
@@ -151,6 +273,10 @@ module.exports = {
   BANK_PARENT_CODE,
   ensureBankGlColumn,
   resolveBankGlAccountCode,
+  resolveBankGlAccountCodeById,
+  resolveDefaultBranchBankGl,
+  resolveBankGlForTreasury,
   ensureBankLeafAccount,
+  resolveOpeningEquityAccountCode,
   postBankOpeningBalanceJournal,
 };

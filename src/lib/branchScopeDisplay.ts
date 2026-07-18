@@ -8,8 +8,7 @@ export function resolveBranchScopeDisplayLabel(
   operatingBranch: Branch | null,
   allBranchesLabel: string,
 ): string {
-  // Keep "Sede Soyo" label when HQ is selected (still consolidated for data).
-  // Only the explicit All-branches sentinel uses the all-branches caption.
+  // Sede shows its own name (sede warehouse). Only __all_branches__ uses the totals caption.
   if (canSwitch && String(scopeId || '') === ALL_BRANCHES_SCOPE_ID) {
     return allBranchesLabel;
   }

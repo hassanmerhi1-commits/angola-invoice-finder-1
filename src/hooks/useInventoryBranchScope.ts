@@ -67,7 +67,15 @@ export function useInventoryBranchScope() {
     }
 
     const global = String(globalScopeId || '').trim();
-    if (global && global !== ALL_BRANCHES_SCOPE_ID) {
+    if (global === ALL_BRANCHES_SCOPE_ID) {
+      setInventoryScopeIdState((prev) => {
+        if (prev === ALL_BRANCHES_SCOPE_ID) return prev;
+        localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, ALL_BRANCHES_SCOPE_ID);
+        return ALL_BRANCHES_SCOPE_ID;
+      });
+      return;
+    }
+    if (global) {
       setInventoryScopeIdState((prev) => {
         if (prev === global) return prev;
         localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, global);
@@ -77,7 +85,7 @@ export function useInventoryBranchScope() {
     }
 
     setInventoryScopeIdState((prev) => {
-      if (prev && branches.some((b) => b.id === prev)) return prev;
+      if (prev === ALL_BRANCHES_SCOPE_ID || branches.some((b) => b.id === prev)) return prev;
       const next = resolveStoredInventoryScopeId(branches, true, globalScopeId);
       localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, next);
       return next;
@@ -88,9 +96,7 @@ export function useInventoryBranchScope() {
     setInventoryScopeIdState(scopeId);
     if (canSwitchBranch) {
       localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, scopeId);
-      if (scopeId !== ALL_BRANCHES_SCOPE_ID) {
-        setOperatingScope(scopeId);
-      }
+      setOperatingScope(scopeId);
     }
   }, [canSwitchBranch, setOperatingScope]);
 

@@ -17,7 +17,7 @@ import { invalidateInventoryGridCache, invalidateInventoryGridCacheForBranches, 
 import { useInventoryBranchScope } from '@/hooks/useInventoryBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { resolveBranchScopeDisplayLabel } from '@/lib/branchScopeDisplay';
-import { normalizeIsMain } from '@/lib/branchAccess';
+import { looksLikeHeadOfficeBranch, normalizeIsMain } from '@/lib/branchAccess';
 import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { DEFAULT_VAT_RATE, normalizeTaxRate } from '@/lib/taxUtils';
@@ -1210,7 +1210,7 @@ export default function Inventory() {
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Head Office Notice */}
+      {/* Stock mode notices */}
       {isHeadOffice && (
         <Alert className="mx-3 mt-3 rounded-xl bg-accent border-primary/20">
           <Building2 className="h-4 w-4 text-primary" />
@@ -1219,11 +1219,21 @@ export default function Inventory() {
           </AlertDescription>
         </Alert>
       )}
+      {!isHeadOffice && canSwitchBranch && looksLikeHeadOfficeBranch(inventoryBranch) && (
+        <Alert className="mx-3 mt-3 rounded-xl bg-muted/60 border-border">
+          <Building2 className="h-4 w-4 text-muted-foreground" />
+          <AlertDescription className="text-foreground">
+            <strong>{t.inventoryPageUi.sedeStockOnlyTitle}</strong>{' '}
+            {t.inventoryPageUi.sedeStockOnlyDesc}
+          </AlertDescription>
+        </Alert>
+      )}
       {/* Toolbar */}
       <div className="relative z-30 flex items-center gap-1.5 px-3 py-2 bg-card/50 border-b backdrop-blur-sm">
         {canSwitchBranch && (
           <BranchSelector
             compact
+            includeAllBranches
             branchList={allBranches.length > 0 ? allBranches : branches}
             inventoryScopeId={inventoryScopeId}
             onInventoryScopeChange={setInventoryScope}

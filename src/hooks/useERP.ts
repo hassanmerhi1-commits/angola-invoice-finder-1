@@ -292,6 +292,23 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
       );
     }
 
+    // Unified offline catalog: SQLite products_cache first, then LAN localStorage.
+    try {
+      const { readLocalProductsCache } = await import('@/lib/sync/offlineFirst');
+      const sqliteCached = await readLocalProductsCache(branchId);
+      if (sqliteCached.length > 0) {
+        console.warn('[useProducts] Server unreachable — using SQLite product cache');
+        const mapped = sqliteCached.map((p) => mapProduct(p));
+        return filterProductsForApiScope(
+          dedupeProductsBySku(mapped, branchId, catalogBranchIds),
+          branchId,
+          catalogBranchIds,
+        );
+      }
+    } catch {
+      /* fall through */
+    }
+
     if (isThinClientMode()) {
       const cached = readLanProducts(lanCatalogScopeKey(branchId));
       if (cached?.length) {
@@ -1077,8 +1094,16 @@ export function useAuth() {
         setAuthState({ user });
         markElectronSessionAuthenticated();
         if (!isOffline && user.branchId) {
-          void import('@/lib/sync/offlineFirst').then(({ warmOfflineCatalog }) => {
+          void import('@/lib/sync/offlineFirst').then(({ warmOfflineCatalog, startCatalogWarmScheduler }) => {
             void warmOfflineCatalog(user.branchId);
+            startCatalogWarmScheduler(() => {
+              try {
+                const u = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
+                return String(u?.branchId || user.branchId || '');
+              } catch {
+                return user.branchId;
+              }
+            });
           }).catch(() => { /* non-fatal */ });
         }
         return { ok: true, offline: isOffline };
@@ -1316,8 +1341,27 @@ export function useClients(deferInitialLoad = false) {
       console.warn('[useClients] storage.getClients failed', e);
     }
 
-    // Merge: API rows first, then storage-only (fixes empty HTTP [] while local/SQLite has rows;
-    // Electron create via IPC + list via HTTP was hiding new clients.)
+    let fromOfflineCache: Client[] = [];
+    if (apiRows.length === 0) {
+      try {
+        const { readLocalClientsCache, syncClientsToLocalCache } = await import('@/lib/sync/offlineFirst');
+        fromOfflineCache = (await readLocalClientsCache()).map((c) => mapClientApiRow(c));
+        if (fromOfflineCache.length === 0) {
+          /* keep storage */
+        }
+      } catch {
+        /* ignore */
+      }
+    } else {
+      try {
+        const { syncClientsToLocalCache } = await import('@/lib/sync/offlineFirst');
+        await syncClientsToLocalCache(apiRows);
+      } catch {
+        /* non-fatal */
+      }
+    }
+
+    // Merge: API rows first, then storage-only / offline cache.
     const byId = new Map<string, Client>();
     for (const row of apiRows) {
       const c = mapClientApiRow(row);
@@ -1327,6 +1371,11 @@ export function useClients(deferInitialLoad = false) {
       const id = String(c.id ?? '');
       if (!id) continue;
       if (!byId.has(id)) byId.set(id, mapClientApiRow(c));
+    }
+    for (const c of fromOfflineCache) {
+      const id = String(c.id ?? '');
+      if (!id) continue;
+      if (!byId.has(id)) byId.set(id, c);
     }
 
     const sorted = Array.from(byId.values()).sort((a, b) =>

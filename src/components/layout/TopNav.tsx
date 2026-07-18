@@ -653,7 +653,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <BranchScopeSelectItems branches={branches} compact />
+                <BranchScopeSelectItems branches={branches} compact showAllBranchesOption />
               </SelectContent>
             </Select>
           ) : currentBranch ? (
@@ -782,7 +782,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <BranchScopeSelectItems branches={branches} compact />
+                <BranchScopeSelectItems branches={branches} compact showAllBranchesOption />
               </SelectContent>
             </Select>
           ) : currentBranch ? (

@@ -21,6 +21,7 @@ const {
   applyPurchaseSupplierToProducts,
 } = require('../transactionEngine');
 const { attachUserBranchScope, resolveWarehouseId } = require('../middleware/branchScope');
+const { requirePermission } = require('../middleware/requirePermission');
 const { isUniqueSkuBranchError } = require('../lib/productSkuResolve');
 const { processTransactionBody } = require('../transactionProcessor');
 const {
@@ -218,7 +219,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.post('/stock-movements', async (req, res) => {
+  router.post('/stock-movements', requirePermission('inventory_adjust', 'accounting_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -240,7 +241,7 @@ module.exports = function(broadcastTable) {
   });
 
   /** Stock adjust entry/exit: movements + weighted cost (IN) + journal — single atomic transaction. */
-  router.post('/stock-adjustment', async (req, res) => {
+  router.post('/stock-adjustment', requirePermission('inventory_adjust', 'accounting_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -278,7 +279,7 @@ module.exports = function(broadcastTable) {
   });
 
   /** Void (delete) a stock adjustment document — reverses stock and journal. */
-  router.delete('/stock-adjustment/:documentId', async (req, res) => {
+  router.delete('/stock-adjustment/:documentId', requirePermission('inventory_adjust', 'accounting_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -302,7 +303,7 @@ module.exports = function(broadcastTable) {
   });
 
   /** Edit a stock adjustment — void original and post replacement. */
-  router.put('/stock-adjustment/:documentId', async (req, res) => {
+  router.put('/stock-adjustment/:documentId', requirePermission('inventory_adjust', 'accounting_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -475,7 +476,13 @@ module.exports = function(broadcastTable) {
   });
 
   // ==================== GENERIC TRANSACTION PROCESSOR ====================
-  router.post('/process', async (req, res) => {
+  router.post('/process', requirePermission(
+    'accounting_create',
+    'accounting_journal',
+    'purchase_create',
+    'purchase_receive',
+    'inventory_adjust',
+  ), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');

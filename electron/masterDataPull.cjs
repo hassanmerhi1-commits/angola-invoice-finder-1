@@ -72,6 +72,18 @@ async function pullMasterData(apiBaseUrl, branchId) {
     branchId: p.branch_id,
   }));
   const r = clientDb.syncProductsCache(products);
+  const clients = (body.clients || []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    nif: c.nif,
+    phone: c.phone,
+    email: c.email,
+    address: c.address,
+    creditLimit: c.credit_limit ?? c.creditLimit,
+    ...c,
+  }));
+  const clientsResult = clientDb.syncClientsCache(clients);
+  clientDb.setWarmBranchId(branchId);
   database.prepare(
     `INSERT INTO client_meta (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
@@ -80,7 +92,7 @@ async function pullMasterData(apiBaseUrl, branchId) {
   return {
     ok: true,
     products: r.updated,
-    clients: (body.clients || []).length,
+    clients: clientsResult.updated,
     generatedAt: body.generatedAt,
   };
 }

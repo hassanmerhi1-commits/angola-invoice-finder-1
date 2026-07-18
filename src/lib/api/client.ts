@@ -1777,32 +1777,90 @@ export const api = {
         { method: 'POST' },
       ),
     receivablesAging: () => apiFetch<any[]>('/payments/receivables-aging'),
-    create: (data: any) => {
-      return apiFetch<any>('/payments', { method: 'POST', body: JSON.stringify(data) }).then((res) => {
-        if (res.data !== undefined || !isDemoMode()) return res;
+    create: async (data: any) => {
+      const {
+        enqueuePaymentSync,
+        hasSyncOutbox,
+        shouldQueueImmediately,
+        probeCityServerReachable,
+        shouldQueueOnNetworkError,
+      } = await import('@/lib/sync/clientOutbox');
+      const clientRequestId = data.clientRequestId || data.client_request_id || generateId();
+      const body = { ...data, clientRequestId, id: data.id || clientRequestId };
+
+      const queuePayment = async () => {
+        const queued = await enqueuePaymentSync({ paymentData: body });
+        if (!queued) return null;
         const now = new Date().toISOString();
-        const prefix = data.paymentType === 'receipt' ? 'REC' : 'PAG';
-        const stored = {
-          id: generateId(),
-          payment_number: `${prefix}-${now.slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-4)}`,
-          payment_type: data.paymentType,
-          entity_type: data.entityType,
-          entity_id: data.entityId,
-          entity_name: data.entityName,
-          payment_method: data.paymentMethod,
-          amount: data.amount,
-          currency: data.currency || 'AOA',
-          reference: data.reference || '',
-          notes: data.notes || '',
-          branch_id: data.branchId,
-          created_by: data.createdBy,
+        const prefix = body.paymentType === 'receipt' ? 'REC' : 'PAG';
+        const stub = {
+          id: body.id,
+          payment_number: `OFF-${prefix}-${String(clientRequestId).slice(0, 8)}`,
+          paymentNumber: `OFF-${prefix}-${String(clientRequestId).slice(0, 8)}`,
+          payment_type: body.paymentType,
+          paymentType: body.paymentType,
+          entity_type: body.entityType,
+          entityType: body.entityType,
+          entity_id: body.entityId,
+          entityId: body.entityId,
+          entity_name: body.entityName,
+          entityName: body.entityName,
+          payment_method: body.paymentMethod,
+          paymentMethod: body.paymentMethod,
+          amount: body.amount,
+          branch_id: body.branchId,
+          branchId: body.branchId,
+          created_by: body.createdBy,
+          createdBy: body.createdBy,
           created_at: now,
+          createdAt: now,
+          pendingSync: true,
+          clientRequestId,
         };
-        const rows = JSON.parse(localStorage.getItem('kwanzaerp_payments') || '[]');
-        rows.push(stored);
-        localStorage.setItem('kwanzaerp_payments', JSON.stringify(rows));
-        return { data: stored };
-      });
+        return { data: stub, error: undefined as string | undefined };
+      };
+
+      if (hasSyncOutbox() && shouldQueueImmediately()) {
+        const queuedResult = await queuePayment();
+        if (queuedResult) return queuedResult;
+      }
+
+      if (hasSyncOutbox() && !shouldQueueImmediately()) {
+        const reachable = await probeCityServerReachable();
+        if (!reachable) {
+          const queuedResult = await queuePayment();
+          if (queuedResult) return queuedResult;
+        }
+      }
+
+      const res = await apiFetch<any>('/payments', { method: 'POST', body: JSON.stringify(body) });
+      if (res.error && hasSyncOutbox() && shouldQueueOnNetworkError(res.error)) {
+        const queuedResult = await queuePayment();
+        if (queuedResult) return queuedResult;
+      }
+      if (res.data !== undefined || !isDemoMode()) return res;
+      const now = new Date().toISOString();
+      const prefix = data.paymentType === 'receipt' ? 'REC' : 'PAG';
+      const stored = {
+        id: generateId(),
+        payment_number: `${prefix}-${now.slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-4)}`,
+        payment_type: data.paymentType,
+        entity_type: data.entityType,
+        entity_id: data.entityId,
+        entity_name: data.entityName,
+        payment_method: data.paymentMethod,
+        amount: data.amount,
+        currency: data.currency || 'AOA',
+        reference: data.reference || '',
+        notes: data.notes || '',
+        branch_id: data.branchId,
+        created_by: data.createdBy,
+        created_at: now,
+      };
+      const rows = JSON.parse(localStorage.getItem('kwanzaerp_payments') || '[]');
+      rows.push(stored);
+      localStorage.setItem('kwanzaerp_payments', JSON.stringify(rows));
+      return { data: stored };
     },
     openItems: (entityType: string, entityId: string) => {
       if (isDemoMode()) {
@@ -2776,10 +2834,58 @@ export const api = {
       }
       return apiFetch<any[]>(`/transactions/stock-movements?${sp}`);
     },
-    createStockMovement: (data: any) => {
-      return apiFetch<any>('/transactions/stock-movements', { method: 'POST', body: JSON.stringify(data) });
+    createStockMovement: async (data: any) => {
+      const {
+        enqueueStockMovementSync,
+        hasSyncOutbox,
+        shouldQueueImmediately,
+        probeCityServerReachable,
+        shouldQueueOnNetworkError,
+      } = await import('@/lib/sync/clientOutbox');
+      const movementId = data.id || data.clientRequestId || generateId();
+      const body = {
+        ...data,
+        id: movementId,
+        clientRequestId: data.clientRequestId || movementId,
+        warehouseId: data.warehouseId || data.branchId,
+        branchId: data.branchId || data.warehouseId,
+      };
+
+      const queueMovement = async () => {
+        const queued = await enqueueStockMovementSync({ movementData: body });
+        if (!queued) return null;
+        return {
+          data: {
+            id: movementId,
+            ...body,
+            pendingSync: true,
+          },
+        };
+      };
+
+      if (hasSyncOutbox() && shouldQueueImmediately()) {
+        const queuedResult = await queueMovement();
+        if (queuedResult) return queuedResult;
+      }
+      if (hasSyncOutbox() && !shouldQueueImmediately()) {
+        const reachable = await probeCityServerReachable();
+        if (!reachable) {
+          const queuedResult = await queueMovement();
+          if (queuedResult) return queuedResult;
+        }
+      }
+
+      const result = await apiFetch<any>('/transactions/stock-movements', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      if (result.error && hasSyncOutbox() && shouldQueueOnNetworkError(result.error)) {
+        const queuedResult = await queueMovement();
+        if (queuedResult) return queuedResult;
+      }
+      return result;
     },
-    stockAdjustment: (data: {
+    stockAdjustment: async (data: {
       direction: 'IN' | 'OUT';
       warehouseId: string;
       referenceNumber: string;
@@ -2792,7 +2898,67 @@ export const api = {
       freightSourceAccount?: string;
       freightSourceName?: string;
     }) => {
-      return apiFetch<{
+      const {
+        enqueueStockMovementSync,
+        hasSyncOutbox,
+        shouldQueueImmediately,
+        probeCityServerReachable,
+        shouldQueueOnNetworkError,
+      } = await import('@/lib/sync/clientOutbox');
+
+      const queueAdjustmentLines = async () => {
+        if (!hasSyncOutbox()) return null;
+        const movementIds: string[] = [];
+        for (const line of data.lines || []) {
+          const id = generateId();
+          const movementData = {
+            id,
+            productId: line.productId,
+            warehouseId: data.warehouseId,
+            branchId: data.warehouseId,
+            movementType: data.direction,
+            quantity: line.quantity,
+            unitCost: line.unitCost ?? 0,
+            referenceType: data.referenceType || 'adjustment',
+            referenceId: data.referenceNumber,
+            referenceNumber: data.referenceNumber,
+            notes: data.notes || '',
+            createdBy: data.createdBy || 'system',
+            clientRequestId: id,
+          };
+          const ok = await enqueueStockMovementSync({ movementData });
+          if (ok) movementIds.push(id);
+        }
+        if (movementIds.length === 0) return null;
+        return {
+          data: {
+            documentId: data.referenceNumber,
+            referenceNumber: data.referenceNumber,
+            movementIds,
+            journalEntryId: null,
+            totalValue: (data.lines || []).reduce(
+              (s, l) => s + (Number(l.quantity) || 0) * (Number(l.unitCost) || 0),
+              0,
+            ),
+            direction: data.direction,
+            pendingSync: true,
+          },
+        };
+      };
+
+      if (hasSyncOutbox() && shouldQueueImmediately()) {
+        const queued = await queueAdjustmentLines();
+        if (queued) return queued;
+      }
+      if (hasSyncOutbox() && !shouldQueueImmediately()) {
+        const reachable = await probeCityServerReachable();
+        if (!reachable) {
+          const queued = await queueAdjustmentLines();
+          if (queued) return queued;
+        }
+      }
+
+      const result = await apiFetch<{
         documentId: string;
         referenceNumber: string;
         movementIds: string[];
@@ -2800,6 +2966,11 @@ export const api = {
         totalValue: number;
         direction: string;
       }>('/transactions/stock-adjustment', { method: 'POST', body: JSON.stringify(data) }, { timeoutMs: 90000 });
+      if (result.error && hasSyncOutbox() && shouldQueueOnNetworkError(result.error)) {
+        const queued = await queueAdjustmentLines();
+        if (queued) return queued;
+      }
+      return result;
     },
     voidStockAdjustment: (documentId: string, body?: { reason?: string; createdBy?: string }) =>
       apiFetch<{

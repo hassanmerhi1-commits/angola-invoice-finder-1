@@ -1,6 +1,7 @@
 import { api } from '@/lib/api/client';
 import { PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
 import type { StockAdjustmentDocument } from '@/lib/stockAdjustmentDocuments';
+import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 
 function currentUserId(): string {
   try {
@@ -13,6 +14,7 @@ function currentUserId(): string {
 
 function notifyProductsChanged(warehouseId: string) {
   if (typeof window === 'undefined') return;
+  invalidateInventoryGridCacheForBranches([warehouseId]);
   window.dispatchEvent(
     new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: warehouseId } }),
   );

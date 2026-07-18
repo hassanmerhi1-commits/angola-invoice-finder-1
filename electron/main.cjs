@@ -2378,6 +2378,43 @@ ipcMain.handle('clientLocal:syncProducts', (_, products) => {
   }
 });
 
+ipcMain.handle('clientLocal:listProductsCache', (_, branchId) => {
+  try {
+    clientDb.init();
+    return { ok: true, products: clientDb.listProductsCache(branchId) };
+  } catch (e) {
+    return { ok: false, products: [], error: e.message };
+  }
+});
+
+ipcMain.handle('clientLocal:syncClients', (_, clients) => {
+  try {
+    if (!clientDb.isOfflineFirstEnabled()) return { ok: false, updated: 0 };
+    clientDb.init();
+    return { ok: true, ...clientDb.syncClientsCache(clients) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('clientLocal:listClientsCache', () => {
+  try {
+    clientDb.init();
+    return { ok: true, clients: clientDb.listClientsCache() };
+  } catch (e) {
+    return { ok: false, clients: [], error: e.message };
+  }
+});
+
+ipcMain.handle('clientLocal:setWarmBranch', (_, branchId) => {
+  try {
+    clientDb.init();
+    return { ok: clientDb.setWarmBranchId(branchId) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 ipcMain.handle('clientLocal:listPending', () => {
   try {
     clientDb.init();
@@ -2762,7 +2799,7 @@ async function initDatabase() {
       agtSyncWorker.startAgtSyncWorker(5000);
       masterDataPull.startMasterDataPullWorker(
         () => getCityApiBaseForClient(),
-        () => process.env.NEXOR_BRANCH_ID || null,
+        () => process.env.NEXOR_BRANCH_ID || clientDb.getWarmBranchId() || null,
         900000
       );
     }

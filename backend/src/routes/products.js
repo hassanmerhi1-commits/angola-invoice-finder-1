@@ -1115,10 +1115,7 @@ module.exports = function(broadcastTable) {
   router.get('/inventory-consolidated', async (req, res) => {
     try {
       const scope = req.branchScope;
-      if (scope?.forceBranchId) {
-        return res.status(403).json({ error: 'Consolidated inventory is for head office only' });
-      }
-      if (scope && !scope.isHeadOffice && !scope.isGlobalAdmin) {
+      if (scope && !scope.canUseConsolidated) {
         return res.status(403).json({ error: 'Consolidated inventory is for head office only' });
       }
       const rows = await listInventoryConsolidatedByBranches();
@@ -1223,10 +1220,7 @@ module.exports = function(broadcastTable) {
       let branchId = resolveListBranchId(req, req.query.branchId);
       if (wantConsolidated) {
         const scope = req.branchScope;
-        if (scope?.forceBranchId) {
-          return res.status(403).json({ error: 'Consolidated inventory is for head office only' });
-        }
-        if (scope && !scope.isHeadOffice && !scope.isGlobalAdmin) {
+        if (scope && !scope.canUseConsolidated) {
           return res.status(403).json({ error: 'Consolidated inventory is for head office only' });
         }
         branchId = null;

@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
 import { getBankAccounts, getBankTransactions } from '@/lib/accountingStorage';
+import { api } from '@/lib/api/client';
 import { BankAccount, BankTransaction } from '@/types/accounting';
 import { format } from 'date-fns';
 import { enUS, pt } from 'date-fns/locale';
@@ -80,6 +81,8 @@ export default function BankReconciliation() {
 
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [allTransactions, setAllTransactions] = useState<BankTransaction[]>([]);
+  const [glBalance, setGlBalance] = useState<number | null>(null);
+  const [glStatus, setGlStatus] = useState<'idle' | 'loading' | 'ok' | 'missing' | 'error'>('idle');
 
   useEffect(() => {
     getBankAccounts(listBranchId).then(setAccounts);
@@ -90,6 +93,50 @@ export default function BankReconciliation() {
     () => accounts.find(a => a.id === selectedAccountId),
     [accounts, selectedAccountId]
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    const code = String(selectedAccount?.glAccountCode || '').trim();
+    if (!selectedAccountId || !code) {
+      setGlBalance(null);
+      setGlStatus(selectedAccountId ? 'missing' : 'idle');
+      return;
+    }
+    setGlStatus('loading');
+    (async () => {
+      try {
+        const listRes = await api.chartOfAccounts.list();
+        const rows = Array.isArray(listRes.data) ? listRes.data : [];
+        const account = rows.find((r: any) => String(r.code || '').trim() === code);
+        if (!account?.id) {
+          if (!cancelled) {
+            setGlBalance(null);
+            setGlStatus('missing');
+          }
+          return;
+        }
+        const balRes = await api.chartOfAccounts.getBalance(String(account.id));
+        const bal = Number(
+          balRes.data?.current_balance ?? balRes.data?.currentBalance ?? balRes.data?.balance ?? NaN,
+        );
+        if (!cancelled) {
+          if (Number.isFinite(bal)) {
+            setGlBalance(bal);
+            setGlStatus('ok');
+          } else {
+            setGlBalance(null);
+            setGlStatus('error');
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setGlBalance(null);
+          setGlStatus('error');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedAccountId, selectedAccount?.glAccountCode]);
 
   const accountTransactions = useMemo(() => {
     if (!selectedAccountId) return [];
@@ -334,6 +381,73 @@ export default function BankReconciliation() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Bank operational balance vs GL (COA leaf) */}
+      {selectedAccount && (
+        <Card className={
+          glStatus === 'ok' && glBalance != null && Math.abs((selectedAccount.currentBalance || 0) - glBalance) < 0.01
+            ? 'border-emerald-500'
+            : glStatus === 'ok' && glBalance != null
+              ? 'border-destructive'
+              : undefined
+        }>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">{t.bankReconciliationUi.bankVsGlTitle}</CardTitle>
+            <CardDescription>
+              {selectedAccount.glAccountCode
+                ? `${t.bankReconciliationUi.glAccount}: ${selectedAccount.glAccountCode}`
+                : t.bankReconciliationUi.noGlLink}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+              <div>
+                <div className="text-xs text-muted-foreground mb-1">{t.bankReconciliationUi.bankBalance}</div>
+                <div className="text-xl font-bold">
+                  {getCurrencySymbol(selectedAccount.currency)}{' '}
+                  {(selectedAccount.currentBalance || 0).toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground mb-1">{t.bankReconciliationUi.glBalance}</div>
+                <div className="text-xl font-bold">
+                  {glStatus === 'loading' && '…'}
+                  {glStatus === 'missing' && '—'}
+                  {glStatus === 'error' && t.bankReconciliationUi.glLoadError}
+                  {glStatus === 'ok' && glBalance != null && (
+                    <>
+                      {getCurrencySymbol(selectedAccount.currency)}{' '}
+                      {glBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
+                    </>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground mb-1">{t.bankReconciliationUi.difference}</div>
+                {glStatus === 'ok' && glBalance != null ? (
+                  <>
+                    <div className={`text-xl font-bold ${
+                      Math.abs((selectedAccount.currentBalance || 0) - glBalance) < 0.01
+                        ? 'text-emerald-600'
+                        : 'text-destructive'
+                    }`}>
+                      {getCurrencySymbol(selectedAccount.currency)}{' '}
+                      {Math.abs((selectedAccount.currentBalance || 0) - glBalance).toLocaleString(uiLocale, { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {Math.abs((selectedAccount.currentBalance || 0) - glBalance) < 0.01
+                        ? t.bankReconciliationUi.bankGlOk
+                        : t.bankReconciliationUi.bankGlDiff}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xl font-bold text-muted-foreground">—</div>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Summary Cards */}
       {statementRows.length > 0 && (

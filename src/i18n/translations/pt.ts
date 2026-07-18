@@ -952,8 +952,10 @@ export const pt: TranslationKeys = {
   },
 
   inventoryPageUi: {
-    headOfficeTitle: "Sede - Visão Global:",
-    headOfficeDesc: "A coluna de stock mostra o total em todas as filiais. Escolha uma filial para ver apenas essa filial.",
+    headOfficeTitle: "Todas as filiais (stock total):",
+    headOfficeDesc: "A coluna de stock soma todas as filiais. Escolha a Sede ou uma filial para ver só esse armazém.",
+    sedeStockOnlyTitle: "Sede — stock só deste armazém:",
+    sedeStockOnlyDesc: "Quantidades apenas na Sede. Para o total da empresa, escolha \"Todas as filiais (stock total)\" no selector.",
     branchModeTitle: "Modo Filial:",
     branchModeDesc: "Quantidades apenas desta filial/armazém ({branch}). No inventário, use o selector de filial e escolha \"Todas as filiais (stock total)\" para o total global.",
 
@@ -3628,6 +3630,15 @@ export const pt: TranslationKeys = {
     systemOnly: "Só no Sistema",
     reconciledOk: "Conciliado ✓",
     difference: "Diferença",
+
+    bankVsGlTitle: "Banco vs contabilidade (GL)",
+    bankBalance: "Saldo banco",
+    glBalance: "Saldo GL",
+    glAccount: "Conta GL",
+    bankGlOk: "Banco = GL",
+    bankGlDiff: "Banco ≠ GL",
+    noGlLink: "Conta bancária sem ligação ao plano de contas",
+    glLoadError: "Não foi possível carregar o saldo GL",
 
     transactionsTitle: "Transacções",
     compareStatementVsSystem: "Compare extracto bancário com transacções do sistema",

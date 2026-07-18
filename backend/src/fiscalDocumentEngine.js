@@ -203,7 +203,7 @@ async function processCreditNote(client, data) {
   if (taxAmount > 0) {
     journalLines.push({ accountCode: '3452', description: `IVA NC ${documentNumber}`, debit: taxAmount, credit: 0 });
   }
-  // Credit the SAME account the sale debited: 45x cash, 311 credit AR, or 431 bank.
+  // Credit the SAME account the sale debited: 45x cash, 311 credit AR, or bank leaf / 431.
   let refundAccountCode = '431';
   const salePayMethod = String(sale.payment_method || '').toLowerCase();
   if (isCashPaymentMethod(sale.payment_method)) {
@@ -233,6 +233,9 @@ async function processCreditNote(client, data) {
       sale.client_id || null,
       sale.customer_name || sale.customerName || '',
     );
+  } else {
+    const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
+    refundAccountCode = await resolveBankGlForTreasury(client, { branchId });
   }
   journalLines.push({
     accountCode: refundAccountCode,
@@ -426,7 +429,7 @@ async function processDebitNote(client, data) {
   let debitAccountCode = '431';
   if (originalInvoiceId) {
     const payRes = await client.query(
-      `SELECT payment_method, client_id, customer_name FROM sales WHERE id = $1 LIMIT 1`,
+      `SELECT payment_method, client_id, customer_name, branch_id FROM sales WHERE id = $1 LIMIT 1`,
       [originalInvoiceId],
     );
     const orig = payRes.rows[0];
@@ -438,7 +441,19 @@ async function processDebitNote(client, data) {
         orig.client_id || null,
         orig.customer_name || customerName || '',
       );
+    } else if (orig && isCashPaymentMethod(orig.payment_method)) {
+      debitAccountCode = await resolveBranchCaixaGlAccountCode(client, {
+        branchId: orig.branch_id || branchId,
+      });
+    } else {
+      const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
+      debitAccountCode = await resolveBankGlForTreasury(client, {
+        branchId: orig?.branch_id || branchId,
+      });
     }
+  } else {
+    const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
+    debitAccountCode = await resolveBankGlForTreasury(client, { branchId });
   }
 
   const journalLines = [

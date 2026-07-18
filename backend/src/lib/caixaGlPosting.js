@@ -27,6 +27,25 @@ function pick(record, ...keys) {
   return undefined;
 }
 
+async function resolveTransferBankGl(bankAccountId, branchId) {
+  const { resolveBankGlForTreasury } = require('./bankGlAccounts');
+  if (db.pool) {
+    const c = await db.pool.connect();
+    try {
+      return await resolveBankGlForTreasury(c, {
+        bankAccountId,
+        branchId: String(branchId || ''),
+      });
+    } finally {
+      c.release();
+    }
+  }
+  return resolveBankGlForTreasury(db, {
+    bankAccountId,
+    branchId: String(branchId || ''),
+  });
+}
+
 /**
  * @param {object} params
  * @returns {Promise<{ journalEntryId: string, entryNumber: string, alreadyPosted?: boolean }>}
@@ -201,11 +220,13 @@ async function syncCaixaGlFromRecord(table, record) {
     }
 
     if (sourceType === 'caixa' && destType === 'bank') {
+      const bankAccountId = pick(data, 'destination_bank_account_id', 'destinationBankAccountId');
+      const counterAccountCode = await resolveTransferBankGl(bankAccountId, branchId);
       const result = await postCaixaGlMovement({
         branchId: String(branchId),
         amount,
         direction: 'out',
-        counterAccountCode: '431',
+        counterAccountCode,
         description: `Transferência para ${destDesc}: ${reason}`,
         referenceType: 'transfer',
         referenceId: String(id),
@@ -215,11 +236,13 @@ async function syncCaixaGlFromRecord(table, record) {
     }
 
     if (sourceType === 'bank' && destType === 'caixa') {
+      const bankAccountId = pick(data, 'source_bank_account_id', 'sourceBankAccountId');
+      const counterAccountCode = await resolveTransferBankGl(bankAccountId, branchId);
       const result = await postCaixaGlMovement({
         branchId: String(branchId),
         amount,
         direction: 'in',
-        counterAccountCode: '431',
+        counterAccountCode,
         description: `Transferência de ${sourceDesc}: ${reason}`,
         referenceType: 'transfer',
         referenceId: String(id),

@@ -163,14 +163,14 @@ module.exports = function bankAccountsRouter(broadcastTable) {
       const isActive = body.isActive !== false;
       const isPrimary = !!body.isPrimary;
 
-      const { ensureBankGlColumn, resolveBankGlAccountCode, postBankOpeningBalanceJournal } = require('../lib/bankGlAccounts');
+      const {
+        ensureBankGlColumn,
+        resolveBankGlAccountCode,
+        postBankOpeningBalanceJournal,
+      } = require('../lib/bankGlAccounts');
       await ensureBankGlColumn(db);
 
-      const existed = await db.query('SELECT id, gl_account_code FROM bank_accounts WHERE id = $1 LIMIT 1', [id]);
-      const isNew = !existed.rows[0];
-
-      await db.query(
-        `INSERT INTO bank_accounts (
+      const upsertSql = `INSERT INTO bank_accounts (
           id, branch_id, branch_name, bank_name, name, account_number,
           iban, swift, currency, balance, is_active, is_primary, created_at, updated_at
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
@@ -186,30 +186,37 @@ module.exports = function bankAccountsRouter(broadcastTable) {
           balance = EXCLUDED.balance,
           is_active = EXCLUDED.is_active,
           is_primary = EXCLUDED.is_primary,
-          updated_at = EXCLUDED.updated_at`,
-        [
-          id,
-          resolvedBranchId,
-          resolvedBranchName,
-          bankName,
-          accountName || bankName,
-          accountNumber,
-          iban,
-          swift,
-          currency,
-          openingBalance,
-          isActive,
-          isPrimary,
-          now,
-        ],
-      );
+          updated_at = EXCLUDED.updated_at`;
+      const upsertParams = [
+        id,
+        resolvedBranchId,
+        resolvedBranchName,
+        bankName,
+        accountName || bankName,
+        accountNumber,
+        iban,
+        swift,
+        currency,
+        openingBalance,
+        isActive,
+        isPrimary,
+        now,
+      ];
 
-      // Link to COA 431xxxx + opening journal for new accounts with opening balance.
-      if (db.pool) {
-        const client = await db.pool.connect();
+      // Atomic for new banks with opening balance: bank row + COA leaf + opening JE.
+      // Updates (or opening = 0): bank row commits; GL link is best-effort.
+      let savedRow;
+
+      async function upsertWithGl(client) {
+        const existed = await client.query(
+          'SELECT id, gl_account_code FROM bank_accounts WHERE id = $1 LIMIT 1',
+          [id],
+        );
+        const isNew = !existed.rows[0];
+        const mustSucceedGl = isNew && openingBalance > 0;
+        await client.query(upsertSql, upsertParams);
+        const bankRow = (await client.query('SELECT * FROM bank_accounts WHERE id = $1', [id])).rows[0];
         try {
-          await client.query('BEGIN');
-          const bankRow = (await client.query('SELECT * FROM bank_accounts WHERE id = $1', [id])).rows[0];
           const glCode = await resolveBankGlAccountCode(client, bankRow);
           if (isNew && openingBalance > 0) {
             await postBankOpeningBalanceJournal(client, {
@@ -221,16 +228,42 @@ module.exports = function bankAccountsRouter(broadcastTable) {
               bankLabel: `${bankName} ${accountNumber}`,
             });
           }
+        } catch (glErr) {
+          if (mustSucceedGl) throw glErr;
+          console.warn('[BANK] GL link skipped:', glErr.message);
+        }
+        return (await client.query('SELECT * FROM bank_accounts WHERE id = $1', [id])).rows[0];
+      }
+
+      if (db.pool) {
+        const client = await db.pool.connect();
+        try {
+          await client.query('BEGIN');
+          savedRow = await upsertWithGl(client);
           await client.query('COMMIT');
         } catch (glErr) {
           try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
-          console.warn('[BANK] GL link/opening:', glErr.message);
+          console.error('[BANK] atomic upsert/GL:', glErr.message);
+          return res.status(422).json({
+            error: glErr.message || 'Falha ao criar conta bancária e lançamento contabilístico',
+          });
         } finally {
           client.release();
         }
+      } else {
+        await db.query('BEGIN');
+        try {
+          savedRow = await upsertWithGl(db);
+          await db.query('COMMIT');
+        } catch (glErr) {
+          try { await db.query('ROLLBACK'); } catch (_) { /* ignore */ }
+          console.error('[BANK] atomic upsert/GL:', glErr.message);
+          return res.status(422).json({
+            error: glErr.message || 'Falha ao criar conta bancária e lançamento contabilístico',
+          });
+        }
       }
 
-      const row = await db.query('SELECT * FROM bank_accounts WHERE id = $1', [id]);
       if (broadcastTable) {
         await broadcastTable('bank_accounts');
         await broadcastTable('journal_entries');
@@ -243,7 +276,7 @@ module.exports = function bankAccountsRouter(broadcastTable) {
         branchId: resolvedBranchId,
         description: `Conta bancária ${bankName} — ${accountNumber}`,
       });
-      res.status(201).json({ data: mapBankRow(row.rows[0]) });
+      res.status(201).json({ data: mapBankRow(savedRow) });
     } catch (error) {
       console.error('[BANK] upsert:', error);
       res.status(500).json({ error: error.message || 'Failed to save bank account' });

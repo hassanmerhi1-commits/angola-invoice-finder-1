@@ -36,6 +36,7 @@ const { randomUUID } = require('crypto');
 const { normalizeSqlDate } = require('./lib/dateSql');
 const { resolveBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlAccount');
 const { resolveEntityAccountCode } = require('./lib/entityCoaAccounts');
+const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
 
 // ==================== PGC (novo com IVA) POSTING ACCOUNT CODES ====================
 // Angola Plano Geral de Contabilidade with no-dot numbering (main 11 → first sub 111).
@@ -2101,6 +2102,13 @@ async function processSale(client, saleData) {
       branchName: branchNameForGl,
       saleId,
     });
+  } else {
+    // Card / transfer / multibanco — per-bank leaf when known, else branch primary bank, else 431.
+    const saleBankId = saleData.bankAccountId || saleData.bank_account_id || null;
+    debitAccountCode = await resolveBankGlForTreasury(client, {
+      bankAccountId: saleBankId,
+      branchId,
+    });
   }
 
   const revenueLines = [
@@ -2777,7 +2785,10 @@ async function processPayment(client, paymentData) {
   if (wantsCaixa) {
     cashAccountCode = await resolveBranchCaixaGlAccountCode(client, { branchId: treasuryBranchId });
   } else {
-    cashAccountCode = ACC.BANK;
+    cashAccountCode = await resolveBankGlForTreasury(client, {
+      bankAccountId: bankAccountId || bankAccount,
+      branchId: treasuryBranchId || branchId,
+    });
   }
   const preferredCash = await findAccountByCode(client, cashAccountCode);
   if (!preferredCash) {

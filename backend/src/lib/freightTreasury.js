@@ -2,8 +2,9 @@
  * Resolve FC freight payment source to GL accounts and update caixa registers.
  */
 const { resolveBranchCaixaGlAccountCode } = require('./resolveBranchCaixaGlAccount');
+const { resolveBankGlForTreasury, BANK_PARENT_CODE } = require('./bankGlAccounts');
 
-const BANK_GL = '431';
+const BANK_GL = BANK_PARENT_CODE;
 
 function roundMoney(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -32,9 +33,10 @@ async function resolveFreightTreasuryGl(client, inv) {
   const branchId = String(pick(inv, 'branchId', 'branch_id', 'warehouseId', 'warehouse_id') || '').trim();
 
   if (paymentSource === 'bank') {
+    const accountCode = await resolveBankGlForTreasury(client, { bankAccountId, branchId });
     return {
       paymentSource: 'bank',
-      accountCode: BANK_GL,
+      accountCode,
       accountName: legacyName || (bankAccountId ? `Banco (${bankAccountId})` : 'Banco'),
       caixaId: null,
       bankAccountId: bankAccountId || null,

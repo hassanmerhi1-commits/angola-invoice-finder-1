@@ -1,4 +1,5 @@
 import { newClientRequestId } from '@/lib/sync/offlineSales';
+import { saveLanProducts, saveLanClients, lanCatalogScopeKey } from '@/lib/lanCatalogCache';
 
 export function isOfflineFirstRole(): boolean {
   if (typeof window === 'undefined') return false;
@@ -64,13 +65,60 @@ export async function syncProductsToLocalCache(products: Array<Record<string, un
   }
 }
 
-/** Pull products from city server into local cache (shop client only). */
+export async function syncClientsToLocalCache(clients: Array<Record<string, unknown>>): Promise<void> {
+  const api = (window as any).electronAPI?.clientLocal;
+  if (api?.syncClients && (await isOfflineFirstEnabled())) {
+    try {
+      await api.syncClients(clients);
+    } catch {
+      /* non-fatal */
+    }
+  }
+  try {
+    saveLanClients(clients);
+  } catch {
+    /* non-fatal */
+  }
+}
+
+/** Prefer SQLite products_cache (offline-first), else empty. */
+export async function readLocalProductsCache(branchId?: string): Promise<Array<Record<string, unknown>>> {
+  const api = (window as any).electronAPI?.clientLocal;
+  if (!api?.listProductsCache || !(await isOfflineFirstEnabled())) return [];
+  try {
+    const r = await api.listProductsCache(branchId);
+    return Array.isArray(r?.products) ? r.products : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function readLocalClientsCache(): Promise<Array<Record<string, unknown>>> {
+  const api = (window as any).electronAPI?.clientLocal;
+  if (api?.listClientsCache && (await isOfflineFirstEnabled())) {
+    try {
+      const r = await api.listClientsCache();
+      if (Array.isArray(r?.clients) && r.clients.length > 0) return r.clients;
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    const { readLanClients } = await import('@/lib/lanCatalogCache');
+    return readLanClients() || [];
+  } catch {
+    return [];
+  }
+}
+
+/** Pull products/clients from city server into local cache (shop client only). */
 export async function pullMasterDataFromCity(branchId: string): Promise<{ ok: boolean; error?: string }> {
   const api = (window as any).electronAPI?.clientLocal;
   if (!api?.pullMasterData || !(await isOfflineFirstEnabled())) {
     return { ok: false, error: 'not available' };
   }
   try {
+    if (api.setWarmBranch) await api.setWarmBranch(branchId);
     const r = await api.pullMasterData(branchId);
     return r?.ok ? { ok: true } : { ok: false, error: r?.error };
   } catch (e: any) {
@@ -85,8 +133,42 @@ export async function warmOfflineCatalog(branchId?: string): Promise<void> {
   if (!id) return;
   try {
     await pullMasterDataFromCity(id);
+    // Mirror SQLite cache into LAN localStorage so thin-client UI shares one catalog.
+    const products = await readLocalProductsCache(id);
+    if (products.length > 0) {
+      saveLanProducts(lanCatalogScopeKey(id), products as any);
+    }
+    const clients = await readLocalClientsCache();
+    if (clients.length > 0) {
+      saveLanClients(clients);
+    }
   } catch {
     /* non-fatal */
+  }
+}
+
+let warmTimer: number | null = null;
+
+/** Periodic pull while the shop session is authenticated (default 15 min). */
+export function startCatalogWarmScheduler(branchIdResolver: () => string | undefined | null, intervalMs = 900_000): void {
+  if (typeof window === 'undefined') return;
+  stopCatalogWarmScheduler();
+  const tick = () => {
+    void (async () => {
+      if (!(await isOfflineFirstEnabled())) return;
+      const branchId = String(branchIdResolver() || '').trim();
+      if (!branchId) return;
+      await warmOfflineCatalog(branchId);
+    })();
+  };
+  warmTimer = window.setInterval(tick, intervalMs);
+  tick();
+}
+
+export function stopCatalogWarmScheduler(): void {
+  if (warmTimer != null) {
+    window.clearInterval(warmTimer);
+    warmTimer = null;
   }
 }
 

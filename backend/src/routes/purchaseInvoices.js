@@ -432,11 +432,18 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
         ...(accountingError ? [accountingError] : []),
       ].filter(Boolean);
       const hasJournal = !!txResult?.journalEntryId;
+      // Align with purchaseInvoicePosting: journal required when freight OR journal lines exist.
       const landingCosts = Number(row.freight_cost || 0) + Number(row.freight_other_costs || 0);
-      const journalRequired = landingCosts > 0;
+      const journalLinesCount = Array.isArray(inv?.journalLines)
+        ? inv.journalLines.length
+        : (Array.isArray(inv?.journal_lines) ? inv.journal_lines.length : 0);
+      const journalRequired = landingCosts > 0 || journalLinesCount > 0;
+      const postingOk = txResult
+        ? !!txResult.success
+        : (!accountingError && hasStock && hasPayable && (!journalRequired || hasJournal));
       if (txResult || accountingError || !skipAccounting) {
         payload.accounting = {
-          success: !accountingError && hasStock && hasPayable && (!journalRequired || hasJournal),
+          success: !accountingError && postingOk,
           stockMovementIds: txResult?.stockMovementIds || [],
           openItemId: txResult?.openItemId || null,
           journalEntryId: txResult?.journalEntryId || null,
@@ -444,11 +451,12 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
           warnings: txResult?.warnings || [],
           error: detailErrors[0]
             || (journalRequired && !hasJournal
-              ? 'Freight journal was not posted — check caixa/bank and chart of accounts.'
+              ? 'Purchase journal was not posted — check caixa/bank and chart of accounts.'
               : null)
             || (!hasStock || !hasPayable
               ? 'Stock or supplier payable was not posted.'
-              : null),
+              : null)
+            || (!postingOk ? 'Purchase accounting did not complete successfully.' : null),
         };
       }
       auditErpSafe(req, {
