@@ -2,11 +2,12 @@
 # Run this on the SERVER PC only.
 #
 # Usage:
-#   cd C:\Users\user\Documents\GitHub\angola-invoice-finder   # or any clone
+#   cd C:\Users\user\Documents\GitHub\angola-invoice-finder
 #   .\scripts\deploy-server.ps1
-#   .\scripts\deploy-server.ps1 -ExpectedVersion 1.1.43
+#   .\scripts\deploy-server.ps1 -ExpectedVersion 1.1.44
 #
 # This script refuses the old repo angola-invoice-finder (no -1) and retargets origin.
+# ASCII-only file so Windows PowerShell parses it reliably.
 
 param(
   [string]$ExpectedVersion = '',
@@ -31,16 +32,15 @@ Set-Location $root
 Write-Host "Deploy root: $root"
 
 if (-not (Test-Path (Join-Path $root '.git'))) {
-  throw "Not a git repo: $root — clone $RepoUrl first."
+  throw "Not a git repo: $root - clone $RepoUrl first."
 }
 
 $origin = (git remote get-url origin 2>$null)
 Write-Host "Current origin: $origin"
 
-$correct = $RepoUrl.TrimEnd('.git') -replace '/$', ''
 $current = ([string]$origin).TrimEnd('.git') -replace '/$', ''
 if ($current -notmatch 'angola-invoice-finder-1$') {
-  Write-Host "WRONG REPO detected. Retargeting origin → angola-invoice-finder-1" -ForegroundColor Yellow
+  Write-Host "WRONG REPO detected. Retargeting origin to angola-invoice-finder-1" -ForegroundColor Yellow
   git remote set-url origin $RepoUrl
   $origin = git remote get-url origin
   Write-Host "New origin: $origin"
@@ -61,7 +61,7 @@ if (Test-Path -LiteralPath $composePath) {
     $updated = [regex]::Replace($compose, 'NEXOR_APP_VERSION:\s*[^\r\n]+', "NEXOR_APP_VERSION: $pkgVer")
     if ($updated -ne $compose) {
       Set-Content -LiteralPath $composePath -Value $updated -NoNewline
-      Write-Host "Synced docker-compose NEXOR_APP_VERSION → $pkgVer"
+      Write-Host "Synced docker-compose NEXOR_APP_VERSION to $pkgVer"
     }
   }
 }
@@ -79,7 +79,7 @@ if (-not $SkipDocker) {
     Write-Host ("Health appVersion={0} backendPackageVersion={1} schema={2}" -f `
       $health.appVersion, $health.backendPackageVersion, $health.schemaVersion)
     if ($pkgVer -and $health.appVersion -ne $pkgVer -and $health.shellVersion -ne $pkgVer) {
-      Write-Host "WARNING: health version does not match $pkgVer — something else may still own port 3000." -ForegroundColor Yellow
+      Write-Host "WARNING: health version does not match $pkgVer - something else may still own port 3000." -ForegroundColor Yellow
       Write-Host "Check: docker compose ps ; Get-NetTCPConnection -LocalPort 3000"
     } else {
       Write-Host "Deploy looks good." -ForegroundColor Green
