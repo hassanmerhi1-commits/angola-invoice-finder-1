@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
@@ -570,7 +570,25 @@ export default function Journals() {
   }, [accounts, accountSearch]);
 
   // Reset new entry form
+  // When true, user edited the balancing (last) line amounts — stop overwriting credit/debit.
+  const lastLineManualRef = useRef(false);
+
+  function balanceLastLine(lines: NewEntryLine[]): NewEntryLine[] {
+    if (lines.length < 2 || lastLineManualRef.current) return lines;
+    const otherLines = lines.slice(0, -1);
+    const otherDebit = otherLines.reduce((s, l) => s + (parseFloat(l.debit) || 0), 0);
+    const otherCredit = otherLines.reduce((s, l) => s + (parseFloat(l.credit) || 0), 0);
+    const diff = otherDebit - otherCredit;
+    return lines.map((l, i) => {
+      if (i !== lines.length - 1) return l;
+      if (diff > 0.009) return { ...l, credit: diff.toFixed(2), debit: '' };
+      if (diff < -0.009) return { ...l, debit: Math.abs(diff).toFixed(2), credit: '' };
+      return { ...l, debit: '', credit: '' };
+    });
+  }
+
   function resetNewEntry() {
+    lastLineManualRef.current = false;
     setNewEntryDate(new Date().toISOString().split('T')[0]);
     setNewEntryType('ajuste');
     setNewEntryDescription('');
@@ -585,17 +603,28 @@ export default function Journals() {
   }
 
   function updateLine(lineId: string, field: keyof NewEntryLine, value: string) {
-    setNewEntryLines(prev => prev.map(l => {
-      if (l.id !== lineId) return l;
-      const updated = { ...l, [field]: value };
-      // When entering debit, clear credit and vice versa
-      if (field === 'debit' && parseFloat(value) > 0) {
-        updated.credit = '';
-      } else if (field === 'credit' && parseFloat(value) > 0) {
-        updated.debit = '';
+    setNewEntryLines(prev => {
+      const lastId = prev[prev.length - 1]?.id;
+      if (lineId === lastId && (field === 'debit' || field === 'credit')) {
+        lastLineManualRef.current = true;
       }
-      return updated;
-    }));
+      const next = prev.map(l => {
+        if (l.id !== lineId) return l;
+        const updated = { ...l, [field]: value };
+        // Same line is either debit or credit, not both
+        if (field === 'debit' && parseFloat(value) > 0) {
+          updated.credit = '';
+        } else if (field === 'credit' && parseFloat(value) > 0) {
+          updated.debit = '';
+        }
+        return updated;
+      });
+      // Typing debit on line 1 auto-fills credit on the last line (still editable).
+      if (field === 'debit' || field === 'credit') {
+        return balanceLastLine(next);
+      }
+      return next;
+    });
   }
 
   function selectAccount(lineId: string, account: Account) {
@@ -619,24 +648,10 @@ export default function Journals() {
     setNewEntryLines(prev => [...prev, createEmptyLine()]);
   }
 
-  // Auto-fill last line to balance
+  // Auto-fill last line to balance (button re-enables auto-fill after manual edits)
   function autoBalance() {
-    if (newEntryLines.length < 2) return;
-    const lastLine = newEntryLines[newEntryLines.length - 1];
-    const otherLines = newEntryLines.slice(0, -1);
-    const otherDebit = otherLines.reduce((s, l) => s + (parseFloat(l.debit) || 0), 0);
-    const otherCredit = otherLines.reduce((s, l) => s + (parseFloat(l.credit) || 0), 0);
-    const diff = otherDebit - otherCredit;
-
-    setNewEntryLines(prev => prev.map((l, i) => {
-      if (i !== prev.length - 1) return l;
-      if (diff > 0) {
-        return { ...l, credit: diff.toFixed(2), debit: '' };
-      } else if (diff < 0) {
-        return { ...l, debit: Math.abs(diff).toFixed(2), credit: '' };
-      }
-      return l;
-    }));
+    lastLineManualRef.current = false;
+    setNewEntryLines(prev => balanceLastLine(prev));
   }
 
   // Save journal entry

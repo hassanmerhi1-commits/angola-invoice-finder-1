@@ -327,7 +327,8 @@ async function ensureBankAccountsFromCoa(db) {
     for (const row of coa.rows || []) {
       try {
         const branchId = String(row.branch_id || '').trim();
-        if (!branchId || branchId === '22222222-2222-2222-2222-222222222222') continue;
+        // Keep seed UUID when it is a real branch (SOYO 03 in production).
+        if (!branchId) continue;
         const branchName = String(row.branch_name || '').trim() || branchId;
         const code = String(row.code || '').trim();
         const name = String(row.name || '').trim() || `Banco ${code}`;

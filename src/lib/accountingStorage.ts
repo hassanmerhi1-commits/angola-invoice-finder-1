@@ -181,13 +181,9 @@ function filterBankAccountsForBranch(
   return [];
 }
 
-const SEED_ORPHAN_BRANCH_ID = '22222222-2222-2222-2222-222222222222';
-
+/** Any non-empty branch id is usable — including seed UUID 22222222-… (SOYO 03 in production). */
 function isUsableTreasuryBranchId(branchId?: string): boolean {
-  const id = String(branchId || '').trim();
-  if (!id) return false;
-  if (branchIdsEquivalent(id, SEED_ORPHAN_BRANCH_ID)) return false;
-  return true;
+  return String(branchId || '').trim().length > 0;
 }
 
 /** Prefer real branch ids; still list named caixas with empty branch so pickers are not blank. */

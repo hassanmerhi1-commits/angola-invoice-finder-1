@@ -156,7 +156,8 @@ async function ensureTreasuryRegistersFromCoa() {
     for (const row of coa.rows || []) {
       try {
         const branchId = String(row.branch_id || '').trim();
-        if (!branchId || branchId === '22222222-2222-2222-2222-222222222222') continue;
+        // Do NOT skip seed UUID 22222222-… — SOYO 03 was assigned that id in production.
+        if (!branchId) continue;
         const branchName = String(row.branch_name || '').trim() || branchId;
         const name = String(row.name || '').trim() || `Caixa ${row.code}`;
         const balance = Number(row.current_balance) || 0;
@@ -198,6 +199,7 @@ async function ensureTreasuryRegistersFromCoa() {
     }
 
     // Heal operational caixas that lost branch_id but still have a branch_name / name match.
+    // Never steal caixas from a real branch that happens to use the old seed UUID (SOYO 03).
     try {
       if (db.engine === 'postgres') {
         await db.query(
@@ -206,8 +208,16 @@ async function ensureTreasuryRegistersFromCoa() {
                branch_name = COALESCE(NULLIF(TRIM(c.branch_name), ''), b.name),
                updated_at = CURRENT_TIMESTAMP
            FROM branches b
-           WHERE (c.branch_id IS NULL
-                  OR c.branch_id = '22222222-2222-2222-2222-222222222222'::uuid)
+           WHERE (
+               c.branch_id IS NULL
+               OR (
+                 c.branch_id = '22222222-2222-2222-2222-222222222222'::uuid
+                 AND NOT EXISTS (
+                   SELECT 1 FROM branches bx
+                   WHERE bx.id = '22222222-2222-2222-2222-222222222222'::uuid
+                 )
+               )
+             )
              AND (
                (NULLIF(TRIM(c.branch_name), '') IS NOT NULL
                  AND LOWER(TRIM(c.branch_name)) = LOWER(TRIM(b.name)))
@@ -216,12 +226,35 @@ async function ensureTreasuryRegistersFromCoa() {
                    AND LOWER(TRIM(c.name)) LIKE '%' || LOWER(TRIM(b.code)) || '%')
              )`,
         );
+
+        // Fix labels when branch_name/name were stored as the raw UUID (SOYO 03 case).
+        await db.query(
+          `UPDATE caixas c
+           SET branch_name = b.name,
+               name = CASE
+                 WHEN NULLIF(TRIM(c.name), '') IS NULL
+                   OR c.name = c.branch_id::text
+                   OR c.name ILIKE 'Caixa Principal - ' || c.branch_id::text
+                   OR c.name ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                 THEN 'Caixa Principal - ' || b.name
+                 ELSE c.name
+               END,
+               updated_at = CURRENT_TIMESTAMP
+           FROM branches b
+           WHERE c.branch_id = b.id
+             AND (
+               NULLIF(TRIM(c.branch_name), '') IS NULL
+               OR c.branch_name = c.branch_id::text
+               OR c.branch_name ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+               OR c.name ILIKE '%' || c.branch_id::text || '%'
+             )`,
+        );
       }
     } catch (healErr) {
       console.warn('[CAIXA] heal branch_id:', healErr.message);
     }
 
-    // Remove orphan seed caixa with UUID label when branch is gone.
+    // Remove orphan seed caixa with UUID label when that seed branch is gone.
     await db.query(
       `DELETE FROM caixas
        WHERE branch_id::text = '22222222-2222-2222-2222-222222222222'
@@ -275,8 +308,14 @@ function caixaRouter(broadcastTable) {
           }
           params.push(matchId);
         } else if (db.engine === 'postgres') {
-          // Hide orphan seed UUID branch from all-branch pickers.
-          sql += ` WHERE c.branch_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222'`;
+          // Hide seed UUID only when it is NOT a real branch (SOYO 03 reuses that id).
+          sql += ` WHERE (
+            c.branch_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222'
+            OR EXISTS (
+              SELECT 1 FROM branches bx
+              WHERE bx.id::text = '22222222-2222-2222-2222-222222222222'
+            )
+          )`;
         }
         sql += ` ORDER BY ${orderBy}`;
         return db.query(sql, params);
@@ -307,6 +346,16 @@ function caixaRouter(broadcastTable) {
       if (!branchId) return res.status(400).json({ error: 'branchId required' });
 
       const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
+      let resolvedBranchName = branchName;
+      if (!resolvedBranchName || resolvedBranchName === resolvedBranchId) {
+        const br = await db.query(
+          db.engine === 'postgres'
+            ? 'SELECT name FROM branches WHERE id::text = $1 LIMIT 1'
+            : 'SELECT name FROM branches WHERE CAST(id AS TEXT) = $1 LIMIT 1',
+          [resolvedBranchId],
+        );
+        resolvedBranchName = br.rows[0]?.name || branchName || '';
+      }
 
       const existing = await db.query(
         db.engine === 'postgres'
@@ -315,18 +364,37 @@ function caixaRouter(broadcastTable) {
         [resolvedBranchId],
       );
       if (existing.rows[0]) {
-        return res.json({ data: mapCaixaRow(existing.rows[0]) });
+        // Heal UUID-as-name labels when ensure is called for a real branch (SOYO 03).
+        const row = existing.rows[0];
+        if (resolvedBranchName && (
+          !row.branch_name || String(row.branch_name) === resolvedBranchId
+          || String(row.name || '').includes(resolvedBranchId)
+        )) {
+          await db.query(
+            `UPDATE caixas SET branch_name = $2,
+               name = CASE
+                 WHEN name IS NULL OR TRIM(name) = '' OR name = $1 OR name ILIKE 'Caixa Principal - ' || $1
+                 THEN $3 ELSE name
+               END,
+               updated_at = CURRENT_TIMESTAMP
+             WHERE id = $4`,
+            [resolvedBranchId, resolvedBranchName, `Caixa Principal - ${resolvedBranchName}`, row.id],
+          );
+          const healed = await db.query('SELECT * FROM caixas WHERE id = $1', [row.id]);
+          return res.json({ data: mapCaixaRow(healed.rows[0]) });
+        }
+        return res.json({ data: mapCaixaRow(row) });
       }
 
       const id = crypto.randomUUID();
       const now = new Date().toISOString();
-      const name = `Caixa Principal - ${branchName || resolvedBranchId}`;
+      const name = `Caixa Principal - ${resolvedBranchName || resolvedBranchId}`;
       await db.query(
         `INSERT INTO caixas (
           id, branch_id, branch_name, name, opening_balance, current_balance,
           status, requires_approval, created_at, updated_at
         ) VALUES ($1,$2,$3,$4,0,0,'closed',false,$5,$5)`,
-        [id, resolvedBranchId, branchName || '', name, now],
+        [id, resolvedBranchId, resolvedBranchName || '', name, now],
       );
       const row = await db.query('SELECT * FROM caixas WHERE id = $1', [id]);
       if (broadcastTable) await broadcastTable('caixas');
