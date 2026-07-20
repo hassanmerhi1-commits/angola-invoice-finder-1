@@ -59,26 +59,26 @@ export function useInventoryGrid(opts: {
 
     const gen = ++generationRef.current;
 
-    // Stale-while-revalidate: show last-known rows instantly (so POS search and the
-    // inventory grid aren't blank while a slow LAN fetch runs), then refresh in the
-    // background. Only show the full loading state when we have nothing cached.
+    // Stale-while-revalidate: show cached rows for this scope instantly. When switching
+    // to a cold scope, keep previous rows visible (avoid a blank 10s loading screen)
+    // until the new branch payload arrives.
     const warm = readWarmStartRows(opts.branchId, opts.consolidated);
     if (warm?.length) {
       setRows(warm);
       setLoading(false);
     } else {
-      setRows([]);
       setLoading(true);
     }
 
     void (async () => {
       try {
-        // Reuse fresh session cache on tab revisits / remounts (≤60s) — big win for Inventory.
-        if (isInventoryGridCacheFresh(opts.branchId, opts.consolidated, 60_000)) {
+        // Reuse fresh session cache on tab revisits / remounts / branch re-select (≤120s).
+        if (isInventoryGridCacheFresh(opts.branchId, opts.consolidated, 120_000)) {
           const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
           if (cached?.length) {
             if (gen !== generationRef.current) return;
             setRows(cached);
+            setLoading(false);
             return;
           }
         }
@@ -91,7 +91,9 @@ export function useInventoryGrid(opts: {
         setRows(fresh);
       } catch (err) {
         console.error('[useInventoryGrid] load failed:', err);
-        if (gen === generationRef.current && !warm?.length) setRows([]);
+        if (gen === generationRef.current && !warm?.length) {
+          // Keep whatever was on screen from the previous scope if fetch fails.
+        }
       } finally {
         if (gen === generationRef.current) setLoading(false);
       }

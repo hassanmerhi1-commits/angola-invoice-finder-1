@@ -13,7 +13,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useProducts } from '@/hooks/useERP';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
-import { invalidateInventoryGridCache, invalidateInventoryGridCacheForBranches, readProductStock } from '@/lib/inventoryGrid';
+import { invalidateInventoryGridCache, readProductStock } from '@/lib/inventoryGrid';
 import { useInventoryBranchScope } from '@/hooks/useInventoryBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { resolveBranchScopeDisplayLabel } from '@/lib/branchScopeDisplay';
@@ -483,13 +483,13 @@ export default function Inventory() {
     }
   }, [showDetailedQtyTab, activeTab]);
 
+  // Branch switch: clear selection only. Do NOT wipe sibling inventory-grid caches —
+  // that forced a cold ~10s reload for every dropdown change from Sede.
   useEffect(() => {
     setSelectedProduct(null);
     stockMovementsScopeRef.current = '';
     stockMovementsLoadedAtRef.current = 0;
-    const branchIds = (allBranches.length > 0 ? allBranches : branches).map((b) => b.id);
-    invalidateInventoryGridCacheForBranches(branchIds);
-  }, [inventoryScopeId, allBranches, branches]);
+  }, [inventoryScopeId]);
 
   // Only fan out N× inventory-grid when the detailed-qty tab is open (not on every Inventory visit).
   useEffect(() => {
@@ -1456,17 +1456,26 @@ export default function Inventory() {
           {gridProducts.length === 0 && inventoryGridLoading ? (
             <p className="text-center py-16 text-muted-foreground">{t.common.loading}</p>
           ) : (
-            <AdvancedDataGrid 
-              key={isHeadOffice ? 'hq' : (listBranchId || 'none')}
-              products={gridProducts}
-              onSelectProduct={handleSelectProduct}
-              onDoubleClickProduct={handleDoubleClickProduct}
-              selectedProductId={selectedProduct?.id}
-              isHeadOffice={isHeadOffice}
-              branches={branches}
-              allBranchProducts={allBranchProducts}
-              preSorted
-            />
+            <div className="relative h-full min-h-0">
+              {inventoryGridLoading && gridProducts.length > 0 && (
+                <div className="absolute top-0 inset-x-0 z-10 flex justify-center pointer-events-none">
+                  <span className="mt-1 rounded-md bg-background/90 border px-2 py-0.5 text-xs text-muted-foreground shadow-sm">
+                    {t.common.loading}
+                  </span>
+                </div>
+              )}
+              <AdvancedDataGrid 
+                key={isHeadOffice ? 'hq' : (listBranchId || 'none')}
+                products={gridProducts}
+                onSelectProduct={handleSelectProduct}
+                onDoubleClickProduct={handleDoubleClickProduct}
+                selectedProductId={selectedProduct?.id}
+                isHeadOffice={isHeadOffice}
+                branches={branches}
+                allBranchProducts={allBranchProducts}
+                preSorted
+              />
+            </div>
           )}
         </TabsContent>
 
