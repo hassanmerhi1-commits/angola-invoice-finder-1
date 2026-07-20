@@ -5526,7 +5526,9 @@ export const pt: TranslationKeys = {
 
   databaseBackupUi: {
     databaseTitle: "Cópia de segurança da base de dados",
-    databaseDescription: "Backup completo da base ERP (produtos, vendas, contabilidade, stock). Recomendado diariamente no PC servidor.",
+    databaseDescription: "Backup completo da base ERP (produtos, vendas, contabilidade, stock). O servidor também cria um backup automático diário.",
+    autoBackupOn: "Backup automático diário activo no servidor (mantém as últimas {keep} cópias).",
+    autoBackupOff: "Backup automático diário desactivado no servidor.",
     demoUnavailable: "Backup da base de dados não disponível no modo demonstração.",
     backendUnavailable: "Não foi possível ligar ao servidor ERP. Inicie a aplicação no PC servidor ou verifique a rede.",
     liveDbSize: "Tamanho da base",

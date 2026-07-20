@@ -19,6 +19,20 @@ export interface BackupInfo {
   backupExtension: '.db' | '.sql';
   appVersion: string;
   restoreInProgress: boolean;
+  autoBackup?: {
+    enabled: boolean;
+    intervalHours: number;
+    keep: number;
+    backupDir: string | null;
+    lastResult: {
+      ok: boolean;
+      skipped?: boolean;
+      reason?: string;
+      filename?: string;
+      error?: string;
+      at?: string;
+    } | null;
+  };
 }
 
 export interface BackupFileEntry {

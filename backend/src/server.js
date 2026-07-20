@@ -281,6 +281,8 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
     migrateInventoryVatTo5(db).catch((e) => console.warn('[DB] Inventory VAT 5% patch:', e.message));
     startReplicatorWorker(4000);
     startAgtWorker(5000);
+    const { startAutoBackupWorker } = require('./jobs/autoBackup');
+    startAutoBackupWorker();
     const { drainRedundantMainQueueOnHq } = require('./sync/outbox');
     drainRedundantMainQueueOnHq().catch((e) => console.warn('[OUTBOX]', e.message));
   });

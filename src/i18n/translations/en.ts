@@ -5524,7 +5524,9 @@ export const en = {
 
   databaseBackupUi: {
     databaseTitle: "Database backup",
-    databaseDescription: "Full backup of your ERP database (products, sales, accounting, stock). Recommended daily on the server PC.",
+    databaseDescription: "Full backup of your ERP database (products, sales, accounting, stock). The server also creates an automatic daily backup.",
+    autoBackupOn: "Automatic daily backup is enabled on the server (keeps last {keep} copies).",
+    autoBackupOff: "Automatic daily backup is disabled on the server.",
     demoUnavailable: "Database backup is not available in demo/preview mode.",
     backendUnavailable: "Cannot reach the ERP server. Start the app on the server PC or check the network connection.",
     liveDbSize: "Database size",

@@ -295,6 +295,11 @@ export function DatabaseBackupCard() {
 
           {info && !backendUnavailable && (
             <div className="space-y-2 p-3 rounded-lg bg-accent/50 text-sm">
+              <p className="text-muted-foreground">
+                {info.autoBackup?.enabled
+                  ? ui.autoBackupOn.replace('{keep}', String(info.autoBackup.keep ?? 14))
+                  : ui.autoBackupOff}
+              </p>
               <div className="flex flex-wrap gap-2 items-center">
                 <Badge variant="secondary">{info.engine.toUpperCase()}</Badge>
                 {info.databaseSize != null && (

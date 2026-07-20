@@ -2,10 +2,16 @@
 # Runs the same /api the desktop app serves, backed by PostgreSQL.
 FROM node:22-bookworm-slim
 
-# Build tools for native deps (better-sqlite3 is only used by the one-time
-# SQLite->Postgres migration script; the running server uses pg).
+# Build tools for native deps + PostgreSQL 16 client (must match postgres:16 server).
+# Debian bookworm's default postgresql-client is 15 and aborts pg_dump against PG 16.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates wget postgresql-client \
+  && apt-get install -y --no-install-recommends ca-certificates curl gnupg python3 make g++ wget \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    | gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg \
+  && echo "deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends postgresql-client-16 \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -18,7 +24,10 @@ RUN npm install --omit=dev
 COPY . .
 
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=3000 \
+    AUTO_BACKUP=1 \
+    AUTO_BACKUP_INTERVAL_HOURS=24 \
+    AUTO_BACKUP_KEEP=14
 
 EXPOSE 3000
 

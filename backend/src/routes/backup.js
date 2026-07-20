@@ -2,9 +2,17 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const db = require('../db');
 const { createPostgresBackup, restorePostgresBackup } = require('../lib/pgBackupCli');
+const {
+  resolveBackupDir,
+  timestampSlug,
+  backupExtension,
+  createDbBackup,
+  listBackupFiles: listBackupFilesShared,
+  runSqliteBackupToFile,
+} = require('../lib/createDbBackup');
+const { getAutoBackupStatus } = require('../jobs/autoBackup');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
 const { auditErpSafe } = require('../lib/erpAudit');
@@ -15,69 +23,18 @@ module.exports = function backupRoutes() {
   const router = express.Router();
   router.use(requireAuth);
 
-  function resolveBackupDir() {
-    const candidates = [
-      process.env.BACKUP_DIR,
-      process.platform === 'win32'
-        ? path.join(process.env.APPDATA || process.env.LOCALAPPDATA || os.homedir(), 'NEXOR ERP', 'backups')
-        : path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'nexor-erp', 'backups'),
-      path.join(os.homedir(), 'NEXOR ERP', 'backups'),
-      path.resolve(process.cwd(), 'backups'),
-      path.resolve(__dirname, '../../backups'),
-    ].filter(Boolean);
-
-    for (const candidate of candidates) {
-      try {
-        fs.mkdirSync(candidate, { recursive: true });
-        return candidate;
-      } catch (error) {
-        console.warn(`[BACKUP] Cannot use backup directory ${candidate}: ${error.message}`);
-      }
-    }
-
-    throw new Error('No writable backup directory available');
-  }
-
   const BACKUP_DIR = resolveBackupDir();
   console.log(`[BACKUP] Using backup directory: ${BACKUP_DIR}`);
 
-  const BACKUP_EXT = db.engine === 'postgres' ? '.sql' : '.db';
-
-  function timestampSlug() {
-    return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  }
+  const BACKUP_EXT = backupExtension();
 
   function isSafeBackupFilename(name) {
-    return /^nexor_erp_[\d-T]+\.(db|sql)$/.test(name) || /^pre_restore_[\d-T]+\.db$/.test(name);
+    return /^nexor_erp_[\d-T]+\.(db|sql)$/.test(name)
+      || /^pre_restore_[\d-T]+\.(db|sql)$/.test(name);
   }
 
   function listBackupFiles() {
-    return fs.readdirSync(BACKUP_DIR)
-      .filter((f) => f.endsWith('.db') || f.endsWith('.sql'))
-      .map((f) => {
-        const stats = fs.statSync(path.join(BACKUP_DIR, f));
-        return {
-          filename: f,
-          size: stats.size,
-          createdAt: stats.mtime.toISOString(),
-          engine: f.endsWith('.sql') ? 'postgres' : 'sqlite',
-        };
-      })
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  }
-
-  /** better-sqlite3 v12+: .backup() returns a Promise (not step/finish/close). */
-  async function runSqliteBackupToFile(destPath) {
-    if (!db.sqlite) throw new Error('SQLite database is not open');
-    try {
-      db.sqlite.pragma('wal_checkpoint(TRUNCATE)');
-    } catch (e) {
-      console.warn('[BACKUP] WAL checkpoint warning:', e.message);
-    }
-    await db.sqlite.backup(destPath);
-    if (!fs.existsSync(destPath)) {
-      throw new Error('Backup file was not created');
-    }
+    return listBackupFilesShared(BACKUP_DIR).map(({ filepath, ...rest }) => rest);
   }
 
   function removeWalSidecars(dbFilePath) {
@@ -116,6 +73,7 @@ module.exports = function backupRoutes() {
         backupExtension: BACKUP_EXT,
         appVersion: process.env.npm_package_version || '1.0.0',
         restoreInProgress,
+        autoBackup: getAutoBackupStatus(),
       });
     } catch (error) {
       res.status(500).json({ error: error.message || 'Failed to read backup info' });
@@ -135,33 +93,22 @@ module.exports = function backupRoutes() {
   router.post('/', requirePermission('admin_backup'), async (req, res) => {
     if (assertNotRestoring(res)) return;
     try {
-      const timestamp = timestampSlug();
-      const filename = `nexor_erp_${timestamp}${BACKUP_EXT}`;
-      const filepath = path.join(BACKUP_DIR, filename);
-
-      if (db.engine === 'sqlite') {
-        await runSqliteBackupToFile(filepath);
-      } else {
-        await createPostgresBackup(filepath);
-      }
-
-      const stats = fs.statSync(filepath);
-      console.log(`[BACKUP] Created: ${filename} (${(stats.size / 1024).toFixed(1)} KB)`);
+      const created = await createDbBackup();
 
       auditErpSafe(req, {
         table: 'backup',
-        id: filename,
+        id: created.filename,
         action: 'create',
-        description: `Backup criado: ${filename} (${(stats.size / 1024).toFixed(1)} KB)`,
-        newValues: { filename, size: stats.size, engine: db.engine },
+        description: `Backup criado: ${created.filename} (${(created.size / 1024).toFixed(1)} KB)`,
+        newValues: { filename: created.filename, size: created.size, engine: created.engine },
       });
 
       res.json({
         success: true,
-        filename,
-        size: stats.size,
-        path: filepath,
-        engine: db.engine,
+        filename: created.filename,
+        size: created.size,
+        path: created.filepath,
+        engine: created.engine,
         timestamp: new Date().toISOString(),
       });
     } catch (error) {

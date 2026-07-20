@@ -33,8 +33,12 @@ services:
       PORT: 3000
       NODE_ENV: production
       BACKUP_DIR: /app/backups
+      # Daily pg_dump into nexor_backups volume (requires postgresql-client-16 in image).
+      AUTO_BACKUP: "1"
+      AUTO_BACKUP_INTERVAL_HOURS: "24"
+      AUTO_BACKUP_KEEP: "14"
       # Shown in /api/health appVersion — bump on release so deploys are verifiable.
-      NEXOR_APP_VERSION: 1.1.47
+      NEXOR_APP_VERSION: 1.1.48
     ports:
       - "3000:3000"
     volumes:

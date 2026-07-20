@@ -88,6 +88,11 @@ function isMissingBinaryError(err) {
   return code === 'ENOENT' || /enoent/i.test(msg) || /not found/i.test(msg);
 }
 
+function isVersionMismatchError(err) {
+  const msg = String(err?.message || '');
+  return /version mismatch/i.test(msg) || /server version:/i.test(msg);
+}
+
 async function localPgDump(binary, filepath, conn) {
   const args = [
     '-h', conn.host,
@@ -156,7 +161,7 @@ async function createPostgresBackup(filepath) {
       const label = c.kind === 'docker' ? 'docker' : c.bin;
       console.warn(`[BACKUP] ${label} failed (${i + 1}/${candidates.length}):`, e.message);
       if (i === candidates.length - 1) break;
-      if (isMissingBinaryError(e)) continue;
+      if (isMissingBinaryError(e) || isVersionMismatchError(e)) continue;
       // Connection/auth errors on local pg_dump — still try docker if available.
       if (c.kind === 'local' && candidates.some((x) => x.kind === 'docker')) continue;
       throw e;
