@@ -45,6 +45,8 @@ services:
       # Hot-reload source from the host so repair/verify scripts stay current without rebuild.
       - ./backend/src:/app/src
       - ./backend/scripts:/app/scripts
+      # Built Vite UI (npm run build:webapp → backend/webapp). Required for browser /app.
+      - ./backend/webapp:/app/webapp
       # Writable import drop folder (scripts may copy erp.db here). Prefer docker cp to /tmp.
       - ./import:/import
       - nexor_backups:/app/backups

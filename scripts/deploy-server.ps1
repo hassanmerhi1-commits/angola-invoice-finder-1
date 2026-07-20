@@ -70,6 +70,28 @@ if ($ExpectedVersion -and $pkgVer -and $pkgVer -ne $ExpectedVersion) {
   throw "Expected version $ExpectedVersion but package.json is $pkgVer after pull."
 }
 
+# Browser UI at /app needs Vite assets in backend/webapp (gitignored) — build on the server.
+Write-Host "Building web UI for /app ..."
+if (-not (Test-Path (Join-Path $root 'node_modules'))) {
+  Write-Host "Installing root npm dependencies (first time)..."
+  npm install
+}
+npm run build:webapp
+if ($LASTEXITCODE -ne 0) { throw "npm run build:webapp failed" }
+$dist = Join-Path $root 'dist'
+$webapp = Join-Path $root 'backend\webapp'
+if (-not (Test-Path (Join-Path $dist 'index.html'))) {
+  throw "Build output missing: $dist\index.html"
+}
+New-Item -ItemType Directory -Force -Path $webapp | Out-Null
+$assetsDir = Join-Path $webapp 'assets'
+if (Test-Path -LiteralPath $assetsDir) {
+  Remove-Item -LiteralPath $assetsDir -Recurse -Force
+}
+Copy-Item -Path (Join-Path $dist '*') -Destination $webapp -Recurse -Force
+$jsCount = @(Get-ChildItem -Path (Join-Path $webapp 'assets') -Filter '*.js' -ErrorAction SilentlyContinue).Count
+Write-Host "Webapp deployed to $webapp ($jsCount js file(s))"
+
 if (-not $SkipDocker) {
   Write-Host "Rebuilding backend container..."
   docker compose up -d --build backend
@@ -84,10 +106,25 @@ if (-not $SkipDocker) {
     } else {
       Write-Host "Deploy looks good." -ForegroundColor Green
     }
+    try {
+      $assetProbe = Invoke-WebRequest -Uri 'http://127.0.0.1:3000/app/' -UseBasicParsing -TimeoutSec 10
+      if ($assetProbe.Content -match '/app/assets/([^"]+\.js)') {
+        $assetName = $Matches[1]
+        $js = Invoke-WebRequest -Uri ("http://127.0.0.1:3000/app/assets/$assetName") -UseBasicParsing -TimeoutSec 15
+        if ($js.RawContentLength -lt 50000 -or $js.Content -match '<!doctype html>') {
+          Write-Host "WARNING: /app asset looks wrong (blank page risk). Re-run build:webapp." -ForegroundColor Yellow
+        } else {
+          Write-Host ("Web /app OK (asset {0}, {1} bytes)" -f $assetName, $js.RawContentLength) -ForegroundColor Green
+        }
+      }
+    } catch {
+      Write-Host "Could not verify /app assets yet: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
   } catch {
     Write-Host "Could not read local health yet: $($_.Exception.Message)" -ForegroundColor Yellow
     Write-Host "Open http://<server-ip>:3000/api/health in a browser."
   }
 }
 
-Write-Host "Done. Always use this script (or repo angola-invoice-finder-1) for server deploys."
+Write-Host "Done. Open http://<server-ip>:3000/app in a browser."
+Write-Host "Always use this script (or repo angola-invoice-finder-1) for server deploys."

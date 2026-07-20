@@ -83,11 +83,16 @@ app.use(express.json({ limit: '10mb' }));
 
 const webappPath = path.join(__dirname, '../webapp');
 if (!fs.existsSync(webappPath)) fs.mkdirSync(webappPath, { recursive: true });
-app.use('/app', express.static(webappPath));
+app.use('/app', express.static(webappPath, { index: false, fallthrough: true }));
+// SPA fallback — do not mask missing /app/assets/* (that causes a blank page).
 app.get(/^\/app(?:\/.*)?$/, (req, res) => {
+  const reqPath = String(req.path || '');
+  if (reqPath.startsWith('/app/assets/')) {
+    return res.status(404).type('text').send('Webapp asset missing — run deploy-webapp / build:webapp on the server.');
+  }
   const indexPath = path.join(webappPath, 'index.html');
   if (fs.existsSync(indexPath)) res.sendFile(indexPath);
-  else res.status(404).json({ error: 'Webapp not deployed' });
+  else res.status(404).json({ error: 'Webapp not deployed — run npm run build:webapp and copy dist/ to backend/webapp' });
 });
 
 /** Fast ping for Electron health monitor — avoid heavy queries while SQLite is busy. */
