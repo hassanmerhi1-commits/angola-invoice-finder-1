@@ -1848,10 +1848,10 @@ function normalizeSalePaymentMethod(saleData) {
 async function processSale(client, saleData) {
   const paymentMethod = normalizeSalePaymentMethod(saleData);
   if (paymentMethod === 'credit') {
-    const dbModule = require('../db');
-    if (dbModule.engine === 'postgres') {
+    // transactionEngine lives in backend/src — use ./db (same as module top), not ../db.
+    if (db.engine === 'postgres') {
       const { ensureSalesCreditPaymentMethod } = require('./lib/ensurePhaseSchema');
-      await ensureSalesCreditPaymentMethod(dbModule);
+      await ensureSalesCreditPaymentMethod(db);
     }
   }
   const {
