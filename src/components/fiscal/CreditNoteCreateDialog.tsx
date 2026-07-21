@@ -122,6 +122,7 @@ export function CreditNoteCreateDialog({
     if (method === 'cash') return t.pos.cash;
     if (method === 'card') return t.pos.card;
     if (method === 'transfer') return t.pos.transfer;
+    if (method === 'credit') return t.pos.credit;
     return method;
   };
 

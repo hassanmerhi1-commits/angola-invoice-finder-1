@@ -368,6 +368,9 @@ module.exports = function(broadcastTable) {
       if (status) { query += ` AND oi.status = $${idx++}`; params.push(status); }
       else { query += ` AND oi.status != 'cleared'`; }
       query += ' ORDER BY oi.document_date ASC';
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 2000, 1), 20000);
+      query += ` LIMIT $${idx++}`;
+      params.push(limit);
       const result = await db.query(query, params);
       res.json(result.rows);
     } catch (error) {

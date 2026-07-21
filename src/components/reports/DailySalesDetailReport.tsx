@@ -693,7 +693,8 @@ export function DailySalesDetailReport({
                         <Badge variant="outline">
                           {sale.paymentMethod === 'cash' ? t.chartsUi.methodCash :
                            sale.paymentMethod === 'card' ? t.chartsUi.methodCard :
-                           sale.paymentMethod === 'transfer' ? t.chartsUi.methodTransfer : sale.paymentMethod}
+                           sale.paymentMethod === 'transfer' ? t.chartsUi.methodTransfer :
+                           sale.paymentMethod === 'credit' ? t.pos.credit : sale.paymentMethod}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">{formatCurrency(saleSubtotal)}</TableCell>

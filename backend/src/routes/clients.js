@@ -36,7 +36,9 @@ module.exports = function(broadcastTable) {
   // Get all clients
   router.get('/', async (req, res) => {
     try {
-      const result = await db.query('SELECT * FROM clients WHERE is_active = true ORDER BY name');
+      // High default cap: pickers need the full list, this only guards runaway tables.
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5000, 1), 50000);
+      const result = await db.query('SELECT * FROM clients WHERE is_active = true ORDER BY name LIMIT $1', [limit]);
       res.json(result.rows);
     } catch (error) {
       console.error('[CLIENTS ERROR]', error);

@@ -15,7 +15,7 @@ import {
 import {
   Search, Printer, FileOutput, Eye, RefreshCw, ShoppingCart,
   Calendar, DollarSign, CreditCard, Banknote, ArrowRightLeft,
-  Receipt, Check, X,
+  Receipt, Check, X, FileText,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
@@ -29,11 +29,12 @@ import { NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 
-const paymentLabels: Record<string, { labelKey: 'cash' | 'card' | 'transfer' | 'mixed'; icon: any; color: string }> = {
+const paymentLabels: Record<string, { labelKey: 'cash' | 'card' | 'transfer' | 'mixed' | 'credit'; icon: any; color: string }> = {
   cash: { labelKey: 'cash', icon: Banknote, color: 'text-success' },
   card: { labelKey: 'card', icon: CreditCard, color: 'text-info' },
   transfer: { labelKey: 'transfer', icon: ArrowRightLeft, color: 'text-primary' },
   mixed: { labelKey: 'mixed', icon: DollarSign, color: 'text-warning' },
+  credit: { labelKey: 'credit', icon: FileText, color: 'text-destructive' },
 };
 
 const statusConfig: Record<string, { labelKey: 'completed' | 'voided' | 'pending'; variant: 'default' | 'secondary' | 'destructive' }> = {

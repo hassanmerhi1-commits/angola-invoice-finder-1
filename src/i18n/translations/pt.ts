@@ -438,6 +438,9 @@ export const pt: TranslationKeys = {
     discountAuthReason: "Desconto POS {pct}%",
     creditRequiresClient: "Selecione um cliente registado para vender a prazo",
     creditHint: "Lança na conta do cliente (311) — pagamento posterior",
+    creditNoLimit: "Cliente sem limite de crédito definido — defina um limite maior que 0 na ficha do cliente",
+    creditOverLimit: "Limite de crédito excedido — saldo {balance} Kz, limite {limit} Kz",
+    creditDueOn: "Vencimento: {date}",
   },
 
   receiptUi: {
@@ -4901,6 +4904,7 @@ export const pt: TranslationKeys = {
       card: "Cartão",
       transfer: "Transferência",
       mixed: "Misto",
+      credit: "A prazo",
     },
 
     // Status
@@ -5458,6 +5462,7 @@ export const pt: TranslationKeys = {
     nifPlaceholder: "Número fiscal",
     addressPlaceholder: "Endereço completo",
     creditLimitLabel: "Limite de Crédito (Kz)",
+    creditLimitHint: "0 = sem vendas a prazo. Defina um limite maior que 0 para permitir crédito.",
     defaultPriceLevelLabel: "Nível de preço padrão",
     priceLevelOption: "Nível de preço {n}",
     priceAdjustmentLabel: "Ajuste de preço (%)",

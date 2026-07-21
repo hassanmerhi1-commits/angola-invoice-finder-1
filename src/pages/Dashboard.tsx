@@ -1,5 +1,5 @@
 // NEXOR ERP Dashboard - With Real KPIs and Financial Charts
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
@@ -8,13 +8,6 @@ import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  DashboardChartsProvider,
-  RevenueExpensesChart, CashFlowChart, TopProductsChart,
-  ARAgingChart, DailySalesChart, ProfitMarginWidget,
-  PaymentMethodChart, StockValuationWidget,
-} from '@/components/dashboard/FinancialCharts';
 import {
   FileText, ShoppingCart, Package, BarChart3, TrendingUp,
   ArrowRight, ClipboardList, Receipt, DollarSign, FileCheck,
@@ -23,6 +16,8 @@ import {
 } from 'lucide-react';
 import { NEXOR_STAT_CARD, NEXOR_SECTION_LABEL, NEXOR_TONE_TILE, type NexorTone } from '@/lib/nexorToneStyles';
 import { NEXOR_FEATURE_SHORTCUT_BTN } from '@/lib/nexorToolbarStyles';
+
+const DashboardChartsSection = lazy(() => import('@/components/dashboard/DashboardChartsSection'));
 
 interface DashboardKPIs {
   todaySales: { count: number; total: number };
@@ -33,6 +28,10 @@ interface DashboardKPIs {
   pendingApprovals: number;
   monthExpenses: number;
 }
+
+// Session-scoped SWR for KPIs/low-stock: paint last values instantly, refresh in background.
+const KPI_CACHE_TTL_MS = 30_000;
+const kpiCache = new Map<string, { at: number; kpis: DashboardKPIs | null; lowStock: unknown[] }>();
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -49,44 +48,60 @@ export default function Dashboard() {
     minStock: number;
     unit: string;
   }>>([]);
-  const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
+  const cacheKey = String(apiBranchId || 'all');
+  const cached = kpiCache.get(cacheKey);
+  const [kpis, setKpis] = useState<DashboardKPIs | null>(cached?.kpis ?? null);
 
-  // Fetch real KPIs
+  // Fetch real KPIs (warm-start from cache; skip network while fresh)
   useEffect(() => {
+    const entry = kpiCache.get(cacheKey);
+    if (entry?.kpis) setKpis(entry.kpis);
+    if (entry && Date.now() - entry.at < KPI_CACHE_TTL_MS) return;
     (async () => {
       try {
         const { api } = await import('@/lib/api/client');
         const result = await api.dashboard.kpis(apiBranchId);
-        if (result.data) setKpis(result.data);
+        if (result.data) {
+          setKpis(result.data);
+          const prev = kpiCache.get(cacheKey);
+          kpiCache.set(cacheKey, { at: Date.now(), kpis: result.data, lowStock: prev?.lowStock ?? [] });
+        }
       } catch {
         // API not available — use zeros
       }
     })();
-  }, [apiBranchId]);
+  }, [apiBranchId, cacheKey]);
 
   useEffect(() => {
+    const mapRows = (rows: Array<Record<string, unknown>>) => rows
+      .slice(0, 10)
+      .map((row) => ({
+        id: String(row.id || ''),
+        name: String(row.name || ''),
+        sku: String(row.sku || ''),
+        stock: Number(row.stock || 0),
+        minStock: Number(row.min_stock ?? row.minStock ?? 0),
+        unit: String(row.unit || ''),
+      }));
+    const entry = kpiCache.get(cacheKey);
+    if (entry?.lowStock?.length) {
+      setLowStockProducts(mapRows(entry.lowStock as Array<Record<string, unknown>>));
+    }
+    if (entry && Date.now() - entry.at < KPI_CACHE_TTL_MS) return;
     (async () => {
       try {
         const { api } = await import('@/lib/api/client');
         const result = await api.products.lowStock(apiBranchId);
         if (!result.data) return;
-        setLowStockProducts(
-          (result.data as Array<Record<string, unknown>>)
-            .slice(0, 10)
-            .map((row) => ({
-              id: String(row.id || ''),
-              name: String(row.name || ''),
-              sku: String(row.sku || ''),
-              stock: Number(row.stock || 0),
-              minStock: Number(row.min_stock ?? row.minStock ?? 0),
-              unit: String(row.unit || ''),
-            })),
-        );
+        const rows = result.data as Array<Record<string, unknown>>;
+        setLowStockProducts(mapRows(rows));
+        const prev = kpiCache.get(cacheKey);
+        kpiCache.set(cacheKey, { at: prev?.at ?? Date.now(), kpis: prev?.kpis ?? null, lowStock: rows });
       } catch {
         setLowStockProducts([]);
       }
     })();
-  }, [apiBranchId]);
+  }, [apiBranchId, cacheKey]);
 
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const fmt = (n: number) => (n || 0).toLocaleString(locale);
@@ -280,42 +295,12 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Financial Charts — one shared sales/products load for all widgets */}
+        {/* Financial Charts — lazy chunk so recharts doesn't block the KPI paint */}
         <div>
           <h3 className={`${NEXOR_SECTION_LABEL} mb-4`}>{d.financialAnalysis}</h3>
-          <DashboardChartsProvider>
-            <Tabs defaultValue="overview" className="space-y-4">
-              <TabsList>
-                <TabsTrigger value="overview">{d.tabOverview}</TabsTrigger>
-                <TabsTrigger value="cashflow">{d.tabCashflow}</TabsTrigger>
-                <TabsTrigger value="products">{d.tabProducts}</TabsTrigger>
-                <TabsTrigger value="aging">{d.tabAging}</TabsTrigger>
-                <TabsTrigger value="payments">{d.tabPayments}</TabsTrigger>
-              </TabsList>
-              <TabsContent value="overview" className="space-y-4">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <ProfitMarginWidget />
-                  <StockValuationWidget />
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <RevenueExpensesChart />
-                  <DailySalesChart />
-                </div>
-              </TabsContent>
-              <TabsContent value="cashflow">
-                <CashFlowChart />
-              </TabsContent>
-              <TabsContent value="products">
-                <TopProductsChart />
-              </TabsContent>
-              <TabsContent value="aging">
-                <ARAgingChart />
-              </TabsContent>
-              <TabsContent value="payments">
-                <PaymentMethodChart />
-              </TabsContent>
-            </Tabs>
-          </DashboardChartsProvider>
+          <Suspense fallback={<div className="h-64 rounded-xl bg-slate-50/80 border border-slate-200/60 animate-pulse" />}>
+            <DashboardChartsSection />
+          </Suspense>
         </div>
 
         {/* Quick Checks */}

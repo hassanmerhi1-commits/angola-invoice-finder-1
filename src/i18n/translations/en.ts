@@ -436,6 +436,9 @@ export const en = {
     discountAuthReason: "POS discount {pct}%",
     creditRequiresClient: "Select a registered customer to sell on account",
     creditHint: "Posts to customer ledger (311) — payment due later",
+    creditNoLimit: "Client has no credit limit — set a limit greater than 0 on the client record",
+    creditOverLimit: "Credit limit exceeded — balance {balance} Kz, limit {limit} Kz",
+    creditDueOn: "Due date: {date}",
   },
 
   receiptUi: {
@@ -4899,6 +4902,7 @@ export const en = {
       card: "Card",
       transfer: "Transfer",
       mixed: "Mixed",
+      credit: "On account",
     },
 
     // Status
@@ -5456,6 +5460,7 @@ export const en = {
     nifPlaceholder: "Tax number",
     addressPlaceholder: "Full address",
     creditLimitLabel: "Credit limit (Kz)",
+    creditLimitHint: "0 = no on-account sales. Set a limit greater than 0 to allow credit.",
     defaultPriceLevelLabel: "Default price level",
     priceLevelOption: "Price level {n}",
     priceAdjustmentLabel: "Price adjustment (%)",

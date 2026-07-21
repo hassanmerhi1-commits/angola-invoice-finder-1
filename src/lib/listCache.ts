@@ -42,6 +42,13 @@ export function markCachedListStale(key: string): void {
   store.set(key, { at: 0, value: entry.value });
 }
 
+/** Stale-mark every cached list whose key starts with prefix (e.g. 'products:'). */
+export function markCachedListsStaleByPrefix(prefix: string): void {
+  for (const [key, entry] of store) {
+    if (key.startsWith(prefix)) store.set(key, { at: 0, value: entry.value });
+  }
+}
+
 export function clearCachedList(key?: string): void {
   if (key) store.delete(key);
   else store.clear();

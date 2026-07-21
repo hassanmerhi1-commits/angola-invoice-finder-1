@@ -235,11 +235,16 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
       console.warn('[useProducts] API list failed:', e);
     }
 
+    // Local dump is only used in demo mode or when the API failed — don't pay
+    // a full local-DB read (Electron IPC) on every successful server refresh.
+    const needLocal = apiProducts === null || isDemoMode();
     let localProducts: Product[] = [];
-    try {
-      localProducts = await storage.getProducts(branchId);
-    } catch (e) {
-      console.error('[useProducts] local getProducts failed:', e);
+    if (needLocal) {
+      try {
+        localProducts = await storage.getProducts(branchId);
+      } catch (e) {
+        console.error('[useProducts] local getProducts failed:', e);
+      }
     }
 
     if (apiProducts !== null) {
@@ -1919,7 +1924,12 @@ export function useCategories() {
     setCachedList('categories', mapped);
   }, []);
 
-  useEffect(() => { refreshCategories(); }, [refreshCategories]);
+  useEffect(() => {
+    // Categories rarely change — skip the network when the cached list is fresh.
+    const cached = getCachedList<Category[]>('categories');
+    if (cached && cached.length > 0 && isCachedListFresh('categories')) return;
+    void refreshCategories();
+  }, [refreshCategories]);
 
   useEffect(() => {
     const onRefresh = (event: Event) => {

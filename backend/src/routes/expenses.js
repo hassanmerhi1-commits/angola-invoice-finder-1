@@ -313,6 +313,9 @@ module.exports = function expensesRouter(broadcastTable) {
         params.push(resolved, branchKey);
       }
       sql += ' ORDER BY created_at DESC';
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 1000, 1), 10000);
+      sql += ` LIMIT $${params.length + 1}`;
+      params.push(limit);
       const result = await db.query(sql, params);
       res.json({ data: (result.rows || []).map(mapRow) });
     } catch (error) {

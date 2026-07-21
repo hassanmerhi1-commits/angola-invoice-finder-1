@@ -32,6 +32,7 @@ loadInstallDatabaseEnv();
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 const express = require('express');
+const compression = require('compression');
 const http = require('http');
 const os = require('os');
 const { Server } = require('socket.io');
@@ -78,6 +79,8 @@ const discoveryBroadcaster = new DiscoveryBroadcaster(PORT, {
 
 app.use(lanCors);
 app.use(securityHeaders);
+// Gzip JSON/static responses — large list payloads over LAN/Tailscale shrink ~5-10x.
+app.use(compression({ threshold: 1024 }));
 app.use(rateLimiter(60000, 800, 8000));
 app.use(express.json({ limit: '10mb' }));
 

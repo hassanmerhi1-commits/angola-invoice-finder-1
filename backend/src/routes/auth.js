@@ -372,6 +372,7 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
       [id],
     );
     const after = updated.rows[0];
+    require('../middleware/requireAuth').invalidateUserCache(String(id));
     await logFiscalEventFromReq(req, {
       tableName: 'users',
       recordId: id,
@@ -519,6 +520,7 @@ router.delete('/users/:id', requireAdmin, async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
+    require('../middleware/requireAuth').invalidateUserCache(String(id));
     await endSession({ userId: id, reason: 'deactivated' });
     await logFiscalEventFromReq(req, {
       tableName: 'users',

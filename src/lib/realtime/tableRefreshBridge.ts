@@ -3,6 +3,7 @@
  * Without this, changes from another LAN client only appear after restart.
  */
 import * as storage from '@/lib/storage';
+import { markCachedListsStaleByPrefix } from '@/lib/listCache';
 
 export const TABLE_REFRESH_EVENT = 'nexor:table-refresh';
 
@@ -67,7 +68,13 @@ function dispatchTableRefresh(table: RefreshableTable, entityId?: string) {
   if (ALSO_REFRESH_PRODUCTS.has(table) && table !== 'products') {
     const productsEvent = TABLE_EVENT_MAP.products;
     if (productsEvent) {
-      window.dispatchEvent(new CustomEvent(productsEvent, { detail: { entityId, sourceTable: table } }));
+      // Lightweight: full product-list hooks only stale-mark (next visit refetches);
+      // grid/POS stock views still refresh. A remote sale used to force every client
+      // to re-download the entire product catalog.
+      markCachedListsStaleByPrefix('products:');
+      window.dispatchEvent(new CustomEvent(productsEvent, {
+        detail: { entityId, sourceTable: table, lightweight: true },
+      }));
     }
   }
   window.dispatchEvent(new CustomEvent(TABLE_REFRESH_EVENT, { detail: { table, entityId } }));

@@ -1,6 +1,9 @@
 import { resolveProductCategoryName } from '@/lib/inventoryFoodCategories';
 import type { Category, Product } from '@/types/erp';
 
+/** Short queries can match thousands of rows; the list is not virtualized. */
+export const POS_SEARCH_MAX_RESULTS = 50;
+
 /** Products in stock matching code or name (for POS browse filter). */
 export function filterPosProductsBySearch(products: Product[], term: string): Product[] {
   const q = term.trim();
@@ -26,7 +29,8 @@ export function filterPosProductsBySearch(products: Product[], term: string): Pr
       if (aName && !bName) return -1;
       if (!aName && bName) return 1;
       return a.name.localeCompare(b.name);
-    });
+    })
+    .slice(0, POS_SEARCH_MAX_RESULTS);
 }
 
 export function getPosNavigableSearchResults(
@@ -46,12 +50,14 @@ export function getPosNavigableSearchResults(
   if (!bucket) return filterPosProductsBySearch(products, term);
 
   const lower = term.toLowerCase();
-  return bucket.products.filter(
-    (p) =>
-      p.name.toLowerCase().includes(lower)
-      || p.sku.toLowerCase().includes(lower)
-      || (p.barcode && p.barcode.toLowerCase().includes(lower)),
-  );
+  return bucket.products
+    .filter(
+      (p) =>
+        p.name.toLowerCase().includes(lower)
+        || p.sku.toLowerCase().includes(lower)
+        || (p.barcode && p.barcode.toLowerCase().includes(lower)),
+    )
+    .slice(0, POS_SEARCH_MAX_RESULTS);
 }
 
 /** Find a single product by barcode, SKU, or unique name match (POS quick-add). */

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { newClientRequestId } from '@/lib/sync/offlineSales';
-import { CartItem, Sale } from '@/types/erp';
+import { CartItem, Client, Sale } from '@/types/erp';
 import {
   Dialog,
   DialogContent,
@@ -30,6 +30,8 @@ interface CheckoutDialogProps {
   defaultCustomerName?: string;
   /** Registered ERP client — required for on-account (credit) sales */
   registeredClientId?: string;
+  /** Full client record for credit-limit pre-check and due-date preview. */
+  registeredClient?: Client | null;
   onCompleteSale: (
     paymentMethod: Sale['paymentMethod'],
     amountPaid: number,
@@ -50,6 +52,7 @@ export function CheckoutDialog({
   defaultCustomerNif,
   defaultCustomerName,
   registeredClientId,
+  registeredClient,
   onCompleteSale,
 }: CheckoutDialogProps) {
   const { t, language } = useTranslation();
@@ -154,7 +157,24 @@ export function CheckoutDialog({
         : effectiveTotal;
   const change = paymentMethod === 'cash' ? paidAmount - effectiveTotal : 0;
   const needsAuthorization = discountPct > 0 && !discountApproved;
-  const creditBlocked = paymentMethod === 'credit' && !registeredClientId;
+
+  // Credit pre-checks (server enforces the same rules; this gives feedback before submit).
+  const clientCreditLimit = Number(registeredClient?.creditLimit) || 0;
+  const clientBalance = Number(registeredClient?.currentBalance) || 0;
+  const creditNoLimit = !!registeredClient && clientCreditLimit <= 0;
+  const creditOverLimit =
+    !!registeredClient
+    && clientCreditLimit > 0
+    && clientBalance + effectiveTotal > clientCreditLimit + 0.01;
+  const creditTermsDays = Math.trunc(Number(registeredClient?.paymentTermsDays) || 0);
+  const creditDueDate = (() => {
+    const due = new Date();
+    due.setDate(due.getDate() + creditTermsDays);
+    return due.toLocaleDateString(locale);
+  })();
+
+  const creditBlocked =
+    paymentMethod === 'credit' && (!registeredClientId || creditNoLimit || creditOverLimit);
   const isValid =
     !needsAuthorization &&
     !creditBlocked &&
@@ -308,8 +328,22 @@ export function CheckoutDialog({
             {!registeredClientId && (
               <p className="text-xs text-muted-foreground">{t.checkoutUi.creditRequiresClient}</p>
             )}
-            {paymentMethod === 'credit' && registeredClientId && (
-              <p className="text-xs text-muted-foreground">{t.checkoutUi.creditHint}</p>
+            {paymentMethod === 'credit' && registeredClientId && creditNoLimit && (
+              <p className="text-xs text-destructive">{t.checkoutUi.creditNoLimit}</p>
+            )}
+            {paymentMethod === 'credit' && registeredClientId && creditOverLimit && (
+              <p className="text-xs text-destructive">
+                {t.checkoutUi.creditOverLimit
+                  .replace('{balance}', clientBalance.toLocaleString(locale))
+                  .replace('{limit}', clientCreditLimit.toLocaleString(locale))}
+              </p>
+            )}
+            {paymentMethod === 'credit' && registeredClientId && !creditNoLimit && !creditOverLimit && (
+              <p className="text-xs text-muted-foreground">
+                {t.checkoutUi.creditHint}
+                {' '}
+                {t.checkoutUi.creditDueOn.replace('{date}', creditDueDate)}
+              </p>
             )}
           </div>
 

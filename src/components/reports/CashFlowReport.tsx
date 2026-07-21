@@ -49,7 +49,8 @@ export default function CashFlowReport() {
   const inflowByMethod = useMemo(() => {
     const acc = { cash: 0, card: 0, transfer: 0, mixed: 0, total: 0 };
     sales
-      .filter((s) => s.status === 'completed' && inRange(s.createdAt))
+      // On-account (credit) sales are receivables, not cash received — exclude them.
+      .filter((s) => s.status === 'completed' && s.paymentMethod !== 'credit' && inRange(s.createdAt))
       .forEach((s) => {
         const v = Number(s.total || 0);
         const m = (s.paymentMethod || 'cash') as keyof typeof acc;

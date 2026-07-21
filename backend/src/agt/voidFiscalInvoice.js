@@ -162,6 +162,10 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
        WHERE document_id = $1 AND document_type = 'invoice' AND status != 'cleared'`,
       [invoiceId],
     );
+    if (sale.client_id) {
+      const { syncClientBalanceFromOpenItems } = require('../transactionEngine');
+      await syncClientBalanceFromOpenItems(client, sale.client_id);
+    }
 
     const config = await getAgtConfigWithSecrets();
     const voidPayload = {

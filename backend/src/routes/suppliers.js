@@ -21,17 +21,18 @@ module.exports = function(broadcastTable) {
 
   router.get('/', async (req, res) => {
     try {
+      // One grouped scan of open_items instead of a correlated subquery per supplier row.
       const result = await db.query(
-        `SELECT s.*,
-                COALESCE((
-                  SELECT SUM(
-                    ${openItemDebitAmountCase(db, 'oi')}
-                  )
-                  FROM open_items oi
-                  WHERE oi.entity_type = 'supplier' AND oi.entity_id = s.id
-                    AND oi.status != 'cleared'
-                ), 0) AS balance
+        `SELECT s.*, COALESCE(b.balance, 0) AS balance
          FROM suppliers s
+         LEFT JOIN (
+           SELECT oi.entity_id, SUM(
+             ${openItemDebitAmountCase(db, 'oi')}
+           ) AS balance
+           FROM open_items oi
+           WHERE oi.entity_type = 'supplier' AND oi.status != 'cleared'
+           GROUP BY oi.entity_id
+         ) b ON b.entity_id = s.id
          WHERE s.is_active = true
          ORDER BY s.name`
       );

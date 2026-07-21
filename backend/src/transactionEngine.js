@@ -1748,6 +1748,30 @@ async function syncSupplierBalanceFromOpenItems(client, supplierId) {
   );
 }
 
+/**
+ * Recompute clients.current_balance from open items. Credit sales bump the
+ * balance inline; receipts / credit notes / voids must call this so the
+ * balance falls again — otherwise credit-limit checks block clients who paid.
+ */
+async function syncClientBalanceFromOpenItems(client, clientId) {
+  if (!clientId) return;
+  const balanceCase = openItemDebitAmountCase(db, '');
+  try {
+    await client.query(
+      `UPDATE clients SET current_balance = COALESCE((
+         SELECT SUM(${balanceCase})
+         FROM open_items
+         WHERE entity_type = 'customer' AND entity_id = $1
+       ), 0),
+       updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [clientId]
+    );
+  } catch (e) {
+    console.warn('[TX ENGINE] Client balance sync skipped:', e.message);
+  }
+}
+
 async function reduceSupplierInvoiceOpenItem(client, { entityId, invoiceDocumentId, amount }) {
   const reduction = Number(amount || 0);
   if (!invoiceDocumentId || reduction <= 0) return null;
@@ -2073,7 +2097,14 @@ async function processSale(client, saleData) {
     creditCustomer = resolved.client;
     const creditLimit = parseFloat(creditCustomer.credit_limit) || 0;
     const currentBalance = parseFloat(creditCustomer.current_balance) || 0;
-    if (creditLimit > 0 && currentBalance + totalAmount > creditLimit + 0.01) {
+    // No positive limit = no credit. A limit of 0 must block on-account sales.
+    if (creditLimit <= 0) {
+      throw new Error(
+        `${creditCustomer.name} não tem limite de crédito definido. `
+        + 'Defina um limite de crédito maior que 0 na ficha do cliente para vender a prazo.',
+      );
+    }
+    if (currentBalance + totalAmount > creditLimit + 0.01) {
       throw new Error(
         `Limite de crédito excedido para ${creditCustomer.name}. `
         + `Saldo: ${currentBalance.toLocaleString('pt-AO')} AOA, limite: ${creditLimit.toLocaleString('pt-AO')} AOA.`,
@@ -2084,6 +2115,12 @@ async function processSale(client, saleData) {
       const due = new Date(today);
       due.setDate(due.getDate() + termsDays);
       saleDueDate = due.toISOString().slice(0, 10);
+      // Header was inserted with today's date before terms were known.
+      try {
+        await client.query(`UPDATE sales SET due_date = $1 WHERE id = $2`, [saleDueDate, saleId]);
+      } catch (e) {
+        console.warn('[TX] Sale due_date update skipped:', e.message);
+      }
     }
   } else if (paymentMethod === 'cash') {
     debitAccountCode = await resolveBranchCaixaGlAccountCode(client, {
@@ -2752,6 +2789,8 @@ async function processPayment(client, paymentData) {
 
   if (entityType === 'supplier' && entityId) {
     await syncSupplierBalanceFromOpenItems(client, entityId);
+  } else if (entityType === 'customer' && entityId) {
+    await syncClientBalanceFromOpenItems(client, entityId);
   }
 
   // Treasury GL: honour explicit caixa/bank source when provided; else infer from paymentMethod.
@@ -2857,6 +2896,7 @@ module.exports = {
   reduceSupplierInvoiceOpenItem,
   adoptPurchaseOrderOpenItemForInvoice,
   syncSupplierBalanceFromOpenItems,
+  syncClientBalanceFromOpenItems,
   isOpenItemDebitFlag,
   // Documents
   linkDocuments,

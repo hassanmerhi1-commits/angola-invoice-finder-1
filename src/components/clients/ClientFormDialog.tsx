@@ -411,6 +411,7 @@ export function ClientFormDialog({
                 onChange={(e) => setFormData({ ...formData, creditLimit: e.target.value })}
                 placeholder="0"
               />
+              <p className="text-[11px] text-muted-foreground">{t.clientsUi.creditLimitHint}</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="coa-client-terms">{t.clientsUi.paymentTermsDaysLabel}</Label>

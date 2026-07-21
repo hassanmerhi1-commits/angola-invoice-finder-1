@@ -38,6 +38,10 @@ module.exports = function(broadcastTable) {
       if (entityId) { query += ` AND p.entity_id = $${idx++}`; params.push(entityId); }
       if (branchId) { query += ` AND p.branch_id = $${idx++}`; params.push(branchId); }
       query += ' ORDER BY p.created_at DESC';
+      // Default cap keeps years of history from being shipped on every list load.
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 1000, 1), 10000);
+      query += ` LIMIT $${idx++}`;
+      params.push(limit);
       const result = await db.query(query, params);
       res.json(result.rows);
     } catch (error) {
@@ -60,6 +64,8 @@ module.exports = function(broadcastTable) {
       try { await broadcastTable('caixas'); } catch (_) { /* non-fatal */ }
       if (req.body.entityType === 'supplier') {
         await broadcastTable('suppliers');
+      } else if (req.body.entityType === 'customer') {
+        try { await broadcastTable('clients'); } catch (_) { /* non-fatal */ }
       }
       res.status(201).json(payment);
     } catch (error) {

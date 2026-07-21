@@ -1819,9 +1819,11 @@ let pool = null;
 if (USE_POSTGRES) {
   pgPool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    max: Number(process.env.PG_POOL_MAX || 10),
+    max: Number(process.env.PG_POOL_MAX || 20),
     idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 30000),
     connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 4000),
+    // Kill runaway queries before they hold pool slots hostage under load.
+    statement_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS || 30000),
   });
   pool = pgPool;
 } else {

@@ -115,6 +115,7 @@ export function InvoiceViewDialog({
     card: iv.paymentCard,
     transfer: iv.paymentTransfer,
     mixed: iv.paymentMixed,
+    credit: t.pos.credit,
   };
 
   const agtStatusLabel =

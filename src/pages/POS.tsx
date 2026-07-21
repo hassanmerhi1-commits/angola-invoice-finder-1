@@ -946,6 +946,7 @@ export default function POS() {
         defaultCustomerNif={selectedClient?.nif}
         defaultCustomerName={selectedClient?.name}
         registeredClientId={selectedClient?.id}
+        registeredClient={selectedClient}
         onCompleteSale={handleCompleteSale}
       />
 

@@ -5,6 +5,34 @@ const { getBearerToken } = require('./requireAdmin');
 const { touchSession, isSessionRevoked } = require('../lib/sessionLog');
 const { parsePermissionOverrides } = require('../lib/rolePermissions');
 
+// Short user-row cache: avoids one DB round-trip on EVERY authenticated request.
+// Deactivation / permission edits propagate within USER_CACHE_TTL_MS.
+const USER_CACHE_TTL_MS = 15_000;
+const userCache = new Map();
+
+function readCachedUser(userId) {
+  const hit = userCache.get(userId);
+  if (!hit) return null;
+  if (Date.now() - hit.at > USER_CACHE_TTL_MS) {
+    userCache.delete(userId);
+    return null;
+  }
+  return hit.user;
+}
+
+function writeCachedUser(userId, user) {
+  userCache.set(userId, { at: Date.now(), user });
+  if (userCache.size > 500) {
+    const oldest = userCache.keys().next().value;
+    if (oldest != null) userCache.delete(oldest);
+  }
+}
+
+function invalidateUserCache(userId) {
+  if (userId != null) userCache.delete(String(userId));
+  else userCache.clear();
+}
+
 /**
  * Requires a valid JWT and an active user row.
  */
@@ -16,16 +44,20 @@ async function requireAuth(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    const result = await db.query(
-      'SELECT id, email, name, role, branch_id, is_active, permissions FROM users WHERE id = $1',
-      [decoded.userId],
-    );
+    let user = readCachedUser(String(decoded.userId));
+    if (!user) {
+      const result = await db.query(
+        'SELECT id, email, name, role, branch_id, is_active, permissions FROM users WHERE id = $1',
+        [decoded.userId],
+      );
 
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'User not found' });
+      if (result.rows.length === 0) {
+        return res.status(401).json({ error: 'User not found' });
+      }
+      user = result.rows[0];
+      writeCachedUser(String(decoded.userId), user);
     }
 
-    const user = result.rows[0];
     const active = user.is_active === true || user.is_active === 1;
     if (!active) {
       return res.status(401).json({ error: 'User account is inactive' });
@@ -53,4 +85,4 @@ async function requireAuth(req, res, next) {
   }
 }
 
-module.exports = { requireAuth };
+module.exports = { requireAuth, invalidateUserCache };

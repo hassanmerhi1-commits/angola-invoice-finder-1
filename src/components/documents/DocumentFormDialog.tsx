@@ -89,6 +89,14 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
   const agtValidated = isAgtValidated(agtStatus);
 
+  // On-account (a prazo) sale invoice: needs a registered client with a positive
+  // credit limit; posts amountPaid=0 and the backend creates the AR open item.
+  const isCreditInvoice = documentType === 'fatura_venda' && paymentMethod === 'credit';
+  const selectedEntityClient = useMemo(
+    () => (config.entityType === 'customer' ? (clients.find((c) => c.id === entityId) ?? null) : null),
+    [config.entityType, clients, entityId],
+  );
+
   // Reset form when opening
   useEffect(() => {
     if (open) {
@@ -284,6 +292,18 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   // Totals
   const totals = useMemo(() => calculateDocumentTotals(lines), [lines]);
 
+  // Credit pre-checks for on-account invoices (backend enforces the same rules).
+  const creditClientLimit = Number(selectedEntityClient?.creditLimit) || 0;
+  const creditClientBalance = Number(selectedEntityClient?.currentBalance) || 0;
+  const creditMissingClient = isCreditInvoice && !selectedEntityClient;
+  const creditNoLimit = isCreditInvoice && !!selectedEntityClient && creditClientLimit <= 0;
+  const creditOverLimit =
+    isCreditInvoice
+    && !!selectedEntityClient
+    && creditClientLimit > 0
+    && creditClientBalance + totals.total > creditClientLimit + 0.01;
+  const creditInvoiceBlocked = creditMissingClient || creditNoLimit || creditOverLimit;
+
   // IVA summary grouped by rate (AGT requirement)
   const ivaSummary = useMemo(() => {
     const map = new Map<number, { base: number; iva: number; total: number }>();
@@ -362,8 +382,8 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       total: totals.total,
       currency: base?.currency ?? 'AOA',
       paymentMethod: (paymentMethod as ERPDocument['paymentMethod']) ?? base?.paymentMethod,
-      amountPaid: config.requiresPayment ? amountPaid : totals.total,
-      amountDue: config.requiresPayment ? totals.total - amountPaid : 0,
+      amountPaid: isCreditInvoice ? 0 : (config.requiresPayment ? amountPaid : totals.total),
+      amountDue: isCreditInvoice ? totals.total : (config.requiresPayment ? totals.total - amountPaid : 0),
       parentDocumentId: base?.parentDocumentId ?? prefillFrom?.id,
       parentDocumentNumber: base?.parentDocumentNumber ?? prefillFrom?.documentNumber,
       parentDocumentType: base?.parentDocumentType ?? prefillFrom?.documentType,
@@ -469,6 +489,24 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         // For confirmed fatura_venda, route through the backend transaction engine
         // so stock is decremented and journal entries (including branch Caixa) are created
         if (documentType === 'fatura_venda' && status === 'confirmed') {
+          if (isCreditInvoice) {
+            if (creditMissingClient) {
+              toast.error(t.checkoutUi.creditRequiresClient);
+              return;
+            }
+            if (creditNoLimit) {
+              toast.error(t.checkoutUi.creditNoLimit);
+              return;
+            }
+            if (creditOverLimit) {
+              toast.error(
+                t.checkoutUi.creditOverLimit
+                  .replace('{balance}', creditClientBalance.toLocaleString(locale))
+                  .replace('{limit}', creditClientLimit.toLocaleString(locale)),
+              );
+              return;
+            }
+          }
           // Stock availability is validated authoritatively by the backend transaction
           // engine, which is SKU- and warehouse-aware (sums the movement ledger across all
           // branch rows + legacy product.stock). We intentionally do NOT pre-check against
@@ -511,8 +549,8 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             discount: totals.totalDiscount,
             total: totals.total,
             paymentMethod: paymentMethod || 'cash',
-            amountPaid: config.requiresPayment ? amountPaid : totals.total,
-            change: config.requiresPayment ? Math.max(0, amountPaid - totals.total) : 0,
+            amountPaid: isCreditInvoice ? 0 : (config.requiresPayment ? amountPaid : totals.total),
+            change: config.requiresPayment && !isCreditInvoice ? Math.max(0, amountPaid - totals.total) : 0,
             customerNif: entityNif || undefined,
             customerName: (entityName || finalConsumerName) || undefined,
             clientId: entityId || undefined,
@@ -554,8 +592,10 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               lines,
               ...totals,
               paymentMethod: paymentMethod as any,
-              amountPaid: config.requiresPayment ? amountPaid : totals.total,
-              amountDue: Math.max(0, totals.total - (config.requiresPayment ? amountPaid : totals.total)),
+              amountPaid: isCreditInvoice ? 0 : (config.requiresPayment ? amountPaid : totals.total),
+              amountDue: isCreditInvoice
+                ? totals.total
+                : Math.max(0, totals.total - (config.requiresPayment ? amountPaid : totals.total)),
               dueDate,
               notes,
               status: 'confirmed',
@@ -983,6 +1023,39 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           </div>
 
           <div className={contentLocked ? 'pointer-events-none opacity-80 space-y-4' : 'space-y-4'}>
+            {documentType === 'fatura_venda' && (
+              <div className="grid grid-cols-4 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">{t.documentFormUi.paymentMethod}</Label>
+                  <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cash">{t.paymentsUi.methods.cash}</SelectItem>
+                      <SelectItem value="card">{t.paymentsUi.methods.card}</SelectItem>
+                      <SelectItem value="transfer">{t.paymentsUi.methods.transfer}</SelectItem>
+                      <SelectItem value="credit">{t.pos.credit}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {isCreditInvoice && (
+                  <div className="col-span-3 flex items-end pb-1">
+                    {creditMissingClient ? (
+                      <p className="text-xs text-destructive">{t.checkoutUi.creditRequiresClient}</p>
+                    ) : creditNoLimit ? (
+                      <p className="text-xs text-destructive">{t.checkoutUi.creditNoLimit}</p>
+                    ) : creditOverLimit ? (
+                      <p className="text-xs text-destructive">
+                        {t.checkoutUi.creditOverLimit
+                          .replace('{balance}', creditClientBalance.toLocaleString(locale))
+                          .replace('{limit}', creditClientLimit.toLocaleString(locale))}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">{t.checkoutUi.creditHint}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {config.requiresPayment && (
               <div className="grid grid-cols-4 gap-3">
                 <div className="space-y-1">
@@ -1154,10 +1227,10 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               <div className="border-t pt-1 flex justify-between font-bold text-sm">
                 <span>{t.documentFormUi.totalIncVat}</span><span className="font-mono">{fmt(totals.total)} Kz</span>
               </div>
-              {config.requiresPayment && (
+              {(config.requiresPayment || isCreditInvoice) && (
                 <>
-                  <div className="flex justify-between text-green-600"><span>{t.documentFormUi.paid}</span><span className="font-mono">{fmt(amountPaid)} Kz</span></div>
-                  <div className="flex justify-between text-destructive font-medium"><span>{t.documentFormUi.outstanding}</span><span className="font-mono">{fmt(totals.total - amountPaid)} Kz</span></div>
+                  <div className="flex justify-between text-green-600"><span>{t.documentFormUi.paid}</span><span className="font-mono">{fmt(isCreditInvoice ? 0 : amountPaid)} Kz</span></div>
+                  <div className="flex justify-between text-destructive font-medium"><span>{t.documentFormUi.outstanding}</span><span className="font-mono">{fmt(totals.total - (isCreditInvoice ? 0 : amountPaid))} Kz</span></div>
                 </>
               )}
             </div>

@@ -84,7 +84,7 @@ export interface ERPDocument {
   
   // Payment
   currency: string;
-  paymentMethod?: 'cash' | 'card' | 'transfer' | 'cheque' | 'mixed';
+  paymentMethod?: 'cash' | 'card' | 'transfer' | 'cheque' | 'mixed' | 'credit';
   amountPaid: number;
   amountDue: number;
   

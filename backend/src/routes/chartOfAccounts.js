@@ -11,17 +11,26 @@ module.exports = function(broadcastTable) {
   // Get all accounts with hierarchy
   router.get('/', async (req, res) => {
     try {
+      // Grouped join instead of a correlated COUNT(*) per row — the chart has
+      // hundreds of rows, so the old query re-scanned the table per account.
       const result = await db.query(`
         SELECT 
           coa.*,
           parent.name as parent_name,
           parent.code as parent_code,
-          (SELECT COUNT(*) FROM chart_of_accounts child WHERE child.parent_id = coa.id) as children_count
+          COALESCE(kids.children_count, 0) as children_count
         FROM chart_of_accounts coa
         LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
+        LEFT JOIN (
+          SELECT parent_id, COUNT(*) AS children_count
+          FROM chart_of_accounts
+          WHERE parent_id IS NOT NULL
+          GROUP BY parent_id
+        ) kids ON kids.parent_id = coa.id
         WHERE coa.is_active = true
         ORDER BY coa.code
       `);
+      res.set('Cache-Control', 'private, max-age=30');
       res.json(result.rows);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);

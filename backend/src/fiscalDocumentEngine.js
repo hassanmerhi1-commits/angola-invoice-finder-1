@@ -12,6 +12,7 @@ const {
   auditLog,
   validatePeriod,
   linkDocuments,
+  syncClientBalanceFromOpenItems,
 } = require('./transactionEngine');
 const { ensureCreditNoteRestoreStockColumn } = require('./lib/ensurePhaseSchema');
 const { resolveBranchFilterId } = require('./lib/branchIdMatch');
@@ -268,6 +269,9 @@ async function processCreditNote(client, data) {
   }
 
   await reduceCustomerInvoiceOpenItem(client, originalInvoiceId, total);
+  if (sale.client_id) {
+    await syncClientBalanceFromOpenItems(client, sale.client_id);
+  }
 
   await linkDocuments(
     client,
