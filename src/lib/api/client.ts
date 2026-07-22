@@ -20,6 +20,7 @@ import {
 } from '@/lib/offlineAuth';
 import { electronHttpJson, isElectronLanClient } from '@/lib/electronHttp';
 import { isNetworkErrorMessage } from '@/lib/networkErrors';
+import { isCreditPaymentMethod } from '@/lib/saleOfflineGuard';
 
 export type LoginErrorKind = 'credentials' | 'connection';
 
@@ -933,8 +934,28 @@ export const api = {
         ...data,
         clientRequestId: data.clientRequestId || newClientRequestId(),
       };
+      const isCreditSale = isCreditPaymentMethod(body.paymentMethod);
 
       const hasOutbox = typeof window !== 'undefined' && !!(window as any).electronAPI?.syncOutbox;
+
+      const finalizeCreatedSale = async (result: ApiResponse<any>) => {
+        if (result.data) {
+          const { clearPendingSaleMatches } = await import('@/lib/sync/pendingSalesCache');
+          clearPendingSaleMatches({
+            ...result.data,
+            clientRequestId: body.clientRequestId,
+            client_request_id: body.clientRequestId,
+          });
+          dispatchSalesChanged(String(body.branchId || data.branchId || ''));
+        }
+        return result;
+      };
+
+      // On-account (credit) sales must always hit the server — never queue offline stubs.
+      if (isCreditSale) {
+        const result = await apiFetch<any>('/sales', { method: 'POST', body: JSON.stringify(body) });
+        return finalizeCreatedSale(result);
+      }
 
       // Enqueue the sale into the offline outbox and return an immediate optimistic
       // receipt stub. Shared by the "known offline" short-circuit and the network-error fallback.
@@ -1007,23 +1028,28 @@ export const api = {
       }
 
       // LAN client with outbox: quick health probe so a dead server queues immediately
-      // instead of blocking checkout for the full HTTP timeout.
+      // instead of blocking checkout for the full HTTP timeout. Skip when the banner
+      // already confirmed the server is reachable (avoids false OFF- stubs while online).
       if (hasOutbox && !isOfflineModeActive() && typeof window !== 'undefined') {
         const elApi = (window as any).electronAPI;
         if (elApi?.isElectron) {
           const lanClient = await isElectronLanClient();
           if (lanClient && elApi?.network?.httpJson) {
-            const baseUrl = await getApiUrlAsync();
-            const authToken = getAuthToken();
-            const healthUrl = `${baseUrl}/api/health`;
-            const health = await electronHttpJson(healthUrl, {
-              method: 'GET',
-              headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
-              timeoutMs: 2500,
-            });
-            if (!health.ok) {
-              const queuedResult = await queueOfflineSale();
-              if (queuedResult) return queuedResult;
+            const { getLanServerReachable } = await import('@/lib/lanReachability');
+            const bannerReachable = getLanServerReachable();
+            if (bannerReachable !== true) {
+              const baseUrl = await getApiUrlAsync();
+              const authToken = getAuthToken();
+              const healthUrl = `${baseUrl}/api/health?lite=1`;
+              const health = await electronHttpJson(healthUrl, {
+                method: 'GET',
+                headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+                timeoutMs: 5000,
+              });
+              if (!health.ok) {
+                const queuedResult = await queueOfflineSale();
+                if (queuedResult) return queuedResult;
+              }
             }
           }
         }
@@ -1034,16 +1060,7 @@ export const api = {
         const queuedResult = await queueOfflineSale();
         if (queuedResult) return queuedResult;
       }
-      if (result.data) {
-        const { clearPendingSaleMatches } = await import('@/lib/sync/pendingSalesCache');
-        clearPendingSaleMatches({
-          ...result.data,
-          clientRequestId: body.clientRequestId,
-          client_request_id: body.clientRequestId,
-        });
-        dispatchSalesChanged(String(body.branchId || data.branchId || ''));
-      }
-      return result;
+      return finalizeCreatedSale(result);
     },
     generateInvoiceNumber: (
       branchCode: string,

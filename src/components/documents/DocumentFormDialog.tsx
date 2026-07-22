@@ -32,6 +32,7 @@ import { useAgtTransmit } from '@/hooks/useAgtTransmit';
 import { usePermissions } from '@/hooks/usePermissions';
 import { OPEN_ITEMS_CHANGED_EVENT, SALES_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import { newClientRequestId } from '@/lib/sync/offlineSales';
+import { isFiscalInvoiceNumber, isOfflineSaleStub } from '@/lib/saleOfflineGuard';
 import { Badge } from '@/components/ui/badge';
 import {
   fiscalInvoiceTypeLabel,
@@ -573,23 +574,36 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           const branchId = currentBranch?.id || '';
           const branchCode = currentBranch?.code || 'SEDE';
 
-          // Generate invoice number from backend
+          // Generate invoice number from backend (required for on-account / FT)
           let invoiceNumber = '';
-          try {
+          if (isCreditInvoice) {
             const numResult = await api.sales.generateInvoiceNumber(branchCode, {
-              paymentMethod: paymentMethod || 'cash',
+              paymentMethod: 'credit',
               total: totals.total,
               customerNif: entityNif || undefined,
             });
-            invoiceNumber = numResult.data?.invoiceNumber || `FT ${branchCode}/${Date.now()}`;
-          } catch {
-            invoiceNumber = `FT ${branchCode}/${Date.now()}`;
+            if (numResult.error || !numResult.data?.invoiceNumber) {
+              throw new Error(numResult.error || t.documentFormUi.saleServerFailed);
+            }
+            invoiceNumber = numResult.data.invoiceNumber;
+          } else {
+            try {
+              const numResult = await api.sales.generateInvoiceNumber(branchCode, {
+                paymentMethod: paymentMethod || 'cash',
+                total: totals.total,
+                customerNif: entityNif || undefined,
+              });
+              invoiceNumber = numResult.data?.invoiceNumber || `FT ${branchCode}/${Date.now()}`;
+            } catch {
+              invoiceNumber = `FT ${branchCode}/${Date.now()}`;
+            }
           }
 
           const clientRequestId = newClientRequestId();
 
           const saleResult = await api.sales.create({
             clientRequestId,
+            invoiceNumber,
             branchId,
             cashierId: user?.id || '',
             cashierName: user?.name || '',
@@ -621,6 +635,9 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           if (sale.duplicate) {
             throw new Error(t.documentFormUi.saleDuplicateRetry);
           }
+          if (isCreditInvoice && isOfflineSaleStub(sale)) {
+            throw new Error(t.documentFormUi.saleCreditRequiresServer);
+          }
           const saleId = String(sale.id || '');
           const saleInvoiceNumber = String(
             sale.invoice_number || sale.invoiceNumber || invoiceNumber,
@@ -632,7 +649,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             sale.payment_method || sale.paymentMethod || paymentMethod || '',
           ).toLowerCase();
 
-          if (isCreditInvoice && (saleInvoiceType === 'FS' || saleInvoiceType === 'FR' || salePaymentMethod !== 'credit')) {
+          if (isCreditInvoice && (!isFiscalInvoiceNumber(saleInvoiceNumber) || saleInvoiceType === 'FS' || saleInvoiceType === 'FR' || salePaymentMethod !== 'credit')) {
             throw new Error(t.documentFormUi.saleCreditMismatch.replace('{number}', saleInvoiceNumber));
           }
 

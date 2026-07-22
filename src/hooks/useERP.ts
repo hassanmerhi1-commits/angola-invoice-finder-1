@@ -26,6 +26,7 @@ import {
 } from '@/lib/productDedupe';
 import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 import { normalizeCustomerNif, resolveSaleDocumentType, resolveSaleInvoiceType } from '@/lib/fiscalInvoiceType';
+import { isCreditPaymentMethod, isFiscalInvoiceNumber, isOfflineSaleStub } from '@/lib/saleOfflineGuard';
 import {
   applySellingPriceHintsToProducts,
   fetchSellingPriceHints,
@@ -695,6 +696,7 @@ function mapSaleRow(s: any): Sale {
 }
 
 export function useSales(branchId?: string, deferInitialLoad = false) {
+  const { t } = useTranslation();
   const salesCacheKey = `sales:${branchId ?? 'all'}`;
   const [sales, setSales] = useState<Sale[]>(() => getCachedList<Sale[]>(salesCacheKey) ?? []);
 
@@ -831,6 +833,17 @@ export function useSales(branchId?: string, deferInitialLoad = false) {
       throw new Error(apiResult.error || t.erpUi.processSaleFailed);
     }
 
+    if (isCreditPaymentMethod(paymentMethod)) {
+      const row = apiResult.data as Record<string, unknown>;
+      const inv = String(row.invoice_number || row.invoiceNumber || '');
+      if (isOfflineSaleStub(row)) {
+        throw new Error(t.documentFormUi.saleCreditRequiresServer);
+      }
+      if (!isFiscalInvoiceNumber(inv)) {
+        throw new Error(t.documentFormUi.saleCreditMismatch.replace('{number}', inv || '?'));
+      }
+    }
+
     const sale: Sale = {
       id: apiResult.data.id,
       invoiceNumber: apiResult.data.invoice_number || apiResult.data.invoiceNumber || '',
@@ -877,7 +890,7 @@ export function useSales(branchId?: string, deferInitialLoad = false) {
     // POS refreshes sales in the background; awaiting here blocks checkout + auto-print.
     void refreshSales();
     return sale;
-  }, [refreshSales]);
+  }, [refreshSales, t]);
 
   return { sales, completeSale, refreshSales };
 }

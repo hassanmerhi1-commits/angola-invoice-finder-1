@@ -541,6 +541,20 @@ async function ensureBankAccountsTable(db) {
   }
 }
 
+async function ensureSalesClientIdColumn(db) {
+  if (db.engine !== 'postgres') return;
+  try {
+    await db.query(
+      'ALTER TABLE sales ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES clients(id)',
+    );
+    await db.query(
+      'CREATE INDEX IF NOT EXISTS idx_sales_client_id ON sales (client_id) WHERE client_id IS NOT NULL',
+    );
+  } catch (err) {
+    console.warn('[SCHEMA] sales.client_id:', err.message);
+  }
+}
+
 async function ensureJournalReferenceIdText(db) {
   if (db.engine !== 'postgres') return;
   try {
@@ -667,6 +681,7 @@ async function ensurePhaseSchema(db) {
     await ensureBranchPricingColumn(db);
     await ensureProductPriceOverrideColumn(db);
     await ensureSalesCreditPaymentMethod(db);
+    await ensureSalesClientIdColumn(db);
     await ensureCaixaTables(db);
     await ensureBankAccountsTable(db);
     try {
@@ -753,6 +768,7 @@ module.exports = {
   ensureBranchPricingColumn,
   ensureProductPriceOverrideColumn,
   ensureSalesCreditPaymentMethod,
+  ensureSalesClientIdColumn,
   ensureCaixaTables,
   ensureUserPermissionsColumn,
   ensureAuditLogActions,

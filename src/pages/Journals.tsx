@@ -26,23 +26,14 @@ import {
   type JournalDisplayLabels,
 } from '@/lib/journalEntryDisplay';
 import { JournalEntryDetailDialog } from '@/components/accounting/JournalEntryDetailDialog';
-import { cn } from '@/lib/utils';
+import { cn, generateId } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Account } from '@/types/accounting';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList, unwrapListPayload } from '@/lib/listCache';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
-import { useTrialBalance } from '@/hooks/useChartOfAccounts';
+import { useTrialBalance, useChartOfAccounts } from '@/hooks/useChartOfAccounts';
 import { useSales } from '@/hooks/useERP';
-
-const COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts';
-
-function loadAccounts(): Account[] {
-  try {
-    const raw = localStorage.getItem(COA_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
 
 // Journal entry row for list + detail
 const ENTRY_TYPES = [
@@ -205,6 +196,7 @@ interface NewEntryLine {
   id: string;
   accountCode: string;
   accountName: string;
+  accountBalance: number | null;
   description: string;
   debit: string;
   credit: string;
@@ -431,12 +423,13 @@ function JournalsCashiersPanel({ branchId }: { branchId?: string }) {
   );
 }
 
-function createEmptyLine(): NewEntryLine {
+function createEmptyLine(description = ''): NewEntryLine {
   return {
     id: `line_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
     accountCode: '',
     accountName: '',
-    description: '',
+    accountBalance: null,
+    description,
     debit: '',
     credit: '',
   };
@@ -486,6 +479,15 @@ export default function Journals() {
   }), [t]);
 
   const { entries, refetch } = useJournalEntries(listBranchId, journalLabels);
+  const { accounts: chartAccounts, refetch: refetchChartAccounts } = useChartOfAccounts();
+  const pickerAccounts = useMemo(
+    () => chartAccounts.filter(a => a.is_active && !a.is_header),
+    [chartAccounts],
+  );
+  const accountsByCode = useMemo(
+    () => new Map(pickerAccounts.map(a => [a.code, a])),
+    [pickerAccounts],
+  );
 
   const [activeTab, setActiveTab] = useState('diarios');
   const [searchTerm, setSearchTerm] = useState('');
@@ -500,17 +502,14 @@ export default function Journals() {
   const [newEntryDate, setNewEntryDate] = useState(new Date().toISOString().split('T')[0]);
   const [newEntryType, setNewEntryType] = useState('ajuste');
   const [newEntryLines, setNewEntryLines] = useState<NewEntryLine[]>([createEmptyLine(), createEmptyLine()]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountSearch, setAccountSearch] = useState('');
   const [activeLineId, setActiveLineId] = useState<string | null>(null);
 
-  // Load accounts for the picker
   useEffect(() => {
     if (newEntryOpen) {
-      const accts = loadAccounts().filter(a => a.is_active && !a.is_header);
-      setAccounts(accts);
+      void refetchChartAccounts({ force: true });
     }
-  }, [newEntryOpen]);
+  }, [newEntryOpen, refetchChartAccounts]);
 
   // Filter entries
   const filteredEntries = useMemo(() => {
@@ -561,12 +560,12 @@ export default function Journals() {
 
   // Filtered accounts for picker
   const filteredAccounts = useMemo(() => {
-    if (!accountSearch) return accounts.slice(0, 50);
+    if (!accountSearch) return pickerAccounts.slice(0, 50);
     const term = accountSearch.toLowerCase();
-    return accounts.filter(a => 
+    return pickerAccounts.filter(a =>
       a.code.toLowerCase().includes(term) || a.name.toLowerCase().includes(term)
     ).slice(0, 50);
-  }, [accounts, accountSearch]);
+  }, [pickerAccounts, accountSearch]);
 
   // Reset new entry form
   // When true, user edited the balancing (last) line amounts — stop overwriting credit/debit.
@@ -612,12 +611,23 @@ export default function Journals() {
   function updateLine(lineId: string, field: keyof NewEntryLine, value: string) {
     setNewEntryLines(prev => {
       const lastId = prev[prev.length - 1]?.id;
+      const firstId = prev[0]?.id;
       if (lineId === lastId && (field === 'debit' || field === 'credit')) {
         lastLineManualRef.current = true;
       }
-      const next = prev.map(l => {
+      let next = prev.map(l => {
         if (l.id !== lineId) return l;
         const updated = { ...l, [field]: value };
+        if (field === 'accountCode') {
+          const match = accountsByCode.get(value.trim());
+          if (match) {
+            updated.accountName = match.name;
+            updated.accountBalance = Number(match.current_balance) || 0;
+          } else if (!value.trim()) {
+            updated.accountName = '';
+            updated.accountBalance = null;
+          }
+        }
         // Same line is either debit or credit, not both
         if (field === 'debit' && parseFloat(value) > 0) {
           updated.credit = '';
@@ -626,6 +636,10 @@ export default function Journals() {
         }
         return updated;
       });
+      // First-line description is the entry title — keep all lines in sync.
+      if (field === 'description' && lineId === firstId) {
+        next = next.map(l => ({ ...l, description: value }));
+      }
       // Typing debit on line 1 auto-fills credit on the last line (still editable).
       if (field === 'debit' || field === 'credit') {
         return balanceLastLine(next);
@@ -637,7 +651,12 @@ export default function Journals() {
   function selectAccount(lineId: string, account: Account) {
     setNewEntryLines(prev => prev.map(l => {
       if (l.id !== lineId) return l;
-      return { ...l, accountCode: account.code, accountName: account.name };
+      return {
+        ...l,
+        accountCode: account.code,
+        accountName: account.name,
+        accountBalance: Number(account.current_balance) || 0,
+      };
     }));
     setActiveLineId(null);
     setAccountSearch('');
@@ -652,7 +671,7 @@ export default function Journals() {
   }
 
   function addLine() {
-    setNewEntryLines(prev => [...prev, createEmptyLine()]);
+    setNewEntryLines(prev => [...prev, createEmptyLine(String(prev[0]?.description || ''))]);
   }
 
   // Auto-fill last line to balance (button re-enables auto-fill after manual edits)
@@ -691,7 +710,7 @@ export default function Journals() {
         credit: parseFloat(line.credit) || 0,
       }));
       
-      const docId = `manual_${Date.now()}`;
+      const docId = generateId();
       // Branch is not shown on the form (accounts carry branch context). API still
       // requires a branchId — use current scope silently without a picker.
       const silentBranchId = currentBranch?.id || listBranchId || '';
@@ -997,7 +1016,7 @@ export default function Journals() {
                           />
                           {activeLineId === line.id && (
                             <div className="absolute top-full left-0 z-50 mt-1 w-96 max-h-56 overflow-y-auto rounded-md border bg-popover shadow-lg">
-                              <div className="sticky top-0 border-b bg-popover p-2">
+                              <div className="sticky top-0 border-b bg-popover p-2 space-y-2">
                                 <Input
                                   placeholder={t.journalsUi.searchAccountPlaceholder}
                                   value={accountSearch}
@@ -1005,6 +1024,11 @@ export default function Journals() {
                                   className="h-8"
                                   autoFocus
                                 />
+                                <div className="flex gap-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  <span className="w-16 shrink-0">{t.journalsUi.account}</span>
+                                  <span className="min-w-0 flex-1">{t.journalsUi.accountName}</span>
+                                  <span className="w-24 shrink-0 text-right">{t.chartOfAccountsUi.colBalance}</span>
+                                </div>
                               </div>
                               {filteredAccounts.length === 0 ? (
                                 <div className="px-3 py-4 text-center text-sm text-muted-foreground">
@@ -1023,8 +1047,8 @@ export default function Journals() {
                                   >
                                     <span className="w-16 shrink-0 font-mono text-primary">{acct.code}</span>
                                     <span className="min-w-0 flex-1 truncate">{acct.name}</span>
-                                    <span className="shrink-0 text-xs text-muted-foreground">
-                                      {(acct.current_balance || 0).toLocaleString(uiLocale)}
+                                    <span className="w-24 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                                      {Number(acct.current_balance || 0).toLocaleString(uiLocale)} Kz
                                     </span>
                                   </button>
                                 ))
@@ -1038,6 +1062,12 @@ export default function Journals() {
                             disabled
                             className="h-9 bg-muted/40"
                           />
+                          {line.accountCode && line.accountBalance != null && (
+                            <p className="mt-1 text-xs font-medium text-primary tabular-nums">
+                              {t.journalsUi.accountCurrentBalance
+                                .replace('{amount}', Number(line.accountBalance).toLocaleString(uiLocale))}
+                            </p>
+                          )}
                         </td>
                         <td className="px-2 py-2 align-top">
                           <Input

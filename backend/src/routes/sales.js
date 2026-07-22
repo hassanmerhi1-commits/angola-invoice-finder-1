@@ -82,6 +82,12 @@ module.exports = function(broadcastTable) {
   router.post('/', requirePermission('pos_access', 'invoice_create'), async (req, res) => {
     let client = await db.pool.connect();
     let attempt = 0;
+    const isCredit = String(req.body?.paymentMethod || req.body?.payment_method || '').toLowerCase() === 'credit';
+    if (isCredit && db.engine === 'postgres') {
+      const { ensureSalesCreditPaymentMethod, ensureSalesClientIdColumn } = require('../lib/ensurePhaseSchema');
+      await ensureSalesCreditPaymentMethod(db);
+      await ensureSalesClientIdColumn(db);
+    }
     try {
       for (;;) {
         try {
@@ -103,7 +109,6 @@ module.exports = function(broadcastTable) {
           });
           await broadcastTable('sales');
           await broadcastTable('products');
-          const isCredit = String(req.body?.paymentMethod || req.body?.payment_method || '').toLowerCase() === 'credit';
           if (isCredit) {
             await broadcastTable('open_items');
             await broadcastTable('clients');
@@ -117,7 +122,6 @@ module.exports = function(broadcastTable) {
           });
         } catch (error) {
           await client.query('ROLLBACK');
-          const isCredit = String(req.body?.paymentMethod || req.body?.payment_method || '').toLowerCase() === 'credit';
           if (attempt === 0 && isCredit && isPaymentMethodConstraintError(error)) {
             console.warn('[SALES] credit constraint hit — auto-repairing schema and retrying once');
             const repaired = await repairCreditPaymentSchema();

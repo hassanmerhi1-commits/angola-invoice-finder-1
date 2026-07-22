@@ -37,6 +37,7 @@ const { normalizeSqlDate } = require('./lib/dateSql');
 const { resolveBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlAccount');
 const { resolveEntityAccountCode } = require('./lib/entityCoaAccounts');
 const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
+const { runInSavepoint, runOptionalInSavepoint } = require('./lib/pgSavepoint');
 
 // ==================== PGC (novo com IVA) POSTING ACCOUNT CODES ====================
 // Angola Plano Geral de Contabilidade with no-dot numbering (main 11 → first sub 111).
@@ -1756,7 +1757,7 @@ async function syncSupplierBalanceFromOpenItems(client, supplierId) {
 async function syncClientBalanceFromOpenItems(client, clientId) {
   if (!clientId) return;
   const balanceCase = openItemDebitAmountCase(db, '');
-  try {
+  await runOptionalInSavepoint(client, 'client_balance_sync', async () => {
     await client.query(
       `UPDATE clients SET current_balance = COALESCE((
          SELECT SUM(${balanceCase})
@@ -1765,11 +1766,11 @@ async function syncClientBalanceFromOpenItems(client, clientId) {
        ), 0),
        updated_at = CURRENT_TIMESTAMP
        WHERE id = $1`,
-      [clientId]
+      [clientId],
     );
-  } catch (e) {
+  }, (e) => {
     console.warn('[TX ENGINE] Client balance sync skipped:', e.message);
-  }
+  });
 }
 
 async function reduceSupplierInvoiceOpenItem(client, { entityId, invoiceDocumentId, amount }) {
@@ -1871,13 +1872,6 @@ function normalizeSalePaymentMethod(saleData) {
 
 async function processSale(client, saleData) {
   const paymentMethod = normalizeSalePaymentMethod(saleData);
-  if (paymentMethod === 'credit') {
-    // transactionEngine lives in backend/src — use ./db (same as module top), not ../db.
-    if (db.engine === 'postgres') {
-      const { ensureSalesCreditPaymentMethod } = require('./lib/ensurePhaseSchema');
-      await ensureSalesCreditPaymentMethod(db);
-    }
-  }
   const {
     branchId, cashierId, cashierName, items,
     subtotal, taxAmount, discount, total,
@@ -1937,7 +1931,9 @@ async function processSale(client, saleData) {
 
     if (!pid && (item.productId || item.sku)) {
       try {
-        pid = await resolveStockProductId(client, item.productId || item.sku, branchId);
+        pid = await runInSavepoint(client, 'resolve_product', () =>
+          resolveStockProductId(client, item.productId || item.sku, branchId),
+        );
       } catch {
         pid = null;
       }
@@ -1981,26 +1977,32 @@ async function processSale(client, saleData) {
   const saleId = randomUUID();
   const saleHeaderParams = [saleId, invoiceNumber, branchId, cashierId, cashierName,
     subtotal, taxAmount, discount || 0, totalAmount,
-    paymentMethod, amountPaid, change, normalizedCustomerNif || null, customerName, clientReqId, saleDueDate, invoiceType];
+    paymentMethod, amountPaid, change, normalizedCustomerNif || null, customerName,
+    clientId, clientReqId, saleDueDate, invoiceType];
 
   const insertSaleHeader = async (number) => {
     const params = [...saleHeaderParams];
     params[1] = number;
+    const savepoint = 'sale_header_insert';
+    await client.query(`SAVEPOINT ${savepoint}`);
     try {
       await client.query(
         `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
           subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
-          customer_nif, customer_name, status, fiscal_status, client_request_id, due_date, invoice_type)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed','issued',$15,$16,$17)`,
+          customer_nif, customer_name, client_id, status, fiscal_status, client_request_id, due_date, invoice_type)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'completed','issued',$16,$17,$18)`,
         params,
       );
+      await client.query(`RELEASE SAVEPOINT ${savepoint}`);
       return null;
     } catch (insertErr) {
+      await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
       if (isUniqueViolation(insertErr) && /client_request_id/i.test(insertErr.message || '')) {
         const existing = await client.query(
           `SELECT * FROM sales WHERE client_request_id = $1 LIMIT 1`,
           [clientReqId],
         );
+        await client.query(`RELEASE SAVEPOINT ${savepoint}`);
         if (existing.rows.length > 0) {
           const row = existing.rows[0];
           return {
@@ -2014,16 +2016,21 @@ async function processSale(client, saleData) {
         }
       }
       if (isUniqueViolation(insertErr) && /invoice_number/i.test(insertErr.message || '')) {
+        await client.query(`RELEASE SAVEPOINT ${savepoint}`);
         throw insertErr;
       }
-      if (!/fiscal_status|invoice_type/i.test(insertErr.message || '')) throw insertErr;
+      if (!/fiscal_status|invoice_type/i.test(insertErr.message || '')) {
+        await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+        throw insertErr;
+      }
       await client.query(
         `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
           subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
-          customer_nif, customer_name, status, client_request_id, due_date)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed',$15,$16)`,
+          customer_nif, customer_name, client_id, status, client_request_id, due_date)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'completed',$16,$17)`,
         params.slice(0, -1),
       );
+      await client.query(`RELEASE SAVEPOINT ${savepoint}`);
       return null;
     }
   };
@@ -2059,12 +2066,6 @@ async function processSale(client, saleData) {
 
   if (headerInsert?.duplicate) {
     return headerInsert;
-  }
-
-  if (clientId) {
-    try {
-      await client.query(`UPDATE sales SET client_id = $1 WHERE id = $2`, [clientId, saleId]);
-    } catch (_) {}
   }
 
   // ── Step 3b: Insert sale_items + stock ──
@@ -2128,12 +2129,7 @@ async function processSale(client, saleData) {
       const due = new Date(today);
       due.setDate(due.getDate() + termsDays);
       saleDueDate = due.toISOString().slice(0, 10);
-      // Header was inserted with today's date before terms were known.
-      try {
-        await client.query(`UPDATE sales SET due_date = $1 WHERE id = $2`, [saleDueDate, saleId]);
-      } catch (e) {
-        console.warn('[TX] Sale due_date update skipped:', e.message);
-      }
+      await client.query(`UPDATE sales SET due_date = $1 WHERE id = $2`, [saleDueDate, saleId]);
     }
   } else if (paymentMethod === 'cash') {
     debitAccountCode = await resolveBranchCaixaGlAccountCode(client, {
@@ -2188,24 +2184,22 @@ async function processSale(client, saleData) {
       documentId: saleId, documentNumber: invoiceNumber, documentDate: today,
       dueDate: saleDueDate, originalAmount: totalAmount, isDebit: true, branchId,
     });
-    try {
-      await client.query(
-        `UPDATE clients SET current_balance = COALESCE(current_balance, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-        [totalAmount, clientId],
-      );
-    } catch (e) {
-      console.warn('[TX] Client balance update skipped:', e.message);
-    }
+    await client.query(
+      `UPDATE clients SET current_balance = COALESCE(current_balance, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+      [totalAmount, clientId],
+    );
   }
 
   // Tax summary (non-critical)
-  try {
+  await runOptionalInSavepoint(client, 'tax_summary', async () => {
     await client.query(
       `INSERT INTO tax_summaries (id, document_type, document_id, tax_code, tax_rate, total_base, total_tax, direction, period_year, period_month)
        VALUES ($1,'sale',$2,'IVA14',14.00,$3,$4,'output',$5,$6)`,
-      [randomUUID(), saleId, parseFloat(subtotal), parseFloat(taxAmount), new Date().getFullYear(), new Date().getMonth() + 1]
+      [randomUUID(), saleId, parseFloat(subtotal), parseFloat(taxAmount), new Date().getFullYear(), new Date().getMonth() + 1],
     );
-  } catch (e) { console.warn('[TX] Tax summary skipped:', e.message); }
+  }, (e) => {
+    console.warn('[TX] Tax summary skipped:', e.message);
+  });
 
   // ── Step 6: Audit ──
   const proformaNote = parentProformaNumber

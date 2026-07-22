@@ -261,8 +261,10 @@ async function assertPeriodOpenForJournal(client, entryDate) {
       );
     }
   } catch (e) {
-    if (String(e.message || '').includes('Período contabilístico')) throw e;
-    /* table may not exist on very old DBs — allow post */
+    const msg = String(e.message || '');
+    if (msg.includes('Período contabilístico')) throw e;
+    if (/does not exist|relation .* does not exist/i.test(msg)) return;
+    throw e;
   }
 }
 
@@ -301,6 +303,10 @@ async function createJournalEntry(client, params) {
   }
 
   const entryId = randomUUID();
+  const refRaw = normalizeOptionalId(referenceId);
+  // Older DBs still have reference_id as UUID — reject manual_* style ids from the UI.
+  const storedReferenceId =
+    refRaw && (normalizeUuid(refRaw) || !/^manual_/i.test(refRaw)) ? refRaw : entryId;
 
   await client.query(
     `INSERT INTO journal_entries 
@@ -308,7 +314,7 @@ async function createJournalEntry(client, params) {
       total_debit, total_credit, is_posted, posted_at, branch_id, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, CURRENT_TIMESTAMP, $9, $10)`,
     [entryId, entryNumber, entryDate || new Date().toISOString().split('T')[0],
-      description, referenceType, normalizeOptionalId(referenceId),
+      description, referenceType, storedReferenceId,
       // created_by is UUID in Postgres — never pass display names like "HUSSEIN MERHI"
       totalDebit, totalCredit, normalizeOptionalId(branchId), normalizeUuid(createdBy)]
   );
@@ -344,12 +350,13 @@ async function createJournalEntry(client, params) {
 
   console.log(`[ACCOUNTING] Created ${entryNumber} (${referenceType}): D=${totalDebit.toFixed(2)} C=${totalCredit.toFixed(2)}`);
 
-  try {
+  const { runOptionalInSavepoint } = require('./lib/pgSavepoint');
+  await runOptionalInSavepoint(client, 'journal_outbox', async () => {
     const { enqueueJournalPosted } = require('./sync/outbox');
     await enqueueJournalPosted(client, entryId, branchId);
-  } catch (_) {
-    /* outbox optional during bootstrap */
-  }
+  }, (e) => {
+    console.warn('[ACCOUNTING] Journal outbox skipped:', e.message);
+  });
 
   return { id: entryId, entry_number: entryNumber, total_debit: totalDebit, total_credit: totalCredit };
 }

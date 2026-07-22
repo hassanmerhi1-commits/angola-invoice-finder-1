@@ -56,6 +56,11 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { isAgtValidated } from '@/lib/agtStatus';
 import { VoidInvoiceDialog } from '@/components/invoice/VoidInvoiceDialog';
 
+function isProvisionalInvoiceNumber(documentNumber: string): boolean {
+  const n = String(documentNumber || '').trim().toUpperCase();
+  return n.startsWith('OFF-') || n.startsWith('LOCAL-');
+}
+
 /** Prefer canonical sales row over stale local erp_documents mirror (doc_* ids). */
 function resolveCanonicalSaleDocument(doc: ERPDocument, all: ERPDocument[]): ERPDocument {
   if (doc.documentType !== 'fatura_venda' || !doc.documentNumber) return doc;
@@ -769,15 +774,24 @@ export default function Invoices() {
                     <td className="px-3 py-1.5 font-mono">
                       <div>{doc.documentNumber}</div>
                       {doc.documentType === 'fatura_venda' && (
-                        <div className="text-[10px] text-muted-foreground font-sans mt-0.5">
-                          {doc.paymentMethod === 'credit'
-                            ? t.pos.credit
-                            : doc.paymentMethod === 'card'
-                              ? t.paymentsUi.methods.card
-                              : doc.paymentMethod === 'transfer'
-                                ? t.paymentsUi.methods.transfer
-                                : t.paymentsUi.methods.cash}
-                          {doc.amountDue > 0.01 ? ` · ${t.invoicesUi.due}` : doc.amountPaid >= doc.total - 0.01 ? ` · ${t.invoicesUi.paid}` : ''}
+                        <div className={cn(
+                          "text-[10px] font-sans mt-0.5",
+                          isProvisionalInvoiceNumber(doc.documentNumber)
+                            ? "text-amber-600 font-medium"
+                            : "text-muted-foreground",
+                        )}>
+                          {isProvisionalInvoiceNumber(doc.documentNumber)
+                            ? t.invoicesUi.pendingSyncOffline
+                            : <>
+                              {doc.paymentMethod === 'credit'
+                                ? t.pos.credit
+                                : doc.paymentMethod === 'card'
+                                  ? t.paymentsUi.methods.card
+                                  : doc.paymentMethod === 'transfer'
+                                    ? t.paymentsUi.methods.transfer
+                                    : t.paymentsUi.methods.cash}
+                              {doc.amountDue > 0.01 ? ` · ${t.invoicesUi.due}` : doc.amountPaid >= doc.total - 0.01 ? ` · ${t.invoicesUi.paid}` : ''}
+                            </>}
                         </div>
                       )}
                     </td>

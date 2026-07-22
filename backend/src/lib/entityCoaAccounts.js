@@ -4,6 +4,7 @@
  * never silently fall back to parent 311/321 when a leaf exists or can be created.
  */
 const { randomUUID } = require('crypto');
+const { runOptionalInSavepoint } = require('./pgSavepoint');
 
 const CLIENT_GROUP_CODE = '31';
 const CLIENT_PARENT_CODE = '311';
@@ -140,12 +141,16 @@ async function createEntityLeaf(client, opts) {
     ],
   );
 
-  await client.query(
-    `UPDATE chart_of_accounts SET children_count = (
-       SELECT COUNT(*) FROM chart_of_accounts WHERE parent_id = $1 AND is_active = true
-     ) WHERE id = $1`,
-    [parentId],
-  );
+  await runOptionalInSavepoint(client, 'coa_children_count', async () => {
+    await client.query(
+      `UPDATE chart_of_accounts SET children_count = (
+         SELECT COUNT(*) FROM chart_of_accounts WHERE parent_id = $1 AND is_active = true
+       ) WHERE id = $1`,
+      [parentId],
+    );
+  }, (e) => {
+    console.warn(`[${logTag}] children_count update skipped:`, e.message);
+  });
 
   // Re-read in case ON CONFLICT skipped insert
   const created = await findEntityLeafCode(client, groupCode, defaultParentCode, normalizedName, normalizedNif);
@@ -194,7 +199,7 @@ async function resolveEntityAccountCode(client, entityType, entityId, entityName
   let nif = null;
 
   if (entityId) {
-    try {
+    await runOptionalInSavepoint(client, 'load_entity', async () => {
       const table = isSupplier ? 'suppliers' : 'clients';
       const row = await client.query(
         `SELECT name, nif FROM ${table} WHERE id = $1 LIMIT 1`,
@@ -204,23 +209,19 @@ async function resolveEntityAccountCode(client, entityType, entityId, entityName
         name = cleanText(row.rows[0].name) || name;
         nif = normalizeNif(row.rows[0].nif);
       }
-    } catch (e) {
+    }, (e) => {
       console.warn(`[ENTITY COA] Failed to load ${entityType} ${entityId}:`, e.message);
-    }
+    });
   }
 
-  try {
-    const existing = await findEntityLeafCode(client, groupCode, parentCode, name, nif);
-    if (existing) return existing;
+  const existing = await findEntityLeafCode(client, groupCode, parentCode, name, nif);
+  if (existing) return existing;
 
-    if (name) {
-      const created = isSupplier
-        ? await ensureSupplierSubAccount(client, name, nif)
-        : await ensureClientSubAccount(client, name, nif);
-      if (created) return created;
-    }
-  } catch (e) {
-    console.warn(`[ENTITY COA] resolveEntityAccountCode failed:`, e.message);
+  if (name) {
+    const created = isSupplier
+      ? await ensureSupplierSubAccount(client, name, nif)
+      : await ensureClientSubAccount(client, name, nif);
+    if (created) return created;
   }
 
   return fallback;
