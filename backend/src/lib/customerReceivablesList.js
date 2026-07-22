@@ -80,6 +80,14 @@ async function listCustomerReceivables(db, options = {}) {
         AND ${OPEN_ITEM_IS_DEBIT_SQL}
       WHERE s.status = 'completed'
         AND COALESCE(s.total, 0) > 0.01
+        AND (
+          LOWER(COALESCE(s.payment_method, '')) = 'credit'
+          OR COALESCE(s.amount_paid, 0) < COALESCE(s.total, 0) - 0.01
+        )
+        AND (
+          TRIM(COALESCE(s.client_id, '')) != ''
+          OR TRIM(COALESCE(s.customer_nif, '')) != ''
+        )
         AND oi.id IS NULL`;
 
     const orphanParams = [];

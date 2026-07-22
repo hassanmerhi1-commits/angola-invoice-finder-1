@@ -766,7 +766,21 @@ export default function Invoices() {
                     onContextMenu={() => setSelectedDocId(doc.id)}
                   >
                     <td className={cn("px-3 py-1.5 font-medium", config.color)}>{config.prefix}</td>
-                    <td className="px-3 py-1.5 font-mono">{doc.documentNumber}</td>
+                    <td className="px-3 py-1.5 font-mono">
+                      <div>{doc.documentNumber}</div>
+                      {doc.documentType === 'fatura_venda' && (
+                        <div className="text-[10px] text-muted-foreground font-sans mt-0.5">
+                          {doc.paymentMethod === 'credit'
+                            ? t.pos.credit
+                            : doc.paymentMethod === 'card'
+                              ? t.paymentsUi.methods.card
+                              : doc.paymentMethod === 'transfer'
+                                ? t.paymentsUi.methods.transfer
+                                : t.paymentsUi.methods.cash}
+                          {doc.amountDue > 0.01 ? ` · ${t.invoicesUi.due}` : doc.amountPaid >= doc.total - 0.01 ? ` · ${t.invoicesUi.paid}` : ''}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-1.5 text-muted-foreground">{new Date(doc.issueDate).toLocaleDateString(locale)}</td>
                     <td className="px-3 py-1.5 text-muted-foreground">
                       {doc.dueDate ? new Date(doc.dueDate).toLocaleDateString(locale) : '—'}

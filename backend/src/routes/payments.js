@@ -80,6 +80,12 @@ module.exports = function(broadcastTable) {
   // READ: Customer receivables from open items
   router.get('/receivables-aging', async (req, res) => {
     try {
+      try {
+        const { backfillMissingCustomerOpenItems } = require('../customerBalanceRepair');
+        await backfillMissingCustomerOpenItems();
+      } catch (repairErr) {
+        console.warn('[PAYMENTS] customer receivables backfill skipped:', repairErr.message);
+      }
       const branchId = req.query.branchId ? String(req.query.branchId).trim() : '';
       const rows = await listCustomerReceivables(db, { branchId, sinceDays: null });
       res.json(rows);
@@ -109,6 +115,23 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       console.error('[PAYMENTS PAYABLES ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch payables' });
+    }
+  });
+
+  // POST: Backfill missing customer receivables from credit sales
+  router.post('/backfill-missing-receivables', requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const { backfillMissingCustomerOpenItems } = require('../customerBalanceRepair');
+      const backfill = await backfillMissingCustomerOpenItems();
+      const rows = await listCustomerReceivables(db, { sinceDays: null });
+      if (broadcastTable) {
+        await broadcastTable('clients');
+        await broadcastTable('open_items');
+      }
+      res.json({ backfill, receivablesCount: rows.length });
+    } catch (error) {
+      console.error('[PAYMENTS RECEIVABLES BACKFILL]', error);
+      res.status(500).json({ error: error.message || 'Failed to backfill receivables' });
     }
   });
 

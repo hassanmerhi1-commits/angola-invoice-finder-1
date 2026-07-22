@@ -1964,11 +1964,13 @@ async function processSale(client, saleData) {
     );
     if (dupClient.rows.length > 0) {
       const existing = await client.query(`SELECT * FROM sales WHERE id = $1`, [dupClient.rows[0].id]);
+      const row = existing.rows[0];
       return {
-        id: existing.rows[0].id,
-        invoice_number: existing.rows[0].invoice_number,
-        total: parseFloat(existing.rows[0].total),
-        status: existing.rows[0].status,
+        id: row.id,
+        invoice_number: row.invoice_number,
+        invoice_type: row.invoice_type,
+        total: parseFloat(row.total),
+        status: row.status,
         duplicate: true,
       };
     }
@@ -1992,6 +1994,7 @@ async function processSale(client, saleData) {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed','issued',$15,$16,$17)`,
         params,
       );
+      return null;
     } catch (insertErr) {
       if (isUniqueViolation(insertErr) && /client_request_id/i.test(insertErr.message || '')) {
         const existing = await client.query(
@@ -1999,11 +2002,13 @@ async function processSale(client, saleData) {
           [clientReqId],
         );
         if (existing.rows.length > 0) {
+          const row = existing.rows[0];
           return {
-            id: existing.rows[0].id,
-            invoice_number: existing.rows[0].invoice_number,
-            total: parseFloat(existing.rows[0].total),
-            status: existing.rows[0].status,
+            id: row.id,
+            invoice_number: row.invoice_number,
+            invoice_type: row.invoice_type,
+            total: parseFloat(row.total),
+            status: row.status,
             duplicate: true,
           };
         }
@@ -2019,11 +2024,13 @@ async function processSale(client, saleData) {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'completed',$15,$16)`,
         params.slice(0, -1),
       );
+      return null;
     }
   };
 
+  let headerInsert = null;
   try {
-    await insertSaleHeader(invoiceNumber);
+    headerInsert = await insertSaleHeader(invoiceNumber);
   } catch (insertErr) {
     if (isUniqueViolation(insertErr) && /client_request_id/i.test(insertErr.message || '')) {
       const existing = await client.query(
@@ -2031,21 +2038,27 @@ async function processSale(client, saleData) {
         [clientReqId],
       );
       if (existing.rows.length > 0) {
+        const row = existing.rows[0];
         return {
-          id: existing.rows[0].id,
-          invoice_number: existing.rows[0].invoice_number,
-          total: parseFloat(existing.rows[0].total),
-          status: existing.rows[0].status,
+          id: row.id,
+          invoice_number: row.invoice_number,
+          invoice_type: row.invoice_type,
+          total: parseFloat(row.total),
+          status: row.status,
           duplicate: true,
         };
       }
     }
     if (isUniqueViolation(insertErr) && /invoice_number/i.test(insertErr.message || '')) {
       invoiceNumber = await allocateUniqueSaleInvoiceNumber(client, seqKey, seqPrefix, seqScope);
-      await insertSaleHeader(invoiceNumber);
+      headerInsert = await insertSaleHeader(invoiceNumber);
     } else {
       throw insertErr;
     }
+  }
+
+  if (headerInsert?.duplicate) {
+    return headerInsert;
   }
 
   if (clientId) {

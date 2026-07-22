@@ -1,7 +1,7 @@
 // NEXOR ERP Document Creation/Edit Dialog
 // Used for all document types: Proforma, Fatura, Recibo, Pagamento, etc.
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,11 +12,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Plus, Trash2, Search, Save, Printer, X, Send } from 'lucide-react';
+import { Plus, Trash2, Search, Save, Printer, X, Send, Link2 } from 'lucide-react';
 import { printDocument } from '@/lib/documentPDF';
 import { cn } from '@/lib/utils';
 import { DocumentType, DocumentLine, ERPDocument, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
-import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocument } from '@/lib/documentStorage';
+import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocument, removeLocalDocumentsByNumber } from '@/lib/documentStorage';
 import { linkProformaAfterInvoiceConfirm } from '@/lib/linkProformaConversion';
 import { useProducts, useAuth, useClients, useSuppliers } from '@/hooks/useERP';
 import type { Client, Supplier, OpenItem } from '@/types/erp';
@@ -31,6 +31,14 @@ import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutabi
 import { useAgtTransmit } from '@/hooks/useAgtTransmit';
 import { usePermissions } from '@/hooks/usePermissions';
 import { OPEN_ITEMS_CHANGED_EVENT, SALES_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
+import { newClientRequestId } from '@/lib/sync/offlineSales';
+import { Badge } from '@/components/ui/badge';
+import {
+  fiscalInvoiceTypeLabel,
+  fsMaxAmount,
+  normalizeCustomerNif,
+  resolveSaleInvoiceType,
+} from '@/lib/fiscalInvoiceType';
 
 function defaultSalesDueDate(daysAhead = 15): string {
   const d = new Date();
@@ -66,6 +74,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const finalConsumerName = t.pos.finalConsumer;
   const fmt = (n: number, opts?: Intl.NumberFormatOptions) =>
     n.toLocaleString(locale, { minimumFractionDigits: opts?.minimumFractionDigits, maximumFractionDigits: opts?.maximumFractionDigits });
+  const savingRef = useRef(false);
 
   // Form state
   const [entityId, setEntityId] = useState<string>('');
@@ -185,6 +194,11 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     if (config.entityType === 'customer') {
       const client = entity as Client;
       setPriceLevel(normalizePriceLevel(client.defaultPriceLevel ?? 1));
+      const creditLimit = Number(client.creditLimit) || 0;
+      if (creditLimit > 0 && documentType === 'fatura_venda') {
+        setPaymentMethod('credit');
+        setAmountPaid(0);
+      }
       // Default the due date from the client's payment terms (days to pay). The
       // user can still override the date manually. Proformas use "valid until".
       const days = Math.trunc(Number(client.paymentTermsDays ?? 0));
@@ -303,6 +317,24 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     && creditClientLimit > 0
     && creditClientBalance + totals.total > creditClientLimit + 0.01;
   const creditInvoiceBlocked = creditMissingClient || creditNoLimit || creditOverLimit;
+  const creditLooksLikeCash =
+    documentType === 'fatura_venda'
+    && paymentMethod !== 'credit'
+    && !!entityId
+    && !!selectedEntityClient
+    && !!dueDate
+    && dueDate > new Date().toISOString().slice(0, 10);
+  const previewInvoiceType = useMemo(() => {
+    if (documentType !== 'fatura_venda') return null;
+    return resolveSaleInvoiceType({
+      customerNif: normalizeCustomerNif(entityNif),
+      paymentMethod,
+      total: totals.total,
+    });
+  }, [documentType, entityNif, paymentMethod, totals.total]);
+  const isNamedCustomer =
+    Boolean(entityName.trim())
+    && entityName.trim().toLowerCase() !== finalConsumerName.trim().toLowerCase();
 
   // IVA summary grouped by rate (AGT requirement)
   const ivaSummary = useMemo(() => {
@@ -416,6 +448,9 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   };
 
   const handleSave = async (status: 'draft' | 'confirmed') => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    try {
     if (!entityName && config.entityType === 'customer') {
       setEntityName(finalConsumerName);
     }
@@ -489,6 +524,10 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         // For confirmed fatura_venda, route through the backend transaction engine
         // so stock is decremented and journal entries (including branch Caixa) are created
         if (documentType === 'fatura_venda' && status === 'confirmed') {
+          if (isNamedCustomer && !entityId) {
+            toast.error(t.documentFormUi.selectClientFromList);
+            return;
+          }
           if (isCreditInvoice) {
             if (creditMissingClient) {
               toast.error(t.checkoutUi.creditRequiresClient);
@@ -506,6 +545,12 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               );
               return;
             }
+          } else if (creditLooksLikeCash) {
+            toast.error(t.documentFormUi.creditUseOnAccountPayment);
+            return;
+          } else if (previewInvoiceType === 'FS' && (isNamedCustomer || entityId)) {
+            toast.error(t.documentFormUi.fsNotOnAccount);
+            return;
           }
           // Stock availability is validated authoritatively by the backend transaction
           // engine, which is SKU- and warehouse-aware (sums the movement ledger across all
@@ -532,14 +577,20 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           // Generate invoice number from backend
           let invoiceNumber = '';
           try {
-            const numResult = await api.sales.generateInvoiceNumber(branchCode);
+            const numResult = await api.sales.generateInvoiceNumber(branchCode, {
+              paymentMethod: paymentMethod || 'cash',
+              total: totals.total,
+              customerNif: entityNif || undefined,
+            });
             invoiceNumber = numResult.data?.invoiceNumber || `FT ${branchCode}/${Date.now()}`;
           } catch {
             invoiceNumber = `FT ${branchCode}/${Date.now()}`;
           }
 
+          const clientRequestId = newClientRequestId();
+
           const saleResult = await api.sales.create({
-            invoiceNumber,
+            clientRequestId,
             branchId,
             cashierId: user?.id || '',
             cashierName: user?.name || '',
@@ -568,10 +619,25 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           }
 
           const sale = saleResult.data as Record<string, unknown>;
+          if (sale.duplicate) {
+            throw new Error(t.documentFormUi.saleDuplicateRetry);
+          }
           const saleId = String(sale.id || '');
           const saleInvoiceNumber = String(
             sale.invoice_number || sale.invoiceNumber || invoiceNumber,
           );
+          const saleInvoiceType = String(
+            sale.invoice_type || sale.invoiceType || previewInvoiceType || '',
+          ).toUpperCase();
+          const salePaymentMethod = String(
+            sale.payment_method || sale.paymentMethod || paymentMethod || '',
+          ).toLowerCase();
+
+          if (isCreditInvoice && (saleInvoiceType === 'FS' || saleInvoiceType === 'FR' || salePaymentMethod !== 'credit')) {
+            throw new Error(t.documentFormUi.saleCreditMismatch.replace('{number}', saleInvoiceNumber));
+          }
+
+          await removeLocalDocumentsByNumber('fatura_venda', saleInvoiceNumber, saleId);
 
           // Mirror in erp_documents using the same id as `sales` (required for AGT transmit)
           const doc = await createDocument(
@@ -609,11 +675,18 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             await linkProformaAfterInvoiceConfirm(prefillFrom, doc);
           }
           onSaved?.(doc);
-          toast.success(
-            t.documentFormUi.documentCreatedWithStockToast
-              .replace('{short}', typeUi.short)
-              .replace('{number}', doc.documentNumber),
-          );
+          if (isCreditInvoice && salePaymentMethod === 'credit' && saleInvoiceType === 'FT') {
+            toast.success(
+              t.documentFormUi.documentCreatedOnAccountToast
+                .replace('{number}', doc.documentNumber),
+            );
+          } else {
+            toast.success(
+              t.documentFormUi.documentCreatedWithStockToast
+                .replace('{short}', typeUi.short)
+                .replace('{number}', doc.documentNumber),
+            );
+          }
         } else if (isPaymentDocument && status === 'confirmed') {
           const paymentType = documentType === 'recibo' ? 'receipt' : 'payment';
           const entType = documentType === 'recibo' ? 'customer' : 'supplier';
@@ -745,6 +818,8 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         ? t.documentFormUi.fiscalLockedSaveError
         : (error.message || t.documentFormUi.saveError);
       toast.error(message);
+    } finally {
+      savingRef.current = false;
     }
   };
 
@@ -867,8 +942,15 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                 <Input
                   value={entityName}
                   onChange={(e) => {
-                    setEntityName(e.target.value);
-                    setEntityId('');
+                    const next = e.target.value;
+                    setEntityName(next);
+                    if (
+                      entityId
+                      && selectedEntityClient
+                      && next.trim().toLowerCase() !== selectedEntityClient.name.trim().toLowerCase()
+                    ) {
+                      setEntityId('');
+                    }
                     setEntityPickerOpen(true);
                   }}
                   onFocus={() => setEntityPickerOpen(true)}
@@ -898,6 +980,12 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                   </div>
                 )}
               </div>
+              {entityId && selectedEntityClient && (
+                <p className="text-[11px] text-emerald-700 flex items-center gap-1">
+                  <Link2 className="h-3 w-3 shrink-0" />
+                  {t.documentFormUi.clientLinked.replace('{name}', selectedEntityClient.name)}
+                </p>
+              )}
             </div>
             <div className="space-y-1">
               <Label className="text-xs">{t.documentFormUi.nif}</Label>
@@ -1055,6 +1143,11 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                   </div>
                 )}
               </div>
+            )}
+            {creditLooksLikeCash && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                {t.documentFormUi.creditDueDateNeedsOnAccount}
+              </p>
             )}
             {config.requiresPayment && (
               <div className="grid grid-cols-4 gap-3">
@@ -1232,6 +1325,23 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                   <div className="flex justify-between text-green-600"><span>{t.documentFormUi.paid}</span><span className="font-mono">{fmt(isCreditInvoice ? 0 : amountPaid)} Kz</span></div>
                   <div className="flex justify-between text-destructive font-medium"><span>{t.documentFormUi.outstanding}</span><span className="font-mono">{fmt(totals.total - (isCreditInvoice ? 0 : amountPaid))} Kz</span></div>
                 </>
+              )}
+              {previewInvoiceType && (
+                <div className="border-t pt-2 mt-2 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">{t.checkoutUi.documentType}</span>
+                    <Badge variant={previewInvoiceType === 'FT' && isCreditInvoice ? 'default' : 'outline'}>
+                      {fiscalInvoiceTypeLabel(previewInvoiceType, t.posUi)}
+                    </Badge>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-snug">
+                    {previewInvoiceType === 'FS'
+                      ? t.documentFormUi.fsPreviewWarning.replace('{max}', fsMaxAmount().toLocaleString(locale))
+                      : previewInvoiceType === 'FT' && isCreditInvoice
+                        ? t.documentFormUi.ftCreditPreview
+                        : t.checkoutUi.documentTypeHint.replace('{max}', fsMaxAmount().toLocaleString(locale))}
+                  </p>
+                </div>
               )}
             </div>
           </div>

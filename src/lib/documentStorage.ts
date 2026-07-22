@@ -8,7 +8,7 @@ import {
   DOCUMENT_TYPE_CONFIG,
   normalizeErpDocumentType,
 } from '@/types/documents';
-import { isElectronMode, dbGetAll, dbInsert, lsGet, lsSet } from '@/lib/dbHelper';
+import { isElectronMode, dbGetAll, dbInsert, dbDelete, lsGet, lsSet } from '@/lib/dbHelper';
 import { api } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
 import * as storage from '@/lib/storage';
@@ -73,6 +73,7 @@ function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
     branchId: sale.branchId || sale.branch_id || '',
     branchName,
     entityType: 'customer',
+    entityId: sale.clientId || sale.client_id || undefined,
     entityName: sale.customerName || sale.customer_name || 'Consumidor Final',
     entityNif: sale.customerNif || sale.customer_nif,
     lines,
@@ -97,6 +98,7 @@ function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
     fiscalLocked: String(sale.fiscalStatus || sale.fiscal_status || 'issued') !== 'draft',
     agtStatus: sale.agtStatus || sale.agt_status || undefined,
     agtCode: sale.agtCode || sale.agt_code || undefined,
+    invoiceType: sale.invoiceType || sale.invoice_type || undefined,
   };
 }
 
@@ -311,6 +313,38 @@ function assertDocumentMayBeSaved(existing: ERPDocument | undefined, doc: ERPDoc
     return { ...existing, dueDate: doc.dueDate, updatedAt: new Date().toISOString() };
   }
   throw new Error('FISCAL_IMMUTABLE');
+}
+
+/** Drop stale local mirrors for a fiscal sale number so list/detail follow the server row. */
+export async function removeLocalDocumentsByNumber(
+  type: DocumentType,
+  documentNumber: string,
+  keepId?: string,
+): Promise<void> {
+  const num = String(documentNumber || '').trim();
+  if (!num) return;
+  const keep = keepId ? String(keepId).trim() : '';
+
+  if (isElectronMode()) {
+    const rows = await dbGetAll<{ id: string; document_type?: string; document_number?: string }>('erp_documents');
+    for (const row of rows) {
+      const rowType = normalizeErpDocumentType(row.document_type || '');
+      const rowNum = String(row.document_number || '').trim();
+      if (rowType !== type || rowNum !== num) continue;
+      if (keep && String(row.id) === keep) continue;
+      await dbDelete('erp_documents', String(row.id));
+    }
+  }
+
+  const docs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
+  const next = docs.filter((d) => {
+    if (d.documentType !== type || d.documentNumber !== num) return true;
+    if (keep && d.id === keep) return true;
+    return false;
+  });
+  if (next.length !== docs.length) {
+    lsSet(STORAGE_KEY, next);
+  }
 }
 
 export async function saveDocument(doc: ERPDocument): Promise<ERPDocument> {

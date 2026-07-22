@@ -87,6 +87,13 @@ module.exports = function(broadcastTable) {
         try {
           await client.query('BEGIN');
           const sale = await processSale(client, req.body);
+          const pm = String(req.body?.paymentMethod || req.body?.payment_method || '').toLowerCase();
+          console.log(
+            `[SALES CREATE] ${sale.invoice_number || sale.invoiceNumber || '?'} `
+            + `payment=${pm || 'cash'} type=${sale.invoice_type || sale.invoiceType || '?'} `
+            + `client=${String(req.body?.clientId || req.body?.client_id || '').slice(0, 8) || 'none'} `
+            + `paid=${req.body?.amountPaid ?? req.body?.amount_paid ?? '?'}`,
+          );
           await commitSaleCreation(client, sale, req.body);
           // Fiscal signing reads PKCS#12 from disk — defer so POS checkout is not blocked.
           setImmediate(() => {
@@ -96,7 +103,18 @@ module.exports = function(broadcastTable) {
           });
           await broadcastTable('sales');
           await broadcastTable('products');
-          return res.status(201).json({ ...sale, items: req.body.items, saft_hash: null });
+          const isCredit = String(req.body?.paymentMethod || req.body?.payment_method || '').toLowerCase() === 'credit';
+          if (isCredit) {
+            await broadcastTable('open_items');
+            await broadcastTable('clients');
+            await broadcastTable('journal_entries');
+          }
+          return res.status(201).json({
+            ...sale,
+            items: req.body.items,
+            saft_hash: null,
+            duplicate: !!sale.duplicate,
+          });
         } catch (error) {
           await client.query('ROLLBACK');
           const isCredit = String(req.body?.paymentMethod || req.body?.payment_method || '').toLowerCase() === 'credit';
@@ -126,6 +144,51 @@ module.exports = function(broadcastTable) {
       res.status(status).json({ error: errorMessage });
     } finally {
       client.release();
+    }
+  });
+
+  // Support / diagnostics — lookup one sale by invoice number (includes open item + journal hints)
+  router.get('/by-number/:invoiceNumber', async (req, res) => {
+    try {
+      const num = decodeURIComponent(String(req.params.invoiceNumber || '').trim());
+      if (!num) return res.status(400).json({ error: 'invoiceNumber required' });
+      const saleRes = await db.query(
+        'SELECT * FROM sales WHERE invoice_number = $1 LIMIT 1',
+        [num],
+      );
+      const sale = saleRes.rows[0];
+      if (!sale) return res.status(404).json({ error: 'Sale not found' });
+
+      const [oiRes, jeRes] = await Promise.all([
+        db.query(
+          `SELECT id, entity_type, entity_id, remaining_amount, status, is_debit
+           FROM open_items WHERE document_id = $1 LIMIT 5`,
+          [sale.id],
+        ),
+        db.query(
+          `SELECT je.id, je.description, je.created_at
+           FROM journal_entries je
+           WHERE je.reference_type = 'sale' AND je.reference_id = $1
+           ORDER BY je.created_at LIMIT 5`,
+          [sale.id],
+        ),
+      ]);
+
+      res.json({
+        sale,
+        openItems: oiRes.rows || [],
+        journalEntries: jeRes.rows || [],
+        diagnosis: {
+          isOnAccount: String(sale.payment_method || '').toLowerCase() === 'credit',
+          isFinalConsumerFs: String(sale.invoice_type || '').toUpperCase() === 'FS',
+          hasReceivableOpenItem: (oiRes.rows || []).some(
+            (r) => r.entity_type === 'customer' && r.is_debit && r.status !== 'cleared',
+          ),
+        },
+      });
+    } catch (error) {
+      console.error('[SALES by-number]', error);
+      res.status(500).json({ error: 'Failed to lookup sale' });
     }
   });
 
