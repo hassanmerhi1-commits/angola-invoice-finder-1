@@ -1741,6 +1741,28 @@ export const api = {
     get: (id: string) => {
       return apiFetch<any>(`/journal-entries/${encodeURIComponent(id)}`);
     },
+    update: (id: string, data: {
+      description: string;
+      entryDate?: string;
+      lines: Array<{
+        accountCode: string;
+        accountName?: string;
+        description?: string;
+        debit?: number;
+        credit?: number;
+      }>;
+    }) => {
+      return apiFetch<any>(`/journal-entries/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      });
+    },
+    reverse: (id: string, data?: { entryDate?: string; createdBy?: string }) => {
+      return apiFetch<{ success: boolean; reverseEntryId?: string; alreadyReversed?: boolean }>(
+        `/journal-entries/${encodeURIComponent(id)}/reverse`,
+        { method: 'POST', body: JSON.stringify(data || {}) },
+      );
+    },
     getByReference: (type: string, id: string) => {
       return apiFetch<any[]>(
         `/journal-entries/reference/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,

@@ -6,6 +6,7 @@ const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
 const { parseListPagination, parseTruthyQuery } = require('../lib/listPagination');
 const { requirePermission } = require('../middleware/requirePermission');
 const { reverseJournalEntry } = require('../lib/purchaseInvoicePosting');
+const { updateJournalEntry } = require('../accounting');
 const { auditErpSafe } = require('../lib/erpAudit');
 
 const ENTRY_HEADER_SELECT = `
@@ -135,6 +136,68 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       console.error('[JOURNAL ENTRIES ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch journal entries' });
+    }
+  });
+
+  /** Edit manual/adjustment journal in place (keeps entry number). */
+  router.put('/:id', requirePermission('accounting_create', 'accounting_journal'), async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+      const body = req.body || {};
+      const lines = Array.isArray(body.lines) ? body.lines : body.journalLines;
+      if (!Array.isArray(lines) || lines.length < 2) {
+        return res.status(400).json({ error: 'At least 2 journal lines are required' });
+      }
+      const description = String(body.description || '').trim();
+      if (!description) {
+        return res.status(400).json({ error: 'Description is required' });
+      }
+
+      await client.query('BEGIN');
+      const result = await updateJournalEntry(client, req.params.id, {
+        description,
+        lines: lines.map((l) => ({
+          accountCode: l.accountCode || l.account_code,
+          description: l.description,
+          debit: Number(l.debit) || 0,
+          credit: Number(l.credit) || 0,
+        })),
+        entryDate: body.entryDate || body.entry_date || body.date || null,
+        createdBy: req.user?.id || body.createdBy || null,
+      });
+      await client.query('COMMIT');
+
+      if (broadcastTable) {
+        await broadcastTable('journal_entries');
+        await broadcastTable('chart_of_accounts');
+      }
+      auditErpSafe(req, {
+        table: 'journal_entries',
+        id: req.params.id,
+        action: 'update',
+        description: `Diário atualizado: ${result.entry_number || req.params.id}`,
+        newValues: {
+          entryNumber: result.entry_number,
+          totalDebit: result.total_debit,
+          totalCredit: result.total_credit,
+        },
+      });
+
+      const fresh = await db.query(`${ENTRY_HEADER_SELECT} WHERE je.id = $1`, [req.params.id]);
+      const entry = fresh.rows[0];
+      if (entry) {
+        entry.lines = await loadJournalLines(req.params.id);
+        entry.context = await enrichJournalEntryContext(db, entry);
+      }
+      res.json(entry || result);
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+      console.error('[JOURNAL ENTRIES update]', error);
+      const msg = error.message || 'Failed to update journal entry';
+      const status = /cannot edit|not found|not balanced|required|período/i.test(msg) ? 400 : 500;
+      res.status(status).json({ error: msg });
+    } finally {
+      client.release();
     }
   });
 

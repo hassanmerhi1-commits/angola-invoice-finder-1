@@ -29,7 +29,13 @@ async function commitSaleCreation(client, sale, body) {
       [idemKey, sale.id],
     );
   }
-  await enqueueSaleCreated(client, sale.id, body.branchId, idemKey);
+  // Outbox must not abort a completed sale transaction.
+  const { runOptionalInSavepoint } = require('../lib/pgSavepoint');
+  await runOptionalInSavepoint(client, 'sale_outbox', async () => {
+    await enqueueSaleCreated(client, sale.id, body.branchId, idemKey);
+  }, (e) => {
+    console.warn('[SALES] outbox enqueue skipped:', e.message);
+  });
   await client.query('COMMIT');
   return sale;
 }
@@ -81,6 +87,8 @@ module.exports = function(broadcastTable) {
   // POS cashiers (pos_access) and back-office invoicing (invoice_create) may create sales.
   router.post('/', requirePermission('pos_access', 'invoice_create'), async (req, res) => {
     let client = await db.pool.connect();
+    const { trackFirstSqlError } = require('../lib/trackFirstSqlError');
+    trackFirstSqlError(client);
     let attempt = 0;
     const isCredit = String(req.body?.paymentMethod || req.body?.payment_method || '').toLowerCase() === 'credit';
     if (isCredit && db.engine === 'postgres') {
@@ -121,28 +129,38 @@ module.exports = function(broadcastTable) {
             duplicate: !!sale.duplicate,
           });
         } catch (error) {
-          await client.query('ROLLBACK');
+          try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
           if (attempt === 0 && isCredit && isPaymentMethodConstraintError(error)) {
             console.warn('[SALES] credit constraint hit — auto-repairing schema and retrying once');
             const repaired = await repairCreditPaymentSchema();
             if (!repaired) throw error;
             attempt += 1;
+            // Fresh client after schema repair — previous may be poisoned.
+            try { client.release(); } catch (_) { /* ignore */ }
+            client = await db.pool.connect();
+            trackFirstSqlError(client);
             continue;
           }
           throw error;
         }
       }
     } catch (error) {
+      const first = typeof client.getFirstSqlError === 'function' ? client.getFirstSqlError() : null;
       console.error('[SALES ERROR]', error);
-      const raw = error.message || 'Failed to create sale';
+      if (first && first !== error) console.error('[SALES FIRST SQL]', first.message);
+      const raw = (first && /current transaction is aborted/i.test(String(error.message || ''))
+        ? first.message
+        : error.message) || 'Failed to create sale';
       const errorMessage = /chk_products_stock_nonneg/i.test(raw)
         ? 'Stock insuficiente para concluir a venda. Verifique o inventário nesta filial.'
-        : isPaymentMethodConstraintError(error)
+        : isPaymentMethodConstraintError(error) || isPaymentMethodConstraintError(first)
           ? 'Não foi possível registar venda a prazo: a base de dados do servidor ainda não permite pagamento "credit". Reinicie o contentor backend ou execute: docker compose exec backend node scripts/ensure-server-schema.js'
+        : /column .*client_id.*does not exist/i.test(raw)
+          ? 'Esquema desatualizado: falta sales.client_id. Atualize o backend do servidor (sync-nexor-backend) e reinicie o NEXOR.'
         : raw;
       const status = /stock insuficiente/i.test(errorMessage)
         ? 409
-        : isPaymentMethodConstraintError(error)
+        : isPaymentMethodConstraintError(error) || isPaymentMethodConstraintError(first)
           ? 503
           : 500;
       res.status(status).json({ error: errorMessage });

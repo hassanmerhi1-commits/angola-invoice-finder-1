@@ -361,8 +361,151 @@ async function createJournalEntry(client, params) {
   return { id: entryId, entry_number: entryNumber, total_debit: totalDebit, total_credit: totalCredit };
 }
 
+/** Manual / adjustment journals may be edited in place. System docs must be reversed instead. */
+const EDITABLE_JOURNAL_REFERENCE_TYPES = new Set([
+  'adjustment',
+  'ajuste',
+  'manual',
+  'journal',
+  'je',
+]);
+
+function isEditableJournalReferenceType(referenceType) {
+  const t = String(referenceType || '').trim().toLowerCase();
+  return !t || EDITABLE_JOURNAL_REFERENCE_TYPES.has(t);
+}
+
+/**
+ * Replace lines + header on an existing manual journal entry.
+ * Rolls COA balances back for old lines, then applies the new lines.
+ * Keeps the same entry_number / id for audit continuity.
+ */
+async function updateJournalEntry(client, entryId, params) {
+  const { description, lines, entryDate, createdBy } = params;
+
+  if (!entryId) throw new Error('Journal entry id is required');
+  if (!lines || lines.length === 0) {
+    throw new Error('Journal entry must have at least one line');
+  }
+  if (!description) {
+    throw new Error('Journal entry description is required');
+  }
+
+  const existing = await client.query(
+    `SELECT id, entry_number, entry_date, description, reference_type, branch_id, is_posted
+     FROM journal_entries WHERE id = $1 FOR UPDATE`,
+    [entryId],
+  );
+  if (!existing.rows.length) {
+    throw new Error('Journal entry not found');
+  }
+  const entry = existing.rows[0];
+  if (String(entry.description || '').includes('[REVERSED]')) {
+    throw new Error('Cannot edit a reversed journal entry');
+  }
+  if (String(entry.reference_type || '') === 'journal_reversal') {
+    throw new Error('Cannot edit a reversal journal entry');
+  }
+  if (!isEditableJournalReferenceType(entry.reference_type)) {
+    throw new Error(
+      `Cannot edit ${entry.reference_type || 'system'} journal entries. Reverse them or correct the source document.`,
+    );
+  }
+
+  const newDate = entryDate || entry.entry_date || new Date().toISOString().split('T')[0];
+  await assertPeriodOpenForJournal(client, entry.entry_date);
+  await assertPeriodOpenForJournal(client, newDate);
+
+  const totalDebit = lines.reduce((sum, l) => sum + (Number(l.debit) || 0), 0);
+  const totalCredit = lines.reduce((sum, l) => sum + (Number(l.credit) || 0), 0);
+  if (Math.abs(totalDebit - totalCredit) > 0.01) {
+    throw new Error(
+      `Journal entry not balanced: Debit=${totalDebit.toFixed(2)}, Credit=${totalCredit.toFixed(2)}. `
+      + `Difference=${Math.abs(totalDebit - totalCredit).toFixed(2)}`,
+    );
+  }
+  if (totalDebit === 0 && totalCredit === 0) {
+    throw new Error('Journal entry cannot have zero total');
+  }
+
+  const oldLines = await client.query(
+    `SELECT account_id, debit_amount, credit_amount
+     FROM journal_entry_lines WHERE journal_entry_id = $1`,
+    [entryId],
+  );
+  for (const old of oldLines.rows) {
+    const balanceChange = -(Number(old.debit_amount) || 0) + (Number(old.credit_amount) || 0);
+    if (balanceChange !== 0) {
+      await client.query(
+        `UPDATE chart_of_accounts SET
+         current_balance = current_balance + $1,
+         updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2`,
+        [balanceChange, old.account_id],
+      );
+    }
+  }
+
+  await client.query(`DELETE FROM journal_entry_lines WHERE journal_entry_id = $1`, [entryId]);
+
+  await client.query(
+    `UPDATE journal_entries SET
+       entry_date = $1,
+       description = $2,
+       total_debit = $3,
+       total_credit = $4,
+       is_posted = true,
+       posted_at = COALESCE(posted_at, CURRENT_TIMESTAMP),
+       updated_at = CURRENT_TIMESTAMP
+     WHERE id = $5`,
+    [newDate, description, totalDebit, totalCredit, entryId],
+  );
+
+  for (const line of lines) {
+    const debit = Number(line.debit) || 0;
+    const credit = Number(line.credit) || 0;
+    if (debit === 0 && credit === 0) continue;
+
+    const account = await findAccountByCode(client, line.accountCode);
+    if (!account) {
+      throw new Error(`Conta contabilística não encontrada: ${line.accountCode}`);
+    }
+
+    await client.query(
+      `INSERT INTO journal_entry_lines
+       (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [randomUUID(), entryId, account.id, line.description || description, debit, credit],
+    );
+
+    const balanceChange = debit - credit;
+    await client.query(
+      `UPDATE chart_of_accounts SET
+       current_balance = current_balance + $1,
+       updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
+      [balanceChange, account.id],
+    );
+  }
+
+  console.log(
+    `[ACCOUNTING] Updated ${entry.entry_number} (${entry.reference_type}): D=${totalDebit.toFixed(2)} C=${totalCredit.toFixed(2)}`,
+  );
+
+  return {
+    id: entryId,
+    entry_number: entry.entry_number,
+    total_debit: totalDebit,
+    total_credit: totalCredit,
+    updated: true,
+    createdBy: normalizeUuid(createdBy),
+  };
+}
+
 module.exports = {
   createJournalEntry,
+  updateJournalEntry,
+  isEditableJournalReferenceType,
   findAccountByCode,
   generateSequenceNumber,
   peekSequenceNumber,

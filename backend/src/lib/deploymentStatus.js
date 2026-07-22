@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 /** Bump when SQL migrations change (match highest migration number). */
-const EXPECTED_SCHEMA_VERSION = 58;
+const EXPECTED_SCHEMA_VERSION = 59;
 
 function readAppVersion() {
   // Prefer package.json (real shipped code). NEXOR_APP_VERSION is only a deploy label

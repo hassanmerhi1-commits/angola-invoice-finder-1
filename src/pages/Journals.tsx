@@ -16,7 +16,7 @@ import { toast } from 'sonner';
 import {
   Plus, Search, Edit2, Trash2, RefreshCw, FileText,
   Calendar, Eye, Printer, Download, CheckCircle, XCircle,
-  Filter, ChevronLeft, ChevronRight, ExternalLink,
+  Filter, ChevronLeft, ChevronRight, ExternalLink, Undo2,
 } from 'lucide-react';
 import { mapAuditLogRow, type AuditLogRow } from '@/lib/auditLogDisplay';
 import {
@@ -75,6 +75,25 @@ function resolveEntryType(type: string) {
     ENTRY_TYPES.find((entry) => entry.value === type)
     || { value: type, labelKey: 'manual', color: 'text-muted-foreground' }
   );
+}
+
+const EDITABLE_JOURNAL_TYPES = new Set([
+  'adjustment', 'ajuste', 'manual', 'journal', 'je', '',
+]);
+
+function isEditableJournalEntry(entry: JournalDisplayEntry | null | undefined): boolean {
+  if (!entry) return false;
+  if (String(entry.description || '').includes('[REVERSED]')) return false;
+  const ref = String(entry.referenceType || entry.type || '').trim().toLowerCase();
+  if (ref === 'journal_reversal') return false;
+  return EDITABLE_JOURNAL_TYPES.has(ref);
+}
+
+function canReverseJournalEntry(entry: JournalDisplayEntry | null | undefined): boolean {
+  if (!entry) return false;
+  if (String(entry.description || '').includes('[REVERSED]')) return false;
+  const ref = String(entry.referenceType || entry.type || '').trim().toLowerCase();
+  return ref !== 'journal_reversal';
 }
 
 function useJournalEntries(branchId: string | undefined, labels: JournalDisplayLabels) {
@@ -497,8 +516,12 @@ export default function Journals() {
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [viewEntryOpen, setViewEntryOpen] = useState(false);
 
-  // New entry dialog state
+  // New / edit entry dialog state
   const [newEntryOpen, setNewEntryOpen] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editingEntryNumber, setEditingEntryNumber] = useState<string>('');
+  const [savingEntry, setSavingEntry] = useState(false);
+  const [reversingEntry, setReversingEntry] = useState(false);
   const [newEntryDate, setNewEntryDate] = useState(new Date().toISOString().split('T')[0]);
   const [newEntryType, setNewEntryType] = useState('ajuste');
   const [newEntryLines, setNewEntryLines] = useState<NewEntryLine[]>([createEmptyLine(), createEmptyLine()]);
@@ -587,6 +610,8 @@ export default function Journals() {
 
   function resetNewEntry() {
     lastLineManualRef.current = false;
+    setEditingEntryId(null);
+    setEditingEntryNumber('');
     setNewEntryDate(new Date().toISOString().split('T')[0]);
     setNewEntryType('ajuste');
     setNewEntryLines([createEmptyLine(), createEmptyLine()]);
@@ -606,6 +631,60 @@ export default function Journals() {
   function openNewEntry() {
     resetNewEntry();
     setNewEntryOpen(true);
+  }
+
+  async function openEditEntry(entry?: JournalDisplayEntry | null) {
+    const target = entry || selectedEntry;
+    if (!target) return;
+    if (!isEditableJournalEntry(target)) {
+      toast.error(t.journalsUi.cannotEditSystemEntry);
+      return;
+    }
+
+    lastLineManualRef.current = true;
+    setEditingEntryId(target.id);
+    setEditingEntryNumber(target.entryNumber || '');
+    setNewEntryDate(String(target.entryDate || '').slice(0, 10) || new Date().toISOString().split('T')[0]);
+    const typeRaw = String(target.referenceType || target.type || 'ajuste').toLowerCase();
+    setNewEntryType(
+      typeRaw === 'manual' ? 'manual'
+        : typeRaw === 'adjustment' || typeRaw === 'ajuste' ? 'ajuste'
+          : 'ajuste',
+    );
+    setAccountSearch('');
+    setActiveLineId(null);
+    setNewEntryOpen(true);
+
+    let lines = target.lines || [];
+    if (lines.length < 2) {
+      const res = await api.journalEntries.get(target.id);
+      if (res.error || !res.data) {
+        toast.error(res.error || t.journalsUi.entryLoadFailed);
+        setNewEntryOpen(false);
+        return;
+      }
+      const mapped = mapJournalEntryFromApi(res.data as Record<string, unknown>, journalLabels);
+      lines = mapped.lines || [];
+      if (mapped.entryDate) setNewEntryDate(String(mapped.entryDate).slice(0, 10));
+    }
+
+    const mappedLines: NewEntryLine[] = lines.map((line) => ({
+      id: generateId(),
+      accountCode: line.accountCode || '',
+      accountName: line.accountName || '',
+      accountBalance: accountsByCode.get(line.accountCode)?.current_balance != null
+        ? Number(accountsByCode.get(line.accountCode)!.current_balance) || 0
+        : null,
+      description: line.description || target.description || '',
+      debit: line.debit ? String(line.debit) : '',
+      credit: line.credit ? String(line.credit) : '',
+    }));
+    setNewEntryLines(
+      mappedLines.length >= 2
+        ? mappedLines
+        : [...mappedLines, ...Array.from({ length: 2 - mappedLines.length }, () => createEmptyLine())],
+    );
+    void refetchChartAccounts({ force: true });
   }
 
   function updateLine(lineId: string, field: keyof NewEntryLine, value: string) {
@@ -680,7 +759,7 @@ export default function Journals() {
     setNewEntryLines(prev => balanceLastLine(prev));
   }
 
-  // Save journal entry
+  // Save journal entry (create or update)
   async function saveNewEntry() {
     const entryTitle = entryTitleFromLines();
     if (!entryTitle) {
@@ -699,51 +778,106 @@ export default function Journals() {
       return;
     }
 
-    // Create journal entry via API
-    let createdEntry: any;
+    const lines = validLines.map((line) => ({
+      accountCode: line.accountCode,
+      accountName: line.accountName,
+      description: String(line.description || '').trim() || entryTitle,
+      debit: parseFloat(line.debit) || 0,
+      credit: parseFloat(line.credit) || 0,
+    }));
+
+    setSavingEntry(true);
     try {
-      const lines = validLines.map((line) => ({
-        accountCode: line.accountCode,
-        accountName: line.accountName,
-        description: String(line.description || '').trim() || entryTitle,
-        debit: parseFloat(line.debit) || 0,
-        credit: parseFloat(line.credit) || 0,
-      }));
-      
-      const docId = generateId();
-      // Branch is not shown on the form (accounts carry branch context). API still
-      // requires a branchId — use current scope silently without a picker.
-      const silentBranchId = currentBranch?.id || listBranchId || '';
-      const response = await api.transactions.process({
-        transactionType: 'adjustment',
-        documentId: docId,
-        documentNumber: `JE-${String(Date.now()).slice(-6)}`,
-        branchId: silentBranchId,
-        branchName: currentBranch?.name || '',
-        userId: user?.id || '',
-        userName: user?.name || 'Sistema',
-        date: newEntryDate,
-        description: entryTitle,
-        journalLines: lines,
-      });
-      
-      if (response.error || (response.data && response.data.success === false)) {
-        throw new Error(response.error || response.data?.errors?.join?.('; ') || 'Failed to post journal');
+      if (editingEntryId) {
+        const response = await api.journalEntries.update(editingEntryId, {
+          description: entryTitle,
+          entryDate: newEntryDate,
+          lines,
+        });
+        if (response.error || !response.data) {
+          throw new Error(response.error || 'Failed to update journal');
+        }
+        const number = response.data.entry_number || response.data.entryNumber || editingEntryNumber;
+        toast.success(t.journalsUi.entryUpdated.replace('{number}', number), {
+          description: t.journalsUi.entryCreatedDesc
+            .replace('{debit}', newEntryTotalDebit.toLocaleString(uiLocale))
+            .replace('{credit}', newEntryTotalCredit.toLocaleString(uiLocale)),
+        });
+      } else {
+        const docId = generateId();
+        const silentBranchId = currentBranch?.id || listBranchId || '';
+        const response = await api.transactions.process({
+          transactionType: 'adjustment',
+          documentId: docId,
+          documentNumber: `JE-${String(Date.now()).slice(-6)}`,
+          branchId: silentBranchId,
+          branchName: currentBranch?.name || '',
+          userId: user?.id || '',
+          userName: user?.name || 'Sistema',
+          date: newEntryDate,
+          description: entryTitle,
+          journalLines: lines,
+        });
+
+        if (response.error || (response.data && response.data.success === false)) {
+          throw new Error(response.error || response.data?.errors?.join?.('; ') || 'Failed to post journal');
+        }
+        const createdEntry = response.data || { entryNumber: `JE-${Date.now()}` };
+        toast.success(
+          t.journalsUi.entryCreated.replace(
+            '{number}',
+            createdEntry.entryNumber || createdEntry.entry_number || '',
+          ),
+          {
+            description: t.journalsUi.entryCreatedDesc
+              .replace('{debit}', newEntryTotalDebit.toLocaleString(uiLocale))
+              .replace('{credit}', newEntryTotalCredit.toLocaleString(uiLocale)),
+          },
+        );
       }
-      createdEntry = response.data || { entryNumber: `JE-${Date.now()}` };
+
+      setNewEntryOpen(false);
+      resetNewEntry();
+      await refetch();
+      void refetchChartAccounts({ force: true });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t.journalsUi.entryCreateFailed);
-      return;
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : (editingEntryId ? t.journalsUi.entryUpdateFailed : t.journalsUi.entryCreateFailed),
+      );
+    } finally {
+      setSavingEntry(false);
     }
+  }
 
-    toast.success(t.journalsUi.entryCreated.replace('{number}', createdEntry.entryNumber), {
-      description: t.journalsUi.entryCreatedDesc
-        .replace('{debit}', newEntryTotalDebit.toLocaleString(uiLocale))
-        .replace('{credit}', newEntryTotalCredit.toLocaleString(uiLocale)),
-    });
+  async function reverseSelectedEntry() {
+    if (!selectedEntry || !canReverseJournalEntry(selectedEntry)) return;
+    const number = selectedEntry.entryNumber || selectedEntry.id;
+    if (!window.confirm(t.journalsUi.reverseConfirm.replace('{number}', number))) return;
 
-    setNewEntryOpen(false);
-    await refetch();
+    setReversingEntry(true);
+    try {
+      const response = await api.journalEntries.reverse(selectedEntry.id, {
+        createdBy: user?.id || undefined,
+      });
+      if (response.error) throw new Error(response.error);
+      if (response.data?.alreadyReversed) {
+        toast.message(t.journalsUi.reverseAlreadyDone.replace('{number}', number));
+      } else {
+        toast.success(
+          t.journalsUi.reverseSuccess
+            .replace('{number}', number)
+            .replace('{reverse}', response.data?.reverseEntryId || ''),
+        );
+      }
+      await refetch();
+      void refetchChartAccounts({ force: true });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t.journalsUi.reverseFailed);
+    } finally {
+      setReversingEntry(false);
+    }
   }
 
   return (
@@ -756,6 +890,30 @@ export default function Journals() {
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedEntry}
           onClick={() => { setViewEntryOpen(true); }}>
           <Eye className="w-3 h-3" /> {t.common.view}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs gap-1"
+          disabled={!selectedEntry || !isEditableJournalEntry(selectedEntry)}
+          onClick={() => { void openEditEntry(selectedEntry); }}
+          title={
+            selectedEntry && !isEditableJournalEntry(selectedEntry)
+              ? t.journalsUi.cannotEditSystemEntry
+              : undefined
+          }
+        >
+          <Edit2 className="w-3 h-3" /> {t.common.edit}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs gap-1"
+          disabled={!selectedEntry || !canReverseJournalEntry(selectedEntry) || reversingEntry}
+          onClick={() => { void reverseSelectedEntry(); }}
+          title={t.journalsUi.reverseHint}
+        >
+          <Undo2 className="w-3 h-3" /> {t.journalsUi.reverseEntry}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
         {/* Date filters */}
@@ -903,17 +1061,23 @@ export default function Journals() {
         entryTypeColor={selectedEntry ? resolveEntryType(selectedEntry.type).color : undefined}
       />
 
-      {/* ============= NEW ENTRY DIALOG ============= */}
-      <Dialog open={newEntryOpen} onOpenChange={setNewEntryOpen}>
+      {/* ============= NEW / EDIT ENTRY DIALOG ============= */}
+      <Dialog open={newEntryOpen} onOpenChange={(open) => {
+        setNewEntryOpen(open);
+        if (!open) resetNewEntry();
+      }}>
         <DialogContent className="max-w-[96vw] w-[96vw] max-h-[94vh] h-[90vh] flex flex-col gap-0 p-0 overflow-hidden sm:rounded-xl">
           <DialogHeader className="shrink-0 space-y-1 border-b bg-muted/30 px-5 py-4 sm:px-6">
             <div className="flex flex-wrap items-start justify-between gap-3 pr-10">
               <div className="space-y-1">
                 <DialogTitle className="flex items-center gap-2 text-xl">
-                  <Plus className="h-5 w-5" /> {t.journalsUi.newManualEntry}
+                  {editingEntryId ? <Edit2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+                  {editingEntryId
+                    ? t.journalsUi.editManualEntry.replace('{number}', editingEntryNumber || '')
+                    : t.journalsUi.newManualEntry}
                 </DialogTitle>
                 <DialogDescription className="text-sm">
-                  {t.journalsUi.newManualEntryHint}
+                  {editingEntryId ? t.journalsUi.editManualEntryHint : t.journalsUi.newManualEntryHint}
                 </DialogDescription>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1139,16 +1303,17 @@ export default function Journals() {
           </div>
 
           <DialogFooter className="shrink-0 gap-2 border-t bg-muted/20 px-5 py-4 sm:px-6">
-            <Button variant="outline" size="lg" onClick={() => setNewEntryOpen(false)}>
+            <Button variant="outline" size="lg" onClick={() => setNewEntryOpen(false)} disabled={savingEntry}>
               {t.common.cancel}
             </Button>
             <Button
               size="lg"
-              onClick={saveNewEntry}
-              disabled={!isBalanced || newEntryTotalDebit === 0 || !entryTitleFromLines()}
+              onClick={() => { void saveNewEntry(); }}
+              disabled={savingEntry || !isBalanced || newEntryTotalDebit === 0 || !entryTitleFromLines()}
               className="gap-2 min-w-[160px]"
             >
-              <CheckCircle className="h-4 w-4" /> {t.journalsUi.postEntry}
+              <CheckCircle className="h-4 w-4" />
+              {editingEntryId ? t.journalsUi.saveEntry : t.journalsUi.postEntry}
             </Button>
           </DialogFooter>
         </DialogContent>
