@@ -472,7 +472,6 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       return;
     }
 
-    try {
       if (editDocument) {
         if (formReadOnly) {
           toast.error(t.documentFormUi.fiscalLockedSaveError);
