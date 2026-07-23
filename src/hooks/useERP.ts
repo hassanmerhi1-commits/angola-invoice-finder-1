@@ -96,6 +96,7 @@ function mapProduct(p: any): Product {
     price3: p.price3 ?? p.price_3,
     price4: p.price4 ?? p.price_4,
     priceOverride: !!(p.priceOverride ?? p.price_override),
+    vatOverride: !!(p.vatOverride ?? p.vat_override),
     cost: Number(p.cost) || 0,
     firstCost: Number(p.firstCost ?? p.first_cost ?? p.cost) || 0,
     lastCost: Number(p.lastCost ?? p.last_cost ?? p.cost) || 0,

@@ -13,7 +13,7 @@ const {
 } = require('../lib/sqlDialect');
 const productActive = (alias) => coalesceActiveNotZero(db, `${alias}.is_active`);
 const branchMainActive = (alias) => coalesceMainTruthy(db, `${alias}.is_main`);
-const { DEFAULT_VAT_RATE } = require('../taxDefaults');
+const { DEFAULT_VAT_RATE, normalizeTaxRate } = require('../taxDefaults');
 const { checkOptimisticLock } = require('../middleware/security');
 const { requirePermission } = require('../middleware/requirePermission');
 const { attachUserBranchScope, resolveListBranchId, normalizeRequestedBranchId } = require('../middleware/branchScope');
@@ -1827,13 +1827,44 @@ module.exports = function(broadcastTable) {
 
       if (skuKey) {
         if (taxRate != null && taxRate !== '') {
+          // Cascade tax to same-SKU rows that are not VAT-locked (vat_override).
+          const vatTrue = db.engine === 'postgres' ? 'true' : '1';
           await db.query(
             `UPDATE products
              SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP
              WHERE ${coalesceActiveNotZero(db, 'is_active')}
-               AND ${sqlMovementSkuKey('products')} = LOWER($2)`,
+               AND ${sqlMovementSkuKey('products')} = LOWER($2)
+               AND COALESCE(vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) != ${vatTrue}`,
             [Number(taxRate), canonicalSkuString(skuKey)],
           );
+        }
+        // Editing tax on a filial product without cascade → lock local VAT
+        if (taxRate != null && taxRate !== '' && !productIsHq) {
+          const prevTax = Number(existing.tax_rate);
+          const nextTax = Number(taxRate);
+          if (Number.isFinite(prevTax) && Number.isFinite(nextTax) && Math.abs(prevTax - nextTax) > 0.0001) {
+            try {
+              await db.query(
+                `UPDATE products
+                 SET vat_override = ${db.engine === 'postgres' ? 'true' : '1'},
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = $1`,
+                [id],
+              );
+            } catch (_) { /* column may be missing until migrate */ }
+          }
+        }
+        const vatOverrideBody = req.body?.vatOverride ?? req.body?.vat_override;
+        if (vatOverrideBody !== undefined && vatOverrideBody !== null && vatOverrideBody !== '') {
+          const flag = vatOverrideBody === true || vatOverrideBody === 'true' || vatOverrideBody === 1 || vatOverrideBody === '1';
+          try {
+            await db.query(
+              `UPDATE products
+               SET vat_override = $1, updated_at = CURRENT_TIMESTAMP
+               WHERE id = $2`,
+              [db.engine === 'postgres' ? flag : (flag ? 1 : 0), id],
+            );
+          } catch (_) { /* column may be missing until migrate */ }
         }
         if (price != null && price !== '') {
           // HQ/Sede: cascade to all non-override rows (canonical SKU, incl. -DUP- siblings).
@@ -1999,7 +2030,7 @@ module.exports = function(broadcastTable) {
                 cost,
                 stock,
                 String(p.unit || p.unidade || 'UN'),
-                Number(p.taxRate ?? p.iva) || DEFAULT_VAT_RATE,
+                normalizeTaxRate(p.taxRate ?? p.iva),
                 storedBranchId,
                 sanitizeUuid(p.supplierId),
                 p.supplierName || null,
@@ -2023,7 +2054,7 @@ module.exports = function(broadcastTable) {
                 cost,
                 stock,
                 String(p.unit || p.unidade || 'UN'),
-                Number(p.taxRate ?? p.iva) || DEFAULT_VAT_RATE,
+                normalizeTaxRate(p.taxRate ?? p.iva),
                 storedBranchId,
                 activeInt,
                 sanitizeUuid(p.supplierId),

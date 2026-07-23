@@ -62,6 +62,8 @@ const MIGRATION_FILES = [
   '055_bank_accounts.sql',
   '056_journal_reference_id_text.sql',
   '057_sales_client_id.sql',
+  '058_products_price_override.sql',
+  '059_products_vat_override.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */

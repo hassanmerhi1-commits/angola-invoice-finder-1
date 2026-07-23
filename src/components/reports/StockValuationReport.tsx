@@ -54,14 +54,20 @@ export default function StockValuationReport() {
     filteredProducts = filteredProducts.filter(p => p.stock > 0);
   }
 
-  // Add calculated values
-  const productsWithValues = filteredProducts.map(p => ({
-    ...p,
-    costValue: p.stock * p.cost,
-    saleValue: p.stock * p.price,
-    potentialProfit: p.stock * (p.price - p.cost),
-    margin: p.price > 0 ? ((p.price - p.cost) / p.price) * 100 : 0,
-  }));
+  // Add calculated values — prefer weighted average cost for inventory valuation
+  const productsWithValues = filteredProducts.map(p => {
+    const unitCost = (p.avgCost != null && Number.isFinite(Number(p.avgCost)))
+      ? Number(p.avgCost)
+      : Number(p.cost) || 0;
+    return {
+      ...p,
+      unitCost,
+      costValue: p.stock * unitCost,
+      saleValue: p.stock * p.price,
+      potentialProfit: p.stock * (p.price - unitCost),
+      margin: p.price > 0 ? ((p.price - unitCost) / p.price) * 100 : 0,
+    };
+  });
 
   // Sort
   productsWithValues.sort((a, b) => {
@@ -103,7 +109,7 @@ export default function StockValuationReport() {
     [t.common.product]: p.name,
     [t.stockValuationUi.category]: p.category,
     [t.stockValuationUi.stock]: p.stock,
-    [t.stockValuationUi.unitCost]: p.cost,
+    [t.stockValuationUi.unitCost]: p.unitCost,
     [t.stockValuationUi.unitPrice]: p.price,
     [t.stockValuationUi.costValue]: p.costValue,
     [t.stockValuationUi.saleValue]: p.saleValue,
@@ -293,7 +299,7 @@ export default function StockValuationReport() {
                       {product.stock} {product.unit}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
-                      {formatMoney(product.cost)} {t.common.currency}
+                      {formatMoney(product.unitCost)} {t.common.currency}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
                       {formatMoney(product.price)} {t.common.currency}

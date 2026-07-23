@@ -34,6 +34,8 @@ export interface Product {
   price4?: number;     // Price 4
   /** When true, HQ/Sede price cascade skips this branch row. */
   priceOverride?: boolean;
+  /** When true, HQ/Sede tax_rate cascade skips this branch row. */
+  vatOverride?: boolean;
   cost: number;
   firstCost: number;
   lastCost: number;

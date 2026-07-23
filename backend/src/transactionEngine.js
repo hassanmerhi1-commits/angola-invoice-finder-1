@@ -639,6 +639,27 @@ async function processStockAdjustment(client, data) {
     if (normalizedDirection === 'IN' && unitCost > 0) {
       await applyWeightedAverageCostAfterIn(client, resolvedProductId, qty, unitCost);
     }
+
+    // Optional VAT update on stock IN (Stock Entry can edit product IVA).
+    if (normalizedDirection === 'IN' && line.taxRate != null && line.taxRate !== '') {
+      const { normalizeTaxRate, taxCodeForRate } = require('./taxDefaults');
+      const rate = normalizeTaxRate(line.taxRate, Number.NaN);
+      if (Number.isFinite(rate) && rate >= 0) {
+        const code = taxCodeForRate(rate);
+        await client.query(
+          `UPDATE products SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          [rate, resolvedProductId],
+        );
+        try {
+          await client.query(
+            `UPDATE products SET tax_code = $1 WHERE id = $2`,
+            [code, resolvedProductId],
+          );
+        } catch (_) {
+          /* tax_code column may be missing on older DBs */
+        }
+      }
+    }
   }
 
   totalValue = Math.round(totalValue * 100) / 100;
@@ -1021,7 +1042,7 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
         parseFloat(src.price) || 0,
         unitCost,
         src.unit || 'UN',
-        parseFloat(src.tax_rate) || require('./taxDefaults').DEFAULT_VAT_RATE,
+        require('./taxDefaults').normalizeTaxRate(src.tax_rate),
         storedBranchId,
       ],
     );
@@ -2083,21 +2104,25 @@ async function processSale(client, saleData) {
     );
 
     if (pid) {
-      // Stock deduction via recordStockMovement (atomic, FOR UPDATE locked)
+      // COGS unit cost (prefer weighted average)
+      const costResult = await client.query('SELECT cost, avg_cost FROM products WHERE id = $1', [pid]);
+      let unitCost = 0;
+      if (costResult.rows.length > 0) {
+        const row = costResult.rows[0];
+        if (row.avg_cost != null && row.avg_cost !== '' && Number.isFinite(Number(row.avg_cost))) {
+          unitCost = Number(row.avg_cost);
+        } else {
+          unitCost = Number(row.cost) || 0;
+        }
+        totalCOGS += unitCost * item.quantity;
+      }
+
       await recordStockMovement(client, {
         productId: pid, warehouseId: branchId,
-        movementType: 'OUT', quantity: item.quantity, unitCost: item.costAtSale || 0,
+        movementType: 'OUT', quantity: item.quantity, unitCost,
         referenceType: 'sale', referenceId: saleId,
         referenceNumber: invoiceNumber, createdBy: cashierId,
       });
-
-      // COGS
-      const costResult = await client.query('SELECT cost, avg_cost FROM products WHERE id = $1', [pid]);
-      if (costResult.rows.length > 0) {
-        const row = costResult.rows[0];
-        const unitCost = parseFloat(row.avg_cost) || parseFloat(row.cost) || 0;
-        totalCOGS += unitCost * item.quantity;
-      }
     }
   }
 
@@ -2383,21 +2408,17 @@ async function processPurchaseReceive(client, orderId, receivedQuantities, recei
 
     const oldCost = parseFloat(productResult.rows[0].cost) || 0;
 
-    // UPDATE PRODUCT COST — freight is capitalized into unit cost
-    await client.query(
-      'UPDATE products SET cost = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [newUnitCost, resolvedProductId]
-    );
-    console.log(`[TX ENGINE] ✅ Product ${productResult.rows[0].name} cost: ${oldCost} → ${newUnitCost}`);
-
-    // STOCK MOVEMENT with landed cost (freight included)
+    // STOCK MOVEMENT with landed cost (freight included), then true WAC
     await recordStockMovement(client, {
       productId: resolvedProductId, warehouseId: order.branch_id,
       movementType: 'IN', quantity: receivedQty, unitCost: newUnitCost,
       referenceType: 'purchase', referenceId: orderId,
       referenceNumber: order.order_number, createdBy: receivedBy,
     });
-    console.log(`[TX ENGINE] ✅ Stock movement: ${receivedQty} units @ ${newUnitCost}`);
+    if (newUnitCost > 0) {
+      await applyWeightedAverageCostAfterIn(client, resolvedProductId, receivedQty, newUnitCost);
+    }
+    console.log(`[TX ENGINE] ✅ Stock + WAC: ${receivedQty} @ ${newUnitCost} (prev cost ${oldCost})`);
   }
 
   // Update PO status
@@ -2926,4 +2947,5 @@ module.exports = {
   getEntityAccountCode,
   ensureInventoryShrinkageAccount,
   applyPurchaseSupplierToProducts,
+  applyWeightedAverageCostAfterIn,
 };

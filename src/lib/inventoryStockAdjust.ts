@@ -28,6 +28,8 @@ export interface StockAdjustLine {
   name: string;
   quantity: number;
   unitCost?: number;
+  /** When set on IN, updates product tax_rate. */
+  taxRate?: number;
 }
 
 export interface ApplyStockAdjustParams {
@@ -88,6 +90,7 @@ export async function applyStockAdjustmentLines(
       productId: l.productId,
       quantity: l.quantity,
       unitCost: l.unitCost ?? 0,
+      taxRate: l.taxRate,
     })),
     landingCosts: landingCosts && landingCosts > 0 ? landingCosts : undefined,
     freightSourceAccount: freightSourceAccount?.trim() || undefined,

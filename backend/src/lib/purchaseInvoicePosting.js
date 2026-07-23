@@ -7,6 +7,7 @@ const { fromRow } = require('../purchaseInvoiceMappers');
 const {
   recordStockMovement,
   applyPurchaseSupplierToProducts,
+  applyWeightedAverageCostAfterIn,
   createOpenItem,
   syncSupplierBalanceFromOpenItems,
   auditLog,
@@ -38,6 +39,51 @@ function journalSignature(lines) {
       .map(normalizeJournalLineForSig)
       .sort((a, b) => `${a.c}:${a.d}:${a.cr}`.localeCompare(`${b.c}:${b.d}:${b.cr}`)),
   );
+}
+
+/** Allocate landing costs into per-product landed unit cost (unitPrice + freight share). */
+function buildLandedUnitCosts(lines, totalLandingCosts) {
+  const stockLines = (lines || []).filter(
+    (l) => l.productId && Number(l.totalQty || l.quantity || 0) > 0,
+  );
+  const allocations = new Map();
+  if (stockLines.length === 0) return allocations;
+
+  const normalized = stockLines.map((line) => {
+    const qty = Number(line.totalQty || line.quantity || 0);
+    const unitCost = roundMoney(line.unitPrice || 0);
+    const lineTotal = roundMoney(Number(line.total || 0) > 0 ? line.total : unitCost * qty);
+    return { line, qty, unitCost, lineTotal };
+  });
+
+  if (!(totalLandingCosts > 0)) {
+    for (const entry of normalized) {
+      allocations.set(entry.line.productId, entry.unitCost);
+    }
+    return allocations;
+  }
+
+  const totalProducts = roundMoney(
+    normalized.reduce((sum, entry) => sum + entry.lineTotal, 0),
+  );
+  if (totalProducts <= 0) {
+    for (const entry of normalized) {
+      allocations.set(entry.line.productId, entry.unitCost);
+    }
+    return allocations;
+  }
+
+  let allocatedFreight = 0;
+  normalized.forEach((entry, index) => {
+    const isLast = index === normalized.length - 1;
+    const freightShare = isLast
+      ? roundMoney(totalLandingCosts - allocatedFreight)
+      : roundMoney((entry.lineTotal / totalProducts) * totalLandingCosts);
+    allocatedFreight = roundMoney(allocatedFreight + freightShare);
+    const freightPerUnit = entry.qty > 0 ? roundMoney(freightShare / entry.qty) : 0;
+    allocations.set(entry.line.productId, roundMoney(entry.unitCost + freightPerUnit));
+  });
+  return allocations;
 }
 
 async function loadPostedJournalSignature(client, journalEntryId) {
@@ -280,23 +326,34 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
   result.journalEntryId = existing.journalEntryId;
 
   if (!result.stockMovementIds.length) {
+    const landing = landingCostsFromInvoice(inv);
+    const landedByProduct = buildLandedUnitCosts(lines, landing);
     for (let i = 0; i < lines.length; i += 1) {
       const line = lines[i];
       if (!line.productId || Number(line.totalQty || line.quantity || 0) <= 0) continue;
-      const stockSp = await withSavepoint(client, `pi_stock_${i}`, async () =>
-        recordStockMovement(client, {
+      const qty = Number(line.totalQty || line.quantity || 0);
+      const unitCost = Number(
+        landedByProduct.get(line.productId) ?? line.unitPrice ?? 0,
+      );
+      const stockSp = await withSavepoint(client, `pi_stock_${i}`, async () => {
+        const movement = await recordStockMovement(client, {
           productId: line.productId,
           warehouseId,
           movementType: 'IN',
-          quantity: Number(line.totalQty || line.quantity || 0),
-          unitCost: Number(line.unitPrice || 0),
+          quantity: qty,
+          unitCost,
           referenceType: 'purchase_invoice',
           referenceId: inv.id,
           referenceNumber: inv.invoiceNumber,
           notes: `Fatura de Compra ${inv.invoiceNumber} — ${inv.supplierName || ''}`.trim(),
           createdBy: inv.createdBy || inv.created_by || null,
-        }),
-      );
+        });
+        if (unitCost > 0) {
+          const resolvedId = movement.product_id || line.productId;
+          await applyWeightedAverageCostAfterIn(client, resolvedId, qty, unitCost);
+        }
+        return movement;
+      });
       if (stockSp.ok && stockSp.value?.id) {
         result.stockMovementIds.push(stockSp.value.id);
       } else {

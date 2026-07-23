@@ -236,6 +236,7 @@ export function ProductDetailDialog({
     category: '',
     unit: 'un',
     iva: DEFAULT_VAT_RATE,
+    vatOverride: false,
     tipo: 'INVENTARIO',
     fornecedorName: '',
     supplierId: '',
@@ -273,6 +274,7 @@ export function ProductDetailDialog({
         category: resolveProductCategoryName(src.category, activeCategories),
         unit: src.unit,
         iva: src.taxRate,
+        vatOverride: !!src.vatOverride,
         tipo: 'INVENTARIO',
         fornecedorName:
           src.supplierName ||
@@ -335,6 +337,7 @@ export function ProductDetailDialog({
         category: defaultProductCategoryName(activeCategories),
         unit: 'un',
         iva: DEFAULT_VAT_RATE,
+        vatOverride: false,
         tipo: 'INVENTARIO',
         fornecedorName: defaultSupplierName.trim() || supplierSelectOptions.find((s) => s.id === supplierId)?.name || '',
         supplierId,
@@ -565,6 +568,7 @@ export function ProductDetailDialog({
       preserveStock: isEdit,
       unit: formData.unit,
       taxRate: formData.iva,
+      vatOverride: formData.vatOverride,
       branchId: resolvedBranchId,
       supplierId: resolvedSupplierId,
       supplierName: resolvedSupplierName,
@@ -690,6 +694,17 @@ export function ProductDetailDialog({
                       {IVA_RATES.map(r => <SelectItem key={r} value={String(r)}>{r}%</SelectItem>)}
                     </SelectContent>
                   </Select>
+                </Row>
+                <Row label={t.productDetailUi.vatLock}>
+                  <div className="flex items-center gap-2 h-7">
+                    <Switch
+                      checked={!!formData.vatOverride}
+                      onCheckedChange={(v) => set('vatOverride', v)}
+                    />
+                    <span className="text-[11px] text-muted-foreground leading-tight">
+                      {t.productDetailUi.vatLockHint}
+                    </span>
+                  </div>
                 </Row>
                 <Row label={t.productDetailUi.type}>
                   <Select value={formData.tipo} onValueChange={v => set('tipo', v)}>

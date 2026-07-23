@@ -1003,6 +1003,7 @@ export default function Inventory() {
           name: item.name,
           quantity: item.quantity,
           unitCost: item.effectiveCost ?? item.cost,
+          taxRate: item.taxRate,
         })),
         warehouseId: targetWarehouseId,
         movementType: 'IN',

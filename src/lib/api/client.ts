@@ -437,7 +437,13 @@ function mapProductPayloadForElectron(data: any) {
     weighted_avg_cost: Number(data.avgCost ?? data.avg_cost ?? cost),
     stock: Number(data.stock ?? 0),
     unit: data.unit || 'UN',
-    tax_rate: Number(data.taxRate ?? data.tax_rate ?? DEFAULT_VAT_RATE),
+    tax_rate: (() => {
+      const raw = data.taxRate ?? data.tax_rate;
+      if (raw === null || raw === undefined || raw === '') return DEFAULT_VAT_RATE;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : DEFAULT_VAT_RATE;
+    })(),
+    vat_override: !!(data.vatOverride ?? data.vat_override),
     branch_id: data.branchId === '' ? null : (data.branchId ?? data.branch_id ?? null),
     supplier_id: data.supplierId === '' ? null : (data.supplierId ?? data.supplier_id ?? null),
     is_active: data.isActive ?? data.is_active ?? true,
@@ -2944,7 +2950,7 @@ export const api = {
       entryDate?: string;
       notes?: string;
       createdBy?: string;
-      lines: { productId: string; quantity: number; unitCost: number }[];
+      lines: { productId: string; quantity: number; unitCost: number; taxRate?: number }[];
       landingCosts?: number;
       freightSourceAccount?: string;
       freightSourceName?: string;

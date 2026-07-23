@@ -126,6 +126,38 @@ async function recordStockMovement(client, params) {
   return { id: movementId, product_id: productId, movement_type: movementType, quantity: qty };
 }
 
+async function applyWeightedAverageCostAfterIn(client, productId, quantityIn, unitCostIn) {
+  const qty = requirePositive(quantityIn, 'quantityIn');
+  const unit = Math.max(0, parseFloat(unitCostIn) || 0);
+  const prodResult = await client.query(
+    'SELECT stock, cost, sku FROM products WHERE id = $1 FOR UPDATE',
+    [productId],
+  );
+  if (prodResult.rows.length === 0) return;
+  const currentStock = parseFloat(prodResult.rows[0].stock) || 0;
+  const oldCost = parseFloat(prodResult.rows[0].cost) || 0;
+  const prevStock = Math.max(0, currentStock - qty);
+  const newCost =
+    currentStock > 0 ? (prevStock * oldCost + qty * unit) / currentStock : unit;
+  const nextAvg = Number(newCost.toFixed(4));
+  const nextLast = Number(unit.toFixed(4));
+  await client.query(
+    `UPDATE products
+     SET cost = $1, last_cost = $2, avg_cost = $1, updated_at = CURRENT_TIMESTAMP
+     WHERE id = $3`,
+    [nextAvg, nextLast, productId],
+  );
+  const skuKey = String(prodResult.rows[0]?.sku || '').trim();
+  if (skuKey) {
+    await client.query(
+      `UPDATE products
+       SET cost = $1, last_cost = $2, avg_cost = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE LOWER(TRIM(sku)) = LOWER($3) AND id <> $4 AND is_active = true`,
+      [nextAvg, nextLast, skuKey, productId],
+    );
+  }
+}
+
 async function findAccountByCode(client, code) {
   const result = await client.query('SELECT id, code, name FROM chart_of_accounts WHERE code = $1 AND is_active = true', [code]);
   return result.rows[0] || null;
@@ -298,18 +330,17 @@ async function processPurchaseReceive(client, pool, orderId, receivedQuantities,
     const resolvedProductId = productResult.rows[0].id;
     const oldCost = parseFloat(productResult.rows[0].cost) || 0;
 
-    // UPDATE PRODUCT COST — freight is capitalized into unit cost
-    await client.query('UPDATE products SET cost = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newUnitCost, resolvedProductId]);
-    console.log(`[TX ENGINE] ✅ Product ${productResult.rows[0].name} cost: ${oldCost} → ${newUnitCost}`);
-
-    // STOCK MOVEMENT with landed cost (freight included)
+    // STOCK MOVEMENT with landed cost, then weighted average (do not overwrite with last landed)
     await recordStockMovement(client, {
       productId: resolvedProductId, warehouseId: order.branch_id,
       movementType: 'IN', quantity: receivedQty, unitCost: newUnitCost,
       referenceType: 'purchase', referenceId: orderId,
       referenceNumber: order.order_number, createdBy: receivedBy,
     });
-    console.log(`[TX ENGINE] ✅ Stock movement: ${receivedQty} units @ ${newUnitCost}`);
+    if (newUnitCost > 0) {
+      await applyWeightedAverageCostAfterIn(client, resolvedProductId, receivedQty, newUnitCost);
+    }
+    console.log(`[TX ENGINE] ✅ Stock + WAC: ${receivedQty} @ ${newUnitCost} (prev cost ${oldCost})`);
   }
 
   // Update PO status

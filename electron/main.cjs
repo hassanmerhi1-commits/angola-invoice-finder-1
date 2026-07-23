@@ -1662,7 +1662,12 @@ function mapElectronProductRowToApiBody(data) {
     cost: Number(data.cost) || 0,
     stock: Number(data.stock) || 0,
     unit: data.unit || 'un',
-    taxRate: Number(data.tax_rate ?? data.taxRate) || 5,
+    taxRate: (() => {
+      const raw = data.tax_rate ?? data.taxRate;
+      if (raw === null || raw === undefined || raw === '') return 5;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : 5;
+    })(),
     branchId: branchRaw && branchRaw !== 'all' ? branchRaw : null,
     isActive: data.is_active !== 0 && data.is_active !== false && data.isActive !== false,
     supplierId: data.supplier_id ?? data.supplierId ?? null,

@@ -191,9 +191,16 @@ async function processCreditNote(client, data) {
         createdBy: issuedBy,
         notes: reasonDescription || `NC ${documentNumber}`,
       });
-      const costRes = await client.query('SELECT cost FROM products WHERE id = $1', [productId]);
+      const costRes = await client.query('SELECT cost, avg_cost FROM products WHERE id = $1', [productId]);
       if (costRes.rows.length) {
-        totalCOGS += Number(costRes.rows[0].cost || 0) * qty;
+        const row = costRes.rows[0];
+        let unitCost = 0;
+        if (row.avg_cost != null && row.avg_cost !== '' && Number.isFinite(Number(row.avg_cost))) {
+          unitCost = Number(row.avg_cost);
+        } else {
+          unitCost = Number(row.cost) || 0;
+        }
+        totalCOGS += unitCost * qty;
       }
     }
   }

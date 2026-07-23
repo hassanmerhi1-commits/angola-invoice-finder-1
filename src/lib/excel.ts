@@ -186,7 +186,7 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
                 'Quantidade': r[4] || 0,
                 'Unidade': r[5] || 'UN',
                 'Categoria': r[6] || '',
-                'IVA %': r[7] || DEFAULT_VAT_RATE,
+                'IVA %': r[7] != null && r[7] !== '' ? r[7] : DEFAULT_VAT_RATE,
               };
             } else {
               // 2 columns: code + description only
@@ -216,7 +216,12 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
               quantidade: parseInt(getMappedValue('quantidade') || 0),
               unidade: String(getMappedValue('unidade') || 'UN'),
               categoria: String(getMappedValue('categoria') || ''),
-              iva: parseFloat(getMappedValue('iva') || String(DEFAULT_VAT_RATE)),
+              iva: (() => {
+                const raw = getMappedValue('iva');
+                if (raw === null || raw === undefined || raw === '') return DEFAULT_VAT_RATE;
+                const n = parseFloat(String(raw));
+                return Number.isFinite(n) ? n : DEFAULT_VAT_RATE;
+              })(),
               codigoBarras: getMappedValue('codigoBarras') || '',
               fornecedor: getMappedValue('fornecedor') || '',
               qtdMinima: parseInt(getMappedValue('qtdMinima') || 0),
@@ -233,7 +238,12 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
             quantidade: parseInt(row['Quantidade'] || row['quantidade'] || row['Stock'] || row['Qty'] || row['QTD'] || 0),
             unidade: String(row['Unidade'] || row['unidade'] || row['Unit'] || row['UN'] || 'UN'),
             categoria: String(row['Categoria'] || row['categoria'] || row['Category'] || ''),
-            iva: parseFloat(row['IVA %'] || row['iva'] || row['IVA'] || row['Tax'] || String(DEFAULT_VAT_RATE)),
+            iva: (() => {
+              const raw = row['IVA %'] ?? row['iva'] ?? row['IVA'] ?? row['Tax'];
+              if (raw === null || raw === undefined || raw === '') return DEFAULT_VAT_RATE;
+              const n = parseFloat(String(raw));
+              return Number.isFinite(n) ? n : DEFAULT_VAT_RATE;
+            })(),
             codigoBarras: row['Código de Barras'] || row['codigo_barras'] || row['Barcode'] || row['EAN'] || '',
             fornecedor: row['Fornecedor'] || row['fornecedor'] || row['Supplier'] || '',
             qtdMinima: parseInt(row['Qtd Mínima'] || row['qtd_minima'] || row['Min Qty'] || 0),
