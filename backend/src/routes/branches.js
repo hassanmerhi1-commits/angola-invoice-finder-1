@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { branchesListSql } = require('../lib/sqlDialect');
 const { ensureBranchCaixaAccount, ensureAllBranchCaixaAccounts } = require('../lib/branchCaixaAccounts');
+const { requirePermission } = require('../middleware/requirePermission');
 const crypto = require('crypto');
 
 /** Clamp any incoming value to a valid selling price level (1-4), defaulting to 1. */
@@ -42,7 +43,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Create branch
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('admin_settings'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -100,7 +101,7 @@ module.exports = function(broadcastTable) {
   });
 
   /** Backfill Caixa GL (45x) accounts for branches missing one — safe to run after deploy. */
-  router.post('/ensure-caixa-accounts', async (req, res) => {
+  router.post('/ensure-caixa-accounts', requirePermission('admin_settings'), async (req, res) => {
     try {
       const result = await ensureAllBranchCaixaAccounts(db);
       if (result.created > 0) {
@@ -114,7 +115,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Update branch
-  router.put('/:id', async (req, res) => {
+  router.put('/:id', requirePermission('admin_settings'), async (req, res) => {
     try {
       const { id } = req.params;
       const { name, code, address, phone, isMain, priceLevel } = req.body;
@@ -162,7 +163,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Soft-delete branch (deactivate)
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', requirePermission('admin_settings'), async (req, res) => {
     try {
       const { id } = req.params;
       const existing = await db.query('SELECT id, is_main FROM branches WHERE id = $1', [id]);

@@ -4,6 +4,7 @@ import {
   getEffectivePermissions,
   type PermissionOverrides,
 } from '@/lib/permissions';
+import { useAuth } from '@/hooks/useERP';
 
 /** Read server-persisted permission overrides for a user from local caches. */
 function getStoredUserOverrides(userId: string): Partial<PermissionOverrides> | undefined {
@@ -103,104 +104,45 @@ export function useUserRoles() {
 }
 
 export function usePermissions(userId: string | undefined) {
+  // Prefer live auth session (JWT user) over parallel localStorage role maps.
+  const { user: authUser } = useAuth();
   const { getUserRole, userRoles } = useUserRoles();
 
-  // Helper to get user role from storage
-  const getStoredUserRole = (id: string): UserRole => {
-    // Check current user first
-    const currentUserStr = localStorage.getItem('kwanzaerp_current_user');
-    if (currentUserStr) {
-      try {
-        const currentUser = JSON.parse(currentUserStr);
-        if (currentUser?.id === id && currentUser?.role) {
-          return currentUser.role as UserRole;
-        }
-      } catch {
-        // Ignore
-      }
-    }
-    
-    // Check users list
-    const storedUsers = localStorage.getItem('kwanzaerp_users');
-    if (storedUsers) {
-      try {
-        const users = JSON.parse(storedUsers);
-        const user = users.find((u: any) => u.id === id);
-        if (user?.role) {
-          return user.role as UserRole;
-        }
-      } catch {
-        // Ignore
-      }
-    }
-    
-    return 'viewer';
-  };
+  const sessionUser =
+    authUser && (!userId || authUser.id === userId) ? authUser : null;
+
+  const role = useMemo((): UserRole => {
+    if (sessionUser?.role) return sessionUser.role as UserRole;
+    if (!userId) return 'viewer';
+    const assignment = userRoles.find((ur) => ur.userId === userId);
+    if (assignment?.role) return assignment.role;
+    return getUserRole(userId);
+  }, [sessionUser, userId, userRoles, getUserRole]);
+
+  const overrides = useMemo(() => {
+    if (sessionUser?.permissionOverrides) return sessionUser.permissionOverrides;
+    if (!userId) return undefined;
+    return getStoredUserOverrides(userId);
+  }, [sessionUser, userId]);
 
   const userPermissions = useMemo(() => {
-    if (!userId) return [];
-
-    const assignment = userRoles.find(ur => ur.userId === userId);
-    const role: UserRole = assignment?.role || getStoredUserRole(userId);
-    // Effective permissions = role defaults + server-persisted per-user grant/revoke overrides.
-    const overrides = getStoredUserOverrides(userId);
+    if (!userId && !sessionUser) return [];
     return getEffectivePermissions(role, overrides);
-  }, [userId, userRoles, getUserRole]);
+  }, [userId, sessionUser, role, overrides]);
 
   const hasPermission = useCallback((permissionId: string): boolean => {
-    // TESTING OVERRIDE: delete actions are enabled for every role during QA.
-    // Remove this block to restore role-based delete restrictions.
-    if (permissionId.endsWith('_delete')) return true;
+    // QA: *_delete is admin-only until testing finishes — then delete this block.
+    if (permissionId.endsWith('_delete')) return role === 'admin';
     return userPermissions.includes(permissionId);
-  }, [userPermissions]);
+  }, [userPermissions, role]);
 
   const hasAnyPermission = useCallback((permissionIds: string[]): boolean => {
-    return permissionIds.some(id => userPermissions.includes(id));
-  }, [userPermissions]);
+    return permissionIds.some((id) => hasPermission(id));
+  }, [hasPermission]);
 
   const hasAllPermissions = useCallback((permissionIds: string[]): boolean => {
-    return permissionIds.every(id => userPermissions.includes(id));
-  }, [userPermissions]);
-
-  const role = useMemo(() => {
-    if (!userId) return 'viewer' as UserRole;
-    
-    // First check role assignments
-    const assignment = userRoles.find(ur => ur.userId === userId);
-    if (assignment?.role) {
-      return assignment.role;
-    }
-    
-    // Fall back to stored user's role (check current user first, then users list)
-    // Check current user first
-    const currentUserStr = localStorage.getItem('kwanzaerp_current_user');
-    if (currentUserStr) {
-      try {
-        const currentUser = JSON.parse(currentUserStr);
-        if (currentUser?.id === userId && currentUser?.role) {
-          return currentUser.role as UserRole;
-        }
-      } catch {
-        // Ignore
-      }
-    }
-    
-    // Check users list
-    const storedUsers = localStorage.getItem('kwanzaerp_users');
-    if (storedUsers) {
-      try {
-        const users = JSON.parse(storedUsers);
-        const user = users.find((u: any) => u.id === userId);
-        if (user?.role) {
-          return user.role as UserRole;
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    }
-    
-    return 'viewer' as UserRole;
-  }, [userId, userRoles]);
+    return permissionIds.every((id) => hasPermission(id));
+  }, [hasPermission]);
 
   const isAdmin = role === 'admin';
   const isManager = role === 'manager' || isAdmin;
@@ -218,29 +160,40 @@ export function usePermissions(userId: string | undefined) {
 
 // Permission check component
 export function usePermissionCheck() {
+  const { user: authUser } = useAuth();
+
   const checkPermission = useCallback((userId: string | undefined, permissionId: string): boolean => {
     if (!userId) return false;
-    
-    const roles = getUserRoles();
-    const assignment = roles.find(ur => ur.userId === userId);
 
-    let role: UserRole = assignment?.role || 'viewer';
-    if (!assignment?.role) {
-      const storedUsers = localStorage.getItem('kwanzaerp_users');
-      if (storedUsers) {
-        try {
-          const users = JSON.parse(storedUsers);
-          const user = users.find((u: any) => u.id === userId);
-          if (user?.role) role = user.role as UserRole;
-        } catch {
-          // Ignore
+    let role: UserRole = 'viewer';
+    let overrides: Partial<PermissionOverrides> | undefined;
+
+    if (authUser?.id === userId) {
+      role = (authUser.role as UserRole) || 'viewer';
+      overrides = authUser.permissionOverrides;
+    } else {
+      const roles = getUserRoles();
+      const assignment = roles.find((ur) => ur.userId === userId);
+      role = assignment?.role || 'viewer';
+      if (!assignment?.role) {
+        const storedUsers = localStorage.getItem('kwanzaerp_users');
+        if (storedUsers) {
+          try {
+            const users = JSON.parse(storedUsers);
+            const user = users.find((u: { id?: string; role?: UserRole }) => u.id === userId);
+            if (user?.role) role = user.role;
+          } catch {
+            // Ignore
+          }
         }
       }
+      overrides = getStoredUserOverrides(userId);
     }
 
-    const overrides = getStoredUserOverrides(userId);
+    // QA: *_delete is admin-only until testing finishes — then delete this block.
+    if (permissionId.endsWith('_delete')) return role === 'admin';
     return getEffectivePermissions(role, overrides).includes(permissionId);
-  }, []);
+  }, [authUser]);
 
   return { checkPermission };
 }

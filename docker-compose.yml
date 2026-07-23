@@ -38,7 +38,7 @@ services:
       AUTO_BACKUP_INTERVAL_HOURS: "24"
       AUTO_BACKUP_KEEP: "14"
       # Shown in /api/health appVersion — bump on release so deploys are verifiable.
-      NEXOR_APP_VERSION: 1.1.57
+      NEXOR_APP_VERSION: 1.1.58
     ports:
       - "3000:3000"
     volumes:

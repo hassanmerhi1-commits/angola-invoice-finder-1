@@ -221,4 +221,18 @@ npm run electron:build
 .\scripts\allow-nexor-lan.ps1
 ```
 
-See also: [DESKTOP-APP.md](./DESKTOP-APP.md), [backend/README.md](./backend/README.md).
+---
+
+## 9. Go-live money-path & security gates
+
+- [ ] Admin password changed (no `changeme` / `caixa1` left active)
+- [ ] `/api/health` shows schema up to date and matching app version
+- [ ] Backup create + restore drill on a **copy** database
+- [ ] Offsite folder set if possible (`BACKUP_OFFSITE_DIR`) — see Admin → Backup RTO hint
+- [ ] Cash / card / transfer / credit sale verified
+- [ ] Purchase invoice → stock → WAC → balanced journal
+- [ ] Cashier cannot backdate (`backdate_post` denied)
+- [ ] AGT: production does **not** invent CUCE unless `AGT_SIMULATE=true` is intentional
+- [ ] Period reopen / backdate SOP reviewed: [docs/PERIOD-REOPEN-BACKDATE-SOP.md](./docs/PERIOD-REOPEN-BACKDATE-SOP.md)
+
+See also: [DESKTOP-APP.md](./DESKTOP-APP.md), [backend/README.md](./backend/README.md), [RELEASE.md](./RELEASE.md).

@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { openItemDebitAmountCase } = require('../lib/sqlDialect');
 const { auditErpSafe } = require('../lib/erpAudit');
+const { requirePermission } = require('../middleware/requirePermission');
 const {
   ensureSupplierSubAccount,
 } = require('../lib/entityCoaAccounts');
@@ -43,7 +44,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('purchase_create', 'admin_settings'), async (req, res) => {
     // Validate before opening a transaction so we can return a clean 400.
     if (!cleanText(req.body?.name)) {
       return res.status(400).json({ error: 'Nome do fornecedor é obrigatório' });
@@ -105,7 +106,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Batch import — auto-creates sub-accounts for each supplier
-  router.post('/batch', async (req, res) => {
+  router.post('/batch', requirePermission('purchase_create', 'inventory_import', 'admin_settings'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -208,7 +209,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.put('/:id', async (req, res) => {
+  router.put('/:id', requirePermission('purchase_create', 'admin_settings'), async (req, res) => {
     try {
       const { id } = req.params;
       const { name, nif, email, phone, address, city, country, contactPerson, paymentTerms, notes, isActive } = req.body;
@@ -234,7 +235,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.post('/reconcile-balances', async (req, res) => {
+  router.post('/reconcile-balances', requirePermission('admin_settings', 'admin_consistency'), async (req, res) => {
     try {
       const { runDataConsistencyRepair } = require('../dataConsistencyRepair');
       const result = await runDataConsistencyRepair();
@@ -248,7 +249,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', requirePermission('admin_settings', 'purchase_create'), async (req, res) => {
     try {
       const { id } = req.params;
       await db.query('UPDATE suppliers SET is_active = false WHERE id = $1', [id]);

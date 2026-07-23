@@ -32,10 +32,10 @@ const ROLE_PERMISSIONS = {
 
 function roleHasPermission(role, permissionId) {
   if (!role) return false;
-  // TESTING OVERRIDE: delete actions are enabled for every role during QA.
-  // Remove this line to restore role-based delete restrictions.
-  if (typeof permissionId === 'string' && permissionId.endsWith('_delete')) return true;
   if (role === 'admin') return true;
+  // QA: *_delete is admin-only until testing finishes — then delete this block
+  // and grant invoice_delete / inventory_delete via role map or overrides.
+  if (typeof permissionId === 'string' && permissionId.endsWith('_delete')) return false;
   const perms = ROLE_PERMISSIONS[role];
   return Array.isArray(perms) && perms.includes(permissionId);
 }
@@ -70,8 +70,9 @@ function parsePermissionOverrides(raw) {
  * Admins always have everything (immune to revokes). Revoke wins over grant.
  */
 function userHasPermission(role, overrides, permissionId) {
-  if (typeof permissionId === 'string' && permissionId.endsWith('_delete')) return true;
   if (role === 'admin') return true;
+  // QA: *_delete is admin-only until testing finishes — then delete this block.
+  if (typeof permissionId === 'string' && permissionId.endsWith('_delete')) return false;
   const o = parsePermissionOverrides(overrides);
   if (o.revoked.includes(permissionId)) return false;
   if (o.granted.includes(permissionId)) return true;

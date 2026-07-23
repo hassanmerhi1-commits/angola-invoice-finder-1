@@ -1,6 +1,7 @@
 // Budget & Cost Center API Routes
 const express = require('express');
 const db = require('../db');
+const { requirePermission } = require('../middleware/requirePermission');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -16,7 +17,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.post('/cost-centers', async (req, res) => {
+  router.post('/cost-centers', requirePermission('admin_settings', 'accounting_create'), async (req, res) => {
     try {
       const { code, name, parentId, branchId, managerId, description } = req.body;
       const result = await db.query(
@@ -32,7 +33,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.put('/cost-centers/:id', async (req, res) => {
+  router.put('/cost-centers/:id', requirePermission('admin_settings', 'accounting_create'), async (req, res) => {
     try {
       const { name, description, isActive, managerId } = req.body;
       const result = await db.query(
@@ -75,7 +76,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.post('/budgets', async (req, res) => {
+  router.post('/budgets', requirePermission('admin_settings', 'accounting_create'), async (req, res) => {
     try {
       const { costCenterId, accountCode, periodYear, periodMonth, budgetAmount, notes } = req.body;
       const result = await db.query(

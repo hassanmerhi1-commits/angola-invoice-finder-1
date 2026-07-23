@@ -445,7 +445,7 @@ function getPendingOutboxEvents(destination = 'CITY_SERVER') {
   ).all(destination);
 }
 
-function markOutboxSent(id) {
+function markOutboxSent(id, serverInvoiceNumber) {
   const database = getDb();
   if (!database) return;
   const ts = new Date().toISOString();
@@ -457,6 +457,61 @@ function markOutboxSent(id) {
     database.prepare(
       `UPDATE sales SET pending_sync = 0, synced_at = ? WHERE id = ?`
     ).run(ts, row.entity_id);
+    if (serverInvoiceNumber) {
+      remapSaleInvoiceNumber(row.entity_id, serverInvoiceNumber);
+    }
+  }
+}
+
+/**
+ * After the city server confirms a sale, it returns the real (authoritative)
+ * fiscal invoice number. Local SQLite only ever had a provisional `LOCAL-…`
+ * placeholder — remap it here so local reports/SAF-T exports and any
+ * not-yet-submitted AGT payload use the true number instead of the stub.
+ * We never overwrite a number that isn't a local placeholder, and we never
+ * touch an AGT submission that already went out (that would just hide the
+ * mismatch, not fix it) — those are logged instead so ops can reconcile.
+ */
+function remapSaleInvoiceNumber(saleId, serverInvoiceNumber) {
+  const database = getDb();
+  if (!database || !saleId || !serverInvoiceNumber) return;
+  const sale = database.prepare('SELECT id, invoice_number FROM sales WHERE id = ?').get(saleId);
+  if (!sale) return;
+  const localNumber = String(sale.invoice_number || '');
+  const isProvisional = /^(LOCAL|OFF)-/i.test(localNumber);
+  if (!isProvisional || localNumber === serverInvoiceNumber) return;
+
+  database.prepare('UPDATE sales SET invoice_number = ? WHERE id = ?').run(serverInvoiceNumber, saleId);
+
+  const pendingAgt = database.prepare(
+    `SELECT id FROM agt_submissions WHERE sale_id = ? AND status IN ('pending', 'failed', 'retrying')`
+  ).get(saleId);
+  if (pendingAgt) {
+    try {
+      database.prepare(
+        `UPDATE agt_submissions SET invoice_number = ?, request_json =
+           json_set(COALESCE(request_json, '{}'), '$.invoiceNumber', ?)
+         WHERE sale_id = ? AND status IN ('pending', 'failed', 'retrying')`
+      ).run(serverInvoiceNumber, serverInvoiceNumber, saleId);
+    } catch (_) {
+      // Fallback if request_json isn't valid JSON for json_set — invoice_number
+      // column itself is still the source of truth clientAgtSubmit.js reads from.
+      database.prepare(
+        `UPDATE agt_submissions SET invoice_number = ?
+         WHERE sale_id = ? AND status IN ('pending', 'failed', 'retrying')`
+      ).run(serverInvoiceNumber, saleId);
+    }
+  }
+
+  const alreadySubmitted = database.prepare(
+    `SELECT id, agt_reference FROM agt_submissions WHERE sale_id = ? AND status = 'submitted'`
+  ).get(saleId);
+  if (alreadySubmitted) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[CLIENT DB] Sale ${saleId} was already submitted to AGT as "${localNumber}" before the city `
+      + `server assigned the real number "${serverInvoiceNumber}". Reconcile manually — do not resubmit.`
+    );
   }
 }
 

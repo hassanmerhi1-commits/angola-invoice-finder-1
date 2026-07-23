@@ -1,6 +1,7 @@
 // Exchange Rate Management Routes
 const express = require('express');
 const db = require('../db');
+const { requirePermission } = require('../middleware/requirePermission');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -37,7 +38,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Create/update rate
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('admin_settings', 'accounting_create'), async (req, res) => {
     try {
       const { from_currency, to_currency = 'AOA', rate, effective_date, source = 'manual' } = req.body;
       const result = await db.query(
@@ -55,7 +56,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Delete rate
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', requirePermission('admin_settings'), async (req, res) => {
     try {
       await db.query('DELETE FROM exchange_rates WHERE id = $1', [req.params.id]);
       res.json({ success: true });

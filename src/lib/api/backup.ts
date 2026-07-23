@@ -19,6 +19,8 @@ export interface BackupInfo {
   backupExtension: '.db' | '.sql';
   appVersion: string;
   restoreInProgress: boolean;
+  offsiteDirConfigured?: boolean;
+  restoreRtoHint?: string | null;
   autoBackup?: {
     enabled: boolean;
     intervalHours: number;
@@ -49,6 +51,8 @@ export interface CreateBackupResult {
   path: string;
   engine: string;
   timestamp: string;
+  offsiteCopy?: string | { error: string } | null;
+  restoreRtoHint?: string | null;
 }
 
 export type BackupConnectionIssue =

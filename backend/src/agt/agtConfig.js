@@ -53,6 +53,13 @@ function mapRow(row) {
   };
 }
 
+function defaultSimulateFlag() {
+  if (process.env.AGT_SIMULATE === 'true') return true;
+  if (process.env.AGT_SIMULATE === 'false') return false;
+  if (process.env.NODE_ENV === 'production' || process.env.NEXOR_PRODUCTION === '1') return false;
+  return true;
+}
+
 async function getAgtConfig() {
   const res = await db.query('SELECT * FROM agt_config WHERE id = $1', [CONFIG_ID]).catch(() => ({ rows: [] }));
   if (!res.rows.length) {
@@ -60,7 +67,7 @@ async function getAgtConfig() {
       id: CONFIG_ID,
       environment: process.env.AGT_ENVIRONMENT || 'sandbox',
       api_url: process.env.AGT_API_URL || '',
-      simulate: process.env.AGT_SIMULATE !== 'false',
+      simulate: defaultSimulateFlag(),
       auto_transmit: true,
     });
   }
@@ -83,7 +90,7 @@ async function saveAgtConfig(payload) {
     statusUrl = '',
     companyNif = '',
     softwareCertificateNumber = '',
-    simulate = true,
+    simulate = defaultSimulateFlag(),
     autoTransmit = true,
   } = payload || {};
 

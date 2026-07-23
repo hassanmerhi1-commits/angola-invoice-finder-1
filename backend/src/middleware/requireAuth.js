@@ -46,10 +46,18 @@ async function requireAuth(req, res, next) {
     const decoded = jwt.verify(token, JWT_SECRET);
     let user = readCachedUser(String(decoded.userId));
     if (!user) {
-      const result = await db.query(
-        'SELECT id, email, name, role, branch_id, is_active, permissions FROM users WHERE id = $1',
-        [decoded.userId],
-      );
+      let result;
+      try {
+        result = await db.query(
+          'SELECT id, email, name, role, branch_id, is_active, permissions, must_change_password FROM users WHERE id = $1',
+          [decoded.userId],
+        );
+      } catch (_) {
+        result = await db.query(
+          'SELECT id, email, name, role, branch_id, is_active, permissions FROM users WHERE id = $1',
+          [decoded.userId],
+        );
+      }
 
       if (result.rows.length === 0) {
         return res.status(401).json({ error: 'User not found' });
@@ -74,6 +82,7 @@ async function requireAuth(req, res, next) {
       role: user.role,
       branchId: user.branch_id,
       permissionOverrides: parsePermissionOverrides(user.permissions),
+      mustChangePassword: user.must_change_password === true || user.must_change_password === 1,
     };
     req.tokenJti = decoded.jti || null;
     if (decoded.jti) {

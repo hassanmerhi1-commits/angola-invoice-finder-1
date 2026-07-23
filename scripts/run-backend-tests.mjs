@@ -17,6 +17,8 @@ const testFiles = [
   'test/backup.test.js',
   'test/transactionEngine.test.js',
   'test/documentSequences.test.js',
+  'test/resolveBranchCaixaGlAccount.test.js',
+  'test/fiscalInvoiceType.test.js',
 ];
 
 function resolveElectronBinary() {

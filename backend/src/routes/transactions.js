@@ -379,7 +379,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.post('/open-items', async (req, res) => {
+  router.post('/open-items', requirePermission('accounting_create', 'accounting_journal', 'purchase_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -418,7 +418,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.post('/document-links', async (req, res) => {
+  router.post('/document-links', requirePermission('accounting_create', 'purchase_create', 'invoice_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -456,7 +456,12 @@ module.exports = function(broadcastTable) {
   });
 
   // Allocate next business number atomically (consumes sequence)
-  router.post('/allocate-number', async (req, res) => {
+  router.post('/allocate-number', requirePermission(
+    'accounting_create',
+    'accounting_journal',
+    'purchase_create',
+    'invoice_create',
+  ), async (req, res) => {
     const documentType = String(req.body?.documentType || '').trim();
     if (!SEQUENCE_DOCUMENT_TYPES.has(documentType)) {
       return res.status(400).json({ error: `Invalid document type: ${documentType}` });

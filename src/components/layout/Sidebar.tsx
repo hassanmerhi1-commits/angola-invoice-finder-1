@@ -35,10 +35,7 @@ import {
   Target,
   GitBranch,
   Coins,
-  Lock,
   Scale,
-  Factory,
-  UserCheck,
   NotebookPen,
   TrendingUp,
 } from 'lucide-react';
@@ -83,7 +80,6 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     { icon: Shield, label: t.nav.auditTrail, path: '/audit-trail' },
     { icon: NotebookPen, label: t.nav.journals, path: '/journals' },
     { icon: TrendingUp, label: t.nav.sales, path: '/vendas' },
-    { icon: UserCheck, label: t.nav.hr, path: '/hr' },
     { icon: Shield, label: t.nav.users, path: '/users' },
     { icon: Building2, label: t.nav.branches, path: '/branches' },
     { icon: BarChart3, label: t.nav.reports, path: '/reports' },

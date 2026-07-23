@@ -75,12 +75,31 @@ async function createDbBackup(opts = {}) {
   }
 
   console.log(`[BACKUP] Created: ${filename} (${(stats.size / 1024).toFixed(1)} KB)`);
+
+  let offsiteCopy = null;
+  const offsiteDir = (process.env.BACKUP_OFFSITE_DIR || '').trim();
+  if (offsiteDir) {
+    try {
+      fs.mkdirSync(offsiteDir, { recursive: true });
+      const dest = path.join(offsiteDir, filename);
+      fs.copyFileSync(filepath, dest);
+      offsiteCopy = dest;
+      console.log(`[BACKUP] Offsite copy: ${dest}`);
+    } catch (e) {
+      console.warn('[BACKUP] Offsite copy failed:', e.message);
+      offsiteCopy = { error: e.message };
+    }
+  }
+
   return {
     filename,
     filepath,
     size: stats.size,
     engine: db.engine,
     backupDir,
+    offsiteCopy,
+    restoreRtoHint:
+      'Restore RTO (target): under 1 hour for LAN ERP — stop clients, restore latest backup via Admin → Backup, restart backend, verify /api/health schema.',
   };
 }
 

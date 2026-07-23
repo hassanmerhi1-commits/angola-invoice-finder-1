@@ -1079,7 +1079,7 @@ async function initAuthStateOnce() {
 }
 
 export type LoginOutcome =
-  | { ok: true; offline?: boolean }
+  | { ok: true; offline?: boolean; mustChangePassword?: boolean }
   | { ok: false; kind: 'credentials' | 'connection'; message?: string };
 
 export function useAuth() {
@@ -1125,6 +1125,7 @@ export function useAuth() {
           isActive: true,
           createdAt: String(apiUser.createdAt ?? apiUser.created_at ?? new Date().toISOString()),
           permissionOverrides: apiUser.permissionOverrides,
+          mustChangePassword: !!(apiUser.mustChangePassword ?? apiUser.must_change_password),
         };
         storage.clearLocalProductsCache();
         storage.setCurrentUser(user);
@@ -1145,7 +1146,7 @@ export function useAuth() {
             });
           }).catch(() => { /* non-fatal */ });
         }
-        return { ok: true, offline: isOffline };
+        return { ok: true, offline: isOffline, mustChangePassword: user.mustChangePassword };
       }
     } catch (e) {
       console.warn('[Auth] Login API error:', e);
@@ -1207,7 +1208,21 @@ export function useAuth() {
     setAuthState({ user: null });
   }, []);
 
-  return { user: snapshot.user, isLoading: snapshot.isLoading, login, logout };
+  const clearMustChangePassword = useCallback(() => {
+    const current = authState.user;
+    if (!current) return;
+    const next = { ...current, mustChangePassword: false };
+    storage.setCurrentUser(next);
+    setAuthState({ user: next });
+  }, []);
+
+  return {
+    user: snapshot.user,
+    isLoading: snapshot.isLoading,
+    login,
+    logout,
+    clearMustChangePassword,
+  };
 }
 
 // ============================================

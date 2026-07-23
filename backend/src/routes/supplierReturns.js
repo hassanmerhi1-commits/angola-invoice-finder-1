@@ -2,6 +2,7 @@
 const express = require('express');
 const { randomUUID } = require('crypto');
 const db = require('../db');
+const { requirePermission } = require('../middleware/requirePermission');
 
 function parseJsonColumn(val, fallback = []) {
   if (val == null || val === '') return fallback;
@@ -102,7 +103,7 @@ module.exports = function (broadcastTable) {
     }
   });
 
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('purchase_create', 'purchase_receive'), async (req, res) => {
     try {
       const body = req.body;
       const id = body.id || randomUUID();
@@ -136,7 +137,7 @@ module.exports = function (broadcastTable) {
     }
   });
 
-  router.put('/:id', async (req, res) => {
+  router.put('/:id', requirePermission('purchase_create', 'purchase_receive'), async (req, res) => {
     try {
       const { id } = req.params;
       const existing = await db.query('SELECT id FROM supplier_returns WHERE id = $1', [id]);
@@ -171,7 +172,7 @@ module.exports = function (broadcastTable) {
     }
   });
 
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', requirePermission('admin_settings', 'purchase_create'), async (req, res) => {
     try {
       const result = await db.query('DELETE FROM supplier_returns WHERE id = $1', [req.params.id]);
       if (result.rowCount === 0) {

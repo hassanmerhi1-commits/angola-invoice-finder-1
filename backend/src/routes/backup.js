@@ -74,6 +74,9 @@ module.exports = function backupRoutes() {
         appVersion: process.env.npm_package_version || '1.0.0',
         restoreInProgress,
         autoBackup: getAutoBackupStatus(),
+        offsiteDirConfigured: Boolean((process.env.BACKUP_OFFSITE_DIR || '').trim()),
+        restoreRtoHint:
+          'Restore RTO (target): under 1 hour for LAN ERP — stop clients, restore latest backup via Admin → Backup, restart backend, verify /api/health schema.',
       });
     } catch (error) {
       res.status(500).json({ error: error.message || 'Failed to read backup info' });
@@ -110,6 +113,8 @@ module.exports = function backupRoutes() {
         path: created.filepath,
         engine: created.engine,
         timestamp: new Date().toISOString(),
+        offsiteCopy: created.offsiteCopy ?? null,
+        restoreRtoHint: created.restoreRtoHint || null,
       });
     } catch (error) {
       console.error('[BACKUP ERROR]', error.message);

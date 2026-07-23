@@ -25,7 +25,7 @@ import { dispatchToolbarEvent, NEXOR_TOOLBAR, NEXOR_SUPPLIERS_NEW } from '@/lib/
 import { NEXOR_TOOLBAR_BTN } from '@/lib/nexorToolbarStyles';
 import { 
   Building2, User as UserIcon, LogOut, Settings, Menu,
-  LayoutDashboard, ShoppingCart, FileText, Package, Users,
+  LayoutDashboard, ShoppingCart, FileText, Package,
   BarChart3, ArrowRightLeft, Calendar, Upload, Truck, PackagePlus, PackageMinus,
   ClipboardList, Tags, FileCheck, ChevronDown, Search,
   Plus, Pencil, Trash2, Filter, Download, FileSpreadsheet,
@@ -43,6 +43,7 @@ import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { ServerConnectionIndicator } from '@/components/layout/ServerConnectionIndicator';
 import { OfflineModeBanner } from '@/components/layout/OfflineModeBanner';
 import { SyncPendingBadge } from '@/components/layout/SyncPendingBadge';
+import { GlobalSearch } from '@/components/layout/GlobalSearch';
 import { CalculatorDialog } from '@/components/utilities/CalculatorDialog';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { userHasPermission } from '@/lib/permissions';
@@ -296,7 +297,6 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     { label: t.nav.journals, path: '/journals', icon: Calendar },
     { label: t.nav.invoices, path: '/invoices', icon: FileText },
     { label: t.nav.fiscalDocuments, path: '/fiscal-documents', icon: FileCheck },
-    { label: t.nav.hr, path: '/hr', icon: Users },
   ];
 
   // Hide nav the current user can't access (role + per-user overrides). Items
@@ -632,6 +632,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         <div className="flex items-center gap-2">
           <ServerConnectionIndicator />
           <SyncPendingBadge />
+          <GlobalSearch />
           <Button
             type="button"
             variant="ghost"

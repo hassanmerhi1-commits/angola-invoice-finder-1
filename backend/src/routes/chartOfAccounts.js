@@ -330,7 +330,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Delete (soft) account
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', requirePermission('admin_settings'), async (req, res) => {
     try {
       const { id } = req.params;
       

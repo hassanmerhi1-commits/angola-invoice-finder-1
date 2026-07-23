@@ -6,6 +6,7 @@ const {
 } = require('../agt/certificateStore');
 const { getSigningStatus, verifyFiscalEntity } = require('../agt/fiscalSigning');
 const { requireAuth } = require('../middleware/requireAuth');
+const { requirePermission } = require('../middleware/requirePermission');
 
 module.exports = function signingRouter() {
   const router = express.Router();
@@ -27,7 +28,7 @@ module.exports = function signingRouter() {
     }
   });
 
-  router.post('/certificates', requireAuth, async (req, res) => {
+  router.post('/certificates', requireAuth, requirePermission('admin_settings'), async (req, res) => {
     try {
       const { alias, pfxBase64, passphrase, certificateNumber } = req.body || {};
       const imported = await importCertificate({
@@ -42,7 +43,7 @@ module.exports = function signingRouter() {
     }
   });
 
-  router.post('/certificates/:id/activate', requireAuth, async (req, res) => {
+  router.post('/certificates/:id/activate', requireAuth, requirePermission('admin_settings'), async (req, res) => {
     try {
       res.json(await activateCertificate(req.params.id));
     } catch (err) {
@@ -50,7 +51,7 @@ module.exports = function signingRouter() {
     }
   });
 
-  router.delete('/certificates/:id', requireAuth, async (req, res) => {
+  router.delete('/certificates/:id', requireAuth, requirePermission('admin_settings'), async (req, res) => {
     try {
       res.json(await deleteCertificate(req.params.id));
     } catch (err) {
@@ -58,7 +59,7 @@ module.exports = function signingRouter() {
     }
   });
 
-  router.get('/verify/:entityType/:entityId', async (req, res) => {
+  router.get('/verify/:entityType/:entityId', requirePermission('agt_send', 'admin_settings'), async (req, res) => {
     try {
       res.json(await verifyFiscalEntity(req.params.entityType, req.params.entityId));
     } catch (err) {

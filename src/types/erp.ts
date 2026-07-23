@@ -118,6 +118,7 @@ export interface User {
   createdAt: string;
   updatedAt?: string;
   permissionOverrides?: { granted: string[]; revoked: string[] };
+  mustChangePassword?: boolean;
 }
 
 export interface DailySummary {

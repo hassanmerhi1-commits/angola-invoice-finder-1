@@ -690,14 +690,56 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
     }
   });
 
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', requirePermission('admin_settings'), async (req, res) => {
+    const client = await db.pool.connect();
     try {
-      await db.query('DELETE FROM purchase_invoices WHERE id = $1', [req.params.id]);
+      const id = req.params.id;
+      const saved = await client.query('SELECT id, invoice_number, status FROM purchase_invoices WHERE id = $1', [id]);
+      if (!saved.rows[0]) {
+        return res.status(404).json({ error: 'Purchase invoice not found' });
+      }
+
+      const { queryPostingStatus } = require('../lib/purchaseInvoicePosting');
+      const posting = await queryPostingStatus(client, id);
+      const hasSideEffects =
+        (posting.stockMovementIds && posting.stockMovementIds.length > 0)
+        || !!posting.openItemId
+        || !!posting.journalEntryId;
+
+      if (hasSideEffects) {
+        return res.status(409).json({
+          error: 'Cannot delete a posted purchase invoice',
+          hint: 'Use supplier return / cancel flow, or repost-accounting tools. Hard delete would orphan stock, payables, and journals.',
+          posting: {
+            stockMovements: posting.stockMovementIds?.length || 0,
+            openItem: !!posting.openItemId,
+            journal: !!posting.journalEntryId,
+          },
+        });
+      }
+
+      const status = String(saved.rows[0].status || '').toLowerCase();
+      if (status && !['draft', 'cancelled', 'voided', 'pending'].includes(status)) {
+        return res.status(409).json({
+          error: `Cannot delete purchase invoice in status "${saved.rows[0].status}"`,
+          hint: 'Only draft/pending invoices without postings may be deleted.',
+        });
+      }
+
+      await client.query('DELETE FROM purchase_invoices WHERE id = $1', [id]);
       await broadcastTable?.('purchase_invoices');
+      auditErpSafe(req, {
+        table: 'purchase_invoices',
+        id,
+        action: 'delete',
+        description: `Fatura de compra eliminada (sem lançamentos): ${saved.rows[0].invoice_number || id}`,
+      });
       res.json({ success: true });
     } catch (error) {
       console.error('[PURCHASE INVOICES]', error);
       res.status(500).json({ error: 'Failed to delete purchase invoice' });
+    } finally {
+      client.release();
     }
   });
 

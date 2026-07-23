@@ -64,6 +64,9 @@ const MIGRATION_FILES = [
   '057_sales_client_id.sql',
   '058_products_price_override.sql',
   '059_products_vat_override.sql',
+  '060_users_must_change_password.sql',
+  '061_login_attempts.sql',
+  '062_attachments_notifications.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */

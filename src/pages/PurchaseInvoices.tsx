@@ -47,6 +47,7 @@ import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
 import { Supplier, Product, PurchaseOrder } from '@/types/erp';
 import { ProductDetailDialog } from '@/components/inventory/ProductDetailDialog';
+import { AttachmentPanel } from '@/components/documents/AttachmentPanel';
 import { InlineLineGrid } from '@/components/purchase/InlineLineGrid';
 import { PurchaseReturnsTab } from '@/components/purchase/PurchaseReturnsTab';
 import { getSupplierReturns } from '@/lib/supplierReturns';
@@ -1077,6 +1078,13 @@ function InvoiceViewDialog({
             </Button>
           </DialogTitle>
         </DialogHeader>
+        <div className="px-6 pb-2">
+          <AttachmentPanel
+            entityType="purchase_invoice"
+            entityId={invoice.id}
+            title={language === 'pt' ? 'Anexos' : 'Attachments'}
+          />
+        </div>
         <ScrollArea className="max-h-[78vh] bg-muted/40 rounded-md">
           <div className="mx-auto my-4 bg-white text-black shadow-xl border p-6 text-[10px]" style={{ width: '210mm', minHeight: '297mm' }}>
             <div className="grid grid-cols-[32mm_1fr_62mm] gap-6 items-start">

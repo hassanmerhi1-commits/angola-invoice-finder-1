@@ -1,5 +1,6 @@
 /**
  * AGT API connector — real HTTP when configured, otherwise deterministic stub.
+ * Production never invents CUCE codes unless AGT_SIMULATE=true is set explicitly.
  */
 const crypto = require('crypto');
 
@@ -19,9 +20,20 @@ function resolveStatusUrl(config) {
   return `${base}/status`;
 }
 
+function isProductionLike() {
+  return process.env.NODE_ENV === 'production' || process.env.NEXOR_PRODUCTION === '1';
+}
+
 function shouldSimulate(config) {
-  if (config?.simulate === false) return false;
+  // Production: only invent CUCE when AGT_SIMULATE=true is set explicitly.
+  // DB "simulate" flag must never override this (operators may leave it on from sandbox).
+  if (isProductionLike()) {
+    return process.env.AGT_SIMULATE === 'true';
+  }
+  if (process.env.AGT_SIMULATE === 'true') return true;
   if (process.env.AGT_SIMULATE === 'false') return false;
+  if (config?.simulate === true) return true;
+  if (config?.simulate === false) return false;
   if (!resolveApiUrl(config)) return true;
   return config?.simulate !== false;
 }
@@ -87,13 +99,7 @@ function normalizeResponse(body) {
   };
 }
 
-async function transmitDocument(payload, config) {
-  if (!shouldSimulate(config)) {
-    const url = resolveApiUrl(config);
-    const body = await httpPost(url, payload, config.apiKey);
-    return normalizeResponse(body);
-  }
-
+function simulatedTransmit(payload) {
   const prefix = payload.documentType || 'FT';
   const agtCode = `CUCE-${prefix}-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
   return {
@@ -107,6 +113,22 @@ async function transmitDocument(payload, config) {
     },
     validatedAt: new Date().toISOString(),
   };
+}
+
+async function transmitDocument(payload, config) {
+  if (shouldSimulate(config)) {
+    return simulatedTransmit(payload);
+  }
+
+  const url = resolveApiUrl(config);
+  const apiKey = config?.apiKey || process.env.AGT_API_KEY;
+  if (!apiKey) {
+    const err = new Error('AGT API key is not configured');
+    err.code = 'AGT_NOT_CONFIGURED';
+    throw err;
+  }
+  const body = await httpPost(url, payload, apiKey);
+  return normalizeResponse(body);
 }
 
 async function transmitVoid(payload, config) {
@@ -125,7 +147,13 @@ async function transmitVoid(payload, config) {
   }
 
   const url = resolveApiUrl(config).replace(/\/documents\/?$/, '/void');
-  const body = await httpPost(url, payload, config.apiKey);
+  const apiKey = config?.apiKey || process.env.AGT_API_KEY;
+  if (!apiKey) {
+    const err = new Error('AGT API key is not configured');
+    err.code = 'AGT_NOT_CONFIGURED';
+    throw err;
+  }
+  const body = await httpPost(url, payload, apiKey);
   return normalizeResponse({ ...body, status: body.status || 'voided' });
 }
 
@@ -139,7 +167,7 @@ async function checkDocumentStatus(documentNumber, config) {
   }
   const base = resolveStatusUrl(config);
   const url = `${base}/${encodeURIComponent(documentNumber)}`;
-  const body = await httpGet(url, config.apiKey);
+  const body = await httpGet(url, config?.apiKey || process.env.AGT_API_KEY);
   return normalizeResponse(body);
 }
 

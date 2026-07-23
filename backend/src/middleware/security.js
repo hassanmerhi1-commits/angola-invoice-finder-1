@@ -13,7 +13,7 @@ function lanCors(req, res, next) {
   if (allowed || !origin) {
     res.setHeader('Access-Control-Allow-Origin', origin || '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Filename');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Filename, X-Request-Id');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
 
     if (req.method === 'OPTIONS') {
@@ -104,18 +104,43 @@ function rateLimiter(windowMs = 60000, maxRequests = 200, lanMaxRequests = 2000)
     return ip === '127.0.0.1' || ip === '::1';
   }
 
+  // Expensive read endpoints still count (reports, inventory grid, export dumps).
+  // Cheap probes and tiny lookups stay exempt so POS / purchase pages stay snappy.
+  const EXPENSIVE_GET_PREFIXES = [
+    '/api/products/inventory-grid',
+    '/api/products/inventory-consolidated',
+    '/api/reports',
+    '/api/dashboard',
+    '/api/saft',
+    '/api/journal-entries',
+    '/api/audit',
+    '/api/sales',
+    '/api/purchase-invoices',
+    '/api/stock-transfers',
+    '/api/search',
+  ];
+
+  function isExpensiveGet(req) {
+    if (req.method !== 'GET' || !req.path.startsWith('/api/')) return false;
+    return EXPENSIVE_GET_PREFIXES.some(
+      (pre) => req.path === pre || req.path.startsWith(`${pre}/`) || req.path.startsWith(`${pre}?`),
+    );
+  }
+
   return (req, res, next) => {
     if (isLocalRequest(req) || req.path === '/api/health') {
       return next();
     }
 
-    // Read-only list/detail GETs are cheap — do not count toward the cap (purchase page opens many in parallel).
-    if (req.method === 'GET' && req.path.startsWith('/api/')) {
+    // Cheap GETs (lookups, health-adjacent) do not count; expensive list/report GETs do.
+    if (req.method === 'GET' && req.path.startsWith('/api/') && !isExpensiveGet(req)) {
       return next();
     }
 
     const ip = normalizeClientIp(req.ip || req.connection?.remoteAddress || 'unknown');
-    const cap = isPrivateLanIp(ip) ? lanMaxRequests : maxRequests;
+    // GET-heavy LAN clients get a higher cap than mutating traffic.
+    const baseCap = isPrivateLanIp(ip) ? lanMaxRequests : maxRequests;
+    const cap = req.method === 'GET' ? Math.max(baseCap, lanMaxRequests) : baseCap;
     const now = Date.now();
     const record = hits.get(ip);
 
@@ -138,8 +163,18 @@ function rateLimiter(windowMs = 60000, maxRequests = 200, lanMaxRequests = 2000)
 // Public API paths reachable without a user JWT. Sync routes carry their own
 // API-key auth; auth routes expose the public login and self-guarded admin
 // endpoints; health is an unauthenticated liveness probe.
-const PUBLIC_API_EXACT = new Set(['/api/health']);
-const PUBLIC_API_PREFIXES = ['/api/auth', '/api/sync', '/api/installations'];
+const PUBLIC_API_EXACT = new Set([
+  '/api/health',
+  '/api/auth/login',
+  '/api/auth/refresh',
+]);
+// Sync carries its own API-key auth. Installation bootstrap/register stays public;
+// list/config endpoints require JWT after setup (see isPublicApiPath).
+const PUBLIC_API_PREFIXES = ['/api/sync'];
+const PUBLIC_INSTALLATION_PATHS = new Set([
+  '/api/installations/register-main',
+  '/api/installations/register-city',
+]);
 
 /** Electron embedded backend calls these from 127.0.0.1 without a user JWT. */
 const LOOPBACK_INTERNAL_PATHS = new Set(['/api/caixa/gl/sync-record']);
@@ -151,7 +186,10 @@ function isLoopbackRequest(req) {
 
 function isPublicApiPath(pathname) {
   if (PUBLIC_API_EXACT.has(pathname)) return true;
-  return PUBLIC_API_PREFIXES.some((pre) => pathname === pre || pathname.startsWith(pre + '/'));
+  if (PUBLIC_INSTALLATION_PATHS.has(pathname)) return true;
+  // Auth login helpers that must work before a session exists
+  if (pathname.startsWith('/api/auth/login')) return true;
+  return PUBLIC_API_PREFIXES.some((pre) => pathname === pre || pathname.startsWith(`${pre}/`));
 }
 
 /**

@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { AttachmentPanel } from '@/components/documents/AttachmentPanel';
 import {
   Table,
   TableBody,
@@ -952,6 +953,14 @@ export default function Expenses() {
                 rows={2}
               />
             </div>
+
+            {editingId && (
+              <AttachmentPanel
+                entityType="expense"
+                entityId={editingId}
+                title={language === 'pt' ? 'Anexos' : 'Attachments'}
+              />
+            )}
 
             <div className="p-3 bg-muted rounded-lg">
               <div className="flex justify-between items-center">

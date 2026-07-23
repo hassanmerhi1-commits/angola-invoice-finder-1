@@ -40,6 +40,7 @@ const { Server } = require('socket.io');
 require('./db');
 const db = require('./db');
 const { lanCors, securityHeaders, rateLimiter, apiAuthGate } = require('./middleware/security');
+const { requestContext } = require('./middleware/requestContext');
 const { DiscoveryBroadcaster } = require('./discovery');
 
 const { readAppVersion, EXPECTED_SCHEMA_VERSION, recordAppMetaForDb, readSchemaVersionFromDb } = require('./lib/deploymentStatus');
@@ -62,7 +63,20 @@ const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] },
+  cors: {
+    origin(origin, callback) {
+      try {
+        const { isAllowedOrigin } = require('./middleware/security');
+        if (!origin || isAllowedOrigin(origin) || origin === 'null') {
+          return callback(null, true);
+        }
+        return callback(new Error('Socket.IO origin not allowed'));
+      } catch {
+        return callback(null, false);
+      }
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  },
 });
 
 function broadcastTable(table, entityId = null) {
@@ -79,6 +93,7 @@ const discoveryBroadcaster = new DiscoveryBroadcaster(PORT, {
 
 app.use(lanCors);
 app.use(securityHeaders);
+app.use(requestContext);
 // Gzip JSON/static responses — large list payloads over LAN/Tailscale shrink ~5-10x.
 app.use(compression({ threshold: 1024 }));
 app.use(rateLimiter(60000, 800, 8000));
@@ -181,9 +196,14 @@ app.get('/api/health', async (req, res) => {
 // security.js (health, auth, sync, installations). NEXOR_OPEN_API=1 disables it
 // (emergency escape hatch only).
 if (process.env.NEXOR_OPEN_API === '1') {
+  if (process.env.NODE_ENV === 'production' || process.env.NEXOR_PRODUCTION === '1') {
+    console.error('[SECURITY] NEXOR_OPEN_API=1 is forbidden in production — refusing to start.');
+    process.exit(1);
+  }
   console.warn('[SECURITY] NEXOR_OPEN_API=1 — API authentication gate DISABLED. Do not use in production.');
 }
 app.use(apiAuthGate);
+app.use(require('./middleware/mustChangePasswordGate').mustChangePasswordGate);
 
 app.use('/api/auth', require('./routes/auth'));
 
@@ -224,6 +244,9 @@ app.use('/api/agt', require('./routes/agt')(broadcastTable));
 app.use('/api/signing', require('./routes/signing')());
 app.use('/api/fiscal-documents', require('./routes/fiscalDocuments')(broadcastTable));
 app.use('/api/company-settings', require('./routes/companySettings')(broadcastTable));
+app.use('/api/attachments', require('./routes/attachments')(broadcastTable));
+app.use('/api/notifications', require('./routes/notifications')());
+app.use('/api/search', require('./routes/search')());
 app.use('/api/sync', require('./routes/syncIngest')(broadcastTable));
 app.use('/api/installations', require('./routes/installations')());
 
@@ -232,6 +255,7 @@ const { startAgtWorker } = require('./jobs/agtWorker');
 const { ensureDefaultInstallation } = require('./sync/installation');
 const { upgradeLegacyPasswordHashesOnStartup } = require('./lib/upgradeLegacyPasswords');
 const { ensurePhaseSchema } = require('./lib/ensurePhaseSchema');
+const { JWT_SECRET_PERSISTENT } = require('./jwtSecret');
 
 const saftRouter = require('./routes/saft')();
 app.use('/api/saft', saftRouter);
@@ -244,6 +268,15 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
 });
 
 (async () => {
+  if (
+    !JWT_SECRET_PERSISTENT
+    && (process.env.NODE_ENV === 'production' || process.env.NEXOR_PRODUCTION === '1')
+  ) {
+    console.error(
+      '[SECURITY] Ephemeral JWT secret is forbidden in production. Set JWT_SECRET in database.env.',
+    );
+    process.exit(1);
+  }
   try {
     await ensurePhaseSchema(db);
     const checks = await buildSchemaChecks(db);
@@ -291,6 +324,8 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
     startAgtWorker(5000);
     const { startAutoBackupWorker } = require('./jobs/autoBackup');
     startAutoBackupWorker();
+    const { startNotificationWorker } = require('./jobs/notificationWorker');
+    startNotificationWorker();
     const { drainRedundantMainQueueOnHq } = require('./sync/outbox');
     drainRedundantMainQueueOnHq().catch((e) => console.warn('[OUTBOX]', e.message));
   });

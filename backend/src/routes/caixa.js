@@ -336,7 +336,7 @@ function caixaRouter(broadcastTable) {
   });
 
   /** Create a default caixa for a branch when none exists (expenses form). */
-  router.post('/registers/ensure', async (req, res) => {
+  router.post('/registers/ensure', requirePermission('caixa_open', 'admin_settings'), async (req, res) => {
     try {
       if (!(await caixaTablesExist())) {
         return res.status(503).json({ error: 'Caixa tables not available on server' });

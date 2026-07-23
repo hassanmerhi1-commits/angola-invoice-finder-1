@@ -380,6 +380,172 @@ async function ensureUserPermissionsColumn(db) {
   }
 }
 
+/** Flag seeded/default accounts to change password after first login. */
+async function ensureMustChangePasswordColumn(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query(
+        'ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false',
+      );
+    } catch (err) {
+      if (err.code !== '42701') console.warn('[SCHEMA] users.must_change_password:', err.message);
+    }
+    return;
+  }
+
+  if (db.sqlite) {
+    let cols = [];
+    try {
+      cols = db.sqlite.pragma('table_info(users)');
+    } catch (_) {
+      return;
+    }
+    if (!cols.length) return;
+    if (!cols.some((c) => c.name === 'must_change_password')) {
+      try {
+        db.sqlite.exec(
+          'ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0',
+        );
+      } catch (_) {}
+    }
+  }
+}
+
+/** Document attachments + server notifications inbox (migration 062). */
+async function ensureAttachmentsNotificationsTables(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS document_attachments (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          entity_type TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+          byte_size INTEGER NOT NULL DEFAULT 0,
+          storage_path TEXT NOT NULL,
+          uploaded_by TEXT,
+          uploaded_by_name TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_document_attachments_entity
+          ON document_attachments (entity_type, entity_id)
+      `);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS notifications (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id TEXT,
+          branch_id TEXT,
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          message TEXT NOT NULL,
+          severity TEXT NOT NULL DEFAULT 'info',
+          link TEXT,
+          is_read BOOLEAN NOT NULL DEFAULT false,
+          dedupe_key TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await db.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe
+          ON notifications (dedupe_key)
+          WHERE dedupe_key IS NOT NULL
+      `);
+      await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_notifications_created
+          ON notifications (created_at DESC)
+      `);
+      await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_notifications_unread
+          ON notifications (is_read, created_at DESC)
+      `);
+    } catch (err) {
+      console.warn('[SCHEMA] attachments/notifications:', err.message);
+    }
+    return;
+  }
+
+  if (db.sqlite) {
+    try {
+      db.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS document_attachments (
+          id TEXT PRIMARY KEY,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+          byte_size INTEGER NOT NULL DEFAULT 0,
+          storage_path TEXT NOT NULL,
+          uploaded_by TEXT,
+          uploaded_by_name TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_document_attachments_entity
+          ON document_attachments (entity_type, entity_id);
+        CREATE TABLE IF NOT EXISTS notifications (
+          id TEXT PRIMARY KEY,
+          user_id TEXT,
+          branch_id TEXT,
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          message TEXT NOT NULL,
+          severity TEXT NOT NULL DEFAULT 'info',
+          link TEXT,
+          is_read INTEGER NOT NULL DEFAULT 0,
+          dedupe_key TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe
+          ON notifications (dedupe_key)
+          WHERE dedupe_key IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_notifications_created
+          ON notifications (created_at DESC);
+      `);
+    } catch (err) {
+      console.warn('[SCHEMA] attachments/notifications (sqlite):', err.message);
+    }
+  }
+}
+
+/** Persist login lockouts across restarts (migration 061). */
+async function ensureLoginAttemptsTable(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS login_attempts (
+          identifier TEXT PRIMARY KEY,
+          fail_count INTEGER NOT NULL DEFAULT 0,
+          first_failed_at TIMESTAMPTZ,
+          locked_until TIMESTAMPTZ,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await db.query(
+        'CREATE INDEX IF NOT EXISTS idx_login_attempts_locked_until ON login_attempts (locked_until)',
+      );
+    } catch (err) {
+      console.warn('[SCHEMA] login_attempts:', err.message);
+    }
+    return;
+  }
+
+  if (db.sqlite) {
+    try {
+      db.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS login_attempts (
+          identifier TEXT PRIMARY KEY,
+          fail_count INTEGER NOT NULL DEFAULT 0,
+          first_failed_at TEXT,
+          locked_until TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `);
+    } catch (_) {}
+  }
+}
+
 async function ensureCreditNoteRestoreStockColumn(db) {
   if (db.engine === 'postgres') {
     const check = await db.query(
@@ -727,6 +893,9 @@ async function ensurePhaseSchema(db) {
     }
     await ensureJournalReferenceIdText(db);
     await ensureUserPermissionsColumn(db);
+    await ensureMustChangePasswordColumn(db);
+    await ensureLoginAttemptsTable(db);
+    await ensureAttachmentsNotificationsTables(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
@@ -774,6 +943,9 @@ async function ensurePhaseSchema(db) {
     await ensureSalesCreditPaymentMethod(db);
     await ensureCaixaTables(db);
     await ensureUserPermissionsColumn(db);
+    await ensureMustChangePasswordColumn(db);
+    await ensureLoginAttemptsTable(db);
+    await ensureAttachmentsNotificationsTables(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {
@@ -804,5 +976,8 @@ module.exports = {
   ensureSalesClientIdColumn,
   ensureCaixaTables,
   ensureUserPermissionsColumn,
+  ensureMustChangePasswordColumn,
+  ensureLoginAttemptsTable,
+  ensureAttachmentsNotificationsTables,
   ensureAuditLogActions,
 };

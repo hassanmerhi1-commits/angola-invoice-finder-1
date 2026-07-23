@@ -38,6 +38,7 @@ function mapUserRow(user) {
     branchId: user.branch_id,
     isActive: user.is_active === true || user.is_active === 1,
     permissionOverrides: parsePermissionOverrides(user.permissions),
+    mustChangePassword: user.must_change_password === true || user.must_change_password === 1,
     createdAt: user.created_at,
     updatedAt: user.updated_at,
   };
@@ -93,7 +94,7 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
       return res.status(400).json({ error: 'Password is required' });
     }
 
-    const lockState = isLocked(rawIdentifier);
+    const lockState = await isLocked(rawIdentifier);
     if (lockState.locked) {
       const retryMinutes = Math.ceil(lockState.retryAfterMs / 60000);
       await logFiscalEventFromReq(req, {
@@ -113,7 +114,7 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
     const validPassword = await verifyPasswordWithDummyFallback(password, user?.password_hash);
 
     if (!user || !validPassword) {
-      const justLocked = recordFailure(rawIdentifier);
+      const justLocked = await recordFailure(rawIdentifier);
       await logFiscalEventFromReq(req, {
         tableName: 'users',
         action: justLocked ? 'login_locked' : 'login_failed',
@@ -124,8 +125,23 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    recordSuccess(rawIdentifier);
+    await recordSuccess(rawIdentifier);
     await upgradePasswordHashIfLegacy(db, user.id, password, user.password_hash);
+
+    // Known factory defaults → force password change even if column was never set.
+    const DEFAULT_PLAINTEXTS = new Set(['changeme', 'admin', 'caixa1']);
+    let mustChange =
+      user.must_change_password === true || user.must_change_password === 1;
+    if (!mustChange && DEFAULT_PLAINTEXTS.has(String(password))) {
+      mustChange = true;
+      try {
+        await db.query(
+          'UPDATE users SET must_change_password = true, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+          [user.id],
+        );
+      } catch (_) { /* column may be missing on ancient SQLite until ensurePhaseSchema */ }
+    }
+    user.must_change_password = mustChange;
 
     let effectiveBranchId = user.branch_id;
     try {
@@ -190,7 +206,7 @@ router.post('/logout', requireAuth, async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT id, email, name, role, branch_id, is_active, permissions, created_at FROM users WHERE id = $1',
+      'SELECT id, email, name, role, branch_id, is_active, permissions, must_change_password, created_at FROM users WHERE id = $1',
       [req.user.id],
     );
     if (result.rows.length === 0) {
@@ -405,39 +421,40 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
  * Verify an elevated (admin/manager) password to authorize a sensitive POS action
  * such as applying a discount. Does NOT issue a token or start a session — it only
  * confirms a supervisor approved the action, and records it in the fiscal audit log.
+ * Requires supervisor username/email — never sprays all admin passwords.
  */
 router.post('/verify-elevated', requireAuth, async (req, res) => {
   try {
     const password = req.body?.password;
-    const identifier = req.body?.identifier;
+    const identifier = String(req.body?.identifier || '').trim();
     const reason = String(req.body?.reason || 'Ação privilegiada').slice(0, 200);
+    if (!identifier) {
+      return res.status(400).json({ error: 'Supervisor username or email is required' });
+    }
     if (password == null || String(password).length === 0) {
       return res.status(400).json({ error: 'Password is required' });
     }
 
+    const lockKey = `elevate:${req.user?.id || req.ip || 'unknown'}`;
+    const lockState = await isLocked(lockKey);
+    if (lockState.locked) {
+      const retryMinutes = Math.ceil(lockState.retryAfterMs / 60000);
+      res.setHeader('Retry-After', String(Math.max(1, retryMinutes) * 60));
+      return res.status(429).json({
+        error: `Too many failed authorization attempts. Try again in ${Math.max(1, retryMinutes)} minute(s).`,
+      });
+    }
+
     let approver = null;
-    if (identifier && String(identifier).trim()) {
-      const user = await findUserForLogin(db, String(identifier).trim());
-      if (user && ['admin', 'manager'].includes(String(user.role))
-        && (user.is_active === true || user.is_active === 1)) {
-        const ok = await verifyPassword(String(password), user.password_hash);
-        if (ok) approver = user;
-      }
-    } else {
-      const candidates = await db.query(
-        `SELECT id, name, role, password_hash FROM users
-         WHERE role IN ('admin', 'manager') AND is_active = true`,
-      );
-      for (const candidate of candidates.rows) {
-        // eslint-disable-next-line no-await-in-loop
-        if (await verifyPassword(String(password), candidate.password_hash)) {
-          approver = candidate;
-          break;
-        }
-      }
+    const user = await findUserForLogin(db, identifier);
+    if (user && ['admin', 'manager'].includes(String(user.role))
+      && (user.is_active === true || user.is_active === 1)) {
+      const ok = await verifyPassword(String(password), user.password_hash);
+      if (ok) approver = user;
     }
 
     if (!approver) {
+      await recordFailure(lockKey);
       await logFiscalEventFromReq(req, {
         tableName: 'users',
         action: 'authorize_failed',
@@ -448,6 +465,7 @@ router.post('/verify-elevated', requireAuth, async (req, res) => {
       return res.status(401).json({ error: 'Invalid supervisor credentials' });
     }
 
+    await recordSuccess(lockKey);
     await logFiscalEventFromReq(req, {
       tableName: 'users',
       recordId: approver.id,
@@ -490,9 +508,12 @@ router.post('/change-password', requireAuth, async (req, res) => {
 
     const passwordHash = await hashPassword(String(newPassword));
     await db.query(
-      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      `UPDATE users SET password_hash = $1, must_change_password = false, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
       [passwordHash, req.user.id],
     );
+    try {
+      require('../middleware/requireAuth').invalidateUserCache(String(req.user.id));
+    } catch (_) { /* ignore */ }
 
     await logFiscalEventFromReq(req, {
       tableName: 'users',

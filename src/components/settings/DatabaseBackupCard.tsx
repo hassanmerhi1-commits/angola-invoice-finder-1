@@ -124,9 +124,13 @@ export function DatabaseBackupCard() {
     setCreating(true);
     try {
       const result = await createDatabaseBackup();
-      toast.success(ui.backupCreated, {
-        description: `${result.filename} (${formatBytes(result.size)})`,
-      });
+      let description = `${result.filename} (${formatBytes(result.size)})`;
+      if (typeof result.offsiteCopy === 'string' && result.offsiteCopy) {
+        description = `${description}. ${ui.offsiteCopyOk}`;
+      } else if (result.offsiteCopy && typeof result.offsiteCopy === 'object' && 'error' in result.offsiteCopy) {
+        description = `${description}. ${ui.offsiteCopyFailed.replace('{error}', result.offsiteCopy.error)}`;
+      }
+      toast.success(ui.backupCreated, { description });
       await refresh();
     } catch (e: unknown) {
       toast.error(ui.backupFailed, { description: e instanceof Error ? e.message : String(e) });
@@ -295,6 +299,12 @@ export function DatabaseBackupCard() {
 
           {info && !backendUnavailable && (
             <div className="space-y-2 p-3 rounded-lg bg-accent/50 text-sm">
+              <p className="text-muted-foreground">
+                {info.offsiteDirConfigured ? ui.offsiteConfigured : ui.offsiteNotConfigured}
+              </p>
+              {info.restoreRtoHint && (
+                <p className="text-muted-foreground text-xs">{ui.restoreRtoHint}</p>
+              )}
               <p className="text-muted-foreground">
                 {info.autoBackup?.enabled
                   ? ui.autoBackupOn.replace('{keep}', String(info.autoBackup.keep ?? 14))

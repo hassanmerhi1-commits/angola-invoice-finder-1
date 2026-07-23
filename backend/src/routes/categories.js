@@ -1,6 +1,7 @@
 // Categories API routes
 const express = require('express');
 const db = require('../db');
+const { requirePermission } = require('../middleware/requirePermission');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -15,7 +16,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('inventory_create', 'admin_settings'), async (req, res) => {
     try {
       const { name, description, color } = req.body;
       const result = await db.query(
@@ -30,7 +31,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.put('/:id', async (req, res) => {
+  router.put('/:id', requirePermission('inventory_edit', 'admin_settings'), async (req, res) => {
     try {
       const { id } = req.params;
       const { name, description, color, isActive } = req.body;
@@ -46,7 +47,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', requirePermission('inventory_edit', 'admin_settings'), async (req, res) => {
     try {
       const { id } = req.params;
       await db.query('UPDATE categories SET is_active = false WHERE id = $1', [id]);

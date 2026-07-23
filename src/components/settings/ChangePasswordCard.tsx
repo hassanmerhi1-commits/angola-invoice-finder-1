@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
@@ -11,7 +12,8 @@ import { toast } from 'sonner';
 
 export function ChangePasswordCard() {
   const { t } = useTranslation();
-  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { user, clearMustChangePassword } = useAuth();
   const ui = t.passwordChangeUi;
 
   const [currentPassword, setCurrentPassword] = useState('');
@@ -45,10 +47,12 @@ export function ChangePasswordCard() {
         toast.error(result.error);
         return;
       }
+      clearMustChangePassword();
       toast.success(ui.success);
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
+      navigate('/');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : ui.failed);
     } finally {
@@ -101,9 +105,8 @@ export function ChangePasswordCard() {
               minLength={8}
             />
           </div>
-          <p className="text-xs text-muted-foreground">{ui.hint}</p>
           <Button type="submit" disabled={saving}>
-            {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
             {ui.submit}
           </Button>
         </form>

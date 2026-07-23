@@ -3,6 +3,7 @@ const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
 const { requireAuth } = require('../middleware/requireAuth');
+const { requirePermission } = require('../middleware/requirePermission');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 
 function newId() {
@@ -197,7 +198,7 @@ module.exports = function proformasRoutes(broadcastTable) {
     }
   });
 
-  router.post('/', requireAuth, async (req, res) => {
+  router.post('/', requireAuth, requirePermission('proforma_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       const header = bodyToHeader(req.body);
@@ -272,7 +273,7 @@ module.exports = function proformasRoutes(broadcastTable) {
     }
   });
 
-  router.put('/:id', requireAuth, async (req, res) => {
+  router.put('/:id', requireAuth, requirePermission('proforma_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       const id = req.params.id;
@@ -369,7 +370,7 @@ module.exports = function proformasRoutes(broadcastTable) {
     }
   });
 
-  router.delete('/:id', requireAuth, async (req, res) => {
+  router.delete('/:id', requireAuth, requirePermission('proforma_create', 'admin_settings'), async (req, res) => {
     try {
       const existing = await db.query(
         'SELECT id, proforma_number FROM proformas WHERE id = $1 AND status != $2 LIMIT 1',

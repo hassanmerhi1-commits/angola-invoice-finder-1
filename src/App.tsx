@@ -99,6 +99,7 @@ function RedirectPreserveSearch({ to }: { to: string }) {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
+  const location = useLocation();
   
   if (isLoading) {
     return (
@@ -110,6 +111,16 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Force password change for seeded/default accounts before using the ERP.
+  if (user.mustChangePassword) {
+    const onSettings =
+      location.pathname === '/settings'
+      || location.pathname.endsWith('/settings');
+    if (!onSettings) {
+      return <Navigate to="/settings?focus=password" replace />;
+    }
   }
   
   return <>{children}</>;
@@ -277,6 +288,7 @@ function AppRoutes() {
         path="/login" 
         element={
           !setupComplete ? <Navigate to="/setup" replace /> :
+          user?.mustChangePassword ? <Navigate to="/settings?focus=password" replace /> :
           user ? <Navigate to="/" replace /> : <Login />
         } 
       />

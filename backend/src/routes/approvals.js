@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { auditErpSafe } = require('../lib/erpAudit');
+const { requirePermission } = require('../middleware/requirePermission');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -25,7 +26,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  router.post('/workflows', async (req, res) => {
+  router.post('/workflows', requirePermission('admin_settings'), async (req, res) => {
     try {
       const { name, documentType, minAmount, maxAmount, steps } = req.body;
       const result = await db.query(
@@ -78,7 +79,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Submit for approval
-  router.post('/requests', async (req, res) => {
+  router.post('/requests', requirePermission('purchase_create', 'accounting_create'), async (req, res) => {
     try {
       const { documentType, documentId, documentNumber, amount, requestedBy, requestedByName, branchId, notes } = req.body;
 
@@ -116,7 +117,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Approve or reject
-  router.post('/requests/:id/:action', async (req, res) => {
+  router.post('/requests/:id/:action', requirePermission('admin_settings', 'purchase_create', 'accounting_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');

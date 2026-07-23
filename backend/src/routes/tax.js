@@ -1,6 +1,7 @@
 // Tax Engine API Routes
 const express = require('express');
 const db = require('../db');
+const { requirePermission } = require('../middleware/requirePermission');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -17,7 +18,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Create tax code
-  router.post('/codes', async (req, res) => {
+  router.post('/codes', requirePermission('admin_settings'), async (req, res) => {
     try {
       const { code, name, rate, taxType, description, accountCodeOutput, accountCodeInput } = req.body;
       const result = await db.query(
@@ -34,7 +35,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Update tax code
-  router.put('/codes/:id', async (req, res) => {
+  router.put('/codes/:id', requirePermission('admin_settings'), async (req, res) => {
     try {
       const { name, rate, description, isActive, accountCodeOutput, accountCodeInput } = req.body;
       const result = await db.query(

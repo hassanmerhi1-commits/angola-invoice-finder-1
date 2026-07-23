@@ -2088,7 +2088,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Delete product (soft delete) — only when no stock movements or sales exist
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', requirePermission('inventory_delete', 'admin_settings'), async (req, res) => {
     try {
       const { id } = req.params;
       const counts = await productTransactionCounts(id);

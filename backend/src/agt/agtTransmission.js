@@ -219,6 +219,14 @@ async function transmitFiscalEntity(entityKind, entityId, options = {}) {
       `UPDATE ${meta.table} SET agt_status = 'rejected' WHERE id = $1`,
       [resolvedEntityId],
     );
+    try {
+      const { notifyAgtFailure } = require('../lib/notifications');
+      await notifyAgtFailure({
+        entityType: meta.entityType,
+        entityId: resolvedEntityId,
+        message: err.message || 'AGT transmission failed',
+      });
+    } catch (_) { /* non-fatal */ }
     throw err;
   }
 }

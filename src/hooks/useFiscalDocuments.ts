@@ -45,24 +45,19 @@ export function useCreditNotes(branchId?: string, deferInitialLoad = false) {
     try {
       let result = await api.fiscalDocuments.listCreditNotes(filterBranch || undefined);
       if (result.error) throw new Error(result.error);
-      if (result.data) {
-        let notes = result.data as CreditNote[];
-        if (notes.length === 0 && filterBranch) {
-          const allRes = await api.fiscalDocuments.listCreditNotes();
-          if (allRes.data?.length) notes = allRes.data as CreditNote[];
-        }
-        setCreditNotes(notes);
-        setCachedList(cacheKey, notes);
-        setLoading(false);
-        return;
+      let notes = (result.data || []) as CreditNote[];
+      if (notes.length === 0 && filterBranch) {
+        const allRes = await api.fiscalDocuments.listCreditNotes();
+        if (allRes.data?.length) notes = allRes.data as CreditNote[];
       }
-    } catch {
-      /* fallback below */
+      setCreditNotes(notes);
+      setCachedList(cacheKey, notes);
+    } catch (err) {
+      console.warn('[Fiscal] credit notes list failed — not falling back to localStorage:', err);
+      setCreditNotes([]);
+    } finally {
+      setLoading(false);
     }
-    const local = fiscalStorage.getCreditNotes(filterBranch || branchId);
-    setCreditNotes(local);
-    setCachedList(cacheKey, local);
-    setLoading(false);
   }, [branchId]);
 
   useEffect(() => {
@@ -151,14 +146,12 @@ export function useCreditNotes(branchId?: string, deferInitialLoad = false) {
   }, []);
 
   const cancelCreditNote = useCallback(async (noteId: string) => {
-    const notes = creditNotes.length ? creditNotes : fiscalStorage.getCreditNotes();
-    const note = notes.find((n) => n.id === noteId);
-    if (note && note.status === 'draft') {
-      note.status = 'cancelled';
-      fiscalStorage.saveCreditNote(note);
-      await refreshCreditNotes();
+    const result = await api.fiscalDocuments.cancelCreditNote(noteId);
+    if (result.error) {
+      throw new Error(result.error || 'Failed to cancel credit note');
     }
-  }, [creditNotes, refreshCreditNotes]);
+    await refreshCreditNotes();
+  }, [refreshCreditNotes]);
 
   return { creditNotes, createCreditNote, cancelCreditNote, refreshCreditNotes, loading };
 }
@@ -176,20 +169,16 @@ export function useDebitNotes(branchId?: string) {
     const cacheKey = `debitNotes:${branchId ?? 'all'}`;
     try {
       const result = await api.fiscalDocuments.listDebitNotes(branchId);
-      if (result.data) {
-        const notes = result.data as DebitNote[];
-        setDebitNotes(notes);
-        setCachedList(cacheKey, notes);
-        setLoading(false);
-        return;
-      }
-    } catch {
-      /* fallback */
+      if (result.error) throw new Error(result.error);
+      const notes = (result.data || []) as DebitNote[];
+      setDebitNotes(notes);
+      setCachedList(cacheKey, notes);
+    } catch (err) {
+      console.warn('[Fiscal] debit notes list failed — not falling back to localStorage:', err);
+      setDebitNotes([]);
+    } finally {
+      setLoading(false);
     }
-    const local = fiscalStorage.getDebitNotes(branchId);
-    setDebitNotes(local);
-    setCachedList(cacheKey, local);
-    setLoading(false);
   }, [branchId]);
 
   useEffect(() => {
@@ -232,15 +221,10 @@ export function useDebitNotes(branchId?: string) {
     return note;
   }, []);
 
-  const cancelDebitNote = useCallback(async (noteId: string) => {
-    const notes = debitNotes.length ? debitNotes : fiscalStorage.getDebitNotes();
-    const note = notes.find((n) => n.id === noteId);
-    if (note && note.status === 'draft') {
-      note.status = 'cancelled';
-      fiscalStorage.saveDebitNote(note);
-      await refreshDebitNotes();
-    }
-  }, [debitNotes, refreshDebitNotes]);
+  const cancelDebitNote = useCallback(async (_noteId: string) => {
+    // Debit-note cancel is not exposed by the API yet — refresh only.
+    await refreshDebitNotes();
+  }, [refreshDebitNotes]);
 
   return { debitNotes, createDebitNote, cancelDebitNote, refreshDebitNotes, loading };
 }
@@ -258,20 +242,16 @@ export function useTransportDocuments(branchId?: string) {
     const cacheKey = `transportDocs:${branchId ?? 'all'}`;
     try {
       const result = await api.fiscalDocuments.listTransportDocuments(branchId);
-      if (result.data) {
-        const docs = result.data as TransportDocument[];
-        setTransportDocs(docs);
-        setCachedList(cacheKey, docs);
-        setLoading(false);
-        return;
-      }
-    } catch {
-      /* fallback */
+      if (result.error) throw new Error(result.error);
+      const docs = (result.data || []) as TransportDocument[];
+      setTransportDocs(docs);
+      setCachedList(cacheKey, docs);
+    } catch (err) {
+      console.warn('[Fiscal] transport docs list failed — not falling back to localStorage:', err);
+      setTransportDocs([]);
+    } finally {
+      setLoading(false);
     }
-    const local = fiscalStorage.getTransportDocuments(branchId);
-    setTransportDocs(local);
-    setCachedList(cacheKey, local);
-    setLoading(false);
   }, [branchId]);
 
   useEffect(() => {
@@ -336,22 +316,11 @@ export function useTransportDocuments(branchId?: string) {
     status: TransportDocument['status'],
   ) => {
     const result = await api.fiscalDocuments.updateTransportStatus(docId, status);
-    if (result.data) {
-      setTransportDocs((prev) => prev.map((d) => (d.id === docId ? (result.data as TransportDocument) : d)));
-      return;
+    if (result.error || !result.data) {
+      throw new Error(result.error || 'Failed to update transport document status');
     }
-    fiscalStorage.getTransportDocuments();
-    const docs = fiscalStorage.getTransportDocuments();
-    const doc = docs.find((d) => d.id === docId);
-    if (doc) {
-      doc.status = status;
-      if (status === 'delivered') {
-        doc.deliveredAt = new Date().toISOString();
-      }
-      fiscalStorage.saveTransportDocument(doc);
-      await refreshTransportDocs();
-    }
-  }, [refreshTransportDocs]);
+    setTransportDocs((prev) => prev.map((d) => (d.id === docId ? (result.data as TransportDocument) : d)));
+  }, []);
 
   return { transportDocs, createTransportDocument, updateTransportStatus, refreshTransportDocs, loading };
 }
@@ -426,9 +395,7 @@ export function useSAFTExport() {
       debitNotesList = (await api.fiscalDocuments.listDebitNotes(branchId)).data || [];
       transportList = (await api.fiscalDocuments.listTransportDocuments(branchId)).data || [];
     } catch {
-      creditNotesList = fiscalStorage.getCreditNotes(branchId);
-      debitNotesList = fiscalStorage.getDebitNotes(branchId);
-      transportList = fiscalStorage.getTransportDocuments(branchId);
+      throw new Error('Failed to load fiscal documents for SAF-T export');
     }
 
     const saftExport: SAFTExport = {

@@ -91,6 +91,14 @@ export default function Login() {
             title: t.auth.welcomeToastTitle,
             description: t.auth.offlineLoginDesc,
           });
+        } else if (result.mustChangePassword) {
+          toast({
+            title: t.auth.welcomeToastTitle,
+            description: t.auth.mustChangePasswordDesc,
+            variant: 'destructive',
+          });
+          navigate('/settings?focus=password');
+          return;
         } else {
           toast({ title: t.auth.welcomeToastTitle, description: t.auth.welcomeToastDesc });
         }

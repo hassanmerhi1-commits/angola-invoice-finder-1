@@ -186,35 +186,14 @@ export async function sendToAGT(invoiceId: string): Promise<AGTValidationRespons
   }
 }
 
-async function sendToAGTSimulated(invoiceId: string): Promise<AGTValidationResponse> {
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  // Try to get sale from API first
-  let sales: Sale[] = [];
-  try {
-    const response = await api.sales.list();
-    sales = response.data || [];
-  } catch {
-    sales = JSON.parse(localStorage.getItem('kwanzaerp_sales') || '[]');
-  }
-  
-  const sale = sales.find(s => s.id === invoiceId);
-  if (!sale) {
-    return { status: 'error', agt_code: '', timestamp: new Date().toISOString(), error: 'Factura não encontrada' };
-  }
-  
-  const agtCode = `AGT-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-  const timestamp = new Date().toISOString();
-  
-  // Update in localStorage for now (AGT status is compliance metadata)
-  const lsSales = JSON.parse(localStorage.getItem('kwanzaerp_sales') || '[]') as Sale[];
-  const idx = lsSales.findIndex(s => s.id === invoiceId);
-  if (idx >= 0) {
-    lsSales[idx] = { ...lsSales[idx], status: 'completed', agtStatus: 'validated', agtCode, agtValidatedAt: timestamp };
-    localStorage.setItem('kwanzaerp_sales', JSON.stringify(lsSales));
-  }
-  
-  return { status: 'validated', agt_code: agtCode, timestamp };
+/** @deprecated Dead path — never invent CUCE client-side. Use sendToAGT → server. */
+async function sendToAGTSimulated(_invoiceId: string): Promise<AGTValidationResponse> {
+  return {
+    status: 'error',
+    agt_code: '',
+    timestamp: new Date().toISOString(),
+    error: 'Client-side AGT simulation is disabled. Use server AGT transmission.',
+  };
 }
 
 export function getAGTStatus(invoiceId: string): { 

@@ -65,6 +65,7 @@ export function CheckoutDialog({
   const [discountInput, setDiscountInput] = useState('');
   const [discountApproved, setDiscountApproved] = useState(false);
   const [approverName, setApproverName] = useState('');
+  const [supervisorIdentifier, setSupervisorIdentifier] = useState('');
   const [supervisorPassword, setSupervisorPassword] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -125,6 +126,10 @@ export function CheckoutDialog({
 
   const handleAuthorizeDiscount = async () => {
     if (discountPct <= 0) return;
+    if (!supervisorIdentifier.trim()) {
+      toast.error(t.checkoutUi.discountUserRequired);
+      return;
+    }
     if (!supervisorPassword) {
       toast.error(t.checkoutUi.discountPasswordRequired);
       return;
@@ -132,6 +137,7 @@ export function CheckoutDialog({
     setVerifying(true);
     try {
       const result = await api.auth.verifyElevated(supervisorPassword, {
+        identifier: supervisorIdentifier.trim(),
         reason: t.checkoutUi.discountAuthReason.replace('{pct}', String(discountPct)),
       });
       if (result.data?.ok) {
@@ -379,6 +385,14 @@ export function CheckoutDialog({
                   <Lock className="w-3.5 h-3.5" />
                   {t.checkoutUi.discountAuthHint}
                 </p>
+                <Input
+                  type="text"
+                  autoComplete="username"
+                  value={supervisorIdentifier}
+                  onChange={(e) => setSupervisorIdentifier(e.target.value)}
+                  className="h-10"
+                  placeholder={t.checkoutUi.discountUserPlaceholder}
+                />
                 <div className="flex gap-2">
                   <Input
                     type="password"

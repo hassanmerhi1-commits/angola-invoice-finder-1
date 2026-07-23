@@ -48,23 +48,13 @@ async function authenticateSyncIngest(req, res, next) {
 }
 
 /**
- * Shop client → city server ingest. Requires a key when NEXOR_CLIENT_SYNC_API_KEY
- * or NEXOR_SYNC_API_KEY is set; otherwise allows LAN ingest (Phase A compat) with a warning.
+ * Shop client → city server ingest.
+ * Fail-closed: require env key or installation API key.
+ * Open ingest only when NEXOR_ALLOW_OPEN_CLIENT_INGEST=1 (dev/legacy) or NODE_ENV=test.
  */
 async function authenticateClientIngest(req, res, next) {
   const token = extractSyncToken(req);
   const { clientKey, syncKey, any } = configuredClientIngestKeys();
-
-  if (!any) {
-    if (!clientIngestWarned) {
-      clientIngestWarned = true;
-      console.warn(
-        '[SYNC] client-ingest is open — set NEXOR_CLIENT_SYNC_API_KEY on city server and shop PCs'
-      );
-    }
-    req.syncAuth = { source: 'open' };
-    return next();
-  }
 
   if (clientKey && token === clientKey) {
     req.syncAuth = { source: 'env-client' };
@@ -82,7 +72,25 @@ async function authenticateClientIngest(req, res, next) {
     return next();
   }
 
-  return res.status(401).json({ error: 'Invalid client sync API key' });
+  const allowOpen =
+    process.env.NEXOR_ALLOW_OPEN_CLIENT_INGEST === '1'
+    || process.env.NODE_ENV === 'test';
+
+  if (!any && allowOpen) {
+    if (!clientIngestWarned) {
+      clientIngestWarned = true;
+      console.warn(
+        '[SYNC] client-ingest is open (NEXOR_ALLOW_OPEN_CLIENT_INGEST) — set NEXOR_CLIENT_SYNC_API_KEY for production'
+      );
+    }
+    req.syncAuth = { source: 'open' };
+    return next();
+  }
+
+  return res.status(401).json({
+    error: 'Client sync API key required',
+    hint: 'Set NEXOR_CLIENT_SYNC_API_KEY (or NEXOR_SYNC_API_KEY) and send Authorization Bearer / X-Sync-Api-Key',
+  });
 }
 
 module.exports = {

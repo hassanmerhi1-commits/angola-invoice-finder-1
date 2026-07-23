@@ -2,6 +2,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
+const { requirePermission } = require('../middleware/requirePermission');
 const { generateSequenceNumber } = require('../accounting');
 const { recordStockMovement, auditLog } = require('../transactionEngine');
 
@@ -183,7 +184,7 @@ module.exports = function importOrdersRoutes(broadcastTable) {
     }
   });
 
-  router.post('/', async (req, res) => {
+  router.post('/', requirePermission('purchase_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       const body = req.body || {};
@@ -290,7 +291,7 @@ module.exports = function importOrdersRoutes(broadcastTable) {
     }
   });
 
-  router.post('/:id/status', async (req, res) => {
+  router.post('/:id/status', requirePermission('purchase_create', 'purchase_receive'), async (req, res) => {
     try {
       const nextStatus = String(req.body?.status || '').trim().toLowerCase();
       if (!VALID_STATUSES.has(nextStatus)) {
@@ -336,7 +337,7 @@ module.exports = function importOrdersRoutes(broadcastTable) {
     }
   });
 
-  router.post('/:id/receive', async (req, res) => {
+  router.post('/:id/receive', requirePermission('purchase_receive'), async (req, res) => {
     const client = await db.pool.connect();
     try {
       const receivedBy = req.body?.receivedBy || req.body?.received_by;

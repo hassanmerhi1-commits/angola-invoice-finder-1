@@ -48,7 +48,7 @@ module.exports = function(broadcastTable) {
    * Sign invoice data
    * POST /api/agt/sign
    */
-  router.post('/sign', async (req, res) => {
+  router.post('/sign', requireAuth, requirePermission('agt_send', 'admin_settings'), async (req, res) => {
     try {
       const { invoiceId } = req.body;
       if (!invoiceId) {

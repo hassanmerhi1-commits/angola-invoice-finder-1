@@ -296,8 +296,14 @@ async function apiFetch<T>(
   let url = buildUrl(baseUrl);
   const token = getAuthToken();
 
+  const requestId =
+    (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID()
+      : `xreq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
+    'X-Request-Id': requestId,
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers || {}),
   };
@@ -2796,6 +2802,49 @@ export const api = {
       apiFetch<any>(`/signing/verify/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`),
   },
 
+  attachments: {
+    list: (entityType: string, entityId: string) =>
+      apiFetch<any[]>(
+        `/attachments?entityType=${encodeURIComponent(entityType)}&entityId=${encodeURIComponent(entityId)}`,
+      ),
+    upload: (data: {
+      entityType: string;
+      entityId: string;
+      fileName: string;
+      contentType?: string;
+      dataBase64: string;
+    }) =>
+      apiFetch<any>('/attachments', { method: 'POST', body: JSON.stringify(data) }),
+    remove: (id: string) =>
+      apiFetch<{ success: boolean }>(`/attachments/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    downloadUrl: (id: string) => `/attachments/${encodeURIComponent(id)}/download`,
+  },
+
+  notifications: {
+    list: (limit = 50) =>
+      apiFetch<any[]>(`/notifications?limit=${encodeURIComponent(String(limit))}`),
+    markRead: (ids?: string[], all = false) =>
+      apiFetch<{ success: boolean }>('/notifications/mark-read', {
+        method: 'POST',
+        body: JSON.stringify(all ? { all: true } : { ids: ids || [] }),
+      }),
+    scanLowStock: () =>
+      apiFetch<{ success: boolean; created: number }>('/notifications/scan-low-stock', {
+        method: 'POST',
+      }),
+  },
+
+  search: {
+    query: (q: string, limit = 8) =>
+      apiFetch<{
+        q: string;
+        clients: any[];
+        products: any[];
+        sales: any[];
+        purchaseInvoices: any[];
+      }>(`/search?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`),
+  },
+
   fiscalDocuments: {
     listCreditNotes: (branchId?: string) => {
       const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
@@ -2803,6 +2852,8 @@ export const api = {
     },
     createCreditNote: (data: Record<string, unknown>) =>
       apiFetch<any>('/fiscal-documents/credit-notes', { method: 'POST', body: JSON.stringify(data) }),
+    cancelCreditNote: (id: string) =>
+      apiFetch<any>(`/fiscal-documents/credit-notes/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
     listDebitNotes: (branchId?: string) => {
       const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
       return apiFetch<any[]>(`/fiscal-documents/debit-notes${qs}`);

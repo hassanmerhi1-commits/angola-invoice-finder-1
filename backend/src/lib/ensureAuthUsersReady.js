@@ -38,10 +38,19 @@ async function repairUserPassword(user, account) {
 
   if (!needsRepair) return false;
   const passwordHash = await hashPassword(preferred);
-  await db.query(
-    'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-    [passwordHash, user.id],
-  );
+  try {
+    await db.query(
+      'UPDATE users SET password_hash = $1, must_change_password = true, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [passwordHash, user.id],
+    );
+  } catch (err) {
+    // Column may not exist until ensurePhaseSchema / migration 060.
+    await db.query(
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [passwordHash, user.id],
+    );
+    console.warn('[AUTH] must_change_password column missing; password repaired without flag:', err.message);
+  }
   console.log(`[AUTH] Initialized default credential for ${user.email} → use "${preferred}" and change it after login`);
   return true;
 }

@@ -1,6 +1,7 @@
 // Daily Reports API routes
 const express = require('express');
 const db = require('../db');
+const { requirePermission } = require('../middleware/requirePermission');
 
 function num(value) {
   const n = Number(value);
@@ -31,7 +32,7 @@ module.exports = function (broadcastTable) {
     }
   });
 
-  router.post('/generate', async (req, res) => {
+  router.post('/generate', requirePermission('reports_daily'), async (req, res) => {
     try {
       await db.ensureDailyReportsSchema();
       const { branchId, date } = req.body || {};
@@ -120,7 +121,7 @@ module.exports = function (broadcastTable) {
     }
   });
 
-  router.post('/:id/close', async (req, res) => {
+  router.post('/:id/close', requirePermission('reports_close'), async (req, res) => {
     try {
       await db.ensureDailyReportsSchema();
       const { id } = req.params;

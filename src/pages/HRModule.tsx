@@ -312,6 +312,9 @@ export default function HRModule() {
 
   return (
     <div className="flex flex-col h-full bg-background">
+      <div className="px-3 py-2 text-xs border-b bg-amber-500/10 text-amber-900 dark:text-amber-100">
+        Preview only — HR data is stored in this browser (localStorage), not on the server database. Do not use for real payroll.
+      </div>
       {/* Toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b flex-wrap">
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={openNewEmployee}>
