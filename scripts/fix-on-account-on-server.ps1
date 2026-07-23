@@ -39,6 +39,6 @@ if (Test-Path $exe) {
 }
 
 Write-Host ''
-Write-Host 'Wait ~20s then check health — expect appVersion >= 1.1.54 and schemaVersionExpected 59:' -ForegroundColor Green
+Write-Host 'Wait ~20s then check health — expect appVersion >= 1.1.55 and schemaVersionExpected 59:' -ForegroundColor Green
 Write-Host '  Invoke-RestMethod http://127.0.0.1:3000/api/health?lite=1'
 Write-Host 'Then retry the on-account (credit) sale from the client.'

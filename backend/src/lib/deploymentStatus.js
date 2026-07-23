@@ -4,8 +4,36 @@
 const fs = require('fs');
 const path = require('path');
 
-/** Bump when SQL migrations change (match highest migration number). */
-const EXPECTED_SCHEMA_VERSION = 59;
+/**
+ * Expected schema = highest numbered migration in manifest (or migrations/*.sql).
+ * Do NOT hand-edit this — add a migration file instead. That stops version/schema
+ * "forgetting to bump" after releases.
+ */
+function resolveExpectedSchemaVersion() {
+  try {
+    const { MIGRATION_FILES } = require('../migrations/manifest');
+    let max = 0;
+    for (const file of MIGRATION_FILES || []) {
+      const match = String(file).match(/^(\d+)/);
+      if (match) max = Math.max(max, Number(match[1]));
+    }
+    if (max > 0) return max;
+  } catch (_) { /* fall through */ }
+
+  try {
+    const dir = path.resolve(__dirname, '../migrations');
+    let max = 0;
+    for (const name of fs.readdirSync(dir)) {
+      const match = name.match(/^(\d+)_.*\.sql$/i);
+      if (match) max = Math.max(max, Number(match[1]));
+    }
+    if (max > 0) return max;
+  } catch (_) { /* fall through */ }
+
+  return 0;
+}
+
+const EXPECTED_SCHEMA_VERSION = resolveExpectedSchemaVersion();
 
 function readAppVersion() {
   // Prefer package.json (real shipped code). NEXOR_APP_VERSION is only a deploy label

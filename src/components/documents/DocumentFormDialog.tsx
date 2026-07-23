@@ -33,6 +33,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { OPEN_ITEMS_CHANGED_EVENT, SALES_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import { newClientRequestId } from '@/lib/sync/offlineSales';
 import { isFiscalInvoiceNumber, isOfflineSaleStub } from '@/lib/saleOfflineGuard';
+import { localISODate, isBeforeToday } from '@/lib/workingDayAccess';
 import { Badge } from '@/components/ui/badge';
 import {
   fiscalInvoiceTypeLabel,
@@ -388,11 +389,16 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     if (lines.length === 0) return null;
 
     const now = new Date();
-    const today = now.toISOString().split('T')[0];
+    const today = localISODate(now);
     const time = now.toTimeString().slice(0, 8);
     const base = editDocument ?? prefillFrom;
     const prefix = DOCUMENT_TYPE_CONFIG[documentType].prefix;
     const draftNumber = `${prefix}-${currentBranch?.code || 'SEDE'}-${today.replace(/-/g, '')}-DRAFT`;
+
+    let issueDate = base?.issueDate ?? today;
+    if (isBeforeToday(issueDate) && !hasPermission('backdate_post')) {
+      issueDate = today;
+    }
 
     return {
       ...(base ?? {}),
@@ -422,7 +428,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       parentDocumentType: base?.parentDocumentType ?? prefillFrom?.documentType,
       childDocuments: base?.childDocuments,
       status: base?.status ?? 'draft',
-      issueDate: base?.issueDate ?? today,
+      issueDate,
       issueTime: base?.issueTime ?? time,
       dueDate: dueDate || base?.dueDate,
       validUntil: validUntil || base?.validUntil,
@@ -471,6 +477,22 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     } else if (lines.length === 0) {
       toast.error(t.documentFormUi.addAtLeastOneLine);
       return;
+    }
+
+    const today = localISODate();
+    let resolvedIssueDate = editDocument?.issueDate?.slice(0, 10) || prefillFrom?.issueDate?.slice(0, 10) || today;
+    if (editDocument && isBeforeToday(editDocument.issueDate) && !dueDateOnlyEdit) {
+      if (!hasPermission('edit_historical')) {
+        toast.error(t.journalsUi.cannotEditHistorical);
+        return;
+      }
+    }
+    if (isBeforeToday(resolvedIssueDate) && !hasPermission('backdate_post')) {
+      toast.error(t.documentFormUi.cannotBackdate);
+      resolvedIssueDate = today;
+    }
+    if (!editDocument && !hasPermission('backdate_post')) {
+      resolvedIssueDate = today;
     }
 
       if (editDocument) {
@@ -682,6 +704,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               notes,
               status: 'confirmed',
               fiscalLocked: true,
+              issueDate: resolvedIssueDate,
               parentDocumentId: prefillFrom?.id,
               parentDocumentNumber: prefillFrom?.documentNumber,
               parentDocumentType: prefillFrom?.documentType,
@@ -771,6 +794,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               dueDate,
               notes,
               status: 'confirmed',
+              issueDate: resolvedIssueDate,
             },
           );
 
@@ -809,6 +833,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               validUntil,
               notes,
               status,
+              issueDate: resolvedIssueDate,
             }
           );
           onSaved?.(doc);

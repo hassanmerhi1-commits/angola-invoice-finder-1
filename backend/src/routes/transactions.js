@@ -24,6 +24,7 @@ const { attachUserBranchScope, resolveWarehouseId } = require('../middleware/bra
 const { requirePermission } = require('../middleware/requirePermission');
 const { isUniqueSkuBranchError } = require('../lib/productSkuResolve');
 const { processTransactionBody } = require('../transactionProcessor');
+const { assertCanUsePostingDate, toISODateOnly } = require('../lib/workingDayAccess');
 const {
   createJournalEntry,
   generateSequenceNumber,
@@ -488,6 +489,14 @@ module.exports = function(broadcastTable) {
   ), async (req, res) => {
     const client = await db.pool.connect();
     try {
+      const txType = String(req.body?.transactionType || '').toLowerCase();
+      if (txType === 'adjustment' || txType === 'manual' || txType === 'journal') {
+        const postingDate = toISODateOnly(
+          req.body.date || req.body.entryDate || req.body.entry_date,
+        );
+        assertCanUsePostingDate(req.user, postingDate || undefined);
+      }
+
       await client.query('BEGIN');
       const result = await processTransactionBody(client, req.body);
       await client.query('COMMIT');
@@ -542,10 +551,16 @@ module.exports = function(broadcastTable) {
       const friendly = isUniqueSkuBranchError(error)
         ? 'Já existe um produto com este código (SKU) nesta filial. Seleccione-o na lista da fatura em vez de criar um duplicado.'
         : (error.message || 'Transaction failed');
-      return res.status(isUniqueSkuBranchError(error) ? 409 : 500).json({
+      const status = isUniqueSkuBranchError(error)
+        ? 409
+        : (error.status === 403 || error.code === 'BACKDATE_DENIED' || error.code === 'EDIT_HISTORICAL_DENIED')
+          ? 403
+          : 500;
+      return res.status(status).json({
         success: false,
         error: friendly,
         errors: [friendly],
+        code: error.code || undefined,
         stockMovementIds: [],
         documentLinkIds: [],
       });

@@ -83,7 +83,6 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     { icon: Shield, label: t.nav.auditTrail, path: '/audit-trail' },
     { icon: NotebookPen, label: t.nav.journals, path: '/journals' },
     { icon: TrendingUp, label: t.nav.sales, path: '/vendas' },
-    { icon: Factory, label: t.nav.production, path: '/production' },
     { icon: UserCheck, label: t.nav.hr, path: '/hr' },
     { icon: Shield, label: t.nav.users, path: '/users' },
     { icon: Building2, label: t.nav.branches, path: '/branches' },

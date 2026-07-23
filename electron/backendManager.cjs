@@ -217,10 +217,57 @@ function isViableBackendEntry(entryPath) {
   }
 }
 
-/** Read EXPECTED_SCHEMA_VERSION baked into a backend tree (pick newest among candidates). */
+/** Parse semver-ish "1.1.54" → [1,1,54] for comparison. */
+function parseVersionParts(version) {
+  const parts = String(version || '')
+    .replace(/^v/i, '')
+    .split(/[.+-]/)
+    .map((p) => Number.parseInt(p, 10))
+    .filter((n) => Number.isFinite(n));
+  return parts.length ? parts : [0];
+}
+
+function compareVersionStrings(a, b) {
+  const pa = parseVersionParts(a);
+  const pb = parseVersionParts(b);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const da = pa[i] || 0;
+    const db = pb[i] || 0;
+    if (da !== db) return da - db;
+  }
+  return 0;
+}
+
+/** package.json version for a backend tree (installer vs C:\NEXOR ERP overlay). */
+function readBackendPackageVersion(entryPath) {
+  try {
+    const pkgPath = path.join(resolveBackendCwd(entryPath), 'package.json');
+    if (!fs.existsSync(pkgPath)) return '0.0.0';
+    const version = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version;
+    return version && version !== '1.0.0' ? String(version) : '0.0.0';
+  } catch (_) {
+    return '0.0.0';
+  }
+}
+
+/**
+ * Schema expectation for a backend tree.
+ * Prefer scanning migrations/*.sql so we never depend on a hand-bumped constant.
+ */
 function readBackendSchemaExpectation(entryPath) {
   try {
-    const statusFile = path.join(resolveBackendCwd(entryPath), 'src', 'lib', 'deploymentStatus.js');
+    const cwd = resolveBackendCwd(entryPath);
+    const migDir = path.join(cwd, 'src', 'migrations');
+    if (fs.existsSync(migDir)) {
+      let max = 0;
+      for (const name of fs.readdirSync(migDir)) {
+        const match = name.match(/^(\d+)_/);
+        if (match) max = Math.max(max, Number(match[1]));
+      }
+      if (max > 0) return max;
+    }
+    const statusFile = path.join(cwd, 'src', 'lib', 'deploymentStatus.js');
     if (!fs.existsSync(statusFile)) return 0;
     const text = fs.readFileSync(statusFile, 'utf8');
     const match = text.match(/EXPECTED_SCHEMA_VERSION\s*=\s*(\d+)/);
@@ -236,6 +283,8 @@ function readBackendFeatureScore(entryPath) {
     const cwd = resolveBackendCwd(entryPath);
     let score = 0;
     if (fs.existsSync(path.join(cwd, 'src', 'lib', 'certificationDemoProfile.js'))) score += 100;
+    if (fs.existsSync(path.join(cwd, 'src', 'lib', 'pgSavepoint.js'))) score += 40;
+    if (fs.existsSync(path.join(cwd, 'src', 'lib', 'trackFirstSqlError.js'))) score += 20;
     const certRoute = path.join(cwd, 'src', 'routes', 'certification.js');
     if (fs.existsSync(certRoute)) {
       const text = fs.readFileSync(certRoute, 'utf8');
@@ -249,6 +298,14 @@ function readBackendFeatureScore(entryPath) {
 }
 
 function compareBackendCandidates(a, b, packagedPath, installPath) {
+  // 1) Real release version wins — stops an old C:\NEXOR ERP\backend overlay
+  //    from shadowing a freshly installed Program Files backend.
+  const versionCmp = compareVersionStrings(
+    readBackendPackageVersion(a),
+    readBackendPackageVersion(b),
+  );
+  if (versionCmp !== 0) return versionCmp;
+
   const schemaA = readBackendSchemaExpectation(a);
   const schemaB = readBackendSchemaExpectation(b);
   if (schemaA !== schemaB) return schemaB - schemaA;
@@ -260,10 +317,8 @@ function compareBackendCandidates(a, b, packagedPath, installPath) {
   if (!process.env.ELECTRON_DEV && process.env.NODE_ENV !== 'development') {
     const aIsPackaged = packagedPath && path.normalize(a) === path.normalize(packagedPath);
     const bIsPackaged = packagedPath && path.normalize(b) === path.normalize(packagedPath);
-    const aIsInstall = installPath && path.normalize(a) === path.normalize(installPath);
-    const bIsInstall = installPath && path.normalize(b) === path.normalize(installPath);
-    if (aIsPackaged && bIsInstall) return -1;
-    if (bIsPackaged && aIsInstall) return 1;
+    if (aIsPackaged && !bIsPackaged) return -1;
+    if (bIsPackaged && !aIsPackaged) return 1;
   }
 
   return 0;
@@ -362,7 +417,27 @@ function resolveBackendEntry() {
     }
   }
 
-  console.log(`[BackendManager] using backend entry: ${best} (schema ${readBackendSchemaExpectation(best)}, features ${readBackendFeatureScore(best)})`);
+  console.log(
+    `[BackendManager] using backend entry: ${best} `
+    + `(v${readBackendPackageVersion(best)}, schema ${readBackendSchemaExpectation(best)}, `
+    + `features ${readBackendFeatureScore(best)})`,
+  );
+  if (
+    installPath
+    && packagedPath
+    && path.normalize(best) === path.normalize(packagedPath)
+    && fs.existsSync(installPath)
+  ) {
+    const installVer = readBackendPackageVersion(installPath);
+    const packagedVer = readBackendPackageVersion(packagedPath);
+    if (compareVersionStrings(packagedVer, installVer) > 0) {
+      console.warn(
+        `[BackendManager] C:\\NEXOR ERP\\backend is older (v${installVer}) than the installed app `
+        + `(v${packagedVer}). Using Program Files backend. Re-run sync-nexor-backend.ps1 on the `
+        + 'SERVER only if you intentionally maintain a sync overlay.',
+      );
+    }
+  }
   return best;
 }
 

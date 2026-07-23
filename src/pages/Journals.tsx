@@ -4,6 +4,7 @@ import { useTranslation } from '@/i18n';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -32,8 +33,10 @@ import { Account } from '@/types/accounting';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList, unwrapListPayload } from '@/lib/listCache';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
-import { useTrialBalance, useChartOfAccounts } from '@/hooks/useChartOfAccounts';
-import { useSales } from '@/hooks/useERP';
+import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
+import {
+  isBeforeToday,
+} from '@/lib/workingDayAccess';
 
 // Journal entry row for list + detail
 const ENTRY_TYPES = [
@@ -236,9 +239,19 @@ function JournalsTrialBalancePanel({ branchId }: { branchId?: string }) {
     <div className="flex flex-col h-full p-3 gap-2">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs text-muted-foreground">{t.common.from}:</span>
-        <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="h-7 text-xs w-32" />
+        <DatePickerButton
+          value={startDate}
+          onChange={setStartDate}
+          placeholder={t.common.from}
+          locale={language === 'pt' ? 'pt' : 'en'}
+        />
         <span className="text-xs text-muted-foreground">{t.common.to}:</span>
-        <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="h-7 text-xs w-32" />
+        <DatePickerButton
+          value={endDate}
+          onChange={setEndDate}
+          placeholder={t.common.to}
+          locale={language === 'pt' ? 'pt' : 'en'}
+        />
         <Button variant="outline" size="sm" className="h-7 text-xs" onClick={refetch}>
           <RefreshCw className="w-3 h-3 mr-1" /> {t.common.refresh}
         </Button>
@@ -458,6 +471,9 @@ export default function Journals() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
+  const { hasPermission } = usePermissions(user?.id);
+  const canBackdatePost = hasPermission('backdate_post');
+  const canEditHistorical = hasPermission('edit_historical');
   const { currentBranch, listBranchId, isConsolidatedView } = useBranchScope();
 
   const journalLabels = useMemo<JournalDisplayLabels>(() => ({
@@ -510,8 +526,8 @@ export default function Journals() {
 
   const [activeTab, setActiveTab] = useState('diarios');
   const [searchTerm, setSearchTerm] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateFrom, setDateFrom] = useState(() => localISODate());
+  const [dateTo, setDateTo] = useState(() => localISODate());
   const [filterType, setFilterType] = useState('all');
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [viewEntryOpen, setViewEntryOpen] = useState(false);
@@ -559,8 +575,9 @@ export default function Journals() {
         || (filterType === 'recibo' && (e.type === 'payment_receipt' || e.type === 'receipt' || e.referenceType === 'receipt'))
         || (filterType === 'pagamento' && (e.type === 'payment_out' || e.type === 'payment' || e.referenceType === 'payment'));
       const sortDate = e.entryDate || e.createdAt;
-      const matchesDateFrom = !dateFrom || sortDate >= dateFrom;
-      const matchesDateTo = !dateTo || sortDate <= dateTo + 'T23:59:59';
+      const day = String(sortDate || '').slice(0, 10);
+      const matchesDateFrom = !dateFrom || day >= dateFrom;
+      const matchesDateTo = !dateTo || day <= dateTo;
       return matchesSearch && matchesType && matchesDateFrom && matchesDateTo;
     });
   }, [entries, searchTerm, filterType, dateFrom, dateTo]);
@@ -612,11 +629,20 @@ export default function Journals() {
     lastLineManualRef.current = false;
     setEditingEntryId(null);
     setEditingEntryNumber('');
-    setNewEntryDate(new Date().toISOString().split('T')[0]);
+    setNewEntryDate(localISODate());
     setNewEntryType('ajuste');
     setNewEntryLines([createEmptyLine(), createEmptyLine()]);
     setAccountSearch('');
     setActiveLineId(null);
+  }
+
+  function handleNewEntryDateChange(isoDate: string) {
+    if (!canBackdatePost && isBeforeToday(isoDate)) {
+      toast.error(t.journalsUi.cannotBackdate);
+      setNewEntryDate(localISODate());
+      return;
+    }
+    setNewEntryDate(isoDate);
   }
 
   /** Line description is the journal entry title/name (no separate header description field). */
@@ -640,11 +666,16 @@ export default function Journals() {
       toast.error(t.journalsUi.cannotEditSystemEntry);
       return;
     }
+    const entryDay = String(target.entryDate || '').slice(0, 10);
+    if (isBeforeToday(entryDay) && !canEditHistorical) {
+      toast.error(t.journalsUi.cannotEditHistorical);
+      return;
+    }
 
     lastLineManualRef.current = true;
     setEditingEntryId(target.id);
     setEditingEntryNumber(target.entryNumber || '');
-    setNewEntryDate(String(target.entryDate || '').slice(0, 10) || new Date().toISOString().split('T')[0]);
+    setNewEntryDate(entryDay || localISODate());
     const typeRaw = String(target.referenceType || target.type || 'ajuste').toLowerCase();
     setNewEntryType(
       typeRaw === 'manual' ? 'manual'
@@ -778,6 +809,19 @@ export default function Journals() {
       return;
     }
 
+    if (isBeforeToday(newEntryDate) && !canBackdatePost) {
+      toast.error(t.journalsUi.cannotBackdate);
+      return;
+    }
+    if (editingEntryId) {
+      const original = entries.find((e) => e.id === editingEntryId);
+      const originalDay = String(original?.entryDate || newEntryDate).slice(0, 10);
+      if (isBeforeToday(originalDay) && !canEditHistorical) {
+        toast.error(t.journalsUi.cannotEditHistorical);
+        return;
+      }
+    }
+
     const lines = validLines.map((line) => ({
       accountCode: line.accountCode,
       accountName: line.accountName,
@@ -853,6 +897,11 @@ export default function Journals() {
 
   async function reverseSelectedEntry() {
     if (!selectedEntry || !canReverseJournalEntry(selectedEntry)) return;
+    const entryDay = String(selectedEntry.entryDate || '').slice(0, 10);
+    if (isBeforeToday(entryDay) && !canEditHistorical) {
+      toast.error(t.journalsUi.cannotEditHistorical);
+      return;
+    }
     const number = selectedEntry.entryNumber || selectedEntry.id;
     if (!window.confirm(t.journalsUi.reverseConfirm.replace('{number}', number))) return;
 
@@ -895,12 +944,18 @@ export default function Journals() {
           variant="outline"
           size="sm"
           className="h-7 text-xs gap-1"
-          disabled={!selectedEntry || !isEditableJournalEntry(selectedEntry)}
+          disabled={
+            !selectedEntry
+            || !isEditableJournalEntry(selectedEntry)
+            || (isBeforeToday(selectedEntry.entryDate) && !canEditHistorical)
+          }
           onClick={() => { void openEditEntry(selectedEntry); }}
           title={
             selectedEntry && !isEditableJournalEntry(selectedEntry)
               ? t.journalsUi.cannotEditSystemEntry
-              : undefined
+              : selectedEntry && isBeforeToday(selectedEntry.entryDate) && !canEditHistorical
+                ? t.journalsUi.cannotEditHistorical
+                : undefined
           }
         >
           <Edit2 className="w-3 h-3" /> {t.common.edit}
@@ -909,18 +964,48 @@ export default function Journals() {
           variant="outline"
           size="sm"
           className="h-7 text-xs gap-1"
-          disabled={!selectedEntry || !canReverseJournalEntry(selectedEntry) || reversingEntry}
+          disabled={
+            !selectedEntry
+            || !canReverseJournalEntry(selectedEntry)
+            || reversingEntry
+            || (isBeforeToday(selectedEntry.entryDate) && !canEditHistorical)
+          }
           onClick={() => { void reverseSelectedEntry(); }}
-          title={t.journalsUi.reverseHint}
+          title={
+            selectedEntry && isBeforeToday(selectedEntry.entryDate) && !canEditHistorical
+              ? t.journalsUi.cannotEditHistorical
+              : t.journalsUi.reverseHint
+          }
         >
           <Undo2 className="w-3 h-3" /> {t.journalsUi.reverseEntry}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
-        {/* Date filters */}
         <span className="text-xs text-muted-foreground">{t.common.from}:</span>
-        <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-7 text-xs w-32" />
+        <DatePickerButton
+          value={dateFrom}
+          onChange={setDateFrom}
+          placeholder={t.common.from}
+          locale={language === 'pt' ? 'pt' : 'en'}
+        />
         <span className="text-xs text-muted-foreground">{t.common.to}:</span>
-        <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-7 text-xs w-32" />
+        <DatePickerButton
+          value={dateTo}
+          onChange={setDateTo}
+          placeholder={t.common.to}
+          locale={language === 'pt' ? 'pt' : 'en'}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs px-2"
+          onClick={() => {
+            const today = localISODate();
+            setDateFrom(today);
+            setDateTo(today);
+          }}
+        >
+          {t.journalsUi.todayOnly}
+        </Button>
         <div className="w-px h-5 bg-border mx-1" />
         <Select value={filterType} onValueChange={setFilterType}>
           <SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder={t.common.type} /></SelectTrigger>
@@ -1112,12 +1197,19 @@ export default function Journals() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
                 <div>
                   <Label className="text-sm font-medium">{t.common.date}</Label>
-                  <Input
-                    type="date"
-                    value={newEntryDate}
-                    onChange={e => setNewEntryDate(e.target.value)}
-                    className="mt-1.5 h-10"
-                  />
+                  <div className="mt-1.5">
+                    <DatePickerButton
+                      value={newEntryDate}
+                      onChange={handleNewEntryDateChange}
+                      placeholder={t.common.date}
+                      locale={language === 'pt' ? 'pt' : 'en'}
+                      buttonClassName="h-10 w-full min-w-0"
+                      disableBeforeToday={!canBackdatePost}
+                    />
+                    {!canBackdatePost && (
+                      <p className="mt-1 text-[11px] text-muted-foreground">{t.journalsUi.dateLockedToToday}</p>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <Label className="text-sm font-medium">{t.common.type}</Label>

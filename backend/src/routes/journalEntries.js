@@ -8,6 +8,11 @@ const { requirePermission } = require('../middleware/requirePermission');
 const { reverseJournalEntry } = require('../lib/purchaseInvoicePosting');
 const { updateJournalEntry } = require('../accounting');
 const { auditErpSafe } = require('../lib/erpAudit');
+const {
+  assertCanUsePostingDate,
+  assertCanEditHistorical,
+  toISODateOnly,
+} = require('../lib/workingDayAccess');
 
 const ENTRY_HEADER_SELECT = `
   SELECT je.*,
@@ -153,6 +158,18 @@ module.exports = function(broadcastTable) {
         return res.status(400).json({ error: 'Description is required' });
       }
 
+      const existing = await db.query(
+        'SELECT entry_date FROM journal_entries WHERE id = $1 LIMIT 1',
+        [req.params.id],
+      );
+      if (!existing.rows[0]) {
+        return res.status(404).json({ error: 'Journal entry not found' });
+      }
+      const existingDate = toISODateOnly(existing.rows[0].entry_date);
+      const newDate = toISODateOnly(body.entryDate || body.entry_date || body.date || existingDate);
+      assertCanEditHistorical(req.user, existingDate);
+      assertCanUsePostingDate(req.user, newDate);
+
       await client.query('BEGIN');
       const result = await updateJournalEntry(client, req.params.id, {
         description,
@@ -194,8 +211,13 @@ module.exports = function(broadcastTable) {
       try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
       console.error('[JOURNAL ENTRIES update]', error);
       const msg = error.message || 'Failed to update journal entry';
-      const status = /cannot edit|not found|not balanced|required|período/i.test(msg) ? 400 : 500;
-      res.status(status).json({ error: msg });
+      let status = 500;
+      if (error.status === 403 || error.code === 'BACKDATE_DENIED' || error.code === 'EDIT_HISTORICAL_DENIED') {
+        status = 403;
+      } else if (/cannot edit|not found|not balanced|required|período/i.test(msg)) {
+        status = 400;
+      }
+      res.status(status).json({ error: msg, code: error.code || undefined });
     } finally {
       client.release();
     }
@@ -205,6 +227,18 @@ module.exports = function(broadcastTable) {
   router.post('/:id/reverse', requirePermission('accounting_create', 'accounting_journal'), async (req, res) => {
     const client = await db.pool.connect();
     try {
+      const existing = await db.query(
+        'SELECT entry_date FROM journal_entries WHERE id = $1 LIMIT 1',
+        [req.params.id],
+      );
+      if (!existing.rows[0]) {
+        return res.status(404).json({ error: 'Journal entry not found' });
+      }
+      const existingDate = toISODateOnly(existing.rows[0].entry_date);
+      assertCanEditHistorical(req.user, existingDate);
+      const reverseDate = toISODateOnly(req.body?.entryDate || existingDate);
+      assertCanUsePostingDate(req.user, reverseDate);
+
       await client.query('BEGIN');
       const result = await reverseJournalEntry(client, req.params.id, {
         createdBy: req.user?.id || req.body?.createdBy || null,
@@ -232,8 +266,13 @@ module.exports = function(broadcastTable) {
       try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
       console.error('[JOURNAL ENTRIES reverse]', error);
       const msg = error.message || 'Failed to reverse journal entry';
-      const status = /cannot reverse|no lines|not found/i.test(msg) ? 400 : 500;
-      res.status(status).json({ error: msg });
+      let status = 500;
+      if (error.status === 403 || error.code === 'BACKDATE_DENIED' || error.code === 'EDIT_HISTORICAL_DENIED') {
+        status = 403;
+      } else if (/cannot reverse|no lines|not found|período/i.test(msg)) {
+        status = 400;
+      }
+      res.status(status).json({ error: msg, code: error.code || undefined });
     } finally {
       client.release();
     }

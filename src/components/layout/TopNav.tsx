@@ -197,7 +197,6 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { label: t.topNav.file.print, icon: Printer, action: () => dispatchToolbarEvent(NEXOR_TOOLBAR.DOCUMENTS_PRINT) },
         { label: 'separator' },
         { label: t.topNav.file.backup, icon: Database, path: '/settings' },
-        { label: t.topNav.file.import, icon: Download, path: '/import' },
         { label: 'separator' },
         { label: t.topNav.file.exit, icon: LogOut, action: onLogout },
       ],
@@ -297,8 +296,6 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     { label: t.nav.journals, path: '/journals', icon: Calendar },
     { label: t.nav.invoices, path: '/invoices', icon: FileText },
     { label: t.nav.fiscalDocuments, path: '/fiscal-documents', icon: FileCheck },
-    { label: t.nav.production, path: '/production', icon: Factory },
-    { label: t.common.import, path: '/import', icon: Globe },
     { label: t.nav.hr, path: '/hr', icon: Users },
   ];
 

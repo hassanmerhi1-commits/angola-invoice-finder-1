@@ -200,16 +200,25 @@ function extractDocumentNumber(description: string, context: JournalContext | nu
 export function resolveCustomerDisplay(
   context: JournalContext | null | undefined,
   labels: JournalDisplayLabels,
+  referenceType?: string,
 ): string {
   const entityType = String(context?.entityType || '').toLowerCase();
   const supplierName = String(context?.supplierName || '').trim();
   const customerName = String(context?.customerName || '').trim();
   const entityName = String(context?.entityName || '').trim();
+  const ref = String(referenceType || '').toLowerCase();
+
+  // Treasury / manual journals have no customer — never label them "Walk-in".
+  const noCustomerRefs = new Set([
+    'adjustment', 'ajuste', 'transfer', 'manual', 'journal', 'je',
+    'expense', 'journal_reversal', 'opening', 'closing', 'abertura', 'fecho',
+  ]);
 
   if (entityType === 'supplier' || supplierName) {
     return supplierName || entityName || labels.fieldSupplier || 'Supplier';
   }
   const name = customerName || entityName || '';
+  if (noCustomerRefs.has(ref)) return name;
   return name || labels.walkInCustomer;
 }
 
@@ -220,7 +229,7 @@ function buildReadableText(
   labels: JournalDisplayLabels,
   isCogs: boolean,
 ): { title: string; subtitle: string; customerName: string } {
-  const customerName = resolveCustomerDisplay(context, labels);
+  const customerName = resolveCustomerDisplay(context, labels, referenceType);
   const docNo = extractDocumentNumber(rawDescription, context);
   const payment = context?.paymentMethod
     ? formatPaymentMethod(context.paymentMethod, labels)
@@ -291,11 +300,15 @@ function buildReadableText(
     };
   }
 
-  if (ref === 'adjustment' || ref === 'ajuste') {
+  if (ref === 'adjustment' || ref === 'ajuste' || ref === 'manual' || ref === 'journal' || ref === 'je' || ref === 'expense') {
     return {
-      title: docNo ? `${labels.descAdjustment} — ${docNo}` : labels.descAdjustment,
-      subtitle: [products, context?.direction === 'IN' ? labels.fieldDirectionIn : context?.direction === 'OUT' ? labels.fieldDirectionOut : ''].filter(Boolean).join(' · '),
-      customerName,
+      title: rawDescription.trim()
+        || (docNo ? `${labels.descAdjustment} — ${docNo}` : labels.descAdjustment),
+      subtitle: [
+        products,
+        context?.direction === 'IN' ? labels.fieldDirectionIn : context?.direction === 'OUT' ? labels.fieldDirectionOut : '',
+      ].filter(Boolean).join(' · '),
+      customerName: '',
     };
   }
 
@@ -304,16 +317,17 @@ function buildReadableText(
       ? `${context.fromBranchName} → ${context.toBranchName}`
       : '';
     return {
-      title: docNo ? `${labels.descTransfer} — ${docNo}` : labels.descTransfer,
+      title: rawDescription.trim()
+        || (docNo ? `${labels.descTransfer} — ${docNo}` : labels.descTransfer),
       subtitle: [route, products].filter(Boolean).join(' · '),
-      customerName,
+      customerName: '',
     };
   }
 
   return {
     title: rawDescription || labels.descAdjustment,
     subtitle: buildContextSummary(context, labels),
-    customerName,
+    customerName: customerName === labels.walkInCustomer ? '' : customerName,
   };
 }
 

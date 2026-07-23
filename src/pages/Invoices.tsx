@@ -46,6 +46,7 @@ import {
   setInvoicesWorkspaceTab,
   type InvoicesWorkspaceTab,
 } from '@/lib/invoicesWorkspace';
+import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
 import { DocumentFormDialog } from '@/components/documents/DocumentFormDialog';
 import { isFiscallyImmutable } from '@/lib/fiscalImmutability';
 import { DocumentFlowViewer } from '@/components/documents/DocumentFlowViewer';
@@ -164,6 +165,8 @@ export default function Invoices() {
   const [activeTab, setActiveTab] = useState<DocumentType | 'all'>('all');
   const [voidTarget, setVoidTarget] = useState<ERPDocument | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [dateFrom, setDateFrom] = useState(() => localISODate());
+  const [dateTo, setDateTo] = useState(() => localISODate());
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -365,14 +368,22 @@ export default function Invoices() {
   }, [openNewDocumentForTab, navigate]);
 
   const filteredDocs = useMemo(() => {
-    if (!searchTerm) return documents;
-    const q = searchTerm.toLowerCase();
-    return documents.filter(d =>
-      d.documentNumber.toLowerCase().includes(q) ||
-      d.entityName.toLowerCase().includes(q) ||
-      (d.entityNif && d.entityNif.includes(q))
-    );
-  }, [documents, searchTerm]);
+    const q = searchTerm.toLowerCase().trim();
+    return documents.filter((d) => {
+      if (q) {
+        const hay = [
+          d.documentNumber,
+          d.entityName,
+          d.entityNif,
+        ].join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      const day = String(d.issueDate || '').slice(0, 10);
+      if (dateFrom && day && day < dateFrom) return false;
+      if (dateTo && day && day > dateTo) return false;
+      return true;
+    });
+  }, [documents, searchTerm, dateFrom, dateTo]);
 
   const selectedDoc = filteredDocs.find(d => d.id === selectedDocId);
 
@@ -662,6 +673,33 @@ export default function Invoices() {
         </Button>
         <Button variant="outline" size="icon" className="h-7 w-7" onClick={refresh}>
           <RefreshCw className="w-3 h-3" />
+        </Button>
+        <div className="w-px h-5 bg-border mx-1" />
+        <span className="text-xs text-muted-foreground">{t.common.from}:</span>
+        <DatePickerButton
+          value={dateFrom}
+          onChange={setDateFrom}
+          placeholder={t.common.from}
+          locale={language === 'pt' ? 'pt' : 'en'}
+        />
+        <span className="text-xs text-muted-foreground">{t.common.to}:</span>
+        <DatePickerButton
+          value={dateTo}
+          onChange={setDateTo}
+          placeholder={t.common.to}
+          locale={language === 'pt' ? 'pt' : 'en'}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs px-2"
+          onClick={() => {
+            const today = localISODate();
+            setDateFrom(today);
+            setDateTo(today);
+          }}
+        >
+          {t.invoicesUi.todayOnly}
         </Button>
 
         <div className="flex-1" />

@@ -4,12 +4,18 @@
  */
 const crypto = require('crypto');
 const { findAccountByCode } = require('../accounting');
+const { coalesceActiveNotZero, isPostgresEngine } = require('./sqlDialect');
+const { runOptionalInSavepoint } = require('./pgSavepoint');
 
 const BANK_PARENT_CODE = '431';
 /** Prefer a real equity leaf; created under 51 if missing. */
 const OPENING_EQUITY_LEAF = '511';
 const OPENING_EQUITY_PARENT = '51';
 const OPENING_EQUITY_FALLBACK = '561'; // Reservas de reavaliação — legais (non-header)
+
+function dialectDb() {
+  return { engine: isPostgresEngine() ? 'postgres' : 'sqlite' };
+}
 
 function cleanName(name) {
   return String(name || '')
@@ -216,20 +222,25 @@ async function resolveBankGlAccountCodeById(client, bankAccountId) {
 async function resolveDefaultBranchBankGl(client, branchId) {
   const bid = String(branchId || '').trim();
   if (!bid) return BANK_PARENT_CODE;
-  try {
-    const res = await client.query(
-      `SELECT * FROM bank_accounts
-       WHERE CAST(branch_id AS TEXT) = $1
-         AND (is_active = true OR is_active = 1 OR is_active IS NULL)
-       ORDER BY is_primary DESC, updated_at DESC, created_at DESC
-       LIMIT 1`,
-      [bid],
-    );
-    if (res.rows[0]) return resolveBankGlAccountCode(client, res.rows[0]);
-  } catch (e) {
-    console.warn('[BANK GL] default branch bank:', e.message);
-  }
-  return BANK_PARENT_CODE;
+  const activeSql = coalesceActiveNotZero(dialectDb(), 'is_active');
+  const code = await runOptionalInSavepoint(
+    client,
+    'default_branch_bank',
+    async () => {
+      const res = await client.query(
+        `SELECT * FROM bank_accounts
+         WHERE CAST(branch_id AS TEXT) = $1
+           AND ${activeSql}
+         ORDER BY is_primary DESC, updated_at DESC, created_at DESC
+         LIMIT 1`,
+        [bid],
+      );
+      if (res.rows[0]) return resolveBankGlAccountCode(client, res.rows[0]);
+      return BANK_PARENT_CODE;
+    },
+    (e) => console.warn('[BANK GL] default branch bank:', e.message),
+  );
+  return code || BANK_PARENT_CODE;
 }
 
 /**
