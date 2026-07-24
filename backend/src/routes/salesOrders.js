@@ -91,6 +91,7 @@ function mapItemRow(row) {
     description: row.description || '',
     quantity: Number(row.quantity) || 0,
     reservedQty: Number(row.reserved_qty) || 0,
+    shippedQty: Number(row.shipped_qty) || 0,
     unitPrice: Number(row.unit_price) || 0,
     discount: Number(row.discount) || 0,
     taxRate: Number(row.tax_rate) || 0,
@@ -182,6 +183,7 @@ async function replaceItems(client, salesOrderId, items, branchId) {
     const item = raw || {};
     const qty = Number(item.quantity) || 0;
     const reservedQty = Number(item.reservedQty ?? item.reserved_qty ?? 0);
+    const shippedQty = Number(item.shippedQty ?? item.shipped_qty ?? 0);
     const unitPrice = Number(item.unitPrice ?? item.unit_price ?? 0);
     const discount = Number(item.discount) || 0;
     const taxRate = Number(item.taxRate ?? item.tax_rate ?? 14);
@@ -191,8 +193,8 @@ async function replaceItems(client, salesOrderId, items, branchId) {
     await client.query(
       `INSERT INTO sales_order_items (
         id, sales_order_id, product_id, product_name, sku, description,
-        quantity, reserved_qty, unit_price, discount, tax_rate, tax_amount, subtotal, total, branch_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        quantity, reserved_qty, shipped_qty, unit_price, discount, tax_rate, tax_amount, subtotal, total, branch_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [
         String(item.id || newId()),
         salesOrderId,
@@ -202,6 +204,7 @@ async function replaceItems(client, salesOrderId, items, branchId) {
         String(item.description || item.productName || item.product_name || ''),
         qty,
         reservedQty,
+        shippedQty,
         unitPrice,
         discount,
         taxRate,
@@ -636,6 +639,89 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
     }
   });
 
+  router.post('/:id/ship', requireAuth, requirePermission(...MUTATE_PERMS), async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+      const id = req.params.id;
+      await client.query('BEGIN');
+      const existing = await client.query('SELECT * FROM sales_orders WHERE id = $1 LIMIT 1 FOR UPDATE', [id]);
+      if (!existing.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Sales order not found' });
+      }
+      const row = existing.rows[0];
+      if (!['confirmed', 'reserved', 'partially_shipped'].includes(row.status)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `Cannot ship sales order in status "${row.status}"` });
+      }
+      const items = await loadItemsForOrder(id);
+      const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
+      // Default: ship all remaining qty on each line.
+      const shipMap = new Map();
+      if (lines.length) {
+        for (const line of lines) {
+          const itemId = String(line.itemId || line.id || '').trim();
+          const qty = Number(line.qty ?? line.quantity);
+          if (itemId && Number.isFinite(qty) && qty > 0) shipMap.set(itemId, qty);
+        }
+      } else {
+        for (const it of items) {
+          const remaining = Math.max(0, Number(it.quantity) - Number(it.shippedQty || 0));
+          if (remaining > 0) shipMap.set(it.id, remaining);
+        }
+      }
+      if (!shipMap.size) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Nothing to ship' });
+      }
+
+      for (const it of items) {
+        const add = Number(shipMap.get(it.id) || 0);
+        if (add <= 0) continue;
+        const already = Number(it.shippedQty || 0);
+        const maxShip = Math.max(0, Number(it.quantity) - already);
+        const shipQty = Math.min(add, maxShip);
+        if (shipQty <= 0) continue;
+        const newShipped = already + shipQty;
+        const newReserved = Math.max(0, Number(it.reservedQty || 0) - shipQty);
+        await client.query(
+          `UPDATE sales_order_items
+           SET shipped_qty = $2, reserved_qty = $3
+           WHERE id = $1`,
+          [it.id, newShipped, newReserved],
+        );
+      }
+
+      const refreshed = await loadItemsForOrder(id);
+      const allShipped = refreshed.every((it) => Number(it.shippedQty || 0) + 0.0001 >= Number(it.quantity || 0));
+      const anyShipped = refreshed.some((it) => Number(it.shippedQty || 0) > 0);
+      const nextStatus = allShipped ? 'shipped' : anyShipped ? 'partially_shipped' : row.status;
+      await client.query(
+        `UPDATE sales_orders SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        [id, nextStatus],
+      );
+      await client.query('COMMIT');
+      const order = mapSalesOrderRow(
+        { ...row, status: nextStatus, updated_at: new Date().toISOString() },
+        refreshed,
+      );
+      await auditSalesOrderEvent(req, {
+        recordId: id,
+        action: 'ship',
+        description: `Encomenda ${orderAuditLabel(order.orderNumber)} expedida (${nextStatus})`,
+        newValues: { status: nextStatus },
+      });
+      await broadcastTable('sales_orders');
+      res.json(order);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[SALES_ORDERS ERROR]', error);
+      res.status(500).json({ error: error.message || 'Failed to ship sales order' });
+    } finally {
+      client.release();
+    }
+  });
+
   router.post('/:id/convert', requireAuth, requirePermission(...MUTATE_PERMS), async (req, res) => {
     try {
       const id = req.params.id;
@@ -644,7 +730,7 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
         return res.status(404).json({ error: 'Sales order not found' });
       }
       const row = existing.rows[0];
-      if (!['confirmed', 'reserved'].includes(row.status)) {
+      if (!['confirmed', 'reserved', 'partially_shipped', 'shipped'].includes(row.status)) {
         return res.status(400).json({ error: `Cannot convert sales order in status "${row.status}"` });
       }
       // Do not mark converted / clear soft hold yet — that happens on mark-invoiced

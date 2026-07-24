@@ -3,7 +3,9 @@
 
 param(
   [string]$ServerIp = '127.0.0.1',
-  [int]$Port = 3000
+  [int]$Port = 3000,
+  [string]$ExpectedVersion = '1.1.65',
+  [int]$MinSchema = 67
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,21 +35,28 @@ if ($r.schemaRepairHint) {
   Write-Host $r.schemaRepairHint
 }
 
+$schemaOk = ($null -eq $r.schemaVersion -or [int]$r.schemaVersion -ge $MinSchema) `
+  -and ($null -eq $r.schemaVersionExpected -or [int]$r.schemaVersionExpected -ge $MinSchema)
+$versionOk = -not $ExpectedVersion `
+  -or [string]$r.appVersion -eq $ExpectedVersion `
+  -or [string]$r.backendPackageVersion -eq $ExpectedVersion
+
 $ok = $r.ok -eq $true `
   -and $r.engine -eq 'postgres' `
-  -and [int]$r.schemaVersionExpected -ge 56 `
-  -and ($null -eq $r.schemaVersion -or [int]$r.schemaVersion -ge 56)
+  -and $schemaOk `
+  -and $versionOk `
+  -and ($r.schemaUpToDate -eq $true -or $null -eq $r.schemaUpToDate)
 
 Write-Host ""
 if ($ok) {
-  Write-Host "OK — server backend and schema look current." -ForegroundColor Green
+  Write-Host "OK — server backend and schema look current ($ExpectedVersion / schema >= $MinSchema)." -ForegroundColor Green
   exit 0
 }
 
 Write-Host "OUT OF DATE — update the SERVER PC (PostgreSQL host), not only LAN clients:" -ForegroundColor Red
-Write-Host "  1. Close NEXOR on the server"
-  Write-Host "  2. Install NEXOR-ERP-1.1.34-x64.exe (or newer) on the SERVER"
-Write-Host "  3. Run C:\NEXOR ERP\repair-server-schema-now.ps1 (or fix-server-schema.cmd)"
-Write-Host "  4. Restart NEXOR on the server"
-Write-Host "  5. Re-run: .\verify-server-health.ps1 -ServerIp $ServerIp"
+Write-Host "  1. git pull origin main"
+Write-Host "  2. docker compose up -d --build backend"
+Write-Host "  3. Confirm /api/health appVersion=$ExpectedVersion and migrations through $MinSchema"
+Write-Host "  4. Re-run: .\verify-server-health.ps1 -ServerIp $ServerIp"
+Write-Host "See also: docs/BACKUP-OFFSITE-RTO.md"
 exit 1

@@ -285,6 +285,7 @@ app.use('/api/notifications', require('./routes/notifications')());
 app.use('/api/webhooks', require('./routes/webhooks')());
 app.use('/api/bank-match-rules', require('./routes/bankMatchRules')());
 app.use('/api/bank-reconciliations', require('./routes/bankReconciliations')());
+app.use('/api/bank-transactions', require('./routes/bankTransactions')());
 app.use('/api/search', require('./routes/search')());
 app.use('/api/sync', require('./routes/syncIngest')(broadcastTable));
 app.use('/api/installations', require('./routes/installations')());

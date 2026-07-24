@@ -228,7 +228,8 @@ npm run electron:build
 - [ ] Admin password changed (no `changeme` / `caixa1` left active)
 - [ ] `/api/health` shows schema up to date and matching app version
 - [ ] Backup create + restore drill on a **copy** database
-- [ ] Offsite folder set if possible (`BACKUP_OFFSITE_DIR`) — see Admin → Backup RTO hint
+- [ ] Offsite folder set if possible (`BACKUP_OFFSITE_DIR`) — see [docs/BACKUP-OFFSITE-RTO.md](./docs/BACKUP-OFFSITE-RTO.md) and Admin → Backup RTO hint
+- [ ] Health watchdog optional: `.\scripts\watchdog-health.ps1 -ServerIp <server>`
 - [ ] Cash / card / transfer / credit sale verified
 - [ ] Purchase invoice → stock → WAC → balanced journal
 - [ ] Cashier cannot backdate (`backdate_post` denied)

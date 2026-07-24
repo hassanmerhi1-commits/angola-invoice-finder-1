@@ -55,6 +55,8 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
   switch (status) {
     case 'confirmed':
     case 'reserved':
+    case 'partially_shipped':
+    case 'shipped':
       return 'default';
     case 'converted':
       return 'outline';
@@ -367,7 +369,7 @@ export default function SalesOrdersPage() {
 
   const runAction = async (
     id: string,
-    action: 'confirm' | 'reserve' | 'convert' | 'cancel',
+    action: 'confirm' | 'reserve' | 'convert' | 'cancel' | 'ship',
   ) => {
     const order = orders.find((o) => o.id === id);
     if (action === 'cancel') {
@@ -388,6 +390,17 @@ export default function SalesOrdersPage() {
     if (action === 'reserve' && !(order?.items || []).some((i) => i.productId && Number(i.quantity) > 0)) {
       toast.error(language === 'pt' ? 'Adicione produtos antes de reservar' : 'Add products before reserving');
       if (order) openEdit(order);
+      return;
+    }
+    if (action === 'ship') {
+      const res = await api.salesOrders.ship(id);
+      if (res.error) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(language === 'pt' ? 'Expedição registada' : 'Shipment recorded');
+      notifySoftReserveChanged(order?.branchId || branchId);
+      await loadOrders();
       return;
     }
     if (action === 'convert') {
@@ -614,7 +627,17 @@ export default function SalesOrdersPage() {
                           {language === 'pt' ? 'Reservar' : 'Reserve'}
                         </Button>
                       )}
-                      {['confirmed', 'reserved'].includes(order.status) && (
+                      {['confirmed', 'reserved', 'partially_shipped'].includes(order.status) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void runAction(order.id, 'ship')}
+                        >
+                          <Package className="w-3 h-3 mr-1" />
+                          {language === 'pt' ? 'Expedir' : 'Ship'}
+                        </Button>
+                      )}
+                      {['confirmed', 'reserved', 'partially_shipped', 'shipped'].includes(order.status) && (
                         <Button
                           size="sm"
                           variant="default"
@@ -624,7 +647,7 @@ export default function SalesOrdersPage() {
                           {language === 'pt' ? 'Converter' : 'Convert'}
                         </Button>
                       )}
-                      {['draft', 'confirmed', 'reserved'].includes(order.status) && (
+                      {['draft', 'confirmed', 'reserved', 'partially_shipped', 'shipped'].includes(order.status) && (
                         <Button
                           size="sm"
                           variant="ghost"

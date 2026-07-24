@@ -1163,12 +1163,20 @@ async function ensureOpeningStockMovement(client, productId, warehouseId, create
   if (legacy <= 0.0001) return;
 
   const movementId = randomUUID();
+  let locationId = null;
+  try {
+    const { ensureDefaultWarehouse } = require('./lib/warehouses');
+    const meta = await ensureDefaultWarehouse(client, wh);
+    locationId = meta?.id || null;
+  } catch {
+    locationId = null;
+  }
   await client.query(
     `INSERT INTO stock_movements
-     (id, product_id, warehouse_id, movement_type, quantity, unit_cost,
+     (id, product_id, warehouse_id, location_id, movement_type, quantity, unit_cost,
       reference_type, reference_id, reference_number, notes, created_by)
-     VALUES ($1, $2, $3, 'IN', $4, 0, 'opening_balance', NULL, 'LEGACY', 'Saldo inicial (stock existente)', $5)`,
-    [movementId, pid, wh, legacy, createdByUuid],
+     VALUES ($1, $2, $3, $4, 'IN', $5, 0, 'opening_balance', NULL, 'LEGACY', 'Saldo inicial (stock existente)', $6)`,
+    [movementId, pid, wh, locationId, legacy, createdByUuid],
   );
 }
 
@@ -1476,13 +1484,22 @@ async function recordStockMovement(client, params) {
     }
   }
 
+  let locationId = null;
+  try {
+    const { ensureDefaultWarehouse } = require('./lib/warehouses');
+    const meta = await ensureDefaultWarehouse(client, resolvedWarehouseId);
+    locationId = meta?.id || null;
+  } catch {
+    locationId = null;
+  }
+
   const movementId = randomUUID();
   await client.query(
     `INSERT INTO stock_movements 
-     (id, product_id, warehouse_id, movement_type, quantity, unit_cost,
+     (id, product_id, warehouse_id, location_id, movement_type, quantity, unit_cost,
       reference_type, reference_id, reference_number, notes, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-    [movementId, resolvedProductId, resolvedWarehouseId, normalizedMovementType, qty, unitCost || 0,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [movementId, resolvedProductId, resolvedWarehouseId, locationId, normalizedMovementType, qty, unitCost || 0,
      referenceType, referenceUuid, referenceNumber || '', notes || '', createdByUuid]
   );
 

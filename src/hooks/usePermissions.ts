@@ -131,10 +131,8 @@ export function usePermissions(userId: string | undefined) {
   }, [userId, sessionUser, role, overrides]);
 
   const hasPermission = useCallback((permissionId: string): boolean => {
-    // QA: *_delete is admin-only until testing finishes — then delete this block.
-    if (permissionId.endsWith('_delete')) return role === 'admin';
     return userPermissions.includes(permissionId);
-  }, [userPermissions, role]);
+  }, [userPermissions]);
 
   const hasAnyPermission = useCallback((permissionIds: string[]): boolean => {
     return permissionIds.some((id) => hasPermission(id));
@@ -190,8 +188,6 @@ export function usePermissionCheck() {
       overrides = getStoredUserOverrides(userId);
     }
 
-    // QA: *_delete is admin-only until testing finishes — then delete this block.
-    if (permissionId.endsWith('_delete')) return role === 'admin';
     return getEffectivePermissions(role, overrides).includes(permissionId);
   }, [authUser]);
 

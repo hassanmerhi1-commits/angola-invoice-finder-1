@@ -606,7 +606,7 @@ export default function UserManagement() {
                 minLength={8}
               />
               <p className="text-xs text-muted-foreground">
-                Login: use the username, the part before @ in the email, or the full email — with this exact password.
+                Login: use the username, the part before @ in the email, or the full email — with this temporary password. They will be forced to change it on first login.
               </p>
             </div>
 

@@ -1512,6 +1512,38 @@ export async function createCashTransaction(
 // ==================== BANK TRANSACTION FUNCTIONS ====================
 
 export async function getBankTransactions(bankAccountId?: string): Promise<BankTransaction[]> {
+  if (await shouldLoadBankAccountsFromServerApi()) {
+    try {
+      const res = await api.bankTransactions.list(
+        bankAccountId ? { bankAccountId } : undefined,
+      );
+      if (Array.isArray(res.data)) {
+        return res.data.map((row: any) => ({
+          id: row.id,
+          bankAccountId: row.bankAccountId || row.bank_account_id,
+          branchId: row.branchId || row.branch_id || '',
+          type: row.type || 'manual',
+          direction: row.direction === 'out' ? 'out' : 'in',
+          amount: Number(row.amount) || 0,
+          balanceAfter: Number(row.balanceAfter ?? row.balance_after) || 0,
+          referenceType: row.referenceType || row.reference_type,
+          referenceId: row.referenceId || row.reference_id,
+          referenceNumber: row.referenceNumber || row.reference_number,
+          transactionDate: row.transactionDate || row.transaction_date || '',
+          valueDate: row.valueDate || row.value_date,
+          bankReference: row.bankReference || row.bank_reference,
+          description: row.description || '',
+          category: row.category,
+          payee: row.payee,
+          createdBy: row.createdBy || row.created_by || '',
+          createdAt: row.createdAt || row.created_at || '',
+          notes: row.notes,
+        })) as BankTransaction[];
+      }
+    } catch (e) {
+      console.warn('[BANK_TXNS] API list failed, falling back to local', e);
+    }
+  }
   if (isElectronMode()) {
     const rows = await dbGetAll<any>('bank_transactions');
     let txns = rows.map(mapBankTransactionFromDb);
@@ -1559,6 +1591,21 @@ export async function createBankTransaction(
     createdAt: new Date().toISOString(),
     notes,
   };
+
+  if (await shouldLoadBankAccountsFromServerApi()) {
+    try {
+      const res = await api.bankTransactions.create(transaction as unknown as Record<string, unknown>);
+      if (res.data?.id) {
+        return {
+          ...transaction,
+          id: res.data.id,
+          balanceAfter: Number(res.data.balanceAfter ?? transaction.balanceAfter) || transaction.balanceAfter,
+        };
+      }
+    } catch (e) {
+      console.warn('[BANK_TXNS] API create failed, storing locally', e);
+    }
+  }
   
   if (isElectronMode()) {
     await dbInsert('bank_transactions', mapBankTransactionToDb(transaction));

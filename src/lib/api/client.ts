@@ -1598,6 +1598,11 @@ export const api = {
         `/sales-orders/${encodeURIComponent(id)}/convert`,
         { method: 'POST' },
       ),
+    ship: (id: string, data?: { lines?: Array<{ itemId: string; qty: number }> }) =>
+      apiFetch<any>(`/sales-orders/${encodeURIComponent(id)}/ship`, {
+        method: 'POST',
+        body: JSON.stringify(data || {}),
+      }),
     markInvoiced: (id: string, data: { invoiceId?: string; invoiceNumber?: string }) =>
       apiFetch<any>(`/sales-orders/${encodeURIComponent(id)}/mark-invoiced`, {
         method: 'POST',
@@ -2911,6 +2916,11 @@ export const api = {
       apiFetch<{ success: boolean; created: number }>('/notifications/scan-low-stock', {
         method: 'POST',
       }),
+    scanAll: () =>
+      apiFetch<{ success: boolean; low: number; ar: number; periods: number; total: number }>(
+        '/notifications/scan',
+        { method: 'POST' },
+      ),
   },
 
   webhooks: {
@@ -3002,6 +3012,18 @@ export const api = {
       apiFetch<{ success: boolean }>(`/bank-reconciliations/${encodeURIComponent(bankAccountId)}`, {
         method: 'DELETE',
       }),
+  },
+
+  bankTransactions: {
+    list: (params?: { bankAccountId?: string; branchId?: string }) => {
+      const q = new URLSearchParams();
+      if (params?.bankAccountId) q.set('bankAccountId', params.bankAccountId);
+      if (params?.branchId) q.set('branchId', params.branchId);
+      const qs = q.toString();
+      return apiFetch<any[]>(`/bank-transactions${qs ? `?${qs}` : ''}`);
+    },
+    create: (data: Record<string, unknown>) =>
+      apiFetch<any>('/bank-transactions', { method: 'POST', body: JSON.stringify(data) }),
   },
 
   search: {

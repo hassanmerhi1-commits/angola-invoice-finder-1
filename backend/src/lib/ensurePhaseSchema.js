@@ -637,6 +637,108 @@ async function ensureBankReconciliationsTable(db) {
   }
 }
 
+/** Sales order ship qty + optional stock location stamp (migration 067). */
+async function ensureSoShipAndLocationColumns(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query(`ALTER TABLE sales_order_items ADD COLUMN IF NOT EXISTS shipped_qty NUMERIC(18, 4) NOT NULL DEFAULT 0`);
+      await db.query(`ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS location_id VARCHAR(64) DEFAULT NULL`);
+    } catch (err) {
+      console.warn('[SCHEMA] so ship/location cols:', err.message);
+    }
+    return;
+  }
+  if (!db.sqlite) return;
+  try {
+    let itemCols = [];
+    try {
+      itemCols = db.sqlite.pragma('table_info(sales_order_items)');
+    } catch (_) {
+      return;
+    }
+    if (!itemCols.some((c) => c.name === 'shipped_qty')) {
+      db.sqlite.exec(`ALTER TABLE sales_order_items ADD COLUMN shipped_qty REAL NOT NULL DEFAULT 0`);
+    }
+    let movCols = [];
+    try {
+      movCols = db.sqlite.pragma('table_info(stock_movements)');
+    } catch (_) {
+      return;
+    }
+    if (!movCols.some((c) => c.name === 'location_id')) {
+      db.sqlite.exec(`ALTER TABLE stock_movements ADD COLUMN location_id TEXT`);
+    }
+  } catch (err) {
+    console.warn('[SCHEMA] so ship/location cols (sqlite):', err.message);
+  }
+}
+
+/** Bank ledger transactions (migration 066). */
+async function ensureBankTransactionsTable(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS bank_transactions (
+          id VARCHAR(64) PRIMARY KEY,
+          bank_account_id VARCHAR(64) NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+          branch_id VARCHAR(64) NOT NULL DEFAULT '',
+          type VARCHAR(32) NOT NULL DEFAULT 'manual',
+          direction VARCHAR(8) NOT NULL DEFAULT 'in',
+          amount NUMERIC(18, 2) NOT NULL DEFAULT 0,
+          balance_after NUMERIC(18, 2) NOT NULL DEFAULT 0,
+          reference_type VARCHAR(32),
+          reference_id VARCHAR(64),
+          reference_number VARCHAR(64),
+          transaction_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          value_date DATE,
+          bank_reference VARCHAR(128),
+          description TEXT NOT NULL DEFAULT '',
+          category VARCHAR(64),
+          payee VARCHAR(255),
+          created_by VARCHAR(64),
+          notes TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_bank_transactions_account
+          ON bank_transactions (bank_account_id, transaction_date DESC)
+      `);
+    } catch (err) {
+      console.warn('[SCHEMA] bank_transactions:', err.message);
+    }
+    return;
+  }
+  if (!db.sqlite) return;
+  try {
+    db.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS bank_transactions (
+        id TEXT PRIMARY KEY,
+        bank_account_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT '',
+        type TEXT NOT NULL DEFAULT 'manual',
+        direction TEXT NOT NULL DEFAULT 'in',
+        amount REAL NOT NULL DEFAULT 0,
+        balance_after REAL NOT NULL DEFAULT 0,
+        reference_type TEXT,
+        reference_id TEXT,
+        reference_number TEXT,
+        transaction_date TEXT,
+        value_date TEXT,
+        bank_reference TEXT,
+        description TEXT NOT NULL DEFAULT '',
+        category TEXT,
+        payee TEXT,
+        created_by TEXT,
+        notes TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+    `);
+  } catch (err) {
+    console.warn('[SCHEMA] bank_transactions (sqlite):', err.message);
+  }
+}
+
 /** Document attachments + server notifications inbox (migration 062). */
 async function ensureAttachmentsNotificationsTables(db) {
   if (db.engine === 'postgres') {
@@ -1125,6 +1227,8 @@ async function ensurePhaseSchema(db) {
     await ensureMfaSalesOrdersWarehousesWebhooks(db);
     await ensureStockTransferWarehouseColumns(db);
     await ensureBankReconciliationsTable(db);
+    await ensureBankTransactionsTable(db);
+    await ensureSoShipAndLocationColumns(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
@@ -1178,6 +1282,8 @@ async function ensurePhaseSchema(db) {
     await ensureMfaSalesOrdersWarehousesWebhooks(db);
     await ensureStockTransferWarehouseColumns(db);
     await ensureBankReconciliationsTable(db);
+    await ensureBankTransactionsTable(db);
+    await ensureSoShipAndLocationColumns(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {

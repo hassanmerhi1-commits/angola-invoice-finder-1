@@ -5,7 +5,6 @@ import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { LogIn, Shield, RefreshCw, AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -318,17 +317,6 @@ export default function Login() {
               )}
             </Button>
           </form>
-
-          <Card className="shadow-card">
-            <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground mb-2 font-semibold">{t.auth.defaultAccountsTitle}</p>
-              <div className="space-y-1 text-xs">
-                <p>{t.auth.defaultAdminHint}</p>
-                <p>{t.auth.defaultCashierHint}</p>
-                <p className="text-muted-foreground mt-2">{t.auth.changePasswordHint}</p>
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
     </div>

@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/requireAuth');
-const { scanLowStockNotifications } = require('../lib/notifications');
+const { scanLowStockNotifications, runNotificationScans } = require('../lib/notifications');
 
 function mapRow(row) {
   return {
@@ -69,6 +69,18 @@ module.exports = function notificationsRouter() {
       }
       const created = await scanLowStockNotifications();
       res.json({ success: true, created });
+    } catch (e) {
+      res.status(500).json({ error: e.message || 'Scan failed' });
+    }
+  });
+
+  router.post('/scan', requireAuth, async (req, res) => {
+    try {
+      if (req.user?.role !== 'admin' && req.user?.role !== 'manager') {
+        return res.status(403).json({ error: 'Permission denied' });
+      }
+      const result = await runNotificationScans();
+      res.json({ success: true, ...result });
     } catch (e) {
       res.status(500).json({ error: e.message || 'Scan failed' });
     }

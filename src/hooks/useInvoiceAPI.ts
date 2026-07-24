@@ -69,7 +69,7 @@ export function useInvoiceAPI() {
     }
   }, []);
 
-  const checkAGTStatus = useCallback((invoiceId: string) => {
+  const checkAGTStatus = useCallback(async (invoiceId: string) => {
     return getAGTStatus(invoiceId);
   }, []);
 

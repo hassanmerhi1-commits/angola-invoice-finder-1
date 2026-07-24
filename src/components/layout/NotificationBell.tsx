@@ -1,4 +1,5 @@
 import { Bell, Package, CheckCircle, CreditCard, ArrowRightLeft, Info, X } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -13,8 +14,11 @@ import { formatDistanceToNow } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useNavigate } from 'react-router-dom';
 
-const iconMap: Record<Notification['type'], React.ReactNode> = {
+const iconMap: Record<string, React.ReactNode> = {
   low_stock: <Package className="w-4 h-4 text-orange-500" />,
+  overdue_ar: <CreditCard className="w-4 h-4 text-orange-500" />,
+  period_close: <Info className="w-4 h-4 text-blue-500" />,
+  agt_failure: <Info className="w-4 h-4 text-destructive" />,
   approval_pending: <CheckCircle className="w-4 h-4 text-blue-500" />,
   payment_received: <CreditCard className="w-4 h-4 text-emerald-500" />,
   stock_transfer: <ArrowRightLeft className="w-4 h-4 text-purple-500" />,
@@ -28,13 +32,30 @@ const severityDot: Record<Notification['severity'], string> = {
 };
 
 export function NotificationBell() {
-  const { notifications, unreadCount, markAsRead, markAllAsRead, clearAll } = useNotifications();
+  const { notifications, unreadCount, markAsRead, markAllAsRead, clearAll, scanAll, refreshFromServer } = useNotifications();
   const navigate = useNavigate();
+  const [scanning, setScanning] = useState(false);
 
   const handleClick = (notif: Notification) => {
     markAsRead(notif.id);
     if (notif.link) {
       navigate(notif.link);
+    }
+  };
+
+  const handleScan = async () => {
+    setScanning(true);
+    try {
+      const r = await scanAll();
+      await refreshFromServer();
+      // silent if zero; toast via console for admins
+      if ((r as any)?.total > 0) {
+        console.log('[NOTIFICATIONS] scan created', r);
+      }
+    } catch (e) {
+      console.warn('[NOTIFICATIONS] scan failed', e);
+    } finally {
+      setScanning(false);
     }
   };
 
@@ -54,6 +75,16 @@ export function NotificationBell() {
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h4 className="font-semibold text-sm">Notificações</h4>
           <div className="flex gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs h-7"
+              disabled={scanning}
+              onClick={() => void handleScan()}
+              title="Scan low stock / overdue AR / period close"
+            >
+              {scanning ? '…' : 'Scan'}
+            </Button>
             {unreadCount > 0 && (
               <Button variant="ghost" size="sm" className="text-xs h-7" onClick={markAllAsRead}>
                 Marcar lidas
@@ -84,7 +115,7 @@ export function NotificationBell() {
                     }`}
                   >
                     <div className="flex items-start gap-3">
-                      <div className="mt-0.5">{iconMap[notif.type]}</div>
+                      <div className="mt-0.5">{iconMap[notif.type] || iconMap.system}</div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-sm truncate">{notif.title}</span>

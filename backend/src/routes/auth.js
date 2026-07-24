@@ -445,8 +445,8 @@ router.post('/users', requireAdmin, async (req, res) => {
     const passwordHash = await hashPassword(plainPassword);
 
     await db.query(
-      `INSERT INTO users (id, email, username, name, role, branch_id, password_hash, is_active, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      `INSERT INTO users (id, email, username, name, role, branch_id, password_hash, is_active, must_change_password, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [id, normalizedEmail, normalizedUsername, name, role, branchId || null, passwordHash],
     );
 
@@ -526,11 +526,15 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
     }
 
     let passwordHash;
+    let mustChangePassword = null;
     if (password != null && String(password).length > 0) {
       if (String(password).length < 8) {
         return res.status(400).json({ error: 'Password must be at least 8 characters' });
       }
       passwordHash = await hashPassword(String(password));
+      // Admin/temp reset for another user → force change on next login.
+      // Changing own password here clears the flag.
+      mustChangePassword = id !== req.user?.id;
     }
 
     await db.query(
@@ -543,6 +547,7 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
          is_active = COALESCE($7, is_active),
          password_hash = COALESCE($8, password_hash),
          permissions = COALESCE($9, permissions),
+         must_change_password = COALESCE($10, must_change_password),
          updated_at = CURRENT_TIMESTAMP
        WHERE id = $1`,
       [
@@ -555,6 +560,7 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
         isActive !== undefined ? isActive : null,
         passwordHash || null,
         permissionsJson,
+        mustChangePassword,
       ],
     );
 

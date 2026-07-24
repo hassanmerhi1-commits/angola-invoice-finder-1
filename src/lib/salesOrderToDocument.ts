@@ -9,6 +9,7 @@ export interface SalesOrderItem {
   description?: string;
   quantity: number;
   reservedQty?: number;
+  shippedQty?: number;
   unitPrice: number;
   discount?: number;
   taxRate?: number;
@@ -41,7 +42,10 @@ export interface SalesOrder {
 }
 
 /** Map a sales order into an ERP document prefill for sales invoice creation. */
-export function salesOrderToErpDocumentPrefill(order: SalesOrder): ERPDocument {
+export function salesOrderToErpDocumentPrefill(
+  order: SalesOrder,
+  opts?: { paymentTermsDays?: number },
+): ERPDocument {
   const lines: DocumentLine[] = order.items.map((item, index) =>
     calculateLineTotals({
       id: item.id || `line_${index}`,
@@ -57,9 +61,12 @@ export function salesOrderToErpDocumentPrefill(order: SalesOrder): ERPDocument {
 
   const totals = calculateDocumentTotals(lines);
   const issueDate = order.createdAt?.split('T')[0] || new Date().toISOString().split('T')[0];
+  const terms = Number.isFinite(opts?.paymentTermsDays)
+    ? Math.max(0, Number(opts?.paymentTermsDays))
+    : 30;
   const dueDate = (() => {
     const d = new Date(`${issueDate}T12:00:00`);
-    d.setDate(d.getDate() + 30);
+    d.setDate(d.getDate() + terms);
     return d.toISOString().split('T')[0];
   })();
 
@@ -89,7 +96,11 @@ export function salesOrderToErpDocumentPrefill(order: SalesOrder): ERPDocument {
     dueDate,
     issueDate,
     issueTime: '00:00:00',
-    notes: [order.notes, `SO: ${order.orderNumber}`].filter(Boolean).join('\n'),
+    notes: [
+      order.notes,
+      order.warehouseId ? `Warehouse: ${order.warehouseId}` : '',
+      `SO: ${order.orderNumber}`,
+    ].filter(Boolean).join('\n'),
     parentDocumentId: order.id,
     parentDocumentNumber: order.orderNumber,
     parentDocumentType: 'sales_order',

@@ -186,29 +186,38 @@ export async function sendToAGT(invoiceId: string): Promise<AGTValidationRespons
   }
 }
 
-/** @deprecated Dead path — never invent CUCE client-side. Use sendToAGT → server. */
-async function sendToAGTSimulated(_invoiceId: string): Promise<AGTValidationResponse> {
-  return {
-    status: 'error',
-    agt_code: '',
-    timestamp: new Date().toISOString(),
-    error: 'Client-side AGT simulation is disabled. Use server AGT transmission.',
-  };
-}
-
-export function getAGTStatus(invoiceId: string): { 
-  status: 'pending' | 'validated' | 'rejected' | 'not_found';
+/** AGT status from server only — never invent fiscal state from localStorage. */
+export async function getAGTStatus(invoiceId: string): Promise<{
+  status: 'pending' | 'validated' | 'rejected' | 'not_found' | 'error';
   agtCode?: string;
   validatedAt?: string;
-} {
-  const sales = JSON.parse(localStorage.getItem('kwanzaerp_sales') || '[]') as Sale[];
-  const sale = sales.find(s => s.id === invoiceId);
-  
-  if (!sale) return { status: 'not_found' };
-  
-  if (sale.agtStatus === 'validated' && sale.agtCode) {
-    return { status: 'validated', agtCode: sale.agtCode, validatedAt: sale.agtValidatedAt };
+  error?: string;
+}> {
+  try {
+    const res = await api.agt.getSaleStatus(invoiceId);
+    if (res.error) {
+      return { status: 'error', error: res.error };
+    }
+    const data = res.data || {};
+    const raw = String(data.agtStatus || data.status || '').toLowerCase();
+    if (raw === 'validated' || raw === 'accepted') {
+      return {
+        status: 'validated',
+        agtCode: data.agtCode || undefined,
+        validatedAt: data.agtValidatedAt || data.validatedAt || undefined,
+      };
+    }
+    if (raw === 'rejected' || raw === 'failed') {
+      return { status: 'rejected', agtCode: data.agtCode || undefined };
+    }
+    if (raw === 'not_found' || (!raw && !data.agtCode)) {
+      return { status: 'not_found' };
+    }
+    return { status: 'pending', agtCode: data.agtCode || undefined };
+  } catch (err) {
+    return {
+      status: 'error',
+      error: err instanceof Error ? err.message : 'AGT status lookup failed',
+    };
   }
-  
-  return { status: sale.agtStatus || 'pending' };
 }

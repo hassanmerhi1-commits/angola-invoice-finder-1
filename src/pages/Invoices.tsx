@@ -5,7 +5,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { navigateThenStartPurchaseCreate } from '@/lib/nexorPurchaseCreate';
 import { useTranslation } from '@/i18n';
-import { useAuth } from '@/hooks/useERP';
+import { useAuth, useClients } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -153,6 +153,7 @@ export default function Invoices() {
     converted: { label: t.documentStatus.converted, variant: 'secondary' },
   }), [t]);
   const { user } = useAuth();
+  const { clients } = useClients();
   const { hasPermission } = usePermissions(user?.id);
   const canSendAgt = hasPermission('agt_send');
   const canCreateCreditNote = hasPermission('credit_note_create');
@@ -303,7 +304,10 @@ export default function Invoices() {
       setFormDocType('fatura_venda');
       setEditDoc(null);
       pendingSalesOrderIdRef.current = st.fromSalesOrder.id;
-      setPrefillDoc(salesOrderToErpDocumentPrefill(st.fromSalesOrder));
+      const client = clients.find((c) => c.id === st.fromSalesOrder?.clientId);
+      setPrefillDoc(salesOrderToErpDocumentPrefill(st.fromSalesOrder, {
+        paymentTermsDays: client?.paymentTermsDays,
+      }));
       setFormOpen(true);
       navigate(location.pathname, { replace: true, state: {} });
       return;
@@ -316,7 +320,7 @@ export default function Invoices() {
     setPrefillDoc(st.prefillFromProforma);
     setFormOpen(true);
     navigate(location.pathname, { replace: true, state: {} });
-  }, [location.state, location.pathname, navigate]);
+  }, [location.state, location.pathname, navigate, clients]);
 
   const openFiscalCreditNoteCreate = useCallback(() => {
     if (!canCreateCreditNote) {

@@ -186,6 +186,14 @@ export function useNotifications() {
     });
   }, []);
 
+  const scanAll = useCallback(async () => {
+    if (isDemoMode()) return { total: 0 };
+    const res = await api.notifications.scanAll();
+    if (res.error) throw new Error(res.error);
+    await refreshFromServer();
+    return res.data || { total: 0 };
+  }, [refreshFromServer]);
+
   return {
     notifications,
     unreadCount,
@@ -194,6 +202,7 @@ export function useNotifications() {
     clearAll,
     addNotification,
     refreshFromServer,
+    scanAll,
   };
 }
 
