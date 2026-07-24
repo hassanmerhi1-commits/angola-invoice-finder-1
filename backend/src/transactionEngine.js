@@ -2495,7 +2495,15 @@ async function processPurchaseReceive(client, orderId, receivedQuantities, recei
 // ==================== CREATE STOCK TRANSFER ====================
 
 async function createStockTransfer(client, data) {
-  const { fromBranchId, toBranchId, items, requestedBy, notes } = data;
+  const {
+    fromBranchId,
+    toBranchId,
+    items,
+    requestedBy,
+    notes,
+    fromWarehouseId,
+    toWarehouseId,
+  } = data;
 
   requireParam(fromBranchId, 'fromBranchId');
   requireParam(toBranchId, 'toBranchId');
@@ -2507,11 +2515,26 @@ async function createStockTransfer(client, data) {
   if (fromBranch.rows.length === 0) throw new Error('Filial de origem não encontrada');
   if (toBranch.rows.length === 0) throw new Error('Filial de destino não encontrada');
 
+  const { resolveWarehouseMeta } = require('./lib/warehouses');
+  const fromWh = await resolveWarehouseMeta(
+    client,
+    fromWarehouseId,
+    fromBranchId,
+    fromBranch.rows[0].name,
+  );
+  const toWh = await resolveWarehouseMeta(
+    client,
+    toWarehouseId,
+    toBranchId,
+    toBranch.rows[0].name,
+  );
+
   const transferNumber = await generateSequenceNumber(client, 'stock_transfer', 'TRF');
   const transferId = randomUUID();
   const actorUuid = normalizeUuid(requestedBy);
 
   for (const item of items) {
+    // Ledger still keys stock by branch id (not warehouses.id).
     await assertTransferStockAvailable(
       client,
       item.productId,
@@ -2522,11 +2545,37 @@ async function createStockTransfer(client, data) {
     );
   }
 
-  await client.query(
-    `INSERT INTO stock_transfers (id, transfer_number, from_branch_id, from_branch_name, to_branch_id, to_branch_name, requested_by, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [transferId, transferNumber, fromBranchId, fromBranch.rows[0].name, toBranchId, toBranch.rows[0].name, requestedBy, notes]
-  );
+  try {
+    await client.query(
+      `INSERT INTO stock_transfers (
+         id, transfer_number, from_branch_id, from_branch_name, to_branch_id, to_branch_name,
+         from_warehouse_id, from_warehouse_name, to_warehouse_id, to_warehouse_name,
+         requested_by, notes
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [
+        transferId,
+        transferNumber,
+        fromBranchId,
+        fromBranch.rows[0].name,
+        toBranchId,
+        toBranch.rows[0].name,
+        fromWh.id || '',
+        fromWh.name || '',
+        toWh.id || '',
+        toWh.name || '',
+        requestedBy,
+        notes,
+      ],
+    );
+  } catch (e) {
+    // Pre-064 DBs without warehouse columns — fall back
+    if (!/from_warehouse_id|column/i.test(String(e.message || ''))) throw e;
+    await client.query(
+      `INSERT INTO stock_transfers (id, transfer_number, from_branch_id, from_branch_name, to_branch_id, to_branch_name, requested_by, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [transferId, transferNumber, fromBranchId, fromBranch.rows[0].name, toBranchId, toBranch.rows[0].name, requestedBy, notes],
+    );
+  }
 
   for (const item of items) {
     const itemId = randomUUID();
@@ -2539,7 +2588,14 @@ async function createStockTransfer(client, data) {
   await auditLog(client, {
     tableName: 'stock_transfers', recordId: transferId, action: 'create',
     userId: requestedBy, branchId: fromBranchId,
-    newValues: { transferNumber, from: fromBranch.rows[0].name, to: toBranch.rows[0].name, items: items.length },
+    newValues: {
+      transferNumber,
+      from: fromBranch.rows[0].name,
+      to: toBranch.rows[0].name,
+      fromWarehouse: fromWh.name || null,
+      toWarehouse: toWh.name || null,
+      items: items.length,
+    },
     description: `Transferência ${transferNumber}: ${fromBranch.rows[0].name} → ${toBranch.rows[0].name}`,
   });
 
@@ -2558,6 +2614,10 @@ async function createStockTransfer(client, data) {
     from_branch_name: fromBranch.rows[0].name,
     to_branch_id: toBranchId,
     to_branch_name: toBranch.rows[0].name,
+    from_warehouse_id: fromWh.id || '',
+    from_warehouse_name: fromWh.name || '',
+    to_warehouse_id: toWh.id || '',
+    to_warehouse_name: toWh.name || '',
     items: itemsResult.rows,
   };
 }

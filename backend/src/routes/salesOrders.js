@@ -570,6 +570,12 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
         return res.status(400).json({ error: `Cannot reserve sales order in status "${row.status}"` });
       }
       const items = await loadItemsForOrder(id);
+      const hasLines = (items || []).some((it) => String(it.product_id || '').trim() && Number(it.quantity) > 0);
+      if (!hasLines) {
+        return res.status(400).json({
+          error: 'Add product lines before reserving stock',
+        });
+      }
       try {
         await assertSoftReserveAvailable(row, items);
       } catch (availErr) {
@@ -645,6 +651,50 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
     } catch (error) {
       console.error('[SALES_ORDERS ERROR]', error);
       res.status(500).json({ error: error.message || 'Failed to convert sales order' });
+    }
+  });
+
+  /** Link a converted order to the invoice created from it. */
+  router.post('/:id/mark-invoiced', requireAuth, requirePermission(...MUTATE_PERMS), async (req, res) => {
+    try {
+      const id = req.params.id;
+      const invoiceId = String(req.body?.invoiceId || req.body?.invoice_id || '').trim();
+      const invoiceNumber = String(req.body?.invoiceNumber || req.body?.invoice_number || '').trim();
+      if (!invoiceId && !invoiceNumber) {
+        return res.status(400).json({ error: 'invoiceId or invoiceNumber is required' });
+      }
+      const existing = await db.query('SELECT * FROM sales_orders WHERE id = $1 LIMIT 1', [id]);
+      if (!existing.rows.length) {
+        return res.status(404).json({ error: 'Sales order not found' });
+      }
+      const updated = await db.query(
+        `UPDATE sales_orders
+         SET status = 'converted',
+             converted_to_invoice_id = COALESCE(NULLIF($2, ''), converted_to_invoice_id),
+             converted_to_invoice_number = COALESCE(NULLIF($3, ''), converted_to_invoice_number),
+             converted_at = COALESCE(converted_at, CURRENT_TIMESTAMP),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1
+         RETURNING *`,
+        [id, invoiceId, invoiceNumber],
+      );
+      await clearReservedQty(db, id);
+      const order = mapSalesOrderRow(updated.rows[0], await loadItemsForOrder(id));
+      await auditSalesOrderEvent(req, {
+        recordId: id,
+        action: 'mark_invoiced',
+        description: `Encomenda ${orderAuditLabel(order.orderNumber)} ligada à fatura ${invoiceNumber || invoiceId}`,
+        newValues: {
+          status: order.status,
+          convertedToInvoiceId: order.convertedToInvoiceId,
+          convertedToInvoiceNumber: order.convertedToInvoiceNumber,
+        },
+      });
+      await broadcastTable('sales_orders');
+      res.json(order);
+    } catch (error) {
+      console.error('[SALES_ORDERS ERROR]', error);
+      res.status(500).json({ error: error.message || 'Failed to mark sales order invoiced' });
     }
   });
 

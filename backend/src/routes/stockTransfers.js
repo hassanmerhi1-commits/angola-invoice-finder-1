@@ -78,6 +78,14 @@ module.exports = function(broadcastTable) {
       await client.query('COMMIT');
       await broadcastTable('stock_transfers');
       await broadcastTable('products');
+      try {
+        const { enqueueWebhookEvent } = require('../lib/webhooks');
+        enqueueWebhookEvent('stock_transfer.approved', {
+          id: req.params.id,
+          fromBranchId: transfer.from_branch_id,
+          toBranchId: transfer.to_branch_id,
+        }).catch((e) => console.warn('[WEBHOOKS] stock_transfer.approved:', e.message));
+      } catch (_) { /* non-fatal */ }
       res.json({
         success: true,
         from_branch_id: transfer.from_branch_id,
@@ -102,6 +110,14 @@ module.exports = function(broadcastTable) {
       await client.query('COMMIT');
       await broadcastTable('stock_transfers');
       await broadcastTable('products');
+      try {
+        const { enqueueWebhookEvent } = require('../lib/webhooks');
+        enqueueWebhookEvent('stock_transfer.received', {
+          id: req.params.id,
+          fromBranchId: transfer.from_branch_id,
+          toBranchId: transfer.to_branch_id,
+        }).catch((e) => console.warn('[WEBHOOKS] stock_transfer.received:', e.message));
+      } catch (_) { /* non-fatal */ }
       res.json({
         success: true,
         to_branch_id: transfer.to_branch_id,

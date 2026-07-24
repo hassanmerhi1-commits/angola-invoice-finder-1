@@ -1,7 +1,7 @@
 // NEXOR ERP Faturas/Vouchers workspace
 // Multi-tab document browser with linked conversion flow
 
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { navigateThenStartPurchaseCreate } from '@/lib/nexorPurchaseCreate';
 import { useTranslation } from '@/i18n';
@@ -176,6 +176,7 @@ export default function Invoices() {
   const [formDocType, setFormDocType] = useState<DocumentType>('fatura_venda');
   const [editDoc, setEditDoc] = useState<ERPDocument | null>(null);
   const [prefillDoc, setPrefillDoc] = useState<ERPDocument | null>(null);
+  const pendingSalesOrderIdRef = useRef<string | null>(null);
 
   const refresh = useCallback(() => setRefreshKey(k => k + 1), []);
 
@@ -299,6 +300,7 @@ export default function Invoices() {
       setInvoicesWorkspaceTab('fatura_venda');
       setFormDocType('fatura_venda');
       setEditDoc(null);
+      pendingSalesOrderIdRef.current = st.fromSalesOrder.id;
       setPrefillDoc(salesOrderToErpDocumentPrefill(st.fromSalesOrder));
       setFormOpen(true);
       navigate(location.pathname, { replace: true, state: {} });
@@ -990,7 +992,21 @@ export default function Invoices() {
           documentType={formDocType}
           editDocument={editDoc}
           prefillFrom={prefillDoc}
-          onSaved={refresh}
+          onSaved={async (doc) => {
+            refresh();
+            const soId = pendingSalesOrderIdRef.current;
+            if (soId) {
+              pendingSalesOrderIdRef.current = null;
+              try {
+                await api.salesOrders.markInvoiced(soId, {
+                  invoiceId: doc.id,
+                  invoiceNumber: doc.documentNumber,
+                });
+              } catch (e) {
+                console.warn('[Invoices] mark sales order invoiced failed', e);
+              }
+            }
+          }}
         />
       )}
     </div>

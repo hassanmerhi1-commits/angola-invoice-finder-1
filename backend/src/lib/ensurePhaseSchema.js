@@ -560,6 +560,38 @@ async function ensureMfaSalesOrdersWarehousesWebhooks(db) {
   }
 }
 
+/** Optional warehouse metadata on stock_transfers (migration 064). */
+async function ensureStockTransferWarehouseColumns(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query(`ALTER TABLE stock_transfers ADD COLUMN IF NOT EXISTS from_warehouse_id VARCHAR(64) DEFAULT ''`);
+      await db.query(`ALTER TABLE stock_transfers ADD COLUMN IF NOT EXISTS to_warehouse_id VARCHAR(64) DEFAULT ''`);
+      await db.query(`ALTER TABLE stock_transfers ADD COLUMN IF NOT EXISTS from_warehouse_name VARCHAR(255) DEFAULT ''`);
+      await db.query(`ALTER TABLE stock_transfers ADD COLUMN IF NOT EXISTS to_warehouse_name VARCHAR(255) DEFAULT ''`);
+    } catch (err) {
+      console.warn('[SCHEMA] stock_transfers warehouse cols:', err.message);
+    }
+    return;
+  }
+  if (!db.sqlite) return;
+  try {
+    let cols = [];
+    try {
+      cols = db.sqlite.pragma('table_info(stock_transfers)');
+    } catch (_) {
+      return;
+    }
+    const names = new Set(cols.map((c) => c.name));
+    for (const col of ['from_warehouse_id', 'to_warehouse_id', 'from_warehouse_name', 'to_warehouse_name']) {
+      if (!names.has(col)) {
+        db.sqlite.exec(`ALTER TABLE stock_transfers ADD COLUMN ${col} TEXT DEFAULT ''`);
+      }
+    }
+  } catch (err) {
+    console.warn('[SCHEMA] stock_transfers warehouse cols (sqlite):', err.message);
+  }
+}
+
 /** Document attachments + server notifications inbox (migration 062). */
 async function ensureAttachmentsNotificationsTables(db) {
   if (db.engine === 'postgres') {
@@ -1046,6 +1078,7 @@ async function ensurePhaseSchema(db) {
     await ensureLoginAttemptsTable(db);
     await ensureAttachmentsNotificationsTables(db);
     await ensureMfaSalesOrdersWarehousesWebhooks(db);
+    await ensureStockTransferWarehouseColumns(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
@@ -1097,6 +1130,7 @@ async function ensurePhaseSchema(db) {
     await ensureLoginAttemptsTable(db);
     await ensureAttachmentsNotificationsTables(db);
     await ensureMfaSalesOrdersWarehousesWebhooks(db);
+    await ensureStockTransferWarehouseColumns(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {
@@ -1131,5 +1165,6 @@ module.exports = {
   ensureLoginAttemptsTable,
   ensureAttachmentsNotificationsTables,
   ensureMfaSalesOrdersWarehousesWebhooks,
+  ensureStockTransferWarehouseColumns,
   ensureAuditLogActions,
 };

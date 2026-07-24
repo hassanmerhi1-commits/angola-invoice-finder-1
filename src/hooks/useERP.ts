@@ -1603,12 +1603,19 @@ export function useStockTransfers(branchId?: string) {
   const createTransfer = useCallback(async (
     fromBranchId: string, toBranchId: string,
     items: { productId: string; productName: string; sku: string; quantity: number }[],
-    requestedBy: string, notes?: string
+    requestedBy: string, notes?: string,
+    opts?: { fromWarehouseId?: string; toWarehouseId?: string },
   ): Promise<StockTransfer> => {
     const { assertOnlineForWrite } = await import('@/lib/offlineWriteGuard');
     assertOnlineForWrite('create stock transfers');
     const result = await api.stockTransfers.create({
-      fromBranchId, toBranchId, items, requestedBy, notes,
+      fromBranchId,
+      toBranchId,
+      items,
+      requestedBy,
+      notes,
+      fromWarehouseId: opts?.fromWarehouseId,
+      toWarehouseId: opts?.toWarehouseId,
     });
     if (!result.data) {
       throw new Error(result.error || t.erpUi.createTransferFailed);

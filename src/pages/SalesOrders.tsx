@@ -2,18 +2,25 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useAuth } from '@/hooks/useERP';
+import { useAuth, useProducts } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
 import { generateId } from '@/lib/utils';
-import { SalesOrder } from '@/lib/salesOrderToDocument';
+import { SalesOrder, SalesOrderItem } from '@/lib/salesOrderToDocument';
+import { Product } from '@/types/erp';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, CheckCircle, Package, ArrowRight } from 'lucide-react';
+import { Plus, RefreshCw, CheckCircle, Package, ArrowRight, Pencil, Trash2, Search } from 'lucide-react';
 
 function generateOrderNumber(branchCode: string): string {
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -35,6 +42,27 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
   }
 }
 
+function lineTotals(item: SalesOrderItem) {
+  const qty = Number(item.quantity) || 0;
+  const price = Number(item.unitPrice) || 0;
+  const discount = Number(item.discount) || 0;
+  const taxRate = Number(item.taxRate ?? 14);
+  const subtotal = qty * price * (1 - discount / 100);
+  const taxAmount = subtotal * (taxRate / 100);
+  return { subtotal, taxAmount, total: subtotal + taxAmount };
+}
+
+function orderTotals(items: SalesOrderItem[]) {
+  let subtotal = 0;
+  let taxAmount = 0;
+  for (const item of items) {
+    const t = lineTotals(item);
+    subtotal += t.subtotal;
+    taxAmount += t.taxAmount;
+  }
+  return { subtotal, taxAmount, total: subtotal + taxAmount, discount: 0 };
+}
+
 export default function SalesOrdersPage() {
   const { t, language } = useTranslation();
   const navigate = useNavigate();
@@ -42,11 +70,21 @@ export default function SalesOrdersPage() {
   const { currentBranch, apiBranchId } = useBranchScope();
   const { user } = useAuth();
   const branchId = apiBranchId || currentBranch?.id;
+  const { products } = useProducts(branchId, { light: true });
 
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [warehouses, setWarehouses] = useState<Array<{ id: string; code: string; name: string; isDefault?: boolean }>>([]);
+  const [warehouseId, setWarehouseId] = useState('');
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState<SalesOrder | null>(null);
+  const [editItems, setEditItems] = useState<SalesOrderItem[]>([]);
+  const [editCustomer, setEditCustomer] = useState('');
+  const [productSearch, setProductSearch] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const loadOrders = useCallback(async () => {
     setLoading(true);
@@ -66,6 +104,24 @@ export default function SalesOrdersPage() {
     void loadOrders();
   }, [loadOrders]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!branchId) {
+        setWarehouses([]);
+        setWarehouseId('');
+        return;
+      }
+      const res = await api.warehouses.list(branchId);
+      if (cancelled) return;
+      const rows = Array.isArray(res.data) ? res.data : [];
+      setWarehouses(rows);
+      const def = rows.find((w) => w.isDefault) || rows[0];
+      setWarehouseId(def?.id || '');
+    })();
+    return () => { cancelled = true; };
+  }, [branchId]);
+
   const formatMoney = (value: number) =>
     `${value.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} ${t.common.currency}`;
 
@@ -76,6 +132,18 @@ export default function SalesOrdersPage() {
     () => orders.filter((o) => o.status !== 'cancelled'),
     [orders],
   );
+
+  const productHits = useMemo(() => {
+    const term = productSearch.trim().toLowerCase();
+    if (!term) return [];
+    return products
+      .filter((p) => p.isActive !== false)
+      .filter((p) =>
+        p.name.toLowerCase().includes(term)
+        || String(p.sku || '').toLowerCase().includes(term),
+      )
+      .slice(0, 8);
+  }, [productSearch, products]);
 
   const handleCreateDraft = async () => {
     const name = customerName.trim();
@@ -95,6 +163,7 @@ export default function SalesOrdersPage() {
         orderNumber: generateOrderNumber(branchCode),
         branchId,
         branchName: currentBranch?.name || '',
+        warehouseId: warehouseId || undefined,
         customerName: name,
         clientId: '',
         items: [],
@@ -112,11 +181,99 @@ export default function SalesOrdersPage() {
         toast.error(res.error || (language === 'pt' ? 'Falha ao criar encomenda' : 'Failed to create order'));
         return;
       }
-      toast.success(language === 'pt' ? 'Encomenda criada' : 'Order created');
+      toast.success(language === 'pt' ? 'Encomenda criada — adicione produtos' : 'Order created — add products');
       setCustomerName('');
       await loadOrders();
+      openEdit(res.data as SalesOrder);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const openEdit = (order: SalesOrder) => {
+    setEditing(order);
+    setEditCustomer(order.customerName || '');
+    setEditItems(
+      (order.items || []).map((it) => ({
+        id: it.id || generateId(),
+        productId: it.productId,
+        productName: it.productName,
+        sku: it.sku,
+        quantity: Number(it.quantity) || 1,
+        unitPrice: Number(it.unitPrice) || 0,
+        discount: Number(it.discount) || 0,
+        taxRate: Number(it.taxRate ?? 14),
+        reservedQty: it.reservedQty,
+      })),
+    );
+    setProductSearch('');
+    setEditOpen(true);
+  };
+
+  const addProduct = (product: Product) => {
+    setEditItems((prev) => {
+      const existing = prev.find((i) => i.productId === product.id);
+      if (existing) {
+        return prev.map((i) =>
+          i.productId === product.id
+            ? { ...i, quantity: Number(i.quantity) + 1 }
+            : i,
+        );
+      }
+      return [
+        ...prev,
+        {
+          id: generateId(),
+          productId: product.id,
+          productName: product.name,
+          sku: product.sku || '',
+          quantity: 1,
+          unitPrice: Number(product.price) || 0,
+          discount: 0,
+          taxRate: Number(product.taxRate ?? 14) || 14,
+        },
+      ];
+    });
+    setProductSearch('');
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    if (!['draft', 'confirmed'].includes(editing.status)) {
+      toast.error(language === 'pt' ? 'Só rascunho/confirmada pode ser editada' : 'Only draft/confirmed orders can be edited');
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      const totals = orderTotals(editItems);
+      const payload = {
+        ...editing,
+        customerName: editCustomer.trim() || editing.customerName,
+        items: editItems.map((it) => {
+          const lt = lineTotals(it);
+          return {
+            ...it,
+            subtotal: lt.subtotal,
+            taxAmount: lt.taxAmount,
+            total: lt.total,
+          };
+        }),
+        subtotal: totals.subtotal,
+        taxAmount: totals.taxAmount,
+        discount: 0,
+        total: totals.total,
+      };
+      const res = await api.salesOrders.update(payload);
+      if (res.error || !res.data) {
+        toast.error(res.error || (language === 'pt' ? 'Falha ao guardar' : 'Failed to save'));
+        return;
+      }
+      toast.success(language === 'pt' ? 'Encomenda actualizada' : 'Order updated');
+      setEditOpen(false);
+      setEditing(null);
+      await loadOrders();
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -124,6 +281,12 @@ export default function SalesOrdersPage() {
     id: string,
     action: 'confirm' | 'reserve' | 'convert',
   ) => {
+    const order = orders.find((o) => o.id === id);
+    if (action === 'reserve' && !(order?.items || []).some((i) => i.productId && Number(i.quantity) > 0)) {
+      toast.error(language === 'pt' ? 'Adicione produtos antes de reservar' : 'Add products before reserving');
+      if (order) openEdit(order);
+      return;
+    }
     const fn =
       action === 'confirm'
         ? api.salesOrders.confirm
@@ -153,6 +316,8 @@ export default function SalesOrdersPage() {
   };
 
   const title = t.nav.salesOrders;
+  const editTotals = orderTotals(editItems);
+  const canEdit = editing && ['draft', 'confirmed'].includes(editing.status);
 
   return (
     <div className="p-4 md:p-6 space-y-6">
@@ -180,6 +345,23 @@ export default function SalesOrdersPage() {
               placeholder={language === 'pt' ? 'Nome do cliente' : 'Customer name'}
             />
           </div>
+          {warehouses.length > 0 && (
+            <div className="min-w-[180px] space-y-1">
+              <Label>{language === 'pt' ? 'Armazém' : 'Warehouse'}</Label>
+              <Select value={warehouseId} onValueChange={setWarehouseId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="MAIN" />
+                </SelectTrigger>
+                <SelectContent>
+                  {warehouses.map((w) => (
+                    <SelectItem key={w.id} value={w.id}>
+                      {w.code} — {w.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <Button onClick={() => void handleCreateDraft()} disabled={creating}>
             <Plus className="w-4 h-4 mr-2" />
             {language === 'pt' ? 'Criar rascunho' : 'Create draft'}
@@ -197,6 +379,7 @@ export default function SalesOrdersPage() {
               <TableRow>
                 <TableHead>{language === 'pt' ? 'N.º' : 'Number'}</TableHead>
                 <TableHead>{language === 'pt' ? 'Cliente' : 'Customer'}</TableHead>
+                <TableHead>{language === 'pt' ? 'Linhas' : 'Lines'}</TableHead>
                 <TableHead>{language === 'pt' ? 'Data' : 'Date'}</TableHead>
                 <TableHead className="text-right">{language === 'pt' ? 'Total' : 'Total'}</TableHead>
                 <TableHead>{language === 'pt' ? 'Estado' : 'Status'}</TableHead>
@@ -206,7 +389,7 @@ export default function SalesOrdersPage() {
             <TableBody>
               {activeOrders.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     {language === 'pt' ? 'Sem encomendas' : 'No orders yet'}
                   </TableCell>
                 </TableRow>
@@ -215,12 +398,19 @@ export default function SalesOrdersPage() {
                   <TableRow key={order.id}>
                     <TableCell className="font-medium">{order.orderNumber}</TableCell>
                     <TableCell>{order.customerName}</TableCell>
+                    <TableCell>{order.items?.length || 0}</TableCell>
                     <TableCell>{formatDate(order.createdAt)}</TableCell>
                     <TableCell className="text-right">{formatMoney(order.total)}</TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(order.status)}>{order.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-1">
+                      {['draft', 'confirmed'].includes(order.status) && (
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(order)}>
+                          <Pencil className="w-3 h-3 mr-1" />
+                          {language === 'pt' ? 'Itens' : 'Items'}
+                        </Button>
+                      )}
                       {order.status === 'draft' && (
                         <Button
                           size="sm"
@@ -259,6 +449,145 @@ export default function SalesOrdersPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {editing?.orderNumber || '—'} — {language === 'pt' ? 'Linhas' : 'Lines'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1">
+              <Label>{language === 'pt' ? 'Cliente' : 'Customer'}</Label>
+              <Input
+                value={editCustomer}
+                onChange={(e) => setEditCustomer(e.target.value)}
+                disabled={!canEdit}
+              />
+            </div>
+            {canEdit && (
+              <div className="space-y-2">
+                <Label>{language === 'pt' ? 'Adicionar produto' : 'Add product'}</Label>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    className="pl-8"
+                    value={productSearch}
+                    onChange={(e) => setProductSearch(e.target.value)}
+                    placeholder={language === 'pt' ? 'Pesquisar nome ou SKU…' : 'Search name or SKU…'}
+                  />
+                </div>
+                {productHits.length > 0 && (
+                  <div className="border rounded-md divide-y max-h-40 overflow-y-auto">
+                    {productHits.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex justify-between gap-2"
+                        onClick={() => addProduct(p)}
+                      >
+                        <span>{p.name} <span className="text-muted-foreground">{p.sku}</span></span>
+                        <span className="tabular-nums">{formatMoney(Number(p.price) || 0)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{language === 'pt' ? 'Produto' : 'Product'}</TableHead>
+                  <TableHead className="w-24">{language === 'pt' ? 'Qtd' : 'Qty'}</TableHead>
+                  <TableHead className="w-28">{language === 'pt' ? 'Preço' : 'Price'}</TableHead>
+                  <TableHead className="text-right">{language === 'pt' ? 'Total' : 'Total'}</TableHead>
+                  {canEdit && <TableHead className="w-10" />}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {editItems.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                      {language === 'pt' ? 'Sem linhas' : 'No lines'}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  editItems.map((item) => (
+                    <TableRow key={item.id || item.productId}>
+                      <TableCell>
+                        <div className="font-medium">{item.productName}</div>
+                        <div className="text-xs text-muted-foreground">{item.sku}</div>
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          min={0.001}
+                          step="any"
+                          className="h-8"
+                          value={item.quantity}
+                          disabled={!canEdit}
+                          onChange={(e) => {
+                            const quantity = Number(e.target.value) || 0;
+                            setEditItems((prev) =>
+                              prev.map((i) => (i.id === item.id ? { ...i, quantity } : i)),
+                            );
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="any"
+                          className="h-8"
+                          value={item.unitPrice}
+                          disabled={!canEdit}
+                          onChange={(e) => {
+                            const unitPrice = Number(e.target.value) || 0;
+                            setEditItems((prev) =>
+                              prev.map((i) => (i.id === item.id ? { ...i, unitPrice } : i)),
+                            );
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(lineTotals(item).total)}
+                      </TableCell>
+                      {canEdit && (
+                        <TableCell>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() =>
+                              setEditItems((prev) => prev.filter((i) => i.id !== item.id))
+                            }
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+            <div className="flex justify-end text-sm font-medium">
+              {language === 'pt' ? 'Total' : 'Total'}: {formatMoney(editTotals.total)}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>
+              {t.common.cancel}
+            </Button>
+            {canEdit && (
+              <Button onClick={() => void saveEdit()} disabled={savingEdit}>
+                {savingEdit ? t.common.saving : t.common.save}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -122,23 +122,12 @@ module.exports = function warehousesRouter(broadcastTable) {
   /** Ensure each branch has a default warehouse (code MAIN). */
   router.post('/ensure-defaults', requirePermission('admin_settings'), async (req, res) => {
     try {
+      const { ensureDefaultWarehouse } = require('../lib/warehouses');
       const branches = await db.query('SELECT id, code, name FROM branches WHERE COALESCE(is_active, true) = true');
       let created = 0;
       for (const b of branches.rows || []) {
-        const existing = await db.query(
-          'SELECT id FROM warehouses WHERE branch_id::text = $1 LIMIT 1',
-          [String(b.id)],
-        ).catch(() => db.query(
-          'SELECT id FROM warehouses WHERE CAST(branch_id AS TEXT) = $1 LIMIT 1',
-          [String(b.id)],
-        ));
-        if (existing.rows[0]) continue;
-        await db.query(
-          `INSERT INTO warehouses (id, branch_id, code, name, is_default, is_active)
-           VALUES ($1,$2,'MAIN',$3,true,true)`,
-          [crypto.randomUUID(), b.id, b.name || b.code || 'Main'],
-        );
-        created += 1;
+        const result = await ensureDefaultWarehouse(db, b.id, b.name || b.code || 'Main');
+        if (result?.created) created += 1;
       }
       res.json({ success: true, created });
     } catch (e) {

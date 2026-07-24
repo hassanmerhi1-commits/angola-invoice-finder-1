@@ -171,6 +171,10 @@ export interface StockTransfer {
   fromBranchName: string;
   toBranchId: string;
   toBranchName: string;
+  fromWarehouseId?: string;
+  fromWarehouseName?: string;
+  toWarehouseId?: string;
+  toWarehouseName?: string;
   items: StockTransferItem[];
   status: 'pending' | 'in_transit' | 'received' | 'cancelled';
   requestedBy: string;

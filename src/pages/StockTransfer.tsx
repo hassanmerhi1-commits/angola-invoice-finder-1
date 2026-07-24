@@ -34,6 +34,7 @@ import {
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useToast } from '@/hooks/use-toast';
+import { api } from '@/lib/api/client';
 
 interface TransferItem {
   productId: string;
@@ -78,6 +79,10 @@ export default function StockTransfer() {
   const [selectedTransfer, setSelectedTransfer] = useState<StockTransferType | null>(null);
   const [fromBranchId, setFromBranchId] = useState(currentBranch?.id || '');
   const [toBranchId, setToBranchId] = useState('');
+  const [fromWarehouseId, setFromWarehouseId] = useState('');
+  const [toWarehouseId, setToWarehouseId] = useState('');
+  const [fromWarehouses, setFromWarehouses] = useState<Array<{ id: string; code: string; name: string; isDefault?: boolean }>>([]);
+  const [toWarehouses, setToWarehouses] = useState<Array<{ id: string; code: string; name: string; isDefault?: boolean }>>([]);
   const [notes, setNotes] = useState('');
   const [transferItems, setTransferItems] = useState<TransferItem[]>([]);
   const [transferQtyDrafts, setTransferQtyDrafts] = useState<Record<string, string>>({});
@@ -113,6 +118,8 @@ export default function StockTransfer() {
   const resetForm = () => {
     setFromBranchId(currentBranch?.id || '');
     setToBranchId('');
+    setFromWarehouseId('');
+    setToWarehouseId('');
     setNotes('');
     setTransferItems([]);
     setTransferQtyDrafts({});
@@ -177,12 +184,52 @@ export default function StockTransfer() {
   // Clear items when source branch changes
   const handleFromBranchChange = (branchId: string) => {
     setFromBranchId(branchId);
+    setFromWarehouseId('');
     setTransferItems([]);
     setTransferQtyDrafts({});
     setProductSearch('');
     // Reset destination if same as new source
-    if (toBranchId === branchId) setToBranchId('');
+    if (toBranchId === branchId) {
+      setToBranchId('');
+      setToWarehouseId('');
+    }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!fromBranchId) {
+        setFromWarehouses([]);
+        setFromWarehouseId('');
+        return;
+      }
+      const res = await api.warehouses.list(fromBranchId);
+      if (cancelled) return;
+      const rows = Array.isArray(res.data) ? res.data : [];
+      setFromWarehouses(rows);
+      const def = rows.find((w: any) => w.isDefault) || rows[0];
+      setFromWarehouseId(def?.id || '');
+    })();
+    return () => { cancelled = true; };
+  }, [fromBranchId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!toBranchId) {
+        setToWarehouses([]);
+        setToWarehouseId('');
+        return;
+      }
+      const res = await api.warehouses.list(toBranchId);
+      if (cancelled) return;
+      const rows = Array.isArray(res.data) ? res.data : [];
+      setToWarehouses(rows);
+      const def = rows.find((w: any) => w.isDefault) || rows[0];
+      setToWarehouseId(def?.id || '');
+    })();
+    return () => { cancelled = true; };
+  }, [toBranchId]);
 
   const updateItemQuantity = (productId: string, quantity: number) => {
     setTransferItems(items =>
@@ -225,7 +272,8 @@ export default function StockTransfer() {
           quantity: item.quantity,
         })),
         user.id,
-        notes
+        notes,
+        { fromWarehouseId: fromWarehouseId || undefined, toWarehouseId: toWarehouseId || undefined },
       );
 
       toast({
@@ -527,6 +575,44 @@ export default function StockTransfer() {
                     {destinationBranches.map(branch => (
                       <SelectItem key={branch.id} value={branch.id}>
                         {branch.name} {branch.isMain && `(${t.branchUi.headOffice})`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Armazém origem</Label>
+                <Select
+                  value={fromWarehouseId}
+                  onValueChange={setFromWarehouseId}
+                  disabled={!fromBranchId || fromWarehouses.length === 0}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="MAIN" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {fromWarehouses.map((w) => (
+                      <SelectItem key={w.id} value={w.id}>
+                        {w.code} — {w.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Armazém destino</Label>
+                <Select
+                  value={toWarehouseId}
+                  onValueChange={setToWarehouseId}
+                  disabled={!toBranchId || toWarehouses.length === 0}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="MAIN" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {toWarehouses.map((w) => (
+                      <SelectItem key={w.id} value={w.id}>
+                        {w.code} — {w.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

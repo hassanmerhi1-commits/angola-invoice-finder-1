@@ -1598,6 +1598,11 @@ export const api = {
         `/sales-orders/${encodeURIComponent(id)}/convert`,
         { method: 'POST' },
       ),
+    markInvoiced: (id: string, data: { invoiceId?: string; invoiceNumber?: string }) =>
+      apiFetch<any>(`/sales-orders/${encodeURIComponent(id)}/mark-invoiced`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 
   purchaseInvoices: {

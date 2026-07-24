@@ -67,6 +67,15 @@ module.exports = function(broadcastTable) {
       } else if (req.body.entityType === 'customer') {
         try { await broadcastTable('clients'); } catch (_) { /* non-fatal */ }
       }
+      try {
+        const { enqueueWebhookEvent } = require('../lib/webhooks');
+        enqueueWebhookEvent('payment.created', {
+          id: payment.id,
+          amount: payment.amount,
+          entityType: req.body.entityType,
+          branchId: req.body.branchId,
+        }).catch((e) => console.warn('[WEBHOOKS] payment.created:', e.message));
+      } catch (_) { /* non-fatal */ }
       res.status(201).json(payment);
     } catch (error) {
       await client.query('ROLLBACK');

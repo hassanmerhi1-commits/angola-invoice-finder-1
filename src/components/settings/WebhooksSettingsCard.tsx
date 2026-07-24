@@ -122,7 +122,8 @@ export function WebhooksSettingsCard() {
             Webhooks
           </CardTitle>
           <CardDescription>
-            Outbound event delivery (sale.created). Deliveries are queued and retried by the worker.
+            Outbound event delivery (sale.created, payment.created, stock_transfer.approved/received).
+            Deliveries are queued and retried by the worker.
           </CardDescription>
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>

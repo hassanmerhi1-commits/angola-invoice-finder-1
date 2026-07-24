@@ -83,10 +83,17 @@ module.exports = function(broadcastTable) {
       const branch = result.rows[0];
 
       await ensureBranchCaixaAccount(client, branch.id, normalizedName);
+      try {
+        const { ensureDefaultWarehouse } = require('../lib/warehouses');
+        await ensureDefaultWarehouse(client, branch.id, normalizedName);
+      } catch (whErr) {
+        console.warn('[BRANCHES] default warehouse:', whErr.message);
+      }
 
       await client.query('COMMIT');
       await broadcastTable('branches');
       await broadcastTable('chart_of_accounts');
+      await broadcastTable('warehouses');
       res.status(201).json(branch);
     } catch (error) {
       await client.query('ROLLBACK');

@@ -68,6 +68,7 @@ const MIGRATION_FILES = [
   '061_login_attempts.sql',
   '062_attachments_notifications.sql',
   '063_mfa_sales_orders_warehouses_webhooks.sql',
+  '064_stock_transfer_warehouse_metadata.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */
