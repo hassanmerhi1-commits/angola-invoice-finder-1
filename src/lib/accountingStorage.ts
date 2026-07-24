@@ -1538,10 +1538,14 @@ export async function getBankTransactions(bankAccountId?: string): Promise<BankT
           createdBy: row.createdBy || row.created_by || '',
           createdAt: row.createdAt || row.created_at || '',
           notes: row.notes,
+          isReconciled: Boolean(row.isReconciled ?? row.is_reconciled),
+          reconciledAt: row.reconciledAt || row.reconciled_at,
+          reconciliationId: row.reconciliationId || row.reconciliation_id,
         })) as BankTransaction[];
       }
     } catch (e) {
-      console.warn('[BANK_TXNS] API list failed, falling back to local', e);
+      console.error('[BANK_TXNS] API list failed (no local fallback in server mode)', e);
+      return [];
     }
   }
   if (isElectronMode()) {
@@ -1595,18 +1599,23 @@ export async function createBankTransaction(
   if (await shouldLoadBankAccountsFromServerApi()) {
     try {
       const res = await api.bankTransactions.create(transaction as unknown as Record<string, unknown>);
+      if (res.error) throw new Error(res.error);
       if (res.data?.id) {
         return {
           ...transaction,
           id: res.data.id,
           balanceAfter: Number(res.data.balanceAfter ?? transaction.balanceAfter) || transaction.balanceAfter,
+          isReconciled: Boolean(res.data.isReconciled),
         };
       }
+      throw new Error('Bank transaction create returned no id');
     } catch (e) {
-      console.warn('[BANK_TXNS] API create failed, storing locally', e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[BANK_TXNS] API create failed (fail-closed)', msg);
+      throw new Error(msg || 'Failed to create bank transaction on server');
     }
   }
-  
+
   if (isElectronMode()) {
     await dbInsert('bank_transactions', mapBankTransactionToDb(transaction));
   } else {
@@ -1614,7 +1623,7 @@ export async function createBankTransaction(
     transactions.push(transaction);
     lsSet(STORAGE_KEYS.bankTransactions, transactions);
   }
-  
+
   return transaction;
 }
 
@@ -1986,6 +1995,9 @@ function mapBankTransactionFromDb(row: any): BankTransaction {
     description: row.description || '', category: row.category, payee: row.payee,
     createdBy: row.created_by || '', createdAt: row.created_at || '',
     notes: row.notes,
+    isReconciled: row.is_reconciled === true || row.is_reconciled === 1,
+    reconciledAt: row.reconciled_at || undefined,
+    reconciliationId: row.reconciliation_id || undefined,
   };
 }
 

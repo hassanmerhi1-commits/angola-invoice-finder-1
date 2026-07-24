@@ -42,7 +42,7 @@ services:
       # Optional offsite copy — mount a host folder and uncomment:
       # BACKUP_OFFSITE_DIR: /app/backups-offsite
       # Shown in /api/health appVersion — bump on release so deploys are verifiable.
-      NEXOR_APP_VERSION: 1.1.67
+      NEXOR_APP_VERSION: 1.1.68
     ports:
       - "3000:3000"
     volumes:

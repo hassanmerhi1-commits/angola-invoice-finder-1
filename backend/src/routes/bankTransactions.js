@@ -30,6 +30,11 @@ function mapTxn(row) {
       ? new Date(row.created_at).toISOString()
       : undefined,
     notes: row.notes || undefined,
+    isReconciled: row.is_reconciled === true || row.is_reconciled === 1,
+    reconciledAt: row.reconciled_at
+      ? new Date(row.reconciled_at).toISOString()
+      : undefined,
+    reconciliationId: row.reconciliation_id || undefined,
   };
 }
 

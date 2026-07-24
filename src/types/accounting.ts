@@ -280,6 +280,10 @@ export interface BankTransaction {
   createdBy: string;
   createdAt: string;
   notes?: string;
+  /** Cleared in bank reconciliation (no second GL). */
+  isReconciled?: boolean;
+  reconciledAt?: string;
+  reconciliationId?: string;
 }
 
 // ==================== EXPENSES ====================

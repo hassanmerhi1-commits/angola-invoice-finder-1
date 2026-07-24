@@ -3694,6 +3694,11 @@ export const pt: TranslationKeys = {
     systemOnly: "Só no Sistema",
     reconciledOk: "Conciliado ✓",
     difference: "Diferença",
+    confirmMatches: "Confirmar matches ({count})",
+    confirming: "A confirmar…",
+    confirmSuccess: "Conciliação confirmada",
+    confirmSuccessDesc: "Marcadas {cleared} de {matched} transacções bancárias (sem lançamento GL extra).",
+    confirmFailed: "Não foi possível confirmar a conciliação",
 
     bankVsGlTitle: "Banco vs contabilidade (GL)",
     bankBalance: "Saldo banco",

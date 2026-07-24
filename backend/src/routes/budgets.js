@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
+const { recomputeBudgetActuals } = require('../lib/budgetActuals');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -53,6 +54,16 @@ module.exports = function(broadcastTable) {
   router.get('/budgets', async (req, res) => {
     try {
       const { year, month, costCenterId } = req.query;
+      try {
+        await recomputeBudgetActuals(db, {
+          year: year || undefined,
+          month: month || undefined,
+          costCenterId: costCenterId || undefined,
+        });
+      } catch (recomputeErr) {
+        console.warn('[BUDGET] actuals recompute skipped:', recomputeErr.message);
+      }
+
       const params = [];
       const conditions = [];
 
@@ -73,6 +84,18 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       console.error('[BUDGET ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch budgets' });
+    }
+  });
+
+  router.post('/budgets/recompute', requirePermission('admin_settings', 'accounting_create'), async (req, res) => {
+    try {
+      const { year, month, costCenterId } = req.body || {};
+      const result = await recomputeBudgetActuals(db, { year, month, costCenterId });
+      broadcastTable('budgets');
+      res.json({ success: true, ...result });
+    } catch (error) {
+      console.error('[BUDGET ERROR]', error);
+      res.status(500).json({ error: 'Failed to recompute budget actuals' });
     }
   });
 
@@ -100,6 +123,11 @@ module.exports = function(broadcastTable) {
     try {
       const { year } = req.query;
       const y = year || new Date().getFullYear();
+      try {
+        await recomputeBudgetActuals(db, { year: y });
+      } catch (recomputeErr) {
+        console.warn('[BUDGET] summary actuals recompute skipped:', recomputeErr.message);
+      }
       const result = await db.query(
         `SELECT * FROM v_budget_summary WHERE period_year = $1`,
         [y]

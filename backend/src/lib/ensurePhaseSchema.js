@@ -704,6 +704,13 @@ async function ensureBankTransactionsTable(db) {
         CREATE INDEX IF NOT EXISTS idx_bank_transactions_account
           ON bank_transactions (bank_account_id, transaction_date DESC)
       `);
+      try {
+        await db.query(`ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS is_reconciled BOOLEAN NOT NULL DEFAULT false`);
+        await db.query(`ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS reconciled_at TIMESTAMPTZ`);
+        await db.query(`ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS reconciliation_id VARCHAR(64)`);
+      } catch (colErr) {
+        console.warn('[SCHEMA] bank_transactions recon cols:', colErr.message);
+      }
     } catch (err) {
       console.warn('[SCHEMA] bank_transactions:', err.message);
     }

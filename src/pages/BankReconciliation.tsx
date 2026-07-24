@@ -84,6 +84,7 @@ export default function BankReconciliation() {
   const [rulePattern, setRulePattern] = useState('');
   const [ruleField, setRuleField] = useState<'description' | 'reference'>('description');
   const [savingRule, setSavingRule] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [reconHydrated, setReconHydrated] = useState(false);
 
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
@@ -415,6 +416,37 @@ export default function BankReconciliation() {
     });
   }, [accountTransactions, statementRows, matchedTxnIds, matchRules, toast, t]);
 
+  const confirmReconciliation = useCallback(async () => {
+    if (!selectedAccountId || summary.matched < 1) return;
+    setConfirming(true);
+    try {
+      // Persist latest matches before confirm.
+      await api.bankReconciliations.save(selectedAccountId, {
+        statementRows,
+        branchId: listBranchId || undefined,
+        status: 'in_progress',
+      });
+      const res = await api.bankReconciliations.confirm(selectedAccountId);
+      if (res.error) throw new Error(res.error);
+      toast({
+        title: t.bankReconciliationUi.confirmSuccess,
+        description: t.bankReconciliationUi.confirmSuccessDesc
+          .replace('{cleared}', String(res.data?.cleared ?? 0))
+          .replace('{matched}', String(res.data?.matchedCount ?? summary.matched)),
+      });
+      const txns = await getBankTransactions();
+      setAllTransactions(txns);
+    } catch (e) {
+      toast({
+        title: t.bankReconciliationUi.confirmFailed,
+        description: e instanceof Error ? e.message : String(e),
+        variant: 'destructive',
+      });
+    } finally {
+      setConfirming(false);
+    }
+  }, [selectedAccountId, summary.matched, statementRows, listBranchId, toast, t]);
+
   const addMatchRule = async () => {
     if (!ruleName.trim() || !rulePattern.trim()) {
       toast({ title: t.bankReconciliationUi.importError, description: 'Name and pattern are required', variant: 'destructive' });
@@ -509,6 +541,17 @@ export default function BankReconciliation() {
               <Button onClick={autoMatch} className="gap-2">
                 <ArrowRightLeft className="w-4 h-4" />
                 {t.bankReconciliationUi.autoReconcile}
+              </Button>
+              <Button
+                onClick={() => void confirmReconciliation()}
+                disabled={confirming || summary.matched < 1}
+                className="gap-2"
+                variant="default"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                {confirming
+                  ? t.bankReconciliationUi.confirming
+                  : t.bankReconciliationUi.confirmMatches.replace('{count}', String(summary.matched))}
               </Button>
               <Button
                 variant="outline"

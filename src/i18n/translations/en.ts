@@ -3691,6 +3691,11 @@ export const en = {
     systemOnly: "System only",
     reconciledOk: "Reconciled ✓",
     difference: "Difference",
+    confirmMatches: "Confirm matches ({count})",
+    confirming: "Confirming…",
+    confirmSuccess: "Reconciliation confirmed",
+    confirmSuccessDesc: "Cleared {cleared} of {matched} matched bank transactions (no extra GL posting).",
+    confirmFailed: "Could not confirm reconciliation",
 
     bankVsGlTitle: "Bank vs ledger (GL)",
     bankBalance: "Bank balance",

@@ -3012,6 +3012,16 @@ export const api = {
       apiFetch<{ success: boolean }>(`/bank-reconciliations/${encodeURIComponent(bankAccountId)}`, {
         method: 'DELETE',
       }),
+    confirm: (bankAccountId: string) =>
+      apiFetch<{
+        success: boolean;
+        cleared: number;
+        matchedCount: number;
+        session?: { status?: string };
+      }>(`/bank-reconciliations/${encodeURIComponent(bankAccountId)}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
   },
 
   bankTransactions: {
