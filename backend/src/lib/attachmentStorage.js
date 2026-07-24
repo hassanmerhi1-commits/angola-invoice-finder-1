@@ -51,6 +51,16 @@ function writeAttachmentFile(entityType, entityId, fileName, buffer) {
   return { id, storagePath: fullPath, byteSize: buffer.length, fileName: safeName };
 }
 
+function assertPathInAttachmentsRoot(storagePath) {
+  const root = path.resolve(attachmentsRoot());
+  const resolved = path.resolve(String(storagePath || ''));
+  const rel = path.relative(root, resolved);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('Invalid attachment storage path');
+  }
+  return resolved;
+}
+
 module.exports = {
   MAX_BYTES,
   ALLOWED_ENTITY,
@@ -58,4 +68,5 @@ module.exports = {
   sanitizeFileName,
   decodeBase64Payload,
   writeAttachmentFile,
+  assertPathInAttachmentsRoot,
 };

@@ -10,6 +10,7 @@ const {
   configuredClientIngestKeys,
 } = require('../middleware/syncAuth');
 const { requireAuth } = require('../middleware/requireAuth');
+const { requirePermission } = require('../middleware/requirePermission');
 const { applyClientIngestEvent, SUPPORTED_TYPES } = require('../sync/clientIngestHandlers');
 const { fetchMasterDataForBranch } = require('../sync/masterData');
 const { logSyncAudit, fetchRecentAudit } = require('../sync/auditLog');
@@ -361,7 +362,7 @@ module.exports = function syncIngestRouter(broadcastTable) {
   });
 
   /** Dead letter queue — failed sync events after max retries */
-  router.get('/dead-letter', requireAuth, async (req, res) => {
+  router.get('/dead-letter', requireAuth, requirePermission('admin_settings'), async (req, res) => {
     try {
       const limit = Math.min(Number(req.query.limit) || 50, 100);
       const events = await fetchDeadLetterEvents(limit);
@@ -371,7 +372,7 @@ module.exports = function syncIngestRouter(broadcastTable) {
     }
   });
 
-  router.post('/dead-letter/:id/replay', requireAuth, async (req, res) => {
+  router.post('/dead-letter/:id/replay', requireAuth, requirePermission('admin_settings'), async (req, res) => {
     try {
       const ok = await replayDeadLetterEvent(req.params.id);
       if (!ok) return res.status(404).json({ error: 'Dead letter not found' });
@@ -389,7 +390,7 @@ module.exports = function syncIngestRouter(broadcastTable) {
     }
   });
 
-  router.post('/dead-letter/:id/resolve', requireAuth, async (req, res) => {
+  router.post('/dead-letter/:id/resolve', requireAuth, requirePermission('admin_settings'), async (req, res) => {
     try {
       const note = req.body?.note || 'manually resolved';
       const ok = await resolveDeadLetterEvent(req.params.id, note);

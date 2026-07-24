@@ -231,6 +231,10 @@ module.exports = function(broadcastTable) {
         }
       } catch (e) {
         if (e.message.includes('aguarda aprovação')) throw e;
+        // Hard-fail if approval table query fails unexpectedly (do not soft-skip).
+        if (!/does not exist|no such table/i.test(String(e.message || ''))) {
+          throw e;
+        }
       }
 
       await processPurchaseReceive(client, id, receivedQuantities, receivedBy);

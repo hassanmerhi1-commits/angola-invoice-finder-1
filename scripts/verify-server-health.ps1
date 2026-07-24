@@ -4,7 +4,7 @@
 param(
   [string]$ServerIp = '127.0.0.1',
   [int]$Port = 3000,
-  [string]$ExpectedVersion = '1.1.66',
+  [string]$ExpectedVersion = '1.1.67',
   [int]$MinSchema = 67
 )
 

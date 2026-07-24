@@ -1278,7 +1278,7 @@ async function getAvailableStockForSale(client, productId, warehouseId, createdB
       SELECT COALESCE(SUM(i.reserved_qty), 0) AS qty
       FROM sales_order_items i
       INNER JOIN sales_orders o ON o.id = i.sales_order_id
-      WHERE o.status = 'reserved'
+      WHERE o.status IN ('reserved', 'partially_shipped')
         AND CAST(o.branch_id AS TEXT) = CAST($1 AS TEXT)
         AND COALESCE(i.reserved_qty, 0) > 0
         AND (
@@ -1947,6 +1947,12 @@ async function processSale(client, saleData) {
   } = saleData;
   const clientId = String(saleData.clientId || saleData.client_id || '').trim() || null;
   const clientReqId = clientRequestId || idempotencyKey || null;
+  const salesOrderId = String(
+    saleData.salesOrderId
+    || saleData.sales_order_id
+    || saleData.parentSalesOrderId
+    || '',
+  ).trim() || null;
 
   // ── Validation ──
   requireParam(branchId, 'branchId');
@@ -1963,6 +1969,20 @@ async function processSale(client, saleData) {
 
   // ── Step 0: Validate period ──
   await validatePeriod(client, today);
+
+  // If linked sales order already shipped (stock OUT on sales_order), skip stock validation + movement.
+  let skipSaleStock = false;
+  if (salesOrderId) {
+    const shipped = await client.query(
+      `SELECT id FROM stock_movements
+       WHERE reference_type = 'sales_order'
+         AND movement_type = 'OUT'
+         AND CAST(reference_id AS TEXT) = CAST($1 AS TEXT)
+       LIMIT 1`,
+      [salesOrderId],
+    );
+    skipSaleStock = shipped.rows.length > 0;
+  }
 
   // ── Step 1: Resolve fiscal type (number allocated after validation, before insert) ──
   const {
@@ -2004,13 +2024,21 @@ async function processSale(client, saleData) {
     }
 
     let resolvedPid = pid;
-    if (pid) {
+    if (pid && !skipSaleStock) {
       const stockInfo = await getAvailableStockForSale(client, pid, branchId, cashierUuid);
       resolvedPid = stockInfo.productId;
       if (stockInfo.available + 0.0001 < Number(item.quantity)) {
         throw new Error(
           `Stock insuficiente para ${stockInfo.name}. Disponível: ${stockInfo.available}, Solicitado: ${item.quantity}`,
         );
+      }
+    } else if (pid && skipSaleStock) {
+      try {
+        resolvedPid = await runInSavepoint(client, 'resolve_product_shipped', () =>
+          resolveStockProductId(client, pid, branchId),
+        );
+      } catch {
+        resolvedPid = pid;
       }
     }
 
@@ -2146,7 +2174,7 @@ async function processSale(client, saleData) {
        item.unitPrice, item.discount || 0, item.taxRate, item.taxAmount, item.subtotal]
     );
 
-    if (pid) {
+    if (pid && !skipSaleStock) {
       // COGS unit cost (prefer weighted average)
       const costResult = await client.query('SELECT cost, avg_cost FROM products WHERE id = $1', [pid]);
       let unitCost = 0;
@@ -2166,6 +2194,19 @@ async function processSale(client, saleData) {
         referenceType: 'sale', referenceId: saleId,
         referenceNumber: invoiceNumber, createdBy: cashierId,
       });
+    } else if (pid && skipSaleStock) {
+      // Still need COGS for journal when goods already left on SO ship.
+      const costResult = await client.query('SELECT cost, avg_cost FROM products WHERE id = $1', [pid]);
+      if (costResult.rows.length > 0) {
+        const row = costResult.rows[0];
+        let unitCost = 0;
+        if (row.avg_cost != null && row.avg_cost !== '' && Number.isFinite(Number(row.avg_cost))) {
+          unitCost = Number(row.avg_cost);
+        } else {
+          unitCost = Number(row.cost) || 0;
+        }
+        totalCOGS += unitCost * item.quantity;
+      }
     }
   }
 
@@ -2408,6 +2449,45 @@ async function processPurchaseReceive(client, orderId, receivedQuantities, recei
   const orderResult = await client.query('SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE', [orderId]);
   const order = orderResult.rows[0];
   if (!order) throw new Error(`Ordem de compra ${orderId} não encontrada`);
+
+  // Mutual exclusion: stock already posted for this PO → do not receive again.
+  const priorPoStock = await client.query(
+    `SELECT id FROM stock_movements
+     WHERE reference_type = 'purchase'
+       AND CAST(reference_id AS TEXT) = CAST($1 AS TEXT)
+     LIMIT 1`,
+    [orderId],
+  );
+  if (priorPoStock.rows.length > 0) {
+    throw new Error(
+      `Ordem ${order.order_number} já tem stock recebido. Não receba de novo — use a fatura de compra (FC) só para AP se ainda em falta.`,
+    );
+  }
+
+  // Mutual exclusion: FC already posted stock for this order number → block PO receive.
+  const orderNo = String(order.order_number || '').trim();
+  if (orderNo) {
+    const linkedInvoices = await client.query(
+      `SELECT id, invoice_number FROM purchase_invoices
+       WHERE LOWER(TRIM(COALESCE(order_no, ''))) = LOWER($1)
+         AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('cancelled', 'voided', 'draft')`,
+      [orderNo],
+    );
+    for (const inv of linkedInvoices.rows || []) {
+      const fcStock = await client.query(
+        `SELECT id FROM stock_movements
+         WHERE reference_type = 'purchase_invoice'
+           AND CAST(reference_id AS TEXT) = CAST($1 AS TEXT)
+         LIMIT 1`,
+        [inv.id],
+      );
+      if (fcStock.rows.length > 0) {
+        throw new Error(
+          `Stock já lançado pela fatura de compra ${inv.invoice_number || inv.id}. Não use "Receber" na OC — a FC é a fonte de stock.`,
+        );
+      }
+    }
+  }
 
   const itemsResult = await client.query('SELECT * FROM purchase_order_items WHERE order_id = $1', [orderId]);
 

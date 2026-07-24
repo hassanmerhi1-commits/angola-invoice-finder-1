@@ -1,4 +1,6 @@
 // Supplier returns (purchase returns / devoluções a fornecedor)
+// Prefer PurchaseReturnsTab → processTransaction (stock + AP/GL).
+// This CRUD route is status/metadata only unless callers also post stock separately.
 const express = require('express');
 const { randomUUID } = require('crypto');
 const db = require('../db');

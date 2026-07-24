@@ -24,10 +24,14 @@ test('final consumer cash sale above FS limit → FR', () => {
   );
 });
 
-test('final consumer transfer sale → FT', () => {
+test('final consumer transfer / Multibanco sale → FR (paid at issue)', () => {
   assert.equal(
     resolveSaleInvoiceType({ customerNif: '', paymentMethod: 'transfer', total: 200_000 }),
-    'FT',
+    'FR',
+  );
+  assert.equal(
+    resolveSaleInvoiceType({ customerNif: '', paymentMethod: 'multibanco', total: 50_000 }),
+    'FS',
   );
 });
 

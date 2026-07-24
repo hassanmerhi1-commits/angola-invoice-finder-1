@@ -643,6 +643,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             dueDate: dueDate || undefined,
             parentProformaId: prefillFrom?.documentType === 'proforma' ? prefillFrom.id : undefined,
             parentProformaNumber: prefillFrom?.documentType === 'proforma' ? prefillFrom.documentNumber : undefined,
+            salesOrderId: prefillFrom?.documentType === 'sales_order' ? prefillFrom.id : undefined,
           });
 
           if (!saleResult.data) {

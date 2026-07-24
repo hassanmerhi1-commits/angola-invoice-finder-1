@@ -8,7 +8,7 @@ const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 
 const MUTATE_PERMS = ['invoice_create', 'proforma_create'];
 const ACTIVE_STATUSES = ['draft', 'confirmed', 'reserved'];
-const { getStock } = require('../transactionEngine');
+  const { getStock, recordStockMovement } = require('../transactionEngine');
 
 function newId() {
   return crypto.randomUUID();
@@ -24,7 +24,7 @@ async function getOpenReservedQty(productId, branchId, excludeOrderId) {
     `SELECT COALESCE(SUM(i.reserved_qty), 0) AS qty
      FROM sales_order_items i
      INNER JOIN sales_orders o ON o.id = i.sales_order_id
-     WHERE o.status = 'reserved'
+     WHERE o.status IN ('reserved', 'partially_shipped')
        AND o.id <> $1
        AND CAST(o.branch_id AS TEXT) = CAST($2 AS TEXT)
        AND CAST(i.product_id AS TEXT) = CAST($3 AS TEXT)
@@ -682,6 +682,41 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
         const maxShip = Math.max(0, Number(it.quantity) - already);
         const shipQty = Math.min(add, maxShip);
         if (shipQty <= 0) continue;
+
+        const productId = String(it.productId || '').trim();
+        if (productId) {
+          const onHand = await getStock(productId, row.branch_id);
+          const otherHeld = await getOpenReservedQty(productId, row.branch_id, id);
+          // This line's remaining reserved covers part of the hold; available = onHand - other holds.
+          const thisReserved = Math.max(0, Number(it.reservedQty || 0));
+          const available = Math.max(0, onHand - otherHeld);
+          // Allow shipping against this order's own reserve without double-subtracting it.
+          const availableForShip = available + Math.min(thisReserved, onHand);
+          if (shipQty > availableForShip + 0.0001) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: `Stock insuficiente para expedir ${it.productName || productId}. Disponível: ${availableForShip}, Pedido: ${shipQty}`,
+            });
+          }
+          const costRes = await client.query(
+            `SELECT COALESCE(avg_cost, cost, 0) AS unit_cost FROM products WHERE id = $1 LIMIT 1`,
+            [productId],
+          );
+          const unitCost = Number(costRes.rows[0]?.unit_cost || 0);
+          await recordStockMovement(client, {
+            productId,
+            warehouseId: row.branch_id,
+            movementType: 'OUT',
+            quantity: shipQty,
+            unitCost,
+            referenceType: 'sales_order',
+            referenceId: id,
+            referenceNumber: row.order_number || '',
+            notes: `Expedição encomenda ${row.order_number || id}`,
+            createdBy: req.user?.id || null,
+          });
+        }
+
         const newShipped = already + shipQty;
         const newReserved = Math.max(0, Number(it.reservedQty || 0) - shipQty);
         await client.query(

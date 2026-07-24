@@ -1777,6 +1777,8 @@ export const en = {
     resultBeforeTax: "RESULT BEFORE TAX",
     incomeTax: "Income tax",
     netResult: "NET RESULT FOR THE PERIOD",
+    fromGlTitle: "Built from posted journals",
+    fromGlHint: "Period activity from trial balance (classes 6/7/8). Empty periods show zeros until journals exist.",
     // Export
     colCode: "Code",
     colDescription: "Description",

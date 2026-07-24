@@ -13,10 +13,10 @@ function registerJobHandler(jobType, handler) {
   JOB_HANDLERS[jobType] = handler;
 }
 
-function startJobQueueWorker(intervalMs = Number(process.env.JOB_QUEUE_MS || 15000)) {
+function startJobQueueWorker(intervalMs = Number(process.env.JOB_QUEUE_MS ?? 0)) {
   if (timer) return;
-  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
-    console.log('[JOB_QUEUE] Worker disabled');
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0 || Object.keys(JOB_HANDLERS).length === 0) {
+    console.log('[JOB_QUEUE] Worker disabled (no handlers or JOB_QUEUE_MS=0)');
     return;
   }
   const run = async () => {

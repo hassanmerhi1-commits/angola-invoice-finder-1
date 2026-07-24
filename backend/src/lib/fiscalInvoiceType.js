@@ -23,7 +23,16 @@ function isFinalConsumer(customerNif) {
 }
 
 function isPaidAtIssue(paymentMethod) {
-  return paymentMethod === 'cash' || paymentMethod === 'card' || paymentMethod === 'mixed';
+  const m = String(paymentMethod || '').trim().toLowerCase();
+  return (
+    m === 'cash'
+    || m === 'card'
+    || m === 'mixed'
+    || m === 'transfer'
+    || m === 'bank_transfer'
+    || m === 'multibanco'
+    || m === 'mb'
+  );
 }
 
 /**

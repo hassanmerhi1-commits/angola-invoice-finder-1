@@ -9,6 +9,7 @@ import {
   printPosThermalReceipts,
 } from '@/lib/thermalPrinter';
 import { recordSalePrint } from '@/lib/recordPrintAudit';
+import { isOfflineSaleStub, offlineSalePrintWarning } from '@/lib/saleOfflineGuard';
 import { usePosProducts } from '@/hooks/usePosProducts';
 import { usePosCaixa } from '@/hooks/usePosCaixa';
 import { processSalePayment, getExpenses } from '@/lib/accountingStorage';
@@ -549,6 +550,10 @@ export default function POS() {
       // applySoldQuantities. Refreshing the product/sales lists is a slow LAN round-trip,
       // so do it in the background instead of blocking the print screen.
       setReceiptOpen(true);
+      const offlineWarn = offlineSalePrintWarning(sale as unknown as Record<string, unknown>);
+      if (offlineWarn || isOfflineSaleStub(sale as unknown as Record<string, unknown>)) {
+        toast.warning(offlineWarn || 'Provisional offline receipt — official number after sync');
+      }
       void refreshProducts();
       void refreshSales();
 

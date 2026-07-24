@@ -459,6 +459,28 @@ module.exports = function expensesRouter(broadcastTable) {
       const alreadyPaid = String(existing.rows[0].status || '') === 'paid';
       const priorStatus = String(existing.rows[0].status || 'draft');
       if (!alreadyPaid) {
+        // Enforce approval when an approval_request exists, or status is pending_approval.
+        const st = priorStatus.toLowerCase();
+        if (st === 'pending_approval' || st === 'submitted' || st === 'awaiting_approval') {
+          return res.status(400).json({
+            error: 'Despesa aguarda aprovação — não pode ser paga ainda',
+          });
+        }
+        try {
+          const appr = await db.query(
+            `SELECT status FROM approval_requests
+             WHERE document_type = 'expense' AND CAST(document_id AS TEXT) = CAST($1 AS TEXT)
+             ORDER BY created_at DESC LIMIT 1`,
+            [req.params.id],
+          );
+          if (appr.rows[0] && String(appr.rows[0].status) !== 'approved') {
+            return res.status(400).json({
+              error: `Despesa aguarda aprovação (estado: ${appr.rows[0].status})`,
+            });
+          }
+        } catch (_) {
+          // approval_requests table may be missing on old DBs
+        }
         await db.query(
           `UPDATE expenses SET status = 'paid', paid_by = $1, paid_at = $2, updated_at = $2 WHERE id = $3`,
           [paidByLabel, paidAt, req.params.id],

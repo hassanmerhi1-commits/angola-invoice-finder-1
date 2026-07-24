@@ -1,5 +1,5 @@
 /**
- * Soft holds from reserved sales orders (status=reserved, reserved_qty > 0).
+ * Soft holds from reserved / partially shipped sales orders (reserved_qty > 0).
  * Stock ledger still uses branch id as warehouse_id.
  */
 
@@ -17,7 +17,7 @@ async function loadReservedHoldsForBranch(db, branchId) {
          COALESCE(SUM(i.reserved_qty), 0) AS qty
        FROM sales_order_items i
        INNER JOIN sales_orders o ON o.id = i.sales_order_id
-       WHERE o.status = 'reserved'
+       WHERE o.status IN ('reserved', 'partially_shipped')
          AND CAST(o.branch_id AS TEXT) = CAST($1 AS TEXT)
          AND COALESCE(i.reserved_qty, 0) > 0
        GROUP BY CAST(i.product_id AS TEXT), LOWER(TRIM(COALESCE(i.sku, '')))`,

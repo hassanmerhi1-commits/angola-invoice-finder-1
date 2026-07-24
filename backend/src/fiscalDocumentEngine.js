@@ -9,6 +9,7 @@ const {
 } = require('./accounting');
 const {
   recordStockMovement,
+  applyWeightedAverageCostAfterIn,
   auditLog,
   validatePeriod,
   linkDocuments,
@@ -179,29 +180,32 @@ async function processCreditNote(client, data) {
     );
 
     if (restoreStock && productId && qty > 0) {
+      const costRes = await client.query('SELECT cost, avg_cost FROM products WHERE id = $1', [productId]);
+      let unitCost = 0;
+      if (costRes.rows.length) {
+        const row = costRes.rows[0];
+        if (row.avg_cost != null && row.avg_cost !== '' && Number.isFinite(Number(row.avg_cost))) {
+          unitCost = Number(row.avg_cost);
+        } else {
+          unitCost = Number(row.cost) || 0;
+        }
+      }
       await recordStockMovement(client, {
         productId,
         warehouseId: branchId,
         movementType: 'IN',
         quantity: qty,
-        unitCost: 0,
+        unitCost,
         referenceType: 'sale_return',
         referenceId: noteId,
         referenceNumber: documentNumber,
         createdBy: issuedBy,
         notes: reasonDescription || `NC ${documentNumber}`,
       });
-      const costRes = await client.query('SELECT cost, avg_cost FROM products WHERE id = $1', [productId]);
-      if (costRes.rows.length) {
-        const row = costRes.rows[0];
-        let unitCost = 0;
-        if (row.avg_cost != null && row.avg_cost !== '' && Number.isFinite(Number(row.avg_cost))) {
-          unitCost = Number(row.avg_cost);
-        } else {
-          unitCost = Number(row.cost) || 0;
-        }
-        totalCOGS += unitCost * qty;
+      if (unitCost > 0) {
+        await applyWeightedAverageCostAfterIn(client, productId, qty, unitCost);
       }
+      totalCOGS += unitCost * qty;
     }
   }
 

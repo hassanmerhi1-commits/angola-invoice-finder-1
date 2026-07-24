@@ -1779,6 +1779,8 @@ export const pt: TranslationKeys = {
     resultBeforeTax: "RESULTADO ANTES DE IMPOSTOS",
     incomeTax: "Imposto sobre o Rendimento",
     netResult: "RESULTADO LÍQUIDO DO PERÍODO",
+    fromGlTitle: "Com base no diário lançado",
+    fromGlHint: "Movimento do período a partir do balancete (classes 6/7/8). Períodos vazios mostram zeros até existirem lançamentos.",
     // Exportação
     colCode: "Código",
     colDescription: "Descrição",

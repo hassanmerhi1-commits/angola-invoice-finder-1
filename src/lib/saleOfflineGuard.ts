@@ -6,11 +6,17 @@ export function isOfflineSaleStub(row: Record<string, unknown> | null | undefine
   return inv.startsWith('OFF-') || inv.startsWith('LOCAL-');
 }
 
+/** Offline stubs must not be treated as final fiscal documents (number changes on sync). */
+export function offlineSalePrintWarning(row: Record<string, unknown> | null | undefined): string | null {
+  if (!isOfflineSaleStub(row)) return null;
+  return 'PROVISIONAL — offline receipt. Official FT/FR/FS number is assigned after sync.';
+}
+
 export function isCreditPaymentMethod(paymentMethod: unknown): boolean {
   return String(paymentMethod || '').trim().toLowerCase() === 'credit';
 }
 
 export function isFiscalInvoiceNumber(invoiceNumber: unknown): boolean {
   const inv = String(invoiceNumber || '').trim().toUpperCase();
-  return /^F[TR]-/.test(inv);
+  return /^F[TRS]-/.test(inv) || /^FR-/.test(inv) || /^FS-/.test(inv);
 }

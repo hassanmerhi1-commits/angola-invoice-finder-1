@@ -7,8 +7,19 @@ const {
   ALLOWED_ENTITY,
   decodeBase64Payload,
   writeAttachmentFile,
+  assertPathInAttachmentsRoot,
 } = require('../lib/attachmentStorage');
+const { requireAuth } = require('../middleware/requireAuth');
 const { auditErpSafe } = require('../lib/erpAudit');
+
+const VIEW_PERMS = [
+  'purchase_create',
+  'expense_create',
+  'admin_settings',
+  'invoice_create',
+  'invoice_view',
+  'accounting_view',
+];
 
 function mapRow(row) {
   if (!row) return null;
@@ -28,7 +39,7 @@ function mapRow(row) {
 module.exports = function attachmentsRouter(broadcastTable) {
   const router = express.Router();
 
-  router.get('/', async (req, res) => {
+  router.get('/', requireAuth, requirePermission(...VIEW_PERMS), async (req, res) => {
     try {
       const entityType = String(req.query.entityType || '').trim();
       const entityId = String(req.query.entityId || '').trim();
@@ -103,7 +114,7 @@ module.exports = function attachmentsRouter(broadcastTable) {
     },
   );
 
-  router.get('/:id/download', async (req, res) => {
+  router.get('/:id/download', requireAuth, requirePermission(...VIEW_PERMS), async (req, res) => {
     try {
       const r = await db.query(
         `SELECT file_name, content_type, storage_path FROM document_attachments WHERE id = $1`,
@@ -111,7 +122,13 @@ module.exports = function attachmentsRouter(broadcastTable) {
       );
       const row = r.rows[0];
       if (!row) return res.status(404).json({ error: 'Attachment not found' });
-      if (!row.storage_path || !fs.existsSync(row.storage_path)) {
+      let safePath;
+      try {
+        safePath = assertPathInAttachmentsRoot(row.storage_path);
+      } catch {
+        return res.status(400).json({ error: 'Invalid attachment path' });
+      }
+      if (!fs.existsSync(safePath)) {
         return res.status(404).json({ error: 'Attachment file missing on disk' });
       }
       res.setHeader('Content-Type', row.content_type || 'application/octet-stream');
@@ -119,7 +136,7 @@ module.exports = function attachmentsRouter(broadcastTable) {
         'Content-Disposition',
         `attachment; filename="${path.basename(row.file_name || 'file')}"`,
       );
-      fs.createReadStream(row.storage_path).pipe(res);
+      fs.createReadStream(safePath).pipe(res);
     } catch (e) {
       console.error('[ATTACHMENTS]', e);
       res.status(500).json({ error: e.message || 'Download failed' });

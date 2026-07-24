@@ -284,6 +284,46 @@ async function ensureSupplierJournalAccounts(client, journalLines, inv) {
   }
 }
 
+async function resolveLinkedPurchaseOrderStock(client, inv) {
+  const orderNo = String(inv.orderNo || inv.order_no || '').trim();
+  if (!orderNo) return { skipStock: false, skipPurchaseJournal: false, warning: null };
+  const poRes = await client.query(
+    `SELECT id, order_number, status FROM purchase_orders
+     WHERE LOWER(TRIM(COALESCE(order_number, ''))) = LOWER($1)
+     LIMIT 1`,
+    [orderNo],
+  );
+  const po = poRes.rows[0];
+  if (!po) return { skipStock: false, skipPurchaseJournal: false, warning: null };
+
+  const mov = await client.query(
+    `SELECT id FROM stock_movements
+     WHERE reference_type = 'purchase'
+       AND CAST(reference_id AS TEXT) = CAST($1 AS TEXT)
+     LIMIT 1`,
+    [po.id],
+  );
+  if (!mov.rows.length) {
+    return { skipStock: false, skipPurchaseJournal: false, warning: null, poId: po.id };
+  }
+
+  const je = await client.query(
+    `SELECT id FROM journal_entries
+     WHERE reference_type = 'purchase'
+       AND CAST(reference_id AS TEXT) = CAST($1 AS TEXT)
+     LIMIT 1`,
+    [po.id],
+  );
+
+  return {
+    skipStock: true,
+    skipPurchaseJournal: je.rows.length > 0,
+    poId: po.id,
+    warning:
+      `Stock/GL já lançados na recepção da OC ${po.order_number}. FC cria apenas conta a pagar (sem novo stock).`,
+  };
+}
+
 /**
  * Post stock, payable, then journal. Returns detailed status for UI.
  * @param {object} [opts]
@@ -325,7 +365,10 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
   result.openItemId = existing.openItemId;
   result.journalEntryId = existing.journalEntryId;
 
-  if (!result.stockMovementIds.length) {
+  const linkedPo = await resolveLinkedPurchaseOrderStock(client, inv);
+  if (linkedPo.warning) result.warnings.push(linkedPo.warning);
+
+  if (!result.stockMovementIds.length && !linkedPo.skipStock) {
     const landing = landingCostsFromInvoice(inv);
     const landedByProduct = buildLandedUnitCosts(lines, landing);
     for (let i = 0; i < lines.length; i += 1) {
@@ -402,11 +445,15 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
     }
   }
 
-  let journalLines = Array.isArray(inv.journalLines) ? [...inv.journalLines] : [];
+  // Server-authoritative journal: ignore FE journalLines (tamper / drift risk).
+  let journalLines = [];
   const landing = landingCostsFromInvoice(inv);
 
-  // Auto-build balanced purchase journal when UI omitted lines (stock + payable already posted).
-  if (journalLines.length === 0 && !result.journalEntryId && Number(inv.total || 0) > 0) {
+  if (linkedPo.skipPurchaseJournal) {
+    result.warnings.push(
+      'Journal de mercadorias já lançado na OC — FC não duplica diário (AP open item apenas).',
+    );
+  } else if (!result.journalEntryId && Number(inv.total || 0) > 0) {
     try {
       const { resolveEntityAccountCode } = require('./entityCoaAccounts');
       const supplierId = String(inv.supplierId || inv.supplier_id || '').trim();
@@ -420,7 +467,6 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
       const totalAmt = roundMoney(Number(inv.total || 0));
       const taxAmt = roundMoney(Number(inv.taxAmount ?? inv.tax_amount ?? 0));
       const goodsAmt = roundMoney(Math.max(0, totalAmt - taxAmt));
-      journalLines = [];
       if (goodsAmt > 0) {
         journalLines.push({
           accountCode: '212',
@@ -443,15 +489,15 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
         credit: totalAmt,
         description: supplierName || 'Fornecedor',
       });
-      result.warnings.push('Journal: auto-built from invoice totals (UI had no journal lines)');
+      result.warnings.push('Journal: built server-side from invoice totals');
     } catch (autoErr) {
       result.warnings.push(`Journal auto-build failed: ${autoErr.message}`);
     }
   }
 
-  if (journalLines.length === 0 && landing > 0) {
+  if (journalLines.length === 0 && landing > 0 && !linkedPo.skipPurchaseJournal) {
     result.errors.push('Journal: freight entered but invoice has no journal lines');
-  } else if (journalLines.length === 0 && !result.journalEntryId && Number(inv.total || 0) > 0) {
+  } else if (journalLines.length === 0 && !result.journalEntryId && Number(inv.total || 0) > 0 && !linkedPo.skipPurchaseJournal) {
     result.warnings.push('Journal: invoice has no journal lines — nothing posted to chart of accounts');
   } else if (journalLines.length > 0) {
     const treasury = await resolveFreightTreasuryGl(client, inv);

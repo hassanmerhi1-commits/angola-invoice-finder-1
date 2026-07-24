@@ -27,7 +27,7 @@ export const PERMISSIONS: Permission[] = [
   // Invoicing / Faturação
   { id: 'invoice_create', name: 'Create Invoice', description: 'Criar fatura de venda', category: 'fiscal' },
   { id: 'invoice_view', name: 'View Invoices', description: 'Visualizar faturas', category: 'fiscal' },
-  { id: 'invoice_delete', name: 'Delete Invoice', description: 'Eliminar faturas', category: 'fiscal' },
+  { id: 'invoice_delete', name: 'Delete Invoice', description: 'Reservado — faturas emitidas não se eliminam; use anulação/NC', category: 'fiscal' },
   { id: 'invoice_print', name: 'Print Invoice', description: 'Imprimir faturas', category: 'fiscal' },
   { id: 'proforma_create', name: 'Create Proforma', description: 'Criar pro-forma', category: 'fiscal' },
   { id: 'proforma_convert', name: 'Convert Proforma', description: 'Converter pro-forma em fatura', category: 'fiscal' },

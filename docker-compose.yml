@@ -6,8 +6,10 @@ services:
     environment:
       POSTGRES_DB: kwanza_erp
       POSTGRES_USER: postgres
+      # SECURITY: override in .env — do not leave the compose default on internet-facing hosts.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yel3an7azi}
     ports:
+      # Prefer binding to localhost only on exposed servers: "127.0.0.1:5432:5432"
       - "5432:5432"
     volumes:
       - kwanza_pgdata:/var/lib/postgresql/data
@@ -40,7 +42,7 @@ services:
       # Optional offsite copy — mount a host folder and uncomment:
       # BACKUP_OFFSITE_DIR: /app/backups-offsite
       # Shown in /api/health appVersion — bump on release so deploys are verifiable.
-      NEXOR_APP_VERSION: 1.1.66
+      NEXOR_APP_VERSION: 1.1.67
     ports:
       - "3000:3000"
     volumes:
