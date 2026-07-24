@@ -4,7 +4,7 @@ import { api } from '@/lib/api/client';
 
 export interface Notification {
   id: string;
-  type: 'low_stock' | 'approval_pending' | 'payment_received' | 'stock_transfer' | 'system' | 'agt_failure';
+  type: 'low_stock' | 'approval_pending' | 'payment_received' | 'stock_transfer' | 'system' | 'agt_failure' | 'overdue_ar' | 'period_close';
   title: string;
   message: string;
   timestamp: string;

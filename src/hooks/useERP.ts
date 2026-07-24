@@ -1080,6 +1080,7 @@ async function initAuthStateOnce() {
 
 export type LoginOutcome =
   | { ok: true; offline?: boolean; mustChangePassword?: boolean }
+  | { ok: false; kind: 'mfa'; mfaToken: string; message?: string }
   | { ok: false; kind: 'credentials' | 'connection'; message?: string };
 
 export function useAuth() {
@@ -1106,6 +1107,9 @@ export function useAuth() {
         console.warn('[Auth] Login failed:', response.error);
         const kind = (response as { errorKind?: 'credentials' | 'connection' }).errorKind || 'credentials';
         return { ok: false, kind, message: response.error };
+      }
+      if (response.data?.mfaRequired && response.data?.mfaToken) {
+        return { ok: false, kind: 'mfa', mfaToken: String(response.data.mfaToken) };
       }
       const apiUser = response.data?.user;
       const isOffline = !!(response.data as { offline?: boolean })?.offline;
@@ -1195,6 +1199,38 @@ export function useAuth() {
     return { ok: false, kind: 'credentials' };
   }, []);
 
+  const completeMfaLogin = useCallback(async (mfaToken: string, code: string): Promise<LoginOutcome> => {
+    try {
+      const response = await api.auth.mfaVerify(mfaToken, code);
+      if (response.error || !response.data?.token || !response.data?.user) {
+        return { ok: false, kind: 'credentials', message: response.error || 'Invalid code' };
+      }
+      setAuthToken(response.data.token);
+      const apiUser = response.data.user;
+      const user: User = {
+        id: String(apiUser.id),
+        email: String(apiUser.email || ''),
+        name: String(apiUser.name || ''),
+        username: String(apiUser.username || ''),
+        role: (apiUser.role as User['role']) || 'cashier',
+        branchId: String(apiUser.branchId ?? apiUser.branch_id ?? ''),
+        isActive: true,
+        createdAt: String(apiUser.createdAt ?? apiUser.created_at ?? new Date().toISOString()),
+        permissionOverrides: apiUser.permissionOverrides,
+        mustChangePassword: !!(apiUser.mustChangePassword ?? apiUser.must_change_password),
+      };
+      storage.clearLocalProductsCache();
+      storage.setCurrentUser(user);
+      applyUserBranchLockOnLogin(user);
+      window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
+      setAuthState({ user });
+      markElectronSessionAuthenticated();
+      return { ok: true, mustChangePassword: user.mustChangePassword };
+    } catch (e) {
+      return { ok: false, kind: 'connection', message: e instanceof Error ? e.message : String(e) };
+    }
+  }, []);
+
   const logout = useCallback(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('kwanza_auth_token') : null;
     if (token && isJwtAuthToken(token)) {
@@ -1220,6 +1256,7 @@ export function useAuth() {
     user: snapshot.user,
     isLoading: snapshot.isLoading,
     login,
+    completeMfaLogin,
     logout,
     clearMustChangePassword,
   };

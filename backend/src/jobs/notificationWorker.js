@@ -1,8 +1,8 @@
 /**
- * Periodic low-stock notification scan.
+ * Periodic notification scans (low stock, overdue AR, period close).
  * Env: NOTIFICATION_SCAN_MS (default 300000 = 5 min). Set 0 to disable.
  */
-const { scanLowStockNotifications } = require('../lib/notifications');
+const { runNotificationScans } = require('../lib/notifications');
 
 let timer = null;
 
@@ -14,8 +14,12 @@ function startNotificationWorker(intervalMs = Number(process.env.NOTIFICATION_SC
   }
   const run = async () => {
     try {
-      const n = await scanLowStockNotifications();
-      if (n > 0) console.log(`[NOTIFICATIONS] Low-stock alerts created: ${n}`);
+      const r = await runNotificationScans();
+      if (r.total > 0) {
+        console.log(
+          `[NOTIFICATIONS] created low=${r.low} overdueAR=${r.ar} periodClose=${r.periods}`,
+        );
+      }
     } catch (e) {
       console.warn('[NOTIFICATIONS] scan error:', e.message);
     }
@@ -23,7 +27,7 @@ function startNotificationWorker(intervalMs = Number(process.env.NOTIFICATION_SC
   setTimeout(run, 45_000);
   timer = setInterval(run, intervalMs);
   if (typeof timer.unref === 'function') timer.unref();
-  console.log(`[NOTIFICATIONS] Low-stock scan every ${Math.round(intervalMs / 1000)}s`);
+  console.log(`[NOTIFICATIONS] Scan every ${Math.round(intervalMs / 1000)}s`);
 }
 
 module.exports = { startNotificationWorker };

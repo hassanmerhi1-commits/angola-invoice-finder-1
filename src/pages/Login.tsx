@@ -21,11 +21,13 @@ const loginSchema = z.object({
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isRetryingServer, setIsRetryingServer] = useState(false);
   const [lastConnectionError, setLastConnectionError] = useState<string | null>(null);
   const [errors, setErrors] = useState<{ username?: string; password?: string }>({});
-  const { login } = useAuth();
+  const { login, completeMfaLogin } = useAuth();
   const { t } = useTranslation();
   const { companyName, logo } = useCompanyLogo();
   const navigate = useNavigate();
@@ -71,19 +73,46 @@ export default function Login() {
     e.preventDefault();
     setErrors({});
 
-    const result = loginSchema.safeParse({ username, password });
-    if (!result.success) {
-      const fieldErrors: { username?: string; password?: string } = {};
-      result.error.errors.forEach(err => {
-        if (err.path[0] === 'username') fieldErrors.username = err.message;
-        if (err.path[0] === 'password') fieldErrors.password = err.message;
-      });
-      setErrors(fieldErrors);
+    if (!mfaToken) {
+      const parsed = loginSchema.safeParse({ username, password });
+      if (!parsed.success) {
+        const fieldErrors: { username?: string; password?: string } = {};
+        parsed.error.errors.forEach((err) => {
+          if (err.path[0] === 'username') fieldErrors.username = err.message;
+          if (err.path[0] === 'password') fieldErrors.password = err.message;
+        });
+        setErrors(fieldErrors);
+        return;
+      }
+    } else if (mfaCode.trim().length < 6) {
+      toast({ title: t.auth.authErrorTitle, description: 'Enter the 6-digit code', variant: 'destructive' });
       return;
     }
 
     setIsLoading(true);
     try {
+      if (mfaToken) {
+        const mfaResult = await completeMfaLogin(mfaToken, mfaCode);
+        if (mfaResult.ok) {
+          setMfaToken(null);
+          setMfaCode('');
+          if (mfaResult.mustChangePassword) {
+            navigate('/settings?focus=password');
+          } else {
+            toast({ title: t.auth.welcomeToastTitle, description: t.auth.welcomeToastDesc });
+            navigate('/');
+          }
+        } else {
+          toast({
+            title: t.auth.authErrorTitle,
+            description: mfaResult.message || 'Invalid authentication code',
+            variant: 'destructive',
+          });
+        }
+        setIsLoading(false);
+        return;
+      }
+
       const result = await login(username, password);
       if (result.ok) {
         if (result.offline) {
@@ -103,6 +132,12 @@ export default function Login() {
           toast({ title: t.auth.welcomeToastTitle, description: t.auth.welcomeToastDesc });
         }
         navigate('/');
+      } else if (result.kind === 'mfa') {
+        setMfaToken(result.mfaToken);
+        toast({
+          title: t.auth.welcomeToastTitle,
+          description: 'Enter the 6-digit code from your authenticator app.',
+        });
       } else if (result.kind === 'connection') {
         const msg = result.message || t.auth.connectionErrorDesc;
         setLastConnectionError(msg);
@@ -218,33 +253,59 @@ export default function Login() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="username" className="text-sm font-semibold">{t.auth.username}</Label>
-              <Input
-                id="username"
-                type="text"
-                placeholder={t.auth.username}
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className={`h-11 rounded-xl ${errors.username ? 'border-destructive' : ''}`}
-                autoComplete="username"
-              />
-              {errors.username && <p className="text-xs text-destructive">{errors.username}</p>}
-            </div>
+            {!mfaToken ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="username" className="text-sm font-semibold">{t.auth.username}</Label>
+                  <Input
+                    id="username"
+                    type="text"
+                    placeholder={t.auth.username}
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className={`h-11 rounded-xl ${errors.username ? 'border-destructive' : ''}`}
+                    autoComplete="username"
+                  />
+                  {errors.username && <p className="text-xs text-destructive">{errors.username}</p>}
+                </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-sm font-semibold">{t.auth.password}</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className={`h-11 rounded-xl ${errors.password ? 'border-destructive' : ''}`}
-                autoComplete="current-password"
-              />
-              {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
-            </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password" className="text-sm font-semibold">{t.auth.password}</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className={`h-11 rounded-xl ${errors.password ? 'border-destructive' : ''}`}
+                    autoComplete="current-password"
+                  />
+                  {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
+                </div>
+              </>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="mfa-code" className="text-sm font-semibold">Authenticator code</Label>
+                <Input
+                  id="mfa-code"
+                  inputMode="numeric"
+                  maxLength={8}
+                  placeholder="123456"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  className="h-11 rounded-xl tracking-widest"
+                  autoFocus
+                />
+                <Button
+                  type="button"
+                  variant="link"
+                  className="px-0 h-auto"
+                  onClick={() => { setMfaToken(null); setMfaCode(''); }}
+                >
+                  Back to password
+                </Button>
+              </div>
+            )}
 
             <Button type="submit" className="w-full h-11 rounded-xl text-sm font-semibold" disabled={isLoading}>
               {isLoading ? (
@@ -252,7 +313,7 @@ export default function Login() {
               ) : (
                 <>
                   <LogIn className="w-4 h-4 mr-2" />
-                  {t.auth.login}
+                  {mfaToken ? 'Verify code' : t.auth.login}
                 </>
               )}
             </Button>

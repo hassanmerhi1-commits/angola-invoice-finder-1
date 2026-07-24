@@ -52,6 +52,7 @@ const PurchaseInvoices = React.lazy(() => import("./pages/PurchaseInvoices"));
 const Categories = React.lazy(() => import("./pages/Categories"));
 const FiscalDocuments = React.lazy(() => import("./pages/FiscalDocuments"));
 const ProForma = React.lazy(() => import("./pages/ProForma"));
+const SalesOrders = React.lazy(() => import("./pages/SalesOrders"));
 const UserManagement = React.lazy(() => import("./pages/UserManagement"));
 const Reports = React.lazy(() => import("./pages/Reports"));
 const ChartOfAccounts = React.lazy(() => import("./pages/ChartOfAccounts"));
@@ -323,6 +324,7 @@ function AppRoutes() {
         <Route path="/data-sync" element={<LazyRoute><DataSync /></LazyRoute>} />
         <Route path="/fiscal-documents" element={<LazyRoute><FiscalDocuments /></LazyRoute>} />
         <Route path="/proforma" element={<LazyRoute><ProForma /></LazyRoute>} />
+        <Route path="/sales-orders" element={<LazyRoute><SalesOrders /></LazyRoute>} />
         <Route path="/users" element={<LazyRoute><UserManagement /></LazyRoute>} />
         <Route path="/chart-of-accounts" element={<LazyRoute><ChartOfAccounts /></LazyRoute>} />
         <Route path="/journals" element={<LazyRoute><Journals /></LazyRoute>} />

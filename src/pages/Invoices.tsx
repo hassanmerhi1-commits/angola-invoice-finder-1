@@ -22,6 +22,7 @@ import {
   Clock, ChevronDown, ArrowRightLeft, Send,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { salesOrderToErpDocumentPrefill, type SalesOrder } from '@/lib/salesOrderToDocument';
 import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
 import type { CreditNote } from '@/types/erp';
@@ -287,9 +288,22 @@ export default function Invoices() {
     setInvoicesWorkspaceTab(activeTab);
   }, [activeTab]);
 
-  // Open sales invoice form when navigating from Pro Forma page conversion
+  // Open sales invoice form when navigating from Pro Forma or Sales Order conversion
   useEffect(() => {
-    const st = location.state as { prefillFromProforma?: ERPDocument } | null;
+    const st = location.state as {
+      prefillFromProforma?: ERPDocument;
+      fromSalesOrder?: SalesOrder;
+    } | null;
+    if (st?.fromSalesOrder) {
+      setActiveTab('fatura_venda');
+      setInvoicesWorkspaceTab('fatura_venda');
+      setFormDocType('fatura_venda');
+      setEditDoc(null);
+      setPrefillDoc(salesOrderToErpDocumentPrefill(st.fromSalesOrder));
+      setFormOpen(true);
+      navigate(location.pathname, { replace: true, state: {} });
+      return;
+    }
     if (!st?.prefillFromProforma) return;
     setActiveTab('fatura_venda');
     setInvoicesWorkspaceTab('fatura_venda');

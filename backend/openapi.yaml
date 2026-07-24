@@ -1,0 +1,102 @@
+openapi: 3.0.3
+info:
+  title: NEXOR ERP API
+  version: 1.1.59
+  description: >
+    Angola multi-branch ERP REST API. Prefer /api/v1/* (alias of /api/*).
+    Authenticate with Bearer JWT from POST /api/auth/login.
+servers:
+  - url: /api/v1
+    description: Versioned alias (recommended)
+  - url: /api
+    description: Legacy unversioned mount
+paths:
+  /health:
+    get:
+      summary: Liveness / schema health
+      security: []
+      responses:
+        '200':
+          description: OK
+  /auth/login:
+    post:
+      summary: Login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                email: { type: string }
+                username: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: Token or MFA challenge
+  /auth/mfa/verify:
+    post:
+      summary: Complete MFA login
+      security: []
+      responses:
+        '200':
+          description: JWT issued
+  /sales:
+    get:
+      summary: List sales
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Sale list
+    post:
+      summary: Create sale (POS / invoice)
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201':
+          description: Created
+  /sales-orders:
+    get:
+      summary: List sales orders
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Orders
+  /search:
+    get:
+      summary: Global search
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        '200':
+          description: Search hits
+  /webhooks:
+    get:
+      summary: List webhooks
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Webhook endpoints
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      responses:
+        '200':
+          description: text/plain exposition
+  /warehouses:
+    get:
+      summary: List warehouses
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Warehouse list
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

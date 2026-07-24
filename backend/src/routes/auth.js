@@ -19,10 +19,17 @@ const { findUserForLogin } = require('../lib/loginUserLookup');
 const { parsePermissionOverrides } = require('../lib/rolePermissions');
 const { resolveAndPersistUserBranchId } = require('../middleware/branchScope');
 const { startSession, endSession } = require('../lib/sessionLog');
+const {
+  generateSecret,
+  verifyTotp,
+  otpauthUrl,
+  generateBackupCodes,
+} = require('../lib/totp');
 
 const router = express.Router();
 
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
+const MFA_PENDING_EXPIRES = '5m';
 
 function mapUserRow(user) {
   const email = String(user.email || '').toLowerCase();
@@ -39,9 +46,61 @@ function mapUserRow(user) {
     isActive: user.is_active === true || user.is_active === 1,
     permissionOverrides: parsePermissionOverrides(user.permissions),
     mustChangePassword: user.must_change_password === true || user.must_change_password === 1,
+    mfaEnabled: user.mfa_enabled === true || user.mfa_enabled === 1,
     createdAt: user.created_at,
     updatedAt: user.updated_at,
   };
+}
+
+function issueMfaPendingToken(user) {
+  return jwt.sign(
+    { userId: user.id, purpose: 'mfa_pending' },
+    JWT_SECRET,
+    { expiresIn: MFA_PENDING_EXPIRES },
+  );
+}
+
+function parseBackupCodes(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+async function completeLoginResponse(req, res, user) {
+  let effectiveBranchId = user.branch_id;
+  try {
+    effectiveBranchId = await resolveAndPersistUserBranchId(user);
+  } catch (branchErr) {
+    console.warn('[AUTH] branch assignment fix skipped:', branchErr?.message || branchErr);
+  }
+  const { token, jti } = issueToken(user);
+  await startSession(req, {
+    userId: user.id,
+    userName: user.name,
+    branchId: effectiveBranchId,
+    tokenJti: jti,
+  });
+  await logFiscalEventFromReq(req, {
+    tableName: 'users',
+    recordId: user.id,
+    action: 'login',
+    userId: user.id,
+    userName: user.name,
+    branchId: effectiveBranchId,
+    description: `Login: ${user.name || user.email}`,
+    newValues: { sessionJti: jti },
+  });
+  res.json({
+    token,
+    user: {
+      ...mapUserRow(user),
+      branchId: effectiveBranchId ?? mapUserRow(user).branchId,
+    },
+  });
 }
 
 function isValidEmailDomain(domain) {
@@ -143,42 +202,158 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
     }
     user.must_change_password = mustChange;
 
-    let effectiveBranchId = user.branch_id;
-    try {
-      effectiveBranchId = await resolveAndPersistUserBranchId(user);
-    } catch (branchErr) {
-      console.warn('[AUTH] branch assignment fix skipped:', branchErr?.message || branchErr);
+    const mfaOn = user.mfa_enabled === true || user.mfa_enabled === 1;
+    if (mfaOn && user.mfa_secret) {
+      const mfaToken = issueMfaPendingToken(user);
+      return res.json({
+        mfaRequired: true,
+        mfaToken,
+        user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      });
     }
-    const { token, jti } = issueToken(user);
 
-    await startSession(req, {
-      userId: user.id,
-      userName: user.name,
-      branchId: effectiveBranchId,
-      tokenJti: jti,
-    });
-
-    await logFiscalEventFromReq(req, {
-      tableName: 'users',
-      recordId: user.id,
-      action: 'login',
-      userId: user.id,
-      userName: user.name,
-      branchId: effectiveBranchId,
-      description: `Login: ${user.name || user.email}`,
-      newValues: { sessionJti: jti },
-    });
-
-    res.json({
-      token,
-      user: {
-        ...mapUserRow(user),
-        branchId: effectiveBranchId ?? mapUserRow(user).branchId,
-      },
-    });
+    return completeLoginResponse(req, res, user);
   } catch (error) {
     console.error('[AUTH ERROR]', error);
     res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// MFA second step after password — public with short-lived mfaToken
+router.post('/mfa/verify', loginRateLimiter(), async (req, res) => {
+  try {
+    const mfaToken = String(req.body?.mfaToken || '');
+    const code = String(req.body?.code || '').trim();
+    if (!mfaToken || !code) {
+      return res.status(400).json({ error: 'mfaToken and code are required' });
+    }
+    let decoded;
+    try {
+      decoded = jwt.verify(mfaToken, JWT_SECRET);
+    } catch {
+      return res.status(401).json({ error: 'MFA session expired. Sign in again.' });
+    }
+    if (decoded.purpose !== 'mfa_pending' || !decoded.userId) {
+      return res.status(401).json({ error: 'Invalid MFA session' });
+    }
+    const result = await db.query(
+      'SELECT * FROM users WHERE id = $1',
+      [decoded.userId],
+    );
+    const user = result.rows[0];
+    if (!user || !(user.is_active === true || user.is_active === 1)) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+    const backup = parseBackupCodes(user.mfa_backup_codes);
+    const totpOk = user.mfa_secret && verifyTotp(user.mfa_secret, code);
+    const backupIdx = backup.indexOf(code.toLowerCase());
+    const backupOk = backupIdx >= 0;
+    if (!totpOk && !backupOk) {
+      await recordFailure(user.email || user.username || user.id);
+      return res.status(401).json({ error: 'Invalid authentication code' });
+    }
+    if (backupOk) {
+      backup.splice(backupIdx, 1);
+      await db.query(
+        'UPDATE users SET mfa_backup_codes = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        [JSON.stringify(backup), user.id],
+      );
+    }
+    await recordSuccess(user.email || user.username || user.id);
+    return completeLoginResponse(req, res, user);
+  } catch (error) {
+    console.error('[AUTH MFA]', error);
+    res.status(500).json({ error: 'MFA verification failed' });
+  }
+});
+
+// Start MFA enrollment (admin/manager only for now)
+router.post('/mfa/setup', requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ error: 'MFA is available for admin and manager roles' });
+    }
+    const secret = generateSecret();
+    const account = req.user.email || req.user.name || req.user.id;
+    await db.query(
+      `UPDATE users SET mfa_secret = $1, mfa_enabled = false, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+      [secret, req.user.id],
+    );
+    require('../middleware/requireAuth').invalidateUserCache(String(req.user.id));
+    res.json({
+      secret,
+      otpauthUrl: otpauthUrl({ secret, accountName: account }),
+    });
+  } catch (error) {
+    console.error('[AUTH MFA setup]', error);
+    res.status(500).json({ error: error.message || 'MFA setup failed' });
+  }
+});
+
+router.post('/mfa/enable', requireAuth, async (req, res) => {
+  try {
+    const code = String(req.body?.code || '').trim();
+    const row = await db.query(
+      'SELECT mfa_secret FROM users WHERE id = $1',
+      [req.user.id],
+    );
+    const secret = row.rows[0]?.mfa_secret;
+    if (!secret) return res.status(400).json({ error: 'Call /mfa/setup first' });
+    if (!verifyTotp(secret, code)) {
+      return res.status(401).json({ error: 'Invalid authentication code' });
+    }
+    const backupCodes = generateBackupCodes(8);
+    await db.query(
+      `UPDATE users SET mfa_enabled = true, mfa_backup_codes = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+      [JSON.stringify(backupCodes), req.user.id],
+    );
+    require('../middleware/requireAuth').invalidateUserCache(String(req.user.id));
+    res.json({ success: true, backupCodes });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to enable MFA' });
+  }
+});
+
+router.post('/mfa/disable', requireAuth, async (req, res) => {
+  try {
+    const code = String(req.body?.code || '').trim();
+    const password = String(req.body?.password || '');
+    const row = await db.query(
+      'SELECT password_hash, mfa_secret, mfa_enabled FROM users WHERE id = $1',
+      [req.user.id],
+    );
+    const user = row.rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const pwOk = password && await verifyPassword(password, user.password_hash);
+    const totpOk = user.mfa_secret && code && verifyTotp(user.mfa_secret, code);
+    if (!pwOk && !totpOk) {
+      return res.status(401).json({ error: 'Password or MFA code required' });
+    }
+    await db.query(
+      `UPDATE users SET mfa_enabled = false, mfa_secret = NULL, mfa_backup_codes = NULL,
+         updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+      [req.user.id],
+    );
+    require('../middleware/requireAuth').invalidateUserCache(String(req.user.id));
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to disable MFA' });
+  }
+});
+
+router.get('/mfa/status', requireAuth, async (req, res) => {
+  try {
+    const row = await db.query(
+      'SELECT mfa_enabled FROM users WHERE id = $1',
+      [req.user.id],
+    );
+    res.json({
+      mfaEnabled: row.rows[0]?.mfa_enabled === true || row.rows[0]?.mfa_enabled === 1,
+      role: req.user.role,
+      available: req.user.role === 'admin' || req.user.role === 'manager',
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to read MFA status' });
   }
 });
 

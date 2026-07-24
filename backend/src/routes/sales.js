@@ -115,6 +115,16 @@ module.exports = function(broadcastTable) {
               .then(() => broadcastTable('sales'))
               .catch((e) => console.warn('[AGT SIGN]', e.message));
           });
+          setImmediate(() => {
+            const { enqueueWebhookEvent } = require('../lib/webhooks');
+            enqueueWebhookEvent('sale.created', {
+              id: sale.id,
+              invoiceNumber: sale.invoice_number || sale.invoiceNumber,
+              total: sale.total,
+              branchId: sale.branch_id || sale.branchId || req.body.branchId,
+              paymentMethod: sale.payment_method || sale.paymentMethod || req.body.paymentMethod,
+            }).catch((e) => console.warn('[WEBHOOKS] sale.created:', e.message));
+          });
           await broadcastTable('sales');
           await broadcastTable('products');
           if (isCredit) {

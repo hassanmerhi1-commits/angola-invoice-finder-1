@@ -3,6 +3,7 @@
 
 export type DocumentType = 
   | 'proforma'        // Orçamento / Proforma
+  | 'sales_order'     // Encomenda de venda
   | 'fatura_venda'    // Fatura De Venda (Sales Invoice)
   | 'fatura_compra'   // Fatura De Compra (Purchase Invoice)
   | 'recibo'          // Recibo (Receipt)
@@ -182,6 +183,16 @@ export const DOCUMENT_TYPE_CONFIG: Record<DocumentType, {
     shortLabel: 'Proforma',
     prefix: 'OR',
     color: 'text-blue-600',
+    entityType: 'customer',
+    canConvertTo: ['fatura_venda'],
+    requiresPayment: false,
+    affectsStock: false,
+  },
+  sales_order: {
+    label: 'Encomenda',
+    shortLabel: 'Encomenda',
+    prefix: 'SO',
+    color: 'text-indigo-600',
     entityType: 'customer',
     canConvertTo: ['fatura_venda'],
     requiresPayment: false,

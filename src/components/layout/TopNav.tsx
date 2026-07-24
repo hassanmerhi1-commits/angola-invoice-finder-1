@@ -217,6 +217,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { label: t.topNav.invoicing.salesHistory, icon: Receipt, path: '/vendas' },
         { label: t.topNav.invoicing.invoices, icon: FileText, path: '/invoices' },
         { label: t.topNav.invoicing.proforma, icon: ClipboardList, path: '/proforma' },
+        { label: t.topNav.invoicing.salesOrders, icon: ClipboardList, path: '/sales-orders' },
         { label: t.topNav.invoicing.fiscalDocuments, icon: FileCheck, path: '/fiscal-documents' },
         { label: 'separator' },
         { label: t.topNav.invoicing.creditNote, icon: CreditCard, path: '/fiscal-documents', state: { openCreditNoteCreate: true } },

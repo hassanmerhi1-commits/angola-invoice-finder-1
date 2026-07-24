@@ -26,6 +26,7 @@ import { Plus, Pencil, Trash2, Building2, MapPin, Phone } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
+import { WarehousesCard } from '@/components/branches/WarehousesCard';
 
 export default function Branches() {
   const { t } = useTranslation();
@@ -224,6 +225,8 @@ export default function Branches() {
           )}
         </CardContent>
       </Card>
+
+      <WarehousesCard />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

@@ -99,6 +99,20 @@ app.use(compression({ threshold: 1024 }));
 app.use(rateLimiter(60000, 800, 8000));
 app.use(express.json({ limit: '10mb' }));
 
+// /api/v1/* is a stable alias of /api/* (OpenAPI versioning).
+app.use((req, _res, next) => {
+  if (req.url === '/api/v1' || req.url.startsWith('/api/v1/') || req.url.startsWith('/api/v1?')) {
+    req.url = req.url.replace(/^\/api\/v1/, '/api') || '/api';
+  }
+  next();
+});
+
+app.get(['/api/openapi.yaml', '/api/v1/openapi.yaml'], (_req, res) => {
+  const specPath = path.join(__dirname, '../openapi.yaml');
+  if (!fs.existsSync(specPath)) return res.status(404).json({ error: 'OpenAPI spec missing' });
+  res.type('text/yaml').send(fs.readFileSync(specPath, 'utf8'));
+});
+
 const webappPath = path.join(__dirname, '../webapp');
 if (!fs.existsSync(webappPath)) fs.mkdirSync(webappPath, { recursive: true });
 app.use('/app', express.static(webappPath, { index: false, fallthrough: true }));
@@ -111,6 +125,26 @@ app.get(/^\/app(?:\/.*)?$/, (req, res) => {
   const indexPath = path.join(webappPath, 'index.html');
   if (fs.existsSync(indexPath)) res.sendFile(indexPath);
   else res.status(404).json({ error: 'Webapp not deployed — run npm run build:webapp and copy dist/ to backend/webapp' });
+});
+
+function isLoopbackMetricsRequest(req) {
+  const ip = String(req.ip || req.socket?.remoteAddress || '').trim();
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
+/** Prometheus text metrics — loopback without auth, otherwise requires JWT. */
+app.get('/api/metrics', (req, res, next) => {
+  const { renderPrometheus } = require('./lib/metrics');
+  const sendMetrics = () => {
+    res.type('text/plain; version=0.0.4; charset=utf-8');
+    res.send(renderPrometheus());
+  };
+  if (isLoopbackMetricsRequest(req)) return sendMetrics();
+  const { requireAuth } = require('./middleware/requireAuth');
+  return requireAuth(req, res, (err) => {
+    if (err) return next(err);
+    return sendMetrics();
+  });
 });
 
 /** Fast ping for Electron health monitor — avoid heavy queries while SQLite is busy. */
@@ -209,6 +243,7 @@ app.use('/api/auth', require('./routes/auth'));
 
 app.use('/api/products', require('./routes/products')(broadcastTable));
 app.use('/api/branches', require('./routes/branches')(broadcastTable));
+app.use('/api/warehouses', require('./routes/warehouses')(broadcastTable));
 app.use('/api/categories', require('./routes/categories')(broadcastTable));
 app.use('/api/suppliers', require('./routes/suppliers')(broadcastTable));
 app.use('/api/clients', require('./routes/clients')(broadcastTable));
@@ -219,6 +254,7 @@ app.use('/api/transactions', require('./routes/transactions')(broadcastTable));
 app.use('/api/purchase-orders', require('./routes/purchaseOrders')(broadcastTable));
 app.use('/api/purchase-invoices', require('./routes/purchaseInvoices')(broadcastTable));
 app.use('/api/proformas', require('./routes/proformas')(broadcastTable));
+app.use('/api/sales-orders', require('./routes/salesOrders')(broadcastTable));
 app.use('/api/supplier-returns', require('./routes/supplierReturns')(broadcastTable));
 app.use('/api/stock-transfers', require('./routes/stockTransfers')(broadcastTable));
 app.use('/api/import-orders', require('./routes/importOrders')(broadcastTable));
@@ -246,6 +282,7 @@ app.use('/api/fiscal-documents', require('./routes/fiscalDocuments')(broadcastTa
 app.use('/api/company-settings', require('./routes/companySettings')(broadcastTable));
 app.use('/api/attachments', require('./routes/attachments')(broadcastTable));
 app.use('/api/notifications', require('./routes/notifications')());
+app.use('/api/webhooks', require('./routes/webhooks')());
 app.use('/api/search', require('./routes/search')());
 app.use('/api/sync', require('./routes/syncIngest')(broadcastTable));
 app.use('/api/installations', require('./routes/installations')());
@@ -326,6 +363,10 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
     startAutoBackupWorker();
     const { startNotificationWorker } = require('./jobs/notificationWorker');
     startNotificationWorker();
+    const { startWebhookWorker } = require('./jobs/webhookWorker');
+    startWebhookWorker();
+    const { startJobQueueWorker } = require('./jobs/jobQueueWorker');
+    startJobQueueWorker();
     const { drainRedundantMainQueueOnHq } = require('./sync/outbox');
     drainRedundantMainQueueOnHq().catch((e) => console.warn('[OUTBOX]', e.message));
   });

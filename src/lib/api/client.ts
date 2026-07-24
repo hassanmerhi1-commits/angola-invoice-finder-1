@@ -594,10 +594,18 @@ export const api = {
         }
       }
 
-      const httpResult = await apiFetch<{ token: string; user: any }>('/auth/login', {
+      const httpResult = await apiFetch<{
+        token?: string;
+        user?: any;
+        mfaRequired?: boolean;
+        mfaToken?: string;
+      }>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email: loginId, username: loginId, password }),
       });
+      if (httpResult.data?.mfaRequired && httpResult.data?.mfaToken) {
+        return httpResult;
+      }
       if (httpResult.data?.token && isJwtAuthToken(httpResult.data.token)) {
         setAuthToken(httpResult.data.token);
         setOfflineModeActive(false);
@@ -645,6 +653,28 @@ export const api = {
       }
       return apiFetch<any>('/auth/me');
     },
+    mfaStatus: () =>
+      apiFetch<{ mfaEnabled: boolean; role: string; available: boolean }>('/auth/mfa/status'),
+    mfaSetup: () =>
+      apiFetch<{ secret: string; otpauthUrl: string }>('/auth/mfa/setup', {
+        method: 'POST',
+        body: '{}',
+      }),
+    mfaEnable: (code: string) =>
+      apiFetch<{ success: boolean; backupCodes: string[] }>('/auth/mfa/enable', {
+        method: 'POST',
+        body: JSON.stringify({ code }),
+      }),
+    mfaDisable: (body: { password?: string; code?: string }) =>
+      apiFetch<{ success: boolean }>('/auth/mfa/disable', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    mfaVerify: (mfaToken: string, code: string) =>
+      apiFetch<{ token: string; user: any }>('/auth/mfa/verify', {
+        method: 'POST',
+        body: JSON.stringify({ mfaToken, code }),
+      }),
     changePassword: async (currentPassword: string, newPassword: string) => {
       await ensureBackendAuthToken();
       return apiFetch<{ success: boolean }>('/auth/change-password', {
@@ -768,6 +798,24 @@ export const api = {
     delete: (id: string) => {
       return apiFetch<{ success?: boolean }>(`/branches/${encodeURIComponent(id)}`, { method: 'DELETE' });
     },
+  },
+
+  warehouses: {
+    list: (branchId?: string) => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/warehouses${qs}`);
+    },
+    create: (data: { branchId: string; code: string; name: string; isDefault?: boolean }) =>
+      apiFetch<any>('/warehouses', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: { name?: string; isDefault?: boolean; isActive?: boolean }) =>
+      apiFetch<any>(`/warehouses/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    ensureDefaults: () =>
+      apiFetch<{ success: boolean; created: number }>('/warehouses/ensure-defaults', {
+        method: 'POST',
+      }),
   },
 
   // Products
@@ -1524,6 +1572,32 @@ export const api = {
       }),
     delete: (id: string) =>
       apiFetch<any>(`/proformas/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
+
+  salesOrders: {
+    list: (branchId?: string) => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<any[]>(`/sales-orders${qs}`);
+    },
+    get: (id: string) => apiFetch<any>(`/sales-orders/${encodeURIComponent(id)}`),
+    create: (data: any) =>
+      apiFetch<any>('/sales-orders', { method: 'POST', body: JSON.stringify(data) }),
+    update: (data: any) =>
+      apiFetch<any>(`/sales-orders/${encodeURIComponent(data.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      apiFetch<any>(`/sales-orders/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    confirm: (id: string) =>
+      apiFetch<any>(`/sales-orders/${encodeURIComponent(id)}/confirm`, { method: 'POST' }),
+    reserve: (id: string) =>
+      apiFetch<any>(`/sales-orders/${encodeURIComponent(id)}/reserve`, { method: 'POST' }),
+    convert: (id: string) =>
+      apiFetch<{ order: any; invoicePayload: any }>(
+        `/sales-orders/${encodeURIComponent(id)}/convert`,
+        { method: 'POST' },
+      ),
   },
 
   purchaseInvoices: {
@@ -2832,6 +2906,14 @@ export const api = {
       apiFetch<{ success: boolean; created: number }>('/notifications/scan-low-stock', {
         method: 'POST',
       }),
+  },
+
+  webhooks: {
+    list: () => apiFetch<any[]>('/webhooks'),
+    create: (data: { name: string; url: string; events?: string[]; secret?: string; isActive?: boolean }) =>
+      apiFetch<any>('/webhooks', { method: 'POST', body: JSON.stringify(data) }),
+    remove: (id: string) =>
+      apiFetch<{ success: boolean; id: string }>(`/webhooks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
 
   search: {

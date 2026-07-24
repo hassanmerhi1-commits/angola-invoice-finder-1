@@ -32,6 +32,7 @@ import {
   FileSpreadsheet, Search, Download, Link2, Unlink, Scale,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { autoMatchStatements, parseBankCsv } from '@/lib/bankMatchRules';
 
 // ==================== TYPES ====================
 
@@ -179,6 +180,43 @@ export default function BankReconciliation() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const isCsv = /\.csv$/i.test(file.name) || file.type === 'text/csv';
+
+    const finish = (rows: BankStatementRow[]) => {
+      setStatementRows(rows);
+      toast({
+        title: t.bankReconciliationUi.statementImported,
+        description: t.bankReconciliationUi.linesLoaded.replace('{count}', String(rows.length)),
+      });
+      setImportDialogOpen(false);
+    };
+
+    const fail = () => {
+      toast({
+        title: t.bankReconciliationUi.importError,
+        description: t.bankReconciliationUi.fileFormatNotRecognized,
+        variant: 'destructive',
+      });
+    };
+
+    if (isCsv) {
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        try {
+          const text = String(evt.target?.result || '');
+          const parsed = parseBankCsv(text).map((r) => ({
+            ...r,
+            matched: false,
+          })) as BankStatementRow[];
+          finish(parsed);
+        } catch {
+          fail();
+        }
+      };
+      reader.readAsText(file);
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
@@ -232,18 +270,9 @@ export default function BankReconciliation() {
           };
         });
 
-        setStatementRows(rows);
-        toast({
-          title: t.bankReconciliationUi.statementImported,
-          description: t.bankReconciliationUi.linesLoaded.replace('{count}', String(rows.length)),
-        });
-        setImportDialogOpen(false);
-      } catch (err) {
-        toast({
-          title: t.bankReconciliationUi.importError,
-          description: t.bankReconciliationUi.fileFormatNotRecognized,
-          variant: 'destructive',
-        });
+        finish(rows);
+      } catch {
+        fail();
       }
     };
     reader.readAsArrayBuffer(file);
@@ -254,38 +283,20 @@ export default function BankReconciliation() {
   const autoMatch = useCallback(() => {
     if (!accountTransactions.length || !statementRows.length) return;
 
-    let matchCount = 0;
-    const updated = statementRows.map(row => {
-      if (row.matched) return row;
+    const { rows: updated, matchCount } = autoMatchStatements(
+      statementRows,
+      accountTransactions.map((t) => ({
+        id: t.id,
+        amount: t.amount,
+        direction: t.direction,
+        transactionDate: t.transactionDate,
+        bankReference: t.bankReference,
+        description: t.description,
+      })),
+      { matchedIds: new Set(matchedTxnIds), minScore: 50 },
+    );
 
-      // Try exact amount + date match
-      const candidates = accountTransactions.filter(t =>
-        !matchedTxnIds.has(t.id) &&
-        Math.abs(t.amount - row.amount) < 0.01 &&
-        t.direction === row.direction
-      );
-
-      // Score candidates
-      let best: BankTransaction | null = null;
-      let bestScore = 0;
-
-      for (const c of candidates) {
-        let score = 50; // Base: amount match
-        if (c.transactionDate === row.date) score += 30;
-        if (c.bankReference && row.reference && c.bankReference === row.reference) score += 20;
-        if (c.description.toLowerCase().includes(row.description.toLowerCase().slice(0, 10))) score += 10;
-        if (score > bestScore) { bestScore = score; best = c; }
-      }
-
-      if (best && bestScore >= 50) {
-        matchCount++;
-        matchedTxnIds.add(best.id);
-        return { ...row, matched: true, matchedTransactionId: best.id, matchConfidence: bestScore };
-      }
-      return row;
-    });
-
-    setStatementRows(updated);
+    setStatementRows(updated as BankStatementRow[]);
     toast({
       title: t.bankReconciliationUi.autoReconciliation,
       description: t.bankReconciliationUi.autoReconciledCount.replace('{count}', String(matchCount)),

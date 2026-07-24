@@ -3,6 +3,7 @@
  * Sets X-Request-Id (echo client header or generate) and logs one JSON line per request.
  */
 const crypto = require('crypto');
+const { observeHttp } = require('../lib/metrics');
 
 function requestContext(req, res, next) {
   const incoming = String(req.headers['x-request-id'] || '').trim();
@@ -13,8 +14,12 @@ function requestContext(req, res, next) {
   const started = Date.now();
   res.on('finish', () => {
     if (!req.path?.startsWith('/api')) return;
+    const ms = Date.now() - started;
     // Health pings are noisy — skip unless non-200.
     if (req.path === '/api/health' && res.statusCode < 400) return;
+    if (req.path !== '/api/metrics') {
+      observeHttp(req.method, res.statusCode, ms);
+    }
 
     const line = {
       ts: new Date().toISOString(),
@@ -24,7 +29,7 @@ function requestContext(req, res, next) {
       method: req.method,
       path: req.originalUrl || req.url,
       status: res.statusCode,
-      ms: Date.now() - started,
+      ms,
       userId: req.user?.id || null,
       role: req.user?.role || null,
       ip: req.ip || req.socket?.remoteAddress || null,

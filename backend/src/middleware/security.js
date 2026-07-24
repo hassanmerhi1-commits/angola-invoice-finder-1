@@ -167,6 +167,9 @@ const PUBLIC_API_EXACT = new Set([
   '/api/health',
   '/api/auth/login',
   '/api/auth/refresh',
+  '/api/auth/mfa/verify',
+  '/api/openapi.yaml',
+  '/api/v1/openapi.yaml',
 ]);
 // Sync carries its own API-key auth. Installation bootstrap/register stays public;
 // list/config endpoints require JWT after setup (see isPublicApiPath).

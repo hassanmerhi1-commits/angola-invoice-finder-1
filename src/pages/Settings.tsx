@@ -8,6 +8,8 @@ import { SigningSettingsCard } from '@/components/settings/SigningSettingsCard';
 import { AgtSettingsCard } from '@/components/settings/AgtSettingsCard';
 import { AgtTransmissionsCard } from '@/components/settings/AgtTransmissionsCard';
 import { SecuritySettingsCard } from '@/components/settings/SecuritySettingsCard';
+import { MfaSettingsCard } from '@/components/settings/MfaSettingsCard';
+import { WebhooksSettingsCard } from '@/components/settings/WebhooksSettingsCard';
 import { CertificationReadinessCard } from '@/components/settings/CertificationReadinessCard';
 import { DailyTodosSettingsCard } from '@/components/settings/DailyTodosSettingsCard';
 import { NetworkSettingsCard } from '@/components/settings/NetworkSettingsCard';
@@ -235,6 +237,7 @@ export default function Settings() {
       case 'security':
         return (
           <div className="space-y-6">
+            <MfaSettingsCard />
             <SecuritySettingsCard />
           </div>
         );
@@ -271,6 +274,7 @@ export default function Settings() {
             <NetworkSettingsCard />
             <HotUpdateSettingsCard />
             <BackendLogsCard />
+            <WebhooksSettingsCard />
           </div>
         );
       default:

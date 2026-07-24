@@ -13,6 +13,7 @@ export const ROUTE_PERMISSIONS: Record<string, string | string[]> = {
   '/vendas': 'invoice_view',
   '/invoices': 'invoice_view',
   '/proforma': 'proforma_create',
+  '/sales-orders': 'invoice_create',
   '/fiscal-documents': 'invoice_view',
   '/inventory': 'inventory_view',
   '/categories': 'inventory_view',

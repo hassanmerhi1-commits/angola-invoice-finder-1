@@ -411,6 +411,155 @@ async function ensureMustChangePasswordColumn(db) {
   }
 }
 
+/** MFA columns + sales orders / warehouses / webhooks / job queue (migration 063). */
+async function ensureMfaSalesOrdersWarehousesWebhooks(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT false');
+      await db.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT');
+      await db.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_backup_codes TEXT');
+    } catch (err) {
+      console.warn('[SCHEMA] users MFA columns:', err.message);
+    }
+    return;
+  }
+
+  if (!db.sqlite) return;
+  try {
+    let cols = [];
+    try {
+      cols = db.sqlite.pragma('table_info(users)');
+    } catch (_) {
+      cols = [];
+    }
+    if (cols.length) {
+      if (!cols.some((c) => c.name === 'mfa_enabled')) {
+        db.sqlite.exec('ALTER TABLE users ADD COLUMN mfa_enabled INTEGER NOT NULL DEFAULT 0');
+      }
+      if (!cols.some((c) => c.name === 'mfa_secret')) {
+        db.sqlite.exec('ALTER TABLE users ADD COLUMN mfa_secret TEXT');
+      }
+      if (!cols.some((c) => c.name === 'mfa_backup_codes')) {
+        db.sqlite.exec('ALTER TABLE users ADD COLUMN mfa_backup_codes TEXT');
+      }
+    }
+    db.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS sales_orders (
+        id TEXT PRIMARY KEY,
+        order_number TEXT NOT NULL,
+        client_id TEXT DEFAULT '',
+        client_name TEXT NOT NULL DEFAULT '',
+        client_nif TEXT DEFAULT '',
+        customer_email TEXT DEFAULT '',
+        customer_phone TEXT DEFAULT '',
+        customer_address TEXT DEFAULT '',
+        branch_id TEXT DEFAULT '',
+        branch_name TEXT DEFAULT '',
+        warehouse_id TEXT DEFAULT '',
+        subtotal REAL NOT NULL DEFAULT 0,
+        tax_amount REAL NOT NULL DEFAULT 0,
+        discount REAL NOT NULL DEFAULT 0,
+        total REAL NOT NULL DEFAULT 0,
+        currency TEXT DEFAULT 'AOA',
+        status TEXT NOT NULL DEFAULT 'draft',
+        reserved_at TEXT,
+        confirmed_at TEXT,
+        notes TEXT DEFAULT '',
+        converted_to_invoice_id TEXT DEFAULT '',
+        converted_to_invoice_number TEXT DEFAULT '',
+        converted_at TEXT,
+        created_by TEXT DEFAULT '',
+        created_by_name TEXT DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS sales_order_items (
+        id TEXT PRIMARY KEY,
+        sales_order_id TEXT NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
+        product_id TEXT DEFAULT '',
+        product_name TEXT NOT NULL DEFAULT '',
+        sku TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        quantity REAL NOT NULL DEFAULT 1,
+        reserved_qty REAL NOT NULL DEFAULT 0,
+        unit_price REAL NOT NULL DEFAULT 0,
+        discount REAL NOT NULL DEFAULT 0,
+        tax_rate REAL NOT NULL DEFAULT 14,
+        tax_amount REAL NOT NULL DEFAULT 0,
+        subtotal REAL NOT NULL DEFAULT 0,
+        total REAL NOT NULL DEFAULT 0,
+        branch_id TEXT DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS idx_sales_orders_branch ON sales_orders(branch_id);
+      CREATE INDEX IF NOT EXISTS idx_sales_orders_status ON sales_orders(status);
+      CREATE INDEX IF NOT EXISTS idx_sales_order_items_order ON sales_order_items(sales_order_id);
+      CREATE TABLE IF NOT EXISTS warehouses (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (branch_id, code)
+      );
+      CREATE INDEX IF NOT EXISTS idx_warehouses_branch ON warehouses(branch_id);
+      CREATE TABLE IF NOT EXISTS webhooks (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        secret TEXT,
+        events TEXT NOT NULL DEFAULT '[]',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_by TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS webhook_deliveries (
+        id TEXT PRIMARY KEY,
+        webhook_id TEXT REFERENCES webhooks(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        delivered_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending
+        ON webhook_deliveries (status, created_at);
+      CREATE TABLE IF NOT EXISTS job_queue (
+        id TEXT PRIMARY KEY,
+        job_type TEXT NOT NULL,
+        payload TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 5,
+        run_after TEXT NOT NULL DEFAULT (datetime('now')),
+        last_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_job_queue_pending
+        ON job_queue (status, run_after);
+      CREATE TABLE IF NOT EXISTS bank_match_rules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        pattern TEXT NOT NULL,
+        match_field TEXT NOT NULL DEFAULT 'description',
+        entity_type TEXT,
+        entity_hint TEXT,
+        priority INTEGER NOT NULL DEFAULT 100,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  } catch (err) {
+    console.warn('[SCHEMA] MFA/sales_orders/warehouses/webhooks (sqlite):', err.message);
+  }
+}
+
 /** Document attachments + server notifications inbox (migration 062). */
 async function ensureAttachmentsNotificationsTables(db) {
   if (db.engine === 'postgres') {
@@ -896,6 +1045,7 @@ async function ensurePhaseSchema(db) {
     await ensureMustChangePasswordColumn(db);
     await ensureLoginAttemptsTable(db);
     await ensureAttachmentsNotificationsTables(db);
+    await ensureMfaSalesOrdersWarehousesWebhooks(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
@@ -946,6 +1096,7 @@ async function ensurePhaseSchema(db) {
     await ensureMustChangePasswordColumn(db);
     await ensureLoginAttemptsTable(db);
     await ensureAttachmentsNotificationsTables(db);
+    await ensureMfaSalesOrdersWarehousesWebhooks(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {
@@ -979,5 +1130,6 @@ module.exports = {
   ensureMustChangePasswordColumn,
   ensureLoginAttemptsTable,
   ensureAttachmentsNotificationsTables,
+  ensureMfaSalesOrdersWarehousesWebhooks,
   ensureAuditLogActions,
 };
