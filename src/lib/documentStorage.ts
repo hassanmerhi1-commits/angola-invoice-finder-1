@@ -305,6 +305,38 @@ export async function getNextSequence(type: DocumentType, branchId: string): Pro
   return docs.length + 1;
 }
 
+/** Map ERP document types to server `document_sequences` keys. */
+const DOC_TYPE_TO_SEQUENCE: Partial<Record<DocumentType, string>> = {
+  fatura_venda: 'sales_invoice',
+  fatura_compra: 'purchase_invoice',
+  nota_credito: 'credit_note',
+  nota_debito: 'debit_note',
+  guia_remessa: 'transport_document',
+  recibo: 'payment_receipt',
+  pagamento: 'payment_out',
+};
+
+/**
+ * Allocate a document number. Fiscal / money types use the server sequence.
+ * Local `docs.length + 1` is demo-only (or non-sequence types like proforma).
+ */
+export async function allocateDocumentNumber(
+  type: DocumentType,
+  branchId: string,
+  branchCode: string,
+): Promise<string> {
+  const seqType = DOC_TYPE_TO_SEQUENCE[type];
+  if (seqType && !isDemoMode()) {
+    const res = await api.transactions.allocateNumber(seqType, branchId);
+    if (res.error || !res.data?.documentNumber) {
+      throw new Error(res.error || 'Failed to allocate document number from server');
+    }
+    return String(res.data.documentNumber);
+  }
+  const seq = await getNextSequence(type, branchId);
+  return generateDocumentNumber(type, branchCode, seq);
+}
+
 function assertDocumentMayBeSaved(existing: ERPDocument | undefined, doc: ERPDocument): ERPDocument {
   if (!existing || !isFiscallyImmutable(existing)) {
     return { ...doc, updatedAt: new Date().toISOString() };
@@ -386,13 +418,14 @@ export async function createDocument(
   if (type === 'nota_credito') {
     throw new Error('Credit notes must be issued in Fiscal Documents (stock and AGT compliance).');
   }
-  const seq = await getNextSequence(type, branchId);
   const now = new Date().toISOString();
-  
+  const documentNumber =
+    data.documentNumber || (await allocateDocumentNumber(type, branchId, branchCode));
+
   const doc: ERPDocument = {
     id: data.id || `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     documentType: type,
-    documentNumber: data.documentNumber || generateDocumentNumber(type, branchCode, seq),
+    documentNumber,
     branchId,
     branchName,
     entityType: DOCUMENT_TYPE_CONFIG[type].entityType,

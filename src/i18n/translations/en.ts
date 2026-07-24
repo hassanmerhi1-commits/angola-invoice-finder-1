@@ -212,7 +212,7 @@ export const en = {
     multiBranch: "Multi-branch",
     defaultAccountsTitle: "Default accounts (change after first login):",
     defaultAdminHint: "After first install, sign in as admin and change the password immediately.",
-    defaultCashierHint: "Cashier — user: caixa1 · password: caixa1",
+    defaultCashierHint: "Create cashier users in User Management — they must change the temporary password on first login.",
     changePasswordHint: "Use Settings → Users to set strong passwords for all accounts.",
     mustChangePasswordDesc: "You must set a new password before continuing.",
     welcomeToastTitle: "Welcome!",

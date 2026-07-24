@@ -5,7 +5,7 @@
 #   powershell -ExecutionPolicy Bypass -File .\scripts\force-server-backend-update.ps1
 
 $ErrorActionPreference = 'Continue'
-$Expected = '1.1.65'
+$Expected = '1.1.66'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path (Join-Path $repoRoot 'backend\src\server.js'))) {
   $repoRoot = (Get-Location).Path

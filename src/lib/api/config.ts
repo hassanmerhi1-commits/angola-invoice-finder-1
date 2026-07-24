@@ -468,7 +468,7 @@ export async function waitForEmbeddedBackendHealth(
   }
   return {
     ok: false,
-    error: 'Database service did not start. Close the app completely, reopen it, wait 30 seconds, then try admin / changeme. If it still fails, rebuild the installer (npm run electron:build).',
+    error: 'Database service did not start. Close the app completely, reopen it, wait 30 seconds, then try again with your admin account. If it still fails, rebuild the installer (npm run electron:build).',
   };
 }
 

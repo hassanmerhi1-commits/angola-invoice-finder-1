@@ -214,7 +214,7 @@ export const pt: TranslationKeys = {
     multiBranch: "Multi-Filial",
     defaultAccountsTitle: "Contas predefinidas (altere após o primeiro acesso):",
     defaultAdminHint: "Após a primeira instalação, entre como admin e altere a senha de imediato.",
-    defaultCashierHint: "Caixa — utilizador: caixa1 · senha: caixa1",
+    defaultCashierHint: "Crie utilizadores de caixa em Gestão de Utilizadores — devem alterar a senha temporária no primeiro login.",
     changePasswordHint: "Em Definições → Utilizadores defina senhas fortes para todas as contas.",
     mustChangePasswordDesc: "Tem de definir uma nova palavra-passe antes de continuar.",
     welcomeToastTitle: "Bem-vindo!",

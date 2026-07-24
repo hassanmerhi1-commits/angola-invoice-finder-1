@@ -7,7 +7,7 @@ export interface Permission {
   id: string;
   name: string;
   description: string;
-  category: 'sales' | 'inventory' | 'reports' | 'admin' | 'fiscal' | 'accounting' | 'stock' | 'hr';
+  category: 'sales' | 'inventory' | 'reports' | 'admin' | 'fiscal' | 'accounting' | 'stock';
 }
 
 export interface RolePermissions {
@@ -85,10 +85,6 @@ export const PERMISSIONS: Permission[] = [
   { id: 'admin_backup', name: 'Backup Data', description: 'Cópia de segurança', category: 'admin' },
   { id: 'admin_restore', name: 'Restore Data', description: 'Restaurar dados', category: 'admin' },
   { id: 'admin_consistency', name: 'Data Consistency', description: 'Verificar e reparar consistência', category: 'admin' },
-
-  // HR
-  { id: 'hr_view', name: 'View HR', description: 'Visualizar RH', category: 'hr' },
-  { id: 'hr_manage', name: 'Manage HR', description: 'Gerir RH', category: 'hr' },
 ];
 
 // Default permissions by role
