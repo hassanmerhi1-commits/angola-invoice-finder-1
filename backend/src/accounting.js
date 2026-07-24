@@ -502,6 +502,80 @@ async function updateJournalEntry(client, entryId, params) {
   };
 }
 
+/**
+ * Rebuild chart_of_accounts.current_balance from opening + posted journal lines.
+ * Fixes drift when lines were inserted without the balance bump (e.g. HQ mirror)
+ * or after supplier/client leaves were created under parents that already held postings.
+ */
+async function recomputeCoaCurrentBalances(client, accountIds) {
+  const ids = Array.isArray(accountIds)
+    ? [...new Set(accountIds.map((id) => String(id || '').trim()).filter(Boolean))]
+    : null;
+
+  if (ids && ids.length === 0) return { updated: 0 };
+
+  if (ids) {
+    const r = await client.query(
+      `UPDATE chart_of_accounts coa
+       SET current_balance = COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0),
+           updated_at = CURRENT_TIMESTAMP
+       FROM (
+         SELECT jel.account_id AS id,
+                SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
+         FROM journal_entry_lines jel
+         INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+         WHERE je.is_posted = true
+           AND jel.account_id = ANY($1::text[])
+         GROUP BY jel.account_id
+       ) j
+       WHERE coa.id = j.id`,
+      [ids],
+    );
+    // Accounts with no journal lines → balance = opening only
+    await client.query(
+      `UPDATE chart_of_accounts
+       SET current_balance = COALESCE(opening_balance, 0),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ANY($1::text[])
+         AND NOT EXISTS (
+           SELECT 1
+           FROM journal_entry_lines jel
+           INNER JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true
+           WHERE jel.account_id = chart_of_accounts.id
+         )`,
+      [ids],
+    );
+    return { updated: ids.length, rowCount: r.rowCount || 0 };
+  }
+
+  const r = await client.query(
+    `UPDATE chart_of_accounts coa
+     SET current_balance = COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0),
+         updated_at = CURRENT_TIMESTAMP
+     FROM (
+       SELECT jel.account_id AS id,
+              SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
+       FROM journal_entry_lines jel
+       INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+       WHERE je.is_posted = true
+       GROUP BY jel.account_id
+     ) j
+     WHERE coa.id = j.id`,
+  );
+  await client.query(
+    `UPDATE chart_of_accounts
+     SET current_balance = COALESCE(opening_balance, 0),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM journal_entry_lines jel
+       INNER JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true
+       WHERE jel.account_id = chart_of_accounts.id
+     )`,
+  );
+  return { updated: r.rowCount || 0 };
+}
+
 module.exports = {
   createJournalEntry,
   updateJournalEntry,
@@ -518,4 +592,5 @@ module.exports = {
   formatSequenceNumber,
   DOCUMENT_SEQUENCE_CONFIG,
   resolveSequenceConfig,
+  recomputeCoaCurrentBalances,
 };

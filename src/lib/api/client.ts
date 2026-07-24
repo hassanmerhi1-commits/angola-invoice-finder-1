@@ -876,7 +876,8 @@ export const api = {
         cost: data?.cost,
         stock: data?.stock,
         unit: data?.unit,
-        taxRate: data?.taxRate,
+        taxRate: data?.taxRate ?? data?.iva,
+        vatOverride: data?.vatOverride ?? data?.vat_override,
         branchId,
         isActive: data?.isActive,
         supplierId: data?.supplierId,
@@ -1675,10 +1676,29 @@ export const api = {
       if (isElectronMode()) {
         return ipcQuery<any>(`
           SELECT
-            coa.*,
+            coa.id,
+            coa.code,
+            coa.name,
+            coa.description,
+            coa.account_type,
+            coa.account_nature,
+            coa.parent_id,
+            coa.level,
+            coa.is_header,
+            coa.is_active,
+            coa.opening_balance,
+            coa.branch_id,
+            coa.created_at,
+            coa.updated_at,
             parent.name AS parent_name,
             parent.code AS parent_code,
-            (SELECT COUNT(*) FROM chart_of_accounts child WHERE child.parent_id = coa.id) AS children_count
+            (SELECT COUNT(*) FROM chart_of_accounts child WHERE child.parent_id = coa.id) AS children_count,
+            COALESCE(coa.opening_balance, 0) + COALESCE((
+              SELECT SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0))
+              FROM journal_entry_lines jel
+              INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+              WHERE jel.account_id = coa.id AND je.is_posted = 1
+            ), 0) AS current_balance
           FROM chart_of_accounts coa
           LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
           WHERE coa.is_active = 1

@@ -8,17 +8,30 @@ const { auditErpSafe } = require('../lib/erpAudit');
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
-  // Get all accounts with hierarchy
+  // Get all accounts with hierarchy — balances computed from posted journals
+  // so the tree matches ledger drill-down (stored current_balance can drift).
   router.get('/', async (req, res) => {
     try {
-      // Grouped join instead of a correlated COUNT(*) per row — the chart has
-      // hundreds of rows, so the old query re-scanned the table per account.
       const result = await db.query(`
         SELECT 
-          coa.*,
+          coa.id,
+          coa.code,
+          coa.name,
+          coa.description,
+          coa.account_type,
+          coa.account_nature,
+          coa.parent_id,
+          coa.level,
+          coa.is_header,
+          coa.is_active,
+          coa.opening_balance,
+          coa.branch_id,
+          coa.created_at,
+          coa.updated_at,
           parent.name as parent_name,
           parent.code as parent_code,
-          COALESCE(kids.children_count, 0) as children_count
+          COALESCE(kids.children_count, 0) as children_count,
+          COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0) AS current_balance
         FROM chart_of_accounts coa
         LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
         LEFT JOIN (
@@ -27,14 +40,34 @@ module.exports = function(broadcastTable) {
           WHERE parent_id IS NOT NULL
           GROUP BY parent_id
         ) kids ON kids.parent_id = coa.id
+        LEFT JOIN (
+          SELECT jel.account_id,
+                 SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
+          FROM journal_entry_lines jel
+          INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+          WHERE je.is_posted = true
+          GROUP BY jel.account_id
+        ) j ON j.account_id = coa.id
         WHERE coa.is_active = true
         ORDER BY coa.code
       `);
-      res.set('Cache-Control', 'private, max-age=30');
+      res.set('Cache-Control', 'private, max-age=15');
       res.json(result.rows);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch accounts' });
+    }
+  });
+
+  router.post('/recompute-balances', requirePermission('admin_settings', 'accounting_create'), async (req, res) => {
+    try {
+      const { recomputeCoaCurrentBalances } = require('../accounting');
+      const result = await recomputeCoaCurrentBalances(db);
+      broadcastTable('chart_of_accounts');
+      res.json({ success: true, ...result });
+    } catch (error) {
+      console.error('[CHART OF ACCOUNTS ERROR]', error);
+      res.status(500).json({ error: 'Failed to recompute account balances' });
     }
   });
 

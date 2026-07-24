@@ -1594,6 +1594,7 @@ module.exports = function(broadcastTable) {
       const { name, sku, barcode, category, price, price2, price3, price4, cost, stock, unit, taxRate, branchId, isActive, supplierId, supplierName } = req.body;
       const activeFlag = isActive !== false;
       const activeValue = db.engine === 'postgres' ? activeFlag : (activeFlag ? 1 : 0);
+      const resolvedTaxRate = normalizeTaxRate(taxRate);
 
       const c = Number(cost) || 0;
       const resolvedBranchId = resolveProductBranchId(req, normalizeRequestedBranchId(branchId));
@@ -1643,12 +1644,29 @@ module.exports = function(broadcastTable) {
             Number(price2) > 0 ? Number(price2) : null,
             Number(price3) > 0 ? Number(price3) : null,
             Number(price4) > 0 ? Number(price4) : null,
-            c, stock ?? null, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, activeValue,
+            c, stock ?? null, unit || 'un', resolvedTaxRate, activeValue,
             storedBranchId,
             sanitizeUuid(supplierId), supplierName || null,
             existing.id,
           ],
         );
+        try {
+          const { taxCodeForRate } = require('../taxDefaults');
+          await db.query(`UPDATE products SET tax_code = $1 WHERE id = $2`, [
+            taxCodeForRate(resolvedTaxRate),
+            existing.id,
+          ]);
+        } catch (_) { /* tax_code optional */ }
+        const vatOverrideBody = req.body?.vatOverride ?? req.body?.vat_override;
+        if (vatOverrideBody !== undefined && vatOverrideBody !== null && vatOverrideBody !== '') {
+          const flag = vatOverrideBody === true || vatOverrideBody === 'true' || vatOverrideBody === 1 || vatOverrideBody === '1';
+          try {
+            await db.query(
+              `UPDATE products SET vat_override = $1 WHERE id = $2`,
+              [db.engine === 'postgres' ? flag : (flag ? 1 : 0), existing.id],
+            );
+          } catch (_) { /* optional */ }
+        }
         await broadcastTable('products');
         auditErpSafe(req, {
           table: 'products',
@@ -1672,10 +1690,39 @@ module.exports = function(broadcastTable) {
           [
             id, name, skuTrim, barcode, category, price, price2 || 0, price3 || 0, price4 || 0,
             c,
-            stock || 0, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, storedBranchId, activeValue,
+            stock || 0, unit || 'un', resolvedTaxRate, storedBranchId, activeValue,
             sanitizeUuid(supplierId), supplierName || null,
           ],
         );
+        try {
+          const { taxCodeForRate } = require('../taxDefaults');
+          await db.query(`UPDATE products SET tax_code = $1 WHERE id = $2`, [
+            taxCodeForRate(resolvedTaxRate),
+            id,
+          ]);
+        } catch (_) { /* tax_code optional */ }
+        const vatCreateOverride = req.body?.vatOverride ?? req.body?.vat_override;
+        if (
+          vatCreateOverride === true
+          || vatCreateOverride === 'true'
+          || vatCreateOverride === 1
+          || vatCreateOverride === '1'
+          || (Number(resolvedTaxRate) !== Number(DEFAULT_VAT_RATE) && storedBranchId)
+        ) {
+          // Lock non-default IVA on create so HQ catalog 5% cannot overwrite it later.
+          try {
+            const lock =
+              vatCreateOverride === true
+              || vatCreateOverride === 'true'
+              || vatCreateOverride === 1
+              || vatCreateOverride === '1'
+              || Number(resolvedTaxRate) !== Number(DEFAULT_VAT_RATE);
+            await db.query(
+              `UPDATE products SET vat_override = $1 WHERE id = $2`,
+              [db.engine === 'postgres' ? !!lock : (lock ? 1 : 0), id],
+            );
+          } catch (_) { /* optional */ }
+        }
       } catch (insertErr) {
         if (!isUniqueSkuBranchError(insertErr)) throw insertErr;
         const conflict = await findProductBySkuAndBranch(db, skuTrim, resolvedBranchId);
@@ -1698,7 +1745,7 @@ module.exports = function(broadcastTable) {
             Number(price2) > 0 ? Number(price2) : null,
             Number(price3) > 0 ? Number(price3) : null,
             Number(price4) > 0 ? Number(price4) : null,
-            c, stock ?? null, unit || 'un', taxRate ?? DEFAULT_VAT_RATE, activeValue,
+            c, stock ?? null, unit || 'un', resolvedTaxRate, activeValue,
             storedBranchId,
             sanitizeUuid(supplierId), supplierName || null,
             conflict.id,
@@ -1837,43 +1884,57 @@ module.exports = function(broadcastTable) {
       const shouldCascadePrices = propagatePrices || productIsHq;
 
       if (skuKey) {
-        if (taxRate != null && taxRate !== '') {
-          // Cascade tax to same-SKU rows that are not VAT-locked (vat_override).
+        const prevTax = Number(existing.tax_rate);
+        const nextTax = taxRate != null && taxRate !== '' ? Number(taxRate) : prevTax;
+        const taxChanged =
+          taxRate != null
+          && taxRate !== ''
+          && Number.isFinite(prevTax)
+          && Number.isFinite(nextTax)
+          && Math.abs(prevTax - nextTax) > 0.0001;
+
+        // Only HQ / explicit propagate may push IVA to other same-SKU rows.
+        // Filial edits must not rewrite catalog (and HQ price-only saves must not
+        // re-cascade a stale 5% over filial 14%).
+        if (taxChanged && shouldCascadePrices) {
           const vatTrue = db.engine === 'postgres' ? 'true' : '1';
           await db.query(
             `UPDATE products
              SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP
              WHERE ${coalesceActiveNotZero(db, 'is_active')}
                AND ${sqlMovementSkuKey('products')} = LOWER($2)
+               AND id <> $3
                AND COALESCE(vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) != ${vatTrue}`,
-            [Number(taxRate), canonicalSkuString(skuKey)],
+            [nextTax, canonicalSkuString(skuKey), id],
           );
         }
-        // Editing tax on a filial product without cascade → lock local VAT
-        if (taxRate != null && taxRate !== '' && !productIsHq) {
-          const prevTax = Number(existing.tax_rate);
-          const nextTax = Number(taxRate);
-          if (Number.isFinite(prevTax) && Number.isFinite(nextTax) && Math.abs(prevTax - nextTax) > 0.0001) {
-            try {
-              await db.query(
-                `UPDATE products
-                 SET vat_override = ${db.engine === 'postgres' ? 'true' : '1'},
-                     updated_at = CURRENT_TIMESTAMP
-                 WHERE id = $1`,
-                [id],
-              );
-            } catch (_) { /* column may be missing until migrate */ }
-          }
+
+        if (taxChanged) {
+          try {
+            const { taxCodeForRate } = require('../taxDefaults');
+            await db.query(
+              `UPDATE products SET tax_code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+              [taxCodeForRate(nextTax), id],
+            );
+          } catch (_) { /* tax_code may be missing */ }
         }
+
+        // Resolve VAT lock: filial IVA change always locks (form often sends vatOverride:false
+        // by default — that used to wipe the auto-lock and let HQ 5% cascade back).
         const vatOverrideBody = req.body?.vatOverride ?? req.body?.vat_override;
-        if (vatOverrideBody !== undefined && vatOverrideBody !== null && vatOverrideBody !== '') {
-          const flag = vatOverrideBody === true || vatOverrideBody === 'true' || vatOverrideBody === 1 || vatOverrideBody === '1';
+        let vatFlag;
+        if (taxChanged && !productIsHq) {
+          vatFlag = true;
+        } else if (vatOverrideBody !== undefined && vatOverrideBody !== null && vatOverrideBody !== '') {
+          vatFlag = vatOverrideBody === true || vatOverrideBody === 'true' || vatOverrideBody === 1 || vatOverrideBody === '1';
+        }
+        if (vatFlag !== undefined) {
           try {
             await db.query(
               `UPDATE products
                SET vat_override = $1, updated_at = CURRENT_TIMESTAMP
                WHERE id = $2`,
-              [db.engine === 'postgres' ? flag : (flag ? 1 : 0), id],
+              [db.engine === 'postgres' ? vatFlag : (vatFlag ? 1 : 0), id],
             );
           } catch (_) { /* column may be missing until migrate */ }
         }

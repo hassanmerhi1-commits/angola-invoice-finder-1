@@ -35,7 +35,7 @@ import { Switch } from '@/components/ui/switch';
 import { Check, X, Plus } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useBranchContext } from '@/contexts/BranchContext';
-import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
+import { DEFAULT_VAT_RATE, normalizeTaxRate } from '@/lib/taxUtils';
 import {
   mergeInventoryFoodCategorySelectOptions,
   resolveProductCategoryName,
@@ -273,7 +273,7 @@ export function ProductDetailDialog({
         name: src.name,
         category: resolveProductCategoryName(src.category, activeCategories),
         unit: src.unit,
-        iva: src.taxRate,
+        iva: normalizeTaxRate(src.taxRate),
         vatOverride: !!src.vatOverride,
         tipo: 'INVENTARIO',
         fornecedorName:
@@ -459,6 +459,8 @@ export function ProductDetailDialog({
     setFormData((prev) => ({
       ...prev,
       iva: newIVA,
+      // Changing IVA on a branch product should stick (server also locks vat_override).
+      vatOverride: prev.vatOverride || newIVA !== prev.iva,
       priceIVA: +(prev.price * (1 + newIVA / 100)).toFixed(2),
     }));
   };
