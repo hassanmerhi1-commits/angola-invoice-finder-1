@@ -472,6 +472,21 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
           accounting: payload.accounting || null,
         },
       });
+      setImmediate(() => {
+        try {
+          const { enqueueWebhookEvent } = require('../lib/webhooks');
+          enqueueWebhookEvent('purchase_invoice.created', {
+            id: row.id,
+            invoiceNumber: row.invoice_number,
+            total: row.total,
+            branchId: row.branch_id,
+            supplierName: row.supplier_name,
+            posted: !skipAccounting,
+          }).catch((e) => console.warn('[WEBHOOKS] purchase_invoice.created:', e.message));
+        } catch (e) {
+          console.warn('[WEBHOOKS] purchase_invoice.created:', e.message);
+        }
+      });
       res.status(201).json(payload);
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }

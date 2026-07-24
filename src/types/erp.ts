@@ -41,6 +41,10 @@ export interface Product {
   lastCost: number;
   avgCost: number;
   stock: number;
+  /** On-hand before soft sales-order holds (when API provides it). */
+  onHandStock?: number;
+  /** Qty held by reserved sales orders at this branch. */
+  reservedStock?: number;
   minStock?: number;    // Minimum stock level (reorder point)
   maxStock?: number;    // Maximum stock level
   unit: string;

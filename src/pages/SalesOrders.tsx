@@ -20,7 +20,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, CheckCircle, Package, ArrowRight, Pencil, Trash2, Search } from 'lucide-react';
+import { Plus, RefreshCw, CheckCircle, Package, ArrowRight, Pencil, Trash2, Search, XCircle } from 'lucide-react';
 
 function generateOrderNumber(branchCode: string): string {
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -279,9 +279,22 @@ export default function SalesOrdersPage() {
 
   const runAction = async (
     id: string,
-    action: 'confirm' | 'reserve' | 'convert',
+    action: 'confirm' | 'reserve' | 'convert' | 'cancel',
   ) => {
     const order = orders.find((o) => o.id === id);
+    if (action === 'cancel') {
+      if (!window.confirm(language === 'pt' ? 'Cancelar esta encomenda?' : 'Cancel this sales order?')) {
+        return;
+      }
+      const res = await api.salesOrders.delete(id);
+      if (res.error) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(language === 'pt' ? 'Encomenda cancelada' : 'Order cancelled');
+      await loadOrders();
+      return;
+    }
     if (action === 'reserve' && !(order?.items || []).some((i) => i.productId && Number(i.quantity) > 0)) {
       toast.error(language === 'pt' ? 'Adicione produtos antes de reservar' : 'Add products before reserving');
       if (order) openEdit(order);
@@ -306,8 +319,12 @@ export default function SalesOrdersPage() {
     toast.success(
       action === 'confirm'
         ? language === 'pt'
-          ? 'Encomenda confirmada'
-          : 'Order confirmed'
+          ? order?.status === 'reserved'
+            ? 'Reserva libertada — encomenda confirmada'
+            : 'Encomenda confirmada'
+          : order?.status === 'reserved'
+            ? 'Hold released — order confirmed'
+            : 'Order confirmed'
         : language === 'pt'
           ? 'Stock reservado'
           : 'Stock reserved',
@@ -403,6 +420,11 @@ export default function SalesOrdersPage() {
                     <TableCell className="text-right">{formatMoney(order.total)}</TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(order.status)}>{order.status}</Badge>
+                      {order.status === 'reserved' && (
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {(order.items || []).reduce((s, i) => s + (Number(i.reservedQty) || 0), 0)} reserved
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right space-x-1">
                       {['draft', 'confirmed'].includes(order.status) && (
@@ -419,6 +441,17 @@ export default function SalesOrdersPage() {
                         >
                           <CheckCircle className="w-3 h-3 mr-1" />
                           {language === 'pt' ? 'Confirmar' : 'Confirm'}
+                        </Button>
+                      )}
+                      {order.status === 'reserved' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          title={language === 'pt' ? 'Liberta a reserva de stock' : 'Releases stock hold'}
+                          onClick={() => void runAction(order.id, 'confirm')}
+                        >
+                          <CheckCircle className="w-3 h-3 mr-1" />
+                          {language === 'pt' ? 'Confirmar (libertar)' : 'Confirm (release)'}
                         </Button>
                       )}
                       {['draft', 'confirmed'].includes(order.status) && (
@@ -439,6 +472,17 @@ export default function SalesOrdersPage() {
                         >
                           <ArrowRight className="w-3 h-3 mr-1" />
                           {language === 'pt' ? 'Converter' : 'Convert'}
+                        </Button>
+                      )}
+                      {['draft', 'confirmed', 'reserved'].includes(order.status) && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive"
+                          onClick={() => void runAction(order.id, 'cancel')}
+                        >
+                          <XCircle className="w-3 h-3 mr-1" />
+                          {language === 'pt' ? 'Cancelar' : 'Cancel'}
                         </Button>
                       )}
                     </TableCell>

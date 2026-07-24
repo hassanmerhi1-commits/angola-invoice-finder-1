@@ -230,15 +230,26 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // READ: Stock from movements view
+  // READ: Stock from movements + soft sales-order holds
   router.get('/stock/:productId/:warehouseId', async (req, res) => {
     try {
       const { productId, warehouseId } = req.params;
       const result = await db.query(
         `SELECT * FROM v_current_stock WHERE product_id = $1 AND warehouse_id = $2`,
-        [productId, warehouseId]
+        [productId, warehouseId],
       );
-      res.json(result.rows[0] || { current_stock: 0 });
+      const row = result.rows[0] || { product_id: productId, warehouse_id: warehouseId, current_stock: 0 };
+      const onHand = Math.max(0, Number(row.current_stock) || 0);
+      const { loadReservedHoldsForBranch, reservedQtyForProduct } = require('../lib/softReserve');
+      const holds = await loadReservedHoldsForBranch(db, warehouseId);
+      const skuRow = await db.query('SELECT sku FROM products WHERE id = $1', [productId]).catch(() => ({ rows: [] }));
+      const reserved = reservedQtyForProduct(holds, productId, skuRow.rows[0]?.sku);
+      res.json({
+        ...row,
+        current_stock: Math.max(0, onHand - reserved),
+        on_hand_stock: onHand,
+        reserved_stock: reserved,
+      });
     } catch (error) {
       res.status(500).json({ error: 'Failed to fetch stock' });
     }

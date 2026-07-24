@@ -513,6 +513,15 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
         description: `Encomenda ${orderAuditLabel(existing.rows[0].order_number)} cancelada`,
       });
       await broadcastTable('sales_orders');
+      setImmediate(() => {
+        try {
+          const { enqueueWebhookEvent } = require('../lib/webhooks');
+          enqueueWebhookEvent('sales_order.cancelled', {
+            id: req.params.id,
+            orderNumber: existing.rows[0].order_number,
+          }).catch((e) => console.warn('[WEBHOOKS] sales_order.cancelled:', e.message));
+        } catch (_) { /* non-fatal */ }
+      });
       res.json({ success: true, status: 'cancelled' });
     } catch (error) {
       console.error('[SALES_ORDERS ERROR]', error);
@@ -606,6 +615,17 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
         newValues: { status: saved.status, reservedAt: saved.reservedAt },
       });
       await broadcastTable('sales_orders');
+      setImmediate(() => {
+        try {
+          const { enqueueWebhookEvent } = require('../lib/webhooks');
+          enqueueWebhookEvent('sales_order.reserved', {
+            id: saved.id,
+            orderNumber: saved.orderNumber,
+            branchId: saved.branchId,
+            total: saved.total,
+          }).catch((e) => console.warn('[WEBHOOKS] sales_order.reserved:', e.message));
+        } catch (_) { /* non-fatal */ }
+      });
       res.json(saved);
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});

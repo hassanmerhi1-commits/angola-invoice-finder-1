@@ -84,11 +84,51 @@ export default function BankReconciliation() {
   const [rulePattern, setRulePattern] = useState('');
   const [ruleField, setRuleField] = useState<'description' | 'reference'>('description');
   const [savingRule, setSavingRule] = useState(false);
+  const [reconHydrated, setReconHydrated] = useState(false);
 
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [allTransactions, setAllTransactions] = useState<BankTransaction[]>([]);
   const [glBalance, setGlBalance] = useState<number | null>(null);
   const [glStatus, setGlStatus] = useState<'idle' | 'loading' | 'ok' | 'missing' | 'error'>('idle');
+
+  // Restore last in-progress reconciliation for this account (local only).
+  useEffect(() => {
+    setReconHydrated(false);
+    if (!selectedAccountId) {
+      setStatementRows([]);
+      setReconHydrated(true);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(RECON_STORAGE_KEY);
+      const store = raw ? JSON.parse(raw) as Record<string, { statementRows?: BankStatementRow[]; updatedAt?: string }> : {};
+      const saved = store[selectedAccountId];
+      setStatementRows(Array.isArray(saved?.statementRows) ? saved.statementRows : []);
+    } catch {
+      setStatementRows([]);
+    }
+    setReconHydrated(true);
+  }, [selectedAccountId]);
+
+  // Persist statement rows when they change (after hydrate).
+  useEffect(() => {
+    if (!reconHydrated || !selectedAccountId) return;
+    try {
+      const raw = localStorage.getItem(RECON_STORAGE_KEY);
+      const store = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+      if (!statementRows.length) {
+        delete store[selectedAccountId];
+      } else {
+        store[selectedAccountId] = {
+          statementRows,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      localStorage.setItem(RECON_STORAGE_KEY, JSON.stringify(store));
+    } catch {
+      // ignore quota / private mode
+    }
+  }, [statementRows, selectedAccountId, reconHydrated]);
 
   useEffect(() => {
     getBankAccounts(listBranchId).then(setAccounts);
@@ -422,10 +462,24 @@ export default function BankReconciliation() {
             {t.bankReconciliationUi.importStatement}
           </Button>
           {statementRows.length > 0 && (
-            <Button onClick={autoMatch} className="gap-2">
-              <ArrowRightLeft className="w-4 h-4" />
-              {t.bankReconciliationUi.autoReconcile}
-            </Button>
+            <>
+              <Button onClick={autoMatch} className="gap-2">
+                <ArrowRightLeft className="w-4 h-4" />
+                {t.bankReconciliationUi.autoReconcile}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setStatementRows([]);
+                  toast({
+                    title: t.bankReconciliationUi.title,
+                    description: language === 'pt' ? 'Extracto limpo' : 'Statement cleared',
+                  });
+                }}
+              >
+                {language === 'pt' ? 'Limpar' : 'Clear'}
+              </Button>
+            </>
           )}
         </div>
       </div>

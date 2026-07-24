@@ -129,6 +129,8 @@ export function mapInventoryGridRows(rows: any[]): Product[] {
       lastCost: Number(p.last_cost ?? p.lastCost ?? p.cost) || 0,
       avgCost: Number(p.avg_cost ?? p.avgCost ?? p.cost) || 0,
       stock: readProductStock(p),
+      onHandStock: Number(p.onHandStock ?? p.on_hand_stock ?? p.stock) || 0,
+      reservedStock: Number(p.reservedStock ?? p.reserved_stock ?? 0) || 0,
       unit: p.unit ?? 'UN',
       taxRate: normalizeTaxRate(p.tax_rate ?? p.taxRate),
       branchId: p.branch_id ?? p.branchId ?? '',

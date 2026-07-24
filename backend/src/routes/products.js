@@ -1118,10 +1118,18 @@ function invalidateInventoryGridResultCache() {
 }
 
 async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded, { repair = false } = {}) {
+  const { loadReservedHoldsForBranch, applySoftReservesToRows } = require('../lib/softReserve');
+  const applyHolds = async (rows) => {
+    if (consolidated || !branchId) return rows;
+    const holds = await loadReservedHoldsForBranch(db, branchId);
+    return applySoftReservesToRows(rows, holds);
+  };
+
   if (!repair) {
     const cached = readInventoryGridResultCache(branchId, consolidated);
     if (cached) {
-      return enrichRowsWithSellingPrices(cached, priceBySkuPreloaded);
+      const priced = enrichRowsWithSellingPrices(cached, priceBySkuPreloaded);
+      return applyHolds(priced);
     }
   }
 
@@ -1159,7 +1167,8 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
   } else {
     invalidateInventoryGridResultCache();
   }
-  return enrichRowsWithSellingPrices(rows, priceBySkuPreloaded);
+  const priced = enrichRowsWithSellingPrices(rows, priceBySkuPreloaded);
+  return applyHolds(priced);
 }
 
 async function listProductsForBranch(branchKey, lightList) {
@@ -1169,7 +1178,6 @@ async function listProductsForBranch(branchKey, lightList) {
   if (lightList) {
     rows = await listProductsForBranchFast(branchKey);
     rows = dedupeProductsBySku(rows, branchKeyStr, mainBranchIds);
-    return rows;
   } else {
   const stockSql = branchListStockSql(lightList);
   const movementExistsSql = branchListMovementExistsClause(lightList);
@@ -1244,7 +1252,10 @@ async function listProductsForBranch(branchKey, lightList) {
     rows = dedupeProductsBySku(rows, branchKeyStr, mainBranchIds);
   }
   }
-  return enrichRowsWithSellingPrices(rows);
+  const { loadReservedHoldsForBranch, applySoftReservesToRows } = require('../lib/softReserve');
+  const holds = await loadReservedHoldsForBranch(db, branchKeyStr);
+  const withHolds = applySoftReservesToRows(rows, holds);
+  return enrichRowsWithSellingPrices(withHolds);
 }
 
 /** Stock movements or sale lines for this product (any row sharing the same canonical SKU). */

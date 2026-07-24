@@ -122,7 +122,8 @@ export function WebhooksSettingsCard() {
             Webhooks
           </CardTitle>
           <CardDescription>
-            Outbound event delivery (sale.created, payment.created, stock_transfer.approved/received).
+            Outbound events: sale.created, payment.created, purchase_invoice.created,
+            sales_order.reserved/cancelled, stock_transfer.approved/received.
             Deliveries are queued and retried by the worker.
           </CardDescription>
         </div>
