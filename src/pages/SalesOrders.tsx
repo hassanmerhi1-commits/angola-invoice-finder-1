@@ -21,6 +21,17 @@ import {
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { Plus, RefreshCw, CheckCircle, Package, ArrowRight, Pencil, Trash2, Search, XCircle } from 'lucide-react';
+import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
+import { PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
+
+function notifySoftReserveChanged(branchId?: string | null) {
+  if (branchId) {
+    invalidateInventoryGridCacheForBranches([branchId]);
+  }
+  window.dispatchEvent(
+    new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: branchId || undefined } }),
+  );
+}
 
 function generateOrderNumber(branchCode: string): string {
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -286,12 +297,14 @@ export default function SalesOrdersPage() {
       if (!window.confirm(language === 'pt' ? 'Cancelar esta encomenda?' : 'Cancel this sales order?')) {
         return;
       }
+      const wasReserved = order?.status === 'reserved';
       const res = await api.salesOrders.delete(id);
       if (res.error) {
         toast.error(res.error);
         return;
       }
       toast.success(language === 'pt' ? 'Encomenda cancelada' : 'Order cancelled');
+      if (wasReserved) notifySoftReserveChanged(order?.branchId || branchId);
       await loadOrders();
       return;
     }
@@ -300,6 +313,7 @@ export default function SalesOrdersPage() {
       if (order) openEdit(order);
       return;
     }
+    const wasReserved = order?.status === 'reserved';
     const fn =
       action === 'confirm'
         ? api.salesOrders.confirm
@@ -313,16 +327,22 @@ export default function SalesOrdersPage() {
     }
     if (action === 'convert' && res.data?.order) {
       toast.success(language === 'pt' ? 'Encomenda convertida — abrir fatura' : 'Order converted — opening invoice');
+      if (wasReserved || order?.status === 'reserved') {
+        notifySoftReserveChanged(order?.branchId || branchId);
+      }
       navigate('/invoices', { state: { fromSalesOrder: res.data.order } });
       return;
+    }
+    if (action === 'reserve' || (action === 'confirm' && wasReserved)) {
+      notifySoftReserveChanged(order?.branchId || branchId);
     }
     toast.success(
       action === 'confirm'
         ? language === 'pt'
-          ? order?.status === 'reserved'
+          ? wasReserved
             ? 'Reserva libertada — encomenda confirmada'
             : 'Encomenda confirmada'
-          : order?.status === 'reserved'
+          : wasReserved
             ? 'Hold released — order confirmed'
             : 'Order confirmed'
         : language === 'pt'

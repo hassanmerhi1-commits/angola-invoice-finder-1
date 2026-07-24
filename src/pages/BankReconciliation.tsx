@@ -32,7 +32,7 @@ import {
   FileSpreadsheet, Search, Download, Link2, Unlink, Scale,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { autoMatchStatements, parseBankCsv, type MatchRule } from '@/lib/bankMatchRules';
+import { autoMatchStatements, parseBankCsv, parseBankOfx, type MatchRule } from '@/lib/bankMatchRules';
 
 // ==================== TYPES ====================
 
@@ -250,6 +250,7 @@ export default function BankReconciliation() {
     if (!file) return;
 
     const isCsv = /\.csv$/i.test(file.name) || file.type === 'text/csv';
+    const isOfx = /\.(ofx|qfx)$/i.test(file.name) || /ofx/i.test(file.type || '');
 
     const finish = (rows: BankStatementRow[]) => {
       setStatementRows(rows);
@@ -268,15 +269,19 @@ export default function BankReconciliation() {
       });
     };
 
-    if (isCsv) {
+    if (isCsv || isOfx) {
       const reader = new FileReader();
       reader.onload = (evt) => {
         try {
           const text = String(evt.target?.result || '');
-          const parsed = parseBankCsv(text).map((r) => ({
+          const parsed = (isOfx ? parseBankOfx(text) : parseBankCsv(text)).map((r) => ({
             ...r,
             matched: false,
           })) as BankStatementRow[];
+          if (!parsed.length) {
+            fail();
+            return;
+          }
           finish(parsed);
         } catch {
           fail();
@@ -869,7 +874,7 @@ export default function BankReconciliation() {
               <Input
                 id="statement-file"
                 type="file"
-                accept=".xlsx,.xls,.csv"
+                accept=".xlsx,.xls,.csv,.ofx,.qfx"
                 className="hidden"
                 onChange={handleFileUpload}
               />

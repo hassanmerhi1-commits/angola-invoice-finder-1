@@ -175,6 +175,8 @@ export default function Inventory() {
     lastCost: Number(p.last_cost || p.lastCost || 0),
     avgCost: Number(p.weighted_avg_cost || p.avg_cost || p.avgCost || 0),
     stock: readProductStock(p),
+    onHandStock: Number(p.onHandStock ?? p.on_hand_stock ?? p.stock) || 0,
+    reservedStock: Number(p.reservedStock ?? p.reserved_stock ?? 0) || 0,
     unit: p.unit || 'UN',
     taxRate: normalizeTaxRate(p.tax_rate ?? p.taxRate),
     branchId: p.branch_id || p.branchId || null,
@@ -332,6 +334,15 @@ export default function Inventory() {
     () => inventoryRows.map((p) => withSellingPriceFromMap(p, sellingPriceBySku)),
     [inventoryRows, sellingPriceBySku],
   );
+
+  const reservedQtyByProductId = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const p of displayProducts) {
+      const r = Number(p.reservedStock) || 0;
+      if (r > 0) map[p.id] = r;
+    }
+    return map;
+  }, [displayProducts]);
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [adjustmentBranchId, setAdjustmentBranchId] = useState('');
@@ -1474,6 +1485,7 @@ export default function Inventory() {
                 isHeadOffice={isHeadOffice}
                 branches={branches}
                 allBranchProducts={allBranchProducts}
+                reservedQty={reservedQtyByProductId}
                 preSorted
               />
             </div>
@@ -1602,6 +1614,17 @@ export default function Inventory() {
                   <div><strong>{t.inventoryPageUi.productInfo.price}</strong> {selectedProduct.price.toLocaleString(uiLocale)} Kz</div>
                   <div><strong>{t.inventoryPageUi.productInfo.cost}</strong> {(selectedProduct.avgCost || selectedProduct.lastCost || selectedProduct.cost || 0).toLocaleString(uiLocale)} Kz</div>
                   <div><strong>{t.inventoryPageUi.productInfo.stock}</strong> {selectedProduct.stock} {selectedProduct.unit}</div>
+                  {(Number(selectedProduct.reservedStock) || 0) > 0 && (
+                    <div>
+                      <strong>{t.inventoryGridUi.reservedQty}:</strong>{' '}
+                      {selectedProduct.reservedStock}
+                      {(Number(selectedProduct.onHandStock) || 0) > 0 && (
+                        <span className="text-muted-foreground">
+                          {' '}({language === 'pt' ? 'físico' : 'on hand'}: {selectedProduct.onHandStock})
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div><strong>{t.inventoryPageUi.productInfo.vat}</strong> {selectedProduct.taxRate}%</div>
                 </div>
               </CardContent>

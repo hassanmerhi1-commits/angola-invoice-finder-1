@@ -84,6 +84,11 @@ export function PosProductSearchList({
                       <Badge variant={product.stock > 10 ? 'secondary' : 'destructive'} className="text-[10px]">
                         {product.stock} {product.unit}
                       </Badge>
+                      {(Number(product.reservedStock) || 0) > 0 && (
+                        <span className="block text-[10px] text-amber-600 mt-0.5">
+                          {language === 'pt' ? 'reserv.' : 'rsvd'} {product.reservedStock}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );

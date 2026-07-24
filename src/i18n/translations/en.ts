@@ -3742,7 +3742,7 @@ export const en = {
     importDialogDescription: "Import an Excel (.xlsx) file with the bank statement",
     clickToSelect: "Click to select",
     orDragFile: "or drag the file",
-    supportsFormats: "Supports: .xlsx, .xls, .csv",
+    supportsFormats: "Supports: .xlsx, .xls, .csv, .ofx, .qfx",
     expectedColumns: "Expected columns:",
     colDateBullet: "• Date / Data",
     colDescriptionBullet: "• Description / Descrição",

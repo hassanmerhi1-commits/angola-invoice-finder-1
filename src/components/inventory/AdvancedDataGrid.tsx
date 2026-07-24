@@ -145,7 +145,7 @@ export function AdvancedDataGrid({
       return { str: String(q), num: q };
     }
     if (key === 'reservedQty') {
-      const r = reservedQty[product.id] || 0;
+      const r = Number(reservedQty[product.id] ?? product.reservedStock) || 0;
       return { str: String(r), num: r };
     }
     const val = product[key as keyof Product];
@@ -250,7 +250,7 @@ export function AdvancedDataGrid({
       );
     }
     if (key === 'reservedQty') {
-      const r = reservedQty[product.id] || 0;
+      const r = Number(reservedQty[product.id] ?? product.reservedStock) || 0;
       return <span className={r > 0 ? 'text-amber-600 font-medium' : 'text-muted-foreground'}>{r}</span>;
     }
     const val = product[key as keyof Product];

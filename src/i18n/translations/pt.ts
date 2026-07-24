@@ -3745,7 +3745,7 @@ export const pt: TranslationKeys = {
     importDialogDescription: "Importe um ficheiro Excel (.xlsx) com o extracto do banco",
     clickToSelect: "Clique para selecionar",
     orDragFile: "ou arraste o ficheiro",
-    supportsFormats: "Suporta: .xlsx, .xls, .csv",
+    supportsFormats: "Suporta: .xlsx, .xls, .csv, .ofx, .qfx",
     expectedColumns: "Colunas esperadas:",
     colDateBullet: "• Data / Date",
     colDescriptionBullet: "• Descrição / Description",

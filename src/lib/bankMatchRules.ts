@@ -166,3 +166,55 @@ export function parseBankCsv(text: string): StatementLike[] {
   }
   return rows;
 }
+
+function ofxTagValue(block: string, tag: string): string {
+  // OFX 1.x often omits closing tags: <TRNAMT>-12.34
+  const openClose = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'i');
+  const m1 = block.match(openClose);
+  if (m1) return m1[1].replace(/<[^>]+>/g, '').trim();
+  const openOnly = new RegExp(`<${tag}>([^<\\r\\n]+)`, 'i');
+  const m2 = block.match(openOnly);
+  return m2 ? m2[1].trim() : '';
+}
+
+function ofxPostedDate(raw: string): string {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (digits.length < 8) return '';
+  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+}
+
+/** Parse OFX 1.x (SGML) or OFX 2.x (XML) bank statement transactions. */
+export function parseBankOfx(text: string): StatementLike[] {
+  const src = String(text || '');
+  if (!/<OFX[\s>]|<STMTTRN[\s>]/i.test(src)) return [];
+
+  const blocks = [...src.matchAll(/<STMTTRN\b[^>]*>([\s\S]*?)<\/STMTTRN>/gi)];
+  const rows: StatementLike[] = [];
+
+  blocks.forEach((m, i) => {
+    const block = m[1] || '';
+    const amtRaw = ofxTagValue(block, 'TRNAMT').replace(/\s/g, '').replace(',', '.');
+    const n = parseFloat(amtRaw);
+    if (!Number.isFinite(n) || n === 0) return;
+    const description =
+      ofxTagValue(block, 'NAME')
+      || ofxTagValue(block, 'MEMO')
+      || ofxTagValue(block, 'PAYEE')
+      || 'OFX';
+    const reference =
+      ofxTagValue(block, 'FITID')
+      || ofxTagValue(block, 'CHECKNUM')
+      || undefined;
+    rows.push({
+      id: `ofx_${i}_${reference || Date.now()}`,
+      date: ofxPostedDate(ofxTagValue(block, 'DTPOSTED')),
+      description,
+      reference: reference || undefined,
+      amount: Math.abs(n),
+      direction: n < 0 ? 'out' : 'in',
+      matched: false,
+    });
+  });
+
+  return rows;
+}

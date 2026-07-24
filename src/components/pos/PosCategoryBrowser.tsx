@@ -28,14 +28,17 @@ type PosCategoryBrowserProps = {
 function ProductTile({
   product,
   uiLocale,
+  reservedLabel,
   highlighted,
   onSelect,
 }: {
   product: Product;
   uiLocale: string;
+  reservedLabel: string;
   highlighted?: boolean;
   onSelect: (product: Product) => void;
 }) {
+  const reserved = Number(product.reservedStock) || 0;
   return (
     <Card
       data-pos-product-id={product.id}
@@ -56,9 +59,16 @@ function ProductTile({
           <span className="text-lg font-bold text-primary">
             {product.price.toLocaleString(uiLocale)} Kz
           </span>
-          <Badge variant={product.stock > 10 ? 'secondary' : 'destructive'}>
-            {product.stock} {product.unit}
-          </Badge>
+          <div className="text-right shrink-0">
+            <Badge variant={product.stock > 10 ? 'secondary' : 'destructive'}>
+              {product.stock} {product.unit}
+            </Badge>
+            {reserved > 0 && (
+              <p className="text-[10px] text-amber-600 mt-0.5">
+                {reservedLabel} {reserved}
+              </p>
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -78,6 +88,7 @@ export function PosCategoryBrowser({
 }: PosCategoryBrowserProps) {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const reservedLabel = language === 'pt' ? 'reserv.' : 'rsvd';
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const buckets = useMemo(
@@ -159,6 +170,7 @@ export function PosCategoryBrowser({
                   key={product.id}
                   product={product}
                   uiLocale={uiLocale}
+                  reservedLabel={reservedLabel}
                   highlighted={product.id === highlightedProductId}
                   onSelect={onProductSelect}
                 />
@@ -193,6 +205,7 @@ export function PosCategoryBrowser({
                   key={product.id}
                   product={product}
                   uiLocale={uiLocale}
+                  reservedLabel={reservedLabel}
                   highlighted={product.id === highlightedProductId}
                   onSelect={onProductSelect}
                 />

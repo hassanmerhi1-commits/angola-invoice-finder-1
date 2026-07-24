@@ -11,7 +11,7 @@ interface ProductGridProps {
 }
 
 export function ProductGrid({ products, onProductSelect, searchTerm }: ProductGridProps) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const list = products ?? [];
   const filteredProducts = list.filter(product =>
     product.isActive &&
@@ -56,13 +56,20 @@ export function ProductGrid({ products, onProductSelect, searchTerm }: ProductGr
                         </h4>
                       </div>
                       <p className="text-xs text-muted-foreground">{product.sku}</p>
-                      <div className="flex items-center justify-between mt-1">
+                      <div className="flex items-center justify-between mt-1 gap-2">
                         <span className="text-lg font-bold text-primary">
                           {product.price.toLocaleString('pt-AO')} Kz
                         </span>
-                        <Badge variant={product.stock > 10 ? 'secondary' : 'destructive'}>
-                          {product.stock} {product.unit}
-                        </Badge>
+                        <div className="text-right shrink-0">
+                          <Badge variant={product.stock > 10 ? 'secondary' : 'destructive'}>
+                            {product.stock} {product.unit}
+                          </Badge>
+                          {(Number(product.reservedStock) || 0) > 0 && (
+                            <p className="text-[10px] text-amber-600 mt-0.5">
+                              {language === 'pt' ? 'reserv.' : 'rsvd'} {product.reservedStock}
+                            </p>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </CardContent>
