@@ -592,6 +592,51 @@ async function ensureStockTransferWarehouseColumns(db) {
   }
 }
 
+/** Bank statement reconciliation sessions (migration 065). */
+async function ensureBankReconciliationsTable(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS bank_reconciliations (
+          id VARCHAR(64) PRIMARY KEY,
+          bank_account_id VARCHAR(64) NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+          branch_id VARCHAR(64) NOT NULL DEFAULT '',
+          statement_rows TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL DEFAULT 'in_progress',
+          updated_by TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE (bank_account_id)
+        )
+      `);
+      await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_bank_reconciliations_account
+          ON bank_reconciliations (bank_account_id)
+      `);
+    } catch (err) {
+      console.warn('[SCHEMA] bank_reconciliations:', err.message);
+    }
+    return;
+  }
+  if (!db.sqlite) return;
+  try {
+    db.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS bank_reconciliations (
+        id TEXT PRIMARY KEY,
+        bank_account_id TEXT NOT NULL UNIQUE,
+        branch_id TEXT NOT NULL DEFAULT '',
+        statement_rows TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'in_progress',
+        updated_by TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      )
+    `);
+  } catch (err) {
+    console.warn('[SCHEMA] bank_reconciliations (sqlite):', err.message);
+  }
+}
+
 /** Document attachments + server notifications inbox (migration 062). */
 async function ensureAttachmentsNotificationsTables(db) {
   if (db.engine === 'postgres') {
@@ -1079,6 +1124,7 @@ async function ensurePhaseSchema(db) {
     await ensureAttachmentsNotificationsTables(db);
     await ensureMfaSalesOrdersWarehousesWebhooks(db);
     await ensureStockTransferWarehouseColumns(db);
+    await ensureBankReconciliationsTable(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
@@ -1131,6 +1177,7 @@ async function ensurePhaseSchema(db) {
     await ensureAttachmentsNotificationsTables(db);
     await ensureMfaSalesOrdersWarehousesWebhooks(db);
     await ensureStockTransferWarehouseColumns(db);
+    await ensureBankReconciliationsTable(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {

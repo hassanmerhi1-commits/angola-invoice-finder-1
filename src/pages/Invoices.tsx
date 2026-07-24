@@ -28,6 +28,8 @@ import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from 
 import type { CreditNote } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
+import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
+import { PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
 import {
   getDocuments,
   convertDocument,
@@ -988,7 +990,14 @@ export default function Invoices() {
         <DocumentFormDialog
           key={`${formDocType}-${prefillDoc?.id ?? editDoc?.id ?? 'new'}`}
           open={formOpen}
-          onOpenChange={setFormOpen}
+          onOpenChange={(open) => {
+            setFormOpen(open);
+            if (!open) {
+              // Abandoning convert must not leave a stale SO link for the next save.
+              pendingSalesOrderIdRef.current = null;
+              setPrefillDoc(null);
+            }
+          }}
           documentType={formDocType}
           editDocument={editDoc}
           prefillFrom={prefillDoc}
@@ -998,14 +1007,29 @@ export default function Invoices() {
             if (soId) {
               pendingSalesOrderIdRef.current = null;
               try {
-                await api.salesOrders.markInvoiced(soId, {
+                const mark = await api.salesOrders.markInvoiced(soId, {
                   invoiceId: doc.id,
                   invoiceNumber: doc.documentNumber,
                 });
+                if (mark.error) {
+                  toast.error(mark.error);
+                } else {
+                  const branchId = doc.branchId || prefillDoc?.branchId;
+                  if (branchId) {
+                    invalidateInventoryGridCacheForBranches([branchId]);
+                  }
+                  window.dispatchEvent(
+                    new CustomEvent(PRODUCTS_CHANGED_EVENT, {
+                      detail: { branchId: branchId || undefined },
+                    }),
+                  );
+                }
               } catch (e) {
                 console.warn('[Invoices] mark sales order invoiced failed', e);
+                toast.error(e instanceof Error ? e.message : 'Failed to link sales order');
               }
             }
+            setPrefillDoc(null);
           }}
         />
       )}

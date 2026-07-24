@@ -2919,6 +2919,37 @@ export const api = {
       apiFetch<any>('/webhooks', { method: 'POST', body: JSON.stringify(data) }),
     remove: (id: string) =>
       apiFetch<{ success: boolean; id: string }>(`/webhooks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    test: (id: string) =>
+      apiFetch<{
+        deliveryId: string;
+        status: string;
+        attempts: number;
+        lastError: string | null;
+        deliveredAt: string | null;
+      }>(`/webhooks/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+    listDeliveries: (params?: { limit?: number; webhookId?: string }) => {
+      const q = new URLSearchParams();
+      if (params?.limit) q.set('limit', String(params.limit));
+      if (params?.webhookId) q.set('webhookId', params.webhookId);
+      const qs = q.toString();
+      return apiFetch<Array<{
+        id: string;
+        webhookId: string;
+        webhookName: string;
+        webhookUrl: string;
+        eventType: string;
+        status: string;
+        attempts: number;
+        lastError: string | null;
+        createdAt: string;
+        deliveredAt: string | null;
+      }>>(`/webhooks/deliveries/recent${qs ? `?${qs}` : ''}`);
+    },
+    retryDelivery: (id: string) =>
+      apiFetch<{ success: boolean; id: string; status: string }>(
+        `/webhooks/deliveries/${encodeURIComponent(id)}/retry`,
+        { method: 'POST' },
+      ),
   },
 
   bankMatchRules: {
@@ -2945,6 +2976,30 @@ export const api = {
       }),
     remove: (id: string) =>
       apiFetch<{ success: boolean; id: string }>(`/bank-match-rules/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
+  },
+
+  bankReconciliations: {
+    get: (bankAccountId: string) =>
+      apiFetch<{
+        id: string;
+        bankAccountId: string;
+        branchId: string;
+        statementRows: any[];
+        status: string;
+        updatedAt?: string;
+      } | null>(`/bank-reconciliations/${encodeURIComponent(bankAccountId)}`),
+    save: (
+      bankAccountId: string,
+      data: { statementRows: any[]; branchId?: string; status?: string },
+    ) =>
+      apiFetch<any>(`/bank-reconciliations/${encodeURIComponent(bankAccountId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    clear: (bankAccountId: string) =>
+      apiFetch<{ success: boolean }>(`/bank-reconciliations/${encodeURIComponent(bankAccountId)}`, {
         method: 'DELETE',
       }),
   },

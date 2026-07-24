@@ -91,26 +91,56 @@ export default function BankReconciliation() {
   const [glBalance, setGlBalance] = useState<number | null>(null);
   const [glStatus, setGlStatus] = useState<'idle' | 'loading' | 'ok' | 'missing' | 'error'>('idle');
 
-  // Restore last in-progress reconciliation for this account (local only).
+  // Restore last in-progress reconciliation for this account (server first, local fallback).
   useEffect(() => {
+    let cancelled = false;
     setReconHydrated(false);
     if (!selectedAccountId) {
       setStatementRows([]);
       setReconHydrated(true);
       return;
     }
-    try {
-      const raw = localStorage.getItem(RECON_STORAGE_KEY);
-      const store = raw ? JSON.parse(raw) as Record<string, { statementRows?: BankStatementRow[]; updatedAt?: string }> : {};
-      const saved = store[selectedAccountId];
-      setStatementRows(Array.isArray(saved?.statementRows) ? saved.statementRows : []);
-    } catch {
-      setStatementRows([]);
-    }
-    setReconHydrated(true);
-  }, [selectedAccountId]);
 
-  // Persist statement rows when they change (after hydrate).
+    const readLocal = (): BankStatementRow[] => {
+      try {
+        const raw = localStorage.getItem(RECON_STORAGE_KEY);
+        const store = raw ? JSON.parse(raw) as Record<string, { statementRows?: BankStatementRow[] }> : {};
+        const saved = store[selectedAccountId];
+        return Array.isArray(saved?.statementRows) ? saved.statementRows : [];
+      } catch {
+        return [];
+      }
+    };
+
+    (async () => {
+      const localRows = readLocal();
+      try {
+        const res = await api.bankReconciliations.get(selectedAccountId);
+        if (cancelled) return;
+        const serverRows = Array.isArray(res.data?.statementRows) ? res.data.statementRows as BankStatementRow[] : [];
+        if (serverRows.length > 0) {
+          setStatementRows(serverRows);
+        } else if (localRows.length > 0) {
+          setStatementRows(localRows);
+          // Migrate local → server once.
+          void api.bankReconciliations.save(selectedAccountId, {
+            statementRows: localRows,
+            branchId: listBranchId || undefined,
+          });
+        } else {
+          setStatementRows([]);
+        }
+      } catch {
+        if (!cancelled) setStatementRows(localRows);
+      } finally {
+        if (!cancelled) setReconHydrated(true);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [selectedAccountId, listBranchId]);
+
+  // Persist statement rows: localStorage immediately, server debounced.
   useEffect(() => {
     if (!reconHydrated || !selectedAccountId) return;
     try {
@@ -128,7 +158,15 @@ export default function BankReconciliation() {
     } catch {
       // ignore quota / private mode
     }
-  }, [statementRows, selectedAccountId, reconHydrated]);
+
+    const timer = window.setTimeout(() => {
+      void api.bankReconciliations.save(selectedAccountId, {
+        statementRows,
+        branchId: listBranchId || undefined,
+      });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [statementRows, selectedAccountId, reconHydrated, listBranchId]);
 
   useEffect(() => {
     getBankAccounts(listBranchId).then(setAccounts);

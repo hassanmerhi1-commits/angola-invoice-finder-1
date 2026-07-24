@@ -647,26 +647,18 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
       if (!['confirmed', 'reserved'].includes(row.status)) {
         return res.status(400).json({ error: `Cannot convert sales order in status "${row.status}"` });
       }
-      // Soft hold ends on convert; sale OUT consumes ledger stock when invoice is posted.
-      await clearReservedQty(db, id);
-      const updated = await db.query(
-        `UPDATE sales_orders
-         SET status = 'converted', converted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $1
-         RETURNING *`,
-        [id],
-      );
-      const order = mapSalesOrderRow(updated.rows[0], await loadItemsForOrder(id));
+      // Do not mark converted / clear soft hold yet — that happens on mark-invoiced
+      // after the invoice is actually saved (avoids orphan converted orders).
+      const order = mapSalesOrderRow(row, await loadItemsForOrder(id));
       const invoicePayload = buildInvoicePayload(order);
       await auditSalesOrderEvent(req, {
         recordId: id,
-        action: 'convert',
-        description: `Encomenda ${orderAuditLabel(order.orderNumber)} marcada para conversão em fatura`,
-        newValues: { status: order.status, convertedAt: order.convertedAt },
+        action: 'convert_prepare',
+        description: `Encomenda ${orderAuditLabel(order.orderNumber)} preparada para fatura`,
+        newValues: { status: order.status },
         metadata: { invoicePayloadReady: true },
       });
-      await broadcastTable('sales_orders');
-      // FE should call api.sales.create(invoicePayload) or open /invoices with fromSalesOrder state
+      // FE opens /invoices with fromSalesOrder; call mark-invoiced after save.
       res.json({ order, invoicePayload });
     } catch (error) {
       console.error('[SALES_ORDERS ERROR]', error);

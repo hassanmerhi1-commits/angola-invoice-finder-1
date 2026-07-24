@@ -57,6 +57,11 @@ export function salesOrderToErpDocumentPrefill(order: SalesOrder): ERPDocument {
 
   const totals = calculateDocumentTotals(lines);
   const issueDate = order.createdAt?.split('T')[0] || new Date().toISOString().split('T')[0];
+  const dueDate = (() => {
+    const d = new Date(`${issueDate}T12:00:00`);
+    d.setDate(d.getDate() + 30);
+    return d.toISOString().split('T')[0];
+  })();
 
   return {
     id: order.id,
@@ -80,9 +85,14 @@ export function salesOrderToErpDocumentPrefill(order: SalesOrder): ERPDocument {
     amountPaid: 0,
     amountDue: totals.total,
     status: 'draft',
+    paymentMethod: 'credit',
+    dueDate,
     issueDate,
     issueTime: '00:00:00',
-    notes: order.notes,
+    notes: [order.notes, `SO: ${order.orderNumber}`].filter(Boolean).join('\n'),
+    parentDocumentId: order.id,
+    parentDocumentNumber: order.orderNumber,
+    parentDocumentType: 'sales_order',
     createdBy: order.createdBy,
     createdByName: order.createdByName,
     createdAt: order.createdAt,

@@ -2,14 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useAuth, useProducts } from '@/hooks/useERP';
+import { useAuth, useProducts, useClients } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
 import { generateId } from '@/lib/utils';
 import { SalesOrder, SalesOrderItem } from '@/lib/salesOrderToDocument';
-import { Product } from '@/types/erp';
+import { Product, Client } from '@/types/erp';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -31,6 +32,17 @@ function notifySoftReserveChanged(branchId?: string | null) {
   window.dispatchEvent(
     new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: branchId || undefined } }),
   );
+}
+
+function applyClientToFields(client: Client) {
+  return {
+    clientId: client.id,
+    customerName: client.name,
+    customerNif: client.nif || '',
+    customerEmail: client.email || '',
+    customerPhone: client.phone || '',
+    customerAddress: client.address || '',
+  };
 }
 
 function generateOrderNumber(branchCode: string): string {
@@ -82,10 +94,18 @@ export default function SalesOrdersPage() {
   const { user } = useAuth();
   const branchId = apiBranchId || currentBranch?.id;
   const { products } = useProducts(branchId, { light: true });
+  const { clients } = useClients();
 
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [customerName, setCustomerName] = useState('');
+  const [selectedClientId, setSelectedClientId] = useState('');
+  const [customerNif, setCustomerNif] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
+  const [draftNotes, setDraftNotes] = useState('');
+  const [clientPickerOpen, setClientPickerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [warehouses, setWarehouses] = useState<Array<{ id: string; code: string; name: string; isDefault?: boolean }>>([]);
   const [warehouseId, setWarehouseId] = useState('');
@@ -94,6 +114,9 @@ export default function SalesOrdersPage() {
   const [editing, setEditing] = useState<SalesOrder | null>(null);
   const [editItems, setEditItems] = useState<SalesOrderItem[]>([]);
   const [editCustomer, setEditCustomer] = useState('');
+  const [editClientId, setEditClientId] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editClientPickerOpen, setEditClientPickerOpen] = useState(false);
   const [productSearch, setProductSearch] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -156,6 +179,44 @@ export default function SalesOrdersPage() {
       .slice(0, 8);
   }, [productSearch, products]);
 
+  const filterClients = useCallback((query: string) => {
+    const q = query.trim().toLowerCase();
+    const active = clients.filter((c) => c.isActive !== false);
+    if (!q) return active.slice(0, 12);
+    return active
+      .filter((c) =>
+        c.name.toLowerCase().includes(q)
+        || String(c.nif || '').toLowerCase().includes(q)
+        || String(c.phone || '').toLowerCase().includes(q),
+      )
+      .slice(0, 12);
+  }, [clients]);
+
+  const createClientHits = useMemo(() => filterClients(customerName), [filterClients, customerName]);
+  const editClientHits = useMemo(() => filterClients(editCustomer), [filterClients, editCustomer]);
+
+  const selectCreateClient = (client: Client) => {
+    const fields = applyClientToFields(client);
+    setSelectedClientId(fields.clientId);
+    setCustomerName(fields.customerName);
+    setCustomerNif(fields.customerNif);
+    setCustomerEmail(fields.customerEmail);
+    setCustomerPhone(fields.customerPhone);
+    setCustomerAddress(fields.customerAddress);
+    setClientPickerOpen(false);
+  };
+
+  const selectEditClient = (client: Client) => {
+    const fields = applyClientToFields(client);
+    setEditClientId(fields.clientId);
+    setEditCustomer(fields.customerName);
+    setEditing((prev) => (prev ? {
+      ...prev,
+      ...fields,
+    } : prev));
+    setEditClientPickerOpen(false);
+  };
+
   const handleCreateDraft = async () => {
     const name = customerName.trim();
     if (!name) {
@@ -176,7 +237,12 @@ export default function SalesOrdersPage() {
         branchName: currentBranch?.name || '',
         warehouseId: warehouseId || undefined,
         customerName: name,
-        clientId: '',
+        clientId: selectedClientId || '',
+        customerNif: customerNif || undefined,
+        customerEmail: customerEmail || undefined,
+        customerPhone: customerPhone || undefined,
+        customerAddress: customerAddress || undefined,
+        notes: draftNotes.trim() || undefined,
         items: [],
         subtotal: 0,
         taxAmount: 0,
@@ -194,6 +260,12 @@ export default function SalesOrdersPage() {
       }
       toast.success(language === 'pt' ? 'Encomenda criada — adicione produtos' : 'Order created — add products');
       setCustomerName('');
+      setSelectedClientId('');
+      setCustomerNif('');
+      setCustomerEmail('');
+      setCustomerPhone('');
+      setCustomerAddress('');
+      setDraftNotes('');
       await loadOrders();
       openEdit(res.data as SalesOrder);
     } finally {
@@ -204,6 +276,8 @@ export default function SalesOrdersPage() {
   const openEdit = (order: SalesOrder) => {
     setEditing(order);
     setEditCustomer(order.customerName || '');
+    setEditClientId(order.clientId || '');
+    setEditNotes(order.notes || '');
     setEditItems(
       (order.items || []).map((it) => ({
         id: it.id || generateId(),
@@ -218,6 +292,7 @@ export default function SalesOrdersPage() {
       })),
     );
     setProductSearch('');
+    setEditClientPickerOpen(false);
     setEditOpen(true);
   };
 
@@ -260,6 +335,8 @@ export default function SalesOrdersPage() {
       const payload = {
         ...editing,
         customerName: editCustomer.trim() || editing.customerName,
+        clientId: editClientId || editing.clientId || '',
+        notes: editNotes.trim() || undefined,
         items: editItems.map((it) => {
           const lt = lineTotals(it);
           return {
@@ -313,6 +390,17 @@ export default function SalesOrdersPage() {
       if (order) openEdit(order);
       return;
     }
+    if (action === 'convert') {
+      if (!order?.clientId) {
+        toast.error(
+          language === 'pt'
+            ? 'Associe um cliente registado antes de converter (necessário para fatura a crédito)'
+            : 'Link a registered client before converting (needed for credit invoice)',
+        );
+        if (order) openEdit(order);
+        return;
+      }
+    }
     const wasReserved = order?.status === 'reserved';
     const fn =
       action === 'confirm'
@@ -326,10 +414,9 @@ export default function SalesOrdersPage() {
       return;
     }
     if (action === 'convert' && res.data?.order) {
-      toast.success(language === 'pt' ? 'Encomenda convertida — abrir fatura' : 'Order converted — opening invoice');
-      if (wasReserved || order?.status === 'reserved') {
-        notifySoftReserveChanged(order?.branchId || branchId);
-      }
+      toast.success(
+        language === 'pt' ? 'A abrir fatura a partir da encomenda' : 'Opening invoice from sales order',
+      );
       navigate('/invoices', { state: { fromSalesOrder: res.data.order } });
       return;
     }
@@ -373,13 +460,56 @@ export default function SalesOrdersPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[200px] space-y-1">
+          <div className="flex-1 min-w-[220px] space-y-1">
             <Label htmlFor="so-customer">{language === 'pt' ? 'Cliente' : 'Customer'}</Label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                id="so-customer"
+                className="pl-8"
+                value={customerName}
+                onChange={(e) => {
+                  setCustomerName(e.target.value);
+                  setSelectedClientId('');
+                  setClientPickerOpen(true);
+                }}
+                onFocus={() => setClientPickerOpen(true)}
+                onBlur={() => window.setTimeout(() => setClientPickerOpen(false), 150)}
+                placeholder={language === 'pt' ? 'Pesquisar cliente ou escrever nome…' : 'Search client or type name…'}
+                autoComplete="off"
+              />
+              {clientPickerOpen && createClientHits.length > 0 && (
+                <div className="absolute z-50 top-full left-0 right-0 mt-0.5 border rounded-md bg-popover shadow-md max-h-48 overflow-y-auto">
+                  {createClientHits.map((client) => (
+                    <button
+                      key={client.id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-accent/50 flex justify-between gap-2 border-b last:border-b-0"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => selectCreateClient(client)}
+                    >
+                      <span className="truncate font-medium">{client.name}</span>
+                      <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                        {client.nif || client.phone || '—'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {selectedClientId && (
+              <p className="text-xs text-muted-foreground">
+                {language === 'pt' ? 'Cliente registado ligado' : 'Registered client linked'}
+              </p>
+            )}
+          </div>
+          <div className="flex-1 min-w-[180px] space-y-1">
+            <Label htmlFor="so-notes">{language === 'pt' ? 'Notas' : 'Notes'}</Label>
             <Input
-              id="so-customer"
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              placeholder={language === 'pt' ? 'Nome do cliente' : 'Customer name'}
+              id="so-notes"
+              value={draftNotes}
+              onChange={(e) => setDraftNotes(e.target.value)}
+              placeholder={language === 'pt' ? 'Opcional' : 'Optional'}
             />
           </div>
           {warehouses.length > 0 && (
@@ -524,10 +654,60 @@ export default function SalesOrdersPage() {
           <div className="space-y-4 py-2">
             <div className="space-y-1">
               <Label>{language === 'pt' ? 'Cliente' : 'Customer'}</Label>
-              <Input
-                value={editCustomer}
-                onChange={(e) => setEditCustomer(e.target.value)}
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  className="pl-8"
+                  value={editCustomer}
+                  onChange={(e) => {
+                    setEditCustomer(e.target.value);
+                    setEditClientId('');
+                    setEditClientPickerOpen(true);
+                  }}
+                  onFocus={() => canEdit && setEditClientPickerOpen(true)}
+                  onBlur={() => window.setTimeout(() => setEditClientPickerOpen(false), 150)}
+                  disabled={!canEdit}
+                  autoComplete="off"
+                />
+                {canEdit && editClientPickerOpen && editClientHits.length > 0 && (
+                  <div className="absolute z-50 top-full left-0 right-0 mt-0.5 border rounded-md bg-popover shadow-md max-h-48 overflow-y-auto">
+                    {editClientHits.map((client) => (
+                      <button
+                        key={client.id}
+                        type="button"
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-accent/50 flex justify-between gap-2 border-b last:border-b-0"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => selectEditClient(client)}
+                      >
+                        <span className="truncate font-medium">{client.name}</span>
+                        <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                          {client.nif || client.phone || '—'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {editClientId ? (
+                <p className="text-xs text-muted-foreground">
+                  {language === 'pt' ? 'Cliente registado ligado' : 'Registered client linked'}
+                </p>
+              ) : (
+                <p className="text-xs text-amber-600">
+                  {language === 'pt'
+                    ? 'Sem cliente registado — necessário para converter em fatura a crédito'
+                    : 'No registered client — required to convert to a credit invoice'}
+                </p>
+              )}
+            </div>
+            <div className="space-y-1">
+              <Label>{language === 'pt' ? 'Notas' : 'Notes'}</Label>
+              <Textarea
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
                 disabled={!canEdit}
+                rows={2}
+                placeholder={language === 'pt' ? 'Notas da encomenda…' : 'Order notes…'}
               />
             </div>
             {canEdit && (

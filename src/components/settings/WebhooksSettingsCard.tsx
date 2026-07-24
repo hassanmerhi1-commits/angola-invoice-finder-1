@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Plus, RefreshCw, Trash2, Webhook } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Loader2, Plus, RefreshCw, RotateCcw, Send, Trash2, Webhook } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,7 +22,38 @@ type WebhookRow = {
   is_active?: boolean | number;
 };
 
+type DeliveryRow = {
+  id: string;
+  webhookId: string;
+  webhookName: string;
+  webhookUrl: string;
+  eventType: string;
+  status: string;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  deliveredAt: string | null;
+};
+
 const DEFAULT_EVENTS = 'sale.created';
+
+const KNOWN_EVENTS = [
+  'sale.created',
+  'payment.created',
+  'purchase_invoice.created',
+  'sales_order.reserved',
+  'sales_order.cancelled',
+  'stock_transfer.approved',
+  'stock_transfer.received',
+  '*',
+] as const;
+
+function deliveryBadgeVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (status === 'delivered') return 'default';
+  if (status === 'failed') return 'destructive';
+  if (status === 'pending') return 'secondary';
+  return 'outline';
+}
 
 export function WebhooksSettingsCard() {
   const { user } = useAuth();
@@ -30,6 +61,7 @@ export function WebhooksSettingsCard() {
   const canManage = isAdmin || hasPermission('admin_settings');
 
   const [rows, setRows] = useState<WebhookRow[]>([]);
+  const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
@@ -41,9 +73,14 @@ export function WebhooksSettingsCard() {
     if (!canManage) return;
     setLoading(true);
     try {
-      const res = await api.webhooks.list();
-      if (res.error) throw new Error(res.error);
-      setRows(Array.isArray(res.data) ? res.data : []);
+      const [whRes, delRes] = await Promise.all([
+        api.webhooks.list(),
+        api.webhooks.listDeliveries({ limit: 40 }),
+      ]);
+      if (whRes.error) throw new Error(whRes.error);
+      if (delRes.error) throw new Error(delRes.error);
+      setRows(Array.isArray(whRes.data) ? whRes.data : []);
+      setDeliveries(Array.isArray(delRes.data) ? delRes.data : []);
     } catch (e: any) {
       toast.error(e?.message || 'Failed to load webhooks');
     } finally {
@@ -100,6 +137,39 @@ export function WebhooksSettingsCard() {
     }
   };
 
+  const retry = async (id: string) => {
+    setSaving(true);
+    try {
+      const res = await api.webhooks.retryDelivery(id);
+      if (res.error) throw new Error(res.error);
+      toast.success('Delivery re-queued');
+      await load();
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to retry delivery');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const testPing = async (id: string) => {
+    setSaving(true);
+    try {
+      const res = await api.webhooks.test(id);
+      if (res.error) throw new Error(res.error);
+      const status = res.data?.status || 'pending';
+      if (status === 'delivered') {
+        toast.success('Test webhook delivered');
+      } else {
+        toast.error(res.data?.lastError || `Test status: ${status}`);
+      }
+      await load();
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to test webhook');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const eventsLabel = (row: WebhookRow) => {
     if (Array.isArray(row.events)) return row.events.join(', ');
     if (typeof row.events === 'string') {
@@ -111,6 +181,18 @@ export function WebhooksSettingsCard() {
       }
     }
     return '—';
+  };
+
+  const selectedEvents = useMemo(
+    () => new Set(events.split(',').map((e) => e.trim()).filter(Boolean)),
+    [events],
+  );
+
+  const toggleEvent = (eventName: string) => {
+    const next = new Set(selectedEvents);
+    if (next.has(eventName)) next.delete(eventName);
+    else next.add(eventName);
+    setEvents([...next].join(', '));
   };
 
   return (
@@ -141,9 +223,31 @@ export function WebhooksSettingsCard() {
             <Label>URL</Label>
             <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/hooks/nexor" />
           </div>
-          <div className="space-y-1.5">
-            <Label>Events (comma-separated)</Label>
-            <Input value={events} onChange={(e) => setEvents(e.target.value)} placeholder={DEFAULT_EVENTS} />
+          <div className="space-y-1.5 md:col-span-2">
+            <Label>Events</Label>
+            <div className="flex flex-wrap gap-2">
+              {KNOWN_EVENTS.map((ev) => {
+                const on = selectedEvents.has(ev);
+                return (
+                  <Button
+                    key={ev}
+                    type="button"
+                    size="sm"
+                    variant={on ? 'default' : 'outline'}
+                    className="h-7 text-xs font-mono"
+                    onClick={() => toggleEvent(ev)}
+                  >
+                    {ev}
+                  </Button>
+                );
+              })}
+            </div>
+            <Input
+              value={events}
+              onChange={(e) => setEvents(e.target.value)}
+              placeholder={DEFAULT_EVENTS}
+              className="mt-1 font-mono text-xs"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Secret (optional)</Label>
@@ -185,7 +289,16 @@ export function WebhooksSettingsCard() {
                         {active ? 'Active' : 'Off'}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right space-x-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={saving}
+                        title="Send test ping"
+                        onClick={() => void testPing(row.id)}
+                      >
+                        <Send className="h-4 w-4" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -201,6 +314,61 @@ export function WebhooksSettingsCard() {
             </TableBody>
           </Table>
         )}
+
+        <div className="pt-2 border-t space-y-2">
+          <h3 className="text-sm font-medium">Recent deliveries</h3>
+          {!loading && deliveries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No deliveries yet.</p>
+          ) : deliveries.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>When</TableHead>
+                  <TableHead>Webhook</TableHead>
+                  <TableHead>Event</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Error</TableHead>
+                  <TableHead className="text-right">Retry</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {deliveries.map((d) => (
+                  <TableRow key={d.id}>
+                    <TableCell className="text-xs whitespace-nowrap">
+                      {d.createdAt ? new Date(d.createdAt).toLocaleString() : '—'}
+                    </TableCell>
+                    <TableCell className="text-sm max-w-[140px] truncate">
+                      {d.webhookName || d.webhookId}
+                    </TableCell>
+                    <TableCell className="text-xs font-mono">{d.eventType}</TableCell>
+                    <TableCell>
+                      <Badge variant={deliveryBadgeVariant(d.status)}>
+                        {d.status}
+                        {d.attempts > 0 ? ` ×${d.attempts}` : ''}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground max-w-[180px] truncate">
+                      {d.lastError || '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {d.status === 'failed' && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled={saving}
+                          onClick={() => void retry(d.id)}
+                          title="Re-queue"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : null}
+        </div>
       </CardContent>
     </Card>
   );

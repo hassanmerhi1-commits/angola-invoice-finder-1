@@ -68,6 +68,96 @@ module.exports = function webhooksRouter() {
     }
   });
 
+  router.get('/deliveries/recent', requireAuth, requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 40));
+      const webhookId = typeof req.query.webhookId === 'string' ? req.query.webhookId.trim() : '';
+      const params = [];
+      let where = '';
+      if (webhookId) {
+        params.push(webhookId);
+        where = `WHERE d.webhook_id = $${params.length}`;
+      }
+      params.push(limit);
+      const r = await db.query(
+        `SELECT d.id, d.webhook_id, d.event_type, d.status, d.attempts, d.last_error,
+                d.created_at, d.delivered_at, w.name AS webhook_name, w.url AS webhook_url
+         FROM webhook_deliveries d
+         LEFT JOIN webhooks w ON w.id = d.webhook_id
+         ${where}
+         ORDER BY d.created_at DESC
+         LIMIT $${params.length}`,
+        params,
+      );
+      res.json((r.rows || []).map((row) => ({
+        id: row.id,
+        webhookId: row.webhook_id,
+        webhookName: row.webhook_name || '',
+        webhookUrl: row.webhook_url || '',
+        eventType: row.event_type,
+        status: row.status,
+        attempts: Number(row.attempts) || 0,
+        lastError: row.last_error || null,
+        createdAt: row.created_at,
+        deliveredAt: row.delivered_at || null,
+      })));
+    } catch (e) {
+      console.error('[WEBHOOKS deliveries]', e);
+      res.status(500).json({ error: e.message || 'Failed to list deliveries' });
+    }
+  });
+
+  router.post('/deliveries/:id/retry', requireAuth, requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const r = await db.query(
+        `UPDATE webhook_deliveries
+         SET status = 'pending', last_error = NULL, attempts = 0
+         WHERE id = $1 AND status IN ('failed', 'pending')
+         RETURNING id, status`,
+        [req.params.id],
+      );
+      if (!r.rows[0]) return res.status(404).json({ error: 'Delivery not found or not retryable' });
+      res.json({ success: true, id: r.rows[0].id, status: r.rows[0].status });
+    } catch (e) {
+      console.error('[WEBHOOKS retry]', e);
+      res.status(500).json({ error: e.message || 'Failed to retry delivery' });
+    }
+  });
+
+  router.post('/:id/test', requireAuth, requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const existing = await db.query('SELECT * FROM webhooks WHERE id = $1', [req.params.id]);
+      if (!existing.rows[0]) return res.status(404).json({ error: 'Webhook not found' });
+      const body = JSON.stringify({
+        event: 'webhook.test',
+        data: { webhookId: req.params.id, message: 'NEXOR webhook test ping' },
+        timestamp: new Date().toISOString(),
+      });
+      const id = crypto.randomUUID();
+      await db.query(
+        `INSERT INTO webhook_deliveries (id, webhook_id, event_type, payload, status)
+         VALUES ($1, $2, 'webhook.test', $3, 'pending')`,
+        [id, req.params.id, body],
+      );
+      const { deliverPendingWebhooks } = require('../lib/webhooks');
+      await deliverPendingWebhooks(5);
+      const d = await db.query(
+        `SELECT id, status, attempts, last_error, delivered_at FROM webhook_deliveries WHERE id = $1`,
+        [id],
+      );
+      res.json({
+        deliveryId: id,
+        status: d.rows[0]?.status || 'pending',
+        attempts: Number(d.rows[0]?.attempts) || 0,
+        lastError: d.rows[0]?.last_error || null,
+        deliveredAt: d.rows[0]?.delivered_at || null,
+      });
+    } catch (e) {
+      console.error('[WEBHOOKS test]', e);
+      res.status(500).json({ error: e.message || 'Failed to test webhook' });
+    }
+  });
+
   router.put('/:id', requireAuth, requirePermission('admin_settings'), async (req, res) => {
     try {
       const existing = await db.query('SELECT * FROM webhooks WHERE id = $1', [req.params.id]);
