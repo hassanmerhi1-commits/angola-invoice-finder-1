@@ -58,8 +58,6 @@ const Reports = React.lazy(() => import("./pages/Reports"));
 const ChartOfAccounts = React.lazy(() => import("./pages/ChartOfAccounts"));
 const Journals = React.lazy(() => import("./pages/Journals"));
 const Extracto = React.lazy(() => import("./pages/Extracto"));
-const HRModule = React.lazy(() => import("./pages/HRModule"));
-const ProductionModule = React.lazy(() => import("./pages/ProductionModule"));
 const ImportModule = React.lazy(() => import("./pages/ImportModule"));
 const Branches = React.lazy(() => import("./pages/Branches"));
 const Settings = React.lazy(() => import("./pages/Settings"));
@@ -337,8 +335,6 @@ function AppRoutes() {
         <Route path="/bank-accounts" element={<LazyRoute><BankAccounts /></LazyRoute>} />
         <Route path="/caixa" element={<LazyRoute><CaixaManagement /></LazyRoute>} />
         <Route path="/settings" element={<LazyRoute><Settings /></LazyRoute>} />
-        <Route path="/hr" element={<LazyRoute><HRModule /></LazyRoute>} />
-        <Route path="/production" element={<LazyRoute><ProductionModule /></LazyRoute>} />
         <Route path="/import" element={<LazyRoute><ImportModule /></LazyRoute>} />
         <Route path="/payments" element={<LazyRoute><PaymentsPage /></LazyRoute>} />
         <Route path="/receivables" element={<LazyRoute><ReceivablesPage /></LazyRoute>} />

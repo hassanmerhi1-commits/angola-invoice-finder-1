@@ -1260,8 +1260,34 @@ async function getAvailableStockForSale(client, productId, warehouseId, createdB
     legacyStock = Math.max(legacyStock, parseFloat(leg.rows[0]?.legacy_stock || 0));
   }
 
-  const available = Math.max(skuMovement, movementStock, legacyStock);
-  return { productId: pid, name: prod.name, available };
+  const availableOnHand = Math.max(skuMovement, movementStock, legacyStock);
+
+  // Soft holds from reserved sales orders at this branch (warehouse_id = branch today).
+  let reservedHold = 0;
+  try {
+    const holdParams = [wh, String(pid)];
+    let holdSql = `
+      SELECT COALESCE(SUM(i.reserved_qty), 0) AS qty
+      FROM sales_order_items i
+      INNER JOIN sales_orders o ON o.id = i.sales_order_id
+      WHERE o.status = 'reserved'
+        AND CAST(o.branch_id AS TEXT) = CAST($1 AS TEXT)
+        AND COALESCE(i.reserved_qty, 0) > 0
+        AND (
+          CAST(i.product_id AS TEXT) = CAST($2 AS TEXT)`;
+    if (sku) {
+      holdParams.push(sku);
+      holdSql += ` OR LOWER(TRIM(COALESCE(i.sku, ''))) = LOWER(TRIM($${holdParams.length}))`;
+    }
+    holdSql += ')';
+    const hold = await client.query(holdSql, holdParams);
+    reservedHold = Math.max(0, parseFloat(hold.rows[0]?.qty || 0));
+  } catch (_) {
+    // sales_orders may not exist on older DBs
+  }
+
+  const available = Math.max(0, availableOnHand - reservedHold);
+  return { productId: pid, name: prod.name, available, reservedHold, onHand: availableOnHand };
 }
 
 /** After movements, align products.stock with movement ledger for this SKU at this warehouse. */

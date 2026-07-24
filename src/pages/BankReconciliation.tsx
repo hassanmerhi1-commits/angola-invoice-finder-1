@@ -32,7 +32,7 @@ import {
   FileSpreadsheet, Search, Download, Link2, Unlink, Scale,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { autoMatchStatements, parseBankCsv } from '@/lib/bankMatchRules';
+import { autoMatchStatements, parseBankCsv, type MatchRule } from '@/lib/bankMatchRules';
 
 // ==================== TYPES ====================
 
@@ -79,6 +79,11 @@ export default function BankReconciliation() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [activeTab, setActiveTab] = useState('unmatched');
+  const [matchRules, setMatchRules] = useState<MatchRule[]>([]);
+  const [ruleName, setRuleName] = useState('');
+  const [rulePattern, setRulePattern] = useState('');
+  const [ruleField, setRuleField] = useState<'description' | 'reference'>('description');
+  const [savingRule, setSavingRule] = useState(false);
 
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [allTransactions, setAllTransactions] = useState<BankTransaction[]>([]);
@@ -89,6 +94,30 @@ export default function BankReconciliation() {
     getBankAccounts(listBranchId).then(setAccounts);
     getBankTransactions().then(setAllTransactions);
   }, [listBranchId]);
+
+  const loadMatchRules = useCallback(async () => {
+    try {
+      const res = await api.bankMatchRules.list();
+      if (Array.isArray(res.data)) {
+        setMatchRules(
+          res.data.map((r) => ({
+            id: r.id,
+            name: r.name,
+            pattern: r.pattern,
+            matchField: r.matchField === 'reference' ? 'reference' : 'description',
+            priority: Number(r.priority) || 100,
+            isActive: r.isActive !== false,
+          })),
+        );
+      }
+    } catch {
+      // table may not exist yet on older servers
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMatchRules();
+  }, [loadMatchRules]);
 
   const selectedAccount = useMemo(
     () => accounts.find(a => a.id === selectedAccountId),
@@ -293,7 +322,7 @@ export default function BankReconciliation() {
         bankReference: t.bankReference,
         description: t.description,
       })),
-      { matchedIds: new Set(matchedTxnIds), minScore: 50 },
+      { matchedIds: new Set(matchedTxnIds), minScore: 50, rules: matchRules },
     );
 
     setStatementRows(updated as BankStatementRow[]);
@@ -301,7 +330,46 @@ export default function BankReconciliation() {
       title: t.bankReconciliationUi.autoReconciliation,
       description: t.bankReconciliationUi.autoReconciledCount.replace('{count}', String(matchCount)),
     });
-  }, [accountTransactions, statementRows, matchedTxnIds, toast, t]);
+  }, [accountTransactions, statementRows, matchedTxnIds, matchRules, toast, t]);
+
+  const addMatchRule = async () => {
+    if (!ruleName.trim() || !rulePattern.trim()) {
+      toast({ title: t.bankReconciliationUi.importError, description: 'Name and pattern are required', variant: 'destructive' });
+      return;
+    }
+    setSavingRule(true);
+    try {
+      const res = await api.bankMatchRules.create({
+        name: ruleName.trim(),
+        pattern: rulePattern.trim(),
+        matchField: ruleField,
+        priority: 100,
+        isActive: true,
+      });
+      if (res.error) throw new Error(res.error);
+      setRuleName('');
+      setRulePattern('');
+      await loadMatchRules();
+      toast({ title: t.bankReconciliationUi.reconciled, description: 'Match rule saved' });
+    } catch (e: any) {
+      toast({ title: t.bankReconciliationUi.importError, description: e?.message || 'Failed to save rule', variant: 'destructive' });
+    } finally {
+      setSavingRule(false);
+    }
+  };
+
+  const removeMatchRule = async (id: string) => {
+    setSavingRule(true);
+    try {
+      const res = await api.bankMatchRules.remove(id);
+      if (res.error) throw new Error(res.error);
+      await loadMatchRules();
+    } catch (e: any) {
+      toast({ title: t.bankReconciliationUi.importError, description: e?.message || 'Failed to delete rule', variant: 'destructive' });
+    } finally {
+      setSavingRule(false);
+    }
+  };
 
   // ==================== MANUAL MATCH ====================
 
@@ -657,6 +725,73 @@ export default function BankReconciliation() {
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Match rules</CardTitle>
+          <CardDescription>
+            Optional regex boosts for auto-reconcile (description or reference). Active rules: {matchRules.filter((r) => r.isActive).length}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-4 items-end">
+            <div className="space-y-1.5">
+              <Label>Name</Label>
+              <Input value={ruleName} onChange={(e) => setRuleName(e.target.value)} placeholder="Salary credit" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Pattern (regex)</Label>
+              <Input value={rulePattern} onChange={(e) => setRulePattern(e.target.value)} placeholder="SALAR|FOLHA" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Field</Label>
+              <Select value={ruleField} onValueChange={(v) => setRuleField(v as 'description' | 'reference')}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="description">Description</SelectItem>
+                  <SelectItem value="reference">Reference</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button onClick={() => void addMatchRule()} disabled={savingRule}>
+              Add rule
+            </Button>
+          </div>
+          {matchRules.length > 0 && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Pattern</TableHead>
+                  <TableHead>Field</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {matchRules.map((rule) => (
+                  <TableRow key={rule.id}>
+                    <TableCell className="font-medium">{rule.name}</TableCell>
+                    <TableCell className="font-mono text-xs">{rule.pattern}</TableCell>
+                    <TableCell>{rule.matchField}</TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={savingRule}
+                        onClick={() => void removeMatchRule(rule.id)}
+                      >
+                        <Unlink className="w-4 h-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Import Dialog */}
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>

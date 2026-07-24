@@ -2916,6 +2916,34 @@ export const api = {
       apiFetch<{ success: boolean; id: string }>(`/webhooks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
 
+  bankMatchRules: {
+    list: () =>
+      apiFetch<Array<{
+        id: string;
+        name: string;
+        pattern: string;
+        matchField: 'description' | 'reference';
+        priority: number;
+        isActive: boolean;
+      }>>('/bank-match-rules'),
+    create: (data: {
+      name: string;
+      pattern: string;
+      matchField?: 'description' | 'reference';
+      priority?: number;
+      isActive?: boolean;
+    }) => apiFetch<any>('/bank-match-rules', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: Record<string, unknown>) =>
+      apiFetch<any>(`/bank-match-rules/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    remove: (id: string) =>
+      apiFetch<{ success: boolean; id: string }>(`/bank-match-rules/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
+  },
+
   search: {
     query: (q: string, limit = 8) =>
       apiFetch<{

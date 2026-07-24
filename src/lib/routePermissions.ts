@@ -42,9 +42,6 @@ export const ROUTE_PERMISSIONS: Record<string, string | string[]> = {
   '/reports': 'reports_daily',
   '/daily-reports': 'reports_daily',
   '/audit-trail': 'reports_audit',
-  // LocalStorage-only stubs — hidden from nav; admin deep-link only until real backends exist.
-  '/hr': 'admin_settings',
-  '/production': 'admin_settings',
   '/users': 'admin_users',
   '/branches': 'admin_branches',
   '/accounting': 'admin_branches',

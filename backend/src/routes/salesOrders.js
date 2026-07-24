@@ -8,9 +8,78 @@ const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 
 const MUTATE_PERMS = ['invoice_create', 'proforma_create'];
 const ACTIVE_STATUSES = ['draft', 'confirmed', 'reserved'];
+const { getStock } = require('../transactionEngine');
 
 function newId() {
   return crypto.randomUUID();
+}
+
+/**
+ * Soft holds: sum reserved_qty on other open reserved orders at the same stock location.
+ * Stock ledger still keys warehouse_id = branch id today.
+ */
+async function getOpenReservedQty(productId, branchId, excludeOrderId) {
+  if (!productId || !branchId) return 0;
+  const r = await db.query(
+    `SELECT COALESCE(SUM(i.reserved_qty), 0) AS qty
+     FROM sales_order_items i
+     INNER JOIN sales_orders o ON o.id = i.sales_order_id
+     WHERE o.status = 'reserved'
+       AND o.id <> $1
+       AND CAST(o.branch_id AS TEXT) = CAST($2 AS TEXT)
+       AND CAST(i.product_id AS TEXT) = CAST($3 AS TEXT)
+       AND COALESCE(i.reserved_qty, 0) > 0`,
+    [excludeOrderId, String(branchId), String(productId)],
+  );
+  return Number(r.rows[0]?.qty || 0);
+}
+
+async function clearReservedQty(clientOrDb, orderId) {
+  await clientOrDb.query(
+    `UPDATE sales_order_items SET reserved_qty = 0 WHERE sales_order_id = $1`,
+    [orderId],
+  );
+}
+
+/**
+ * Ensure on-hand stock covers this order after other soft holds.
+ * Throws Error with statusCode 409 on shortfall.
+ */
+async function assertSoftReserveAvailable(orderRow, items) {
+  const branchId = String(orderRow.branch_id || '').trim();
+  if (!branchId) {
+    const err = new Error('Branch is required to reserve stock');
+    err.statusCode = 400;
+    throw err;
+  }
+  const shortfalls = [];
+  for (const item of items || []) {
+    const productId = String(item.product_id || '').trim();
+    const need = Number(item.quantity) || 0;
+    if (!productId || need <= 0) continue;
+    const onHand = await getStock(productId, branchId);
+    const otherHeld = await getOpenReservedQty(productId, branchId, orderRow.id);
+    const available = onHand - otherHeld;
+    if (available + 1e-9 < need) {
+      shortfalls.push({
+        productId,
+        productName: item.product_name || productId,
+        need,
+        onHand,
+        otherHeld,
+        available: Math.max(0, available),
+      });
+    }
+  }
+  if (shortfalls.length) {
+    const detail = shortfalls
+      .map((s) => `${s.productName}: need ${s.need}, available ${s.available}`)
+      .join('; ');
+    const err = new Error(`Insufficient stock to reserve — ${detail}`);
+    err.statusCode = 409;
+    err.shortfalls = shortfalls;
+    throw err;
+  }
 }
 
 function mapItemRow(row) {
@@ -433,6 +502,7 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
       if (existing.rows[0].status === 'cancelled') {
         return res.json({ success: true, status: 'cancelled' });
       }
+      await clearReservedQty(db, req.params.id);
       await db.query(
         `UPDATE sales_orders SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
         [req.params.id],
@@ -460,6 +530,10 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
       const row = existing.rows[0];
       if (!['draft', 'reserved'].includes(row.status)) {
         return res.status(400).json({ error: `Cannot confirm sales order in status "${row.status}"` });
+      }
+      // Confirming from reserved releases the soft hold (status leaves 'reserved').
+      if (row.status === 'reserved') {
+        await clearReservedQty(db, id);
       }
       const updated = await db.query(
         `UPDATE sales_orders
@@ -495,8 +569,17 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
       if (!['draft', 'confirmed'].includes(row.status)) {
         return res.status(400).json({ error: `Cannot reserve sales order in status "${row.status}"` });
       }
+      const items = await loadItemsForOrder(id);
+      try {
+        await assertSoftReserveAvailable(row, items);
+      } catch (availErr) {
+        const status = availErr.statusCode || 400;
+        return res.status(status).json({
+          error: availErr.message,
+          shortfalls: availErr.shortfalls || undefined,
+        });
+      }
       await client.query('BEGIN');
-      // TODO: stock movement — reserve inventory in warehouse when stock engine supports it
       await client.query(
         `UPDATE sales_order_items SET reserved_qty = quantity WHERE sales_order_id = $1`,
         [id],
@@ -513,7 +596,7 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
       await auditSalesOrderEvent(req, {
         recordId: id,
         action: 'reserve',
-        description: `Encomenda ${orderAuditLabel(saved.orderNumber)} reservada`,
+        description: `Encomenda ${orderAuditLabel(saved.orderNumber)} reservada (soft hold)`,
         newValues: { status: saved.status, reservedAt: saved.reservedAt },
       });
       await broadcastTable('sales_orders');
@@ -538,6 +621,8 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
       if (!['confirmed', 'reserved'].includes(row.status)) {
         return res.status(400).json({ error: `Cannot convert sales order in status "${row.status}"` });
       }
+      // Soft hold ends on convert; sale OUT consumes ledger stock when invoice is posted.
+      await clearReservedQty(db, id);
       const updated = await db.query(
         `UPDATE sales_orders
          SET status = 'converted', converted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
