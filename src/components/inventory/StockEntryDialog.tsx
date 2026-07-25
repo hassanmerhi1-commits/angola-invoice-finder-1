@@ -305,12 +305,11 @@ export function StockEntryDialog({
   const loadImportCatalog = useCallback(async () => {
     if (!entryBranchId) return [] as Product[];
     try {
-      const [branchRes, allRes] = await Promise.all([
-        api.products.list(entryBranchId, { light: false }),
-        api.products.list(undefined, { light: false }),
-      ]);
+      // Light list only — import matching needs sku/name/barcode/cost, not full stock rows.
+      // Branch list already includes company-wide catalog masters (0 stock) for filials.
+      const branchRes = await api.products.list(entryBranchId, { light: true });
       const merged = new Map<string, Product>();
-      for (const row of [...(branchRes.data || []), ...(allRes.data || [])]) {
+      for (const row of branchRes.data || []) {
         const product = mapApiProductRow(row as Record<string, unknown>);
         if (product.isActive !== false) merged.set(product.id, product);
       }
@@ -813,7 +812,7 @@ export function StockEntryDialog({
     [entryBranchId, productsForImport, toast, t.stockEntryUi, focusQtyLine],
   );
 
-  const openImportDialog = useCallback(async () => {
+  const openImportDialog = useCallback(() => {
     if (!entryBranchId) {
       toast({
         variant: 'destructive',
@@ -822,9 +821,13 @@ export function StockEntryDialog({
       });
       return;
     }
-    await loadImportCatalog();
+    // Open immediately — catalog is already warmed when the entry dialog opens;
+    // searchableProducts covers matching until the light refresh finishes.
     setImportDialogOpen(true);
-  }, [entryBranchId, loadImportCatalog, toast, t.stockEntryUi]);
+    if (importLookupProducts.length === 0) {
+      void loadImportCatalog();
+    }
+  }, [entryBranchId, importLookupProducts.length, loadImportCatalog, toast, t.stockEntryUi]);
 
   const handleProductKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement>,

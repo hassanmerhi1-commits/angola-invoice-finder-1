@@ -264,7 +264,14 @@ async function flushSqliteOutbox(apiBase, cdb) {
 async function flushToServer(apiBaseUrl) {
   const apiBase = apiBaseUrl || process.env.NEXOR_CITY_API_URL || 'http://127.0.0.1:3000';
   const healthy = await checkServerHealth(apiBase);
-  if (!healthy) return { flushed: 0, reason: 'server_unreachable', pending: getPendingCount() };
+  if (!healthy) {
+    return {
+      flushed: 0,
+      reason: 'server_unreachable',
+      target: apiBase,
+      pending: getPendingCount(),
+    };
+  }
 
   const cdb = getClientDb();
   if (useSqliteOutbox() && cdb) {

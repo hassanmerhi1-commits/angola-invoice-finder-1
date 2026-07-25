@@ -2295,6 +2295,18 @@ function getCityApiBaseForClient() {
       return `http://${parsed.host}:${parsed.httpPort ?? 3000}`;
     }
   }
+  // The IP file is the same source the renderer uses to reach the city server.
+  // Without this, installs missing setup-config.json flush to localhost and the
+  // outbox reports "server_unreachable" forever even though the server is up.
+  try {
+    const ip = parseIPFile();
+    if (ip?.valid && !ip.isServer && ip.serverAddress) {
+      const parsed = parseClientHostFromIpContent(String(ip.serverAddress));
+      if (parsed?.host) {
+        return `http://${parsed.host}:${ip.httpPort ?? parsed.httpPort ?? 3000}`;
+      }
+    }
+  } catch (_) {}
   return 'http://127.0.0.1:3000';
 }
 

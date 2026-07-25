@@ -83,7 +83,10 @@ export function SyncPendingBadge() {
       if (flushed > 0) {
         toast.success(ui.syncOk.replace('{n}', String(flushed)));
       } else if (result?.reason === 'server_unreachable' || pending > 0) {
-        toast.error(ui.syncStillOffline);
+        // Show the host we actually tried — mismatched targets are the usual cause.
+        toast.error(ui.syncStillOffline, {
+          description: result?.target ? String(result.target) : undefined,
+        });
       } else {
         toast.message(ui.syncNothing);
       }
