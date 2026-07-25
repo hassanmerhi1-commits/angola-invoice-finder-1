@@ -87,6 +87,8 @@ export function TransactionHistoryReport() {
   // Filters
   const [dateFrom, setDateFrom] = useState<Date>();
   const [dateTo, setDateTo] = useState<Date>();
+  const [dateFromOpen, setDateFromOpen] = useState(false);
+  const [dateToOpen, setDateToOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -235,7 +237,7 @@ export function TransactionHistoryReport() {
               {/* Date From */}
               <div className="space-y-2">
                 <Label>Data Início</Label>
-                <Popover>
+                <Popover open={dateFromOpen} onOpenChange={setDateFromOpen}>
                   <PopoverTrigger asChild>
                     <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !dateFrom && "text-muted-foreground")}>
                       <CalendarIcon className="mr-2 h-4 w-4" />
@@ -243,7 +245,16 @@ export function TransactionHistoryReport() {
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-0 bg-background border shadow-lg z-50" align="start">
-                    <Calendar mode="single" selected={dateFrom} onSelect={setDateFrom} locale={pt} initialFocus />
+                    <Calendar
+                      mode="single"
+                      selected={dateFrom}
+                      onSelect={(day) => {
+                        setDateFrom(day);
+                        if (day) setDateFromOpen(false);
+                      }}
+                      locale={pt}
+                      initialFocus
+                    />
                   </PopoverContent>
                 </Popover>
               </div>
@@ -251,7 +262,7 @@ export function TransactionHistoryReport() {
               {/* Date To */}
               <div className="space-y-2">
                 <Label>Data Fim</Label>
-                <Popover>
+                <Popover open={dateToOpen} onOpenChange={setDateToOpen}>
                   <PopoverTrigger asChild>
                     <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !dateTo && "text-muted-foreground")}>
                       <CalendarIcon className="mr-2 h-4 w-4" />
@@ -259,7 +270,16 @@ export function TransactionHistoryReport() {
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-0 bg-background border shadow-lg z-50" align="start">
-                    <Calendar mode="single" selected={dateTo} onSelect={setDateTo} locale={pt} initialFocus />
+                    <Calendar
+                      mode="single"
+                      selected={dateTo}
+                      onSelect={(day) => {
+                        setDateTo(day);
+                        if (day) setDateToOpen(false);
+                      }}
+                      locale={pt}
+                      initialFocus
+                    />
                   </PopoverContent>
                 </Popover>
               </div>

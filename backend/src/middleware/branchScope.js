@@ -61,8 +61,9 @@ async function branchExists(branchId) {
  * inherit head office so list APIs are not locked to a non-existent branch.
  *
  * Aligns with UI canUserSwitchBranch:
- * - admin → never forceBranchId (may request consolidated / any branch)
- * - manager on HQ-like branch (is_main or SEDE name/code) → consolidated OK
+ * - admin/manager on HQ-like branch (is_main or SEDE name/code) → consolidated OK
+ * - admin with no branch_id → global (inherits HQ)
+ * - shop-assigned admin/manager → locked to their branch
  * - everyone else → locked to their branch
  */
 async function buildBranchScopeFromUser(userRow, opts = {}) {
@@ -92,8 +93,8 @@ async function buildBranchScopeFromUser(userRow, opts = {}) {
   const hqLike = looksLikeHeadOfficeBranch(branchRow);
   const isHeadOffice = !!(branchId && hqLike && headOfficeRole);
   const isGlobalAdmin = isAdmin && !branchId;
-  /** Admin always; HQ manager; admin with no branch. Matches UI switch/consolidated rights. */
-  const canUseConsolidated = isAdmin || isHeadOffice || isGlobalAdmin;
+  /** HQ admin/manager, or admin with no branch. Shop admin is branch-locked. */
+  const canUseConsolidated = isHeadOffice || isGlobalAdmin;
 
   return {
     userId: userRow.id,
@@ -102,7 +103,7 @@ async function buildBranchScopeFromUser(userRow, opts = {}) {
     isHeadOffice,
     isGlobalAdmin,
     canUseConsolidated,
-    /** Non–head-office users (incl. cashiers at sede): locked to their branch. */
+    /** Non–head-office users (incl. shop admins / cashiers): locked to their branch. */
     forceBranchId: branchId && !canUseConsolidated ? branchId : null,
   };
 }

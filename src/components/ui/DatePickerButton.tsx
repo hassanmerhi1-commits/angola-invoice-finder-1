@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { format, parseISO, isValid, startOfDay } from 'date-fns';
 import { pt, enGB } from 'date-fns/locale';
 import { CalendarIcon } from 'lucide-react';
@@ -41,6 +42,7 @@ export function DatePickerButton({
   minDate,
   disableBeforeToday,
 }: Props) {
+  const [open, setOpen] = useState(false);
   const selected = parseLocalISO(value);
   const dfLocale = locale === 'pt' ? pt : enGB;
   const floor = disableBeforeToday
@@ -50,7 +52,7 @@ export function DatePickerButton({
       : undefined;
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           type="button"
@@ -77,6 +79,7 @@ export function DatePickerButton({
             const iso = localISODate(day);
             if (floor && day < floor) return;
             onChange(iso);
+            setOpen(false);
           }}
           disabled={floor ? { before: floor } : undefined}
           locale={dfLocale}

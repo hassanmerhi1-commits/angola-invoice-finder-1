@@ -2300,6 +2300,10 @@ export const en = {
     tooltipWaiting: "Waiting to upload to the server. Auto-retry every few seconds.",
     tooltipFailed: "Sync failed: {error}",
     tooltipItemLine: "• {type} ({status}): {error}",
+    tooltipClickSync: "Click to sync now",
+    syncOk: "Synced {n} item(s).",
+    syncStillOffline: "Server still unreachable — sales stay pending.",
+    syncNothing: "Nothing new to sync.",
   },
 
   exchangeRatesUi: {

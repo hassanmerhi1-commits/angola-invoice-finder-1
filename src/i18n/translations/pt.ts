@@ -2302,6 +2302,10 @@ export const pt: TranslationKeys = {
     tooltipWaiting: "A aguardar envio para o servidor. Nova tentativa automática de poucos em poucos segundos.",
     tooltipFailed: "Falha na sincronização: {error}",
     tooltipItemLine: "• {type} ({status}): {error}",
+    tooltipClickSync: "Clique para sincronizar agora",
+    syncOk: "Sincronizados {n} item(ns).",
+    syncStillOffline: "Servidor ainda inacessível — as vendas ficam pendentes.",
+    syncNothing: "Nada novo para sincronizar.",
   },
 
   exchangeRatesUi: {

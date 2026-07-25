@@ -101,13 +101,13 @@ export function looksLikeHeadOfficeBranch(branch: Branch | null | undefined): bo
 }
 
 /**
- * Admin may always switch branches / use all-filial treasury (Sede or any shop login).
- * Manager only when assigned to head office (is_main or name/code SEDE).
+ * Admin/manager may switch branches only when assigned to HQ (is_main / MAIN / SEDE*).
+ * Shop-assigned admin/manager (e.g. Soyo 03) stay locked to that branch.
+ * No valid assignment → allow switch (they inherit HQ via resolveEffectiveUserBranch).
  */
 export function canUserSwitchBranch(user: BranchAccessUser, userBranch: Branch | null): boolean {
   const role = String(user?.role || '').toLowerCase();
-  if (role === 'admin') return true;
-  if (role !== 'manager') return false;
+  if (role !== 'admin' && role !== 'manager') return false;
   if (!userBranch) return true;
   return looksLikeHeadOfficeBranch(userBranch);
 }
