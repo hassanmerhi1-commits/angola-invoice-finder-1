@@ -2305,6 +2305,7 @@ export const pt: TranslationKeys = {
     tooltipClickSync: "Clique para sincronizar agora",
     syncOk: "Sincronizados {n} item(ns).",
     syncStillOffline: "Servidor ainda inacessível — as vendas ficam pendentes.",
+    syncIngestFailed: "Servidor acessível, mas a sincronização foi rejeitada.",
     syncNothing: "Nada novo para sincronizar.",
   },
 

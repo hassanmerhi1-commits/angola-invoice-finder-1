@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import {
   Plus, Search, Printer, RefreshCw, FileText, Receipt,
   Banknote, CreditCard, ArrowRight, Download, XCircle, CheckCircle,
-  Clock, ChevronDown, ArrowRightLeft, Send,
+  Clock, ChevronDown, ArrowRightLeft, Send, Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { salesOrderToErpDocumentPrefill, type SalesOrder } from '@/lib/salesOrderToDocument';
@@ -173,6 +173,7 @@ export default function Invoices() {
   const [dateTo, setDateTo] = useState(() => localISODate());
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [listLoading, setListLoading] = useState(false);
 
   // Dialog state
   const [formOpen, setFormOpen] = useState(false);
@@ -185,7 +186,7 @@ export default function Invoices() {
 
   // Load documents — seed instantly from cache so the tab renders without waiting on the network.
   const [documents, setDocuments] = useState<ERPDocument[]>(
-    () => getCachedList<ERPDocument[]>(`invoicesDocs:${activeTab}:${listBranchId ?? 'all'}`) ?? [],
+    () => getCachedList<ERPDocument[]>(`invoicesDocs:${activeTab}:${listBranchId ?? 'all'}:${dateFrom}:${dateTo}`) ?? [],
   );
 
   useEffect(() => {
@@ -210,19 +211,25 @@ export default function Invoices() {
       isMain: b.isMain,
     }));
 
-    const cacheKey = `invoicesDocs:${activeTab}:${listBranchId ?? 'all'}`;
+    const cacheKey = `invoicesDocs:${activeTab}:${listBranchId ?? 'all'}:${dateFrom}:${dateTo}`;
+    // Drop previous branch/tab rows immediately; seed only this scope's cache.
+    setSelectedDocId(null);
+    setDocuments(getCachedList<ERPDocument[]>(cacheKey) ?? []);
+    setListLoading(true);
+
+    let cancelled = false;
+    const listOpts = { light: true as const, dateFrom, dateTo, limit: 200 };
     const load = async () => {
       try {
         if (type === 'nota_credito') {
-          let cnRes = await api.fiscalDocuments.listCreditNotes(listBranchId);
-          if ((!cnRes.data || cnRes.data.length === 0) && listBranchId) {
-            cnRes = await api.fiscalDocuments.listCreditNotes();
-          }
+          const cnRes = await api.fiscalDocuments.listCreditNotes(listBranchId, listOpts);
           const mapped = (cnRes.data || []).map((cn: CreditNote) =>
             mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
           );
-          setDocuments(mapped);
-          setCachedList(cacheKey, mapped);
+          if (!cancelled) {
+            setDocuments(mapped);
+            setCachedList(cacheKey, mapped);
+          }
           return;
         }
 
@@ -233,18 +240,13 @@ export default function Invoices() {
         const [storedDocs, salesDocs, purchaseDocs, cnRes] = await Promise.all([
           getDocuments(type, branchFilter),
           loadSales
-            ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog)
+            ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog, listOpts)
             : Promise.resolve([]),
           loadPurchase
             ? getPurchaseInvoicesAsDocuments(listBranchId, branchNames, branchCatalog, isHeadOffice)
             : Promise.resolve([]),
           loadFiscalCreditNotes
-            ? api.fiscalDocuments.listCreditNotes(listBranchId).then(async (res) => {
-                if ((!res.data || res.data.length === 0) && listBranchId) {
-                  return api.fiscalDocuments.listCreditNotes();
-                }
-                return res;
-              })
+            ? api.fiscalDocuments.listCreditNotes(listBranchId, listOpts)
             : Promise.resolve({ data: [] as CreditNote[] }),
         ]);
 
@@ -273,8 +275,10 @@ export default function Invoices() {
 
         merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         const result = type ? merged.filter((d) => d.documentType === type) : merged;
-        setDocuments(result);
-        setCachedList(cacheKey, result);
+        if (!cancelled) {
+          setDocuments(result);
+          setCachedList(cacheKey, result);
+        }
       } catch (err) {
         console.error('[Invoices] load failed:', err);
         // Keep showing the last cached list instead of blanking the tab on a transient failure.
@@ -282,11 +286,14 @@ export default function Invoices() {
         if (!cached || cached.length === 0) {
           toast.error(err instanceof Error ? err.message : t.common.loading);
         }
+      } finally {
+        if (!cancelled) setListLoading(false);
       }
     };
 
-    load();
-  }, [activeTab, listBranchId, isHeadOffice, branches, refreshKey, t.pos.finalConsumer]);
+    void load();
+    return () => { cancelled = true; };
+  }, [activeTab, listBranchId, isHeadOffice, branches, refreshKey, dateFrom, dateTo, t.pos.finalConsumer]);
 
   useEffect(() => {
     setInvoicesWorkspaceTab(activeTab);
@@ -798,7 +805,14 @@ export default function Invoices() {
               </Button>
             </div>
           )}
-          <table className="w-full text-xs">
+          <div className="relative">
+          {listLoading && filteredDocs.length > 0 && (
+            <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-center gap-2 border-b bg-background/80 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {t.common.loading}
+            </div>
+          )}
+          <table className={cn('w-full text-xs', listLoading && filteredDocs.length > 0 && 'opacity-60 pointer-events-none')}>
             <thead className="bg-muted/60 border-b sticky top-0 z-10">
               <tr>
                 <th className="px-3 py-2 text-left font-semibold w-12">{t.invoicesUi.type}</th>
@@ -888,13 +902,20 @@ export default function Invoices() {
               </tr>
             </tfoot>
           </table>
-          {filteredDocs.length === 0 && (
+          {listLoading && filteredDocs.length === 0 && (
+            <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
+              <Loader2 className="h-8 w-8 animate-spin opacity-70" />
+              <p className="text-sm">{t.common.loading}</p>
+            </div>
+          )}
+          {!listLoading && filteredDocs.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
               <p className="text-sm">{t.common.noResults}</p>
               <p className="text-xs mt-1">{t.common.create}</p>
             </div>
           )}
+          </div>
         </div>
       </Tabs>
 

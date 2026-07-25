@@ -42,7 +42,11 @@ services:
       # Optional offsite copy — mount a host folder and uncomment:
       # BACKUP_OFFSITE_DIR: /app/backups-offsite
       # Shown in /api/health appVersion — bump on release so deploys are verifiable.
-      NEXOR_APP_VERSION: 1.1.69
+      NEXOR_APP_VERSION: 1.1.73
+      # Shop-client outbox (/api/sync/client-ingest). Without a shared key, allow
+      # ingest on trusted LAN/Tailscale. For stricter setups, remove this and set
+      # the same NEXOR_CLIENT_SYNC_API_KEY on server + each shop's sync.env.
+      NEXOR_ALLOW_OPEN_CLIENT_INGEST: "1"
     ports:
       - "3000:3000"
     volumes:

@@ -145,24 +145,51 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
 
   router.get('/credit-notes', async (req, res) => {
     try {
-      const { branchId } = req.query;
+      const { parseListPagination, parseTruthyQuery } = require('../lib/listPagination');
+      const { branchId, dateFrom, dateTo } = req.query;
+      const light = parseTruthyQuery(req.query.light);
+      const { limit, offset } = parseListPagination(req, { defaultLimit: 200, maxLimit: 1000 });
       let query = 'SELECT * FROM credit_notes WHERE 1=1';
       const params = [];
       if (branchId) {
         params.push(branchId);
         query += ` AND branch_id = $${params.length}`;
       }
-      query += ' ORDER BY created_at DESC';
-      const result = await db.query(query, params);
-      const notes = [];
-      for (const row of result.rows) {
-        const itemsRes = await db.query(
-          'SELECT * FROM credit_note_items WHERE credit_note_id = $1',
-          [row.id],
-        );
-        notes.push(mapCreditNoteRow(row, itemsRes.rows));
+      const from = String(dateFrom || '').trim().slice(0, 10);
+      const to = String(dateTo || '').trim().slice(0, 10);
+      if (from) {
+        params.push(`${from}T00:00:00`);
+        query += ` AND created_at >= $${params.length}`;
       }
-      res.json(notes);
+      if (to) {
+        params.push(to);
+        query += db.engine === 'postgres'
+          ? ` AND created_at < ($${params.length}::date + INTERVAL '1 day')`
+          : ` AND date(created_at) <= date($${params.length})`;
+      }
+      query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+      params.push(limit, offset);
+      const result = await db.query(query, params);
+      const rows = result.rows || [];
+      if (rows.length === 0) {
+        return res.json([]);
+      }
+      if (light) {
+        return res.json(rows.map((row) => mapCreditNoteRow(row, [])));
+      }
+      const ids = rows.map((r) => r.id);
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+      const itemsRes = await db.query(
+        `SELECT * FROM credit_note_items WHERE credit_note_id IN (${placeholders}) ORDER BY credit_note_id`,
+        ids,
+      );
+      const byNote = new Map();
+      for (const item of itemsRes.rows || []) {
+        const key = String(item.credit_note_id);
+        if (!byNote.has(key)) byNote.set(key, []);
+        byNote.get(key).push(item);
+      }
+      res.json(rows.map((row) => mapCreditNoteRow(row, byNote.get(String(row.id)) || [])));
     } catch (err) {
       console.error('[FISCAL credit-notes list]', err);
       res.status(500).json({ error: 'Failed to list credit notes' });

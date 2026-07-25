@@ -46,20 +46,34 @@ module.exports = function(broadcastTable) {
   // READ — default capped list; items loaded in one IN() query (no N+1).
   router.get('/', async (req, res) => {
     try {
-      const { parseListPagination } = require('../lib/listPagination');
-      const { branchId } = req.query;
+      const { parseListPagination, parseTruthyQuery } = require('../lib/listPagination');
+      const { branchId, dateFrom, dateTo } = req.query;
+      const light = parseTruthyQuery(req.query.light);
       const { limit, offset } = parseListPagination(req, { defaultLimit: 200, maxLimit: 2000 });
-      let query = 'SELECT * FROM sales';
+      let query = 'SELECT * FROM sales WHERE 1=1';
       const params = [];
       if (branchId) {
-        query += ' WHERE branch_id = $1';
         params.push(branchId);
+        query += ` AND branch_id = $${params.length}`;
+      }
+      const from = String(dateFrom || '').trim().slice(0, 10);
+      const to = String(dateTo || '').trim().slice(0, 10);
+      if (from) {
+        params.push(`${from}T00:00:00`);
+        query += ` AND created_at >= $${params.length}`;
+      }
+      if (to) {
+        // Inclusive end day
+        params.push(to);
+        query += db.engine === 'postgres'
+          ? ` AND created_at < ($${params.length}::date + INTERVAL '1 day')`
+          : ` AND date(created_at) <= date($${params.length})`;
       }
       query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
       params.push(limit, offset);
       const result = await db.query(query, params);
       const sales = result.rows || [];
-      if (sales.length > 0) {
+      if (sales.length > 0 && !light) {
         const ids = sales.map((s) => s.id);
         const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
         const itemsResult = await db.query(
@@ -74,6 +88,10 @@ module.exports = function(broadcastTable) {
         }
         for (const sale of sales) {
           sale.items = bySale.get(String(sale.id)) || [];
+        }
+      } else {
+        for (const sale of sales) {
+          sale.items = [];
         }
       }
       res.json(sales);

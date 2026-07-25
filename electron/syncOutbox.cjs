@@ -177,9 +177,10 @@ function listPendingForUi() {
 }
 
 async function checkServerHealth(apiBase) {
-  const url = `${apiBase.replace(/\/$/, '')}/api/health`;
+  // lite=1 avoids heavy schema/product counts; Tailscale can be slower than LAN.
+  const url = `${apiBase.replace(/\/$/, '')}/api/health?lite=1`;
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 4000);
+  const t = setTimeout(() => ctrl.abort(), 8000);
   try {
     const res = await fetch(url, { signal: ctrl.signal });
     if (!res.ok) return false;
@@ -195,13 +196,16 @@ async function checkServerHealth(apiBase) {
 async function flushSqliteOutbox(apiBase, cdb) {
   const events = cdb.getPendingOutboxEvents('CITY_SERVER');
   let flushed = 0;
+  const errors = [];
 
   for (const ev of events) {
     let payload;
     try {
       payload = JSON.parse(ev.payload_json);
     } catch {
-      cdb.markOutboxFailed(ev.id, 'invalid payload_json', (ev.retry_count || 0) + 1);
+      const msg = 'invalid payload_json';
+      cdb.markOutboxFailed(ev.id, msg, (ev.retry_count || 0) + 1);
+      errors.push(msg);
       continue;
     }
 
@@ -251,14 +255,25 @@ async function flushSqliteOutbox(apiBase, cdb) {
         cdb.markOutboxSent(ev.id);
         flushed += 1;
       } else {
-        cdb.markOutboxFailed(ev.id, body.error || `HTTP ${res.status}`, (ev.retry_count || 0) + 1);
+        const msg = body.error || body.hint || `HTTP ${res.status}`;
+        cdb.markOutboxFailed(ev.id, msg, (ev.retry_count || 0) + 1);
+        errors.push(msg);
       }
     } catch (e) {
-      cdb.markOutboxFailed(ev.id, e.message, (ev.retry_count || 0) + 1);
+      const msg = e.message || 'fetch failed';
+      cdb.markOutboxFailed(ev.id, msg, (ev.retry_count || 0) + 1);
+      errors.push(msg);
     }
   }
 
-  return { flushed, pending: cdb.getPendingCount() };
+  const pending = cdb.getPendingCount();
+  return {
+    flushed,
+    pending,
+    target: apiBase,
+    reason: flushed > 0 ? (pending > 0 ? 'partial' : 'ok') : (pending > 0 ? 'ingest_failed' : 'ok'),
+    error: errors[0] || null,
+  };
 }
 
 async function flushToServer(apiBaseUrl) {
@@ -270,6 +285,7 @@ async function flushToServer(apiBaseUrl) {
       reason: 'server_unreachable',
       target: apiBase,
       pending: getPendingCount(),
+      error: `No response from ${apiBase}/api/health`,
     };
   }
 
@@ -281,6 +297,7 @@ async function flushToServer(apiBaseUrl) {
 
   const events = readJsonOutbox();
   let flushed = 0;
+  const errors = [];
 
   for (const ev of events) {
     if (ev.status === 'sent') continue;
@@ -307,18 +324,26 @@ async function flushToServer(apiBaseUrl) {
       } else {
         ev.attempts = (ev.attempts || 0) + 1;
         ev.status = 'failed';
-        ev.lastError = body.error || `HTTP ${res.status}`;
+        ev.lastError = body.error || body.hint || `HTTP ${res.status}`;
+        errors.push(ev.lastError);
       }
     } catch (e) {
       ev.attempts = (ev.attempts || 0) + 1;
       ev.status = 'failed';
       ev.lastError = e.message;
+      errors.push(e.message);
     }
   }
 
   const kept = events.filter((e) => e.status !== 'sent');
   writeJsonOutbox(kept);
-  return { flushed, pending: kept.length };
+  return {
+    flushed,
+    pending: kept.length,
+    target: apiBase,
+    reason: flushed > 0 ? (kept.length > 0 ? 'partial' : 'ok') : (kept.length > 0 ? 'ingest_failed' : 'ok'),
+    error: errors[0] || null,
+  };
 }
 
 module.exports = {

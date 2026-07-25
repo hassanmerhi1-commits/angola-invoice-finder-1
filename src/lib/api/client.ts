@@ -911,11 +911,23 @@ export const api = {
 
   // Sales
   sales: {
-    list: async (branchId?: string, opts?: { limit?: number; offset?: number }) => {
+    list: async (
+      branchId?: string,
+      opts?: {
+        limit?: number;
+        offset?: number;
+        light?: boolean;
+        dateFrom?: string;
+        dateTo?: string;
+      },
+    ) => {
       const params = new URLSearchParams();
       if (branchId) params.set('branchId', branchId);
       if (opts?.limit != null) params.set('limit', String(opts.limit));
       if (opts?.offset != null) params.set('offset', String(opts.offset));
+      if (opts?.light) params.set('light', '1');
+      if (opts?.dateFrom) params.set('dateFrom', opts.dateFrom);
+      if (opts?.dateTo) params.set('dateTo', opts.dateTo);
       const qs = params.toString();
       const endpoint = `/sales${qs ? `?${qs}` : ''}`;
       const { mergeSaleRows, readPendingSalesCache } = await import('@/lib/sync/pendingSalesCache');
@@ -933,17 +945,35 @@ export const api = {
           const sql = branchId
             ? 'SELECT * FROM sales WHERE branch_id = $1 ORDER BY created_at DESC'
             : 'SELECT * FROM sales ORDER BY created_at DESC';
-          const params = branchId ? [branchId] : [];
-          const salesResult = await ipcQuery<any>(sql, params);
+          const ipcParams = branchId ? [branchId] : [];
+          const salesResult = await ipcQuery<any>(sql, ipcParams);
           if (salesResult.data) {
-            for (const sale of salesResult.data) {
-              const itemsResult = await ipcQuery<any>(
-                'SELECT * FROM sale_items WHERE sale_id = $1',
-                [sale.id],
-              );
-              sale.items = itemsResult.data || [];
+            let rows = salesResult.data;
+            const from = opts?.dateFrom?.slice(0, 10);
+            const to = opts?.dateTo?.slice(0, 10);
+            if (from || to) {
+              rows = rows.filter((sale: any) => {
+                const day = String(sale.created_at || sale.createdAt || '').slice(0, 10);
+                if (from && day && day < from) return false;
+                if (to && day && day > to) return false;
+                return true;
+              });
             }
-            serverRows = salesResult.data;
+            if (opts?.limit != null) {
+              rows = rows.slice(opts.offset || 0, (opts.offset || 0) + opts.limit);
+            }
+            for (const sale of rows) {
+              if (opts?.light) {
+                sale.items = [];
+              } else {
+                const itemsResult = await ipcQuery<any>(
+                  'SELECT * FROM sale_items WHERE sale_id = $1',
+                  [sale.id],
+                );
+                sale.items = itemsResult.data || [];
+              }
+            }
+            serverRows = rows;
             serverError = undefined;
           }
         }
@@ -958,6 +988,17 @@ export const api = {
           prunePendingSalesCacheForServerRows(serverRows);
         }
         merged = mergeSaleRows(merged, [...localRows, ...pendingRows]);
+      }
+
+      const from = opts?.dateFrom?.slice(0, 10);
+      const to = opts?.dateTo?.slice(0, 10);
+      if ((from || to) && merged.length > 0) {
+        merged = merged.filter((sale: any) => {
+          const day = String(sale.created_at || sale.createdAt || '').slice(0, 10);
+          if (from && day && day < from) return false;
+          if (to && day && day > to) return false;
+          return true;
+        });
       }
 
       if (merged.length > 0) {
@@ -3068,9 +3109,19 @@ export const api = {
   },
 
   fiscalDocuments: {
-    listCreditNotes: (branchId?: string) => {
-      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
-      return apiFetch<any[]>(`/fiscal-documents/credit-notes${qs}`);
+    listCreditNotes: (
+      branchId?: string,
+      opts?: { light?: boolean; dateFrom?: string; dateTo?: string; limit?: number; offset?: number },
+    ) => {
+      const params = new URLSearchParams();
+      if (branchId) params.set('branchId', branchId);
+      if (opts?.light) params.set('light', '1');
+      if (opts?.dateFrom) params.set('dateFrom', opts.dateFrom);
+      if (opts?.dateTo) params.set('dateTo', opts.dateTo);
+      if (opts?.limit != null) params.set('limit', String(opts.limit));
+      if (opts?.offset != null) params.set('offset', String(opts.offset));
+      const qs = params.toString();
+      return apiFetch<any[]>(`/fiscal-documents/credit-notes${qs ? `?${qs}` : ''}`);
     },
     createCreditNote: (data: Record<string, unknown>) =>
       apiFetch<any>('/fiscal-documents/credit-notes', { method: 'POST', body: JSON.stringify(data) }),

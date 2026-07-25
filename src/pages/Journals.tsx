@@ -18,7 +18,7 @@ import { toast } from 'sonner';
 import {
   Plus, Search, Edit2, Trash2, RefreshCw, FileText,
   Calendar, Eye, Printer, Download, CheckCircle, XCircle,
-  Filter, ChevronLeft, ChevronRight, ExternalLink, Undo2,
+  Filter, ChevronLeft, ChevronRight, ExternalLink, Undo2, Loader2,
 } from 'lucide-react';
 import { mapAuditLogRow, type AuditLogRow } from '@/lib/auditLogDisplay';
 import {
@@ -100,31 +100,43 @@ function canReverseJournalEntry(entry: JournalDisplayEntry | null | undefined): 
   return ref !== 'journal_reversal';
 }
 
-function useJournalEntries(branchId: string | undefined, labels: JournalDisplayLabels) {
-  const cacheKey = `journalEntries:${branchId ?? 'all'}`;
+function useJournalEntries(
+  branchId: string | undefined,
+  labels: JournalDisplayLabels,
+  dateFrom?: string,
+  dateTo?: string,
+) {
+  const cacheKey = `journalEntries:${branchId ?? 'all'}:${dateFrom ?? ''}:${dateTo ?? ''}`;
   const [entries, setEntries] = useState<JournalDisplayEntry[]>(
     () => getCachedList<JournalDisplayEntry[]>(cacheKey) ?? [],
   );
+  const [isLoading, setIsLoading] = useState(false);
 
   const loadAll = useCallback(async () => {
+    const key = `journalEntries:${branchId ?? 'all'}:${dateFrom ?? ''}:${dateTo ?? ''}`;
+    // Drop previous branch rows immediately; seed only this scope's cache.
+    setEntries(getCachedList<JournalDisplayEntry[]>(key) ?? []);
+    setIsLoading(true);
+
     const allEntries: JournalDisplayEntry[] = [];
+    let fetchOk = false;
 
     try {
       const response = await api.journalEntries.list({
         ...(branchId ? { branchId } : {}),
+        ...(dateFrom ? { startDate: dateFrom } : {}),
+        ...(dateTo ? { endDate: dateTo } : {}),
         limit: 200,
         offset: 0,
       });
       if (response.error) {
         console.warn('[Journals] Failed to load journal entries:', response.error);
+      } else {
+        fetchOk = true;
       }
+      // Server already scopes by branchId / dates — no second client filter pass.
       const { items: rows } = unwrapListPayload<Record<string, unknown>>(response.data);
-      const journalEntries = branchId
-        ? rows.filter((je: Record<string, unknown>) =>
-            branchIdsEquivalent(String(je.branch_id ?? je.branchId), branchId),
-          )
-        : rows;
-      for (const je of journalEntries) {
+      for (const je of rows) {
         allEntries.push(mapJournalEntryFromApi(je as Record<string, unknown>, labels));
       }
     } catch {
@@ -148,6 +160,7 @@ function useJournalEntries(branchId: string | undefined, labels: JournalDisplayL
             lines: je.lines,
           } as Record<string, unknown>, labels));
         }
+        fetchOk = true;
       } catch { /* ignore */ }
     }
 
@@ -193,25 +206,21 @@ function useJournalEntries(branchId: string | undefined, labels: JournalDisplayL
     }
 
     allEntries.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    const key = `journalEntries:${branchId ?? 'all'}`;
-    if (allEntries.length === 0 && (getCachedList<JournalDisplayEntry[]>(key)?.length ?? 0) > 0) {
+    // Only keep stale cache when the network fetch failed; a real empty branch must clear.
+    if (!fetchOk && allEntries.length === 0 && (getCachedList<JournalDisplayEntry[]>(key)?.length ?? 0) > 0) {
+      setIsLoading(false);
       return;
     }
     setEntries(allEntries);
     setCachedList(key, allEntries);
-  }, [branchId, labels]);
+    setIsLoading(false);
+  }, [branchId, labels, dateFrom, dateTo]);
 
   useEffect(() => { void loadAll(); }, [loadAll]);
 
-  useEffect(() => {
-    const onScope = () => { void loadAll(); };
-    window.addEventListener('nexor:branch-scope-changed', onScope);
-    return () => window.removeEventListener('nexor:branch-scope-changed', onScope);
-  }, [loadAll]);
-
   useEffect(() => subscribeSupplierReturnsChanged(() => { void loadAll(); }), [loadAll]);
 
-  return { entries, refetch: loadAll };
+  return { entries, refetch: loadAll, isLoading };
 }
 
 // ============= NEW ENTRY LINE INTERFACE =============
@@ -514,7 +523,19 @@ export default function Journals() {
     fieldNif: t.journalsUi.detailNif,
   }), [t]);
 
-  const { entries, refetch } = useJournalEntries(listBranchId, journalLabels);
+  const [activeTab, setActiveTab] = useState('diarios');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [dateFrom, setDateFrom] = useState(() => localISODate());
+  const [dateTo, setDateTo] = useState(() => localISODate());
+  const [filterType, setFilterType] = useState('all');
+  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+
+  const { entries, refetch, isLoading: listLoading } = useJournalEntries(
+    listBranchId,
+    journalLabels,
+    dateFrom,
+    dateTo,
+  );
   const { accounts: chartAccounts, refetch: refetchChartAccounts } = useChartOfAccounts();
   const pickerAccounts = useMemo(
     () => chartAccounts.filter(a => a.is_active && !a.is_header),
@@ -525,12 +546,9 @@ export default function Journals() {
     [pickerAccounts],
   );
 
-  const [activeTab, setActiveTab] = useState('diarios');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [dateFrom, setDateFrom] = useState(() => localISODate());
-  const [dateTo, setDateTo] = useState(() => localISODate());
-  const [filterType, setFilterType] = useState('all');
-  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+  useEffect(() => {
+    setSelectedEntryId(null);
+  }, [listBranchId, activeTab]);
   const [viewEntryOpen, setViewEntryOpen] = useState(false);
 
   // New / edit entry dialog state
@@ -1046,7 +1064,14 @@ export default function Journals() {
         </TabsList>
 
         <TabsContent value="diarios" className="flex-1 m-0 overflow-auto">
-          <table className="w-full text-xs">
+          <div className="relative">
+          {listLoading && filteredEntries.length > 0 && (
+            <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-center gap-2 border-b bg-background/80 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {t.common.loading}
+            </div>
+          )}
+          <table className={cn('w-full text-xs', listLoading && filteredEntries.length > 0 && 'opacity-60 pointer-events-none')}>
             <thead className="bg-muted/60 border-b sticky top-0 z-10">
               <tr>
                 <th className="px-3 py-2 text-left font-semibold w-36">{t.journalsUi.colDateTime}</th>
@@ -1117,9 +1142,16 @@ export default function Journals() {
               </tr>
             </tfoot>
           </table>
-          {filteredEntries.length === 0 && (
+          {listLoading && filteredEntries.length === 0 && (
+            <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
+              <Loader2 className="h-8 w-8 animate-spin opacity-70" />
+              <p className="text-sm">{t.common.loading}</p>
+            </div>
+          )}
+          {!listLoading && filteredEntries.length === 0 && (
             <div className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.noEntriesFound}</div>
           )}
+          </div>
         </TabsContent>
 
         <TabsContent value="balancete" className="flex-1 m-0 overflow-hidden">

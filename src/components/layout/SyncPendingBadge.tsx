@@ -80,12 +80,25 @@ export function SyncPendingBadge() {
       await refresh();
       const flushed = Number(result?.flushed ?? 0);
       const pending = Number(result?.pending ?? 0);
-      if (flushed > 0) {
+      const reason = String(result?.reason || '');
+      const target = result?.target ? String(result.target) : '';
+      const detail = String(result?.error || '').trim()
+        || items.find((i) => i.lastError?.trim())?.lastError
+        || '';
+
+      if (flushed > 0 && pending <= 0) {
         toast.success(ui.syncOk.replace('{n}', String(flushed)));
-      } else if (result?.reason === 'server_unreachable' || pending > 0) {
-        // Show the host we actually tried — mismatched targets are the usual cause.
+      } else if (flushed > 0) {
+        toast.success(ui.syncOk.replace('{n}', String(flushed)), {
+          description: detail || (pending > 0 ? `${pending} still pending` : undefined),
+        });
+      } else if (reason === 'server_unreachable') {
         toast.error(ui.syncStillOffline, {
-          description: result?.target ? String(result.target) : undefined,
+          description: [target, detail].filter(Boolean).join('\n') || undefined,
+        });
+      } else if (pending > 0) {
+        toast.error(ui.syncIngestFailed, {
+          description: [detail, target].filter(Boolean).join('\n') || undefined,
         });
       } else {
         toast.message(ui.syncNothing);
@@ -95,7 +108,7 @@ export function SyncPendingBadge() {
     } finally {
       setSyncing(false);
     }
-  }, [refresh, syncing, ui.syncNothing, ui.syncOk, ui.syncStillOffline]);
+  }, [items, refresh, syncing, ui.syncIngestFailed, ui.syncNothing, ui.syncOk, ui.syncStillOffline]);
 
   const badgeLabel = useMemo(() => {
     if (language === 'pt') {

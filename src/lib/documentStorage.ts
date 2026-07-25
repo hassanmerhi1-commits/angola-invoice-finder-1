@@ -63,8 +63,13 @@ function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
   // ERPDocument convention: subtotal is the gross (pre-discount) goods value, with the
   // discount shown separately. Derive both from the lines so on-screen and printed
   // totals stay consistent (Mercadoria − Desconto + IVA = Total).
-  const grossSubtotal = Math.round(lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0) * 100) / 100;
-  const totalDiscount = Math.round(lines.reduce((s, l) => s + l.discountAmount, 0) * 100) / 100;
+  // Light list responses omit line items — fall back to sale header totals for the grid.
+  const grossSubtotal = lines.length
+    ? Math.round(lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0) * 100) / 100
+    : Number(sale.subtotal ?? sale.total ?? 0);
+  const totalDiscount = lines.length
+    ? Math.round(lines.reduce((s, l) => s + l.discountAmount, 0) * 100) / 100
+    : Number(sale.discountAmount ?? sale.discount_amount ?? sale.discount ?? 0);
 
   return {
     id: sale.id,
@@ -174,7 +179,7 @@ export function mapCreditNoteToDocument(
     entityType: 'customer',
     entityName: cn.customerName || finalConsumerLabel,
     entityNif: cn.customerNif,
-    lines: cn.items.map((item, idx) => ({
+    lines: (cn.items || []).map((item, idx) => ({
       id: `cn_${cn.id}_${idx}`,
       productId: item.productId || '',
       productSku: item.sku,
@@ -236,13 +241,19 @@ export async function getSalesInvoicesAsDocuments(
   branchNames: Record<string, string> = {},
   includeAllBranches = false,
   branchCatalog: BranchRef[] = [],
+  opts?: { light?: boolean; dateFrom?: string; dateTo?: string; limit?: number },
 ): Promise<ERPDocument[]> {
   let rows: any[] = [];
 
   if (isDemoMode()) {
     rows = await storage.getSales(includeAllBranches ? undefined : branchId);
   } else {
-    const res = await api.sales.list(includeAllBranches ? undefined : branchId);
+    const res = await api.sales.list(includeAllBranches ? undefined : branchId, {
+      light: opts?.light,
+      dateFrom: opts?.dateFrom,
+      dateTo: opts?.dateTo,
+      limit: opts?.limit ?? 200,
+    });
     if (res.error) {
       throw new Error(res.error);
     }
@@ -260,6 +271,17 @@ export async function getSalesInvoicesAsDocuments(
         ),
       );
     }
+  }
+
+  const from = opts?.dateFrom?.slice(0, 10);
+  const to = opts?.dateTo?.slice(0, 10);
+  if (from || to) {
+    rows = rows.filter((s) => {
+      const day = String(s.created_at || s.createdAt || '').slice(0, 10);
+      if (from && day && day < from) return false;
+      if (to && day && day > to) return false;
+      return true;
+    });
   }
 
   return rows

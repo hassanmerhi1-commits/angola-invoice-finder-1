@@ -2303,6 +2303,7 @@ export const en = {
     tooltipClickSync: "Click to sync now",
     syncOk: "Synced {n} item(s).",
     syncStillOffline: "Server still unreachable — sales stay pending.",
+    syncIngestFailed: "Server reachable, but sync was rejected.",
     syncNothing: "Nothing new to sync.",
   },
 
