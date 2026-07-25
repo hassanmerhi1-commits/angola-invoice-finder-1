@@ -3134,12 +3134,23 @@ export const api = {
         body: JSON.stringify({ documentType, branchId }),
       });
     },
-    stockMovements: (params?: { productId?: string; warehouseId?: string; referenceType?: string; limit?: number }) => {
+    stockMovements: (params?: {
+      productId?: string;
+      warehouseId?: string;
+      referenceType?: string;
+      limit?: number;
+      dateFrom?: string;
+      dateTo?: string;
+      adjustmentsOnly?: boolean;
+    }) => {
       const sp = new URLSearchParams();
       if (params?.productId) sp.append('productId', params.productId);
       if (params?.warehouseId) sp.append('warehouseId', params.warehouseId);
       if (params?.referenceType) sp.append('referenceType', params.referenceType);
       if (params?.limit) sp.append('limit', params.limit.toString());
+      if (params?.dateFrom) sp.append('dateFrom', params.dateFrom);
+      if (params?.dateTo) sp.append('dateTo', params.dateTo);
+      if (params?.adjustmentsOnly) sp.append('adjustmentsOnly', '1');
 
       if (isElectronMode()) {
         return apiFetch<any[]>(`/transactions/stock-movements?${sp}`).then(result => {
@@ -3157,6 +3168,25 @@ export const api = {
           if (params?.productId) { sql += ` AND sm.product_id = $${idx++}`; sqlParams.push(params.productId); }
           if (params?.warehouseId) { sql += ` AND sm.warehouse_id = $${idx++}`; sqlParams.push(params.warehouseId); }
           if (params?.referenceType) { sql += ` AND sm.reference_type = $${idx++}`; sqlParams.push(params.referenceType); }
+          if (params?.dateFrom) {
+            sql += ` AND sm.created_at >= $${idx++}`;
+            sqlParams.push(`${params.dateFrom}T00:00:00`);
+          }
+          if (params?.dateTo) {
+            sql += ` AND date(sm.created_at) <= date($${idx++})`;
+            sqlParams.push(params.dateTo);
+          }
+          if (params?.adjustmentsOnly) {
+            sql += ` AND COALESCE(sm.reference_type, '') != 'adjustment_void'
+              AND COALESCE(sm.notes, '') NOT LIKE '%[ANULADO]%'
+              AND (
+                UPPER(COALESCE(sm.reference_number, '')) LIKE 'AJ-%'
+                OR LOWER(COALESCE(sm.reference_type, '')) IN (
+                  'adjustment', 'correction', 'damage', 'initial', 'loss', 'expired',
+                  'internal_use', 'sample', 'donation'
+                )
+              )`;
+          }
           sql += ` ORDER BY sm.created_at DESC LIMIT $${idx}`;
           sqlParams.push(params?.limit || 500);
           return ipcQuery<any>(sql, sqlParams);

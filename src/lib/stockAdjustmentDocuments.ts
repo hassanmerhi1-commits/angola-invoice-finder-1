@@ -42,8 +42,14 @@ export function isStockAdjustmentMovement(
   movement: Pick<StockMovement, 'reason' | 'referenceNumber' | 'notes'>,
 ): boolean {
   const reason = String(movement.reason || '').toLowerCase().trim();
+  const refNo = String(movement.referenceNumber || '').trim();
   if (reason === 'adjustment_void') return false;
   if (String(movement.notes || '').includes('[ANULADO]')) return false;
+
+  // Stock Entry / Exit docs (AJ-*) always belong in adjustment history, even when the
+  // operator picked reason "purchase" or "transfer_in" (those are NOT purchase invoices).
+  if (/^AJ-/i.test(refNo)) return true;
+
   if (NON_ADJUSTMENT_REASONS.has(reason)) return false;
   if (
     reason === 'adjustment'
@@ -52,10 +58,13 @@ export function isStockAdjustmentMovement(
     || reason === 'initial'
     || reason === 'loss'
     || reason === 'expired'
+    || reason === 'internal_use'
+    || reason === 'sample'
+    || reason === 'donation'
   ) {
     return true;
   }
-  return /^AJ-/i.test(String(movement.referenceNumber || '').trim());
+  return false;
 }
 
 function documentGroupKey(movement: StockMovement): string {

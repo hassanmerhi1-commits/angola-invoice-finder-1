@@ -616,7 +616,7 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             ${rowFirstCost} AS first_cost,
             ${rowLastCost} AS last_cost,
             ${rowAvgCost} AS avg_cost,
-            ${sqlGridStockExpr('p')} AS stock,
+            0 AS stock,
             p.unit,
             p.tax_rate,
             $1 AS branch_id,
@@ -627,7 +627,13 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             ON ${sqlMovementSkuKey('p')} = sbs.sku_key
           WHERE ${productActive('p')}
             AND TRIM(COALESCE(p.sku, '')) != ''
-            AND ${catalogBranchClause}
+            AND (
+              ${emptyBranchIdClause(db, 'p.branch_id')}
+              OR ${catalogBranchClause}
+              OR ${db.engine === 'postgres'
+                ? 'p.branch_id IS DISTINCT FROM $1'
+                : 'CAST(p.branch_id AS TEXT) != CAST($1 AS TEXT)'}
+            )
             ${sqlHideCatalogWhenFilialHasSameSku()}
             AND NOT EXISTS (
               SELECT 1 FROM movement_skus ms
@@ -823,13 +829,41 @@ async function listProductsForBranchFast(branchKey) {
             p.unit, p.tax_rate, p.branch_id, p.supplier_id, p.supplier_name,
             p.is_active, p.created_at, p.updated_at`;
 
-  const query = `
-          SELECT ${listSelect}
+  // Company-wide catalog: any SKU not already owned by this filial (0 stock until
+  // purchase/transfer/adjust clones a local row). Prefer NULL / sede / MAIN masters.
+  const catalogPriority = db.engine === 'postgres'
+    ? `CASE
+         WHEN ${emptyBranchIdClause(db, 'p.branch_id')} THEN 0
+         WHEN ${catalogBranchClause} THEN 1
+         ELSE 2
+       END`
+    : `CASE
+         WHEN ${emptyBranchIdClause(db, 'p.branch_id')} THEN 0
+         WHEN ${catalogBranchClause} THEN 1
+         ELSE 2
+       END`;
+
+  const catalogSelect = db.engine === 'postgres'
+    ? `
+          SELECT DISTINCT ON (LOWER(TRIM(p.sku)))
+            p.id, p.name, p.sku, p.barcode, p.category,
+            ${rowPrice} AS price, p.price2, p.price3, p.price4,
+            p.cost, p.first_cost, p.last_cost, p.avg_cost,
+            0 AS stock,
+            p.unit, p.tax_rate,
+            $1 AS branch_id,
+            p.supplier_id, p.supplier_name,
+            p.is_active, p.created_at, p.updated_at
           FROM products p
-          WHERE ${productActive('p')} AND p.branch_id = $1
-
-          UNION ALL
-
+          WHERE ${productActive('p')}
+            AND TRIM(COALESCE(p.sku, '')) != ''
+            AND (
+              ${emptyBranchIdClause(db, 'p.branch_id')}
+              OR p.branch_id IS DISTINCT FROM $1
+            )
+            ${sqlHideCatalogWhenFilialHasSameSku()}
+          ORDER BY LOWER(TRIM(p.sku)), ${catalogPriority}, p.updated_at DESC NULLS LAST`
+    : `
           SELECT
             p.id, p.name, p.sku, p.barcode, p.category,
             ${rowPrice} AS price, p.price2, p.price3, p.price4,
@@ -842,8 +876,22 @@ async function listProductsForBranchFast(branchKey) {
           FROM products p
           WHERE ${productActive('p')}
             AND TRIM(COALESCE(p.sku, '')) != ''
-            AND ${catalogBranchClause}
-            ${sqlHideCatalogWhenFilialHasSameSku()}
+            AND (
+              ${emptyBranchIdClause(db, 'p.branch_id')}
+              OR CAST(p.branch_id AS TEXT) != CAST($1 AS TEXT)
+            )
+            ${sqlHideCatalogWhenFilialHasSameSku()}`;
+
+  const query = `
+          SELECT * FROM (
+            SELECT ${listSelect}
+            FROM products p
+            WHERE ${productActive('p')} AND p.branch_id = $1
+
+            UNION ALL
+
+            ${catalogSelect}
+          ) listed
           ORDER BY name`;
   const result = await db.query(query, params);
   return dedupeRowsBySkuFast(result.rows, branchKey, mainBranchIds);
@@ -1233,7 +1281,20 @@ async function listProductsForBranch(branchKey, lightList) {
                 p.branch_id IN (
                   SELECT id FROM branches
                   WHERE ${headOfficeBranchWhere(db)}
+                     OR UPPER(TRIM(COALESCE(code, ''))) = 'MAIN'
+                     OR UPPER(TRIM(COALESCE(code, ''))) LIKE 'SEDE%'
+                     OR LOWER(COALESCE(name, '')) LIKE '%sede%'
                 )
+                AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+                AND NOT EXISTS (
+                  SELECT 1 FROM products bx
+                  WHERE ${productActive('bx')} AND bx.branch_id = $1
+                    AND LOWER(TRIM(COALESCE(bx.sku, ''))) = LOWER(TRIM(p.sku))
+                )
+              )
+              OR (
+                -- Company-wide master: SKU exists on another branch but not yet on this filial
+                p.branch_id IS DISTINCT FROM $1
                 AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
                 AND NOT EXISTS (
                   SELECT 1 FROM products bx

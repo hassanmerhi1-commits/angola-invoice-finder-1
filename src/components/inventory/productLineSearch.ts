@@ -149,10 +149,11 @@ export const filterProductsForSearch = (
 
 export const newLineRowId = () => `row_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-/** Limit search/picker to the branch selected in the dialog header. */
+/** Limit search/picker to the branch selected in the dialog header.
+ *  Shared catalog rows (no branch) stay visible — qty may be 0 until purchase/transfer. */
 export function filterProductsForBranch(products: Product[], branchId: string): Product[] {
   if (!branchId) return products;
-  return products.filter((p) => !p.branchId || p.branchId === branchId);
+  return products.filter((p) => !p.branchId || p.branchId === branchId || p.branchId === 'all');
 }
 
 /** Resolve the product row for a branch + SKU (same code, different branch ids). */
@@ -168,7 +169,7 @@ export function findProductForBranchSku(
   );
 }
 
-/** Stock quantity for a SKU at the target branch (0 if no row exists yet). */
+/** Stock quantity for a SKU at the target branch (0 if no local row exists yet). */
 export function getProductStockAtBranch(
   products: Product[],
   sku: string,

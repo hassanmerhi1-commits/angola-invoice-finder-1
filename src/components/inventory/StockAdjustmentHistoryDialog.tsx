@@ -19,7 +19,7 @@ export function StockAdjustmentHistoryDialog({
         <DialogHeader>
           <DialogTitle>{t.adjustmentHistoryUi.title}</DialogTitle>
         </DialogHeader>
-        <StockAdjustmentHistoryReport />
+        {open ? <StockAdjustmentHistoryReport key="adj-history-open" /> : null}
       </DialogContent>
     </Dialog>
   );

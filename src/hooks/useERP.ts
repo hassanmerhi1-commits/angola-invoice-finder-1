@@ -185,12 +185,15 @@ function filterProductsForApiScope(
 ): Product[] {
   if (!branchId) return products;
   const key = String(branchId).trim();
-  const isMainScope = catalogBranchIds.includes(key);
+  const catalogSet = new Set(catalogBranchIds.map((id) => String(id).trim()).filter(Boolean));
+  const isMainScope = catalogSet.has(key);
   return products.filter((p) => {
     const owner = String(p.branchId || '').trim();
     if (!owner) return true;
     if (owner === key) return true;
-    if (isMainScope && catalogBranchIds.includes(owner)) return true;
+    // Sede / MAIN / regional hub masters are visible on every filial (qty may be 0).
+    if (catalogSet.has(owner)) return true;
+    if (isMainScope && catalogSet.has(owner)) return true;
     return false;
   });
 }
@@ -216,7 +219,15 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
   const productsCacheKey = `products:${branchId ?? 'all'}:${listOptions?.light ? 'light' : 'full'}`;
   const { branches } = useBranchContext();
   const catalogBranchIds = useMemo(
-    () => branches.filter((b) => normalizeIsMain(b.isMain)).map((b) => b.id),
+    () =>
+      branches
+        .filter((b) => {
+          if (normalizeIsMain(b.isMain)) return true;
+          const code = String(b.code || '').trim().toUpperCase();
+          const name = String(b.name || '').trim().toLowerCase();
+          return code === 'MAIN' || code.startsWith('SEDE') || name.includes('sede');
+        })
+        .map((b) => b.id),
     [branches],
   );
   const [products, setProducts] = useState<Product[]>(
@@ -233,7 +244,11 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     try {
       const response = await api.products.list(branchId, listOptions);
       if (!response.error && Array.isArray(response.data)) {
-        apiProducts = filterProductsForApiScope(response.data.map(mapProduct), branchId);
+        apiProducts = filterProductsForApiScope(
+          response.data.map(mapProduct),
+          branchId,
+          catalogBranchIds,
+        );
       }
     } catch (e) {
       console.warn('[useProducts] API list failed:', e);

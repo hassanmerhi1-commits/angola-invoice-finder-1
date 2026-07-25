@@ -193,7 +193,7 @@ module.exports = function(broadcastTable) {
   // ==================== STOCK MOVEMENTS ====================
   router.get('/stock-movements', async (req, res) => {
     try {
-      const { productId, referenceType, limit } = req.query;
+      const { productId, referenceType, limit, dateFrom, dateTo, adjustmentsOnly } = req.query;
       const warehouseId = resolveWarehouseId(req, req.query.warehouseId);
       if (warehouseId === undefined) {
         return res.json([]);
@@ -211,11 +211,39 @@ module.exports = function(broadcastTable) {
       if (productId) { query += ` AND sm.product_id = $${idx++}`; params.push(productId); }
       if (warehouseId) { query += ` AND sm.warehouse_id = $${idx++}`; params.push(warehouseId); }
       if (referenceType) { query += ` AND sm.reference_type = $${idx++}`; params.push(referenceType); }
+
+      const from = String(dateFrom || '').trim();
+      const to = String(dateTo || '').trim();
+      if (from) {
+        query += ` AND sm.created_at >= $${idx++}::timestamptz`;
+        params.push(`${from}T00:00:00`);
+      }
+      if (to) {
+        query += ` AND sm.created_at < ($${idx++}::date + INTERVAL '1 day')`;
+        params.push(to);
+      }
+
+      const onlyAdj = String(adjustmentsOnly || '').toLowerCase();
+      if (onlyAdj === '1' || onlyAdj === 'true' || onlyAdj === 'yes') {
+        // Include AJ-* stock entry/exit docs even when reason was purchase/transfer.
+        query += ` AND COALESCE(sm.reference_type, '') <> 'adjustment_void'
+          AND COALESCE(sm.notes, '') NOT LIKE '%[ANULADO]%'
+          AND (
+            sm.reference_number ~* '^AJ-'
+            OR LOWER(COALESCE(sm.reference_type, '')) IN (
+              'adjustment', 'correction', 'damage', 'initial', 'loss', 'expired',
+              'internal_use', 'sample', 'donation'
+            )
+          )`;
+      }
+
+      const lim = Math.min(Math.max(parseInt(String(limit || ''), 10) || 500, 1), 5000);
       query += ` ORDER BY sm.created_at DESC LIMIT $${idx++}`;
-      params.push(parseInt(limit) || 500);
+      params.push(lim);
       const result = await db.query(query, params);
       res.json(result.rows.map(mapStockMovementRow));
     } catch (error) {
+      console.error('[STOCK MOVEMENTS]', error);
       res.status(500).json({ error: 'Failed to fetch stock movements' });
     }
   });

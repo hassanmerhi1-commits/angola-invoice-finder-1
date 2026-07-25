@@ -17,8 +17,22 @@ async function loadMainBranchIds(clientOrDb) {
   if (mainBranchIdsCache && now - mainBranchIdsCacheAt < MAIN_BRANCH_CACHE_MS) {
     return mainBranchIdsCache;
   }
+  // Match UI "head office" detection: is_main, code MAIN/SEDE*, or name contains "sede".
+  // Regional hubs (e.g. Sede Soyo) must count as catalog sources so filials see the full list.
   const result = await q.query(
-    `SELECT id FROM branches WHERE ${headOfficeBranchWhere(db)}`,
+    `SELECT id FROM branches
+     WHERE ${headOfficeBranchWhere(db)}
+        OR UPPER(TRIM(COALESCE(code, ''))) = 'MAIN'
+        OR UPPER(TRIM(COALESCE(code, ''))) LIKE 'SEDE%'
+        OR LOWER(COALESCE(name, '')) LIKE '%sede%'
+     ORDER BY
+       CASE
+         WHEN ${headOfficeBranchWhere(db)} THEN 0
+         WHEN UPPER(TRIM(COALESCE(code, ''))) = 'MAIN' THEN 1
+         WHEN UPPER(TRIM(COALESCE(code, ''))) LIKE 'SEDE%' THEN 2
+         ELSE 3
+       END,
+       name`,
   );
   mainBranchIdsCache = result.rows.map((row) => String(row.id).trim()).filter(Boolean);
   mainBranchIdsCacheAt = now;

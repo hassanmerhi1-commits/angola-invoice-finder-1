@@ -503,6 +503,7 @@ export function StockEntryDialog({
       const branchId = entryBranchId;
       if (!branchId) return product;
       if ((product.branchId || '') === branchId) return product;
+      // Prefer local row; otherwise keep catalog/sede id — server clones on post.
       return findProductForBranchSku(searchableProducts, product.sku, branchId) ?? product;
     },
     [searchableProducts, entryBranchId],

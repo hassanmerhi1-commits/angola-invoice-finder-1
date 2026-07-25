@@ -55,6 +55,7 @@ import {
   filterProductsForSearch,
   findProductForBranchSku,
   newLineRowId,
+  normalizeSearchText,
   remapLineProductIdsForBranch,
   sortProductSearchResults,
 } from './productLineSearch';
@@ -457,20 +458,23 @@ export function StockExitDialog({
       const resolved = resolveProductForExit(product);
       if (!resolved) {
         const stockAtBranch = findProductForBranchSku(searchableProducts, product.sku, exitBranchId);
-        if (!stockAtBranch || (stockAtBranch.stock ?? 0) <= 0) {
-          toast({
-            title: stockAtBranch
-              ? t.stockExitUi.noStockTitle
-              : t.stockExitUi.productNotInBranchTitle,
-            description: stockAtBranch
-              ? t.stockExitUi.noStockDesc.replace('{sku}', product.sku || '')
-              : t.stockExitUi.productNotInBranchDesc.replace(
-                  '{branch}',
-                  resolveBranchName(exitBranchId),
-                ),
-            variant: 'destructive',
-          });
-        }
+        const skuKnown = searchableProducts.some(
+          (p) => normalizeSearchText(p.sku) === normalizeSearchText(product.sku),
+        );
+        // Exit needs qty > 0. Catalog/sede SKUs with 0 at this branch are "no stock", not "missing".
+        const treatAsNoStock = Boolean(stockAtBranch) || skuKnown;
+        toast({
+          title: treatAsNoStock
+            ? t.stockExitUi.noStockTitle
+            : t.stockExitUi.productNotInBranchTitle,
+          description: treatAsNoStock
+            ? t.stockExitUi.noStockDesc.replace('{sku}', product.sku || '')
+            : t.stockExitUi.productNotInBranchDesc.replace(
+                '{branch}',
+                resolveBranchName(exitBranchId),
+              ),
+          variant: 'destructive',
+        });
         return;
       }
       const stock = resolved.stock ?? 0;

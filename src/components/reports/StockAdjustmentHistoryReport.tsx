@@ -113,19 +113,29 @@ export default function StockAdjustmentHistoryReport() {
     setLoading(true);
     try {
       const result = await api.transactions.stockMovements({
-        warehouseId: branchFilter || apiBranchId,
-        limit: 5000,
+        warehouseId: branchFilter || apiBranchId || undefined,
+        dateFrom: startDate || undefined,
+        dateTo: endDate || undefined,
+        adjustmentsOnly: true,
+        limit: 2000,
       });
       if (result.data && Array.isArray(result.data)) {
         setMovements(result.data.map((row) => mapMovementRow(row as Record<string, unknown>)));
         return;
       }
+      const local = await getLocalStockMovements(branchFilter || apiBranchId);
+      setMovements(local);
     } catch {
-      /* fall through */
+      try {
+        const local = await getLocalStockMovements(branchFilter || apiBranchId);
+        setMovements(local);
+      } catch {
+        setMovements([]);
+      }
+    } finally {
+      setLoading(false);
     }
-    const local = await getLocalStockMovements(branchFilter || apiBranchId);
-    setMovements(local);
-  }, [apiBranchId, branchFilter]);
+  }, [apiBranchId, branchFilter, startDate, endDate]);
 
   useEffect(() => {
     void loadMovements();
@@ -180,10 +190,11 @@ export default function StockAdjustmentHistoryReport() {
         dateFrom: startDate,
         dateTo: endDate,
         direction,
-        branchId: branchFilter || apiBranchId,
+        // Empty branchFilter = all branches (don't fall back to apiBranchId and hide other sites).
+        branchId: branchFilter || undefined,
         searchTerm,
       }),
-    [documents, startDate, endDate, direction, branchFilter, apiBranchId, searchTerm],
+    [documents, startDate, endDate, direction, branchFilter, searchTerm],
   );
 
   const formatMoney = (value: number) =>
