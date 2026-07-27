@@ -1241,6 +1241,8 @@ export const pt: TranslationKeys = {
     generatedAt: "Gerado em",
     period: "Período",
     allDates: "Todas as datas",
+    thisMonth: "Este mês",
+    showingLatest: "A mostrar os últimos {limit} movimentos — restrinja o período para ver entradas mais antigas.",
     filterByType: "Todos os tipos",
   },
 

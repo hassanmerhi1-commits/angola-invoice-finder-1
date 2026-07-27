@@ -146,10 +146,15 @@ function ensureEssentialAccounts(accounts: Account[]): Account[] {
  * Creates accounts like 454 Caixa - Sede, 455 Caixa - Luanda, etc.
  * Call this on app init / when branches are loaded.
  */
-export async function ensureBranchCaixaAccounts(branches: { id: string; name: string }[]): Promise<void> {
-  if (!branches || branches.length === 0) return;
+/** Returns true when at least one branch caixa account was created. */
+export async function ensureBranchCaixaAccounts(
+  branches: { id: string; name: string }[],
+  preloaded?: Account[],
+): Promise<boolean> {
+  if (!branches || branches.length === 0) return false;
 
-  let accounts = await tryLoadAccountsFromApi();
+  let accounts: Account[] | null =
+    preloaded && preloaded.length > 0 ? [...preloaded] : await tryLoadAccountsFromApi();
   const usingApi = accounts !== null;
 
   if (!accounts) {
@@ -159,22 +164,22 @@ export async function ensureBranchCaixaAccounts(branches: { id: string; name: st
   const parent = accounts.find(a => a.code === '45');
   if (!parent) {
     console.warn('[CoA Engine] Parent account 45 (Caixa) not found');
-    return;
+    return false;
   }
+
+  // Fast exit: every branch already has a 45x leaf — avoid create/list round-trips.
+  const missing = branches.filter((branch) => !accounts!.find(a =>
+    a.code.startsWith('45') &&
+    a.level >= 2 &&
+    !a.is_header &&
+    (a.branch_id === branch.id || a.name.includes(branch.name))
+  ));
+  if (missing.length === 0) return false;
 
   let changed = false;
   const now = new Date().toISOString();
 
-  for (const branch of branches) {
-    // Check if this branch already has a caixa account
-    const existing = accounts.find(a =>
-      a.code.startsWith('45') &&
-      a.level >= 2 &&
-      !a.is_header &&
-      (a.branch_id === branch.id || a.name.includes(branch.name))
-    );
-
-    if (existing) continue;
+  for (const branch of missing) {
 
     // Find next free 45x code (451–453 reserved by PGC).
     const children = accounts.filter(
@@ -236,6 +241,7 @@ export async function ensureBranchCaixaAccounts(branches: { id: string; name: st
   if (changed) {
     saveAccountsLocal(accounts);
   }
+  return changed;
 }
 
 // ============= SUPPLIER ACCOUNT =============

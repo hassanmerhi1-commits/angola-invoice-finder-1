@@ -215,8 +215,10 @@ export default function Invoices() {
     const cacheKey = `invoicesDocs:${activeTab}:${listBranchId ?? 'all'}:${dateFrom}:${dateTo}`;
     // Drop previous branch/tab rows immediately; seed only this scope's cache.
     setSelectedDocId(null);
-    setDocuments(getCachedList<ERPDocument[]>(cacheKey) ?? []);
-    setListLoading(true);
+    const cached = getCachedList<ERPDocument[]>(cacheKey) ?? [];
+    setDocuments(cached);
+    // Soft refresh when we already have rows — keep table interactive.
+    setListLoading(cached.length === 0);
 
     let cancelled = false;
     const listOpts = { light: true as const, dateFrom, dateTo, limit: 200 };
@@ -234,17 +236,18 @@ export default function Invoices() {
           return;
         }
 
+        // Tab-scoped: don't wait on purchases when viewing sales (and vice versa).
         const loadSales = !type || type === 'fatura_venda';
         const loadPurchase = !type || type === 'fatura_compra';
+        const loadFiscalCreditNotes = !type || type === 'nota_credito';
 
-        const loadFiscalCreditNotes = !type;
         const [storedDocs, salesDocs, purchaseDocs, cnRes] = await Promise.all([
           getDocuments(type, branchFilter),
           loadSales
             ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog, listOpts)
             : Promise.resolve([]),
           loadPurchase
-            ? getPurchaseInvoicesAsDocuments(listBranchId, branchNames, branchCatalog, isHeadOffice)
+            ? getPurchaseInvoicesAsDocuments(listBranchId, branchNames, branchCatalog, isHeadOffice, listOpts)
             : Promise.resolve([]),
           loadFiscalCreditNotes
             ? api.fiscalDocuments.listCreditNotes(listBranchId, listOpts)
@@ -265,6 +268,9 @@ export default function Invoices() {
           }
           // Local erp_documents copies are stale; fiscal API is canonical for credit notes.
           if (doc.documentType === 'nota_credito') continue;
+          // Tab-scoped local docs: skip purchase rows when not loading purchases, etc.
+          if (type === 'fatura_venda' && doc.documentType === 'fatura_compra') continue;
+          if (type === 'fatura_compra' && doc.documentType === 'fatura_venda') continue;
           merged.push(doc);
           if (doc.documentNumber) seenNumbers.add(doc.documentNumber);
         }
@@ -283,8 +289,8 @@ export default function Invoices() {
       } catch (err) {
         console.error('[Invoices] load failed:', err);
         // Keep showing the last cached list instead of blanking the tab on a transient failure.
-        const cached = getCachedList<ERPDocument[]>(cacheKey);
-        if (!cached || cached.length === 0) {
+        const cachedErr = getCachedList<ERPDocument[]>(cacheKey);
+        if (!cachedErr || cachedErr.length === 0) {
           toast.error(err instanceof Error ? err.message : t.common.loading);
         }
       } finally {

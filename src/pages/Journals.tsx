@@ -32,7 +32,7 @@ import { cn, generateId } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Account } from '@/types/accounting';
 import { api } from '@/lib/api/client';
-import { getCachedList, setCachedList, unwrapListPayload } from '@/lib/listCache';
+import { getCachedList, setCachedList, unwrapListPayload, isCachedListFresh } from '@/lib/listCache';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
 import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
 import {
@@ -112,11 +112,19 @@ function useJournalEntries(
   );
   const [isLoading, setIsLoading] = useState(false);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (opts?: { force?: boolean }) => {
     const key = `journalEntries:${branchId ?? 'all'}:${dateFrom ?? ''}:${dateTo ?? ''}`;
+    const cached = getCachedList<JournalDisplayEntry[]>(key) ?? [];
     // Drop previous branch rows immediately; seed only this scope's cache.
-    setEntries(getCachedList<JournalDisplayEntry[]>(key) ?? []);
-    setIsLoading(true);
+    setEntries(cached);
+
+    if (!opts?.force && isCachedListFresh(key) && cached.length > 0) {
+      setIsLoading(false);
+      return;
+    }
+
+    // Soft refresh when we already have rows — keep table interactive.
+    setIsLoading(cached.length === 0);
 
     const allEntries: JournalDisplayEntry[] = [];
     let fetchOk = false;
@@ -218,9 +226,9 @@ function useJournalEntries(
 
   useEffect(() => { void loadAll(); }, [loadAll]);
 
-  useEffect(() => subscribeSupplierReturnsChanged(() => { void loadAll(); }), [loadAll]);
+  useEffect(() => subscribeSupplierReturnsChanged(() => { void loadAll({ force: true }); }), [loadAll]);
 
-  return { entries, refetch: loadAll, isLoading };
+  return { entries, refetch: () => loadAll({ force: true }), isLoading };
 }
 
 // ============= NEW ENTRY LINE INTERFACE =============
@@ -530,13 +538,29 @@ export default function Journals() {
   const [filterType, setFilterType] = useState('all');
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
 
+  // New / edit entry dialog state — declare before CoA so we can defer the chart fetch.
+  const [viewEntryOpen, setViewEntryOpen] = useState(false);
+  const [newEntryOpen, setNewEntryOpen] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editingEntryNumber, setEditingEntryNumber] = useState<string>('');
+  const [savingEntry, setSavingEntry] = useState(false);
+  const [reversingEntry, setReversingEntry] = useState(false);
+  const [newEntryDate, setNewEntryDate] = useState(new Date().toISOString().split('T')[0]);
+  const [newEntryType, setNewEntryType] = useState('ajuste');
+  const [newEntryLines, setNewEntryLines] = useState<NewEntryLine[]>([createEmptyLine(), createEmptyLine()]);
+  const [accountSearch, setAccountSearch] = useState('');
+  const [activeLineId, setActiveLineId] = useState<string | null>(null);
+
   const { entries, refetch, isLoading: listLoading } = useJournalEntries(
     listBranchId,
     journalLabels,
     dateFrom,
     dateTo,
   );
-  const { accounts: chartAccounts, refetch: refetchChartAccounts } = useChartOfAccounts();
+  // Defer CoA until the New/Edit dialog opens — list view does not need the full chart.
+  const { accounts: chartAccounts, refetch: refetchChartAccounts } = useChartOfAccounts({
+    enabled: newEntryOpen,
+  });
   const pickerAccounts = useMemo(
     () => chartAccounts.filter(a => a.is_active && !a.is_header),
     [chartAccounts],
@@ -549,19 +573,6 @@ export default function Journals() {
   useEffect(() => {
     setSelectedEntryId(null);
   }, [listBranchId, activeTab]);
-  const [viewEntryOpen, setViewEntryOpen] = useState(false);
-
-  // New / edit entry dialog state
-  const [newEntryOpen, setNewEntryOpen] = useState(false);
-  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
-  const [editingEntryNumber, setEditingEntryNumber] = useState<string>('');
-  const [savingEntry, setSavingEntry] = useState(false);
-  const [reversingEntry, setReversingEntry] = useState(false);
-  const [newEntryDate, setNewEntryDate] = useState(new Date().toISOString().split('T')[0]);
-  const [newEntryType, setNewEntryType] = useState('ajuste');
-  const [newEntryLines, setNewEntryLines] = useState<NewEntryLine[]>([createEmptyLine(), createEmptyLine()]);
-  const [accountSearch, setAccountSearch] = useState('');
-  const [activeLineId, setActiveLineId] = useState<string | null>(null);
 
   useEffect(() => {
     if (newEntryOpen) {

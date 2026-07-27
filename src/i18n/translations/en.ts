@@ -1239,6 +1239,8 @@ export const en = {
     generatedAt: "Generated at",
     period: "Period",
     allDates: "All dates",
+    thisMonth: "This month",
+    showingLatest: "Showing the latest {limit} movements — narrow the date range for older entries.",
     filterByType: "All types",
   },
 

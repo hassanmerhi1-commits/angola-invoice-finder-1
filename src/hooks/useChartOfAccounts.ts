@@ -90,24 +90,61 @@ const createLocalId = () =>
     ? generateId()
     : `local-coa-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-export function useChartOfAccounts() {
+/** CoA structure changes rarely; longer TTL avoids re-hitting city on every tab visit. */
+const COA_CACHE_FRESH_MS = 180_000;
+
+export function useChartOfAccounts(opts?: { enabled?: boolean }) {
+  const enabled = opts?.enabled !== false;
   const { t } = useTranslation();
   const cachedAccounts = getCachedList<Account[]>('chartOfAccounts');
   const [accounts, setAccounts] = useState<Account[]>(() => cachedAccounts ?? []);
-  const [isLoading, setIsLoading] = useState(() => !(cachedAccounts && cachedAccounts.length));
+  const [isLoading, setIsLoading] = useState(() => enabled && !(cachedAccounts && cachedAccounts.length));
   const [error, setError] = useState<string | null>(null);
   const branchCaixaSeeded = useRef(false);
   // Once we have rows to show, background refreshes shouldn't flash the spinner.
   const hasRowsRef = useRef((cachedAccounts?.length ?? 0) > 0);
+  const liveBalancesInFlight = useRef(false);
 
-  const fetchAccounts = useCallback(async (opts?: { force?: boolean }) => {
-    if (!opts?.force && isCachedListFresh('chartOfAccounts') && hasRowsRef.current) {
+  const applyAccounts = useCallback((remoteAccounts: Account[]) => {
+    const sorted = sortAccountsByCode(remoteAccounts);
+    setAccounts(sorted);
+    setCachedList('chartOfAccounts', sorted);
+    hasRowsRef.current = sorted.length > 0;
+    saveLocalAccounts(sorted);
+  }, []);
+
+  /** Merge live journal-computed balances into the already-shown tree (no spinner). */
+  const refreshLiveBalances = useCallback(async () => {
+    if (liveBalancesInFlight.current) return;
+    liveBalancesInFlight.current = true;
+    try {
+      const response = await api.chartOfAccounts.list({ liveBalances: true });
+      if (response.error || !response.data?.length) return;
+      applyAccounts(sortAccountsByCode(response.data));
+      setError(null);
+    } catch (err: any) {
+      console.warn('[useChartOfAccounts] Live balance refresh failed:', err?.message || err);
+    } finally {
+      liveBalancesInFlight.current = false;
+    }
+  }, [applyAccounts]);
+
+  const fetchAccounts = useCallback(async (opts?: { force?: boolean; liveBalances?: boolean }) => {
+    if (
+      !opts?.force
+      && !opts?.liveBalances
+      && isCachedListFresh('chartOfAccounts', COA_CACHE_FRESH_MS)
+      && hasRowsRef.current
+    ) {
       setIsLoading(false);
       return;
     }
     try {
       if (!hasRowsRef.current) setIsLoading(true);
-      const response = await api.chartOfAccounts.list();
+      // Fast path: stored balances. Manual Refresh / force can request live totals.
+      const response = await api.chartOfAccounts.list(
+        opts?.liveBalances ? { liveBalances: true } : undefined,
+      );
       if (response.error) throw new Error(response.error);
       let remoteAccounts = sortAccountsByCode(response.data || []);
       if (remoteAccounts.length === 0) {
@@ -122,10 +159,12 @@ export function useChartOfAccounts() {
       } else {
         saveLocalAccounts(remoteAccounts);
       }
-      setAccounts(remoteAccounts);
-      setCachedList('chartOfAccounts', remoteAccounts);
-      hasRowsRef.current = remoteAccounts.length > 0;
+      applyAccounts(remoteAccounts);
       setError(null);
+      // After a fast paint, upgrade balances in the background (skip if we already asked live).
+      if (!opts?.liveBalances && remoteAccounts.length > 0) {
+        void refreshLiveBalances();
+      }
     } catch (err: any) {
       // Keep last good server data — don't flash zeroed seed over live balances.
       if (hasRowsRef.current) {
@@ -134,9 +173,7 @@ export function useChartOfAccounts() {
       } else {
         const local = loadLocalAccounts(t);
         if (local.length > 0) {
-          setAccounts(local);
-          setCachedList('chartOfAccounts', local);
-          hasRowsRef.current = true;
+          applyAccounts(local);
           setError(null);
         } else {
           setError(err.message || 'Failed to fetch accounts');
@@ -146,45 +183,46 @@ export function useChartOfAccounts() {
     } finally {
       setIsLoading(false);
     }
-  }, [t]);
+  }, [t, applyAccounts, refreshLiveBalances]);
 
   useTableRefreshListener(['chart_of_accounts', 'journal_entries', 'payments'], () => {
+    if (!enabled) return;
     markCachedListStale('chartOfAccounts');
     void fetchAccounts({ force: true });
   });
 
-  // Auto-seed branch caixa accounts once after first load (skip second CoA fetch if still fresh).
+  // Auto-seed branch caixa accounts once after first load — only refetch if something was created.
   useEffect(() => {
-    if (isLoading || branchCaixaSeeded.current || accounts.length === 0) return;
+    if (!enabled || isLoading || branchCaixaSeeded.current || accounts.length === 0) return;
     branchCaixaSeeded.current = true;
 
-    // Fetch branches from API instead of storage
+    const run = (branches: { id: string; name: string }[]) => {
+      if (branches.length === 0) return;
+      void ensureBranchCaixaAccounts(branches, accounts).then((created) => {
+        if (!created) return;
+        markCachedListStale('chartOfAccounts');
+        void fetchAccounts({ force: true });
+      });
+    };
+
     api.branches.list().then(response => {
-      const branches = response.data || [];
-      if (branches.length > 0) {
-        ensureBranchCaixaAccounts(branches.map((b: any) => ({ id: b.id, name: b.name }))).then(() => {
-          markCachedListStale('chartOfAccounts');
-          void fetchAccounts({ force: true });
-        });
-      }
+      run((response.data || []).map((b: any) => ({ id: b.id, name: b.name })));
     }).catch(() => {
-      // Fallback: read from localStorage
       try {
         const raw = localStorage.getItem('kwanzaerp_branches');
         const branches = raw ? JSON.parse(raw) : [];
-        if (branches.length > 0) {
-          ensureBranchCaixaAccounts(branches.map((b: any) => ({ id: b.id, name: b.name }))).then(() => {
-            markCachedListStale('chartOfAccounts');
-            void fetchAccounts({ force: true });
-          });
-        }
+        run(branches.map((b: any) => ({ id: b.id, name: b.name })));
       } catch { /* ignore */ }
     });
-  }, [isLoading, accounts.length, t, fetchAccounts]);
+  }, [enabled, isLoading, accounts, fetchAccounts]);
 
   useEffect(() => {
+    if (!enabled) {
+      setIsLoading(false);
+      return;
+    }
     void fetchAccounts();
-  }, [fetchAccounts]);
+  }, [enabled, fetchAccounts]);
 
   const createAccount = async (data: AccountFormData): Promise<Account> => {
     try {

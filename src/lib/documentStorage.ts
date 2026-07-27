@@ -222,10 +222,16 @@ export async function getPurchaseInvoicesAsDocuments(
   branchNames: Record<string, string> = {},
   branchCatalog: BranchRef[] = [],
   includeAllBranches = false,
+  opts?: { dateFrom?: string; dateTo?: string; limit?: number },
 ): Promise<ERPDocument[]> {
   const invoices = await getPurchaseInvoices(
     includeAllBranches ? undefined : branchId,
     branchCatalog,
+    {
+      dateFrom: opts?.dateFrom,
+      dateTo: opts?.dateTo,
+      limit: opts?.limit ?? 200,
+    },
   );
   return invoices
     .map((inv) => {

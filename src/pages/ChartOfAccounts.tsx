@@ -577,7 +577,7 @@ export default function ChartOfAccounts() {
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={handleResetToPgc} disabled={isReseeding} title={t.chartOfAccountsUi.resetPgcTooltip}>
           <RotateCcw className={cn('w-3 h-3', isReseeding && 'animate-spin')} /> {t.chartOfAccountsUi.resetPgc}
         </Button>
-        <Button variant="outline" size="icon" className="h-7 w-7" onClick={refetch}><RefreshCw className="w-3 h-3" /></Button>
+        <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => void refetch({ force: true, liveBalances: true })}><RefreshCw className="w-3 h-3" /></Button>
         <div className="flex-1" />
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />

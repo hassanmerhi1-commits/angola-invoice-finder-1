@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,16 @@ import { NEXOR_PILL_BTN, NEXOR_PILL_BTN_PRIMARY } from '@/lib/nexorToolbarStyles
 import { NEXOR_STAT_CARD } from '@/lib/nexorToneStyles';
 import { formatDisplayDate } from '@/lib/formatDisplayDate';
 
+const LEDGER_FETCH_LIMIT = 500;
+
+function currentMonthBounds(): { from: string; to: string } {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const lastDay = String(new Date(y, now.getMonth() + 1, 0).getDate()).padStart(2, '0');
+  return { from: `${y}-${m}-01`, to: `${y}-${m}-${lastDay}` };
+}
+
 interface LedgerEntry {
   id: string;
   journal_entry_id: string;
@@ -71,8 +81,10 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
   const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [startDate, setStartDate] = useState(() => currentMonthBounds().from);
+  const [endDate, setEndDate] = useState(() => currentMonthBounds().to);
+  const [truncated, setTruncated] = useState(false);
+  const pendingOpenReset = useRef(false);
 
   const refTypeLabels: Record<string, string> = useMemo(() => ({
     sale: t.ledgerUi.refSale,
@@ -100,6 +112,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
         startDate || undefined,
         endDate || undefined,
         undefined,
+        { limit: LEDGER_FETCH_LIMIT },
       );
       if (res.error) {
         console.error('Failed to fetch ledger:', res.error);
@@ -109,25 +122,42 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
           : raw;
         toast.error(friendly);
         setEntries([]);
+        setTruncated(false);
         return;
       }
-      setEntries(res.data || []);
+      const rows = res.data || [];
+      setEntries(rows);
+      setTruncated(rows.length >= LEDGER_FETCH_LIMIT);
     } catch (e) {
       console.error('Failed to fetch ledger:', e);
       toast.error(e instanceof Error ? e.message : t.ledgerUi.loadError);
       setEntries([]);
+      setTruncated(false);
     } finally {
       setIsLoading(false);
     }
   }, [account, startDate, endDate, t.ledgerUi.loadError, t.ledgerUi.serverUnreachable]);
 
   useEffect(() => {
-    if (open && account) {
-      setSearchTerm('');
-      setTypeFilter('all');
-      void fetchLedger();
+    if (!open || !account) return;
+    setSearchTerm('');
+    setTypeFilter('all');
+    pendingOpenReset.current = true;
+    // Reset to current month each open — keeps first paint fast over Tailscale.
+    const bounds = currentMonthBounds();
+    setStartDate(bounds.from);
+    setEndDate(bounds.to);
+  }, [open, account?.id]);
+
+  useEffect(() => {
+    if (!open || !account) return;
+    if (pendingOpenReset.current) {
+      const bounds = currentMonthBounds();
+      if (startDate !== bounds.from || endDate !== bounds.to) return;
+      pendingOpenReset.current = false;
     }
-  }, [open, account?.id, fetchLedger]);
+    void fetchLedger();
+  }, [open, account?.id, startDate, endDate, fetchLedger]);
 
   const filtered = useMemo(() => entries.filter((e) => {
     if (typeFilter !== 'all' && e.reference_type !== typeFilter) return false;
@@ -414,9 +444,38 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
               ))}
             </SelectContent>
           </Select>
-          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-9 text-sm w-40 rounded-lg border-slate-200/80 bg-white" />
-          <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-9 text-sm w-40 rounded-lg border-slate-200/80 bg-white" />
+          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-9 text-sm w-40 rounded-lg border-slate-200/80 bg-white" title={t.ledgerUi.startDate} />
+          <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-9 text-sm w-40 rounded-lg border-slate-200/80 bg-white" title={t.ledgerUi.endDate} />
+          <Button
+            variant="outline"
+            size="sm"
+            className={NEXOR_PILL_BTN}
+            onClick={() => {
+              const bounds = currentMonthBounds();
+              setStartDate(bounds.from);
+              setEndDate(bounds.to);
+            }}
+          >
+            {t.ledgerUi.thisMonth}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={NEXOR_PILL_BTN}
+            onClick={() => {
+              setStartDate('');
+              setEndDate('');
+            }}
+          >
+            {t.ledgerUi.allDates}
+          </Button>
         </div>
+
+        {truncated && (
+          <div className="shrink-0 rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
+            {t.ledgerUi.showingLatest.replace('{limit}', String(LEDGER_FETCH_LIMIT))}
+          </div>
+        )}
 
         {/* Summary cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 shrink-0">

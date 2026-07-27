@@ -212,7 +212,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
 
   router.get('/', async (req, res) => {
     try {
-      const { branchId, status } = req.query;
+      const { branchId, status, dateFrom, dateTo } = req.query;
       const { limit, offset } = parseListPagination(req, { defaultLimit: 300, maxLimit: 1000 });
       // List payload omits heavy JSON blobs so LAN clients do not time out / hang.
       let query = `SELECT id, invoice_number, supplier_account_code, supplier_name, supplier_id,
@@ -241,6 +241,18 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       if (status) {
         query += ` AND status = $${idx++}`;
         params.push(status);
+      }
+      // Prefer document date; fall back to created_at when date is empty.
+      const dayExpr = db.engine === 'postgres'
+        ? `COALESCE(NULLIF(TRIM(date::text), ''), to_char(created_at::date, 'YYYY-MM-DD'))`
+        : `COALESCE(NULLIF(TRIM(CAST(date AS TEXT)), ''), substr(CAST(created_at AS TEXT), 1, 10))`;
+      if (dateFrom) {
+        query += ` AND (${dayExpr}) >= $${idx++}`;
+        params.push(String(dateFrom).slice(0, 10));
+      }
+      if (dateTo) {
+        query += ` AND (${dayExpr}) <= $${idx++}`;
+        params.push(String(dateTo).slice(0, 10));
       }
       query += ` ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
       params.push(limit, offset);

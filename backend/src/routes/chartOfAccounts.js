@@ -8,11 +8,29 @@ const { auditErpSafe } = require('../lib/erpAudit');
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
-  // Get all accounts with hierarchy — balances computed from posted journals
-  // so the tree matches ledger drill-down (stored current_balance can drift).
+  // Fast list uses stored current_balance (no journal aggregate).
+  // Pass ?liveBalances=1 to recompute from posted journals (slower; for Refresh / background merge).
   router.get('/', async (req, res) => {
     try {
+      const liveBalances =
+        req.query.liveBalances === '1'
+        || req.query.liveBalances === 'true'
+        || req.query.liveBalances === 'yes';
       const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
+      const balanceSelect = liveBalances
+        ? `COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0) AS current_balance`
+        : `COALESCE(coa.current_balance, coa.opening_balance, 0) AS current_balance`;
+      const journalJoin = liveBalances
+        ? `LEFT JOIN (
+          SELECT jel.account_id,
+                 SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
+          FROM journal_entry_lines jel
+          INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+          WHERE (je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)
+          GROUP BY jel.account_id
+        ) j ON ${idText('j.account_id')} = ${idText('coa.id')}
+           OR ${idText('j.account_id')} = ${idText('coa.code')}`
+        : '';
       const result = await db.query(`
         SELECT 
           coa.id,
@@ -32,7 +50,7 @@ module.exports = function(broadcastTable) {
           parent.name as parent_name,
           parent.code as parent_code,
           COALESCE(kids.children_count, 0) as children_count,
-          COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0) AS current_balance
+          ${balanceSelect}
         FROM chart_of_accounts coa
         LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
         LEFT JOIN (
@@ -41,19 +59,11 @@ module.exports = function(broadcastTable) {
           WHERE parent_id IS NOT NULL
           GROUP BY parent_id
         ) kids ON kids.parent_id = coa.id
-        LEFT JOIN (
-          SELECT jel.account_id,
-                 SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
-          FROM journal_entry_lines jel
-          INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-          WHERE (je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)
-          GROUP BY jel.account_id
-        ) j ON ${idText('j.account_id')} = ${idText('coa.id')}
-           OR ${idText('j.account_id')} = ${idText('coa.code')}
+        ${journalJoin}
         WHERE coa.is_active = true
         ORDER BY coa.code
       `);
-      res.set('Cache-Control', 'private, max-age=15');
+      res.set('Cache-Control', liveBalances ? 'private, max-age=15' : 'private, max-age=60');
       res.json(result.rows);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
@@ -403,7 +413,11 @@ module.exports = function(broadcastTable) {
   router.get('/:id/ledger', async (req, res) => {
     try {
       const { id } = req.params;
-      const { start_date, end_date } = req.query;
+      const { start_date, end_date, limit: limitRaw } = req.query;
+      const parsedLimit = parseInt(String(limitRaw || '500'), 10);
+      const limit = Number.isFinite(parsedLimit)
+        ? Math.min(Math.max(parsedLimit, 1), 2000)
+        : 500;
 
       const rootRes = await db.query(
         `SELECT id, code, name, opening_balance, current_balance, is_header
@@ -450,17 +464,11 @@ module.exports = function(broadcastTable) {
         ? 'LEFT JOIN branches b ON b.id::text = je.branch_id::text'
         : 'LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(je.branch_id AS TEXT)';
 
-      // Split parent walk + code-prefix into separate CTEs.
-      // Postgres rejects a 3-arm UNION inside one WITH RECURSIVE (self-ref must be
-      // only in the recursive term) — that made city ledger return 500 / empty.
-      const result = await db.query(`
-        WITH RECURSIVE by_parent AS (
-          SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}
-          UNION
-          SELECT c.id, c.code, c.name
-          FROM chart_of_accounts c
-          INNER JOIN by_parent t ON ${idText('c.parent_id')} = ${idText('t.id')}
-        ),
+      // Leaf accounts: parent walk alone (just this id). Headers also expand by PGC code prefix
+      // when parent_id links are incomplete — that LIKE is expensive on busy trees.
+      const expandByCode = root.is_header === true || root.is_header === 1 || root.is_header === '1';
+      const byCodeCte = expandByCode
+        ? `,
         by_code AS (
           SELECT id, code, name
           FROM chart_of_accounts
@@ -473,11 +481,29 @@ module.exports = function(broadcastTable) {
                 AND ${idText('code')} LIKE CAST($2 AS TEXT) || '%'
               )
             )
-        ),
-        account_tree AS (
-          SELECT id, code, name FROM by_parent
+        )`
+        : '';
+      const accountTreeSelect = expandByCode
+        ? `SELECT id, code, name FROM by_parent
           UNION
-          SELECT id, code, name FROM by_code
+          SELECT id, code, name FROM by_code`
+        : `SELECT id, code, name FROM by_parent`;
+
+      // Split parent walk + code-prefix into separate CTEs.
+      // Postgres rejects a 3-arm UNION inside one WITH RECURSIVE (self-ref must be
+      // only in the recursive term) — that made city ledger return 500 / empty.
+      const limitParam = `$${paramIndex++}`;
+      params.push(limit);
+      const result = await db.query(`
+        WITH RECURSIVE by_parent AS (
+          SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}
+          UNION
+          SELECT c.id, c.code, c.name
+          FROM chart_of_accounts c
+          INNER JOIN by_parent t ON ${idText('c.parent_id')} = ${idText('t.id')}
+        )${byCodeCte},
+        account_tree AS (
+          ${accountTreeSelect}
         )
         SELECT DISTINCT
           jel.id,
@@ -507,6 +533,7 @@ module.exports = function(broadcastTable) {
         WHERE ${postedClause}
           ${dateFilter}
         ORDER BY (${entryDateExpr}) DESC, je.created_at DESC
+        LIMIT ${limitParam}
       `, params);
 
       // Leaf with opening balance only: surface it as a synthetic line so drill-down
@@ -557,6 +584,8 @@ module.exports = function(broadcastTable) {
         }
       }
 
+      res.set('X-Ledger-Limit', String(limit));
+      res.set('X-Ledger-Has-More', String((result.rows || []).length >= limit));
       res.json(result.rows);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);

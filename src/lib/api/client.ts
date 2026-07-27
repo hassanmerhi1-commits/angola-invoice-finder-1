@@ -1687,12 +1687,21 @@ export const api = {
   },
 
   purchaseInvoices: {
-    list: (params?: { branchId?: string; status?: string; limit?: number; offset?: number }) => {
+    list: (params?: {
+      branchId?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+      dateFrom?: string;
+      dateTo?: string;
+    }) => {
       const sp = new URLSearchParams();
       if (params?.branchId) sp.append('branchId', params.branchId);
       if (params?.status) sp.append('status', params.status);
       if (params?.limit != null) sp.append('limit', String(params.limit));
       if (params?.offset != null) sp.append('offset', String(params.offset));
+      if (params?.dateFrom) sp.append('dateFrom', params.dateFrom);
+      if (params?.dateTo) sp.append('dateTo', params.dateTo);
       const qs = sp.toString();
       return apiFetch<{ items: any[]; limit: number; offset: number; hasMore: boolean } | any[]>(
         `/purchase-invoices${qs ? `?${qs}` : ''}`,
@@ -1745,10 +1754,45 @@ export const api = {
 
   // Chart of Accounts
   chartOfAccounts: {
-    list: async () => {
-      const apiResult = await apiFetch<any[]>('/chart-of-accounts');
+    /** Fast by default (stored balances). Pass liveBalances for journal-recomputed totals. */
+    list: async (opts?: { liveBalances?: boolean }) => {
+      const qs = opts?.liveBalances ? '?liveBalances=1' : '';
+      const apiResult = await apiFetch<any[]>(`/chart-of-accounts${qs}`);
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
-      if (isElectronMode()) {
+      // Shop clients: never fall back to heavy IPC journal aggregates over legacy WS.
+      if (isElectronMode() && !isThinClientMode() && shouldTryIpcAfterApiFailure(apiResult)) {
+        if (opts?.liveBalances) {
+          return ipcQuery<any>(`
+            SELECT
+              coa.id,
+              coa.code,
+              coa.name,
+              coa.description,
+              coa.account_type,
+              coa.account_nature,
+              coa.parent_id,
+              coa.level,
+              coa.is_header,
+              coa.is_active,
+              coa.opening_balance,
+              coa.branch_id,
+              coa.created_at,
+              coa.updated_at,
+              parent.name AS parent_name,
+              parent.code AS parent_code,
+              (SELECT COUNT(*) FROM chart_of_accounts child WHERE child.parent_id = coa.id) AS children_count,
+              COALESCE(coa.opening_balance, 0) + COALESCE((
+                SELECT SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0))
+                FROM journal_entry_lines jel
+                INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+                WHERE jel.account_id = coa.id AND je.is_posted = 1
+              ), 0) AS current_balance
+            FROM chart_of_accounts coa
+            LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
+            WHERE coa.is_active = 1
+            ORDER BY coa.code
+          `);
+        }
         return ipcQuery<any>(`
           SELECT
             coa.id,
@@ -1768,12 +1812,7 @@ export const api = {
             parent.name AS parent_name,
             parent.code AS parent_code,
             (SELECT COUNT(*) FROM chart_of_accounts child WHERE child.parent_id = coa.id) AS children_count,
-            COALESCE(coa.opening_balance, 0) + COALESCE((
-              SELECT SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0))
-              FROM journal_entry_lines jel
-              INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-              WHERE jel.account_id = coa.id AND je.is_posted = 1
-            ), 0) AS current_balance
+            COALESCE(coa.current_balance, coa.opening_balance, 0) AS current_balance
           FROM chart_of_accounts coa
           LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
           WHERE coa.is_active = 1
@@ -1862,10 +1901,18 @@ export const api = {
       '/chart-of-accounts/reseed',
       { method: 'POST' },
     ),
-    getLedger: async (id: string, startDate?: string, endDate?: string, _branchId?: string) => {
+    getLedger: async (
+      id: string,
+      startDate?: string,
+      endDate?: string,
+      _branchId?: string,
+      opts?: { limit?: number },
+    ) => {
       const p = new URLSearchParams();
       if (startDate) p.append('start_date', startDate);
       if (endDate) p.append('end_date', endDate);
+      const limit = opts?.limit ?? 500;
+      p.append('limit', String(limit));
       // COA drill-down is company-wide — never send branchId (supplier AP spans filials).
       const qs = p.toString();
       const apiResult = await apiFetch<any[]>(
@@ -1943,7 +1990,8 @@ export const api = {
           sql += ` AND COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10)) <= $${params.length + 1}`;
           params.push(endDate);
         }
-        sql += ` ORDER BY COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10)) DESC, je.created_at DESC`;
+        sql += ` ORDER BY COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10)) DESC, je.created_at DESC LIMIT $${params.length + 1}`;
+        params.push(limit);
         const local = await ipcQuery<any>(sql, params);
         if (!local.error) return local;
       }

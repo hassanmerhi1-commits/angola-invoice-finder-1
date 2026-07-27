@@ -363,7 +363,7 @@ export function invoiceBelongsToBranch(
 export async function getPurchaseInvoices(
   branchId?: string,
   branchCatalog?: BranchRef[],
-  opts?: { limit?: number; offset?: number },
+  opts?: { limit?: number; offset?: number; dateFrom?: string; dateTo?: string },
 ): Promise<PurchaseInvoice[]> {
   const catalog = branchCatalog as Branch[] | undefined;
   const resolvedBranch = branchId
@@ -376,6 +376,8 @@ export async function getPurchaseInvoices(
       ...(resolvedBranch ? { branchId: resolvedBranch } : {}),
       limit: opts?.limit ?? 300,
       offset: opts?.offset ?? 0,
+      ...(opts?.dateFrom ? { dateFrom: opts.dateFrom } : {}),
+      ...(opts?.dateTo ? { dateTo: opts.dateTo } : {}),
     });
     if (res.error) {
       console.error('[PurchaseInvoice] API list failed:', res.error);
@@ -388,12 +390,32 @@ export async function getPurchaseInvoices(
     if (resolvedBranch) {
       docs = docs.filter((d) => invoiceBelongsToBranch(d, resolvedBranch, branchCatalog));
     }
+    const from = opts?.dateFrom?.slice(0, 10);
+    const to = opts?.dateTo?.slice(0, 10);
+    if (from || to) {
+      docs = docs.filter((d) => {
+        const day = String(d.date || d.createdAt || '').slice(0, 10);
+        if (from && day && day < from) return false;
+        if (to && day && day > to) return false;
+        return true;
+      });
+    }
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
   let docs = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []).map(normalizeInvoiceWarehouse);
   if (resolvedBranch) {
     docs = docs.filter((d) => invoiceBelongsToBranch(d, resolvedBranch, branchCatalog));
+  }
+  const from = opts?.dateFrom?.slice(0, 10);
+  const to = opts?.dateTo?.slice(0, 10);
+  if (from || to) {
+    docs = docs.filter((d) => {
+      const day = String(d.date || d.createdAt || '').slice(0, 10);
+      if (from && day && day < from) return false;
+      if (to && day && day > to) return false;
+      return true;
+    });
   }
   return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
