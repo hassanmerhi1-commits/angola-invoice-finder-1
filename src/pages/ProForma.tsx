@@ -46,8 +46,9 @@ export default function ProFormaPage() {
   const { currentBranch, apiBranchId } = useBranchScope();
   const { user } = useAuth();
   const branchId = apiBranchId || currentBranch?.id;
-  const { products } = useProducts(branchId, { light: true });
-  const { clients } = useClients();
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const { products } = useProducts(branchId, { light: true, enabled: showCreateDialog });
+  const { clients } = useClients(!showCreateDialog);
   const {
     proformas,
     refresh,
@@ -60,7 +61,6 @@ export default function ProFormaPage() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showViewDialog, setShowViewDialog] = useState(false);
   const [selectedProforma, setSelectedProforma] = useState<ProForma | null>(null);
   const [stats, setStats] = useState({ total: 0, draft: 0, sent: 0, accepted: 0, converted: 0, expired: 0, totalValue: 0, pendingValue: 0 });

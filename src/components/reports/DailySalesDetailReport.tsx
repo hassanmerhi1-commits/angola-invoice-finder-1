@@ -66,7 +66,7 @@ export function DailySalesDetailReport({
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId, currentBranch } = useBranchScope();
   const effectiveBranchId = branchId ?? apiBranchId;
-  const { sales } = useSales(effectiveBranchId);
+  const { sales } = useSales(effectiveBranchId, { light: false });
   const { products } = useProducts(effectiveBranchId, { light: true });
   const { categories } = useCategories();
   const printRef = useRef<HTMLDivElement>(null);

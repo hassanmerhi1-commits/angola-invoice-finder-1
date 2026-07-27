@@ -1391,7 +1391,7 @@ export default function PurchaseInvoices() {
 
   const { products, productsLoading, addProduct: addProductToStock, refreshProducts } = useProducts(
     productsBranchId,
-    { light: true },
+    { light: true, enabled: mode === 'create' || poCreateOpen },
   );
 
   // Purchase orders

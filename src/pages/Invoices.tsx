@@ -153,7 +153,8 @@ export default function Invoices() {
     converted: { label: t.documentStatus.converted, variant: 'secondary' },
   }), [t]);
   const { user } = useAuth();
-  const { clients } = useClients();
+  const [formOpen, setFormOpen] = useState(false);
+  const { clients } = useClients(!formOpen);
   const { hasPermission } = usePermissions(user?.id);
   const canSendAgt = hasPermission('agt_send');
   const canCreateCreditNote = hasPermission('credit_note_create');
@@ -176,7 +177,6 @@ export default function Invoices() {
   const [listLoading, setListLoading] = useState(false);
 
   // Dialog state
-  const [formOpen, setFormOpen] = useState(false);
   const [formDocType, setFormDocType] = useState<DocumentType>('fatura_venda');
   const [editDoc, setEditDoc] = useState<ERPDocument | null>(null);
   const [prefillDoc, setPrefillDoc] = useState<ERPDocument | null>(null);

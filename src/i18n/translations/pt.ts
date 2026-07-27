@@ -1205,6 +1205,8 @@ export const pt: TranslationKeys = {
     totalCredit: "Total Crédito",
     currentBalance: "Saldo Actual",
     noMovements: "Nenhum movimento registado nesta conta",
+    noMovementsHint: "Se o saldo não é zero, abra as subcontas (ou expanda o cabeçalho) — os movimentos costumam estar nas contas filhas.",
+    loadError: "Não foi possível carregar os movimentos da conta",
     noSearchResults: "Nenhum resultado para a pesquisa",
     date: "Data",
     journalNo: "Nº Diário",

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useBranchScope } from '@/hooks/useBranchScope';
 import { useCategories, useProducts } from '@/hooks/useERP';
 import { Category } from '@/types/erp';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -60,8 +61,10 @@ const initialFormData = {
 
 export default function Categories() {
   const { t } = useTranslation();
+  const { apiBranchId } = useBranchScope();
   const { categories, saveCategory, deleteCategory, createCategory } = useCategories();
-  const { products } = useProducts(undefined, { light: true });
+  // Branch-scoped light list for counts only — avoid company-wide catalog on this tab.
+  const { products } = useProducts(apiBranchId, { light: true });
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);

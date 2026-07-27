@@ -33,7 +33,7 @@ export default function SalesAnalysisReport({
   const dfLocale = language === 'pt' ? pt : enUS;
   const { apiBranchId } = useBranchScope();
   const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter();
-  const { sales } = useSales(apiBranchId);
+  const { sales } = useSales(apiBranchId, { light: false });
   const pivotCtx = useSalesPivotContext(apiBranchId);
 
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));

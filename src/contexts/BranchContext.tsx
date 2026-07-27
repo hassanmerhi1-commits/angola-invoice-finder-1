@@ -119,20 +119,21 @@ export function BranchProvider({ children }: { children: ReactNode }) {
       return false;
     };
 
+    // Paint instantly from last session, then refresh from API in background.
+    const hadCache = applyCachedBranches();
+    if (hadCache) setIsLoading(false);
+
     try {
       const response = await api.branches.list();
       if (response.data && Array.isArray(response.data) && response.data.length > 0) {
         applyBranchList(response.data.map((row) => mapBranchRow(row as Record<string, unknown>)));
-      } else {
+      } else if (!hadCache) {
         throw new Error('No branches from API');
       }
     } catch {
-      if (applyCachedBranches()) return;
-
-      if (!isDemoMode()) {
+      if (!hadCache && !applyCachedBranches() && !isDemoMode()) {
         setBranches([]);
         setCurrentBranchState(null);
-        return;
       }
     } finally {
       setIsLoading(false);

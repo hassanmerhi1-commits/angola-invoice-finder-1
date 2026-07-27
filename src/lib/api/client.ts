@@ -1839,28 +1839,47 @@ export const api = {
       );
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       if (isElectronMode()) {
+        // Match server: parent_id tree + PGC code-prefix children + id/code join.
         let sql = `
           WITH RECURSIVE account_tree AS (
-            SELECT id, code, name FROM chart_of_accounts WHERE id = $1
-            UNION ALL
+            SELECT id, code, name FROM chart_of_accounts WHERE id = $1 OR code = $1
+            UNION
             SELECT c.id, c.code, c.name
             FROM chart_of_accounts c
-            INNER JOIN account_tree t ON c.parent_id = t.id
+            INNER JOIN account_tree t ON CAST(c.parent_id AS TEXT) = CAST(t.id AS TEXT)
+            UNION
+            SELECT c.id, c.code, c.name
+            FROM chart_of_accounts c
+            WHERE c.is_active = 1
+              AND (
+                c.code = (SELECT code FROM chart_of_accounts WHERE id = $1 OR code = $1 LIMIT 1)
+                OR (
+                  length(c.code) > length((SELECT code FROM chart_of_accounts WHERE id = $1 OR code = $1 LIMIT 1))
+                  AND c.code LIKE ((SELECT code FROM chart_of_accounts WHERE id = $1 OR code = $1 LIMIT 1) || '%')
+                )
+              )
           )
-          SELECT jel.*, atree.code AS account_code, atree.name AS account_name,
+          SELECT DISTINCT jel.*, atree.code AS account_code, atree.name AS account_name,
                  je.entry_number, je.entry_date, je.description as journal_description,
                  je.reference_type, je.reference_id, je.branch_id,
                  b.name AS branch_name, je.is_posted, je.created_at as journal_created_at
           FROM journal_entry_lines jel
-          INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-          INNER JOIN account_tree atree ON atree.id = jel.account_id
+          INNER JOIN journal_entries je ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
+          INNER JOIN account_tree atree ON (
+            CAST(atree.id AS TEXT) = CAST(jel.account_id AS TEXT)
+            OR CAST(atree.code AS TEXT) = CAST(jel.account_id AS TEXT)
+          )
           LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(je.branch_id AS TEXT)
-          WHERE je.is_posted = true
+          WHERE (je.is_posted = 1 OR je.is_posted IS NULL)
         `;
         const params: any[] = [id];
-        if (startDate && endDate) {
-          sql += ' AND je.entry_date BETWEEN $2 AND $3';
-          params.push(startDate, endDate);
+        if (startDate) {
+          sql += ` AND je.entry_date >= $${params.length + 1}`;
+          params.push(startDate);
+        }
+        if (endDate) {
+          sql += ` AND je.entry_date <= $${params.length + 1}`;
+          params.push(endDate);
         }
         sql += ' ORDER BY je.entry_date DESC, je.created_at DESC';
         return ipcQuery<any>(sql, params);
@@ -1949,11 +1968,12 @@ export const api = {
 
   // Payments & Open Items
   payments: {
-    list: (params?: { entityType?: string; entityId?: string; branchId?: string }) => {
+    list: (params?: { entityType?: string; entityId?: string; branchId?: string; limit?: number }) => {
       const sp = new URLSearchParams();
       if (params?.entityType) sp.append('entityType', params.entityType);
       if (params?.entityId) sp.append('entityId', params.entityId);
       if (params?.branchId) sp.append('branchId', params.branchId);
+      if (params?.limit != null) sp.append('limit', String(params.limit));
       const query = sp.toString();
       return apiFetch<any[]>(`/payments${query ? `?${query}` : ''}`).then((res) => {
         if (res.data !== undefined || !isDemoMode()) return res;
@@ -3418,12 +3438,13 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(body),
       }),
-    openItems: (params?: { entityType?: string; entityId?: string; branchId?: string; status?: string }) => {
+    openItems: (params?: { entityType?: string; entityId?: string; branchId?: string; status?: string; limit?: number }) => {
       const sp = new URLSearchParams();
       if (params?.entityType) sp.append('entityType', params.entityType);
       if (params?.entityId) sp.append('entityId', params.entityId);
       if (params?.branchId) sp.append('branchId', params.branchId);
       if (params?.status) sp.append('status', params.status);
+      if (params?.limit != null) sp.append('limit', String(params.limit));
       const query = sp.toString();
       return apiFetch<any[]>(`/transactions/open-items${query ? `?${query}` : ''}`).then((res) => {
         if (res.data !== undefined || !isDemoMode()) return res;

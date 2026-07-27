@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo } from 'react';
-import { useAuth, useProducts } from '@/hooks/useERP';
+import { useAuth } from '@/hooks/useERP';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { normalizeIsMain, resolveUserBranch } from '@/lib/branchAccess';
+import { resolveUserBranch } from '@/lib/branchAccess';
 import { PRODUCTS_CHANGED_EVENT, SALES_CHANGED_EVENT } from '@/lib/storage';
 import { Branch, Product } from '@/types/erp';
 import {
@@ -26,13 +26,9 @@ function synthesizeBranch(id: string, nameHint?: string): Branch {
 }
 
 /**
- * POS — one products list per branch (+ main catalog prices when on a filial).
- * Uses the same inventory-grid path as Inventário. When the city server is down,
- * useInventoryGrid falls back to session/LAN caches and SQLite products_cache.
- *
- * Caixa users have no branch picker — branch comes from the user assignment
- * (or last known scope). We always resolve a Branch object when any id is known
- * so checkout never fails with "no branch selected" while the cart is usable.
+ * POS — one products list per branch.
+ * Inventory-grid already returns sellingPrices for filials; no second sede catalog fetch.
+ * Caixa branch is auto-resolved (no picker).
  */
 export function usePosProducts() {
   const { user } = useAuth();
@@ -58,15 +54,6 @@ export function usePosProducts() {
 
   const branchId = resolvedBranch?.id;
 
-  const mainBranch = useMemo(
-    () => catalog.find((b) => normalizeIsMain(b.isMain)) ?? catalog[0] ?? null,
-    [catalog],
-  );
-
-  const needsCatalogPrices = Boolean(
-    branchId && mainBranch?.id && branchId !== mainBranch.id,
-  );
-
   const {
     rows: branchProducts = [],
     loading: branchLoading,
@@ -78,24 +65,15 @@ export function usePosProducts() {
     enabled: !!branchId,
   });
 
-  const { products: catalogProducts = [], refreshProducts: refreshCatalog } = useProducts(
-    mainBranch?.id,
-    { light: true, enabled: needsCatalogPrices },
-  );
-
   const products = useMemo(() => {
     const hints = readSellingPriceHintsSession();
-    const priceBySku = buildSellingPriceBySku(
-      [...branchProducts, ...catalogProducts],
-      hints,
-    );
+    const priceBySku = buildSellingPriceBySku(branchProducts, hints);
     return branchProducts.map((row) => withSellingPriceFromMap(row, priceBySku));
-  }, [branchProducts, catalogProducts]);
+  }, [branchProducts]);
 
   const refreshProducts = useCallback(async () => {
     await refreshBranch();
-    if (needsCatalogPrices) await refreshCatalog();
-  }, [refreshBranch, refreshCatalog, needsCatalogPrices]);
+  }, [refreshBranch]);
 
   /** Immediate stock/qty update on the grid before the server round-trip. */
   const applySoldQuantities = useCallback(

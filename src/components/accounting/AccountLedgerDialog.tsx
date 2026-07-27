@@ -101,14 +101,21 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
         endDate || undefined,
         undefined,
       );
+      if (res.error) {
+        console.error('Failed to fetch ledger:', res.error);
+        toast.error(res.error);
+        setEntries([]);
+        return;
+      }
       setEntries(res.data || []);
     } catch (e) {
       console.error('Failed to fetch ledger:', e);
+      toast.error(e instanceof Error ? e.message : t.ledgerUi.loadError);
       setEntries([]);
     } finally {
       setIsLoading(false);
     }
-  }, [account, startDate, endDate]);
+  }, [account, startDate, endDate, t.ledgerUi.loadError]);
 
   useEffect(() => {
     if (open && account) {
@@ -436,8 +443,11 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
             </div>
           ) : filtered.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground text-sm">
-              {entries.length === 0 ? t.ledgerUi.noMovements : t.ledgerUi.noSearchResults}
+            <div className="text-center py-16 text-muted-foreground text-sm px-6 space-y-2">
+              <p>{entries.length === 0 ? t.ledgerUi.noMovements : t.ledgerUi.noSearchResults}</p>
+              {entries.length === 0 && Math.abs(Number(account?.current_balance) || 0) > 0.001 && (
+                <p className="text-xs max-w-md mx-auto">{t.ledgerUi.noMovementsHint}</p>
+              )}
             </div>
           ) : (
             <table className="w-full text-sm">

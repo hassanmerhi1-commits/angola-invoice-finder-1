@@ -16,12 +16,25 @@ module.exports = function(broadcastTable) {
       if (branchId) { query += ' WHERE branch_id = $1'; params.push(branchId); }
       query += ' ORDER BY created_at DESC';
       const result = await db.query(query, params);
-
-      for (let order of result.rows) {
-        const itemsResult = await db.query('SELECT * FROM purchase_order_items WHERE order_id = $1', [order.id]);
-        order.items = itemsResult.rows;
+      const orders = result.rows || [];
+      if (orders.length > 0) {
+        const ids = orders.map((o) => o.id);
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+        const itemsResult = await db.query(
+          `SELECT * FROM purchase_order_items WHERE order_id IN (${placeholders}) ORDER BY order_id`,
+          ids,
+        );
+        const byOrder = new Map();
+        for (const item of itemsResult.rows || []) {
+          const key = String(item.order_id);
+          if (!byOrder.has(key)) byOrder.set(key, []);
+          byOrder.get(key).push(item);
+        }
+        for (const order of orders) {
+          order.items = byOrder.get(String(order.id)) || [];
+        }
       }
-      res.json(result.rows);
+      res.json(orders);
     } catch (error) {
       console.error('[PURCHASE ORDERS ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch purchase orders' });

@@ -46,7 +46,7 @@ const statusConfig: Record<string, { labelKey: 'completed' | 'voided' | 'pending
 export default function Vendas() {
   const navigate = useNavigate();
   const { currentBranch, apiBranchId } = useBranchScope();
-  const { sales, refreshSales } = useSales(apiBranchId);
+  const { sales, refreshSales } = useSales(apiBranchId, { light: false });
   const company = getCompanySettings();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';

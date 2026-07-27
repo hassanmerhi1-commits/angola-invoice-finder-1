@@ -95,8 +95,11 @@ export default function SalesOrdersPage() {
   const { currentBranch, apiBranchId } = useBranchScope();
   const { user } = useAuth();
   const branchId = apiBranchId || currentBranch?.id;
-  const { products } = useProducts(branchId, { light: true });
-  const { clients } = useClients();
+  const [creating, setCreating] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const needCatalog = creating || editOpen;
+  const { products } = useProducts(branchId, { light: true, enabled: needCatalog });
+  const { clients } = useClients(!needCatalog);
 
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [loading, setLoading] = useState(false);
@@ -108,11 +111,9 @@ export default function SalesOrdersPage() {
   const [customerAddress, setCustomerAddress] = useState('');
   const [draftNotes, setDraftNotes] = useState('');
   const [clientPickerOpen, setClientPickerOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
   const [warehouses, setWarehouses] = useState<Array<{ id: string; code: string; name: string; isDefault?: boolean }>>([]);
   const [warehouseId, setWarehouseId] = useState('');
 
-  const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<SalesOrder | null>(null);
   const [editItems, setEditItems] = useState<SalesOrderItem[]>([]);
   const [editCustomer, setEditCustomer] = useState('');

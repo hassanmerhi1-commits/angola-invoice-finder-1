@@ -30,7 +30,7 @@ export default function ClientStatementReport() {
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
   const { clients } = useClients();
-  const { sales } = useSales(apiBranchId);
+  const { sales } = useSales(apiBranchId, { light: false });
   
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));

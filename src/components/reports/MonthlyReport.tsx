@@ -38,7 +38,7 @@ export default function MonthlyReport() {
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
   const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter();
-  const { sales } = useSales(apiBranchId);
+  const { sales } = useSales(apiBranchId, { light: false });
   const { products } = useProducts(apiBranchId, { light: true });
   const { companyName } = useCompanyLogo();
 

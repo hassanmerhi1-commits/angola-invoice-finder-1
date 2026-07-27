@@ -861,13 +861,23 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
   
   // Roll up children AND keep postings on the parent itself (payments often landed
   // on 321 before supplier leaves existed — dropping own balance made them vanish).
+  // Also include PGC code-prefix descendants when parent_id links are incomplete.
   const computeBalance = (acc: Account): number => {
-    const kids = allAccounts.filter(a => a.parent_id === acc.id);
     const own = Number(acc.current_balance) || 0;
-    if (kids.length === 0) return own;
-    return own + kids.reduce((sum, kid) => sum + computeBalance(kid), 0);
+    const byParent = allAccounts.filter((a) => a.parent_id === acc.id);
+    if (byParent.length > 0) {
+      return own + byParent.reduce((sum, kid) => sum + computeBalance(kid), 0);
+    }
+    const prefixKids = allAccounts.filter(
+      (a) =>
+        a.id !== acc.id
+        && String(a.code || '').startsWith(String(acc.code || ''))
+        && String(a.code || '').length > String(acc.code || '').length,
+    );
+    if (prefixKids.length === 0) return own;
+    return own + prefixKids.reduce((sum, kid) => sum + (Number(kid.current_balance) || 0), 0);
   };
-  
+
   const balance = hasChildren || account.is_header ? computeBalance(account) : (Number(account.current_balance) || 0);
 
   return (

@@ -713,13 +713,34 @@ function mapSaleRow(s: any): Sale {
   };
 }
 
-export function useSales(branchId?: string, deferInitialLoad = false) {
+export type UseSalesOptions = {
+  deferInitialLoad?: boolean;
+  /** Skip sale_items (headers only). Default true for faster lists. */
+  light?: boolean;
+  dateFrom?: string;
+  dateTo?: string;
+  limit?: number;
+};
+
+export function useSales(
+  branchId?: string,
+  deferOrOpts: boolean | UseSalesOptions = false,
+) {
   const { t } = useTranslation();
-  const salesCacheKey = `sales:${branchId ?? 'all'}`;
+  const opts: UseSalesOptions =
+    typeof deferOrOpts === 'boolean'
+      ? { deferInitialLoad: deferOrOpts, light: true }
+      : { light: true, ...deferOrOpts };
+  const light = opts.light !== false;
+  const deferInitialLoad = !!opts.deferInitialLoad;
+  const dateFrom = opts.dateFrom;
+  const dateTo = opts.dateTo;
+  const limit = opts.limit ?? 200;
+  const salesCacheKey = `sales:${branchId ?? 'all'}:${light ? 'light' : 'full'}:${dateFrom || ''}:${dateTo || ''}:${limit}`;
   const [sales, setSales] = useState<Sale[]>(() => getCachedList<Sale[]>(salesCacheKey) ?? []);
 
-  const refreshSales = useCallback(async (opts?: { force?: boolean }) => {
-    if (!opts?.force && isCachedListFresh(salesCacheKey)) {
+  const refreshSales = useCallback(async (optsRefresh?: { force?: boolean }) => {
+    if (!optsRefresh?.force && isCachedListFresh(salesCacheKey)) {
       const cached = getCachedList<Sale[]>(salesCacheKey);
       if (cached?.length) {
         setSales(cached);
@@ -729,7 +750,12 @@ export function useSales(branchId?: string, deferInitialLoad = false) {
     let data: any[] = [];
     let reachedServer = false;
     try {
-      const result = await api.sales.list(branchId, { limit: 200 });
+      const result = await api.sales.list(branchId, {
+        limit,
+        light,
+        dateFrom,
+        dateTo,
+      });
       if (result.data !== undefined) {
         data = Array.isArray(result.data) ? result.data : (result.data as any)?.items ?? [];
         reachedServer = true;
@@ -757,7 +783,7 @@ export function useSales(branchId?: string, deferInitialLoad = false) {
     const mapped = data.map(mapSaleRow);
     setSales(mapped);
     setCachedList(salesCacheKey, mapped);
-  }, [branchId, salesCacheKey]);
+  }, [branchId, salesCacheKey, light, dateFrom, dateTo, limit]);
 
   useEffect(() => {
     const onSalesChanged = () => {

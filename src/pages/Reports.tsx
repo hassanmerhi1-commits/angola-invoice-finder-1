@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
@@ -14,17 +14,27 @@ import { format } from 'date-fns';
 import {
   BarChart3, Users, Truck, TrendingUp, Calendar,
   FileText, Download, DollarSign, Check, ChevronDown,
-  Package, PieChart, ArrowUpRight, ShoppingCart,
+  Package, PieChart, ArrowUpRight, ShoppingCart, Loader2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import SalesAnalysisReport from '@/components/reports/SalesAnalysisReport';
-import ProfitabilityReport from '@/components/reports/ProfitabilityReport';
-import PurchasesAnalysisReport from '@/components/reports/PurchasesAnalysisReport';
-import InventoryReports from '@/components/reports/InventoryReports';
-import StatisticsReports from '@/components/reports/StatisticsReports';
-import MonthlyReport from '@/components/reports/MonthlyReport';
-import FinancialReports from '@/components/reports/FinancialReports';
-import StatementsReports from '@/components/reports/StatementsReports';
+
+const SalesAnalysisReport = lazy(() => import('@/components/reports/SalesAnalysisReport'));
+const ProfitabilityReport = lazy(() => import('@/components/reports/ProfitabilityReport'));
+const PurchasesAnalysisReport = lazy(() => import('@/components/reports/PurchasesAnalysisReport'));
+const InventoryReports = lazy(() => import('@/components/reports/InventoryReports'));
+const StatisticsReports = lazy(() => import('@/components/reports/StatisticsReports'));
+const MonthlyReport = lazy(() => import('@/components/reports/MonthlyReport'));
+const FinancialReports = lazy(() => import('@/components/reports/FinancialReports'));
+const StatementsReports = lazy(() => import('@/components/reports/StatementsReports'));
+
+function ReportTabFallback() {
+  return (
+    <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+      <Loader2 className="h-5 w-5 animate-spin" />
+      Loading…
+    </div>
+  );
+}
 
 interface DashboardKPIs {
   monthSales: { count: number; total: number };
@@ -440,35 +450,51 @@ export default function Reports() {
           </TabsContent>
 
           <TabsContent value="sales" className="mt-0">
-            <SalesAnalysisReport view={views.sales} onViewChange={(v) => setView('sales', v)} />
+            <Suspense fallback={<ReportTabFallback />}>
+              <SalesAnalysisReport view={views.sales} onViewChange={(v) => setView('sales', v)} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="purchases" className="mt-0">
-            <PurchasesAnalysisReport view={views.purchases} onViewChange={(v) => setView('purchases', v)} />
+            <Suspense fallback={<ReportTabFallback />}>
+              <PurchasesAnalysisReport view={views.purchases} onViewChange={(v) => setView('purchases', v)} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="profit" className="mt-0">
-            <ProfitabilityReport view={views.profit} onViewChange={(v) => setView('profit', v)} />
+            <Suspense fallback={<ReportTabFallback />}>
+              <ProfitabilityReport view={views.profit} onViewChange={(v) => setView('profit', v)} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="inventory" className="mt-0">
-            <InventoryReports view={views.inventory} onViewChange={(v) => setView('inventory', v)} />
+            <Suspense fallback={<ReportTabFallback />}>
+              <InventoryReports view={views.inventory} onViewChange={(v) => setView('inventory', v)} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="statistics" className="mt-0">
-            <StatisticsReports view={views.statistics} onViewChange={(v) => setView('statistics', v)} />
+            <Suspense fallback={<ReportTabFallback />}>
+              <StatisticsReports view={views.statistics} onViewChange={(v) => setView('statistics', v)} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="monthly" className="mt-0">
-            <MonthlyReport />
+            <Suspense fallback={<ReportTabFallback />}>
+              <MonthlyReport />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="financial" className="mt-0">
-            <FinancialReports view={views.financial} onViewChange={(v) => setView('financial', v)} />
+            <Suspense fallback={<ReportTabFallback />}>
+              <FinancialReports view={views.financial} onViewChange={(v) => setView('financial', v)} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="statements" className="mt-0">
-            <StatementsReports view={views.statements} onViewChange={(v) => setView('statements', v)} />
+            <Suspense fallback={<ReportTabFallback />}>
+              <StatementsReports view={views.statements} onViewChange={(v) => setView('statements', v)} />
+            </Suspense>
           </TabsContent>
         </div>
       </Tabs>

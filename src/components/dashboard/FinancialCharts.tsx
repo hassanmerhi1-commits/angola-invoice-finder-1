@@ -19,7 +19,14 @@ const ChartsDataContext = createContext<ChartsData | null>(null);
 
 export function DashboardChartsProvider({ children }: { children: ReactNode }) {
   const { apiBranchId } = useBranchScope();
-  const { sales } = useSales(apiBranchId);
+  const dateFrom = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return toLocalDateStr(d);
+  }, []);
+  const dateTo = useMemo(() => toLocalDateStr(new Date()), []);
+  // Charts need line items for top products — bound to last 30 days to stay fast.
+  const { sales } = useSales(apiBranchId, { light: false, dateFrom, dateTo, limit: 500 });
   const { products } = useProducts(apiBranchId, { light: true });
   const value = useMemo(() => ({ sales, products }), [sales, products]);
   return <ChartsDataContext.Provider value={value}>{children}</ChartsDataContext.Provider>;

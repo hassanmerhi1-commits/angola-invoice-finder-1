@@ -1203,6 +1203,8 @@ export const en = {
     totalCredit: "Total credit",
     currentBalance: "Current balance",
     noMovements: "No movements recorded for this account",
+    noMovementsHint: "If the balance is not zero, open the child accounts (or expand the header) — movements are often posted on sub-accounts.",
+    loadError: "Could not load account movements",
     noSearchResults: "No results for the search",
     date: "Date",
     journalNo: "Journal No.",

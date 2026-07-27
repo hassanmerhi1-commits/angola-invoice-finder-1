@@ -12,6 +12,7 @@ module.exports = function(broadcastTable) {
   // so the tree matches ledger drill-down (stored current_balance can drift).
   router.get('/', async (req, res) => {
     try {
+      const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
       const result = await db.query(`
         SELECT 
           coa.id,
@@ -45,9 +46,10 @@ module.exports = function(broadcastTable) {
                  SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
           FROM journal_entry_lines jel
           INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-          WHERE je.is_posted = true
+          WHERE (je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)
           GROUP BY jel.account_id
-        ) j ON j.account_id = coa.id
+        ) j ON ${idText('j.account_id')} = ${idText('coa.id')}
+           OR ${idText('j.account_id')} = ${idText('coa.code')}
         WHERE coa.is_active = true
         ORDER BY coa.code
       `);
@@ -396,19 +398,45 @@ module.exports = function(broadcastTable) {
 
   // Get account ledger (posted lines for this account + all descendants —
   // chart headers roll up child balances, so drill-down must include children).
+  // Include code-prefix children (PGC) when parent_id links are missing/incomplete.
   // Supplier/client AP/AR spans all filials — never filter by toolbar branchId.
   router.get('/:id/ledger', async (req, res) => {
     try {
       const { id } = req.params;
       const { start_date, end_date } = req.query;
 
-      let dateFilter = '';
-      const params = [id];
-      let paramIndex = 2;
+      const rootRes = await db.query(
+        `SELECT id, code, name, opening_balance, current_balance, is_header
+         FROM chart_of_accounts
+         WHERE id = $1 OR code = $1
+         LIMIT 1`,
+        [id],
+      );
+      const root = rootRes.rows[0];
+      if (!root) {
+        return res.status(404).json({ error: 'Account not found' });
+      }
 
-      if (start_date && end_date) {
-        dateFilter = `AND je.entry_date BETWEEN $${paramIndex++} AND $${paramIndex++}`;
-        params.push(start_date, end_date);
+      const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
+      const entryDateExpr = db.engine === 'postgres'
+        ? `COALESCE(
+            je.entry_date::text,
+            CASE WHEN je.created_at IS NOT NULL THEN to_char(je.created_at::date, 'YYYY-MM-DD') END
+          )`
+        : `COALESCE(CAST(je.entry_date AS TEXT), substr(CAST(je.created_at AS TEXT), 1, 10))`;
+
+      let dateFilter = '';
+      // $1 = root id, $2 = root code (for prefix expansion)
+      const params = [root.id, String(root.code || '')];
+      let paramIndex = 3;
+
+      if (start_date) {
+        dateFilter += ` AND je.entry_date >= $${paramIndex++}`;
+        params.push(start_date);
+      }
+      if (end_date) {
+        dateFilter += ` AND je.entry_date <= $${paramIndex++}`;
+        params.push(end_date);
       }
 
       const branchJoin = db.engine === 'postgres'
@@ -418,12 +446,23 @@ module.exports = function(broadcastTable) {
       const result = await db.query(`
         WITH RECURSIVE account_tree AS (
           SELECT id, code, name FROM chart_of_accounts WHERE id = $1
-          UNION ALL
+          UNION
           SELECT c.id, c.code, c.name
           FROM chart_of_accounts c
-          INNER JOIN account_tree t ON c.parent_id = t.id
+          INNER JOIN account_tree t ON ${idText('c.parent_id')} = ${idText('t.id')}
+          UNION
+          SELECT c.id, c.code, c.name
+          FROM chart_of_accounts c
+          WHERE c.is_active = true
+            AND (
+              c.code = $2
+              OR (
+                length(CAST(c.code AS TEXT)) > length(CAST($2 AS TEXT))
+                AND CAST(c.code AS TEXT) LIKE CAST($2 AS TEXT) || '%'
+              )
+            )
         )
-        SELECT 
+        SELECT DISTINCT
           jel.id,
           jel.journal_entry_id,
           jel.account_id,
@@ -433,10 +472,7 @@ module.exports = function(broadcastTable) {
           jel.debit_amount,
           jel.credit_amount,
           je.entry_number,
-          COALESCE(
-            je.entry_date::text,
-            CASE WHEN je.created_at IS NOT NULL THEN to_char(je.created_at::date, 'YYYY-MM-DD') END
-          ) AS entry_date,
+          ${entryDateExpr} AS entry_date,
           je.description as journal_description,
           je.reference_type,
           je.reference_id,
@@ -445,37 +481,50 @@ module.exports = function(broadcastTable) {
           je.is_posted,
           je.created_at as journal_created_at
         FROM journal_entry_lines jel
-        INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-        INNER JOIN account_tree atree ON atree.id = jel.account_id
+        INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
+        INNER JOIN account_tree atree ON (
+          ${idText('atree.id')} = ${idText('jel.account_id')}
+          OR ${idText('atree.code')} = ${idText('jel.account_id')}
+        )
         ${branchJoin}
-        WHERE je.is_posted = true ${dateFilter}
+        WHERE (je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)
+          ${dateFilter}
         ORDER BY je.entry_date DESC, je.created_at DESC
       `, params);
 
       // Leaf with opening balance only: surface it as a synthetic line so drill-down
       // is not empty while the chart still shows a non-zero balance.
       if ((result.rows || []).length === 0) {
-        const acc = await db.query(
-          `SELECT id, code, name, opening_balance, current_balance, is_header
-           FROM chart_of_accounts WHERE id = $1`,
-          [id],
-        );
-        const row = acc.rows[0];
-        const opening = Number(row?.opening_balance) || 0;
-        const current = Number(row?.current_balance) || 0;
+        const opening = Number(root.opening_balance) || 0;
         const kids = await db.query(
-          `SELECT COUNT(*) AS n FROM chart_of_accounts WHERE parent_id = $1`,
-          [id],
+          `SELECT COUNT(*) AS n FROM chart_of_accounts
+           WHERE parent_id = $1
+              OR (
+                is_active = true
+                AND length(CAST(code AS TEXT)) > length(CAST($2 AS TEXT))
+                AND CAST(code AS TEXT) LIKE CAST($2 AS TEXT) || '%'
+              )`,
+          [root.id, String(root.code || '')],
         );
         const childCount = Number(kids.rows[0]?.n || kids.rows[0]?.count || 0);
-        if (row && !row.is_header && childCount === 0 && (opening !== 0 || current !== 0)) {
+        const ownNet = await db.query(
+          `SELECT COALESCE(SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)), 0) AS net
+           FROM journal_entry_lines jel
+           INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
+           WHERE (je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)
+             AND (${idText('jel.account_id')} = $1 OR ${idText('jel.account_id')} = $2)`,
+          [String(root.id), String(root.code || '')],
+        );
+        const net = Number(ownNet.rows[0]?.net) || 0;
+        const current = opening + net;
+        if (!root.is_header && childCount === 0 && (opening !== 0 || current !== 0)) {
           const amt = opening !== 0 ? opening : current;
           return res.json([{
-            id: `opening-${id}`,
+            id: `opening-${root.id}`,
             journal_entry_id: null,
-            account_id: id,
-            account_code: row.code,
-            account_name: row.name,
+            account_id: root.id,
+            account_code: root.code,
+            account_name: root.name,
             description: 'Saldo de abertura',
             debit_amount: amt > 0 ? amt : 0,
             credit_amount: amt < 0 ? Math.abs(amt) : 0,

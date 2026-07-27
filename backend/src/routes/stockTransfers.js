@@ -38,12 +38,25 @@ module.exports = function(broadcastTable) {
       if (branchId) { query += ' WHERE from_branch_id = $1 OR to_branch_id = $1'; params.push(branchId); }
       query += ' ORDER BY created_at DESC';
       const result = await db.query(query, params);
-
-      for (let transfer of result.rows) {
-        const itemsResult = await db.query('SELECT * FROM stock_transfer_items WHERE transfer_id = $1', [transfer.id]);
-        transfer.items = itemsResult.rows;
+      const transfers = result.rows || [];
+      if (transfers.length > 0) {
+        const ids = transfers.map((t) => t.id);
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+        const itemsResult = await db.query(
+          `SELECT * FROM stock_transfer_items WHERE transfer_id IN (${placeholders}) ORDER BY transfer_id`,
+          ids,
+        );
+        const byTransfer = new Map();
+        for (const item of itemsResult.rows || []) {
+          const key = String(item.transfer_id);
+          if (!byTransfer.has(key)) byTransfer.set(key, []);
+          byTransfer.get(key).push(item);
+        }
+        for (const transfer of transfers) {
+          transfer.items = byTransfer.get(String(transfer.id)) || [];
+        }
       }
-      res.json(result.rows);
+      res.json(transfers);
     } catch (error) {
       console.error('[STOCK TRANSFERS ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch stock transfers' });

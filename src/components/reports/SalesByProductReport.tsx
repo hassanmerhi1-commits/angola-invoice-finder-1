@@ -64,7 +64,7 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
     selectedBranch: branchState,
     setSelectedBranch,
   } = useSyncedBranchFilter();
-  const { sales } = useSales(apiBranchId);
+  const { sales } = useSales(apiBranchId, { light: false });
   const { products } = useProducts(apiBranchId, { light: true });
   const { companyName } = useCompanyLogo();
 

@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
-import { getCachedList, setCachedList } from '@/lib/listCache';
+import { getCachedList, setCachedList, isCachedListFresh } from '@/lib/listCache';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
@@ -91,12 +91,24 @@ function usePaymentsData(branchId?: string) {
   const [openItems, setOpenItems] = useState<OpenItem[]>(() => getCachedList<OpenItem[]>(`openItems:${scope}`) ?? []);
   const [loading, setLoading] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (opts?: { force?: boolean }) => {
+    const payKey = `payments:${scope}`;
+    const openKey = `openItems:${scope}`;
+    if (
+      !opts?.force
+      && isCachedListFresh(payKey)
+      && isCachedListFresh(openKey)
+      && (getCachedList<Payment[]>(payKey)?.length ?? 0) > 0
+    ) {
+      setPayments(getCachedList<Payment[]>(payKey) ?? []);
+      setOpenItems(getCachedList<OpenItem[]>(openKey) ?? []);
+      return;
+    }
     setLoading(true);
     try {
       const [paymentsRes, openRes] = await Promise.all([
-        api.payments.list(branchId ? { branchId } : undefined),
-        api.transactions.openItems(branchId ? { branchId } : undefined),
+        api.payments.list({ ...(branchId ? { branchId } : {}), limit: 200 }),
+        api.transactions.openItems({ ...(branchId ? { branchId } : {}), limit: 500 }),
       ]);
       if (paymentsRes.error) {
         console.error('[PAYMENTS] List error:', paymentsRes.error);
@@ -104,18 +116,18 @@ function usePaymentsData(branchId?: string) {
       if (paymentsRes.data) {
         const mapped = paymentsRes.data.map(mapPaymentRow);
         setPayments(mapped);
-        setCachedList(`payments:${branchId ?? 'all'}`, mapped);
+        setCachedList(payKey, mapped);
       }
       if (openRes.data) {
         const mappedOpen = openRes.data.map(mapOpenItemRow);
         setOpenItems(mappedOpen);
-        setCachedList(`openItems:${branchId ?? 'all'}`, mappedOpen);
+        setCachedList(openKey, mappedOpen);
       }
     } catch (e) {
       console.error('[PAYMENTS] Failed to load:', e);
     }
     setLoading(false);
-  }, [branchId]);
+  }, [branchId, scope]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -135,7 +147,7 @@ function usePaymentsData(branchId?: string) {
     const res = await api.payments.create(paymentData);
     if (res.error) throw new Error(res.error);
     if (!(res.data as { pendingSync?: boolean } | undefined)?.pendingSync) {
-      await refresh();
+      await refresh({ force: true });
     }
     return res.data;
   }, [refresh]);
