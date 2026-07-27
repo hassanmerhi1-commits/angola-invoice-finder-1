@@ -2826,6 +2826,7 @@ export const en = {
     },
     toolbar: {
       all: "All",
+      allHint: "Back to the full list — clears selection, search, and filters",
       new: "New",
       delete: "Delete",
       edit: "Edit",
@@ -3062,6 +3063,8 @@ export const en = {
     pdf: "PDF",
     searchPlaceholder: "Search...",
     todayOnly: "Today",
+    allDates: "All dates",
+    showAllDocuments: "Showing all documents (filters cleared)",
     nif: "Tax ID",
     flowProforma: "Pro forma",
     flowInvoice: "Invoice",

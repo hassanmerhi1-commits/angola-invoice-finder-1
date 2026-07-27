@@ -1856,28 +1856,48 @@ export const api = {
       );
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       if (isElectronMode()) {
-        // Match server: parent_id tree + PGC code-prefix children + id/code join.
+        // Match server: parent_id walk + PGC code-prefix (separate CTEs — Postgres-safe shape).
         let sql = `
-          WITH RECURSIVE account_tree AS (
-            SELECT id, code, name FROM chart_of_accounts WHERE id = $1 OR code = $1
+          WITH RECURSIVE by_parent AS (
+            SELECT id, code, name FROM chart_of_accounts WHERE CAST(id AS TEXT) = CAST($1 AS TEXT)
             UNION
             SELECT c.id, c.code, c.name
             FROM chart_of_accounts c
-            INNER JOIN account_tree t ON CAST(c.parent_id AS TEXT) = CAST(t.id AS TEXT)
-            UNION
-            SELECT c.id, c.code, c.name
-            FROM chart_of_accounts c
-            WHERE c.is_active = 1
+            INNER JOIN by_parent t ON CAST(c.parent_id AS TEXT) = CAST(t.id AS TEXT)
+          ),
+          by_code AS (
+            SELECT id, code, name
+            FROM chart_of_accounts
+            WHERE (is_active = 1 OR is_active IS NULL)
               AND (
-                c.code = (SELECT code FROM chart_of_accounts WHERE id = $1 OR code = $1 LIMIT 1)
+                CAST(code AS TEXT) = (
+                  SELECT CAST(code AS TEXT) FROM chart_of_accounts
+                  WHERE CAST(id AS TEXT) = CAST($1 AS TEXT) OR CAST(code AS TEXT) = CAST($1 AS TEXT)
+                  LIMIT 1
+                )
                 OR (
-                  length(c.code) > length((SELECT code FROM chart_of_accounts WHERE id = $1 OR code = $1 LIMIT 1))
-                  AND c.code LIKE ((SELECT code FROM chart_of_accounts WHERE id = $1 OR code = $1 LIMIT 1) || '%')
+                  length(CAST(code AS TEXT)) > length((
+                    SELECT CAST(code AS TEXT) FROM chart_of_accounts
+                    WHERE CAST(id AS TEXT) = CAST($1 AS TEXT) OR CAST(code AS TEXT) = CAST($1 AS TEXT)
+                    LIMIT 1
+                  ))
+                  AND CAST(code AS TEXT) LIKE ((
+                    SELECT CAST(code AS TEXT) FROM chart_of_accounts
+                    WHERE CAST(id AS TEXT) = CAST($1 AS TEXT) OR CAST(code AS TEXT) = CAST($1 AS TEXT)
+                    LIMIT 1
+                  ) || '%')
                 )
               )
+          ),
+          account_tree AS (
+            SELECT id, code, name FROM by_parent
+            UNION
+            SELECT id, code, name FROM by_code
           )
           SELECT DISTINCT jel.*, atree.code AS account_code, atree.name AS account_name,
-                 je.entry_number, je.entry_date, je.description as journal_description,
+                 je.entry_number,
+                 COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10)) AS entry_date,
+                 je.description as journal_description,
                  je.reference_type, je.reference_id, je.branch_id,
                  b.name AS branch_name, je.is_posted, je.created_at as journal_created_at
           FROM journal_entry_lines jel
@@ -1891,14 +1911,14 @@ export const api = {
         `;
         const params: any[] = [id];
         if (startDate) {
-          sql += ` AND je.entry_date >= $${params.length + 1}`;
+          sql += ` AND COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10)) >= $${params.length + 1}`;
           params.push(startDate);
         }
         if (endDate) {
-          sql += ` AND je.entry_date <= $${params.length + 1}`;
+          sql += ` AND COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10)) <= $${params.length + 1}`;
           params.push(endDate);
         }
-        sql += ' ORDER BY je.entry_date DESC, je.created_at DESC';
+        sql += ` ORDER BY COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10)) DESC, je.created_at DESC`;
         return ipcQuery<any>(sql, params);
       }
       return apiResult;

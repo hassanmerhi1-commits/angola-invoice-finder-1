@@ -418,49 +418,66 @@ module.exports = function(broadcastTable) {
       }
 
       const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
+      const activeClause = db.engine === 'postgres'
+        ? '(is_active IS DISTINCT FROM false)'
+        : '(is_active = 1 OR is_active IS NULL OR is_active = true)';
+      const postedClause = db.engine === 'postgres'
+        ? '(je.is_posted IS DISTINCT FROM false)'
+        : '(je.is_posted = 1 OR je.is_posted IS NULL OR je.is_posted = true)';
       const entryDateExpr = db.engine === 'postgres'
         ? `COALESCE(
-            je.entry_date::text,
+            NULLIF(TRIM(je.entry_date::text), ''),
             CASE WHEN je.created_at IS NOT NULL THEN to_char(je.created_at::date, 'YYYY-MM-DD') END
           )`
-        : `COALESCE(CAST(je.entry_date AS TEXT), substr(CAST(je.created_at AS TEXT), 1, 10))`;
+        : `COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10))`;
 
       let dateFilter = '';
       // $1 = root id, $2 = root code (for prefix expansion)
       const params = [root.id, String(root.code || '')];
       let paramIndex = 3;
 
+      // Filter on effective date (entry_date or created_at) — many rows have null entry_date.
       if (start_date) {
-        dateFilter += ` AND je.entry_date >= $${paramIndex++}`;
-        params.push(start_date);
+        dateFilter += ` AND (${entryDateExpr}) >= $${paramIndex++}`;
+        params.push(String(start_date).slice(0, 10));
       }
       if (end_date) {
-        dateFilter += ` AND je.entry_date <= $${paramIndex++}`;
-        params.push(end_date);
+        dateFilter += ` AND (${entryDateExpr}) <= $${paramIndex++}`;
+        params.push(String(end_date).slice(0, 10));
       }
 
       const branchJoin = db.engine === 'postgres'
         ? 'LEFT JOIN branches b ON b.id::text = je.branch_id::text'
         : 'LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(je.branch_id AS TEXT)';
 
+      // Split parent walk + code-prefix into separate CTEs.
+      // Postgres rejects a 3-arm UNION inside one WITH RECURSIVE (self-ref must be
+      // only in the recursive term) — that made city ledger return 500 / empty.
       const result = await db.query(`
-        WITH RECURSIVE account_tree AS (
-          SELECT id, code, name FROM chart_of_accounts WHERE id = $1
+        WITH RECURSIVE by_parent AS (
+          SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}
           UNION
           SELECT c.id, c.code, c.name
           FROM chart_of_accounts c
-          INNER JOIN account_tree t ON ${idText('c.parent_id')} = ${idText('t.id')}
-          UNION
-          SELECT c.id, c.code, c.name
-          FROM chart_of_accounts c
-          WHERE c.is_active = true
+          INNER JOIN by_parent t ON ${idText('c.parent_id')} = ${idText('t.id')}
+        ),
+        by_code AS (
+          SELECT id, code, name
+          FROM chart_of_accounts
+          WHERE ${activeClause}
+            AND CAST($2 AS TEXT) <> ''
             AND (
-              c.code = $2
+              ${idText('code')} = ${idText('$2')}
               OR (
-                length(CAST(c.code AS TEXT)) > length(CAST($2 AS TEXT))
-                AND CAST(c.code AS TEXT) LIKE CAST($2 AS TEXT) || '%'
+                length(${idText('code')}) > length(CAST($2 AS TEXT))
+                AND ${idText('code')} LIKE CAST($2 AS TEXT) || '%'
               )
             )
+        ),
+        account_tree AS (
+          SELECT id, code, name FROM by_parent
+          UNION
+          SELECT id, code, name FROM by_code
         )
         SELECT DISTINCT
           jel.id,
@@ -487,9 +504,9 @@ module.exports = function(broadcastTable) {
           OR ${idText('atree.code')} = ${idText('jel.account_id')}
         )
         ${branchJoin}
-        WHERE (je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)
+        WHERE ${postedClause}
           ${dateFilter}
-        ORDER BY je.entry_date DESC, je.created_at DESC
+        ORDER BY (${entryDateExpr}) DESC, je.created_at DESC
       `, params);
 
       // Leaf with opening balance only: surface it as a synthetic line so drill-down
@@ -498,11 +515,12 @@ module.exports = function(broadcastTable) {
         const opening = Number(root.opening_balance) || 0;
         const kids = await db.query(
           `SELECT COUNT(*) AS n FROM chart_of_accounts
-           WHERE parent_id = $1
+           WHERE ${idText('parent_id')} = ${idText('$1')}
               OR (
-                is_active = true
-                AND length(CAST(code AS TEXT)) > length(CAST($2 AS TEXT))
-                AND CAST(code AS TEXT) LIKE CAST($2 AS TEXT) || '%'
+                ${activeClause}
+                AND CAST($2 AS TEXT) <> ''
+                AND length(${idText('code')}) > length(CAST($2 AS TEXT))
+                AND ${idText('code')} LIKE CAST($2 AS TEXT) || '%'
               )`,
           [root.id, String(root.code || '')],
         );
@@ -511,14 +529,14 @@ module.exports = function(broadcastTable) {
           `SELECT COALESCE(SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)), 0) AS net
            FROM journal_entry_lines jel
            INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
-           WHERE (je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)
-             AND (${idText('jel.account_id')} = $1 OR ${idText('jel.account_id')} = $2)`,
+           WHERE ${postedClause}
+             AND (${idText('jel.account_id')} = ${idText('$1')} OR ${idText('jel.account_id')} = ${idText('$2')})`,
           [String(root.id), String(root.code || '')],
         );
         const net = Number(ownNet.rows[0]?.net) || 0;
         const current = opening + net;
-        if (!root.is_header && childCount === 0 && (opening !== 0 || current !== 0)) {
-          const amt = opening !== 0 ? opening : current;
+        if (childCount === 0 && (opening !== 0 || current !== 0 || Number(root.current_balance) !== 0)) {
+          const amt = opening !== 0 ? opening : (current !== 0 ? current : Number(root.current_balance) || 0);
           return res.json([{
             id: `opening-${root.id}`,
             journal_entry_id: null,
@@ -542,7 +560,7 @@ module.exports = function(broadcastTable) {
       res.json(result.rows);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
-      res.status(500).json({ error: 'Failed to fetch account ledger' });
+      res.status(500).json({ error: error.message || 'Failed to fetch account ledger' });
     }
   });
 

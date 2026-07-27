@@ -476,11 +476,18 @@ export default function Invoices() {
     const selected = documents.find((d) => d.id === selectedDocId) || null;
 
     const onAll = () => {
+      // Classic ERP "All": leave the open document, clear filters, show the full list.
       setSelectedDocId(null);
       setSearchTerm('');
       setFormOpen(false);
       setEditDoc(null);
       setPrefillDoc(null);
+      setActiveTab('all');
+      setInvoicesWorkspaceTab('all');
+      setDateFrom('');
+      setDateTo('');
+      setRefreshKey((k) => k + 1);
+      toast.info(t.invoicesUi.showAllDocuments);
     };
     const onPrint = () => {
       if (!selected) {
@@ -778,6 +785,17 @@ export default function Invoices() {
           }}
         >
           {t.invoicesUi.todayOnly}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs px-2"
+          onClick={() => {
+            setDateFrom('');
+            setDateTo('');
+          }}
+        >
+          {t.invoicesUi.allDates}
         </Button>
 
         <div className="flex-1" />

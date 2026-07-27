@@ -738,7 +738,13 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
               size="sm"
               className={NEXOR_TOOLBAR_BTN}
               disabled={btn.disabled}
-              title={btn.disabled ? t.topNav.toolbar.noPermission : undefined}
+              title={
+                btn.disabled
+                  ? t.topNav.toolbar.noPermission
+                  : btn.actionKey === 'all'
+                    ? t.topNav.toolbar.allHint
+                    : undefined
+              }
               onClick={() => handleToolbarClick(btn.actionKey)}
             >
               <btn.icon className="w-3.5 h-3.5" />

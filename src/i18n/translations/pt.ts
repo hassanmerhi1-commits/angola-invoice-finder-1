@@ -2829,6 +2829,7 @@ export const pt: TranslationKeys = {
     },
     toolbar: {
       all: "Todos",
+      allHint: "Voltar à lista completa — limpa selecção, pesquisa e filtros",
       new: "Novo",
       delete: "Eliminar",
       edit: "Editar",
@@ -3065,6 +3066,8 @@ export const pt: TranslationKeys = {
     pdf: "PDF",
     searchPlaceholder: "Pesquisar...",
     todayOnly: "Hoje",
+    allDates: "Todas as datas",
+    showAllDocuments: "A mostrar todos os documentos (filtros limpos)",
     nif: "NIF",
     flowProforma: "Proforma",
     flowInvoice: "Fatura",
