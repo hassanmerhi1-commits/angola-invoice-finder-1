@@ -253,13 +253,19 @@ export default function StockAdjustmentHistoryReport() {
   };
 
   const handlePrintDocument = (doc: StockAdjustmentDocument) => {
-    printStockAdjustmentDocument(
+    void printStockAdjustmentDocument(
       doc,
       printLabels,
       formatMoney,
       formatDateTime,
       getReasonLabel,
-    );
+    ).catch((err: unknown) => {
+      toast({
+        title: t.common.error,
+        description: err instanceof Error ? err.message : String(err),
+        variant: 'destructive',
+      });
+    });
   };
 
   const handleExportCsv = () => {

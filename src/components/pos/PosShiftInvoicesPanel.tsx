@@ -14,7 +14,7 @@ import {
 import { Eye, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/utils';
-import { filterShiftSalesForCashier } from '@/lib/posShiftSales';
+import { filterShiftSalesForCashier, withRecoveredShiftStart } from '@/lib/posShiftSales';
 import {
   listCheckoutFailures,
   readShiftIssues,
@@ -94,14 +94,18 @@ export function PosShiftInvoicesPanel({
   };
 
   const shiftOpenedLabel = useMemo(() => {
-    if (!session?.openedAt) return null;
-    const opened = new Date(session.openedAt);
+    const effective = session
+      ? withRecoveredShiftStart(session, sales, cashier)
+      : null;
+    const openedAt = effective?.openedAt || session?.openedAt;
+    if (!openedAt) return null;
+    const opened = new Date(openedAt);
     if (!Number.isFinite(opened.getTime())) return null;
     return t.posUi.endOfDayShiftSince.replace(
       '{time}',
       opened.toLocaleString(locale, { hour: '2-digit', minute: '2-digit' }),
     );
-  }, [session?.openedAt, locale, t.posUi.endOfDayShiftSince]);
+  }, [session, sales, cashier, locale, t.posUi.endOfDayShiftSince]);
 
   const handleRefresh = async () => {
     if (!onRefresh) return;

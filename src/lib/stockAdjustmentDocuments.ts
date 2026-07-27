@@ -179,7 +179,7 @@ export function filterStockAdjustmentDocuments(
   return result;
 }
 
-export function printStockAdjustmentDocument(
+export async function printStockAdjustmentDocument(
   doc: StockAdjustmentDocument,
   labels: {
     title: string;
@@ -203,16 +203,23 @@ export function printStockAdjustmentDocument(
   formatMoney: (value: number) => string,
   formatDate: (iso: string) => string,
   getReasonLabel: (reason: string) => string,
-): void {
+): Promise<void> {
+  const escape = (value: string) =>
+    String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
   const rows = doc.lines
     .map(
       (line) => `
       <tr>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;font-family:monospace;">${line.sku}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;">${line.productName}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;font-family:monospace;">${escape(line.sku)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;">${escape(line.productName)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right;">${line.quantity}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right;">${formatMoney(line.unitCost)}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right;">${formatMoney(line.lineValue)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right;">${escape(formatMoney(line.unitCost))}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right;">${escape(formatMoney(line.lineValue))}</td>
       </tr>`,
     )
     .join('');
@@ -221,7 +228,7 @@ export function printStockAdjustmentDocument(
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>${labels.title} — ${doc.referenceNumber}</title>
+  <title>${escape(labels.title)} — ${escape(doc.referenceNumber)}</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; color: #111; }
     h1 { font-size: 20px; margin: 0 0 4px; }
@@ -234,39 +241,33 @@ export function printStockAdjustmentDocument(
   </style>
 </head>
 <body>
-  <h1>${labels.title}</h1>
+  <h1>${escape(labels.title)}</h1>
   <div class="meta">
-    <div><strong>${labels.reference}:</strong> ${doc.referenceNumber}</div>
-    <div><strong>${labels.date}:</strong> ${formatDate(doc.createdAt)}</div>
-    <div><strong>${labels.branch}:</strong> ${doc.branchName}</div>
-    <div><strong>${labels.direction}:</strong> ${doc.direction === 'IN' ? labels.directionIn : labels.directionOut}</div>
-    <div><strong>${labels.reason}:</strong> ${getReasonLabel(doc.reason)}</div>
-    <div><strong>${labels.user}:</strong> ${doc.createdByName || '—'}</div>
-    ${doc.notes ? `<div><strong>${labels.notes}:</strong> ${doc.notes}</div>` : ''}
+    <div><strong>${escape(labels.reference)}:</strong> ${escape(doc.referenceNumber)}</div>
+    <div><strong>${escape(labels.date)}:</strong> ${escape(formatDate(doc.createdAt))}</div>
+    <div><strong>${escape(labels.branch)}:</strong> ${escape(doc.branchName)}</div>
+    <div><strong>${escape(labels.direction)}:</strong> ${escape(doc.direction === 'IN' ? labels.directionIn : labels.directionOut)}</div>
+    <div><strong>${escape(labels.reason)}:</strong> ${escape(getReasonLabel(doc.reason))}</div>
+    <div><strong>${escape(labels.user)}:</strong> ${escape(doc.createdByName || '—')}</div>
+    ${doc.notes ? `<div><strong>${escape(labels.notes)}:</strong> ${escape(doc.notes)}</div>` : ''}
   </div>
   <table>
     <thead>
       <tr>
-        <th>${labels.sku}</th>
-        <th>${labels.product}</th>
-        <th class="right">${labels.quantity}</th>
-        <th class="right">${labels.unitCost}</th>
-        <th class="right">${labels.lineTotal}</th>
+        <th>${escape(labels.sku)}</th>
+        <th>${escape(labels.product)}</th>
+        <th class="right">${escape(labels.quantity)}</th>
+        <th class="right">${escape(labels.unitCost)}</th>
+        <th class="right">${escape(labels.lineTotal)}</th>
       </tr>
     </thead>
     <tbody>${rows}</tbody>
   </table>
-  <div class="total">${labels.documentTotal}: ${formatMoney(doc.totalValue)} (${doc.lineCount} ${labels.product.toLowerCase()})</div>
-  <div class="footer">${labels.printedAt}</div>
+  <div class="total">${escape(labels.documentTotal)}: ${escape(formatMoney(doc.totalValue))} (${doc.lineCount} ${escape(labels.product.toLowerCase())})</div>
+  <div class="footer">${escape(labels.printedAt)}</div>
 </body>
 </html>`;
 
-  const printWindow = window.open('', '_blank', 'width=900,height=700');
-  if (!printWindow) return;
-  printWindow.document.write(html);
-  printWindow.document.close();
-  setTimeout(() => {
-    printWindow.focus();
-    printWindow.print();
-  }, 300);
+  const { printHtml } = await import('@/lib/printHtml');
+  await printHtml(html);
 }

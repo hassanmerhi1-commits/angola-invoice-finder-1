@@ -384,6 +384,7 @@ export const pt: TranslationKeys = {
       openingCashHint: "Dinheiro físico na gaveta no início do turno.",
       openButton: "Abrir caixa e iniciar turno",
       openedToast: "Caixa aberta",
+      reopenedShiftHint: "Turno já aberto recuperado — o dia não foi fechado.",
       openError: "Não foi possível abrir a caixa",
       requiredToSell: "Abra a caixa primeiro",
       reconcileTitle: "Fechar turno — conferência de caixa",

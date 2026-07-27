@@ -39,7 +39,7 @@ import { PosOpenCaixaDialog } from '@/components/pos/PosOpenCaixaDialog';
 import { PosShiftInvoicesPanel } from '@/components/pos/PosShiftInvoicesPanel';
 import { PosUpdateMenu } from '@/components/pos/PosUpdateMenu';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { filterShiftSalesForCashier } from '@/lib/posShiftSales';
+import { filterShiftSalesForCashier, todayLocalDate, recoveredShiftOpenedAt } from '@/lib/posShiftSales';
 import {
   appendShiftIssue,
   clearSaleIssueKind,
@@ -58,7 +58,14 @@ export default function POS() {
   const { user } = useAuth();
   const { t } = useTranslation();
   const cart = useCart();
-  const { completeSale, sales, refreshSales } = useSales(branchId, true);
+  const today = todayLocalDate();
+  const { completeSale, sales, refreshSales } = useSales(branchId, {
+    deferInitialLoad: true,
+    light: true,
+    dateFrom: today,
+    dateTo: today,
+    limit: 500,
+  });
   const { creditNotes, refreshCreditNotes } = useCreditNotes(branchId, true);
   const { clients, refreshClients } = useClients(true);
 
@@ -154,6 +161,7 @@ export default function POS() {
     recordCashRefund,
     recordCashExpense,
     refresh: refreshCaixa,
+    adoptOpenedAt,
   } = usePosCaixa(branchId, currentBranch?.name || branchId);
   const [openingCaixa, setOpeningCaixa] = useState(false);
   const shiftInvoiceCount = useMemo(
@@ -170,6 +178,18 @@ export default function POS() {
     [currentBranch?.id, caixaSession?.id, bumpShiftIssues],
   );
   const caixaOpen = !!caixaSession;
+
+  // If the register was re-opened after an update, pull shift start back to the first
+  // sale of the day so shift invoices / end-of-day include the morning work.
+  useEffect(() => {
+    if (!caixaSession || !user || sales.length === 0) return;
+    const recovered = recoveredShiftOpenedAt(sales, user, caixaSession, today);
+    if (!recovered || recovered === caixaSession.openedAt) return;
+    const recoveredMs = new Date(recovered).getTime();
+    const openedMs = new Date(caixaSession.openedAt).getTime();
+    if (!Number.isFinite(recoveredMs) || recoveredMs >= openedMs) return;
+    adoptOpenedAt(recovered);
+  }, [caixaSession, user, sales, today, adoptOpenedAt]);
 
   // Defer non-critical POS data until the cash register is open (faster entry + open-caixa dialog).
   useEffect(() => {
@@ -687,9 +707,14 @@ export default function POS() {
     if (!user) return;
     setOpeningCaixa(true);
     try {
-      await openCaixaSessionForBranch(openingCash, user.name || user.username || 'POS');
+      const sess = await openCaixaSessionForBranch(openingCash, user.name || user.username || 'POS');
+      const reclaimed =
+        !!sess?.openedAt
+        && Date.now() - new Date(sess.openedAt).getTime() > 5 * 60 * 1000;
       toast.success(t.posUi.caixa.openedToast, {
-        description: `${t.posUi.caixa.openingCashLabel}: ${openingCash.toLocaleString('pt-AO')} Kz`,
+        description: reclaimed
+          ? t.posUi.caixa.reopenedShiftHint
+          : `${t.posUi.caixa.openingCashLabel}: ${openingCash.toLocaleString('pt-AO')} Kz`,
       });
     } catch (err) {
       console.error('[POS] Failed to open caixa:', err);

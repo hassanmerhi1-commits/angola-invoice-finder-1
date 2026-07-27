@@ -382,6 +382,7 @@ export const en = {
       openingCashHint: "Cash physically in the drawer at the start of the shift.",
       openButton: "Open register & start shift",
       openedToast: "Cash register opened",
+      reopenedShiftHint: "Existing open shift restored — your day was not closed.",
       openError: "Could not open the cash register",
       requiredToSell: "Open the cash register first",
       reconcileTitle: "Close shift — cash reconciliation",

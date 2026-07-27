@@ -1009,6 +1009,23 @@ export const api = {
       }
       return { data: [], error: null };
     },
+    get: async (id: string) => {
+      const endpoint = `/sales/${encodeURIComponent(id)}`;
+      const apiResult = await apiFetch<any>(endpoint);
+      if (apiResult.data !== undefined) return apiResult;
+      if (isElectronMode()) {
+        const salesResult = await ipcQuery<any>('SELECT * FROM sales WHERE id = $1 LIMIT 1', [id]);
+        const sale = salesResult.data?.[0];
+        if (!sale) return { error: apiResult.error || 'Sale not found' };
+        const itemsResult = await ipcQuery<any>(
+          'SELECT * FROM sale_items WHERE sale_id = $1',
+          [sale.id],
+        );
+        sale.items = itemsResult.data || [];
+        return { data: sale, error: null };
+      }
+      return apiResult;
+    },
     updateDueDate: (id: string, dueDate: string) =>
       apiFetch<any>(`/sales/${encodeURIComponent(id)}`, {
         method: 'PATCH',

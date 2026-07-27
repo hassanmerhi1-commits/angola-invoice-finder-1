@@ -34,6 +34,7 @@ import {
   getDocuments,
   convertDocument,
   getSalesInvoicesAsDocuments,
+  getSaleInvoiceAsDocument,
   getPurchaseInvoicesAsDocuments,
   mapCreditNoteToDocument,
 } from '@/lib/documentStorage';
@@ -428,7 +429,7 @@ export default function Invoices() {
     openNewDocumentForTab(type);
   };
 
-  const openEditDocument = (doc: ERPDocument) => {
+  const openEditDocument = async (doc: ERPDocument) => {
     if (doc.documentType === 'nota_credito') {
       const isLocalOnly = doc.id.startsWith('doc_');
       navigate('/fiscal-documents', {
@@ -438,9 +439,33 @@ export default function Invoices() {
       });
       return;
     }
-    const resolved = doc.documentType === 'fatura_venda'
+    let resolved = doc.documentType === 'fatura_venda'
       ? resolveCanonicalSaleDocument(doc, documents)
       : doc;
+
+    // Light list omits line items — hydrate full sale before opening the form.
+    if (
+      resolved.documentType === 'fatura_venda'
+      && (!resolved.lines || resolved.lines.length === 0)
+      && resolved.id
+      && !resolved.id.startsWith('doc_')
+    ) {
+      const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
+      try {
+        const full = await getSaleInvoiceAsDocument(resolved.id, branchNames);
+        if (full) {
+          resolved = {
+            ...full,
+            agtStatus: full.agtStatus || resolved.agtStatus,
+            agtCode: full.agtCode || resolved.agtCode,
+          };
+        }
+      } catch (err) {
+        console.error('[Invoices] failed to load sale lines:', err);
+        toast.error(err instanceof Error ? err.message : t.common.error);
+      }
+    }
+
     setFormDocType(resolved.documentType);
     setEditDoc(resolved);
     setPrefillDoc(null);
@@ -462,11 +487,23 @@ export default function Invoices() {
         toast.info(t.topNav.file.printSelectDocument);
         return;
       }
-      void printDocument(selected, { source: 'invoices' })
-        .catch((err: unknown) => {
-          const message = err instanceof Error ? err.message : String(err);
-          toast.error(message || t.invoiceViewUi.printError);
-        });
+      void (async () => {
+        let doc = selected;
+        if (
+          doc.documentType === 'fatura_venda'
+          && (!doc.lines || doc.lines.length === 0)
+          && doc.id
+          && !doc.id.startsWith('doc_')
+        ) {
+          const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
+          const full = await getSaleInvoiceAsDocument(doc.id, branchNames);
+          if (full) doc = full;
+        }
+        await printDocument(doc, { source: 'invoices' });
+      })().catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(message || t.invoiceViewUi.printError);
+      });
     };
     const onExcel = () => {
       const rows = filteredDocs.map((d) => ({
@@ -499,7 +536,7 @@ export default function Invoices() {
         window.removeEventListener(event, handler);
       }
     };
-  }, [documents, selectedDocId, filteredDocs, t]);
+  }, [documents, selectedDocId, filteredDocs, t, branches]);
 
   useEffect(() => {
     setContextMenuResolver((target) => {
@@ -520,11 +557,23 @@ export default function Invoices() {
           id: 'doc-print',
           label: t.interaction.printDocument,
           onSelect: () => {
-            void printDocument(doc, { source: 'invoices' })
-              .catch((err: unknown) => {
-                const message = err instanceof Error ? err.message : String(err);
-                toast.error(message || t.invoiceViewUi.printError);
-              });
+            void (async () => {
+              let toPrint = doc;
+              if (
+                toPrint.documentType === 'fatura_venda'
+                && (!toPrint.lines || toPrint.lines.length === 0)
+                && toPrint.id
+                && !toPrint.id.startsWith('doc_')
+              ) {
+                const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
+                const full = await getSaleInvoiceAsDocument(toPrint.id, branchNames);
+                if (full) toPrint = full;
+              }
+              await printDocument(toPrint, { source: 'invoices' });
+            })().catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              toast.error(message || t.invoiceViewUi.printError);
+            });
           },
         },
       ];
@@ -562,7 +611,7 @@ export default function Invoices() {
       return items;
     });
     return () => setContextMenuResolver(null);
-  }, [documents, openEditDocument, t, transmitAgt, refresh, canSendAgt, canVoidInvoice]);
+  }, [documents, openEditDocument, t, transmitAgt, refresh, canSendAgt, canVoidInvoice, branches]);
 
   const handleConvert = async (doc: ERPDocument, targetType: DocumentType) => {
     if (targetType === 'nota_credito') {

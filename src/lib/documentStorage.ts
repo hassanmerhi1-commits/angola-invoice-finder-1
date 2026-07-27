@@ -24,7 +24,7 @@ import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutabi
 
 const STORAGE_KEY = 'kwanzaerp_documents';
 
-function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
+export function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
   const createdAt = sale.createdAt || sale.created_at || new Date().toISOString();
   const issueDate = String(createdAt).split('T')[0] || createdAt;
   const items = Array.isArray(sale.items) ? sale.items : [];
@@ -290,6 +290,27 @@ export async function getSalesInvoicesAsDocuments(
       return mapSaleRowToDocument(sale, branchNames[bid] || '');
     })
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+/** Full sale with line items — use when opening an invoice after a light list fetch. */
+export async function getSaleInvoiceAsDocument(
+  saleId: string,
+  branchNames: Record<string, string> = {},
+): Promise<ERPDocument | null> {
+  const id = String(saleId || '').trim();
+  if (!id) return null;
+  if (isDemoMode()) {
+    const rows = await storage.getSales();
+    const sale = rows.find((s: any) => String(s.id) === id);
+    if (!sale) return null;
+    const bid = sale.branchId || sale.branch_id || '';
+    return mapSaleRowToDocument(sale, branchNames[bid] || '');
+  }
+  const res = await api.sales.get(id);
+  if (res.error || !res.data) return null;
+  const sale = res.data;
+  const bid = sale.branchId || sale.branch_id || '';
+  return mapSaleRowToDocument(sale, branchNames[bid] || '');
 }
 
 export async function getDocuments(type?: DocumentType, branchId?: string): Promise<ERPDocument[]> {

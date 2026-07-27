@@ -838,6 +838,17 @@ export async function getOpenCaixaSession(caixaId: string): Promise<CaixaSession
   return sessions.find(s => s.status === 'open');
 }
 
+/** Any open shift for this branch (local Electron DB / localStorage), not scoped to one register id. */
+export async function getOpenCaixaSessionForBranch(branchId: string): Promise<CaixaSession | undefined> {
+  const key = String(branchId || '').trim();
+  if (!key) return undefined;
+  const sessions = await getCaixaSessions();
+  const open = sessions
+    .filter((s) => s.status === 'open' && branchIdsEquivalent(s.branchId, key))
+    .sort((a, b) => new Date(b.openedAt || b.createdAt).getTime() - new Date(a.openedAt || a.createdAt).getTime());
+  return open[0];
+}
+
 export async function openCaixaSession(
   caixaId: string, 
   branchId: string, 

@@ -20,7 +20,7 @@ import { format } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
 import { api } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
-import { filterShiftSalesForCashier, filterShiftCashRefunds, filterShiftCashExpenses, todayLocalDate } from '@/lib/posShiftSales';
+import { filterShiftSalesForCashier, filterShiftCashRefunds, filterShiftCashExpenses, todayLocalDate, withRecoveredShiftStart } from '@/lib/posShiftSales';
 
 interface CaixaGlReconciliation {
   caixaAccountCode: string;
@@ -130,29 +130,35 @@ export function PosEndOfDayReportDialog({
     };
   }, [open, branch?.id, session, today, t.posUi.caixa.glUnavailable]);
 
+  const effectiveSession = useMemo(
+    () => (session ? withRecoveredShiftStart(session, sales, cashier, today) : null),
+    [session, sales, cashier, today],
+  );
+
   const cashierSales = useMemo(() => {
-    const rows = filterShiftSalesForCashier(sales, cashier, session, today);
+    const rows = filterShiftSalesForCashier(sales, cashier, effectiveSession || session, today);
     return [...rows].reverse();
-  }, [sales, cashier, today, session]);
+  }, [sales, cashier, today, session, effectiveSession]);
 
   const shiftOpenedLabel = useMemo(() => {
-    if (!session?.openedAt) return null;
-    const opened = new Date(session.openedAt);
+    const openedAt = effectiveSession?.openedAt || session?.openedAt;
+    if (!openedAt) return null;
+    const opened = new Date(openedAt);
     if (!Number.isFinite(opened.getTime())) return null;
     return t.posUi.endOfDayShiftSince.replace(
       '{time}',
       opened.toLocaleString(locale, { hour: '2-digit', minute: '2-digit' }),
     );
-  }, [session?.openedAt, locale, t.posUi.endOfDayShiftSince]);
+  }, [effectiveSession?.openedAt, session?.openedAt, locale, t.posUi.endOfDayShiftSince]);
 
   const shiftCashRefunds = useMemo(
-    () => filterShiftCashRefunds(creditNotes, sales, session, today),
-    [creditNotes, sales, session, today],
+    () => filterShiftCashRefunds(creditNotes, sales, cashier, effectiveSession || session, today),
+    [creditNotes, sales, cashier, session, effectiveSession, today],
   );
 
   const shiftCashExpenses = useMemo(
-    () => filterShiftCashExpenses(expenses, session, session?.caixaId, today),
-    [expenses, session, today],
+    () => filterShiftCashExpenses(expenses, effectiveSession || session, sales, cashier, session?.caixaId, today),
+    [expenses, session, effectiveSession, sales, cashier, today],
   );
 
   const totals = useMemo(() => {

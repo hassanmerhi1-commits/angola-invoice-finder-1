@@ -365,5 +365,30 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  // Single sale with line items (invoice open after light list).
+  // Registered after /by-number and /generate-invoice-number so those paths win.
+  router.get('/:id', async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ error: 'Sale id required' });
+    }
+    try {
+      const result = await db.query('SELECT * FROM sales WHERE id = $1 LIMIT 1', [id]);
+      const sale = result.rows[0];
+      if (!sale) {
+        return res.status(404).json({ error: 'Sale not found' });
+      }
+      const itemsResult = await db.query(
+        'SELECT * FROM sale_items WHERE sale_id = $1 ORDER BY sale_id',
+        [sale.id],
+      );
+      sale.items = itemsResult.rows || [];
+      res.json(sale);
+    } catch (error) {
+      console.error('[SALES get]', error);
+      res.status(500).json({ error: 'Failed to fetch sale' });
+    }
+  });
+
   return router;
 };
