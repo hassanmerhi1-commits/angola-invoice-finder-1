@@ -224,7 +224,8 @@ export default function POS() {
       void getExpenses(currentBranch.id).then((rows) => {
         if (!cancelled) setShiftExpenses(rows);
       });
-      void refreshCaixa();
+      // Sync expense totals for the drawer math — do not block the close button.
+      void refreshCaixa({ silent: true, syncExpenses: true });
     }
     return () => {
       cancelled = true;

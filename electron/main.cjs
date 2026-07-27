@@ -3698,12 +3698,24 @@ ipcMain.handle('db:getAll', async (_, table, companyId) => {
   if (isServerMode) {
     return { success: true, data: await dbGetAll(table) };
   }
+  if (!USE_LEGACY_WS) {
+    return {
+      success: false,
+      error: 'Direct DB sync is disabled. Use the city HTTP API (port 3000).',
+    };
+  }
   return sendToServer({ action: 'getAll', table, companyId });
 });
 
 ipcMain.handle('db:getById', async (_, table, id, companyId) => {
   if (isServerMode) {
     return { success: true, data: await dbGetById(table, id) };
+  }
+  if (!USE_LEGACY_WS) {
+    return {
+      success: false,
+      error: 'Direct DB sync is disabled. Use the city HTTP API (port 3000).',
+    };
   }
   return sendToServer({ action: 'getById', table, id, companyId });
 });
@@ -3712,6 +3724,12 @@ ipcMain.handle('db:insert', async (_, table, data, companyId) => {
   if (isServerMode) {
     return await dbInsert(table, data, companyId);
   }
+  if (!USE_LEGACY_WS) {
+    return {
+      success: false,
+      error: 'Direct DB sync is disabled. Use the city HTTP API (port 3000).',
+    };
+  }
   return sendToServer({ action: 'insert', table, data, companyId });
 });
 
@@ -3719,12 +3737,24 @@ ipcMain.handle('db:update', async (_, table, id, data, companyId) => {
   if (isServerMode) {
     return await dbUpdate(table, id, data, companyId);
   }
+  if (!USE_LEGACY_WS) {
+    return {
+      success: false,
+      error: 'Direct DB sync is disabled. Use the city HTTP API (port 3000).',
+    };
+  }
   return sendToServer({ action: 'update', table, id, data, companyId });
 });
 
 ipcMain.handle('db:delete', async (_, table, id, companyId) => {
   if (isServerMode) {
     return await dbDelete(table, id, companyId);
+  }
+  if (!USE_LEGACY_WS) {
+    return {
+      success: false,
+      error: 'Direct DB sync is disabled. Use the city HTTP API (port 3000).',
+    };
   }
   return sendToServer({ action: 'delete', table, id, companyId });
 });
@@ -3734,12 +3764,29 @@ ipcMain.handle('db:query', async (_, sql, params, companyId) => {
     const result = await dbQuery(sql, params || []);
     return Array.isArray(result) ? { success: true, data: result } : result;
   }
-  return sendToServer({ action: 'query', sql, params, companyId });
+  // Legacy WS :4546 is off by default — never hang shop PCs on ETIMEDOUT to the city IP.
+  if (!USE_LEGACY_WS) {
+    return {
+      success: false,
+      error: 'Direct DB query is disabled on this PC. Open Chart of Accounts via the city API (check Tailscale / http://city:3000).',
+    };
+  }
+  try {
+    return await sendToServer({ action: 'query', sql, params, companyId });
+  } catch (e) {
+    return { success: false, error: e.message || 'Server unreachable' };
+  }
 });
 
 ipcMain.handle('db:export', async (_, companyId) => {
   if (isServerMode) {
     return { success: true, data: await dbExportAll() };
+  }
+  if (!USE_LEGACY_WS) {
+    return {
+      success: false,
+      error: 'Direct DB sync is disabled. Use the city HTTP API (port 3000).',
+    };
   }
   return sendToServer({ action: 'export', companyId });
 });
@@ -3747,6 +3794,12 @@ ipcMain.handle('db:export', async (_, companyId) => {
 ipcMain.handle('db:import', async (_, data, companyId) => {
   if (isServerMode) {
     return await dbImportAll(data, companyId);
+  }
+  if (!USE_LEGACY_WS) {
+    return {
+      success: false,
+      error: 'Direct DB sync is disabled. Use the city HTTP API (port 3000).',
+    };
   }
   return sendToServer({ action: 'import', data, companyId });
 });

@@ -106,7 +106,7 @@ export function PosEndOfDayReportDialog({
               openedAt: session.openedAt,
             }
           : undefined,
-      })
+      }, { timeoutMs: 8000 })
       .then((res) => {
         if (cancelled) return;
         if (res.error || !res.data) {
@@ -517,7 +517,11 @@ export function PosEndOfDayReportDialog({
               disabled={closing || countedCash === ''}
               onClick={() => void handleCloseCaixa()}
             >
-              <DoorClosed className="w-4 h-4 mr-2" />
+              {closing ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <DoorClosed className="w-4 h-4 mr-2" />
+              )}
               {t.posUi.caixa.closeButton}
             </Button>
           </div>

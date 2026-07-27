@@ -187,9 +187,16 @@ async function ipcGetAll<T>(table: string): Promise<ApiResponse<T[]>> {
 async function ipcQuery<T>(sql: string, params: any[] = []): Promise<ApiResponse<T[]>> {
   try {
     const result = await window.electronAPI!.db.query(sql, params);
-    return { data: (result.data || []) as T[] };
+    if (result && result.success === false) {
+      return { error: result.error || 'IPC query failed' };
+    }
+    return { data: (result?.data || []) as T[] };
   } catch (e: any) {
-    return { error: e.message || 'IPC query error' };
+    const msg = String(e?.message || e || 'IPC query error');
+    if (/ETIMEDOUT|ECONNREFUSED|4546|not connected|unreachable/i.test(msg)) {
+      return { error: 'City server unreachable — check Tailscale and that the API is running on port 3000' };
+    }
+    return { error: msg };
   }
 }
 
@@ -1391,18 +1398,21 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
-    reconciliation: (params: {
-      branchId: string;
-      date: string;
-      session?: {
-        openingBalance?: number;
-        totalIn?: number;
-        totalOut?: number;
-        salesTotal?: number;
-        expensesTotal?: number;
-        openedAt?: string;
-      };
-    }) => {
+    reconciliation: (
+      params: {
+        branchId: string;
+        date: string;
+        session?: {
+          openingBalance?: number;
+          totalIn?: number;
+          totalOut?: number;
+          salesTotal?: number;
+          expensesTotal?: number;
+          openedAt?: string;
+        };
+      },
+      fetchOpts?: { timeoutMs?: number },
+    ) => {
       const sp = new URLSearchParams();
       sp.set('branchId', params.branchId);
       sp.set('date', params.date);
@@ -1424,17 +1434,24 @@ export const api = {
       if (params.session?.openedAt) {
         sp.set('sessionOpenedAt', params.session.openedAt);
       }
-      return apiFetch<any>(`/caixa/reconciliation?${sp}`);
+      return apiFetch<any>(`/caixa/reconciliation?${sp}`, {}, fetchOpts);
     },
-    getOpenSession: (branchId: string) =>
-      apiFetch<any | null>(`/caixa/sessions/open?branchId=${encodeURIComponent(branchId)}`),
+    getOpenSession: (branchId: string, opts?: { syncExpenses?: boolean }) => {
+      const sp = new URLSearchParams({ branchId });
+      if (opts?.syncExpenses) sp.set('syncExpenses', '1');
+      return apiFetch<any | null>(
+        `/caixa/sessions/open?${sp}`,
+        {},
+        { timeoutMs: opts?.syncExpenses ? 12000 : 5000 },
+      );
+    },
     openSession: (body: Record<string, unknown>) =>
-      apiFetch<any>('/caixa/sessions/open', { method: 'POST', body: JSON.stringify(body) }),
+      apiFetch<any>('/caixa/sessions/open', { method: 'POST', body: JSON.stringify(body) }, { timeoutMs: 8000 }),
     closeSession: (sessionId: string, body: Record<string, unknown>) =>
       apiFetch<any>(`/caixa/sessions/${encodeURIComponent(sessionId)}/close`, {
         method: 'POST',
         body: JSON.stringify(body),
-      }),
+      }, { timeoutMs: 8000 }),
     postGlEntry: (body: Record<string, unknown>) =>
       apiFetch<any>('/caixa/gl/post', { method: 'POST', body: JSON.stringify(body) }),
   },
@@ -1855,7 +1872,15 @@ export const api = {
         `/chart-of-accounts/${encodeURIComponent(id)}/ledger${qs ? `?${qs}` : ''}`,
       );
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
-      if (isElectronMode()) {
+
+      // Shop/LAN clients must not fall back to legacy WS db:query (:4546) — that port is
+      // disabled and only produces ETIMEDOUT against the city Tailscale IP.
+      const allowLocalSql =
+        isElectronMode()
+        && !isThinClientMode()
+        && shouldTryIpcAfterApiFailure(apiResult);
+
+      if (allowLocalSql) {
         // Match server: parent_id walk + PGC code-prefix (separate CTEs — Postgres-safe shape).
         let sql = `
           WITH RECURSIVE by_parent AS (
@@ -1919,9 +1944,13 @@ export const api = {
           params.push(endDate);
         }
         sql += ` ORDER BY COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10)) DESC, je.created_at DESC`;
-        return ipcQuery<any>(sql, params);
+        const local = await ipcQuery<any>(sql, params);
+        if (!local.error) return local;
       }
-      return apiResult;
+
+      return apiResult.error
+        ? apiResult
+        : { error: 'Could not load account movements — check city server connection' };
     },
   },
 

@@ -103,7 +103,11 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
       );
       if (res.error) {
         console.error('Failed to fetch ledger:', res.error);
-        toast.error(res.error);
+        const raw = String(res.error);
+        const friendly = /ETIMEDOUT|ECONNREFUSED|4546|db:query|unreachable|failed to fetch|network|timeout/i.test(raw)
+          ? t.ledgerUi.serverUnreachable
+          : raw;
+        toast.error(friendly);
         setEntries([]);
         return;
       }
@@ -115,7 +119,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     } finally {
       setIsLoading(false);
     }
-  }, [account, startDate, endDate, t.ledgerUi.loadError]);
+  }, [account, startDate, endDate, t.ledgerUi.loadError, t.ledgerUi.serverUnreachable]);
 
   useEffect(() => {
     if (open && account) {

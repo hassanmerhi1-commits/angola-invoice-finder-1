@@ -96,6 +96,8 @@ export type GetCaixasOptions = {
   ensureIfEmpty?: boolean;
   /** Return registers from every branch (admin treasury picker). */
   allBranches?: boolean;
+  /** Skip server round-trips (POS open register must stay snappy on slow Tailscale). */
+  localOnly?: boolean;
 };
 
 export type GetBankAccountsOptions = {
@@ -392,6 +394,7 @@ export async function getCaixas(
   const branchLabel = String(branchName || '').trim();
   const ensureIfEmpty = opts?.ensureIfEmpty ?? false;
   const allBranches = opts?.allBranches ?? false;
+  const localOnly = opts?.localOnly ?? false;
 
   if (allBranches) {
     const cachedAll = caixaListCache.get(CAIXA_ALL_BRANCHES_CACHE_KEY);
@@ -404,6 +407,14 @@ export async function getCaixas(
   }
 
   const localAll = await loadLocalCaixas();
+
+  if (localOnly) {
+    let caixas = localAll.filter((c) => isListableCaixa(c));
+    if (!allBranches && branchKey) {
+      caixas = filterCaixasForBranch(caixas, branchKey, branchLabel);
+    }
+    return sortTreasuryCaixas(caixas);
+  }
 
   if (await shouldLoadCaixasFromServerApi()) {
     try {
@@ -621,14 +632,34 @@ export async function updateCaixaBalance(caixaId: string, amount: number, direct
 export async function ensureBranchCaixa(
   branchId: string,
   branchName: string,
-  opts?: { ensureIfEmpty?: boolean },
+  opts?: { ensureIfEmpty?: boolean; localOnly?: boolean },
 ): Promise<Caixa> {
   const existing = await getCaixas(branchId, branchName, {
-    ensureIfEmpty: opts?.ensureIfEmpty ?? true,
+    ensureIfEmpty: false,
+    localOnly: opts?.localOnly,
   });
   if (existing.length > 0) {
     return existing[0];
   }
+  if (opts?.localOnly) {
+    // Create locally only — server sync happens later via openSession / treasury push.
+    const caixa: Caixa = {
+      id: `caixa_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      branchId,
+      branchName,
+      name: `Caixa Principal - ${branchName}`,
+      openingBalance: 0,
+      currentBalance: 0,
+      status: 'closed',
+      createdAt: new Date().toISOString(),
+    };
+    await saveCaixa(caixa);
+    return caixa;
+  }
+  const withEnsure = await getCaixas(branchId, branchName, {
+    ensureIfEmpty: opts?.ensureIfEmpty ?? true,
+  });
+  if (withEnsure.length > 0) return withEnsure[0];
   return createCaixa(branchId, branchName, `Caixa Principal - ${branchName}`, 0);
 }
 

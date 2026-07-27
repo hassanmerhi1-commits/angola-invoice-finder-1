@@ -552,7 +552,11 @@ function caixaRouter(broadcastTable) {
         [resolvedBranchId],
       );
       let sessionRow = result.rows[0] || null;
-      if (sessionRow) {
+      // Expense ledger sync is useful for end-of-day, but it slows every POS open /
+      // session probe over Tailscale. Opt in with ?syncExpenses=1.
+      const syncExpenses = String(req.query.syncExpenses || '').trim() === '1'
+        || String(req.query.syncExpenses || '').toLowerCase() === 'true';
+      if (sessionRow && syncExpenses) {
         try {
           await syncOpenSessionExpensesFromLedger(null, resolvedBranchId);
           const refreshed = await db.query(

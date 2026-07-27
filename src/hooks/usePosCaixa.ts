@@ -127,9 +127,14 @@ type RemoteOpenLookup =
   | { kind: 'none' }
   | { kind: 'error'; error: string };
 
-async function fetchRemoteOpenSession(branchId: string): Promise<RemoteOpenLookup> {
+async function fetchRemoteOpenSession(
+  branchId: string,
+  opts?: { syncExpenses?: boolean },
+): Promise<RemoteOpenLookup> {
   try {
-    const remote = await api.caixa.getOpenSession(branchId);
+    const remote = await api.caixa.getOpenSession(branchId, {
+      syncExpenses: opts?.syncExpenses,
+    });
     if (remote.error) {
       return { kind: 'error', error: String(remote.error) };
     }
@@ -141,6 +146,31 @@ async function fetchRemoteOpenSession(branchId: string): Promise<RemoteOpenLooku
     console.warn('[usePosCaixa] server open session lookup:', err);
     return { kind: 'error', error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallback);
+    }, ms);
+    void promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(fallback);
+      },
+    );
+  });
 }
 
 async function loadLocalOpenSession(branchId: string): Promise<CaixaSession | null> {
@@ -201,7 +231,7 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
   sessionRef.current = session;
   const metaLoadRef = useRef(0);
 
-  const refresh = useCallback(async (options?: { silent?: boolean }) => {
+  const refresh = useCallback(async (options?: { silent?: boolean; syncExpenses?: boolean }) => {
     if (!branchId) {
       // Branch not ready yet after restart — do NOT clear an in-memory open shift.
       setLoading(false);
@@ -218,7 +248,7 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       setLoading(false);
       // Always pull server totals (expenses/refunds), even on silent refresh — otherwise
       // a stale localStorage cache hides caixa expenses paid after the session opened.
-      void fetchRemoteOpenSession(branchId).then((remote) => {
+      void fetchRemoteOpenSession(branchId, { syncExpenses: options?.syncExpenses }).then((remote) => {
         if (remote.kind === 'open') {
           const merged =
             sticky && remote.session.id === sticky.id
@@ -241,7 +271,11 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
     if (!options?.silent) setLoading(true);
 
     try {
-      const remote = await fetchRemoteOpenSession(branchId);
+      const remote = await withTimeout(
+        fetchRemoteOpenSession(branchId, { syncExpenses: options?.syncExpenses }),
+        options?.silent ? 8000 : 4000,
+        { kind: 'error', error: 'timeout' } as RemoteOpenLookup,
+      );
       if (remote.kind === 'open') {
         setSession(remote.session);
         writePosCaixaCache(branchId, remote.session);
@@ -340,50 +374,76 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
   const openSession = useCallback(
     async (openingCash: number, openedBy: string) => {
       if (!branchId) return null;
-      const cx = caixa ?? (await ensureBranchCaixa(branchId, branchName || branchId, { ensureIfEmpty: true }));
+
+      // Fast reclaim — no network.
+      const cached = findCachedOpenSession(branchId);
+      if (cached?.status === 'open') {
+        setSession(cached);
+        writePosCaixaCache(branchId, cached);
+        void resyncOpenSessionToServer(cached, branchName || branchId);
+        return cached;
+      }
+      const localExisting = await loadLocalOpenSession(branchId);
+      if (localExisting) {
+        setSession(localExisting);
+        writePosCaixaCache(branchId, localExisting);
+        void resyncOpenSessionToServer(localExisting, branchName || branchId);
+        return localExisting;
+      }
+
+      // Local-first register metadata (avoid Tailscale round-trips before POS unlocks).
+      const cx =
+        caixa
+        ?? (await ensureBranchCaixa(branchId, branchName || branchId, {
+          ensureIfEmpty: true,
+          localOnly: true,
+        }));
       setCaixa(cx);
 
-      const remote = await fetchRemoteOpenSession(branchId);
+      // Brief remote probe — if server already has an open shift, reuse it.
+      const remote = await withTimeout(
+        fetchRemoteOpenSession(branchId),
+        2500,
+        { kind: 'error', error: 'timeout' } as RemoteOpenLookup,
+      );
       if (remote.kind === 'open') {
         setSession(remote.session);
         writePosCaixaCache(branchId, remote.session);
         return remote.session;
       }
 
-      const cached = findCachedOpenSession(branchId);
-      if (cached) {
-        setSession(cached);
-        writePosCaixaCache(branchId, cached);
-        void resyncOpenSessionToServer(cached, branchName || branchId);
-        return cached;
-      }
-
-      const local = await loadLocalOpenSession(branchId);
-      if (local) {
-        setSession(local);
-        writePosCaixaCache(branchId, local);
-        void resyncOpenSessionToServer(local, branchName || branchId);
-        return local;
-      }
-
+      // Unlock POS immediately with a local session; sync city in the background.
       const sess = await openCaixaSession(cx.id, branchId, openingCash, openedBy);
       setSession(sess);
       writePosCaixaCache(branchId, sess);
 
-      try {
-        await api.caixa.openSession({
-          id: sess.id,
-          caixaId: sess.caixaId,
-          branchId: sess.branchId,
-          branchName: branchName || branchId,
-          openingBalance: sess.openingBalance,
-          openedBy: sess.openedBy,
-          date: sess.date || todayLocalDate(),
-          openedAt: sess.openedAt,
-        });
-      } catch (err) {
-        console.warn('[usePosCaixa] server open sync:', err);
-      }
+      void (async () => {
+        try {
+          // If a slow remote reply arrives with an existing open session, prefer it.
+          const late = await withTimeout(
+            fetchRemoteOpenSession(branchId),
+            5000,
+            { kind: 'none' } as RemoteOpenLookup,
+          );
+          if (late.kind === 'open' && late.session.id !== sess.id) {
+            setSession(late.session);
+            writePosCaixaCache(branchId, late.session);
+            return;
+          }
+          await api.caixa.openSession({
+            id: sess.id,
+            caixaId: sess.caixaId,
+            branchId: sess.branchId,
+            branchName: branchName || branchId,
+            openingBalance: sess.openingBalance,
+            openedBy: sess.openedBy,
+            date: sess.date || todayLocalDate(),
+            openedAt: sess.openedAt,
+          });
+        } catch (err) {
+          console.warn('[usePosCaixa] server open sync:', err);
+        }
+      })();
 
       return sess;
     },
@@ -394,41 +454,52 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
     async (countedCash: number, closedBy: string, notes?: string) => {
       if (!session) return;
       const snapshot = { ...session };
-      await closeCaixaSession(session.id, countedCash, closedBy, notes);
-      try {
-        await api.caixa.closeSession(snapshot.id, {
-          caixaId: snapshot.caixaId,
-          branchId: snapshot.branchId,
-          date: snapshot.date,
-          openingBalance: snapshot.openingBalance,
-          closingBalance: countedCash,
-          totalIn: snapshot.totalIn,
-          totalOut: snapshot.totalOut,
-          salesTotal: snapshot.salesTotal,
-          expensesTotal: snapshot.expensesTotal,
-          adjustments: snapshot.adjustments,
-          openedBy: snapshot.openedBy,
-          closedBy,
-          openedAt: snapshot.openedAt,
-          notes,
-          caixa: caixa
-            ? {
-                id: caixa.id,
-                branchId: caixa.branchId,
-                branchName: caixa.branchName,
-                name: caixa.name,
-                openingBalance: caixa.openingBalance,
-                currentBalance: countedCash,
-                closingBalance: countedCash,
-                status: 'closed',
-              }
-            : undefined,
-        });
-      } catch (err) {
-        console.warn('[usePosCaixa] server close sync:', err);
-      }
+      const caixaSnap = caixa;
+
+      // Clear UI immediately so the cashier is not stuck on a slow Tailscale close.
       if (branchId) clearPosCaixaCache(branchId);
       setSession(null);
+
+      try {
+        await closeCaixaSession(snapshot.id, countedCash, closedBy, notes);
+      } catch (err) {
+        console.warn('[usePosCaixa] local close failed:', err);
+      }
+
+      void (async () => {
+        try {
+          await api.caixa.closeSession(snapshot.id, {
+            caixaId: snapshot.caixaId,
+            branchId: snapshot.branchId,
+            date: snapshot.date,
+            openingBalance: snapshot.openingBalance,
+            closingBalance: countedCash,
+            totalIn: snapshot.totalIn,
+            totalOut: snapshot.totalOut,
+            salesTotal: snapshot.salesTotal,
+            expensesTotal: snapshot.expensesTotal,
+            adjustments: snapshot.adjustments,
+            openedBy: snapshot.openedBy,
+            closedBy,
+            openedAt: snapshot.openedAt,
+            notes,
+            caixa: caixaSnap
+              ? {
+                  id: caixaSnap.id,
+                  branchId: caixaSnap.branchId,
+                  branchName: caixaSnap.branchName,
+                  name: caixaSnap.name,
+                  openingBalance: caixaSnap.openingBalance,
+                  currentBalance: countedCash,
+                  closingBalance: countedCash,
+                  status: 'closed',
+                }
+              : undefined,
+          });
+        } catch (err) {
+          console.warn('[usePosCaixa] server close sync:', err);
+        }
+      })();
     },
     [session, caixa, branchId],
   );
