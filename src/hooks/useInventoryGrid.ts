@@ -3,21 +3,18 @@ import { Product } from '@/types/erp';
 import {
   cacheKey,
   fetchInventoryGrid,
-  invalidateInventoryGridCache,
+  invalidateInventoryGridSessionCache,
   isInventoryGridCacheFresh,
   readInventoryGridCache,
-  readInventoryGridCacheStale,
+  readOfflineInventoryGridFallback,
   writeCache,
 } from '@/lib/inventoryGrid';
-import { saveLanInventoryGrid, readLanInventoryGrid } from '@/lib/lanCatalogCache';
+import { saveLanInventoryGrid } from '@/lib/lanCatalogCache';
 import { canonicalProductSku } from '@/lib/productDedupe';
 
-/** Best available cached rows (session cache, then LAN cache) for an instant warm start. */
+/** Best available cached rows (session / LAN grid / LAN products) for an instant warm start. */
 function readWarmStartRows(branchId: string | undefined, consolidated: boolean): Product[] | null {
-  const stale = readInventoryGridCacheStale(branchId, consolidated);
-  if (stale?.length) return stale;
-  const lan = readLanInventoryGrid(cacheKey(branchId, consolidated));
-  return lan?.length ? lan : null;
+  return readOfflineInventoryGridFallback(branchId, consolidated);
 }
 
 export function useInventoryGrid(opts: {
@@ -34,7 +31,8 @@ export function useInventoryGrid(opts: {
 
   const refresh = useCallback(async () => {
     if (!enabled) return;
-    invalidateInventoryGridCache(opts.branchId, opts.consolidated);
+    // Session only — durable LAN/SQLite caches must survive offline refresh.
+    invalidateInventoryGridSessionCache(opts.branchId, opts.consolidated);
     const gen = ++generationRef.current;
     setLoading(true);
     try {
@@ -45,6 +43,8 @@ export function useInventoryGrid(opts: {
       });
       if (gen !== generationRef.current) return;
       setRows(fresh);
+    } catch (err) {
+      console.error('[useInventoryGrid] refresh failed:', err);
     } finally {
       if (gen === generationRef.current) setLoading(false);
     }
@@ -105,7 +105,7 @@ export function useInventoryGrid(opts: {
   }, [enabled, scopeKey, opts.branchId, opts.consolidated]);
 
   const invalidate = useCallback(() => {
-    invalidateInventoryGridCache(opts.branchId, opts.consolidated);
+    invalidateInventoryGridSessionCache(opts.branchId, opts.consolidated);
   }, [opts.branchId, opts.consolidated]);
 
   const patchRow = useCallback(

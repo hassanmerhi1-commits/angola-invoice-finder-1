@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { isOfflineModeActive } from '@/lib/offlineAuth';
 import {
   buildPosCategoryBuckets,
   filterPosProductsBySearch,
@@ -145,7 +146,7 @@ export function PosCategoryBrowser({
     return (
       <div className="flex flex-col items-center justify-center h-full min-h-[16rem] text-muted-foreground text-center px-4">
         <Package className="w-12 h-12 mb-2 opacity-40" />
-        <p>{t.posUi.noProductsForBranch}</p>
+        <p>{isOfflineModeActive() ? t.posUi.offlineNoCatalog : t.posUi.noProductsForBranch}</p>
       </div>
     );
   }

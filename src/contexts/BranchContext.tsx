@@ -61,6 +61,32 @@ export function BranchProvider({ children }: { children: ReactNode }) {
       applyUserBranchLockOnLogin(storedUser);
       return;
     }
+    // Caixa/filial user with a branchId that didn't match the list yet — still lock
+    // scope to that id so POS checkout has a branch (no toolbar picker for them).
+    const rawAssignedId = String(storedUser?.branchId || '').trim();
+    if (
+      rawAssignedId
+      && storedUser
+      && !canUserSwitchBranch(storedUser, null)
+    ) {
+      const fallback =
+        mapped.find((b) => branchIdsEquivalent(b.id, rawAssignedId))
+        || {
+          id: rawAssignedId,
+          name: rawAssignedId,
+          code: rawAssignedId.slice(0, 8).toUpperCase(),
+          address: '',
+          phone: '',
+          isMain: false,
+          priceLevel: 1,
+          createdAt: '',
+        };
+      persistCurrentBranch(fallback.id, fallback);
+      setScopeIdState(fallback.id);
+      setCurrentBranchState(fallback);
+      applyUserBranchLockOnLogin(storedUser);
+      return;
+    }
 
     setScopeIdState((prevScope) => {
       const userBranch = resolveEffectiveUserBranch(mapped, storedUser);

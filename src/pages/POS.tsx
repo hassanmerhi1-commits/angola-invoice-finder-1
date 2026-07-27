@@ -509,7 +509,23 @@ export default function POS() {
     clientId?: string,
     clientRequestId?: string,
   ) => {
-    if (!currentBranch || !user) {
+    // Caixa has no branch picker — branch is auto from the user/PC. Prefer the
+    // resolved POS branch; fall back to the user's assigned branchId if needed.
+    const saleBranch =
+      currentBranch
+      || (branchId
+        ? {
+            id: branchId,
+            name: branchId,
+            code: branchId.slice(0, 8).toUpperCase(),
+            address: '',
+            phone: '',
+            isMain: false,
+            priceLevel: 1,
+            createdAt: '',
+          }
+        : null);
+    if (!saleBranch || !user) {
       throw new Error(
         !user
           ? t.posUi.checkoutSessionExpired
@@ -528,8 +544,8 @@ export default function POS() {
 
       const sale = await completeSale(
         cart.items,
-        currentBranch.code,
-        currentBranch.id,
+        saleBranch.code,
+        saleBranch.id,
         user.id,
         paymentMethod,
         amountPaid,
@@ -564,7 +580,7 @@ export default function POS() {
       if (paymentMethod === 'cash') {
         recordCashSale(sale.total);
         void processSalePayment(
-          currentBranch.id,
+          saleBranch.id,
           sale.id,
           sale.invoiceNumber,
           sale.total,
@@ -582,8 +598,8 @@ export default function POS() {
               invoiceNumber: sale.invoiceNumber,
               message: caixaResult.message,
             });
-          } else if (currentBranch?.id && caixaSession?.id) {
-            clearSaleIssueKind(currentBranch.id, caixaSession.id, sale.id, 'caixa');
+          } else if (saleBranch.id && caixaSession?.id) {
+            clearSaleIssueKind(saleBranch.id, caixaSession.id, sale.id, 'caixa');
             bumpShiftIssues();
           }
         }).catch((caixaErr) => {
@@ -600,12 +616,12 @@ export default function POS() {
       // Print in the background so the receipt screen is not blocked by LAN + spooler.
       void (async () => {
         try {
-          const printResult = await printPosThermalReceipts(sale, currentBranch, {
+          const printResult = await printPosThermalReceipts(sale, saleBranch, {
             openDrawer: paymentMethod === 'cash',
           });
           if (printResult.success) {
-            if (currentBranch?.id && caixaSession?.id) {
-              clearSaleIssueKind(currentBranch.id, caixaSession.id, sale.id, 'print');
+            if (saleBranch.id && caixaSession?.id) {
+              clearSaleIssueKind(saleBranch.id, caixaSession.id, sale.id, 'print');
               bumpShiftIssues();
             }
             void recordSalePrint(sale, { format: 'thermal', source: 'pos' });

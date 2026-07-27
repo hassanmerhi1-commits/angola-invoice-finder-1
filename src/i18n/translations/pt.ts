@@ -310,9 +310,10 @@ export const pt: TranslationKeys = {
     checkoutAuthRequired: "Sessão no servidor expirou — saia e entre novamente neste PC, depois tente outra vez.",
     checkoutNetworkError: "Não foi possível ligar ao servidor ERP. Verifique a rede e se o NEXOR está aberto no PC servidor.",
     checkoutSessionExpired: "Sessão expirada — faça login novamente antes de concluir a venda.",
-    checkoutBranchMissing: "Nenhuma filial seleccionada — escolha a filial na barra superior e tente novamente.",
+    checkoutBranchMissing: "Filial não carregada para este caixa. Saia e entre novamente (a filial do caixa é automática — não há selector).",
     selectBranchFirst: "Seleccione uma filial na barra superior para carregar produtos.",
     noProductsForBranch: "Sem produtos nesta filial. Confirme o stock em Inventário (mesma filial, não consolidado).",
+    offlineNoCatalog: "Sem catálogo local neste PC. Ligue ao servidor uma vez, abra o POS online, e depois pode vender offline com o último stock conhecido.",
     shoppingCartTitle: "Carrinho de Compras",
     updates: {
       button: "Actualizações",
@@ -530,7 +531,7 @@ export const pt: TranslationKeys = {
   },
 
   offlineBanner: {
-    message: "Modo offline — a mostrar dados em cache. As vendas sincronizam quando o servidor voltar.",
+    message: "Modo offline — stock conhecido neste PC. Vendas em dinheiro sincronizam quando o servidor voltar.",
     pendingCount: "{count} venda(s) por sincronizar",
   },
 

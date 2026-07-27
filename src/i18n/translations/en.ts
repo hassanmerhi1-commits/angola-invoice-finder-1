@@ -308,9 +308,10 @@ export const en = {
     checkoutAuthRequired: "Server login expired — log out and sign in again on this PC, then retry.",
     checkoutNetworkError: "Cannot reach the ERP server. Check network settings and that NEXOR is running on the server PC.",
     checkoutSessionExpired: "Session expired — log in again before completing the sale.",
-    checkoutBranchMissing: "No branch selected — choose a branch in the toolbar and try again.",
+    checkoutBranchMissing: "Branch not loaded for this cashier. Log out and sign in again (caixa branch is automatic — there is no branch picker).",
     selectBranchFirst: "Select a branch in the toolbar to load products.",
     noProductsForBranch: "No products for this branch. Check Inventário for the same branch (not consolidated view), or sync stock.",
+    offlineNoCatalog: "No local product cache on this PC. Connect to the server once, open POS while online, then you can sell offline with last known stock.",
     shoppingCartTitle: "Shopping cart",
     updates: {
       button: "Updates",
@@ -528,7 +529,7 @@ export const en = {
   },
 
   offlineBanner: {
-    message: "Offline mode — showing cached data. Sales will sync when the server is back.",
+    message: "Offline mode — last known stock on this PC. Cash sales sync when the server is back.",
     pendingCount: "{count} sale(s) pending sync",
   },
 

@@ -1,38 +1,66 @@
 import { useCallback, useEffect, useMemo } from 'react';
-import { useProducts } from '@/hooks/useERP';
+import { useAuth, useProducts } from '@/hooks/useERP';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { normalizeIsMain } from '@/lib/branchAccess';
+import { normalizeIsMain, resolveUserBranch } from '@/lib/branchAccess';
 import { PRODUCTS_CHANGED_EVENT, SALES_CHANGED_EVENT } from '@/lib/storage';
-import { Product } from '@/types/erp';
+import { Branch, Product } from '@/types/erp';
 import {
   buildSellingPriceBySku,
   withSellingPriceFromMap,
 } from '@/lib/productDedupe';
 import { readSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
+function synthesizeBranch(id: string, nameHint?: string): Branch {
+  const label = String(nameHint || id).trim() || id;
+  return {
+    id,
+    name: label,
+    code: label.slice(0, 8).toUpperCase() || id.slice(0, 8),
+    address: '',
+    phone: '',
+    isMain: false,
+    priceLevel: 1,
+    createdAt: '',
+  };
+}
+
 /**
  * POS — one products list per branch (+ main catalog prices when on a filial).
- * Uses the same inventory-grid API as Inventário so LAN clients see the same rows.
+ * Uses the same inventory-grid path as Inventário. When the city server is down,
+ * useInventoryGrid falls back to session/LAN caches and SQLite products_cache.
+ *
+ * Caixa users have no branch picker — branch comes from the user assignment
+ * (or last known scope). We always resolve a Branch object when any id is known
+ * so checkout never fails with "no branch selected" while the cart is usable.
  */
 export function usePosProducts() {
+  const { user } = useAuth();
   const {
     currentBranch,
     branches,
+    allBranches,
     listBranchId,
     apiBranchId,
     userBranch,
   } = useBranchScope();
 
-  const branchId =
-    currentBranch?.id ||
-    listBranchId ||
-    apiBranchId ||
-    userBranch?.id;
+  const catalog = allBranches.length > 0 ? allBranches : branches;
+
+  const resolvedBranch = useMemo((): Branch | null => {
+    if (currentBranch) return currentBranch;
+    if (userBranch) return userBranch;
+    const rawId =
+      String(listBranchId || apiBranchId || user?.branchId || '').trim();
+    if (!rawId) return null;
+    return resolveUserBranch(catalog, rawId) || synthesizeBranch(rawId);
+  }, [currentBranch, userBranch, listBranchId, apiBranchId, user?.branchId, catalog]);
+
+  const branchId = resolvedBranch?.id;
 
   const mainBranch = useMemo(
-    () => branches.find((b) => normalizeIsMain(b.isMain)) ?? branches[0] ?? null,
-    [branches],
+    () => catalog.find((b) => normalizeIsMain(b.isMain)) ?? catalog[0] ?? null,
+    [catalog],
   );
 
   const needsCatalogPrices = Boolean(
@@ -98,6 +126,6 @@ export function usePosProducts() {
     branchId,
     refreshProducts,
     applySoldQuantities,
-    currentBranch: currentBranch ?? userBranch,
+    currentBranch: resolvedBranch,
   };
 }

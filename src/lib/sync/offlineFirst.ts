@@ -136,7 +136,14 @@ export async function warmOfflineCatalog(branchId?: string): Promise<void> {
     // Mirror SQLite cache into LAN localStorage so thin-client UI shares one catalog.
     const products = await readLocalProductsCache(id);
     if (products.length > 0) {
-      saveLanProducts(lanCatalogScopeKey(id), products as any);
+      const { mapInventoryGridRows, cacheKey, writeCache } = await import('@/lib/inventoryGrid');
+      const { saveLanInventoryGrid } = await import('@/lib/lanCatalogCache');
+      const gridRows = mapInventoryGridRows(products);
+      saveLanProducts(lanCatalogScopeKey(id), gridRows as any);
+      // POS/Inventory read the inventory-grid cache — keep it warm for cold offline starts.
+      const gridKey = cacheKey(id, false);
+      saveLanInventoryGrid(gridKey, gridRows);
+      writeCache(gridKey, gridRows);
     }
     const clients = await readLocalClientsCache();
     if (clients.length > 0) {

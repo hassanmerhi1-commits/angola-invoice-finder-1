@@ -2,7 +2,9 @@ import { Product } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import {
   saveLanInventoryGrid,
+  saveLanProducts,
   readLanInventoryGrid,
+  readLanProducts,
   invalidateLanInventoryGrid,
   lanCatalogScopeKey,
 } from '@/lib/lanCatalogCache';
@@ -144,16 +146,45 @@ export function mapInventoryGridRows(rows: any[]): Product[] {
   return out;
 }
 
-function readOfflineInventoryGridFallback(
+/** Sync caches only (session + LAN). Used for instant warm-start. */
+export function readOfflineInventoryGridFallback(
   branchId: string | undefined,
   consolidated: boolean,
 ): Product[] | null {
   const key = cacheKey(branchId, consolidated);
+  const scope = lanCatalogScopeKey(branchId, consolidated);
+  const lanProducts = readLanProducts(scope);
   return (
     readInventoryGridCacheStale(branchId, consolidated)
     || readLanInventoryGrid(key)
+    || readLanInventoryGrid(scope)
+    || (lanProducts?.length ? mapInventoryGridRows(lanProducts as any[]) : null)
     || readCache(key)
   );
+}
+
+/** Last-resort local SQLite products_cache (shop Electron clients). */
+async function readSqliteProductsAsGrid(branchId?: string): Promise<Product[] | null> {
+  try {
+    const { readLocalProductsCache } = await import('@/lib/sync/offlineFirst');
+    const rows = await readLocalProductsCache(branchId);
+    if (!rows.length) return null;
+    return mapInventoryGridRows(rows);
+  } catch {
+    return null;
+  }
+}
+
+/** Clear session TTL cache only — keep durable LAN cache for offline POS. */
+export function invalidateInventoryGridSessionCache(
+  branchId?: string,
+  consolidated?: boolean,
+): void {
+  try {
+    sessionStorage.removeItem(CACHE_PREFIX + cacheKey(branchId, !!consolidated));
+  } catch {
+    /* ignore */
+  }
 }
 
 export async function fetchInventoryGrid(opts: {
@@ -167,6 +198,23 @@ export async function fetchInventoryGrid(opts: {
     const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
     if (cached?.length) return cached;
   }
+
+  // Already offline: serve local catalog immediately (no long network timeout).
+  try {
+    const { isOfflineModeActive } = await import('@/lib/offlineAuth');
+    if (isOfflineModeActive()) {
+      const local =
+        readOfflineInventoryGridFallback(opts.branchId, opts.consolidated)
+        || (!opts.consolidated ? await readSqliteProductsAsGrid(opts.branchId) : null);
+      if (local?.length) {
+        writeCache(key, local);
+        return local;
+      }
+    }
+  } catch {
+    /* continue to network */
+  }
+
   try {
     const res = await api.products.inventoryGrid({
       branchId: opts.branchId,
@@ -192,12 +240,26 @@ export async function fetchInventoryGrid(opts: {
     const priced = mapped.map((row) => withSellingPriceFromMap(row, priceBySku));
     writeCache(key, priced);
     saveLanInventoryGrid(key, priced);
+    // Keep product-list LAN key in sync so warmOfflineCatalog / useProducts share one catalog.
+    if (!opts.consolidated && opts.branchId) {
+      saveLanProducts(lanCatalogScopeKey(opts.branchId, false), priced);
+    }
     return priced;
   } catch (err) {
     const stale = readOfflineInventoryGridFallback(opts.branchId, opts.consolidated);
     if (stale?.length) {
       console.warn('[inventoryGrid] Server unreachable — using cached inventory rows');
       return stale;
+    }
+    // Cold start / cleared session: still sell from local SQLite if master data was pulled.
+    if (!opts.consolidated) {
+      const sqlite = await readSqliteProductsAsGrid(opts.branchId);
+      if (sqlite?.length) {
+        console.warn('[inventoryGrid] Server unreachable — using SQLite products_cache');
+        writeCache(key, sqlite);
+        saveLanInventoryGrid(key, sqlite);
+        return sqlite;
+      }
     }
     throw err;
   }
