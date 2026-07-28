@@ -263,7 +263,7 @@ export async function printStockAdjustmentDocument(
     </thead>
     <tbody>${rows}</tbody>
   </table>
-  <div class="total">${escape(labels.documentTotal)}: ${escape(formatMoney(doc.totalValue))} (${doc.lineCount} ${escape(labels.product.toLowerCase())})</div>
+  <div class="total">${escape(labels.documentTotal)}: ${escape(formatMoney(doc.totalValue))} (${doc.lineCount} ${escape(String(labels.product || 'product').toLowerCase())})</div>
   <div class="footer">${escape(labels.printedAt)}</div>
 </body>
 </html>`;
