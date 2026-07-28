@@ -426,22 +426,42 @@ module.exports = function(broadcastTable) {
         ? Math.min(Math.max(parsedLimit, 1), 2000)
         : 500;
 
-      // Cast both sides to text — Postgres rejects `code = $1` when $1 is inferred as uuid
-      // from comparing to `id` (error: operator does not exist: character varying = uuid).
-      const asText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
-      const rootRes = await db.query(
-        `SELECT id, code, name, opening_balance, current_balance, is_header
-         FROM chart_of_accounts
-         WHERE ${asText('id')} = ${asText('$1')} OR ${asText('code')} = ${asText('$1')}
-         LIMIT 1`,
-        [String(id)],
-      );
+      // Never OR uuid id with varchar code in one predicate — Postgres then types $1 as
+      // uuid and rejects `code = $1` (operator does not exist: character varying = uuid).
+      const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
+      const key = String(id || '').trim();
+      const looksLikeUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key);
+      const rootSelect = `SELECT id, code, name, opening_balance, current_balance, is_header
+         FROM chart_of_accounts`;
+      let rootRes;
+      if (looksLikeUuid) {
+        rootRes = await db.query(
+          `${rootSelect} WHERE ${idText('id')} = ${idText('$1')} LIMIT 1`,
+          [key],
+        );
+      } else {
+        // Account codes (e.g. "31", "451") — match code only; never touch uuid id.
+        rootRes = await db.query(
+          `${rootSelect} WHERE ${idText('code')} = ${idText('$1')} LIMIT 1`,
+          [key],
+        );
+      }
+      // Fallback: UUID that was not found as id, or code typed like a uuid (rare).
+      if (!rootRes.rows[0] && looksLikeUuid) {
+        rootRes = await db.query(
+          `${rootSelect} WHERE ${idText('code')} = ${idText('$1')} LIMIT 1`,
+          [key],
+        );
+      } else if (!rootRes.rows[0] && !looksLikeUuid) {
+        rootRes = await db.query(
+          `${rootSelect} WHERE ${idText('id')} = ${idText('$1')} LIMIT 1`,
+          [key],
+        );
+      }
       const root = rootRes.rows[0];
       if (!root) {
         return res.status(404).json({ error: 'Account not found' });
       }
-
-      const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
       const activeClause = db.engine === 'postgres'
         ? '(is_active IS DISTINCT FROM false)'
         : '(is_active = 1 OR is_active IS NULL OR is_active = true)';
@@ -456,8 +476,8 @@ module.exports = function(broadcastTable) {
         : `COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10))`;
 
       let dateFilter = '';
-      // $1 = root id, $2 = root code (for prefix expansion)
-      const params = [root.id, String(root.code || '')];
+      // $1 = root id, $2 = root code (for prefix expansion) — always plain strings
+      const params = [String(root.id), String(root.code || '')];
       let paramIndex = 3;
 
       // Filter on effective date (entry_date or created_at) — many rows have null entry_date.

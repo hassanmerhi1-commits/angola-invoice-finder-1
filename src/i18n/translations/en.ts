@@ -1210,6 +1210,7 @@ export const en = {
     noMovementsHint: "If the balance is not zero, open the child accounts (or expand the header) — movements are often posted on sub-accounts.",
     loadError: "Could not load account movements",
     serverUnreachable: "City server unreachable — check Tailscale and that the API is running (port 3000)",
+    serverNeedsRebuild: "City backend is outdated — on the city PC run: git pull && docker compose up -d --force-recreate --build backend",
     noSearchResults: "No results for the search",
     date: "Date",
     journalNo: "Journal No.",

@@ -105,21 +105,31 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     if (!account) return;
     setIsLoading(true);
     try {
-      // Chart balances are company-wide — ledger must not hide movements behind the
-      // active branch filter (that made drill-down look empty while the balance was non-zero).
-      const res = await api.chartOfAccounts.getLedger(
-        account.id,
-        startDate || undefined,
-        endDate || undefined,
-        undefined,
-        { limit: LEDGER_FETCH_LIMIT },
-      );
-      if (res.error) {
-        console.error('Failed to fetch ledger:', res.error);
-        const raw = String(res.error);
+      // Prefer account code first — avoids legacy city backends that crash on
+      // `WHERE id = $1 OR code = $1` when $1 is a UUID (varchar = uuid).
+      const keys = [account.code, account.id].filter((k, i, arr) => !!k && arr.indexOf(k) === i);
+      let res: Awaited<ReturnType<typeof api.chartOfAccounts.getLedger>> | null = null;
+      for (const key of keys) {
+        res = await api.chartOfAccounts.getLedger(
+          String(key),
+          startDate || undefined,
+          endDate || undefined,
+          undefined,
+          { limit: LEDGER_FETCH_LIMIT },
+        );
+        if (!res.error && res.data !== undefined) break;
+        const raw = String(res.error || '');
+        // Try next key when city still has the old OR-typed predicate.
+        if (!/character varying|uuid|operator does not exist|42883/i.test(raw)) break;
+      }
+      if (!res || res.error) {
+        console.error('Failed to fetch ledger:', res?.error);
+        const raw = String(res?.error || '');
         const friendly = /ETIMEDOUT|ECONNREFUSED|4546|db:query|unreachable|failed to fetch|network|timeout/i.test(raw)
           ? t.ledgerUi.serverUnreachable
-          : raw;
+          : /character varying|uuid|operator does not exist|42883/i.test(raw)
+            ? t.ledgerUi.serverNeedsRebuild
+            : raw || t.ledgerUi.loadError;
         toast.error(friendly);
         setEntries([]);
         setTruncated(false);
@@ -136,7 +146,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     } finally {
       setIsLoading(false);
     }
-  }, [account, startDate, endDate, t.ledgerUi.loadError, t.ledgerUi.serverUnreachable]);
+  }, [account, startDate, endDate, t.ledgerUi.loadError, t.ledgerUi.serverUnreachable, t.ledgerUi.serverNeedsRebuild]);
 
   useEffect(() => {
     if (!open || !account) return;
