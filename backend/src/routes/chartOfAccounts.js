@@ -31,6 +31,18 @@ module.exports = function(broadcastTable) {
         ) j ON ${idText('j.account_id')} = ${idText('coa.id')}
            OR ${idText('j.account_id')} = ${idText('coa.code')}`
         : '';
+      // Fast path: use stored children_count (maintained on write). Live path keeps the kids join.
+      const kidsJoin = liveBalances
+        ? `LEFT JOIN (
+          SELECT parent_id, COUNT(*) AS children_count
+          FROM chart_of_accounts
+          WHERE parent_id IS NOT NULL
+          GROUP BY parent_id
+        ) kids ON kids.parent_id = coa.id`
+        : '';
+      const childrenSelect = liveBalances
+        ? `COALESCE(kids.children_count, 0) as children_count`
+        : `COALESCE(coa.children_count, 0) as children_count`;
       const result = await db.query(`
         SELECT 
           coa.id,
@@ -49,16 +61,11 @@ module.exports = function(broadcastTable) {
           coa.updated_at,
           parent.name as parent_name,
           parent.code as parent_code,
-          COALESCE(kids.children_count, 0) as children_count,
+          ${childrenSelect},
           ${balanceSelect}
         FROM chart_of_accounts coa
         LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
-        LEFT JOIN (
-          SELECT parent_id, COUNT(*) AS children_count
-          FROM chart_of_accounts
-          WHERE parent_id IS NOT NULL
-          GROUP BY parent_id
-        ) kids ON kids.parent_id = coa.id
+        ${kidsJoin}
         ${journalJoin}
         WHERE coa.is_active = true
         ORDER BY coa.code
@@ -419,12 +426,15 @@ module.exports = function(broadcastTable) {
         ? Math.min(Math.max(parsedLimit, 1), 2000)
         : 500;
 
+      // Cast both sides to text — Postgres rejects `code = $1` when $1 is inferred as uuid
+      // from comparing to `id` (error: operator does not exist: character varying = uuid).
+      const asText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
       const rootRes = await db.query(
         `SELECT id, code, name, opening_balance, current_balance, is_header
          FROM chart_of_accounts
-         WHERE id = $1 OR code = $1
+         WHERE ${asText('id')} = ${asText('$1')} OR ${asText('code')} = ${asText('$1')}
          LIMIT 1`,
-        [id],
+        [String(id)],
       );
       const root = rootRes.rows[0];
       if (!root) {

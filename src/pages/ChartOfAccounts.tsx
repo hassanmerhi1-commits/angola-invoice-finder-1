@@ -601,13 +601,19 @@ export default function ChartOfAccounts() {
       </Tabs>
 
       {/* Data Grid */}
-      <div className="flex-1 overflow-auto">
-        {isLoading ? (
+      <div className="flex-1 overflow-auto relative">
+        {isLoading && accounts.length > 0 && (
+          <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-center gap-2 border-b bg-background/80 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            {t.common.loading}
+          </div>
+        )}
+        {isLoading && accounts.length === 0 ? (
           <div className="flex items-center justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
           </div>
         ) : (
-          <table className="w-full text-xs">
+          <table className={cn('w-full text-xs', isLoading && accounts.length > 0 && 'opacity-60')}>
             <thead className="bg-muted/60 border-b sticky top-0 z-10">
               <tr>
                 <th className="px-3 py-2 text-left font-semibold w-32">{t.chartOfAccountsUi.colAccountNo}</th>

@@ -58,6 +58,23 @@ function writePosCaixaCache(branchId: string, session: CaixaSession): void {
   if (session.branchId && !branchIdsEquivalent(session.branchId, branchId)) {
     localStorage.setItem(`${POS_CAIXA_CACHE_PREFIX}${session.branchId}`, JSON.stringify(session));
   }
+  // Mirror into durable session list so restart recovery works even if the sticky key is lost.
+  try {
+    const key = 'kwanzaerp_caixa_sessions';
+    const raw = localStorage.getItem(key);
+    const list: CaixaSession[] = raw ? JSON.parse(raw) : [];
+    const next = [
+      ...list.filter(
+        (s) =>
+          s.id !== session.id
+          && !(s.status === 'open' && branchIdsEquivalent(s.branchId, session.branchId || branchId)),
+      ),
+      session,
+    ];
+    localStorage.setItem(key, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
 }
 
 function clearPosCaixaCache(branchId: string): void {
@@ -336,9 +353,10 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
         return;
       }
 
-      // Confirmed: no open session on server or local.
+      // Server says none — do NOT clear local sticky cache. Thin clients often open
+      // local-first and city sync fails; wiping cache forces a second "open register".
+      // Only show the open dialog when we truly have no local evidence.
       setSession(null);
-      clearPosCaixaCache(branchId);
       setLoading(false);
 
       const metaToken = ++metaLoadRef.current;

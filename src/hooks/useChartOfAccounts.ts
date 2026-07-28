@@ -93,17 +93,32 @@ const createLocalId = () =>
 /** CoA structure changes rarely; longer TTL avoids re-hitting city on every tab visit. */
 const COA_CACHE_FRESH_MS = 180_000;
 
+function readInitialAccounts(): Account[] {
+  const mem = getCachedList<Account[]>('chartOfAccounts');
+  if (mem && mem.length > 0) return mem;
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem(LOCAL_COA_STORAGE_KEY) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw) as Account[];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const sorted = sortAccountsByCode(parsed.filter((a) => a.is_active !== false));
+        setCachedList('chartOfAccounts', sorted);
+        return sorted;
+      }
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
 export function useChartOfAccounts(opts?: { enabled?: boolean }) {
   const enabled = opts?.enabled !== false;
   const { t } = useTranslation();
-  const cachedAccounts = getCachedList<Account[]>('chartOfAccounts');
-  const [accounts, setAccounts] = useState<Account[]>(() => cachedAccounts ?? []);
-  const [isLoading, setIsLoading] = useState(() => enabled && !(cachedAccounts && cachedAccounts.length));
+  const [accounts, setAccounts] = useState<Account[]>(() => readInitialAccounts());
+  const [isLoading, setIsLoading] = useState(() => enabled && readInitialAccounts().length === 0);
   const [error, setError] = useState<string | null>(null);
   const branchCaixaSeeded = useRef(false);
-  // Once we have rows to show, background refreshes shouldn't flash the spinner.
-  const hasRowsRef = useRef((cachedAccounts?.length ?? 0) > 0);
-  const liveBalancesInFlight = useRef(false);
+  const hasRowsRef = useRef(false);
+  if (accounts.length > 0) hasRowsRef.current = true;
 
   const applyAccounts = useCallback((remoteAccounts: Account[]) => {
     const sorted = sortAccountsByCode(remoteAccounts);
@@ -112,22 +127,6 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     hasRowsRef.current = sorted.length > 0;
     saveLocalAccounts(sorted);
   }, []);
-
-  /** Merge live journal-computed balances into the already-shown tree (no spinner). */
-  const refreshLiveBalances = useCallback(async () => {
-    if (liveBalancesInFlight.current) return;
-    liveBalancesInFlight.current = true;
-    try {
-      const response = await api.chartOfAccounts.list({ liveBalances: true });
-      if (response.error || !response.data?.length) return;
-      applyAccounts(sortAccountsByCode(response.data));
-      setError(null);
-    } catch (err: any) {
-      console.warn('[useChartOfAccounts] Live balance refresh failed:', err?.message || err);
-    } finally {
-      liveBalancesInFlight.current = false;
-    }
-  }, [applyAccounts]);
 
   const fetchAccounts = useCallback(async (opts?: { force?: boolean; liveBalances?: boolean }) => {
     if (
@@ -140,8 +139,9 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
       return;
     }
     try {
+      // Never blank the tree when we already have local/cache rows.
       if (!hasRowsRef.current) setIsLoading(true);
-      // Fast path: stored balances. Manual Refresh / force can request live totals.
+      // Fast path: stored balances. Manual Refresh passes liveBalances for journal totals.
       const response = await api.chartOfAccounts.list(
         opts?.liveBalances ? { liveBalances: true } : undefined,
       );
@@ -161,10 +161,8 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
       }
       applyAccounts(remoteAccounts);
       setError(null);
-      // After a fast paint, upgrade balances in the background (skip if we already asked live).
-      if (!opts?.liveBalances && remoteAccounts.length > 0) {
-        void refreshLiveBalances();
-      }
+      // Do NOT auto-fetch liveBalances — that re-scans all journal lines over Tailscale
+      // and is what made CoA feel permanently slow. Refresh button opts in explicitly.
     } catch (err: any) {
       // Keep last good server data — don't flash zeroed seed over live balances.
       if (hasRowsRef.current) {
@@ -183,12 +181,17 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     } finally {
       setIsLoading(false);
     }
-  }, [t, applyAccounts, refreshLiveBalances]);
+  }, [t, applyAccounts]);
 
-  useTableRefreshListener(['chart_of_accounts', 'journal_entries', 'payments'], () => {
+  useTableRefreshListener(['chart_of_accounts'], () => {
     if (!enabled) return;
     markCachedListStale('chartOfAccounts');
     void fetchAccounts({ force: true });
+  });
+
+  // Journal/payment posts may drift stored balances — soft-stale only (no Tailscale storm).
+  useTableRefreshListener(['journal_entries', 'payments'], () => {
+    markCachedListStale('chartOfAccounts');
   });
 
   // Auto-seed branch caixa accounts once after first load — only refetch if something was created.

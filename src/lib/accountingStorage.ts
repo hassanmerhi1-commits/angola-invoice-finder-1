@@ -21,6 +21,17 @@ import { api, ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
 import { isThinClientMode, isServerDatabaseHost } from '@/lib/api/config';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
 
+function newUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 // Angola PGC expense accounts (class 7 = Custos). Used to book cash/bank expenses to the GL.
 const EXPENSE_GL_ACCOUNTS: Record<ExpenseCategory, string> = {
   staff: '722', // Remunerações - Pessoal
@@ -603,7 +614,7 @@ export async function createCaixa(
   }
 
   const caixa: Caixa = {
-    id: `caixa_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    id: newUuid(),
     branchId,
     branchName,
     name,
@@ -644,7 +655,7 @@ export async function ensureBranchCaixa(
   if (opts?.localOnly) {
     // Create locally only — server sync happens later via openSession / treasury push.
     const caixa: Caixa = {
-      id: `caixa_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      id: newUuid(),
       branchId,
       branchName,
       name: `Caixa Principal - ${branchName}`,
@@ -850,18 +861,35 @@ export async function updateCaixaSessionTotals(
 // ==================== CAIXA SESSION FUNCTIONS ====================
 
 export async function getCaixaSessions(caixaId?: string, date?: string): Promise<CaixaSession[]> {
+  const fromLs = lsGet<CaixaSession[]>(STORAGE_KEYS.caixaSessions, []);
+  let sessions: CaixaSession[] = [...fromLs];
+
   if (isElectronMode()) {
-    const rows = await dbGetAll<any>('caixa_sessions');
-    let sessions = rows.map(mapCaixaSessionFromDb);
-    if (caixaId) sessions = sessions.filter(s => s.caixaId === caixaId);
-    if (date) sessions = sessions.filter(s => s.date === date);
-    return sessions;
+    try {
+      const rows = await dbGetAll<any>('caixa_sessions');
+      const fromDb = rows.map(mapCaixaSessionFromDb);
+      const byId = new Map<string, CaixaSession>();
+      for (const s of [...fromLs, ...fromDb]) {
+        if (!s?.id) continue;
+        const prev = byId.get(s.id);
+        if (!prev) {
+          byId.set(s.id, s);
+          continue;
+        }
+        // Prefer the richer / newer copy when both exist.
+        const prevT = new Date(prev.openedAt || prev.createdAt || 0).getTime();
+        const nextT = new Date(s.openedAt || s.createdAt || 0).getTime();
+        byId.set(s.id, nextT >= prevT ? s : prev);
+      }
+      sessions = Array.from(byId.values());
+    } catch (err) {
+      console.warn('[accountingStorage] caixa_sessions DB read failed; using localStorage:', err);
+    }
   }
-  const sessions = lsGet<CaixaSession[]>(STORAGE_KEYS.caixaSessions, []);
-  let filtered = sessions;
-  if (caixaId) filtered = filtered.filter(s => s.caixaId === caixaId);
-  if (date) filtered = filtered.filter(s => s.date === date);
-  return filtered;
+
+  if (caixaId) sessions = sessions.filter(s => s.caixaId === caixaId);
+  if (date) sessions = sessions.filter(s => s.date === date);
+  return sessions;
 }
 
 export async function getOpenCaixaSession(caixaId: string): Promise<CaixaSession | undefined> {
@@ -888,7 +916,7 @@ export async function openCaixaSession(
 ): Promise<CaixaSession> {
   const today = format(new Date(), 'yyyy-MM-dd');
   const session: CaixaSession = {
-    id: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    id: newUuid(),
     caixaId,
     branchId,
     date: today,
@@ -903,13 +931,21 @@ export async function openCaixaSession(
     openedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   };
-  
+
+  // Always write localStorage — thin clients cannot rely on Electron IPC DB (:4546 disabled).
+  const sessions = lsGet<CaixaSession[]>(STORAGE_KEYS.caixaSessions, []);
+  const nextLs = [
+    ...sessions.filter((s) => s.id !== session.id && !(s.status === 'open' && branchIdsEquivalent(s.branchId, branchId))),
+    session,
+  ];
+  lsSet(STORAGE_KEYS.caixaSessions, nextLs);
+
   if (isElectronMode()) {
-    await dbInsert('caixa_sessions', mapCaixaSessionToDb(session));
-  } else {
-    const sessions = lsGet<CaixaSession[]>(STORAGE_KEYS.caixaSessions, []);
-    sessions.push(session);
-    lsSet(STORAGE_KEYS.caixaSessions, sessions);
+    try {
+      await dbInsert('caixa_sessions', mapCaixaSessionToDb(session));
+    } catch (err) {
+      console.warn('[accountingStorage] caixa_sessions DB insert failed; localStorage kept:', err);
+    }
   }
   
   const caixa = await getCaixaById(caixaId);
@@ -929,53 +965,61 @@ export async function closeCaixaSession(
   closedBy: string,
   notes?: string
 ): Promise<void> {
-  if (isElectronMode()) {
-    const sessions = await getCaixaSessions();
-    const session = sessions.find(s => s.id === sessionId);
-    if (session) {
-      session.closingBalance = closingBalance;
-      session.closedBy = closedBy;
-      session.closedAt = new Date().toISOString();
-      session.status = 'closed';
-      session.notes = notes;
-      await dbInsert('caixa_sessions', mapCaixaSessionToDb(session));
-      
-      const caixa = await getCaixaById(session.caixaId);
-      if (caixa) {
-        caixa.status = 'closed';
-        caixa.closedAt = session.closedAt;
-        caixa.closedBy = closedBy;
-        caixa.closingBalance = closingBalance;
-        caixa.closingNotes = notes;
-        await saveCaixa(caixa);
-      }
-
-      try {
-        const { enqueueCaixaCloseSync } = await import('@/lib/sync/clientOutbox');
-        await enqueueCaixaCloseSync({
-          sessionData: { ...session },
-          ...(caixa ? { caixaData: { ...caixa } } : {}),
-        });
-      } catch {
-        /* non-fatal */
-      }
-    }
-    return;
-  }
-  const sessions = lsGet<CaixaSession[]>(STORAGE_KEYS.caixaSessions, []);
-  const session = sessions.find(s => s.id === sessionId);
-  if (session) {
+  const markClosed = (session: CaixaSession) => {
     session.closingBalance = closingBalance;
     session.closedBy = closedBy;
     session.closedAt = new Date().toISOString();
     session.status = 'closed';
     session.notes = notes;
-    lsSet(STORAGE_KEYS.caixaSessions, sessions);
-    
-    const caixa = await getCaixaById(session.caixaId);
+  };
+
+  // Always update localStorage first (thin-client survival).
+  const lsSessions = lsGet<CaixaSession[]>(STORAGE_KEYS.caixaSessions, []);
+  const lsSession = lsSessions.find((s) => s.id === sessionId);
+  if (lsSession) {
+    markClosed(lsSession);
+    lsSet(STORAGE_KEYS.caixaSessions, lsSessions);
+  }
+
+  if (isElectronMode()) {
+    try {
+      const sessions = await getCaixaSessions();
+      const session = sessions.find(s => s.id === sessionId);
+      if (session) {
+        markClosed(session);
+        await dbInsert('caixa_sessions', mapCaixaSessionToDb(session));
+        
+        const caixa = await getCaixaById(session.caixaId);
+        if (caixa) {
+          caixa.status = 'closed';
+          caixa.closedAt = session.closedAt;
+          caixa.closedBy = closedBy;
+          caixa.closingBalance = closingBalance;
+          caixa.closingNotes = notes;
+          await saveCaixa(caixa);
+        }
+
+        try {
+          const { enqueueCaixaCloseSync } = await import('@/lib/sync/clientOutbox');
+          await enqueueCaixaCloseSync({
+            sessionData: { ...session },
+            ...(caixa ? { caixaData: { ...caixa } } : {}),
+          });
+        } catch {
+          /* non-fatal */
+        }
+      }
+    } catch (err) {
+      console.warn('[accountingStorage] caixa close DB update failed; localStorage kept:', err);
+    }
+    return;
+  }
+
+  if (lsSession) {
+    const caixa = await getCaixaById(lsSession.caixaId);
     if (caixa) {
       caixa.status = 'closed';
-      caixa.closedAt = session.closedAt;
+      caixa.closedAt = lsSession.closedAt;
       caixa.closedBy = closedBy;
       caixa.closingBalance = closingBalance;
       caixa.closingNotes = notes;

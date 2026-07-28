@@ -1757,7 +1757,11 @@ export const api = {
     /** Fast by default (stored balances). Pass liveBalances for journal-recomputed totals. */
     list: async (opts?: { liveBalances?: boolean }) => {
       const qs = opts?.liveBalances ? '?liveBalances=1' : '';
-      const apiResult = await apiFetch<any[]>(`/chart-of-accounts${qs}`);
+      const apiResult = await apiFetch<any[]>(
+        `/chart-of-accounts${qs}`,
+        undefined,
+        { timeoutMs: opts?.liveBalances ? 45000 : 12000 },
+      );
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       // Shop clients: never fall back to heavy IPC journal aggregates over legacy WS.
       if (isElectronMode() && !isThinClientMode() && shouldTryIpcAfterApiFailure(apiResult)) {

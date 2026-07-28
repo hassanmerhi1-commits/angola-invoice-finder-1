@@ -29,6 +29,12 @@ async function caixaTablesExist() {
 }
 caixaTablesExist.cached = undefined;
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || '').trim(),
+  );
+}
+
 function mapSessionRow(row) {
   if (!row) return null;
   return {
@@ -534,22 +540,29 @@ function caixaRouter(broadcastTable) {
   router.get('/sessions/open', async (req, res) => {
     try {
       if (!(await caixaTablesExist())) {
-        return res.json(null);
+        // Do not return null — clients treat null as "confirmed closed" and may drop sticky state.
+        return res.status(503).json({ error: 'Caixa tables not available on server' });
       }
       const branchId = String(req.query.branchId || '').trim();
       if (!branchId) return res.status(400).json({ error: 'branchId required' });
 
       const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
       const orderBy = db.engine === 'postgres' ? 'opened_at DESC NULLS LAST' : 'opened_at DESC';
-      const branchFilter = db.engine === 'postgres'
-        ? 'branch_id::text = $1'
-        : 'CAST(branch_id AS TEXT) = $1';
+      // Match UUID / hyphen variants — shops often send a remapped branch id after update.
+      const branchCol = db.engine === 'postgres' ? 'branch_id::text' : 'CAST(branch_id AS TEXT)';
+      const norm = (expr) => `REPLACE(LOWER(TRIM(COALESCE(${expr}, ''))), '-', '')`;
       const result = await db.query(
         `SELECT * FROM caixa_sessions
-         WHERE ${branchFilter} AND status = 'open'
+         WHERE status = 'open'
+           AND (
+             ${branchCol} = $1
+             OR ${branchCol} = $2
+             OR ${norm(branchCol)} = ${norm('$1')}
+             OR ${norm(branchCol)} = ${norm('$2')}
+           )
          ORDER BY ${orderBy}
          LIMIT 1`,
-        [resolvedBranchId],
+        [resolvedBranchId, branchId],
       );
       let sessionRow = result.rows[0] || null;
       // Expense ledger sync is useful for end-of-day, but it slows every POS open /
@@ -592,24 +605,38 @@ function caixaRouter(broadcastTable) {
 
       if (!branchId) return res.status(400).json({ error: 'branchId required' });
 
+      const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
+      const branchCol = db.engine === 'postgres' ? 'branch_id::text' : 'CAST(branch_id AS TEXT)';
+      const norm = (expr) => `REPLACE(LOWER(TRIM(COALESCE(${expr}, ''))), '-', '')`;
       const existing = await db.query(
-        `SELECT id FROM caixa_sessions WHERE branch_id = $1 AND status = 'open' LIMIT 1`,
-        [branchId],
+        `SELECT id FROM caixa_sessions
+         WHERE status = 'open'
+           AND (
+             ${branchCol} = $1
+             OR ${branchCol} = $2
+             OR ${norm(branchCol)} = ${norm('$1')}
+             OR ${norm(branchCol)} = ${norm('$2')}
+           )
+         LIMIT 1`,
+        [resolvedBranchId, branchId],
       );
       if (existing.rows.length > 0) {
         const row = await db.query(`SELECT * FROM caixa_sessions WHERE id = $1`, [existing.rows[0].id]);
         return res.json(mapSessionRow(row.rows[0]));
       }
 
-      const sessionId = id || crypto.randomUUID();
-      const cxId = caixaId || crypto.randomUUID();
+      const sessionId = isUuid(id) ? String(id).trim() : crypto.randomUUID();
+      const cxId = isUuid(caixaId) ? String(caixaId).trim() : crypto.randomUUID();
       const today = date || new Date().toISOString().slice(0, 10);
       const openBal = Number(openingBalance) || 0;
       const now = new Date().toISOString();
+      const openedAt = req.body?.openedAt && String(req.body.openedAt).trim()
+        ? String(req.body.openedAt).trim()
+        : now;
 
       await db.query(
         `INSERT INTO caixas (id, branch_id, branch_name, name, opening_balance, current_balance, status, opened_by, opened_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $5, 'open', $6, $7, $7)
+         VALUES ($1, $2, $3, $4, $5, $5, 'open', $6, $7, $8)
          ON CONFLICT (id) DO UPDATE SET
            status = 'open',
            opening_balance = excluded.opening_balance,
@@ -617,7 +644,7 @@ function caixaRouter(broadcastTable) {
            opened_by = excluded.opened_by,
            opened_at = excluded.opened_at,
            updated_at = excluded.updated_at`,
-        [cxId, branchId, branchName || '', `Caixa Principal - ${branchName || branchId}`, openBal, openedBy || '', now],
+        [cxId, resolvedBranchId, branchName || '', `Caixa Principal - ${branchName || branchId}`, openBal, openedBy || '', openedAt, now],
       );
 
       await db.query(
@@ -625,7 +652,7 @@ function caixaRouter(broadcastTable) {
           id, caixa_id, branch_id, date, opening_balance, total_in, total_out,
           sales_total, expenses_total, adjustments, status, opened_by, opened_at
         ) VALUES ($1,$2,$3,$4,$5,0,0,0,0,0,'open',$6,$7)`,
-        [sessionId, cxId, branchId, today, openBal, openedBy || '', now],
+        [sessionId, cxId, resolvedBranchId, today, openBal, openedBy || '', openedAt],
       );
 
       if (broadcastTable) await broadcastTable('caixa_sessions');
