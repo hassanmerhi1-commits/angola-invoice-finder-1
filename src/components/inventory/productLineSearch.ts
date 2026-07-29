@@ -10,6 +10,14 @@ export const normalizeSearchText = (value: string) =>
 
 const DUP_SKU_SUFFIX_RE = /-dup-[a-f0-9]+$/i;
 
+/** Digits only, leading zeros stripped — matches 1010-00030 / 101000030 / 0101000030. */
+export function digitProductCodeForMatch(code: string): string {
+  const digits = String(code || '').replace(/\D/g, '');
+  if (!digits) return '';
+  const trimmed = digits.replace(/^0+/, '');
+  return trimmed || '0';
+}
+
 /** Normalize SKU for import matching (strip repair suffix, optional leading zeros on numeric codes). */
 export function canonicalProductCodeForMatch(code: string): string {
   const raw = normalizeSearchText(code).replace(DUP_SKU_SUFFIX_RE, '');
@@ -17,6 +25,8 @@ export function canonicalProductCodeForMatch(code: string): string {
     const trimmed = raw.replace(/^0+/, '');
     return trimmed || '0';
   }
+  const digitKey = digitProductCodeForMatch(raw);
+  if (digitKey && /^\d+$/.test(digitKey) && digitKey !== raw) return digitKey;
   return raw;
 }
 
@@ -26,6 +36,8 @@ function productCodeMatchKeys(code: string): string[] {
   const keys = new Set<string>();
   keys.add(normalizeSearchText(trimmed));
   keys.add(canonicalProductCodeForMatch(trimmed));
+  const digitKey = digitProductCodeForMatch(trimmed);
+  if (digitKey) keys.add(digitKey);
   return Array.from(keys).filter(Boolean);
 }
 

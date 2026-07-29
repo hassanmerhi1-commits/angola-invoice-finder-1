@@ -816,14 +816,19 @@ export default function Inventory() {
       if (result.data) {
         const { imported = 0, updated = 0, failed = 0 } = result.data;
         const saved = imported + updated;
-        const messages: string[] = [];
-        if (imported > 0) messages.push(t.inventoryUi.importedCount.replace('{count}', String(imported)));
-        if (updated > 0) messages.push(`${updated} ${language === 'pt' ? 'actualizados' : 'updated'}`);
-        if (failed > 0) messages.push(t.inventoryUi.failedCount.replace('{count}', String(failed)));
-        if (saved > 0) {
+        if (saved > 0 && failed === 0) {
+          const bits: string[] = [];
+          if (imported > 0) bits.push(t.inventoryUi.importedCount.replace('{count}', String(imported)));
+          if (updated > 0) bits.push(`${updated} ${language === 'pt' ? 'actualizados' : 'updated'}`);
+          toast.success(bits.join(', ') || t.inventoryUi.importCompleted);
+        } else if (saved > 0) {
+          const messages: string[] = [];
+          if (imported > 0) messages.push(t.inventoryUi.importedCount.replace('{count}', String(imported)));
+          if (updated > 0) messages.push(`${updated} ${language === 'pt' ? 'actualizados' : 'updated'}`);
+          if (failed > 0) messages.push(t.inventoryUi.failedCount.replace('{count}', String(failed)));
           toast.success(messages.join(', ') || t.inventoryUi.importCompleted);
         } else if (failed > 0) {
-          toast.error(messages.join(', ') || t.inventoryUi.importError);
+          toast.error(t.inventoryUi.failedCount.replace('{count}', String(failed)));
         } else {
           toast.info(t.inventoryUi.noNewProductsToImport);
         }
@@ -1703,6 +1708,7 @@ export default function Inventory() {
         existingKeys={existingSkus}
         duplicateLabel="SKU"
         mappingType="products"
+        defaultDuplicateAction="update"
       />
 
       {/* Inventory Count Sheet Dialog */}

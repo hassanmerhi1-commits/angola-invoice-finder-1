@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Download, X, AlertTriangle, RefreshCw, Settings2 } from 'lucide-react';
+import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Download, X, AlertTriangle, RefreshCw, Settings2, Loader2 } from 'lucide-react';
 import { ColumnMappingDialog, ColumnMapping } from './ColumnMappingDialog';
 import { getExcelHeaders } from '@/lib/excel';
 import { useTranslation } from '@/i18n';
@@ -29,7 +29,7 @@ interface ExcelImportDialogProps<T> {
   description: string;
   parseFile: (file: File, mappings?: ColumnMapping[]) => Promise<T[]>;
   validateData: (data: T[]) => { valid: T[]; errors: ImportError[] };
-  onImport: (data: T[], options?: { skipDuplicates?: boolean; updateDuplicates?: boolean }) => void;
+  onImport: (data: T[], options?: { skipDuplicates?: boolean; updateDuplicates?: boolean }) => void | Promise<void>;
   downloadTemplate: () => void;
   columns: { key: keyof T; label: string }[];
   // Duplicate detection
@@ -38,6 +38,12 @@ interface ExcelImportDialogProps<T> {
   duplicateLabel?: string; // Label for the duplicate key (e.g., 'SKU', 'NIF')
   // Column mapping
   mappingType?: 'products' | 'clients' | 'suppliers';
+  /** When true, block file pick until the product catalog is ready for matching. */
+  catalogLoading?: boolean;
+  /** Size of the in-memory catalog used for validation (shown when 0 rows match). */
+  catalogSize?: number;
+  /** Default handling when duplicate keys already exist in the system. */
+  defaultDuplicateAction?: 'skip' | 'update' | 'include';
 }
 
 export function ExcelImportDialog<T>({
@@ -54,6 +60,9 @@ export function ExcelImportDialog<T>({
   existingKeys = [],
   duplicateLabel,
   mappingType,
+  catalogLoading = false,
+  catalogSize,
+  defaultDuplicateAction = 'skip',
 }: ExcelImportDialogProps<T>) {
   const { t } = useTranslation();
   const resolvedDuplicateLabel = duplicateLabel || t.importUi.duplicateLabelDefault;
@@ -62,12 +71,20 @@ export function ExcelImportDialog<T>({
   const [validData, setValidData] = useState<T[]>([]);
   const [errors, setErrors] = useState<ImportError[]>([]);
   const [fileName, setFileName] = useState<string>('');
-  const [duplicateAction, setDuplicateAction] = useState<'skip' | 'update' | 'include'>('skip');
+  const [duplicateAction, setDuplicateAction] = useState<'skip' | 'update' | 'include'>(defaultDuplicateAction);
   const [showMappingDialog, setShowMappingDialog] = useState(false);
   const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>([]);
   const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Re-run validation when the catalog finishes loading / grows (Stock Entry import).
+  useEffect(() => {
+    if (!open || step !== 'preview' || parsedData.length === 0 || catalogLoading) return;
+    const { valid, errors: nextErrors } = validateData(parsedData);
+    setValidData(valid);
+    setErrors(nextErrors);
+  }, [open, step, parsedData, validateData, catalogLoading, catalogSize]);
 
   // Detect duplicates
   const { duplicates, newItems } = useMemo(() => {
@@ -134,7 +151,7 @@ export function ExcelImportDialog<T>({
     }
   };
 
-  const handleImport = () => {
+  const handleImport = async () => {
     setStep('importing');
     
     // Determine what to import based on duplicate action
@@ -145,16 +162,22 @@ export function ExcelImportDialog<T>({
     } else if (duplicateAction === 'update') {
       // Import all, let the handler know to update existing
       dataToImport = validData;
-      onImport(dataToImport, { updateDuplicates: true });
-      handleClose();
+      try {
+        await onImport(dataToImport, { updateDuplicates: true });
+      } finally {
+        handleClose();
+      }
       return;
     } else {
       // Include all (may create duplicates)
       dataToImport = validData;
     }
     
-    onImport(dataToImport, { skipDuplicates: duplicateAction === 'skip' });
-    handleClose();
+    try {
+      await onImport(dataToImport, { skipDuplicates: duplicateAction === 'skip' });
+    } finally {
+      handleClose();
+    }
   };
 
   const handleClose = () => {
@@ -163,7 +186,7 @@ export function ExcelImportDialog<T>({
     setValidData([]);
     setErrors([]);
     setFileName('');
-    setDuplicateAction('skip');
+    setDuplicateAction(defaultDuplicateAction);
     setColumnMappings([]);
     setDetectedHeaders([]);
     setCurrentFile(null);
@@ -174,10 +197,12 @@ export function ExcelImportDialog<T>({
   };
 
   const triggerFileInput = () => {
+    if (catalogLoading) return;
     fileInputRef.current?.click();
   };
 
   const importCount = duplicateAction === 'skip' ? newItems.length : validData.length;
+  const noValidRows = step === 'preview' && validData.length === 0 && parsedData.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -193,26 +218,41 @@ export function ExcelImportDialog<T>({
         <div className="flex-1 overflow-hidden">
           {step === 'upload' && (
             <div className="space-y-4">
-              <div 
-                onClick={triggerFileInput}
-                className="border-2 border-dashed rounded-lg p-12 text-center cursor-pointer hover:border-primary transition-colors"
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
-                <Upload className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                <p className="text-lg font-medium mb-2">{t.importUi.clickToSelectFile}</p>
-                <p className="text-sm text-muted-foreground">
-                  {t.importUi.supportsExcelCsv}
-                </p>
-              </div>
+              {catalogLoading ? (
+                <div className="border-2 border-dashed rounded-lg p-12 text-center">
+                  <Loader2 className="w-12 h-12 mx-auto mb-4 text-muted-foreground animate-spin" />
+                  <p className="text-lg font-medium mb-2">{t.importUi.catalogLoadingTitle}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {t.importUi.catalogLoadingDesc}
+                  </p>
+                </div>
+              ) : (
+                <div
+                  onClick={triggerFileInput}
+                  className="border-2 border-dashed rounded-lg p-12 text-center cursor-pointer hover:border-primary transition-colors"
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                  <Upload className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                  <p className="text-lg font-medium mb-2">{t.importUi.clickToSelectFile}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {t.importUi.supportsExcelCsv}
+                  </p>
+                  {typeof catalogSize === 'number' && catalogSize > 0 && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {t.importUi.catalogReadyCount.replace('{count}', String(catalogSize))}
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div className="flex justify-center">
-                <Button variant="outline" onClick={downloadTemplate}>
+                <Button variant="outline" onClick={downloadTemplate} disabled={catalogLoading}>
                   <Download className="w-4 h-4 mr-2" />
                   {t.importUi.downloadSampleTemplate}
                 </Button>
@@ -329,6 +369,13 @@ export function ExcelImportDialog<T>({
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>
                     <div className="font-medium mb-1">{t.importUi.errorsFoundTitle}</div>
+                    {noValidRows && (
+                      <p className="text-sm mb-2">
+                        {(typeof catalogSize === 'number' && catalogSize === 0)
+                          ? t.importUi.noValidCatalogEmpty
+                          : t.importUi.noValidCannotImport}
+                      </p>
+                    )}
                     <ul className="list-disc list-inside text-sm max-h-24 overflow-auto">
                       {errors.slice(0, 5).map((error, idx) => (
                         <li key={idx}>
@@ -410,6 +457,11 @@ export function ExcelImportDialog<T>({
           {step === 'preview' && importCount === 0 && validData.length > 0 && (
             <Button disabled>
               {t.importUi.allDuplicates}
+            </Button>
+          )}
+          {step === 'preview' && noValidRows && (
+            <Button disabled variant="secondary">
+              {t.importUi.cannotImportNoneValid}
             </Button>
           )}
         </DialogFooter>

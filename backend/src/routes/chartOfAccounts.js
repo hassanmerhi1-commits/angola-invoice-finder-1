@@ -476,9 +476,12 @@ module.exports = function(broadcastTable) {
         : `COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10))`;
 
       let dateFilter = '';
-      // $1 = root id, $2 = root code (for prefix expansion) — always plain strings
-      const params = [String(root.id), String(root.code || '')];
-      let paramIndex = 3;
+      // $1 = root id. Code param only when expanding by PGC prefix (headers).
+      // Leaf queries must NOT bind an unused $2 — Postgres then errors:
+      // "could not determine data type of parameter $2".
+      const params = [String(root.id)];
+      let paramIndex = 2;
+      let codeParamSql = null;
 
       // Filter on effective date (entry_date or created_at) — many rows have null entry_date.
       if (start_date) {
@@ -497,18 +500,22 @@ module.exports = function(broadcastTable) {
       // Leaf accounts: parent walk alone (just this id). Headers also expand by PGC code prefix
       // when parent_id links are incomplete — that LIKE is expensive on busy trees.
       const expandByCode = root.is_header === true || root.is_header === 1 || root.is_header === '1';
+      if (expandByCode) {
+        codeParamSql = `$${paramIndex++}`;
+        params.push(String(root.code || ''));
+      }
       const byCodeCte = expandByCode
         ? `,
         by_code AS (
           SELECT id, code, name
           FROM chart_of_accounts
           WHERE ${activeClause}
-            AND CAST($2 AS TEXT) <> ''
+            AND CAST(${codeParamSql} AS TEXT) <> ''
             AND (
-              ${idText('code')} = ${idText('$2')}
+              ${idText('code')} = ${idText(codeParamSql)}
               OR (
-                length(${idText('code')}) > length(CAST($2 AS TEXT))
-                AND ${idText('code')} LIKE CAST($2 AS TEXT) || '%'
+                length(${idText('code')}) > length(CAST(${codeParamSql} AS TEXT))
+                AND ${idText('code')} LIKE CAST(${codeParamSql} AS TEXT) || '%'
               )
             )
         )`
@@ -579,7 +586,7 @@ module.exports = function(broadcastTable) {
                 AND length(${idText('code')}) > length(CAST($2 AS TEXT))
                 AND ${idText('code')} LIKE CAST($2 AS TEXT) || '%'
               )`,
-          [root.id, String(root.code || '')],
+          [String(root.id), String(root.code || '')],
         );
         const childCount = Number(kids.rows[0]?.n || kids.rows[0]?.count || 0);
         const ownNet = await db.query(

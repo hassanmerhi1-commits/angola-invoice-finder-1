@@ -180,7 +180,7 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
               // 3+ columns: code, description, price (or more)
               return {
                 'Código': r[0],
-                'Descrição': r[1],
+                'Descrição': r[1] || r[0],
                 'Preço Venda': r[2] || 0,
                 'Preço Custo': r[3] || 0,
                 'Quantidade': r[4] || 0,
@@ -188,13 +188,19 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
                 'Categoria': r[6] || '',
                 'IVA %': r[7] != null && r[7] !== '' ? r[7] : DEFAULT_VAT_RATE,
               };
-            } else {
-              // 2 columns: code + description only
+            }
+            if (colCount === 1) {
+              // Code-only sheet (common for CODIGOS.xls)
               return {
                 'Código': r[0],
-                'Descrição': r[1] || '',
+                'Descrição': r[0],
               };
             }
+            // 2 columns: code + description
+            return {
+              'Código': r[0],
+              'Descrição': r[1] || r[0] || '',
+            };
           });
         } else {
           rows = XLSX.utils.sheet_to_json(firstSheet);
@@ -207,13 +213,16 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
               const mapping = columnMappings.find(m => m.systemField === field);
               return mapping?.excelColumn ? row[mapping.excelColumn] : undefined;
             };
+            const codigo = formatSpreadsheetCode(getMappedValue('codigo'));
+            let descricao = String(getMappedValue('descricao') || '').trim();
+            if (!descricao && codigo) descricao = codigo;
             
             return {
-              codigo: String(getMappedValue('codigo') || ''),
-              descricao: String(getMappedValue('descricao') || ''),
-              preco: parseFloat(getMappedValue('preco') || 0),
-              custo: parseFloat(getMappedValue('custo') || 0),
-              quantidade: parseInt(getMappedValue('quantidade') || 0),
+              codigo,
+              descricao,
+              preco: parseFloat(String(getMappedValue('preco') || 0)) || 0,
+              custo: parseFloat(String(getMappedValue('custo') || 0)) || 0,
+              quantidade: parseInt(String(getMappedValue('quantidade') || 0), 10) || 0,
               unidade: String(getMappedValue('unidade') || 'UN'),
               categoria: String(getMappedValue('categoria') || ''),
               iva: (() => {
@@ -222,34 +231,67 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
                 const n = parseFloat(String(raw));
                 return Number.isFinite(n) ? n : DEFAULT_VAT_RATE;
               })(),
-              codigoBarras: getMappedValue('codigoBarras') || '',
-              fornecedor: getMappedValue('fornecedor') || '',
-              qtdMinima: parseInt(getMappedValue('qtdMinima') || 0),
-              localizacao: getMappedValue('localizacao') || '',
+              codigoBarras: String(getMappedValue('codigoBarras') || ''),
+              fornecedor: String(getMappedValue('fornecedor') || ''),
+              qtdMinima: parseInt(String(getMappedValue('qtdMinima') || 0), 10) || 0,
+              localizacao: String(getMappedValue('localizacao') || ''),
             };
           }
-          
-          // Default mapping with common column name patterns
+
+          // Default mapping — fuzzy header match (CODIGOS, Codigo, SKU, …)
+          const lowerKey = (k: string) =>
+            String(k || '').trim().toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+          const findByAliases = (aliases: string[]) => {
+            for (const a of aliases) {
+              if (row[a] !== undefined && row[a] !== null && String(row[a]).trim() !== '') return row[a];
+            }
+            for (const [key, val] of Object.entries(row)) {
+              if (val === undefined || val === null || String(val).trim() === '') continue;
+              const nk = lowerKey(key);
+              if (aliases.some((a) => {
+                const na = lowerKey(a);
+                return nk === na || (na.length >= 4 && (nk.startsWith(na) || nk.includes(na)));
+              })) {
+                return val;
+              }
+            }
+            return undefined;
+          };
+
+          const codigo = formatSpreadsheetCode(
+            findByAliases([
+              'Código', 'codigo', 'CODIGOS', 'Codigos', 'Codigo', 'SKU', 'sku',
+              'Cod', 'COD', 'Code', 'Artigo', 'Referência', 'Referencia', 'Ref',
+            ]) ?? Object.values(row)[0],
+          );
+          let descricao = String(
+            findByAliases([
+              'Descrição', 'descricao', 'Descricao', 'Nome', 'nome', 'Produto',
+              'DESCRICAO', 'Description', 'Designação', 'Designacao', 'Name',
+            ]) || '',
+          ).trim();
+          if (!descricao && codigo) descricao = codigo;
+
           return {
-            codigo: String(row['Código'] || row['codigo'] || row['SKU'] || row['sku'] || row['Cod'] || row['COD'] || row['Code'] || ''),
-            descricao: String(row['Descrição'] || row['descricao'] || row['Nome'] || row['nome'] || row['Produto'] || row['DESCRICAO'] || row['Description'] || ''),
-            preco: parseFloat(row['Preço Venda'] || row['preco'] || row['Preço'] || row['Price'] || row['PVP'] || 0),
-            custo: parseFloat(row['Preço Custo'] || row['custo'] || row['Cost'] || row['Custo'] || 0),
-            quantidade: parseInt(row['Quantidade'] || row['quantidade'] || row['Stock'] || row['Qty'] || row['QTD'] || 0),
-            unidade: String(row['Unidade'] || row['unidade'] || row['Unit'] || row['UN'] || 'UN'),
-            categoria: String(row['Categoria'] || row['categoria'] || row['Category'] || ''),
+            codigo,
+            descricao,
+            preco: parseFloat(String(findByAliases(['Preço Venda', 'preco', 'Preço', 'Price', 'PVP', 'Preco']) || 0)) || 0,
+            custo: parseFloat(String(findByAliases(['Preço Custo', 'custo', 'Cost', 'Custo', 'Preco Custo']) || 0)) || 0,
+            quantidade: parseInt(String(findByAliases(['Quantidade', 'quantidade', 'Stock', 'Qty', 'QTD']) || 0), 10) || 0,
+            unidade: String(findByAliases(['Unidade', 'unidade', 'Unit', 'UN']) || 'UN'),
+            categoria: String(findByAliases(['Categoria', 'categoria', 'Category']) || ''),
             iva: (() => {
-              const raw = row['IVA %'] ?? row['iva'] ?? row['IVA'] ?? row['Tax'];
+              const raw = findByAliases(['IVA %', 'iva', 'IVA', 'Tax']);
               if (raw === null || raw === undefined || raw === '') return DEFAULT_VAT_RATE;
               const n = parseFloat(String(raw));
               return Number.isFinite(n) ? n : DEFAULT_VAT_RATE;
             })(),
-            codigoBarras: row['Código de Barras'] || row['codigo_barras'] || row['Barcode'] || row['EAN'] || '',
-            fornecedor: row['Fornecedor'] || row['fornecedor'] || row['Supplier'] || '',
-            qtdMinima: parseInt(row['Qtd Mínima'] || row['qtd_minima'] || row['Min Qty'] || 0),
-            localizacao: row['Localização'] || row['localizacao'] || row['Location'] || '',
+            codigoBarras: String(findByAliases(['Código de Barras', 'codigo_barras', 'Barcode', 'EAN']) || ''),
+            fornecedor: String(findByAliases(['Fornecedor', 'fornecedor', 'Supplier']) || ''),
+            qtdMinima: parseInt(String(findByAliases(['Qtd Mínima', 'qtd_minima', 'Min Qty']) || 0), 10) || 0,
+            localizacao: String(findByAliases(['Localização', 'localizacao', 'Location']) || ''),
           };
-        });
+        }).filter((p) => String(p.codigo || '').trim());
         
         resolve(products);
       } catch (error) {
@@ -316,7 +358,8 @@ export function downloadImportTemplate() {
   XLSX.writeFile(wb, 'template_importacao_produtos.xlsx');
 }
 
-// Validate imported products
+// Validate imported products — new SKUs are allowed (batch import creates them).
+// Missing description falls back to the code so code-only sheets still import.
 export function validateImportedProducts(products: ExcelProduct[]): {
   valid: ExcelProduct[];
   errors: { row: number; errors: string[] }[];
@@ -326,12 +369,12 @@ export function validateImportedProducts(products: ExcelProduct[]): {
 
   products.forEach((product, index) => {
     const rowErrors: string[] = [];
-    
-    if (!product.codigo) {
+    const codigo = formatSpreadsheetCode(product.codigo).trim();
+    let descricao = String(product.descricao || '').trim();
+    if (!descricao && codigo) descricao = codigo;
+
+    if (!codigo) {
       rowErrors.push('Código é obrigatório');
-    }
-    if (!product.descricao) {
-      rowErrors.push('Descrição é obrigatória');
     }
     if (product.preco < 0) {
       rowErrors.push('Preço não pode ser negativo');
@@ -346,7 +389,11 @@ export function validateImportedProducts(products: ExcelProduct[]): {
     if (rowErrors.length > 0) {
       errors.push({ row: index + 2, errors: rowErrors });
     } else {
-      valid.push(product);
+      valid.push({
+        ...product,
+        codigo,
+        descricao,
+      });
     }
   });
 
@@ -405,7 +452,7 @@ function parseSpreadsheetNumber(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Pick first non-empty cell matching any header alias (exact or normalized). */
+/** Pick first non-empty cell matching any header alias (exact, normalized, or fuzzy). */
 function pickSpreadsheetField(row: Record<string, unknown>, aliases: string[]): unknown {
   const normalizedAliases = aliases.map(normalizeSpreadsheetHeader);
 
@@ -418,6 +465,10 @@ function pickSpreadsheetField(row: Record<string, unknown>, aliases: string[]): 
     if (val === undefined || val === null || String(val).trim() === '') continue;
     const nk = normalizeSpreadsheetHeader(key);
     if (normalizedAliases.includes(nk)) return val;
+    // Fuzzy: "CODIGOS", "Codigo Produto", "Descrição do Artigo", etc.
+    if (normalizedAliases.some((a) => a.length >= 4 && (nk === a || nk.startsWith(a) || nk.includes(a)))) {
+      return val;
+    }
   }
 
   return undefined;
@@ -455,8 +506,8 @@ function pickSpreadsheetQuantity(row: Record<string, unknown>): number {
 
 function parseStockEntryRow(row: Record<string, unknown>): ExcelStockEntryLine {
   const codigoRaw = pickSpreadsheetField(row, [
-    'Código', 'Codigo', 'codigo', 'SKU', 'sku', 'Cod', 'COD', 'Code', 'code',
-    'Código Produto', 'codigo_produto', 'Ref', 'Referência', 'Referencia',
+    'Código', 'Codigo', 'codigo', 'CODIGOS', 'Codigos', 'SKU', 'sku', 'Cod', 'COD', 'Code', 'code',
+    'Código Produto', 'codigo_produto', 'Ref', 'Referência', 'Referencia', 'Artigo',
   ]);
   const costRaw = pickSpreadsheetField(row, [
     'Preço Custo', 'Preco Custo', 'custo', 'Custo', 'Cost', 'cost',

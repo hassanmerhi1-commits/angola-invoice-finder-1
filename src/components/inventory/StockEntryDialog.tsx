@@ -276,6 +276,7 @@ export function StockEntryDialog({
   const [freightAccountPickerOpen, setFreightAccountPickerOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importLookupProducts, setImportLookupProducts] = useState<Product[]>([]);
+  const [importCatalogLoading, setImportCatalogLoading] = useState(false);
 
   const catalogProducts = useMemo(() => {
     if (searchProducts && searchProducts.length > 0) return searchProducts;
@@ -304,6 +305,7 @@ export function StockEntryDialog({
 
   const loadImportCatalog = useCallback(async () => {
     if (!entryBranchId) return [] as Product[];
+    setImportCatalogLoading(true);
     try {
       // Light list only — import matching needs sku/name/barcode/cost, not full stock rows.
       // Branch list already includes company-wide catalog masters (0 stock) for filials.
@@ -319,12 +321,15 @@ export function StockEntryDialog({
     } catch {
       setImportLookupProducts([]);
       return [];
+    } finally {
+      setImportCatalogLoading(false);
     }
   }, [entryBranchId]);
 
   useEffect(() => {
     if (!open || !entryBranchId) {
       setImportLookupProducts([]);
+      setImportCatalogLoading(false);
       return;
     }
     void loadImportCatalog();
@@ -698,69 +703,118 @@ export function StockEntryDialog({
       const errors: { row: number; errors: string[] }[] = [];
 
       data.forEach((row, index) => {
-        const rowErrors: string[] = [];
         const codigo = String(row.codigo || '').trim();
-
         if (!codigo) {
-          rowErrors.push(t.stockEntryUi.importErrorCodeRequired);
+          errors.push({ row: index + 2, errors: [t.stockEntryUi.importErrorCodeRequired] });
+          return;
         }
-        if (rowErrors.length === 0 && !findProductForStockEntryImport(productsForImport, codigo, entryBranchId, row.descricao)) {
-          rowErrors.push(t.stockEntryUi.importProductNotFound.replace('{code}', codigo));
-        }
-
-        if (rowErrors.length > 0) {
-          errors.push({ row: index + 2, errors: rowErrors });
-        } else {
-          valid.push({
-            codigo,
-            descricao: row.descricao,
-            quantidade: row.quantidade > 0 ? Math.round(row.quantidade) : 0,
-            custo: Math.max(0, row.custo || 0),
-          });
-        }
+        // Missing catalog products are auto-created on Import — do not block.
+        valid.push({
+          codigo,
+          descricao: row.descricao,
+          quantidade: row.quantidade > 0 ? Math.round(row.quantidade) : 0,
+          custo: Math.max(0, row.custo || 0),
+        });
       });
 
       return { valid, errors };
     },
-    [productsForImport, entryBranchId, t.stockEntryUi],
+    [t.stockEntryUi],
   );
 
   const handleImportFromExcel = useCallback(
-    (data: ExcelStockEntryLine[]) => {
+    async (data: ExcelStockEntryLine[]) => {
       if (!entryBranchId || data.length === 0) return;
 
-      const mergedBySku = new Map<string, { productId: string; quantity: number; cost: number; taxRate: number; rowId?: string }>();
       const importQty = (qty: number) => (qty > 0 ? qty : 1);
+      let catalog = [...productsForImport];
+
+      const missingRows = data.filter(
+        (row) => !findProductForStockEntryImport(catalog, row.codigo, entryBranchId, row.descricao),
+      );
+      let createdCount = 0;
+
+      if (missingRows.length > 0) {
+        const uniqueMissing = new Map<string, ExcelStockEntryLine>();
+        for (const row of missingRows) {
+          const key = normalizeSearchText(row.codigo);
+          if (key && !uniqueMissing.has(key)) uniqueMissing.set(key, row);
+        }
+        const payload = Array.from(uniqueMissing.values()).map((row) => ({
+          sku: row.codigo,
+          name: String(row.descricao || '').trim() || row.codigo,
+          category: 'GERAL',
+          price: 0,
+          cost: Math.max(0, row.custo || 0),
+          stock: 0,
+          unit: 'UN',
+          taxRate: DEFAULT_VAT_RATE,
+          isActive: true,
+          branchId: entryBranchId,
+        }));
+        const batch = await api.products.batchImport(payload);
+        createdCount = Number(batch.data?.imported || 0);
+        // Refresh light catalog so new SKUs resolve for line fill.
+        const refreshed = await loadImportCatalog();
+        if (refreshed.length > 0) catalog = refreshed;
+        else {
+          for (const row of uniqueMissing.values()) {
+            catalog.push({
+              id: `temp-${row.codigo}`,
+              sku: row.codigo,
+              name: String(row.descricao || '').trim() || row.codigo,
+              barcode: '',
+              category: 'GERAL',
+              price: 0,
+              cost: Math.max(0, row.custo || 0),
+              stock: 0,
+              unit: 'UN',
+              taxRate: DEFAULT_VAT_RATE,
+              isActive: true,
+              branchId: entryBranchId,
+            } as Product);
+          }
+        }
+      }
+
+      const mergedBySku = new Map<string, {
+        productId: string | null;
+        quantity: number;
+        cost: number;
+        taxRate: number;
+        search: string;
+      }>();
 
       for (const row of data) {
         const catalogProduct = findProductForStockEntryImport(
-          productsForImport,
+          catalog,
           row.codigo,
           entryBranchId,
           row.descricao,
         );
-        if (!catalogProduct) continue;
+        const skuKey = normalizeSearchText(catalogProduct?.sku || row.codigo);
+        if (!skuKey) continue;
 
-        const skuKey = normalizeSearchText(catalogProduct.sku);
         const qty = importQty(row.quantidade);
-        const cost = row.custo > 0 ? row.custo : (catalogProduct.cost || 0);
-        const taxRate = normalizeTaxRate(catalogProduct.taxRate);
+        const cost = row.custo > 0 ? row.custo : (catalogProduct?.cost || 0);
+        const taxRate = normalizeTaxRate(catalogProduct?.taxRate);
         const prev = mergedBySku.get(skuKey);
 
         if (prev) {
           mergedBySku.set(skuKey, {
-            productId: catalogProduct.id,
+            productId: catalogProduct?.id ?? prev.productId,
             quantity: prev.quantity + qty,
             cost: row.custo > 0 ? row.custo : prev.cost,
             taxRate: prev.taxRate,
-            rowId: prev.rowId,
+            search: prev.search,
           });
         } else {
           mergedBySku.set(skuKey, {
-            productId: catalogProduct.id,
+            productId: catalogProduct?.id ?? null,
             quantity: qty,
             cost,
             taxRate,
+            search: catalogProduct ? '' : String(row.codigo || '').trim(),
           });
         }
       }
@@ -768,35 +822,41 @@ export function StockEntryDialog({
       let firstImportedRowId: string | null = null;
 
       setForm((prev) => {
-        const byProductId = new Map<string, EntryLineRow>();
-        for (const line of prev.lines) {
-          if (line.productId) byProductId.set(line.productId, line);
-        }
-        for (const { productId, quantity, cost, taxRate } of mergedBySku.values()) {
-          const existing = byProductId.get(productId);
-          if (existing) {
-            byProductId.set(productId, {
-              ...existing,
-              quantity: existing.quantity + quantity,
-              cost: cost > 0 ? cost : existing.cost,
-            });
-          } else {
-            const rowId = newLineRowId();
-            if (!firstImportedRowId) firstImportedRowId = rowId;
-            byProductId.set(productId, {
-              rowId,
-              productId,
-              search: '',
-              quantity: Math.max(1, quantity),
-              cost,
-              taxRate,
-            });
+        const lines = [...prev.lines];
+        const usedRowIds = new Set<string>();
+
+        for (const entry of mergedBySku.values()) {
+          let targetIdx = lines.findIndex(
+            (l) =>
+              !usedRowIds.has(l.rowId)
+              && (
+                (entry.productId && l.productId === entry.productId)
+                || (!entry.productId && normalizeSearchText(l.search) === normalizeSearchText(entry.search))
+              ),
+          );
+          if (targetIdx < 0) {
+            targetIdx = lines.findIndex((l) => !l.productId && !String(l.search || '').trim() && !usedRowIds.has(l.rowId));
           }
+          if (targetIdx < 0) {
+            const fresh = createEmptyLine();
+            lines.push(fresh);
+            targetIdx = lines.length - 1;
+          }
+
+          const rowId = lines[targetIdx].rowId;
+          usedRowIds.add(rowId);
+          if (!firstImportedRowId) firstImportedRowId = rowId;
+
+          lines[targetIdx] = {
+            ...lines[targetIdx],
+            productId: entry.productId,
+            search: entry.search,
+            quantity: entry.quantity,
+            cost: entry.cost,
+            taxRate: entry.taxRate,
+          };
         }
-        const filled = Array.from(byProductId.values());
-        const minLen = Math.max(DEFAULT_LINE_ROWS, filled.length + ROWS_APPEND_BATCH);
-        const lines = [...filled];
-        while (lines.length < minLen) lines.push(createEmptyLine());
+
         return { ...prev, lines };
       });
 
@@ -804,12 +864,18 @@ export function StockEntryDialog({
         window.setTimeout(() => focusQtyLine(firstImportedRowId!), 80);
       }
 
+      const parts = [
+        t.stockEntryUi.importSuccessDesc.replace('{count}', String(mergedBySku.size)),
+      ];
+      if (createdCount > 0) {
+        parts.push(t.stockEntryUi.importCreatedProducts.replace('{count}', String(createdCount)));
+      }
       toast({
         title: t.stockEntryUi.importSuccess,
-        description: t.stockEntryUi.importSuccessDesc.replace('{count}', String(mergedBySku.size)),
+        description: parts.join(' '),
       });
     },
-    [entryBranchId, productsForImport, toast, t.stockEntryUi, focusQtyLine],
+    [entryBranchId, productsForImport, loadImportCatalog, toast, t.stockEntryUi, focusQtyLine],
   );
 
   const openImportDialog = useCallback(() => {
@@ -821,13 +887,11 @@ export function StockEntryDialog({
       });
       return;
     }
-    // Open immediately — catalog is already warmed when the entry dialog opens;
-    // searchableProducts covers matching until the light refresh finishes.
+    // Open immediately, but block file pick until the light catalog finishes —
+    // otherwise every row fails as "Product not found" and Import is hidden.
     setImportDialogOpen(true);
-    if (importLookupProducts.length === 0) {
-      void loadImportCatalog();
-    }
-  }, [entryBranchId, importLookupProducts.length, loadImportCatalog, toast, t.stockEntryUi]);
+    void loadImportCatalog();
+  }, [entryBranchId, loadImportCatalog, toast, t.stockEntryUi]);
 
   const handleProductKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement>,
@@ -1515,6 +1579,8 @@ export function StockEntryDialog({
         validateData={validateStockEntryImport}
         onImport={handleImportFromExcel}
         downloadTemplate={downloadStockEntryImportTemplate}
+        catalogLoading={importCatalogLoading}
+        catalogSize={productsForImport.length}
         columns={[
           { key: 'codigo', label: t.stockEntryUi.colCode },
           { key: 'descricao', label: t.stockEntryUi.colProduct },
