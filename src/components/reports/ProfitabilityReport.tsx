@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
+import { useReportCreditNotes } from '@/hooks/useReportCreditNotes';
 import { useSales } from '@/hooks/useERP';
 import { PieChart, TrendingUp, TrendingDown, Package, Tags, Users, Truck } from 'lucide-react';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
@@ -12,6 +13,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
          PieChart as RechartsPie, Pie, Cell, Legend } from 'recharts';
 import { useTranslation } from '@/i18n';
 import { buildSalesPivot } from '@/lib/reports/salesPivot';
+import { mergeNetReportSales } from '@/lib/reports/netSales';
 import { useSalesPivotContext } from '@/components/reports/useSalesPivotContext';
 import PivotReportView from '@/components/reports/PivotReportView';
 import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
@@ -38,14 +40,18 @@ export default function ProfitabilityReport({
   const viewTab = view ?? internalViewTab;
   const setViewTab = onViewChange ?? setInternalViewTab;
 
-  const filteredSales = useMemo(() => {
-    return sales.filter((sale) => {
-      const saleDate = sale.createdAt.split('T')[0];
-      const matchesDate = saleDate >= dateFrom && saleDate <= dateTo;
-      const matchesBranch = selectedBranch === 'all' || sale.branchId === selectedBranch;
-      return matchesDate && matchesBranch && sale.status === 'completed';
-    });
-  }, [sales, dateFrom, dateTo, selectedBranch]);
+  const reportBranchId = selectedBranch === 'all' ? undefined : selectedBranch;
+  const { creditNotes } = useReportCreditNotes(reportBranchId, { dateFrom, dateTo });
+
+  const filteredSales = useMemo(
+    () =>
+      mergeNetReportSales(sales, creditNotes, {
+        dateFrom,
+        dateTo,
+        branchId: reportBranchId,
+      }),
+    [sales, creditNotes, dateFrom, dateTo, reportBranchId],
+  );
 
   const itemPivot = useMemo(() => buildSalesPivot(filteredSales, 'item', pivotCtx), [filteredSales, pivotCtx]);
   const categoryPivot = useMemo(() => buildSalesPivot(filteredSales, 'category', pivotCtx), [filteredSales, pivotCtx]);

@@ -9,12 +9,12 @@ import {
 import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { api } from '@/lib/api/client';
-import { exportReportExcel } from '@/lib/reportExport';
-import { format } from 'date-fns';
+import { exportReportExcel, exportReportExcelMulti } from '@/lib/reportExport';
+import { format, startOfMonth, endOfMonth } from 'date-fns';
 import {
   BarChart3, Users, Truck, TrendingUp, Calendar,
   FileText, Download, DollarSign, Check, ChevronDown,
-  Package, PieChart, ArrowUpRight, ShoppingCart, Loader2,
+  Package, PieChart, ArrowUpRight, ShoppingCart, Loader2, Archive,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -67,6 +67,8 @@ const TAB_TARGETS: Record<string, FamilyTarget> = {
   'stock-valuation': { family: 'inventory', sub: 'valuation' },
   'stock-movements': { family: 'inventory', sub: 'movements' },
   'stock-adjustments': { family: 'inventory', sub: 'adjustments' },
+  'dead-stock': { family: 'inventory', sub: 'dead-stock' },
+  ops: { family: 'inventory', sub: 'dead-stock' },
   'top-customers': { family: 'statistics', sub: 'top-customers' },
   'trial-balance': { family: 'financial', sub: 'trial-balance' },
   'income-statement': { family: 'financial', sub: 'income-statement' },
@@ -107,6 +109,7 @@ export default function Reports() {
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
+  const [monthEndExporting, setMonthEndExporting] = useState(false);
 
   const goToTarget = (target: FamilyTarget) => {
     setActiveTab(target.family);
@@ -165,6 +168,112 @@ export default function Reports() {
       );
     } catch (e) {
       console.error('[Reports] overview export failed:', e);
+    }
+  };
+
+  const handleMonthEndPack = async () => {
+    setMonthEndExporting(true);
+    const now = new Date();
+    const dateFrom = format(startOfMonth(now), 'yyyy-MM-dd');
+    const dateTo = format(endOfMonth(now), 'yyyy-MM-dd');
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+
+    const overviewSheet = [
+      {
+        Metric: t.reportsCenterUi.quickStats.salesMonth,
+        Value: salesMonth,
+      },
+      {
+        Metric: t.reportsCenterUi.quickStats.receivable,
+        Value: receivable,
+      },
+      {
+        Metric: t.reportsCenterUi.quickStats.payable,
+        Value: payable,
+      },
+      {
+        Metric: t.reportsCenterUi.quickStats.avgMargin,
+        Value: `${avgMargin.toFixed(1)}%`,
+      },
+      {
+        Metric: 'Note',
+        Value: t.reportsCenterUi.monthEndPackDesc,
+      },
+      {
+        Metric: 'Period',
+        Value: `${dateFrom} — ${dateTo}`,
+      },
+    ];
+
+    let trialSheet: Record<string, unknown>[] = [{ Note: 'Trial balance unavailable' }];
+    let vatSheet: Record<string, unknown>[] = [{ Note: 'VAT report unavailable' }];
+
+    try {
+      const tb = await api.chartOfAccounts.getTrialBalance(dateFrom, dateTo, apiBranchId);
+      if (tb.data?.length) {
+        trialSheet = tb.data
+          .filter((row: { is_header?: boolean }) => !row.is_header)
+          .map((row: Record<string, unknown>) => ({
+            Code: row.code,
+            Name: row.name,
+            Type: row.account_type,
+            Opening: Number(row.opening_balance) || 0,
+            Debits: Number(row.total_debits) || 0,
+            Credits: Number(row.total_credits) || 0,
+            Closing: Number(row.closing_balance) || 0,
+          }));
+      }
+    } catch (e) {
+      console.warn('[Reports] month-end trial balance skipped:', e);
+    }
+
+    try {
+      const iva = await api.tax.ivaReport(year, month);
+      const lines = Array.isArray(iva.data?.lines) ? iva.data.lines : [];
+      if (lines.length) {
+        vatSheet = lines.map((l: Record<string, unknown>) => ({
+          Direction: l.direction,
+          Code: l.tax_code,
+          Rate: l.tax_rate,
+          Base: Number(l.total_base) || 0,
+          Tax: Number(l.total_tax) || 0,
+        }));
+        vatSheet.push({
+          Direction: 'net',
+          Code: '',
+          Rate: '',
+          Base: '',
+          Tax: Number(iva.data?.ivaPayable ?? Number(iva.data?.outputTax || 0) - Number(iva.data?.inputTax || 0)),
+        });
+      } else {
+        vatSheet = [
+          { Metric: 'Output VAT', Value: Number(iva.data?.outputTax) || 0 },
+          { Metric: 'Input VAT', Value: Number(iva.data?.inputTax) || 0 },
+          { Metric: 'Net payable', Value: Number(iva.data?.ivaPayable) || 0 },
+        ];
+      }
+    } catch (e) {
+      console.warn('[Reports] month-end VAT skipped:', e);
+    }
+
+    try {
+      await exportReportExcelMulti(
+        [
+          { name: 'Overview', data: overviewSheet },
+          { name: 'Trial Balance', data: trialSheet },
+          { name: 'VAT', data: vatSheet },
+        ],
+        `MonthEnd_${format(now, 'yyyyMM')}`,
+        {
+          title: t.reportsCenterUi.monthEndPack,
+          subtitle: `${dateFrom} — ${dateTo}`,
+        },
+      );
+    } catch (e) {
+      console.error('[Reports] month-end pack failed:', e);
+    } finally {
+      setMonthEndExporting(false);
     }
   };
 
@@ -268,6 +377,8 @@ export default function Reports() {
         { value: 'valuation', label: t.reportsCenterUi.tabStock },
         { value: 'category', label: t.stockValuationUi.byCategory },
         { value: 'movements', label: t.reportsCenterUi.tabMovements },
+        { value: 'adjustments', label: t.adjustmentHistoryUi.title },
+        { value: 'dead-stock', label: t.reportsCenterUi.deadStock },
       ],
     },
     {
@@ -415,15 +526,31 @@ export default function Reports() {
             {/* Quick Stats */}
             <Card>
               <CardHeader>
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center gap-2 flex-wrap">
                   <div>
                     <CardTitle>{t.reportsCenterUi.quickSummaryTitle}</CardTitle>
                     <CardDescription>{t.reportsCenterUi.quickSummaryDesc}</CardDescription>
                   </div>
-                  <Button variant="outline" size="sm" onClick={handleExportOverview}>
-                    <Download className="w-4 h-4 mr-2" />
-                    {t.reportsCenterUi.exportOverview}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleMonthEndPack()}
+                      disabled={monthEndExporting}
+                      title={t.reportsCenterUi.monthEndPackDesc}
+                    >
+                      {monthEndExporting ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Archive className="w-4 h-4 mr-2" />
+                      )}
+                      {t.reportsCenterUi.monthEndPack}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={handleExportOverview}>
+                      <Download className="w-4 h-4 mr-2" />
+                      {t.reportsCenterUi.exportOverview}
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>

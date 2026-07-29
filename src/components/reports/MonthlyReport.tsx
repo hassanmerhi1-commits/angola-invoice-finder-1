@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
+import { useReportCreditNotes } from '@/hooks/useReportCreditNotes';
 import { useSales, useProducts } from '@/hooks/useERP';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { Calendar, Download, Printer, FileDown } from 'lucide-react';
 import { format, startOfYear, endOfYear } from 'date-fns';
 import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { unwrapListPayload } from '@/lib/listCache';
+import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { mergeNetReportSales } from '@/lib/reports/netSales';
+import { ReportToolbar } from '@/components/reports/ReportToolbar';
 
 function escapeHtml(value: string): string {
   return String(value ?? '')
@@ -37,14 +38,19 @@ export default function MonthlyReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
-  const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter();
+  const branchFilter = useSyncedBranchFilter();
+  const { selectedBranch } = branchFilter;
   const { sales } = useSales(apiBranchId, { light: false });
   const { products } = useProducts(apiBranchId, { light: true });
   const { companyName } = useCompanyLogo();
 
   const [dateFrom, setDateFrom] = useState(format(startOfYear(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfYear(new Date()), 'yyyy-MM-dd'));
+  const [comparePrevious, setComparePrevious] = useState(false);
   const [purchases, setPurchases] = useState<any[]>([]);
+
+  const reportBranchId = selectedBranch === 'all' ? undefined : selectedBranch;
+  const { creditNotes } = useReportCreditNotes(reportBranchId, { dateFrom, dateTo });
 
   useEffect(() => {
     let cancelled = false;
@@ -75,23 +81,22 @@ export default function MonthlyReport() {
     const get = (month: string) =>
       map.get(month) || { month, sales: 0, cost: 0, profit: 0, purchases: 0, net: 0 };
 
-    sales
-      .filter(
-        (s) =>
-          s.status === 'completed' &&
-          inRange(s.createdAt) &&
-          (selectedBranch === 'all' || s.branchId === selectedBranch),
-      )
-      .forEach((s) => {
-        const month = String(s.createdAt || '').slice(0, 7);
-        if (!month) return;
-        const row = get(month);
-        row.sales += Number(s.subtotal || 0);
-        s.items.forEach((item) => {
-          row.cost += (costMap.get(item.productId) || 0) * Number(item.quantity || 0);
-        });
-        map.set(month, row);
+    const netSales = mergeNetReportSales(sales, creditNotes, {
+      dateFrom,
+      dateTo,
+      branchId: reportBranchId,
+    });
+
+    netSales.forEach((s) => {
+      const month = String(s.createdAt || '').slice(0, 7);
+      if (!month) return;
+      const row = get(month);
+      row.sales += Number(s.subtotal || 0);
+      s.items.forEach((item) => {
+        row.cost += (costMap.get(item.productId) || 0) * Number(item.quantity || 0);
       });
+      map.set(month, row);
+    });
 
     purchases
       .filter((p) => String(p.status || '') !== 'draft' && inRange(p.date || p.createdAt))
@@ -119,7 +124,7 @@ export default function MonthlyReport() {
     );
 
     return { rows: list, totals: tot };
-  }, [sales, purchases, costMap, dateFrom, dateTo, selectedBranch]);
+  }, [sales, creditNotes, purchases, costMap, dateFrom, dateTo, reportBranchId]);
 
   const fmt = (n: number) =>
     new Intl.NumberFormat(locale, { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n || 0);
@@ -232,61 +237,36 @@ export default function MonthlyReport() {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="w-5 h-5" />
-                {t.monthlyUi.title}
-              </CardTitle>
-              <CardDescription>{t.monthlyUi.description}</CardDescription>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={handleExport}>
-                <Download className="w-4 h-4 mr-2" />
-                {t.reportsUi.exportExcel}
-              </Button>
-              <Button variant="outline" size="sm" onClick={handlePrint}>
-                <Printer className="w-4 h-4 mr-2" />
-                {t.reportsUi.print}
-              </Button>
-              <Button variant="outline" size="sm" onClick={handleSavePdf}>
-                <FileDown className="w-4 h-4 mr-2" />
-                {t.reportsUi.savePdf}
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <Label>{t.reportsUi.dateFrom}</Label>
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-            </div>
-            <div>
-              <Label>{t.reportsUi.dateTo}</Label>
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-            </div>
-            <div>
-              <Label>{t.salesAnalysisUi.branch}</Label>
-              <Select value={selectedBranch} onValueChange={setSelectedBranch} disabled={!canPickBranch}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t.common.all} />
-                </SelectTrigger>
-                <SelectContent>
-                  {canPickBranch && <SelectItem value="all">{t.salesAnalysisUi.allBranches}</SelectItem>}
-                  {(canPickBranch ? branches : currentBranch ? [currentBranch] : []).map((branch) => (
-                    <SelectItem key={branch.id} value={branch.id}>
-                      {branch.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <ReportToolbar
+        title={
+          <>
+            <Calendar className="w-5 h-5" />
+            {t.monthlyUi.title}
+          </>
+        }
+        description={t.monthlyUi.description}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onDateFromChange={setDateFrom}
+        onDateToChange={setDateTo}
+        branchFilter={branchFilter}
+        comparePrevious={comparePrevious}
+        onComparePreviousChange={setComparePrevious}
+        compareLabel={t.monthlyUi.comparePrevious}
+      >
+        <Button variant="outline" size="sm" onClick={handleExport}>
+          <Download className="w-4 h-4 mr-2" />
+          {t.reportsUi.exportExcel}
+        </Button>
+        <Button variant="outline" size="sm" onClick={handlePrint}>
+          <Printer className="w-4 h-4 mr-2" />
+          {t.reportsUi.print}
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleSavePdf}>
+          <FileDown className="w-4 h-4 mr-2" />
+          {t.reportsUi.savePdf}
+        </Button>
+      </ReportToolbar>
 
       <Card>
         <CardHeader className="pb-2">

@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Package, ArrowRightLeft, Tags, ClipboardList } from 'lucide-react';
+import { Package, ArrowRightLeft, Tags, ClipboardList, AlertTriangle } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
 import StockValuationReport from '@/components/reports/StockValuationReport';
 import StockByCategoryReport from '@/components/reports/StockByCategoryReport';
 import StockMovementReport from '@/components/reports/StockMovementReport';
 import StockAdjustmentHistoryReport from '@/components/reports/StockAdjustmentHistoryReport';
+import DeadStockReport from '@/components/reports/DeadStockReport';
 
 export default function InventoryReports({
   view,
@@ -24,6 +25,7 @@ export default function InventoryReports({
     { value: 'category', label: t.stockValuationUi.byCategory, icon: Tags },
     { value: 'movements', label: t.reportsCenterUi.tabMovements, icon: ArrowRightLeft },
     { value: 'adjustments', label: t.adjustmentHistoryUi.title, icon: ClipboardList },
+    { value: 'dead-stock', label: t.reportsCenterUi.deadStock, icon: AlertTriangle },
   ];
 
   return (
@@ -34,6 +36,7 @@ export default function InventoryReports({
         {tab === 'category' && <StockByCategoryReport />}
         {tab === 'movements' && <StockMovementReport />}
         {tab === 'adjustments' && <StockAdjustmentHistoryReport />}
+        {(tab === 'dead-stock' || tab === 'ops') && <DeadStockReport />}
       </div>
     </div>
   );

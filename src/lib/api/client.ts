@@ -2129,6 +2129,11 @@ export const api = {
       const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
       return apiFetch<any[]>(`/payments/receivables-aging${qs}`);
     },
+    backfillMissingReceivables: () =>
+      apiFetch<{ backfill: unknown; receivablesCount: number }>(
+        '/payments/backfill-missing-receivables',
+        { method: 'POST' },
+      ),
     create: async (data: any) => {
       const {
         enqueuePaymentSync,
@@ -2871,6 +2876,22 @@ export const api = {
           },
         };
       });
+    },
+  },
+
+  analytics: {
+    salesSummary: (params: { dateFrom: string; dateTo: string; branchId?: string }) => {
+      const sp = new URLSearchParams();
+      sp.set('dateFrom', params.dateFrom);
+      sp.set('dateTo', params.dateTo);
+      if (params.branchId) sp.set('branchId', params.branchId);
+      return apiFetch<{
+        revenue: number;
+        tax: number;
+        transactions: number;
+        byPaymentMethod: Record<string, number>;
+        byDay: Array<{ date: string; revenue: number; transactions: number }>;
+      }>(`/analytics/sales-summary?${sp.toString()}`);
     },
   },
 

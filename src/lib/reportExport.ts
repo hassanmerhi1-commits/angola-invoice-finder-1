@@ -2,7 +2,7 @@
  * Unified report preview + print / PDF / Excel export.
  */
 
-import { exportToExcel } from '@/lib/excel';
+import { exportToExcel, exportToExcelMultiSheet } from '@/lib/excel';
 import { openExportPreview } from '@/lib/printPreview';
 import { printHtml } from '@/lib/printHtml';
 
@@ -184,4 +184,18 @@ export async function exportReportExcel(
   const action = await openExportPreview({ html, kind: 'excel' });
   if (action === 'cancel') return;
   exportToExcel(data, filename);
+}
+
+/** Multi-sheet workbook export with a simple HTML preview of the first sheet. */
+export async function exportReportExcelMulti(
+  sheets: Array<{ name: string; data: Record<string, unknown>[] }>,
+  filename: string,
+  preview: { title: string; subtitle?: string; companyName?: string; landscape?: boolean },
+): Promise<void> {
+  if (!sheets.length) return;
+  const first = sheets.find((s) => s.data.length > 0) || sheets[0];
+  const html = buildDataTableHtml(first.data.length ? first.data : [{ Note: preview.subtitle || '—' }], preview);
+  const action = await openExportPreview({ html, kind: 'excel' });
+  if (action === 'cancel') return;
+  exportToExcelMultiSheet(sheets, filename);
 }

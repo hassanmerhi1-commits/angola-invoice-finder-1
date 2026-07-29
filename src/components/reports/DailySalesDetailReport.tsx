@@ -403,13 +403,13 @@ export function DailySalesDetailReport({
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* IVA Filter */}
                 <div className="space-y-2">
-                  <Label htmlFor="iva-filter">Taxa IVA</Label>
+                  <Label htmlFor="iva-filter">{t.reportsUi.taxRateFilter}</Label>
                   <Select value={ivaFilter} onValueChange={setIvaFilter}>
                     <SelectTrigger id="iva-filter">
-                      <SelectValue placeholder="Todas as taxas" />
+                      <SelectValue placeholder={t.reportsUi.allTaxRates} />
                     </SelectTrigger>
                     <SelectContent className="bg-background">
-                      <SelectItem value="all">Todas as taxas</SelectItem>
+                      <SelectItem value="all">{t.reportsUi.allTaxRates}</SelectItem>
                       {uniqueIvaRates.map(rate => (
                         <SelectItem key={rate} value={String(rate)}>
                           {rate}% IVA

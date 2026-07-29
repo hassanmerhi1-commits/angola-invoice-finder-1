@@ -18,6 +18,24 @@ export function exportToExcel(data: Record<string, unknown>[], filename: string)
   XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
+/** Write multiple named sheets into one workbook. Empty sheets get a placeholder row. */
+export function exportToExcelMultiSheet(
+  sheets: Array<{ name: string; data: Record<string, unknown>[] }>,
+  filename: string,
+) {
+  if (!sheets.length) return;
+  const wb = XLSX.utils.book_new();
+  for (const sheet of sheets) {
+    const rows = sheet.data.length > 0 ? sheet.data : [{ Note: '—' }];
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const colWidths = Object.keys(rows[0] || {}).map((key) => ({ wch: Math.max(key.length, 15) }));
+    ws['!cols'] = colWidths;
+    const safeName = String(sheet.name || 'Sheet').slice(0, 31) || 'Sheet';
+    XLSX.utils.book_append_sheet(wb, ws, safeName);
+  }
+  XLSX.writeFile(wb, filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`);
+}
+
 // Export clients to Excel
 export function exportClientsToExcel(clients: Client[], filename: string = 'clientes.xlsx') {
   const data = clients.map(c => ({

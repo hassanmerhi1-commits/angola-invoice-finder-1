@@ -25,6 +25,7 @@ import {
 import { Printer, FileSpreadsheet, FileDown, RefreshCw, Loader2 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useTrialBalance } from '@/hooks/useChartOfAccounts';
+import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
 import type { TrialBalanceRow } from '@/types/accounting';
 import { buildReportHtml, escapeHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 
@@ -88,6 +89,7 @@ function rowHasActivity(row: TrialBalanceRow): boolean {
 export default function TrialBalanceReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter();
 
   const [startDate, setStartDate] = useState(() => {
     const date = new Date();
@@ -97,7 +99,8 @@ export default function TrialBalanceReport() {
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [accountType, setAccountType] = useState('all');
 
-  const { data, isLoading, error, refetch } = useTrialBalance(startDate, endDate);
+  const branchId = selectedBranch === 'all' ? undefined : selectedBranch;
+  const { data, isLoading, error, refetch } = useTrialBalance(startDate, endDate, branchId);
 
   const typeLabels = useMemo(
     () => ({
@@ -262,6 +265,22 @@ export default function TrialBalanceReport() {
                 onChange={(e) => setEndDate(e.target.value)}
                 className="h-8 w-40"
               />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">{t.salesAnalysisUi.branch}</Label>
+              <Select value={selectedBranch} onValueChange={setSelectedBranch} disabled={!canPickBranch}>
+                <SelectTrigger className="h-8 w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {canPickBranch && <SelectItem value="all">{t.salesAnalysisUi.allBranches}</SelectItem>}
+                  {(canPickBranch ? branches : currentBranch ? [currentBranch] : []).map((branch) => (
+                    <SelectItem key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">{t.trialBalanceUi.accountType}</Label>

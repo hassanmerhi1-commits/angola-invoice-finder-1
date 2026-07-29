@@ -4,35 +4,61 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useSales } from '@/hooks/useERP';
 import { Download, ArrowUpCircle, ArrowDownCircle, Wallet, Loader2, Printer, FileDown } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, parseISO } from 'date-fns';
 import { api } from '@/lib/api/client';
-import { unwrapListPayload } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
 import { buildDataTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
+type PaymentRow = {
+  id?: string;
+  payment_type?: string;
+  paymentType?: string;
+  payment_method?: string;
+  paymentMethod?: string;
+  amount?: number;
+  created_at?: string;
+  createdAt?: string;
+  branch_id?: string;
+  branchId?: string;
+};
+
+function isReceipt(p: PaymentRow) {
+  const t = String(p.payment_type || p.paymentType || '').toLowerCase();
+  return t === 'receipt' || t === 'recibo' || t.startsWith('rec');
+}
+
+function isDisbursement(p: PaymentRow) {
+  const t = String(p.payment_type || p.paymentType || '').toLowerCase();
+  return t === 'payment_out' || t === 'payment' || t === 'pagamento' || t.startsWith('pag');
+}
+
+/** Treasury-style cash movement from the payments ledger (REC / PAG). */
 export default function CashFlowReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
-  const { sales } = useSales(apiBranchId);
 
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [purchases, setPurchases] = useState<any[]>([]);
+  const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const res = await api.purchaseInvoices.list(apiBranchId ? { branchId: apiBranchId } : undefined);
-      if (!cancelled) {
-        const { items } = unwrapListPayload(res.data);
-        setPurchases(items);
-        setLoading(false);
+      try {
+        const res = await api.payments.list({
+          branchId: apiBranchId || undefined,
+          limit: 10000,
+        });
+        if (!cancelled) setPayments(Array.isArray(res.data) ? res.data : []);
+      } catch {
+        if (!cancelled) setPayments([]);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => {
@@ -46,26 +72,27 @@ export default function CashFlowReport() {
     return !!d && d >= dateFrom && d <= dateTo;
   };
 
+  const inPeriod = useMemo(
+    () => payments.filter((p) => inRange(p.created_at || p.createdAt)),
+    [payments, dateFrom, dateTo],
+  );
+
   const inflowByMethod = useMemo(() => {
     const acc = { cash: 0, card: 0, transfer: 0, mixed: 0, total: 0 };
-    sales
-      // On-account (credit) sales are receivables, not cash received — exclude them.
-      .filter((s) => s.status === 'completed' && s.paymentMethod !== 'credit' && inRange(s.createdAt))
-      .forEach((s) => {
-        const v = Number(s.total || 0);
-        const m = (s.paymentMethod || 'cash') as keyof typeof acc;
-        if (m in acc) acc[m] += v;
-        else acc.cash += v;
-        acc.total += v;
-      });
+    inPeriod.filter(isReceipt).forEach((p) => {
+      const v = Number(p.amount || 0);
+      const m = String(p.payment_method || p.paymentMethod || 'cash').toLowerCase() as keyof typeof acc;
+      if (m in acc && m !== 'total') acc[m] += v;
+      else acc.cash += v;
+      acc.total += v;
+    });
     return acc;
-  }, [sales, dateFrom, dateTo]);
+  }, [inPeriod]);
 
-  const outflowTotal = useMemo(() => {
-    return purchases
-      .filter((p) => String(p.status || '') !== 'draft' && inRange(p.date || p.createdAt))
-      .reduce((sum, p) => sum + Number(p.total || 0), 0);
-  }, [purchases, dateFrom, dateTo]);
+  const outflowTotal = useMemo(
+    () => inPeriod.filter(isDisbursement).reduce((sum, p) => sum + Number(p.amount || 0), 0),
+    [inPeriod],
+  );
 
   const netFlow = inflowByMethod.total - outflowTotal;
 
@@ -76,19 +103,15 @@ export default function CashFlowReport() {
     } catch {
       days = [];
     }
-    // Cap to keep chart readable
     const limited = days.length > 92 ? days.slice(days.length - 92) : days;
     return limited.map((d) => {
       const key = format(d, 'yyyy-MM-dd');
-      const inflow = sales
-        .filter((s) => s.status === 'completed' && localDate(s.createdAt) === key)
-        .reduce((sum, s) => sum + Number(s.total || 0), 0);
-      const outflow = purchases
-        .filter((p) => String(p.status || '') !== 'draft' && localDate(p.date || p.createdAt) === key)
-        .reduce((sum, p) => sum + Number(p.total || 0), 0);
+      const dayRows = inPeriod.filter((p) => localDate(p.created_at || p.createdAt) === key);
+      const inflow = dayRows.filter(isReceipt).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      const outflow = dayRows.filter(isDisbursement).reduce((sum, p) => sum + Number(p.amount || 0), 0);
       return { label: format(d, 'dd/MM'), inflow, outflow, net: inflow - outflow };
     });
-  }, [sales, purchases, dateFrom, dateTo]);
+  }, [inPeriod, dateFrom, dateTo]);
 
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
@@ -145,7 +168,10 @@ export default function CashFlowReport() {
                 <Wallet className="w-5 h-5" />
                 {t.cashFlowUi.title}
               </CardTitle>
-              <CardDescription>{t.cashFlowUi.description}</CardDescription>
+              <CardDescription>
+                {t.cashFlowUi.description}
+                <span className="block mt-1 text-xs">{t.cashFlowUi.operationalHint}</span>
+              </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={() => void handlePrint()} disabled={excelData.length === 0}>

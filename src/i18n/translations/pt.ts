@@ -1721,6 +1721,8 @@ export const pt: TranslationKeys = {
 
     // Receivables aging
     receivablesTitle: "Análise de Antiguidade - Contas a Receber",
+    receivablesApiDesc: "Saldos em aberto de clientes do livro de pagamentos, agrupados por antiguidade",
+    repairReceivables: "Reparar contas a receber em falta",
     current0to30: "Actual (0-30)",
     days31to60: "31-60 dias",
     days61to90: "61-90 dias",
@@ -1728,6 +1730,8 @@ export const pt: TranslationKeys = {
     totalToReceive: "Total a Receber",
     creditLimit: "Limite de Crédito",
     percentUsed: "% Utilizado",
+    allTaxRates: "Todas as taxas",
+    taxRateFilter: "Taxa IVA",
 
     // Client statement
     statementTitle: "Extracto de Conta - Cliente",
@@ -1945,6 +1949,21 @@ export const pt: TranslationKeys = {
     noStock: "Sem stock",
     totals: "TOTAIS",
     products: "Produtos",
+  },
+
+  inventoryOpsUi: {
+    title: "Stock parado / lento",
+    description: "Produtos com stock em mão abaixo do mínimo ou sem vendas nos últimos 90 dias",
+    reason: "Motivo",
+    belowMin: "Abaixo do mínimo",
+    noSale90d: "Sem venda em 90 dias",
+    both: "Abaixo do mín. + sem venda",
+    minStock: "Stock mín.",
+    lastSale: "Última venda",
+    neverSold: "Nunca vendido",
+    costTied: "Custo imobilizado",
+    productsFlagged: "{count} produtos assinalados",
+    empty: "Sem stock parado ou de baixa rotação nesta filial.",
   },
   supplierStatementUi: {
     title: "Conta Corrente - Fornecedor",
@@ -5150,6 +5169,14 @@ export const pt: TranslationKeys = {
 
     viewReports: "Ver Relatórios",
     exportOverview: "Exportar resumo",
+    monthEndPack: "Pacote de fecho",
+    monthEndPackDesc: "Exportar KPIs, balancete e IVA num único livro Excel",
+    comparePrevious: "Comparar período anterior",
+    deadStock: "Stock parado",
+    belowMin: "Abaixo do mínimo",
+    noSale90d: "Sem venda em 90 dias",
+    vsPrevious: "vs anterior",
+    revenueDelta: "{pct}% vs período anterior",
 
     categories: {
       sales: {
@@ -5187,6 +5214,11 @@ export const pt: TranslationKeys = {
   vatReportUi: {
     title: "Resumo de IVA",
     description: "IVA liquidado nas vendas vs IVA dedutível nas compras, com o valor líquido a entregar à AGT",
+    fiscalDescription: "IVA fiscal a partir dos resumos de imposto — mesma fonte que Gestão Fiscal",
+    openTaxManagement: "Abrir Gestão Fiscal",
+    openSaft: "Abrir SAF-T",
+    year: "Ano",
+    month: "Mês",
     section: "Secção",
     outputVat: "IVA liquidado (vendas)",
     inputVat: "IVA dedutível (compras)",
@@ -5198,17 +5230,19 @@ export const pt: TranslationKeys = {
     taxableBase: "Base tributável",
     taxAmount: "Valor do IVA",
     outputByRate: "IVA liquidado por taxa",
+    inputByRate: "IVA dedutível por taxa",
   },
 
   cashFlowUi: {
-    title: "Fluxo de caixa",
-    description: "Entradas (recebimentos de vendas) vs saídas (facturas de compra)",
-    inflow: "Entradas",
-    outflow: "Saídas",
-    net: "Fluxo líquido",
-    inflowByMethod: "Entradas por forma de pagamento",
+    title: "Movimentos de caixa",
+    description: "Recebimentos (REC) e pagamentos (PAG) do ledger de pagamentos",
+    operationalHint: "Baseado em pagamentos registados — não no reconhecimento de facturas. Vendas POS em dinheiro sem recibo separado podem faltar até existirem REC.",
+    inflow: "Recebimentos",
+    outflow: "Pagamentos",
+    net: "Movimento líquido de caixa",
+    inflowByMethod: "Recebimentos por forma de pagamento",
     mixed: "Misto",
-    dailyTitle: "Fluxo de caixa diário",
+    dailyTitle: "Movimentos diários de caixa",
     day: "Dia",
   },
 
@@ -5256,6 +5290,7 @@ export const pt: TranslationKeys = {
     grossProfit: "Lucro bruto",
     purchases: "Compras",
     netCashFlow: "Líquido (vendas − compras)",
+    comparePrevious: "Comparar período anterior",
   },
 
   profitUi: {

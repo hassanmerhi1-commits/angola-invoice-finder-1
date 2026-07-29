@@ -1,25 +1,28 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
+import { useReportCreditNotes } from '@/hooks/useReportCreditNotes';
 import { useSales } from '@/hooks/useERP';
 import { Download, TrendingUp, Calendar, Package, Tags, Building2, Users, Truck, User, FileText } from 'lucide-react';
 import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, eachWeekOfInterval,
-         eachMonthOfInterval, isSameDay, isSameWeek, isSameMonth, getWeek } from 'date-fns';
+         eachMonthOfInterval, isSameDay, isSameWeek, isSameMonth, getWeek, differenceInCalendarDays, subDays } from 'date-fns';
 import { enUS, pt } from 'date-fns/locale';
 import { exportReportExcel } from '@/lib/reportExport';
+import { api } from '@/lib/api/client';
 import { CartesianGrid, Tooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis } from 'recharts';
 import { useTranslation } from '@/i18n';
 import SalesByProductReport from '@/components/reports/SalesByProductReport';
 import PivotReportView from '@/components/reports/PivotReportView';
 import { DailySalesDetailReport } from '@/components/reports/DailySalesDetailReport';
 import { buildSalesPivot } from '@/lib/reports/salesPivot';
+import { mergeNetReportSales } from '@/lib/reports/netSales';
 import { useSalesPivotContext } from '@/components/reports/useSalesPivotContext';
 import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
+import { ReportToolbar } from '@/components/reports/ReportToolbar';
 
 export default function SalesAnalysisReport({
   view,
@@ -32,28 +35,95 @@ export default function SalesAnalysisReport({
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const dfLocale = language === 'pt' ? pt : enUS;
   const { apiBranchId } = useBranchScope();
-  const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter();
+  const branchFilter = useSyncedBranchFilter();
+  const { selectedBranch, currentBranch } = branchFilter;
   const { sales } = useSales(apiBranchId, { light: false });
   const pivotCtx = useSalesPivotContext(apiBranchId);
 
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month'>('day');
+  const [comparePrevious, setComparePrevious] = useState(false);
   const [internalViewTab, setInternalViewTab] = useState('summary');
   const viewTab = view ?? internalViewTab;
   const setViewTab = onViewChange ?? setInternalViewTab;
   const [dailyOpen, setDailyOpen] = useState(false);
+  const [apiSummary, setApiSummary] = useState<{
+    revenue: number;
+    tax: number;
+    transactions: number;
+    byPaymentMethod: Record<string, number>;
+  } | null>(null);
 
-  const filteredSales = useMemo(() => {
-    return sales.filter((sale) => {
-      const saleDate = sale.createdAt.split('T')[0];
-      const matchesDate = saleDate >= dateFrom && saleDate <= dateTo;
-      const matchesBranch = selectedBranch === 'all' || sale.branchId === selectedBranch;
-      return matchesDate && matchesBranch && sale.status === 'completed';
+  const reportBranchId = selectedBranch === 'all' ? undefined : selectedBranch;
+
+  const prevPeriod = useMemo(() => {
+    try {
+      const from = parseISO(dateFrom);
+      const to = parseISO(dateTo);
+      const days = Math.max(1, differenceInCalendarDays(to, from) + 1);
+      const prevTo = subDays(from, 1);
+      const prevFrom = subDays(prevTo, days - 1);
+      return {
+        dateFrom: format(prevFrom, 'yyyy-MM-dd'),
+        dateTo: format(prevTo, 'yyyy-MM-dd'),
+      };
+    } catch {
+      return null;
+    }
+  }, [dateFrom, dateTo]);
+
+  const cnDateFrom = comparePrevious && prevPeriod ? prevPeriod.dateFrom : dateFrom;
+  const { creditNotes } = useReportCreditNotes(reportBranchId, { dateFrom: cnDateFrom, dateTo });
+
+  const filteredSales = useMemo(
+    () =>
+      mergeNetReportSales(sales, creditNotes, {
+        dateFrom,
+        dateTo,
+        branchId: reportBranchId,
+      }),
+    [sales, creditNotes, dateFrom, dateTo, reportBranchId],
+  );
+
+  const prevFilteredSales = useMemo(() => {
+    if (!comparePrevious || !prevPeriod) return [];
+    return mergeNetReportSales(sales, creditNotes, {
+      dateFrom: prevPeriod.dateFrom,
+      dateTo: prevPeriod.dateTo,
+      branchId: reportBranchId,
     });
-  }, [sales, dateFrom, dateTo, selectedBranch]);
+  }, [comparePrevious, prevPeriod, sales, creditNotes, reportBranchId]);
 
-  const summaryStats = useMemo(() => {
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.analytics.salesSummary({
+          dateFrom,
+          dateTo,
+          branchId: reportBranchId,
+        });
+        if (cancelled || res.error || !res.data) {
+          if (!cancelled) setApiSummary(null);
+          return;
+        }
+        setApiSummary({
+          revenue: Number(res.data.revenue) || 0,
+          tax: Number(res.data.tax) || 0,
+          transactions: Number(res.data.transactions) || 0,
+          byPaymentMethod: res.data.byPaymentMethod || {},
+        });
+      } catch {
+        if (!cancelled) setApiSummary(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [dateFrom, dateTo, reportBranchId]);
+
+  const clientSummary = useMemo(() => {
     const totalRevenue = filteredSales.reduce((sum, s) => sum + s.total, 0);
     const totalTransactions = filteredSales.length;
     const totalItems = filteredSales.reduce((sum, s) => sum + s.items.reduce((is, i) => is + i.quantity, 0), 0);
@@ -66,6 +136,35 @@ export default function SalesAnalysisReport({
     };
     return { totalRevenue, totalTransactions, totalItems, totalTax, avgTicket, byPaymentMethod };
   }, [filteredSales]);
+
+  // Prefer SQL aggregate for headline KPIs when available and no CN netting needed.
+  const summaryStats = useMemo(() => {
+    if (!apiSummary || creditNotes.length > 0) return clientSummary;
+    const totalRevenue = apiSummary.revenue;
+    const totalTransactions = apiSummary.transactions;
+    const totalTax = apiSummary.tax;
+    const avgTicket = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
+    const byPaymentMethod = {
+      cash: Number(apiSummary.byPaymentMethod.cash) || 0,
+      card: Number(apiSummary.byPaymentMethod.card) || 0,
+      transfer: Number(apiSummary.byPaymentMethod.transfer) || 0,
+    };
+    return {
+      totalRevenue,
+      totalTransactions,
+      totalItems: clientSummary.totalItems,
+      totalTax,
+      avgTicket,
+      byPaymentMethod,
+    };
+  }, [apiSummary, clientSummary, creditNotes.length]);
+
+  const revenueDeltaPct = useMemo(() => {
+    if (!comparePrevious) return null;
+    const prevRevenue = prevFilteredSales.reduce((sum, s) => sum + s.total, 0);
+    if (Math.abs(prevRevenue) < 0.01) return summaryStats.totalRevenue === 0 ? 0 : 100;
+    return ((summaryStats.totalRevenue - prevRevenue) / Math.abs(prevRevenue)) * 100;
+  }, [comparePrevious, prevFilteredSales, summaryStats.totalRevenue]);
 
   const salesByDate = useMemo(() => {
     const interval = { start: parseISO(dateFrom), end: parseISO(dateTo) };
@@ -95,7 +194,6 @@ export default function SalesAnalysisReport({
     });
   }, [filteredSales, dateFrom, dateTo, groupBy, dfLocale, t.salesAnalysisUi.weekLabel]);
 
-  // ---- Pivot engine wiring -------------------------------------------------
   const itemPivot = useMemo(() => buildSalesPivot(filteredSales, 'item', pivotCtx), [filteredSales, pivotCtx]);
   const categoryPivot = useMemo(() => buildSalesPivot(filteredSales, 'category', pivotCtx), [filteredSales, pivotCtx]);
   const customerPivot = useMemo(() => buildSalesPivot(filteredSales, 'customer', pivotCtx), [filteredSales, pivotCtx]);
@@ -139,70 +237,53 @@ export default function SalesAnalysisReport({
 
   return (
     <div className="space-y-6">
-      {/* Filters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+      <ReportToolbar
+        title={
+          <>
             <TrendingUp className="w-5 h-5" />
             {t.salesAnalysisUi.title}
-          </CardTitle>
-          <CardDescription>{t.salesAnalysisUi.description}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            <div>
-              <Label>{t.reportsUi.dateFrom}</Label>
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-            </div>
-            <div>
-              <Label>{t.reportsUi.dateTo}</Label>
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-            </div>
-            <div>
-              <Label>{t.salesAnalysisUi.branch}</Label>
-              <Select value={selectedBranch} onValueChange={setSelectedBranch} disabled={!canPickBranch}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t.common.all} />
-                </SelectTrigger>
-                <SelectContent>
-                  {canPickBranch && <SelectItem value="all">{t.salesAnalysisUi.allBranches}</SelectItem>}
-                  {(canPickBranch ? branches : currentBranch ? [currentBranch] : []).map((branch) => (
-                    <SelectItem key={branch.id} value={branch.id}>
-                      {branch.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>{t.salesAnalysisUi.groupBy}</Label>
-              <Select value={groupBy} onValueChange={(v: 'day' | 'week' | 'month') => setGroupBy(v)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="day">{t.salesAnalysisUi.groupDay}</SelectItem>
-                  <SelectItem value="week">{t.salesAnalysisUi.groupWeek}</SelectItem>
-                  <SelectItem value="month">{t.salesAnalysisUi.groupMonth}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-end">
-              <Button variant="outline" onClick={handleExportSummary}>
-                <Download className="w-4 h-4 mr-2" />
-                {t.common.export}
-              </Button>
-            </div>
+          </>
+        }
+        description={t.salesAnalysisUi.description}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onDateFromChange={setDateFrom}
+        onDateToChange={setDateTo}
+        branchFilter={branchFilter}
+        comparePrevious={comparePrevious}
+        onComparePreviousChange={setComparePrevious}
+        extraFilters={
+          <div>
+            <Label>{t.salesAnalysisUi.groupBy}</Label>
+            <Select value={groupBy} onValueChange={(v: 'day' | 'week' | 'month') => setGroupBy(v)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="day">{t.salesAnalysisUi.groupDay}</SelectItem>
+                <SelectItem value="week">{t.salesAnalysisUi.groupWeek}</SelectItem>
+                <SelectItem value="month">{t.salesAnalysisUi.groupMonth}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-        </CardContent>
-      </Card>
+        }
+      >
+        <Button variant="outline" onClick={handleExportSummary}>
+          <Download className="w-4 h-4 mr-2" />
+          {t.common.export}
+        </Button>
+      </ReportToolbar>
 
-      {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card>
           <CardContent className="pt-6">
             <p className="text-sm text-muted-foreground">{t.salesAnalysisUi.totalRevenue}</p>
             <p className="text-2xl font-bold">{formatCurrency(summaryStats.totalRevenue)}</p>
+            {comparePrevious && revenueDeltaPct != null && (
+              <p className={`text-xs mt-1 ${revenueDeltaPct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {t.reportsCenterUi.revenueDelta.replace('{pct}', `${revenueDeltaPct >= 0 ? '+' : ''}${revenueDeltaPct.toFixed(1)}`)}
+              </p>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -231,7 +312,6 @@ export default function SalesAnalysisReport({
         </Card>
       </div>
 
-      {/* Sub-report selector */}
       {!onViewChange && <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />}
 
       <div className="space-y-4">

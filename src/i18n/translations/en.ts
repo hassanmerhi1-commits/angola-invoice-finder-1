@@ -1719,6 +1719,8 @@ export const en = {
 
     // Receivables aging
     receivablesTitle: "Aging analysis - accounts receivable",
+    receivablesApiDesc: "Open customer balances from the payments ledger, grouped by aging bucket",
+    repairReceivables: "Repair missing receivables",
     current0to30: "Current (0-30)",
     days31to60: "31-60 days",
     days61to90: "61-90 days",
@@ -1726,6 +1728,8 @@ export const en = {
     totalToReceive: "Total to receive",
     creditLimit: "Credit limit",
     percentUsed: "% used",
+    allTaxRates: "All tax rates",
+    taxRateFilter: "VAT rate",
 
     // Client statement
     statementTitle: "Account statement - customer",
@@ -1943,6 +1947,21 @@ export const en = {
     noStock: "Out of stock",
     totals: "TOTALS",
     products: "Products",
+  },
+
+  inventoryOpsUi: {
+    title: "Dead stock / slow movers",
+    description: "Products with stock on hand that are below minimum or have not sold in 90 days",
+    reason: "Reason",
+    belowMin: "Below minimum",
+    noSale90d: "No sale in 90 days",
+    both: "Below min + no sale",
+    minStock: "Min stock",
+    lastSale: "Last sale",
+    neverSold: "Never sold",
+    costTied: "Cost tied up",
+    productsFlagged: "{count} products flagged",
+    empty: "No dead or slow-moving stock for this branch.",
   },
   supplierStatementUi: {
     title: "Supplier statement",
@@ -5148,6 +5167,14 @@ export const en = {
 
     viewReports: "View reports",
     exportOverview: "Export summary",
+    monthEndPack: "Month-end pack",
+    monthEndPackDesc: "Export overview KPIs, trial balance and VAT into one Excel workbook",
+    comparePrevious: "Compare previous period",
+    deadStock: "Dead stock",
+    belowMin: "Below minimum",
+    noSale90d: "No sale in 90 days",
+    vsPrevious: "vs previous",
+    revenueDelta: "{pct}% vs previous period",
 
     categories: {
       sales: {
@@ -5185,6 +5212,11 @@ export const en = {
   vatReportUi: {
     title: "VAT (IVA) summary",
     description: "Output VAT on sales vs deductible VAT on purchases, with the net amount payable to AGT",
+    fiscalDescription: "Fiscal IVA from tax summaries — same source as Tax Management",
+    openTaxManagement: "Open Tax Management",
+    openSaft: "Open SAF-T",
+    year: "Year",
+    month: "Month",
     section: "Section",
     outputVat: "Output VAT (sales)",
     inputVat: "Input VAT (purchases)",
@@ -5196,17 +5228,19 @@ export const en = {
     taxableBase: "Taxable base",
     taxAmount: "VAT amount",
     outputByRate: "Output VAT by rate",
+    inputByRate: "Input VAT by rate",
   },
 
   cashFlowUi: {
-    title: "Cash flow",
-    description: "Money in (sales receipts) vs money out (purchase invoices)",
-    inflow: "Inflows",
-    outflow: "Outflows",
-    net: "Net cash flow",
-    inflowByMethod: "Inflows by payment method",
+    title: "Cash movements",
+    description: "Receipts (REC) and disbursements (PAG) from the payments ledger",
+    operationalHint: "Driven by recorded payments — not invoice recognition. POS cash sales without a separate receipt may be missing until posted as REC.",
+    inflow: "Receipts",
+    outflow: "Disbursements",
+    net: "Net cash movement",
+    inflowByMethod: "Receipts by payment method",
     mixed: "Mixed",
-    dailyTitle: "Daily cash flow",
+    dailyTitle: "Daily cash movements",
     day: "Day",
   },
 
@@ -5254,6 +5288,7 @@ export const en = {
     grossProfit: "Gross profit",
     purchases: "Purchases",
     netCashFlow: "Net (sales − purchases)",
+    comparePrevious: "Compare previous period",
   },
 
   profitUi: {

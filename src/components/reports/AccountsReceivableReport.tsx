@@ -1,27 +1,27 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, Fragment } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { useBranchScope } from '@/hooks/useBranchScope';
-import { useClients, useSales } from '@/hooks/useERP';
-import { Download, Clock, AlertTriangle, AlertCircle, CheckCircle } from 'lucide-react';
+import { Download, Clock, AlertTriangle, AlertCircle, CheckCircle, Loader2, Wrench } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
+import { isDemoMode } from '@/lib/api/config';
 import { format, differenceInDays, parseISO } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { exportReportExcel } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
+import { api } from '@/lib/api/client';
+import { useBranchScope } from '@/hooks/useBranchScope';
 
 interface AgingEntry {
   clientId: string;
   clientName: string;
   clientNif: string;
-  current: number; // 0-30 days
-  days30: number; // 31-60 days
-  days60: number; // 61-90 days
-  days90: number; // 90+ days
+  current: number;
+  days30: number;
+  days60: number;
+  days90: number;
   total: number;
-  creditLimit: number;
   invoices: {
     id: string;
     number: string;
@@ -31,127 +31,145 @@ interface AgingEntry {
   }[];
 }
 
+/** AR aging from open_items API (same source as Payments checklist). */
 export default function AccountsReceivableReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
-  const { clients } = useClients();
-  const { sales } = useSales(apiBranchId);
   const [expandedClient, setExpandedClient] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [repairing, setRepairing] = useState(false);
+  const [lines, setLines] = useState<any[]>([]);
+
+  const loadReceivables = async () => {
+    setLoading(true);
+    const res = await api.payments.receivablesAging(apiBranchId || undefined);
+    setLines(Array.isArray(res.data) ? res.data : []);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    void loadReceivables();
+  }, [apiBranchId]);
+
+  const handleRepair = async () => {
+    if (isDemoMode()) {
+      toast({
+        title: t.common.error,
+        description:
+          language === 'pt'
+            ? 'Reparação só disponível com servidor ligado.'
+            : 'Repair requires a connected server.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setRepairing(true);
+    try {
+      const res = await api.payments.backfillMissingReceivables();
+      if (res.error) throw new Error(res.error);
+      await loadReceivables();
+      toast({
+        title: language === 'pt' ? 'Contas a receber actualizadas' : 'Accounts receivable updated',
+        description:
+          language === 'pt'
+            ? 'Lista sincronizada com documentos em aberto.'
+            : 'List synced with open customer documents.',
+      });
+    } catch (e) {
+      toast({
+        title: t.common.error,
+        description: e instanceof Error ? e.message : String(e),
+        variant: 'destructive',
+      });
+    } finally {
+      setRepairing(false);
+    }
+  };
 
   const agingReport = useMemo((): AgingEntry[] => {
     const today = new Date();
-    const clientAging: Record<string, AgingEntry> = {};
-    
-    // Group sales by client and calculate aging
-    sales
-      .filter(sale => sale.status === 'completed')
-      .forEach(sale => {
-        // Find matching client
-        const client = clients.find(c => 
-          c.nif === sale.customerNif || c.name === sale.customerName
-        );
-        
-        if (!client || client.currentBalance <= 0) return;
-        
-        const clientId = client.id;
-        if (!clientAging[clientId]) {
-          clientAging[clientId] = {
-            clientId,
-            clientName: client.name,
-            clientNif: client.nif,
-            current: 0,
-            days30: 0,
-            days60: 0,
-            days90: 0,
-            total: 0,
-            creditLimit: client.creditLimit,
-            invoices: [],
-          };
-        }
-        
-        const saleDate = parseISO(sale.createdAt);
-        const daysOverdue = differenceInDays(today, saleDate);
-        const amount = sale.total - sale.amountPaid;
-        
-        if (amount <= 0) return;
-        
-        // Add to appropriate aging bucket
-        if (daysOverdue <= 30) {
-          clientAging[clientId].current += amount;
-        } else if (daysOverdue <= 60) {
-          clientAging[clientId].days30 += amount;
-        } else if (daysOverdue <= 90) {
-          clientAging[clientId].days60 += amount;
-        } else {
-          clientAging[clientId].days90 += amount;
-        }
-        
-        clientAging[clientId].total += amount;
-        clientAging[clientId].invoices.push({
-          id: sale.id,
-          number: sale.invoiceNumber,
-          date: sale.createdAt,
-          amount,
-          daysOverdue,
-        });
-      });
-    
-    // Also add clients with positive balance but no matching sales
-    clients
-      .filter(c => c.currentBalance > 0 && !clientAging[c.id])
-      .forEach(client => {
-        clientAging[client.id] = {
-          clientId: client.id,
-          clientName: client.name,
-          clientNif: client.nif,
-          current: client.currentBalance, // Assume current
+    const byClient: Record<string, AgingEntry> = {};
+
+    for (const row of lines) {
+      const clientId = String(row.entity_id || '');
+      if (!clientId) continue;
+      const amount = Number(row.remaining_amount || 0);
+      if (amount <= 0.001) continue;
+
+      if (!byClient[clientId]) {
+        byClient[clientId] = {
+          clientId,
+          clientName: String(row.client_name || ''),
+          clientNif: String(row.client_nif || ''),
+          current: 0,
           days30: 0,
           days60: 0,
           days90: 0,
-          total: client.currentBalance,
-          creditLimit: client.creditLimit,
+          total: 0,
           invoices: [],
         };
+      }
+
+      const entry = byClient[clientId];
+      const docDate = String(row.document_date || '').slice(0, 10) || format(today, 'yyyy-MM-dd');
+      const dueRaw = row.due_date || row.dueDate || docDate;
+      const dueDate = String(dueRaw).slice(0, 10);
+      const daysOverdue = Math.max(0, differenceInDays(today, parseISO(dueDate)));
+
+      if (daysOverdue <= 30) entry.current += amount;
+      else if (daysOverdue <= 60) entry.days30 += amount;
+      else if (daysOverdue <= 90) entry.days60 += amount;
+      else entry.days90 += amount;
+
+      entry.total += amount;
+      entry.invoices.push({
+        id: String(row.id || row.document_id),
+        number: String(row.document_number || ''),
+        date: docDate,
+        amount,
+        daysOverdue,
       });
-    
-    return Object.values(clientAging)
-      .filter(entry => entry.total > 0)
+    }
+
+    return Object.values(byClient)
+      .filter((e) => e.total > 0.001)
       .sort((a, b) => b.total - a.total);
-  }, [clients, sales]);
+  }, [lines]);
 
-  const summaryStats = useMemo(() => {
-    return agingReport.reduce((acc, entry) => ({
-      current: acc.current + entry.current,
-      days30: acc.days30 + entry.days30,
-      days60: acc.days60 + entry.days60,
-      days90: acc.days90 + entry.days90,
-      total: acc.total + entry.total,
-    }), { current: 0, days30: 0, days60: 0, days90: 0, total: 0 });
-  }, [agingReport]);
+  const summaryStats = useMemo(
+    () =>
+      agingReport.reduce(
+        (acc, entry) => ({
+          current: acc.current + entry.current,
+          days30: acc.days30 + entry.days30,
+          days60: acc.days60 + entry.days60,
+          days90: acc.days90 + entry.days90,
+          total: acc.total + entry.total,
+        }),
+        { current: 0, days30: 0, days60: 0, days90: 0, total: 0 },
+      ),
+    [agingReport],
+  );
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat(locale, {
-      style: 'currency', 
-      currency: 'AOA',
-      minimumFractionDigits: 0 
-    }).format(value);
-  };
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
 
   const getAgingBadge = (daysOverdue: number) => {
     if (daysOverdue <= 30) {
       return <Badge variant="secondary" className="bg-green-500/10 text-green-500">{t.reportsUi.current0to30}</Badge>;
-    } else if (daysOverdue <= 60) {
-      return <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-500">{t.reportsUi.days31to60}</Badge>;
-    } else if (daysOverdue <= 90) {
-      return <Badge variant="secondary" className="bg-orange-500/10 text-orange-500">{t.reportsUi.days61to90}</Badge>;
-    } else {
-      return <Badge variant="destructive">{t.reportsUi.days90plus}</Badge>;
     }
+    if (daysOverdue <= 60) {
+      return <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-500">{t.reportsUi.days31to60}</Badge>;
+    }
+    if (daysOverdue <= 90) {
+      return <Badge variant="secondary" className="bg-orange-500/10 text-orange-500">{t.reportsUi.days61to90}</Badge>;
+    }
+    return <Badge variant="destructive">{t.reportsUi.days90plus}</Badge>;
   };
 
   const handleExport = async () => {
-    const data = agingReport.map(entry => ({
+    const data = agingReport.map((entry) => ({
       [t.reportsUi.client]: entry.clientName,
       [t.reportsUi.nif]: entry.clientNif,
       [t.reportsUi.current0to30]: entry.current,
@@ -159,10 +177,7 @@ export default function AccountsReceivableReport() {
       [t.reportsUi.days61to90]: entry.days60,
       [t.reportsUi.days90plus]: entry.days90,
       [t.reportsUi.total]: entry.total,
-      [t.reportsUi.creditLimit]: entry.creditLimit,
-      [t.reportsUi.percentUsed]: ((entry.total / entry.creditLimit) * 100).toFixed(1),
     }));
-
     try {
       await exportReportExcel(data, `ContasReceber_Aging_${format(new Date(), 'yyyyMMdd')}`, {
         title: t.reportsUi.receivablesTitle,
@@ -172,9 +187,17 @@ export default function AccountsReceivableReport() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>{t.common.loading}</span>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card>
           <CardContent className="pt-6">
@@ -220,23 +243,26 @@ export default function AccountsReceivableReport() {
         </Card>
       </div>
 
-      {/* Aging Table */}
       <Card>
         <CardHeader>
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
             <div>
               <CardTitle className="flex items-center gap-2">
                 <Clock className="w-5 h-5" />
                 {t.reportsUi.receivablesTitle}
               </CardTitle>
-              <CardDescription>
-                Saldos de clientes organizados por tempo de vencimento
-              </CardDescription>
+              <CardDescription>{t.reportsUi.receivablesApiDesc}</CardDescription>
             </div>
-            <Button variant="outline" onClick={handleExport}>
-              <Download className="w-4 h-4 mr-2" />
-              {t.reportsUi.exportExcel}
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={handleRepair} disabled={repairing}>
+                {repairing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Wrench className="w-4 h-4 mr-2" />}
+                {t.reportsUi.repairReceivables}
+              </Button>
+              <Button variant="outline" onClick={handleExport}>
+                <Download className="w-4 h-4 mr-2" />
+                {t.reportsUi.exportExcel}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -250,84 +276,68 @@ export default function AccountsReceivableReport() {
                 <TableHead className="text-right text-orange-500">{t.reportsUi.days61to90}</TableHead>
                 <TableHead className="text-right text-red-500">{t.reportsUi.days90plus}</TableHead>
                 <TableHead className="text-right">{t.reportsUi.total}</TableHead>
-                <TableHead>{t.reportsUi.percentUsed}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {agingReport.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     {t.common.noResults}
                   </TableCell>
                 </TableRow>
               ) : (
-                agingReport.map((entry) => {
-                  const creditUsage = entry.creditLimit > 0 
-                    ? (entry.total / entry.creditLimit) * 100 
-                    : 100;
-                  
-                  return (
-                    <>
-                      <TableRow 
-                        key={entry.clientId}
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => setExpandedClient(
-                          expandedClient === entry.clientId ? null : entry.clientId
-                        )}
-                      >
-                        <TableCell className="font-medium">{entry.clientName}</TableCell>
-                        <TableCell>{entry.clientNif}</TableCell>
-                        <TableCell className="text-right">
-                          {entry.current > 0 ? formatCurrency(entry.current) : '-'}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {entry.days30 > 0 ? formatCurrency(entry.days30) : '-'}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {entry.days60 > 0 ? formatCurrency(entry.days60) : '-'}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {entry.days90 > 0 ? formatCurrency(entry.days90) : '-'}
-                        </TableCell>
-                        <TableCell className="text-right font-bold">{formatCurrency(entry.total)}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Progress 
-                              value={Math.min(creditUsage, 100)} 
-                              className={`h-2 w-20 ${creditUsage > 80 ? '[&>div]:bg-red-500' : creditUsage > 50 ? '[&>div]:bg-yellow-500' : '[&>div]:bg-green-500'}`}
-                            />
-                            <span className={`text-sm ${creditUsage > 80 ? 'text-red-500' : ''}`}>
-                              {creditUsage.toFixed(0)}%
-                            </span>
+                agingReport.map((entry) => (
+                  <Fragment key={entry.clientId}>
+                    <TableRow
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() =>
+                        setExpandedClient(expandedClient === entry.clientId ? null : entry.clientId)
+                      }
+                    >
+                      <TableCell className="font-medium">{entry.clientName}</TableCell>
+                      <TableCell>{entry.clientNif}</TableCell>
+                      <TableCell className="text-right">
+                        {entry.current > 0 ? formatCurrency(entry.current) : '-'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {entry.days30 > 0 ? formatCurrency(entry.days30) : '-'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {entry.days60 > 0 ? formatCurrency(entry.days60) : '-'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {entry.days90 > 0 ? formatCurrency(entry.days90) : '-'}
+                      </TableCell>
+                      <TableCell className="text-right font-bold">{formatCurrency(entry.total)}</TableCell>
+                    </TableRow>
+                    {expandedClient === entry.clientId && entry.invoices.length > 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="bg-muted/30 p-4">
+                          <p className="text-sm font-medium mb-2">{t.reportsUi.openInvoices}</p>
+                          <div className="space-y-2">
+                            {entry.invoices.map((inv) => (
+                              <div
+                                key={inv.id}
+                                className="flex items-center justify-between p-2 bg-background rounded"
+                              >
+                                <div className="flex items-center gap-4">
+                                  <span className="font-mono text-sm">{inv.number}</span>
+                                  <span className="text-sm text-muted-foreground">
+                                    {format(parseISO(inv.date), 'dd/MM/yyyy', { locale: pt })}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  {getAgingBadge(inv.daysOverdue)}
+                                  <span className="font-medium">{formatCurrency(inv.amount)}</span>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </TableCell>
                       </TableRow>
-                      {expandedClient === entry.clientId && entry.invoices.length > 0 && (
-                        <TableRow>
-                          <TableCell colSpan={8} className="bg-muted/30 p-4">
-                            <p className="text-sm font-medium mb-2">{t.reportsUi.openInvoices}</p>
-                            <div className="space-y-2">
-                              {entry.invoices.map(inv => (
-                                <div key={inv.id} className="flex items-center justify-between p-2 bg-background rounded">
-                                  <div className="flex items-center gap-4">
-                                    <span className="font-mono text-sm">{inv.number}</span>
-                                    <span className="text-sm text-muted-foreground">
-                                      {format(parseISO(inv.date), 'dd/MM/yyyy', { locale: pt })}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-4">
-                                    {getAgingBadge(inv.daysOverdue)}
-                                    <span className="font-medium">{formatCurrency(inv.amount)}</span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </>
-                  );
-                })
+                    )}
+                  </Fragment>
+                ))
               )}
             </TableBody>
           </Table>

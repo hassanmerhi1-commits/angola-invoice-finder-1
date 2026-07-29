@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,10 +8,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useClients, useSales } from '@/hooks/useERP';
+import { useReportCreditNotes } from '@/hooks/useReportCreditNotes';
 import { Download, Printer, FileText, Search, TrendingUp, TrendingDown, FileDown } from 'lucide-react';
-import { format, parseISO, isWithinInterval, startOfMonth, endOfMonth } from 'date-fns';
-import { pt } from 'date-fns/locale';
+import { format, parseISO, startOfMonth, endOfMonth } from 'date-fns';
 import { useTranslation } from '@/i18n';
+import { api } from '@/lib/api/client';
 import { buildReportHtml, escapeHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 
 interface StatementEntry {
@@ -25,84 +26,185 @@ interface StatementEntry {
   balance: number;
 }
 
+function matchesClient(
+  opts: {
+    clientId?: string;
+    customerNif?: string;
+    customerName?: string;
+  },
+  client: { id: string; nif: string; name: string } | undefined,
+) {
+  if (!client) return false;
+  if (opts.clientId && opts.clientId === client.id) return true;
+  if (client.nif && opts.customerNif && opts.customerNif === client.nif) return true;
+  if (client.name && opts.customerName && opts.customerName === client.name) return true;
+  return false;
+}
+
 export default function ClientStatementReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
   const { clients } = useClients();
   const { sales } = useSales(apiBranchId, { light: false });
-  
+
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [searchTerm, setSearchTerm] = useState('');
+  const [receipts, setReceipts] = useState<any[]>([]);
+
+  const { creditNotes } = useReportCreditNotes(apiBranchId, { dateFrom, dateTo });
 
   const selectedClientData = useMemo(() => {
-    return clients.find(c => c.id === selectedClient);
+    return clients.find((c) => c.id === selectedClient);
   }, [clients, selectedClient]);
 
-  const statementEntries = useMemo((): StatementEntry[] => {
-    if (!selectedClient) return [];
-    
-    // Get sales for this client
-    const clientSales = sales.filter(sale => {
-      const saleDate = sale.createdAt.split('T')[0];
-      const matchesClient =
-        (sale.clientId && selectedClientData?.id && sale.clientId === selectedClientData.id)
-        || (!!selectedClientData?.nif && sale.customerNif === selectedClientData.nif)
-        || (!!selectedClientData?.name && sale.customerName === selectedClientData.name);
-      const matchesDate = saleDate >= dateFrom && saleDate <= dateTo;
-      return matchesClient && matchesDate;
-    });
-
-    let runningBalance = selectedClientData?.currentBalance || 0;
-    
-    // Create statement entries from sales (debits - money owed by client)
-    const entries: StatementEntry[] = clientSales
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-    .map(sale => {
-        const isOnAccount = sale.paymentMethod === 'credit';
-        const debit = sale.total;
-        // Cash/card/transfer paid at sale → credit the account; on-account stays open debit.
-        const credit = isOnAccount ? 0 : (sale.amountPaid >= sale.total ? sale.total : 0);
-        runningBalance = runningBalance + debit - credit;
-        
-        return {
-          id: sale.id,
-          date: sale.createdAt,
-          type: 'invoice' as const,
-          reference: sale.invoiceNumber,
-          description: `Fatura - ${sale.items.length} item(s)`,
-          debit: debit,
-          credit: credit,
-          balance: runningBalance,
-        };
+  useEffect(() => {
+    if (!selectedClient) {
+      setReceipts([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const res = await api.payments.list({
+        entityType: 'customer',
+        entityId: selectedClient,
+        branchId: apiBranchId || undefined,
+        limit: 5000,
       });
+      if (!cancelled) setReceipts(Array.isArray(res.data) ? res.data : []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClient, apiBranchId]);
 
-    return entries;
-  }, [selectedClient, selectedClientData, sales, dateFrom, dateTo]);
+  const statementEntries = useMemo((): StatementEntry[] => {
+    if (!selectedClient || !selectedClientData) return [];
+
+    const raw: Omit<StatementEntry, 'balance'>[] = [];
+
+    for (const sale of sales) {
+      if (sale.status === 'voided') continue;
+      const saleDate = String(sale.createdAt || '').slice(0, 10);
+      if (saleDate < dateFrom || saleDate > dateTo) continue;
+      if (
+        !matchesClient(
+          { clientId: sale.clientId, customerNif: sale.customerNif, customerName: sale.customerName },
+          selectedClientData,
+        )
+      ) {
+        continue;
+      }
+      const isOnAccount = sale.paymentMethod === 'credit';
+      const debit = Number(sale.total || 0);
+      const credit = isOnAccount ? 0 : Number(sale.amountPaid || 0) >= debit ? debit : 0;
+      raw.push({
+        id: sale.id,
+        date: sale.createdAt,
+        type: 'invoice',
+        reference: sale.invoiceNumber,
+        description: `${t.reportsUi.invoice} — ${sale.items?.length || 0} item(s)`,
+        debit,
+        credit,
+      });
+    }
+
+    for (const note of creditNotes) {
+      if (String(note.status) !== 'issued' && String(note.status) !== 'transmitted') continue;
+      const noteDate = String(note.issuedAt || note.createdAt || '').slice(0, 10);
+      if (noteDate < dateFrom || noteDate > dateTo) continue;
+      let matched = matchesClient(
+        { customerNif: note.customerNif, customerName: note.customerName },
+        selectedClientData,
+      );
+      if (!matched && !note.customerNif && !note.customerName) {
+        const orig = sales.find((s) => s.id === note.originalInvoiceId);
+        matched = !!(
+          orig &&
+          matchesClient(
+            { clientId: orig.clientId, customerNif: orig.customerNif, customerName: orig.customerName },
+            selectedClientData,
+          )
+        );
+      }
+      if (!matched) continue;
+      const amount = Number(note.total || 0);
+      raw.push({
+        id: note.id,
+        date: note.issuedAt || note.createdAt,
+        type: 'credit_note',
+        reference: note.documentNumber,
+        description: `${t.reportsUi.creditNote} — ${note.originalInvoiceNumber || ''}`.trim(),
+        debit: 0,
+        credit: amount,
+      });
+    }
+
+    for (const pay of receipts) {
+      const pType = String(pay.payment_type || pay.paymentType || '').toLowerCase();
+      if (pType && pType !== 'receipt' && !pType.startsWith('rec')) continue;
+      const payDate = String(pay.created_at || pay.createdAt || '').slice(0, 10);
+      if (payDate < dateFrom || payDate > dateTo) continue;
+      const amount = Number(pay.amount || 0);
+      if (amount <= 0) continue;
+      raw.push({
+        id: String(pay.id),
+        date: pay.created_at || pay.createdAt,
+        type: 'payment',
+        reference: String(pay.payment_number || pay.paymentNumber || ''),
+        description: t.reportsUi.payment,
+        debit: 0,
+        credit: amount,
+      });
+    }
+
+    raw.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    const periodNet = raw.reduce((s, e) => s + e.debit - e.credit, 0);
+    let running = Number(selectedClientData.currentBalance || 0) - periodNet;
+
+    return raw.map((e) => {
+      running = running + e.debit - e.credit;
+      return { ...e, balance: running };
+    });
+  }, [
+    selectedClient,
+    selectedClientData,
+    sales,
+    creditNotes,
+    receipts,
+    dateFrom,
+    dateTo,
+    t.reportsUi.invoice,
+    t.reportsUi.creditNote,
+    t.reportsUi.payment,
+  ]);
 
   const totals = useMemo(() => {
-    return statementEntries.reduce((acc, entry) => ({
-      debit: acc.debit + entry.debit,
-      credit: acc.credit + entry.credit,
-    }), { debit: 0, credit: 0 });
+    return statementEntries.reduce(
+      (acc, entry) => ({
+        debit: acc.debit + entry.debit,
+        credit: acc.credit + entry.credit,
+      }),
+      { debit: 0, credit: 0 },
+    );
   }, [statementEntries]);
 
   const filteredClients = useMemo(() => {
     if (!searchTerm) return clients;
     const term = searchTerm.toLowerCase();
-    return clients.filter(c => 
-      c.name.toLowerCase().includes(term) || 
-      c.nif.toLowerCase().includes(term)
+    return clients.filter(
+      (c) => c.name.toLowerCase().includes(term) || c.nif.toLowerCase().includes(term),
     );
   }, [clients, searchTerm]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat(locale, {
-      style: 'currency', 
+      style: 'currency',
       currency: 'AOA',
-      minimumFractionDigits: 2 
+      minimumFractionDigits: 2,
     }).format(value);
   };
 
@@ -111,9 +213,13 @@ export default function ClientStatementReport() {
     return statementEntries.map((entry) => ({
       [t.reportsUi.date]: format(parseISO(entry.date), 'dd/MM/yyyy'),
       [t.reportsUi.type]:
-        entry.type === 'invoice' ? t.reportsUi.invoice :
-        entry.type === 'payment' ? t.reportsUi.payment :
-        entry.type === 'credit_note' ? t.reportsUi.creditNote : t.reportsUi.debitNote,
+        entry.type === 'invoice'
+          ? t.reportsUi.invoice
+          : entry.type === 'payment'
+            ? t.reportsUi.payment
+            : entry.type === 'credit_note'
+              ? t.reportsUi.creditNote
+              : t.reportsUi.debitNote,
       [t.reportsUi.reference]: entry.reference,
       [t.reportsUi.description]: entry.description,
       [t.reportsUi.debit]: entry.debit,
@@ -129,9 +235,13 @@ export default function ClientStatementReport() {
         (entry) => `<tr>
           <td>${escapeHtml(format(parseISO(entry.date), 'dd/MM/yyyy'))}</td>
           <td>${escapeHtml(
-            entry.type === 'invoice' ? t.reportsUi.invoice :
-            entry.type === 'payment' ? t.reportsUi.payment :
-            entry.type === 'credit_note' ? t.reportsUi.creditNote : t.reportsUi.debitNote,
+            entry.type === 'invoice'
+              ? t.reportsUi.invoice
+              : entry.type === 'payment'
+                ? t.reportsUi.payment
+                : entry.type === 'credit_note'
+                  ? t.reportsUi.creditNote
+                  : t.reportsUi.debitNote,
           )}</td>
           <td>${escapeHtml(entry.reference)}</td>
           <td>${escapeHtml(entry.description)}</td>
@@ -189,9 +299,9 @@ export default function ClientStatementReport() {
 
   const handleSavePdf = async () => {
     const html = buildPrintHtml();
-    if (!html) return;
+    if (!html || !selectedClientData) return;
     try {
-      await saveReportPdf(html, `Extracto_${selectedClientData?.name}_${format(new Date(), 'yyyyMMdd')}`);
+      await saveReportPdf(html, `Extracto_${selectedClientData.name}_${format(new Date(), 'yyyyMMdd')}`);
     } catch (e) {
       console.error('[ClientStatementReport] save pdf failed:', e);
     }
@@ -199,178 +309,167 @@ export default function ClientStatementReport() {
 
   return (
     <div className="space-y-6">
-      {/* Filters */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="w-5 h-5" />
-            {t.reportsUi.statementTitle}
-          </CardTitle>
-          <CardDescription>
-            {t.reportsUi.statementDesc}
-          </CardDescription>
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="w-5 h-5" />
+                {t.reportsUi.statementTitle}
+              </CardTitle>
+              <CardDescription>{t.reportsUi.statementDesc}</CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => void handlePrint()} disabled={!selectedClient}>
+                <Printer className="w-4 h-4 mr-2" />
+                {t.reportsUi.print}
+              </Button>
+              <Button variant="outline" onClick={() => void handleSavePdf()} disabled={!selectedClient}>
+                <FileDown className="w-4 h-4 mr-2" />
+                {t.reportsUi.savePdf}
+              </Button>
+              <Button variant="outline" onClick={() => void handleExport()} disabled={!selectedClient}>
+                <Download className="w-4 h-4 mr-2" />
+                {t.reportsUi.exportExcel}
+              </Button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="md:col-span-2">
               <Label>{t.reportsUi.client}</Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder={t.reportsUi.searchClient}
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-9 mb-2"
-                />
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    className="pl-8"
+                    placeholder={t.reportsUi.searchClient}
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+                <Select value={selectedClient} onValueChange={setSelectedClient}>
+                  <SelectTrigger className="w-[220px]">
+                    <SelectValue placeholder={t.reportsUi.selectClient} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {filteredClients.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <Select value={selectedClient} onValueChange={setSelectedClient}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t.reportsUi.selectClient} />
-                </SelectTrigger>
-                <SelectContent>
-                  {filteredClients.map(client => (
-                    <SelectItem key={client.id} value={client.id}>
-                      {client.name} ({client.nif})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
             <div>
               <Label>{t.reportsUi.dateFrom}</Label>
-              <Input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-              />
+              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
             </div>
             <div>
               <Label>{t.reportsUi.dateTo}</Label>
-              <Input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-              />
+              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
           </div>
-          
-          {selectedClientData && (
-            <div className="mt-4 p-4 bg-muted/50 rounded-lg">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">{t.reportsUi.client}</p>
-                  <p className="font-semibold">{selectedClientData.name}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">{t.reportsUi.nif}</p>
-                  <p className="font-semibold">{selectedClientData.nif}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">{t.reportsUi.creditLimit}</p>
-                  <p className="font-semibold">{formatCurrency(selectedClientData.creditLimit)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">{t.reportsUi.balance}</p>
-                  <p className={`font-semibold ${selectedClientData.currentBalance > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                    {formatCurrency(selectedClientData.currentBalance)}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
         </CardContent>
       </Card>
 
-      {/* Statement Table */}
-      {selectedClient && (
-        <Card>
-          <CardHeader>
-            <div className="flex justify-between items-center">
-              <CardTitle>Movimentos</CardTitle>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => void handleExport()} disabled={excelData.length === 0}>
-                  <Download className="w-4 h-4 mr-2" />
-                  Excel
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => void handleSavePdf()} disabled={statementEntries.length === 0}>
-                  <FileDown className="w-4 h-4 mr-2" />
-                  {t.reportsUi.savePdf}
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => void handlePrint()} disabled={statementEntries.length === 0}>
-                  <Printer className="w-4 h-4 mr-2" />
-                  {t.reportsUi.print}
-                </Button>
+      {selectedClientData && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingUp className="w-4 h-4 text-red-500" />
+                <p className="text-sm text-muted-foreground">{t.reportsUi.debit}</p>
               </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t.reportsUi.date}</TableHead>
-                  <TableHead>{t.reportsUi.type}</TableHead>
-                  <TableHead>{t.reportsUi.reference}</TableHead>
-                  <TableHead>{t.reportsUi.description}</TableHead>
-                  <TableHead className="text-right">{t.reportsUi.debit}</TableHead>
-                  <TableHead className="text-right">{t.reportsUi.credit}</TableHead>
-                  <TableHead className="text-right">{t.reportsUi.balance}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {statementEntries.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                      {t.common.noResults}
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  <>
-                    {statementEntries.map((entry) => (
-                      <TableRow key={entry.id}>
-                        <TableCell>
-                          {format(parseISO(entry.date), 'dd/MM/yyyy', { locale: pt })}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={entry.type === 'invoice' ? 'default' : 
-                                         entry.type === 'payment' ? 'secondary' : 'outline'}>
-                            {entry.type === 'invoice' ? t.reportsUi.invoice :
-                             entry.type === 'payment' ? t.reportsUi.payment :
-                             entry.type === 'credit_note' ? 'NC' : 'ND'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-mono text-sm">{entry.reference}</TableCell>
-                        <TableCell>{entry.description}</TableCell>
-                        <TableCell className="text-right text-red-500">
-                          {entry.debit > 0 ? formatCurrency(entry.debit) : '-'}
-                        </TableCell>
-                        <TableCell className="text-right text-green-500">
-                          {entry.credit > 0 ? formatCurrency(entry.credit) : '-'}
-                        </TableCell>
-                        <TableCell className={`text-right font-medium ${entry.balance > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                          {formatCurrency(entry.balance)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {/* Totals Row */}
-                    <TableRow className="bg-muted/50 font-bold">
-                      <TableCell colSpan={4}>{t.common.total}</TableCell>
-                      <TableCell className="text-right text-red-500">
-                        {formatCurrency(totals.debit)}
-                      </TableCell>
-                      <TableCell className="text-right text-green-500">
-                        {formatCurrency(totals.credit)}
-                      </TableCell>
-                      <TableCell className={`text-right ${(totals.debit - totals.credit) > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                        {formatCurrency(totals.debit - totals.credit)}
-                      </TableCell>
-                    </TableRow>
-                  </>
+              <p className="text-2xl font-bold">{formatCurrency(totals.debit)}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingDown className="w-4 h-4 text-green-500" />
+                <p className="text-sm text-muted-foreground">{t.reportsUi.credit}</p>
+              </div>
+              <p className="text-2xl font-bold">{formatCurrency(totals.credit)}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-sm text-muted-foreground mb-2">{t.reportsUi.balance}</p>
+              <p className="text-2xl font-bold">
+                {formatCurrency(
+                  statementEntries[statementEntries.length - 1]?.balance ??
+                    selectedClientData.currentBalance,
                 )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+              </p>
+              <Badge variant="secondary" className="mt-2">
+                {selectedClientData.name}
+              </Badge>
+            </CardContent>
+          </Card>
+        </div>
       )}
+
+      <Card>
+        <CardContent className="pt-6">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t.reportsUi.date}</TableHead>
+                <TableHead>{t.reportsUi.type}</TableHead>
+                <TableHead>{t.reportsUi.reference}</TableHead>
+                <TableHead>{t.reportsUi.description}</TableHead>
+                <TableHead className="text-right">{t.reportsUi.debit}</TableHead>
+                <TableHead className="text-right">{t.reportsUi.credit}</TableHead>
+                <TableHead className="text-right">{t.reportsUi.balance}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {!selectedClient ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    {t.reportsUi.selectClient}
+                  </TableCell>
+                </TableRow>
+              ) : statementEntries.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    {t.common.noResults}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                statementEntries.map((entry) => (
+                  <TableRow key={`${entry.type}-${entry.id}`}>
+                    <TableCell>{format(parseISO(entry.date), 'dd/MM/yyyy')}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">
+                        {entry.type === 'invoice'
+                          ? 'FT'
+                          : entry.type === 'payment'
+                            ? 'REC'
+                            : entry.type === 'credit_note'
+                              ? 'NC'
+                              : 'ND'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-mono text-sm">{entry.reference}</TableCell>
+                    <TableCell>{entry.description}</TableCell>
+                    <TableCell className="text-right">
+                      {entry.debit > 0 ? formatCurrency(entry.debit) : '-'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {entry.credit > 0 ? formatCurrency(entry.credit) : '-'}
+                    </TableCell>
+                    <TableCell className="text-right font-medium">{formatCurrency(entry.balance)}</TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   );
 }
