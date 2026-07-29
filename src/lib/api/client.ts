@@ -321,12 +321,18 @@ async function apiFetch<T>(
       options.body != null && typeof options.body === 'string'
         ? (() => { try { return JSON.parse(options.body as string); } catch { return options.body; } })()
         : options.body;
-    const r = await electronHttpJson(url, {
+    const doHttp = () => electronHttpJson(url, {
       method: options.method || 'GET',
       body,
       headers: headers as Record<string, string>,
       timeoutMs: fetchOpts?.timeoutMs ?? 25000,
     });
+    let r = await doHttp();
+    // Silent one-shot retry — Tailscale idle sockets often fail the first hop.
+    if (!r.ok && r.status === 0 && /socket hang up|ECONNRESET|EPIPE|timeout|ETIMEDOUT|network/i.test(String(r.error || ''))) {
+      await new Promise((res) => setTimeout(res, 200));
+      r = await doHttp();
+    }
     if (r.ok) {
       return { data: r.json as T, status: r.status };
     }

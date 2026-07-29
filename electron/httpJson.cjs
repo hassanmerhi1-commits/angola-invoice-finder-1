@@ -1,10 +1,27 @@
 /**
  * Node HTTP(S) JSON requests — same path as curl, bypasses renderer fetch / CORS.
+ *
+ * Shop → city over Tailscale often drops idle TCP. Node's default keep-alive agent
+ * then resurfaces as "socket hang up" on the next click; a second attempt works.
+ * We disable keep-alive and silently retry once on retriable network errors.
  */
 const http = require('http');
 const https = require('https');
 
-function httpJsonRequest(targetUrl, opts = {}) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetriableNetworkError(err) {
+  const code = String(err?.code || '');
+  const msg = String(err?.message || err || '');
+  return (
+    ['ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EPIPE', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND'].includes(code)
+    || /socket hang up|ECONNRESET|EPIPE|timed out|timeout|network/i.test(msg)
+  );
+}
+
+function httpJsonRequestOnce(targetUrl, opts = {}) {
   const method = String(opts.method || 'GET').toUpperCase();
   const timeoutMs = Number(opts.timeoutMs) || 20000;
   const headers = opts.headers && typeof opts.headers === 'object' ? opts.headers : {};
@@ -22,8 +39,11 @@ function httpJsonRequest(targetUrl, opts = {}) {
           port: u.port || (u.protocol === 'https:' ? 443 : 80),
           path: `${u.pathname}${u.search}`,
           method,
+          // Fresh TCP each request — avoids Tailscale/NAT killing idle keep-alive sockets.
+          agent: false,
           headers: {
             Accept: 'application/json',
+            Connection: 'close',
             ...(bodyRaw
               ? {
                   'Content-Type': headers['Content-Type'] || 'application/json',
@@ -55,17 +75,38 @@ function httpJsonRequest(targetUrl, opts = {}) {
           });
         },
       );
-      req.on('error', (e) => resolve({ ok: false, status: 0, error: e.message, json: null, text: '' }));
+      req.on('error', (e) => resolve({
+        ok: false,
+        status: 0,
+        error: e.message,
+        code: e.code,
+        json: null,
+        text: '',
+      }));
       req.on('timeout', () => {
         req.destroy();
-        resolve({ ok: false, status: 0, error: 'timeout', json: null, text: '' });
+        resolve({ ok: false, status: 0, error: 'timeout', code: 'ETIMEDOUT', json: null, text: '' });
       });
       if (bodyRaw) req.write(bodyRaw);
       req.end();
     } catch (e) {
-      resolve({ ok: false, status: 0, error: e.message, json: null, text: '' });
+      resolve({ ok: false, status: 0, error: e.message, code: e.code, json: null, text: '' });
     }
   });
 }
 
-module.exports = { httpJsonRequest };
+async function httpJsonRequest(targetUrl, opts = {}) {
+  const first = await httpJsonRequestOnce(targetUrl, opts);
+  if (first.ok || first.status > 0) return first;
+  if (!isRetriableNetworkError(first)) return first;
+
+  await sleep(180);
+  const second = await httpJsonRequestOnce(targetUrl, opts);
+  if (second.ok || second.status > 0) return second;
+  return {
+    ...second,
+    error: second.error || first.error || 'socket hang up',
+  };
+}
+
+module.exports = { httpJsonRequest, isRetriableNetworkError };

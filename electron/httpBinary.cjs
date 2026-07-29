@@ -29,7 +29,9 @@ function httpBinaryRequest(targetUrl, opts = {}) {
           port: u.port || (u.protocol === 'https:' ? 443 : 80),
           path: `${u.pathname}${u.search}`,
           method,
+          agent: false,
           headers: {
+            Connection: 'close',
             ...(bodyBuf
               ? {
                   'Content-Length': bodyBuf.length,

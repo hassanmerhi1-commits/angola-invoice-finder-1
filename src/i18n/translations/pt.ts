@@ -61,6 +61,8 @@ export const pt: TranslationKeys = {
     currency: "Kz",
     unknown: "Desconhecido",
     dash: "—",
+    from: "De",
+    to: "Até",
     featureInDevelopment: "Funcionalidade em desenvolvimento",
   },
 

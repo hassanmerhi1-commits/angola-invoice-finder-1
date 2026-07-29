@@ -59,6 +59,8 @@ export const en = {
     currency: "Kz",
     unknown: "Unknown",
     dash: "—",
+    from: "From",
+    to: "To",
     featureInDevelopment: "Feature in development",
   },
 

@@ -125,9 +125,9 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
       if (!res || res.error) {
         console.error('Failed to fetch ledger:', res?.error);
         const raw = String(res?.error || '');
-        const friendly = /ETIMEDOUT|ECONNREFUSED|4546|db:query|unreachable|failed to fetch|network|timeout/i.test(raw)
+        const friendly = /ETIMEDOUT|ECONNREFUSED|4546|db:query|unreachable|failed to fetch|network|timeout|socket hang up|ECONNRESET|EPIPE/i.test(raw)
           ? t.ledgerUi.serverUnreachable
-          : /character varying|uuid|operator does not exist|42883/i.test(raw)
+          : /character varying|uuid|operator does not exist|42883|could not determine data type/i.test(raw)
             ? t.ledgerUi.serverNeedsRebuild
             : raw || t.ledgerUi.loadError;
         toast.error(friendly);

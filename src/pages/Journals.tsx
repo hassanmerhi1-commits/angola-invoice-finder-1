@@ -5,7 +5,7 @@ import { branchIdsEquivalent } from '@/lib/branchAccess';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
+import { useChartOfAccounts, useTrialBalance } from '@/hooks/useChartOfAccounts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
