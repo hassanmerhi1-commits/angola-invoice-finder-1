@@ -557,6 +557,7 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             COALESCE(ms.ledger_stock, sbs.ledger_stock, 0) AS stock,
             p.unit,
             p.tax_rate,
+            p.vat_override,
             CASE WHEN p.branch_id = $1 THEN p.branch_id ELSE $1 END AS branch_id,
             p.supplier_id,
             p.supplier_name
@@ -586,6 +587,7 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             ${sqlGridStockExpr('p')} AS stock,
             p.unit,
             p.tax_rate,
+            p.vat_override,
             p.branch_id,
             p.supplier_id,
             p.supplier_name
@@ -619,6 +621,7 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             0 AS stock,
             p.unit,
             p.tax_rate,
+            p.vat_override,
             $1 AS branch_id,
             p.supplier_id,
             p.supplier_name
@@ -735,6 +738,7 @@ async function listInventoryConsolidatedByBranches() {
         COALESCE(p.avg_cost, p.cost, 0) AS avg_cost,
         p.unit,
         p.tax_rate,
+        p.vat_override,
         p.branch_id,
         p.supplier_id,
         p.supplier_name
@@ -799,6 +803,7 @@ async function listInventoryConsolidatedByBranches() {
       stock,
       unit: 'UN',
       tax_rate: null,
+      vat_override: false,
       branch_id: mainBranchIds[0] || null,
       supplier_id: null,
       supplier_name: null,
@@ -826,7 +831,7 @@ async function listProductsForBranchFast(branchKey) {
             ${rowPrice} AS price, p.price2, p.price3, p.price4,
             p.cost, p.first_cost, p.last_cost, p.avg_cost,
             ${branchStock} AS stock,
-            p.unit, p.tax_rate, p.branch_id, p.supplier_id, p.supplier_name,
+            p.unit, p.tax_rate, p.vat_override, p.branch_id, p.supplier_id, p.supplier_name,
             p.is_active, p.created_at, p.updated_at`;
 
   // Company-wide catalog: any SKU not already owned by this filial (0 stock until
@@ -850,7 +855,7 @@ async function listProductsForBranchFast(branchKey) {
             ${rowPrice} AS price, p.price2, p.price3, p.price4,
             p.cost, p.first_cost, p.last_cost, p.avg_cost,
             0 AS stock,
-            p.unit, p.tax_rate,
+            p.unit, p.tax_rate, p.vat_override,
             $1 AS branch_id,
             p.supplier_id, p.supplier_name,
             p.is_active, p.created_at, p.updated_at
@@ -869,7 +874,7 @@ async function listProductsForBranchFast(branchKey) {
             ${rowPrice} AS price, p.price2, p.price3, p.price4,
             p.cost, p.first_cost, p.last_cost, p.avg_cost,
             0 AS stock,
-            p.unit, p.tax_rate,
+            p.unit, p.tax_rate, p.vat_override,
             $1 AS branch_id,
             p.supplier_id, p.supplier_name,
             p.is_active, p.created_at, p.updated_at
@@ -1247,6 +1252,7 @@ async function listProductsForBranch(branchKey, lightList) {
             ${stockSql} AS stock,
             COALESCE(bp.unit, p.unit) AS unit,
             COALESCE(bp.tax_rate, p.tax_rate) AS tax_rate,
+            COALESCE(bp.vat_override, p.vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) AS vat_override,
             COALESCE(bp.branch_id, $1) AS branch_id,
             COALESCE(bp.supplier_id, p.supplier_id) AS supplier_id,
             COALESCE(bp.supplier_name, p.supplier_name) AS supplier_name,
@@ -1982,9 +1988,14 @@ module.exports = function(broadcastTable) {
 
         // Resolve VAT lock: filial IVA change always locks (form often sends vatOverride:false
         // by default — that used to wipe the auto-lock and let HQ 5% cascade back).
+        // Also lock any non-default filial rate so future HQ saves cannot push 5% over 14%/7%/0%.
         const vatOverrideBody = req.body?.vatOverride ?? req.body?.vat_override;
         let vatFlag;
-        if (taxChanged && !productIsHq) {
+        if (!productIsHq && (
+          taxChanged
+          || Number(mergedTaxRate) !== Number(DEFAULT_VAT_RATE)
+          || (Number.isFinite(Number(existing.tax_rate)) && Number(existing.tax_rate) !== Number(DEFAULT_VAT_RATE))
+        )) {
           vatFlag = true;
         } else if (vatOverrideBody !== undefined && vatOverrideBody !== null && vatOverrideBody !== '') {
           vatFlag = vatOverrideBody === true || vatOverrideBody === 'true' || vatOverrideBody === 1 || vatOverrideBody === '1';
@@ -2146,32 +2157,73 @@ module.exports = function(broadcastTable) {
 
         try {
           if (existingId) {
-            const upd = await db.query(
-              `UPDATE products
-               SET name = $1, sku = $2, barcode = $3, category = $4, price = $5, cost = $6,
-                   stock = $7, unit = $8, tax_rate = $9, branch_id = $10,
-                   supplier_id = $11, supplier_name = $12, is_active = $13,
-                   last_cost = COALESCE($6, last_cost), avg_cost = COALESCE($6, avg_cost),
-                   updated_at = CURRENT_TIMESTAMP
-               WHERE id = $14`,
-              [
-                name,
-                sku,
-                p.barcode || '',
-                p.category || 'GERAL',
-                Number(p.price) || 0,
-                cost,
-                stock,
-                String(p.unit || p.unidade || 'UN'),
-                normalizeTaxRate(p.taxRate ?? p.iva),
-                storedBranchId,
-                sanitizeUuid(p.supplierId),
-                p.supplierName || null,
-                activeInt,
-                existingId,
-              ],
-            );
+            // Preserve stored IVA unless the import row explicitly includes taxRate/iva.
+            // Code-only sheets (CODIGOS.xls) used to wipe 14%/7%/0% back to default 5%.
+            const rawIva = p.taxRate ?? p.iva ?? p.tax_rate;
+            const hasExplicitIva =
+              rawIva !== undefined && rawIva !== null && String(rawIva).trim() !== '';
+            const upd = hasExplicitIva
+              ? await db.query(
+                  `UPDATE products
+                   SET name = $1, sku = $2, barcode = $3, category = $4, price = $5, cost = $6,
+                       stock = $7, unit = $8, tax_rate = $9, branch_id = $10,
+                       supplier_id = $11, supplier_name = $12, is_active = $13,
+                       last_cost = COALESCE($6, last_cost), avg_cost = COALESCE($6, avg_cost),
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE id = $14`,
+                  [
+                    name,
+                    sku,
+                    p.barcode || '',
+                    p.category || 'GERAL',
+                    Number(p.price) || 0,
+                    cost,
+                    stock,
+                    String(p.unit || p.unidade || 'UN'),
+                    normalizeTaxRate(rawIva),
+                    storedBranchId,
+                    sanitizeUuid(p.supplierId),
+                    p.supplierName || null,
+                    activeInt,
+                    existingId,
+                  ],
+                )
+              : await db.query(
+                  `UPDATE products
+                   SET name = $1, sku = $2, barcode = $3, category = $4, price = $5, cost = $6,
+                       stock = $7, unit = $8, branch_id = $9,
+                       supplier_id = $10, supplier_name = $11, is_active = $12,
+                       last_cost = COALESCE($6, last_cost), avg_cost = COALESCE($6, avg_cost),
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE id = $13`,
+                  [
+                    name,
+                    sku,
+                    p.barcode || '',
+                    p.category || 'GERAL',
+                    Number(p.price) || 0,
+                    cost,
+                    stock,
+                    String(p.unit || p.unidade || 'UN'),
+                    storedBranchId,
+                    sanitizeUuid(p.supplierId),
+                    p.supplierName || null,
+                    activeInt,
+                    existingId,
+                  ],
+                );
             if (upd.rowCount > 0) updated++;
+            if (hasExplicitIva) {
+              const rate = normalizeTaxRate(rawIva);
+              if (Number(rate) !== Number(DEFAULT_VAT_RATE)) {
+                try {
+                  await db.query(
+                    `UPDATE products SET vat_override = $1 WHERE id = $2`,
+                    [db.engine === 'postgres' ? true : 1, existingId],
+                  );
+                } catch (_) { /* column may be missing */ }
+              }
+            }
           } else {
             const id = crypto.randomUUID();
             const ins = await db.query(
@@ -2194,7 +2246,18 @@ module.exports = function(broadcastTable) {
                 p.supplierName || null,
               ],
             );
-            if (ins.rowCount > 0) inserted++;
+            if (ins.rowCount > 0) {
+              inserted++;
+              const insertRate = normalizeTaxRate(p.taxRate ?? p.iva);
+              if (Number(insertRate) !== Number(DEFAULT_VAT_RATE)) {
+                try {
+                  await db.query(
+                    `UPDATE products SET vat_override = $1 WHERE id = $2`,
+                    [db.engine === 'postgres' ? true : 1, id],
+                  );
+                } catch (_) { /* column may be missing */ }
+              }
+            }
           }
         } catch (err) {
           failed++;

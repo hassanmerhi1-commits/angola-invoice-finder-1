@@ -81,7 +81,8 @@ export interface ExcelProduct {
   quantidade: number;
   unidade: string;
   categoria: string;
-  iva: number;
+  /** null when the sheet has no IVA column — must not overwrite stored tax_rate */
+  iva: number | null;
   codigoBarras?: string;
   fornecedor?: string;
   qtdMinima?: number;
@@ -227,9 +228,9 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
               categoria: String(getMappedValue('categoria') || ''),
               iva: (() => {
                 const raw = getMappedValue('iva');
-                if (raw === null || raw === undefined || raw === '') return DEFAULT_VAT_RATE;
+                if (raw === null || raw === undefined || raw === '') return null;
                 const n = parseFloat(String(raw));
-                return Number.isFinite(n) ? n : DEFAULT_VAT_RATE;
+                return Number.isFinite(n) ? n : null;
               })(),
               codigoBarras: String(getMappedValue('codigoBarras') || ''),
               fornecedor: String(getMappedValue('fornecedor') || ''),
@@ -282,9 +283,9 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
             categoria: String(findByAliases(['Categoria', 'categoria', 'Category']) || ''),
             iva: (() => {
               const raw = findByAliases(['IVA %', 'iva', 'IVA', 'Tax']);
-              if (raw === null || raw === undefined || raw === '') return DEFAULT_VAT_RATE;
+              if (raw === null || raw === undefined || raw === '') return null;
               const n = parseFloat(String(raw));
-              return Number.isFinite(n) ? n : DEFAULT_VAT_RATE;
+              return Number.isFinite(n) ? n : null;
             })(),
             codigoBarras: String(findByAliases(['Código de Barras', 'codigo_barras', 'Barcode', 'EAN']) || ''),
             fornecedor: String(findByAliases(['Fornecedor', 'fornecedor', 'Supplier']) || ''),
@@ -382,7 +383,7 @@ export function validateImportedProducts(products: ExcelProduct[]): {
     if (product.quantidade < 0) {
       rowErrors.push('Quantidade não pode ser negativa');
     }
-    if (product.iva < 0 || product.iva > 100) {
+    if (product.iva != null && (product.iva < 0 || product.iva > 100)) {
       rowErrors.push('IVA deve estar entre 0 e 100');
     }
 

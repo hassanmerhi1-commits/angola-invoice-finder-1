@@ -333,6 +333,18 @@ async function ensureProductVatOverrideColumn(db) {
     } catch (err) {
       if (err.code !== '42701') console.warn('[SCHEMA] products.vat_override:', err.message);
     }
+    try {
+      // Lock existing non-default rates so HQ 5% cascade cannot wipe 14%/7%/0%.
+      await db.query(
+        `UPDATE products
+         SET vat_override = TRUE
+         WHERE COALESCE(vat_override, FALSE) = FALSE
+           AND tax_rate IS NOT NULL
+           AND ABS(tax_rate - 5) > 0.001`,
+      );
+    } catch (err) {
+      console.warn('[SCHEMA] products.vat_override backfill:', err.message);
+    }
     return;
   }
 
@@ -350,6 +362,15 @@ async function ensureProductVatOverrideColumn(db) {
         db.sqlite.exec('ALTER TABLE products ADD COLUMN vat_override INTEGER NOT NULL DEFAULT 0');
       } catch (_) {}
     }
+    try {
+      db.sqlite.exec(`
+        UPDATE products
+        SET vat_override = 1
+        WHERE COALESCE(vat_override, 0) = 0
+          AND tax_rate IS NOT NULL
+          AND ABS(tax_rate - 5) > 0.001
+      `);
+    } catch (_) {}
   }
 }
 

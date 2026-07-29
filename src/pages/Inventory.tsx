@@ -20,7 +20,7 @@ import { resolveBranchScopeDisplayLabel } from '@/lib/branchScopeDisplay';
 import { looksLikeHeadOfficeBranch, normalizeIsMain } from '@/lib/branchAccess';
 import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
-import { DEFAULT_VAT_RATE, normalizeTaxRate } from '@/lib/taxUtils';
+import { normalizeTaxRate } from '@/lib/taxUtils';
 import { saveProduct, getProducts as storageGetProducts, getStockMovements as localGetStockMovements, PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -179,6 +179,7 @@ export default function Inventory() {
     reservedStock: Number(p.reservedStock ?? p.reserved_stock ?? 0) || 0,
     unit: p.unit || 'UN',
     taxRate: normalizeTaxRate(p.tax_rate ?? p.taxRate),
+    vatOverride: !!(p.vat_override ?? p.vatOverride),
     branchId: p.branch_id || p.branchId || null,
     supplierId: p.supplier_id || p.supplierId || null,
     supplierName: p.supplier_name || p.supplierName || '',
@@ -789,7 +790,8 @@ export default function Inventory() {
     const importBranchId =
       listBranchId ?? mainBranch?.id ?? currentBranch?.id ?? userBranch?.id ?? null;
 
-    const productsToImport = data.map((item) => ({
+    const productsToImport = data.map((item) => {
+      const row: Record<string, unknown> = {
         sku: item.codigo,
         name: item.descricao,
         barcode: item.codigoBarras || '',
@@ -798,10 +800,13 @@ export default function Inventory() {
         cost: item.custo,
         stock: item.quantidade,
         unit: item.unidade || 'UN',
-        taxRate: item.iva ?? DEFAULT_VAT_RATE,
         isActive: true,
         branchId: importBranchId,
-      }));
+      };
+      // Omit taxRate when Excel had no IVA column so updates keep existing 14%/7%/0%.
+      if (item.iva != null) row.taxRate = item.iva;
+      return row;
+    });
 
     if (productsToImport.length === 0) {
       toast.info(t.inventoryUi.noNewProductsToImport);
