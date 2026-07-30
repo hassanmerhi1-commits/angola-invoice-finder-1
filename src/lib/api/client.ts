@@ -1,5 +1,5 @@
 import { generateId } from '@/lib/utils';
-import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
+import { normalizeTaxRate } from '@/lib/taxUtils';
 // NEXOR ERP API Client — API-first transaction routing
 // Transactional writes always use the backend HTTP API so browser and desktop share the same execution path
 // Electron IPC stays available only for desktop-only utilities and non-transactional reads
@@ -457,10 +457,10 @@ function mapProductPayloadForElectron(data: any) {
     stock: Number(data.stock ?? 0),
     unit: data.unit || 'UN',
     tax_rate: (() => {
-      const raw = data.taxRate ?? data.tax_rate;
-      if (raw === null || raw === undefined || raw === '') return DEFAULT_VAT_RATE;
+      const raw = data.taxRate ?? data.tax_rate ?? data.iva;
+      if (raw === null || raw === undefined || raw === '') return undefined;
       const n = Number(raw);
-      return Number.isFinite(n) ? n : DEFAULT_VAT_RATE;
+      return Number.isFinite(n) ? n : undefined;
     })(),
     vat_override: !!(data.vatOverride ?? data.vat_override),
     branch_id: data.branchId === '' ? null : (data.branchId ?? data.branch_id ?? null),

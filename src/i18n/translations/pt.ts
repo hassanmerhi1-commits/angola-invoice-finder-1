@@ -698,6 +698,9 @@ export const pt: TranslationKeys = {
   productFormUi: {
     errorTitle: "Erro",
     nameSkuRequired: "Nome e SKU são obrigatórios",
+    ivaRequired: "IVA % é obrigatório — escolha 0%, 5%, 7% ou 14%",
+    ivaLabel: "IVA %",
+    ivaPlaceholder: "Seleccionar IVA %",
     priceCostNonNegative: "Preço e custo não podem ser negativos",
     productUpdated: "Produto actualizado",
     productCreated: "Produto criado",

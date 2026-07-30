@@ -1,12 +1,31 @@
-/** Default IVA/VAT rate for new products and lines when none is specified. */
+/** Allowed Angola IVA rates for product master data. */
+export const ALLOWED_VAT_RATES = [0, 5, 7, 14] as const;
+
+/**
+ * @deprecated Do not use for new products — IVA must be chosen explicitly.
+ * Kept only as a fallback for legacy document lines that lack a rate.
+ */
 export const DEFAULT_VAT_RATE = 5;
 export const DEFAULT_TAX_CODE = 'IVA5';
 
-/** Parse product / line IVA rate; supports 0%, 5%, 7%, 14%, etc. */
-export function normalizeTaxRate(value: unknown, defaultRate = DEFAULT_VAT_RATE): number {
-  if (value === null || value === undefined || value === '') return defaultRate;
+/** Parse a rate; returns null when missing/invalid (no silent 5% default). */
+export function parseTaxRateOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
-  return Number.isFinite(n) ? n : defaultRate;
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? n : null;
+}
+
+export function isAllowedVatRate(value: unknown): boolean {
+  const n = parseTaxRateOrNull(value);
+  if (n === null) return false;
+  return (ALLOWED_VAT_RATES as readonly number[]).includes(Math.round(n));
+}
+
+/** Parse product / line IVA rate. Prefer parseTaxRateOrNull for new product creates. */
+export function normalizeTaxRate(value: unknown, defaultRate = DEFAULT_VAT_RATE): number {
+  const parsed = parseTaxRateOrNull(value);
+  if (parsed !== null) return parsed;
+  return defaultRate;
 }
 
 /** Build a display label such as "IVA (5%)" or plain "IVA" when rates differ. */

@@ -74,10 +74,9 @@ import {
   sortProductSearchResults,
 } from './productLineSearch';
 
-import { DEFAULT_VAT_RATE, normalizeTaxRate } from '@/lib/taxUtils';
+import { ALLOWED_VAT_RATES, normalizeTaxRate, parseTaxRateOrNull } from '@/lib/taxUtils';
 
 const ENTRY_CURRENCIES = ['KZ', 'USD', 'EUR'] as const;
-const STOCK_ENTRY_IVA_RATES = [0, 5, 7, 14] as const;
 
 export type StockEntryReason =
   | 'adjustment'
@@ -93,7 +92,7 @@ export interface EntryItem {
   unit: string;
   quantity: number;
   cost: number;
-  taxRate: number;
+  taxRate?: number;
   currentStock: number;
   branchId: string;
   branchName: string;
@@ -107,7 +106,7 @@ interface EntryLineRow {
   search: string;
   quantity: number;
   cost: number;
-  taxRate: number;
+  taxRate: number | null;
 }
 
 interface StockEntryDialogProps {
@@ -225,7 +224,7 @@ const createEmptyLine = (): EntryLineRow => ({
   search: '',
   quantity: 1,
   cost: 0,
-  taxRate: DEFAULT_VAT_RATE,
+  taxRate: null,
 });
 
 const createInitialLines = (count = DEFAULT_LINE_ROWS): EntryLineRow[] =>
@@ -421,7 +420,7 @@ export function StockEntryDialog({
           search: '',
           quantity: 1,
           cost: productForLine.cost || 0,
-          taxRate: normalizeTaxRate(productForLine.taxRate),
+          taxRate: parseTaxRateOrNull(productForLine.taxRate),
         };
       }
     }
@@ -604,11 +603,11 @@ export function StockEntryDialog({
         unit: product.unit,
         quantity: Math.max(1, line.quantity),
         cost: Math.max(0, line.cost),
-        taxRate: normalizeTaxRate(line.taxRate),
+        taxRate: parseTaxRateOrNull(line.taxRate) ?? parseTaxRateOrNull(product.taxRate) ?? undefined,
         currentStock: stockAtEntryBranch(picked),
         branchId,
         branchName: resolveBranchName(branchId),
-      });
+      } as EntryItem);
     }
     return items;
   }, [form.lines, entryBranchId, productsById, resolveBranchName, resolveProductForEntry, stockAtEntryBranch]);
@@ -625,7 +624,7 @@ export function StockEntryDialog({
                 search: '',
                 quantity: Math.max(1, l.quantity),
                 cost: l.cost > 0 ? l.cost : resolved.cost || product.cost || 0,
-                taxRate: normalizeTaxRate(resolved.taxRate ?? product.taxRate),
+                taxRate: parseTaxRateOrNull(resolved.taxRate ?? product.taxRate),
               }
             : l,
         );
@@ -656,7 +655,7 @@ export function StockEntryDialog({
     setForm((prev) => ({
       ...prev,
       lines: prev.lines.map((l) =>
-        l.rowId === rowId ? { ...l, productId: null, search: '', cost: 0, taxRate: DEFAULT_VAT_RATE } : l,
+        l.rowId === rowId ? { ...l, productId: null, search: '', cost: 0, taxRate: null } : l,
       ),
     }));
     setPickerRowId(rowId);
@@ -740,6 +739,8 @@ export function StockEntryDialog({
           const key = normalizeSearchText(row.codigo);
           if (key && !uniqueMissing.has(key)) uniqueMissing.set(key, row);
         }
+        // Do not invent IVA 5% on auto-create — new products without IVA are skipped;
+        // existing SKUs keep their stored rate via batch update (no taxRate field).
         const payload = Array.from(uniqueMissing.values()).map((row) => ({
           sku: row.codigo,
           name: String(row.descricao || '').trim() || row.codigo,
@@ -748,7 +749,6 @@ export function StockEntryDialog({
           cost: Math.max(0, row.custo || 0),
           stock: 0,
           unit: 'UN',
-          taxRate: DEFAULT_VAT_RATE,
           isActive: true,
           branchId: entryBranchId,
         }));
@@ -757,31 +757,13 @@ export function StockEntryDialog({
         // Refresh light catalog so new SKUs resolve for line fill.
         const refreshed = await loadImportCatalog();
         if (refreshed.length > 0) catalog = refreshed;
-        else {
-          for (const row of uniqueMissing.values()) {
-            catalog.push({
-              id: `temp-${row.codigo}`,
-              sku: row.codigo,
-              name: String(row.descricao || '').trim() || row.codigo,
-              barcode: '',
-              category: 'GERAL',
-              price: 0,
-              cost: Math.max(0, row.custo || 0),
-              stock: 0,
-              unit: 'UN',
-              taxRate: DEFAULT_VAT_RATE,
-              isActive: true,
-              branchId: entryBranchId,
-            } as Product);
-          }
-        }
       }
 
       const mergedBySku = new Map<string, {
         productId: string | null;
         quantity: number;
         cost: number;
-        taxRate: number;
+        taxRate: number | null;
         search: string;
       }>();
 
@@ -797,7 +779,7 @@ export function StockEntryDialog({
 
         const qty = importQty(row.quantidade);
         const cost = row.custo > 0 ? row.custo : (catalogProduct?.cost || 0);
-        const taxRate = normalizeTaxRate(catalogProduct?.taxRate);
+        const taxRate = parseTaxRateOrNull(catalogProduct?.taxRate);
         const prev = mergedBySku.get(skuKey);
 
         if (prev) {
@@ -805,7 +787,7 @@ export function StockEntryDialog({
             productId: catalogProduct?.id ?? prev.productId,
             quantity: prev.quantity + qty,
             cost: row.custo > 0 ? row.custo : prev.cost,
-            taxRate: prev.taxRate,
+            taxRate: prev.taxRate ?? taxRate,
             search: prev.search,
           });
         } else {
@@ -1421,7 +1403,7 @@ export function StockEntryDialog({
                       </TableCell>
                       <TableCell className="align-middle">
                         <Select
-                          value={String(normalizeTaxRate(line.taxRate))}
+                          value={line.taxRate === null || line.taxRate === undefined ? undefined : String(line.taxRate)}
                           onValueChange={(v) => updateLineTaxRate(line.rowId, Number(v))}
                           disabled={!product}
                         >
@@ -1429,10 +1411,10 @@ export function StockEntryDialog({
                             className="h-7 text-[11px] px-1.5"
                             tabIndex={product ? 0 : -1}
                           >
-                            <SelectValue />
+                            <SelectValue placeholder="IVA" />
                           </SelectTrigger>
                           <SelectContent>
-                            {STOCK_ENTRY_IVA_RATES.map((r) => (
+                            {ALLOWED_VAT_RATES.map((r) => (
                               <SelectItem key={r} value={String(r)}>
                                 {r}%
                               </SelectItem>

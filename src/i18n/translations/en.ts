@@ -696,6 +696,9 @@ export const en = {
   productFormUi: {
     errorTitle: "Error",
     nameSkuRequired: "Name and SKU are required",
+    ivaRequired: "VAT % is required — choose 0%, 5%, 7% or 14%",
+    ivaLabel: "VAT %",
+    ivaPlaceholder: "Select VAT %",
     priceCostNonNegative: "Price and cost cannot be negative",
     productUpdated: "Product updated",
     productCreated: "Product created",

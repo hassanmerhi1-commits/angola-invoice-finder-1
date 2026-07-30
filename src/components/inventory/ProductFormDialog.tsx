@@ -23,7 +23,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
-import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
+import { ALLOWED_VAT_RATES } from '@/lib/taxUtils';
 import {
   mergeInventoryFoodCategorySelectOptions,
   resolveProductCategoryName,
@@ -76,7 +76,7 @@ export function ProductFormDialog({
     minStock: 0,
     maxStock: 0,
     unit: 'un',
-    taxRate: DEFAULT_VAT_RATE,
+    taxRate: null as number | null,
     branchId: 'all',
     supplierId: '',
     isActive: true,
@@ -116,7 +116,7 @@ export function ProductFormDialog({
         minStock: 0,
         maxStock: 0,
         unit: 'un',
-        taxRate: DEFAULT_VAT_RATE,
+        taxRate: null,
         branchId: 'all',
         supplierId: '',
         isActive: true,
@@ -131,6 +131,15 @@ export function ProductFormDialog({
       toast({
         title: t.productFormUi.errorTitle,
         description: t.productFormUi.nameSkuRequired,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (formData.taxRate === null || formData.taxRate === undefined) {
+      toast({
+        title: t.productFormUi.errorTitle,
+        description: t.productFormUi.ivaRequired,
         variant: 'destructive',
       });
       return;
@@ -323,15 +332,22 @@ export function ProductFormDialog({
               </div>
 
               <div>
-                <Label htmlFor="taxRate">Taxa IVA (%)</Label>
-                <NumericInput
-                  id="taxRate"
-                  min={0}
-                  max={100}
-                  value={formData.taxRate}
-                  onWheel={preventWheelValueChange}
-                  onValueChange={(taxRate) => setFormData({ ...formData, taxRate })}
-                />
+                <Label htmlFor="taxRate">{t.productFormUi.ivaLabel} *</Label>
+                <Select
+                  value={formData.taxRate === null || formData.taxRate === undefined ? undefined : String(formData.taxRate)}
+                  onValueChange={(v) => setFormData({ ...formData, taxRate: Number(v) })}
+                >
+                  <SelectTrigger id="taxRate">
+                    <SelectValue placeholder={t.productFormUi.ivaPlaceholder} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ALLOWED_VAT_RATES.map((r) => (
+                      <SelectItem key={r} value={String(r)}>
+                        {r}%
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div>

@@ -35,7 +35,7 @@ import { Switch } from '@/components/ui/switch';
 import { Check, X, Plus } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useBranchContext } from '@/contexts/BranchContext';
-import { DEFAULT_VAT_RATE, normalizeTaxRate } from '@/lib/taxUtils';
+import { ALLOWED_VAT_RATES, normalizeTaxRate } from '@/lib/taxUtils';
 import {
   mergeInventoryFoodCategorySelectOptions,
   resolveProductCategoryName,
@@ -75,8 +75,6 @@ const UNITS = [
   { value: 'emb', labelKey: 'emb' },
   { value: 'pct', labelKey: 'pct' },
 ] as const;
-
-const IVA_RATES = [0, 5, 7, 14];
 
 // Simple row component for the form grid
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -235,7 +233,7 @@ export function ProductDetailDialog({
     name: '',
     category: '',
     unit: 'un',
-    iva: DEFAULT_VAT_RATE,
+    iva: null as number | null,
     vatOverride: false,
     tipo: 'INVENTARIO',
     fornecedorName: '',
@@ -336,7 +334,7 @@ export function ProductDetailDialog({
         name: '',
         category: defaultProductCategoryName(activeCategories),
         unit: 'un',
-        iva: DEFAULT_VAT_RATE,
+        iva: null,
         vatOverride: false,
         tipo: 'INVENTARIO',
         fornecedorName: defaultSupplierName.trim() || supplierSelectOptions.find((s) => s.id === supplierId)?.name || '',
@@ -435,7 +433,7 @@ export function ProductDetailDialog({
       const next: typeof prev = {
         ...prev,
         price: newPrice,
-        priceIVA: +(newPrice * (1 + prev.iva / 100)).toFixed(2),
+        priceIVA: +(newPrice * (1 + (prev.iva ?? 0) / 100)).toFixed(2),
       };
       ([2, 3, 4] as const).forEach((lvl) => {
         const pct = tierPct[lvl];
@@ -451,7 +449,7 @@ export function ProductDetailDialog({
     setFormData((prev) => ({
       ...prev,
       priceIVA: newPriceIVA,
-      price: +(newPriceIVA / (1 + prev.iva / 100)).toFixed(2),
+      price: +(newPriceIVA / (1 + (prev.iva ?? 0) / 100)).toFixed(2),
     }));
   };
 
@@ -495,7 +493,7 @@ export function ProductDetailDialog({
       setFormData((prev) => ({
         ...prev,
         price: newPrice,
-        priceIVA: +(newPrice * (1 + prev.iva / 100)).toFixed(2),
+        priceIVA: +(newPrice * (1 + (prev.iva ?? 0) / 100)).toFixed(2),
       }));
       return;
     }
@@ -523,6 +521,10 @@ export function ProductDetailDialog({
     const skuTrim = String(formData.sku || '').trim();
     if (!skuTrim) {
       toast.error(t.productFormUi.nameSkuRequired);
+      return;
+    }
+    if (formData.iva === null || formData.iva === undefined) {
+      toast.error(t.productFormUi.ivaRequired);
       return;
     }
 
@@ -689,11 +691,20 @@ export function ProductDetailDialog({
                     </SelectContent>
                   </Select>
                 </Row>
-                <Row label={t.productDetailUi.vat}>
-                  <Select value={String(formData.iva)} onValueChange={v => updateIVA(parseInt(v))}>
-                    <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                <Row label={`${t.productDetailUi.vat} *`}>
+                  <Select
+                    value={formData.iva === null || formData.iva === undefined ? undefined : String(formData.iva)}
+                    onValueChange={(v) => updateIVA(parseInt(v, 10))}
+                  >
+                    <SelectTrigger className="h-7 text-xs">
+                      <SelectValue placeholder={t.productFormUi.ivaPlaceholder} />
+                    </SelectTrigger>
                     <SelectContent className="bg-popover border shadow-lg z-50">
-                      {IVA_RATES.map(r => <SelectItem key={r} value={String(r)}>{r}%</SelectItem>)}
+                      {ALLOWED_VAT_RATES.map((r) => (
+                        <SelectItem key={r} value={String(r)}>
+                          {r}%
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </Row>
@@ -739,21 +750,21 @@ export function ProductDetailDialog({
                 <Row label={t.productDetailUi.price2ExVat}>
                   <NumericInput value={formData.price2} onValueChange={(v) => setTierPrice(2, v)} className="h-7 text-xs" />
                 </Row>
-                <ReadOnlyRow label={t.productDetailUi.price2IncVat} value={(formData.price2 * (1 + formData.iva / 100)).toFixed(2)} />
+                <ReadOnlyRow label={t.productDetailUi.price2IncVat} value={(formData.price2 * (1 + (formData.iva ?? 0) / 100)).toFixed(2)} />
                 <Row label="% over Price 1">
                   <NumericInput value={markupForLevel(2)} onValueChange={(v) => updateMarkupForLevel(2, v)} className="h-7 text-xs" />
                 </Row>
                 <Row label={t.productDetailUi.price3ExVat}>
                   <NumericInput value={formData.price3} onValueChange={(v) => setTierPrice(3, v)} className="h-7 text-xs" />
                 </Row>
-                <ReadOnlyRow label={t.productDetailUi.price3IncVat} value={(formData.price3 * (1 + formData.iva / 100)).toFixed(2)} />
+                <ReadOnlyRow label={t.productDetailUi.price3IncVat} value={(formData.price3 * (1 + (formData.iva ?? 0) / 100)).toFixed(2)} />
                 <Row label="% over Price 1">
                   <NumericInput value={markupForLevel(3)} onValueChange={(v) => updateMarkupForLevel(3, v)} className="h-7 text-xs" />
                 </Row>
                 <Row label={t.productDetailUi.price4ExVat}>
                   <NumericInput value={formData.price4} onValueChange={(v) => setTierPrice(4, v)} className="h-7 text-xs" />
                 </Row>
-                <ReadOnlyRow label={t.productDetailUi.price4IncVat} value={(formData.price4 * (1 + formData.iva / 100)).toFixed(2)} />
+                <ReadOnlyRow label={t.productDetailUi.price4IncVat} value={(formData.price4 * (1 + (formData.iva ?? 0) / 100)).toFixed(2)} />
                 <Row label="% over Price 1">
                   <NumericInput value={markupForLevel(4)} onValueChange={(v) => updateMarkupForLevel(4, v)} className="h-7 text-xs" />
                 </Row>
