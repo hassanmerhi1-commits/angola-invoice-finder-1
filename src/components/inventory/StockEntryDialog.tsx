@@ -150,7 +150,9 @@ function FreightAccountPickerDialog({
   const [search, setSearch] = useState('');
   const accounts = useMemo(() => {
     try {
-      const data = localStorage.getItem('kwanzaerp_chart_of_accounts');
+      const data =
+        localStorage.getItem('kwanzaerp_chart_of_accounts_v2')
+        || localStorage.getItem('kwanzaerp_chart_of_accounts');
       const all: Array<{ code: string; name: string; is_active: boolean }> = data ? JSON.parse(data) : [];
       return all.filter((a) => a.is_active !== false).sort((a, b) => a.code.localeCompare(b.code));
     } catch {

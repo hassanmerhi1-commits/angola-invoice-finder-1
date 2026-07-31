@@ -11,7 +11,8 @@ import { generateId } from '@/lib/utils';
 import { Account } from '@/types/accounting';
 import { api } from '@/lib/api/client';
 
-const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts';
+const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts_v2';
+const LEGACY_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts';
 
 type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
 
@@ -19,7 +20,9 @@ type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
 
 function loadAccountsLocal(): Account[] {
   try {
-    const raw = localStorage.getItem(LOCAL_COA_STORAGE_KEY);
+    const raw =
+      localStorage.getItem(LOCAL_COA_STORAGE_KEY)
+      || localStorage.getItem(LEGACY_COA_STORAGE_KEY);
     const accounts: Account[] = raw ? JSON.parse(raw) : [];
     return ensureEssentialAccounts(accounts);
   } catch { return []; }
@@ -29,6 +32,7 @@ function saveAccountsLocal(accounts: Account[]) {
   localStorage.setItem(LOCAL_COA_STORAGE_KEY, JSON.stringify(
     [...accounts].sort((a, b) => a.code.localeCompare(b.code))
   ));
+  try { localStorage.removeItem(LEGACY_COA_STORAGE_KEY); } catch { /* ignore */ }
 }
 
 // ============= API HELPERS =============

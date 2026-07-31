@@ -8,7 +8,8 @@ import { PGC_ACCOUNTS } from '@/lib/pgcChartOfAccounts';
 import { useTranslation } from '@/i18n';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 
-const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts';
+const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts_v2';
+const LEGACY_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts';
 
 const nowIso = () => new Date().toISOString();
 
@@ -64,6 +65,10 @@ const loadLocalAccounts = (t: any): Account[] => {
   if (typeof window === 'undefined') return [];
 
   try {
+    // Drop pre-v1.1.90 cached zeros that hid live journal balances.
+    try {
+      localStorage.removeItem(LEGACY_COA_STORAGE_KEY);
+    } catch { /* ignore */ }
     const raw = localStorage.getItem(LOCAL_COA_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Account[];

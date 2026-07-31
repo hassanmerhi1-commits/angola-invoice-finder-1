@@ -61,13 +61,13 @@ module.exports = function(broadcastTable) {
             SELECT ${idText('jel.account_id')} AS account_key,
                    COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
             FROM journal_entry_lines jel
-            INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+            INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
             WHERE ${postedClause}
             UNION ALL
             SELECT ${idText('coa_c.id')} AS account_key,
                    COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
             FROM journal_entry_lines jel
-            INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+            INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
             INNER JOIN chart_of_accounts coa_c
               ON ${idText('coa_c.code')} = ${idText('jel.account_id')}
             WHERE ${postedClause}

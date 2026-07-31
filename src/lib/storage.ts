@@ -11,7 +11,7 @@
 import { Branch, Product, Sale, User, DailySummary, Client, StockTransfer, Supplier, PurchaseOrder, Category, StockMovement } from '@/types/erp';
 import { auditLog } from '@/lib/auditService';
 import { isDemoMode } from '@/lib/api/config';
-import { DEFAULT_VAT_RATE, normalizeTaxRate } from './taxUtils';
+import { DEFAULT_VAT_RATE, normalizeTaxRate, parseTaxRateOrNull } from './taxUtils';
 import {
   canUserSwitchBranch,
   mapBranchRow,
@@ -207,27 +207,16 @@ export function setCurrentBranch(branch: Branch): void {
 
 const INVENTORY_VAT_5_PATCH = 'kwanzaerp_patch_inventory_vat_5';
 
-/** One-time: align cached local products with 5% default VAT. */
+/**
+ * HISTORICAL marker only — never wipe cached products to 5% again.
+ * The old migrate set every local product to taxRate:5; if the marker key was
+ * cleared, IVA appeared to "break again" after an update.
+ */
 function migrateLocalInventoryVatTo5(): void {
   if (typeof localStorage === 'undefined') return;
-  if (localStorage.getItem(INVENTORY_VAT_5_PATCH)) return;
-  if (isElectronMode()) {
+  if (!localStorage.getItem(INVENTORY_VAT_5_PATCH)) {
     localStorage.setItem(INVENTORY_VAT_5_PATCH, '1');
-    return;
   }
-  const products = lsGet<Product[]>(STORAGE_KEYS.products, []);
-  if (!products.length) {
-    localStorage.setItem(INVENTORY_VAT_5_PATCH, '1');
-    return;
-  }
-  const updated = products.map((p) => ({
-    ...p,
-    taxRate: DEFAULT_VAT_RATE,
-    updatedAt: new Date().toISOString(),
-  }));
-  lsSet(STORAGE_KEYS.products, updated);
-  localStorage.setItem(INVENTORY_VAT_5_PATCH, '1');
-  emitProductsChanged('all');
 }
 
 // ============= PRODUCT FUNCTIONS =============
@@ -1429,7 +1418,7 @@ function mapProductFromDb(row: any): Product {
     avgCost: Number(row.weighted_avg_cost ?? row.avg_cost ?? row.avgCost ?? cost),
     stock: Number(row.stock || 0),
     unit: row.unit || 'un',
-    taxRate: normalizeTaxRate(row.tax_rate ?? row.taxRate),
+    taxRate: parseTaxRateOrNull(row.tax_rate ?? row.taxRate) ?? 0,
     branchId: row.branch_id ?? row.branchId ?? '',
     supplierId: row.supplier_id ?? row.supplierId,
     supplierName: row.supplier_name ?? row.supplierName,

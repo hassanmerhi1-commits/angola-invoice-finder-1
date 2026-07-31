@@ -1650,7 +1650,7 @@ async function connectPostgres(connectionString) {
 function mapElectronProductRowToApiBody(data) {
   if (!data) return null;
   const branchRaw = data.branch_id ?? data.branchId;
-  return {
+  const body = {
     name: data.name || '',
     sku: data.sku || '',
     barcode: data.barcode || '',
@@ -1662,17 +1662,22 @@ function mapElectronProductRowToApiBody(data) {
     cost: Number(data.cost) || 0,
     stock: Number(data.stock) || 0,
     unit: data.unit || 'un',
-    taxRate: (() => {
-      const raw = data.tax_rate ?? data.taxRate;
-      if (raw === null || raw === undefined || raw === '') return 5;
-      const n = Number(raw);
-      return Number.isFinite(n) ? n : 5;
-    })(),
     branchId: branchRaw && branchRaw !== 'all' ? branchRaw : null,
     isActive: data.is_active !== 0 && data.is_active !== false && data.isActive !== false,
     supplierId: data.supplier_id ?? data.supplierId ?? null,
     supplierName: data.supplier_name ?? data.supplierName ?? null,
   };
+  // Never invent 5% — omit taxRate so POST upsert preserves the stored rate.
+  const rawTax = data.tax_rate ?? data.taxRate;
+  if (rawTax !== null && rawTax !== undefined && rawTax !== '') {
+    const n = Number(rawTax);
+    if (Number.isFinite(n)) body.taxRate = n;
+  }
+  const vatOverride = data.vat_override ?? data.vatOverride;
+  if (vatOverride !== undefined && vatOverride !== null && vatOverride !== '') {
+    body.vatOverride = vatOverride === true || vatOverride === 1 || vatOverride === '1' || vatOverride === 'true';
+  }
+  return body;
 }
 
 async function dbGetAll(table) {

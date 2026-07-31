@@ -1906,30 +1906,92 @@ module.exports = function(broadcastTable) {
         if (!isUniqueSkuBranchError(insertErr)) throw insertErr;
         const conflict = await findProductBySkuAndBranch(db, skuTrim, resolvedBranchId);
         if (!conflict?.id) throw insertErr;
-        result = await db.query(
-          `UPDATE products
-           SET name = $1, sku = $2, barcode = $3, category = $4, price = $5,
-               price2 = COALESCE($6, price2),
-               price3 = COALESCE($7, price3),
-               price4 = COALESCE($8, price4),
-               cost = $9, stock = COALESCE($10, stock), unit = $11, tax_rate = $12, is_active = $13,
-               branch_id = $14,
-               supplier_id = $15, supplier_name = $16,
-               last_cost = COALESCE($9, last_cost), avg_cost = COALESCE($9, avg_cost),
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = $17
-           RETURNING *`,
-          [
-            name, skuTrim, barcode, category, price,
-            Number(price2) > 0 ? Number(price2) : null,
-            Number(price3) > 0 ? Number(price3) : null,
-            Number(price4) > 0 ? Number(price4) : null,
-            c, stock ?? null, unit || 'un', resolvedTaxRate, activeValue,
-            storedBranchId,
-            sanitizeUuid(supplierId), supplierName || null,
-            conflict.id,
-          ],
+        const conflictTaxRes = await db.query(
+          `SELECT tax_rate, vat_override FROM products WHERE id = $1 LIMIT 1`,
+          [conflict.id],
         );
+        const conflictRow = conflictTaxRes.rows?.[0] || null;
+        const vatOverrideBodyConflict = req.body?.vatOverride ?? req.body?.vat_override;
+        const clientSetsOverrideConflict = isTruthyFlag(vatOverrideBodyConflict);
+        const forceVatChangeConflict =
+          req.body?.forceVatChange === true
+          || req.body?.forceVatChange === 'true'
+          || req.body?.force_vat_change === true;
+        let conflictTaxRate = resolvedTaxRate;
+        let writeConflictTax = true;
+        if (
+          conflictRow
+          && shouldPreserveExistingTaxRate(conflictRow, conflictTaxRate, {
+            clientSetsOverride: clientSetsOverrideConflict,
+            forceVatChange: forceVatChangeConflict,
+          })
+        ) {
+          console.warn(
+            `[PRODUCTS] UNIQUE upsert preserved tax_rate=${conflictRow.tax_rate} (ignored ${conflictTaxRate}) for ${skuTrim}`,
+          );
+          writeConflictTax = false;
+        }
+        result = await db.query(
+          writeConflictTax
+            ? `UPDATE products
+               SET name = $1, sku = $2, barcode = $3, category = $4, price = $5,
+                   price2 = COALESCE($6, price2),
+                   price3 = COALESCE($7, price3),
+                   price4 = COALESCE($8, price4),
+                   cost = $9, stock = COALESCE($10, stock), unit = $11, tax_rate = $12, is_active = $13,
+                   branch_id = $14,
+                   supplier_id = $15, supplier_name = $16,
+                   last_cost = COALESCE($9, last_cost), avg_cost = COALESCE($9, avg_cost),
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = $17
+               RETURNING *`
+            : `UPDATE products
+               SET name = $1, sku = $2, barcode = $3, category = $4, price = $5,
+                   price2 = COALESCE($6, price2),
+                   price3 = COALESCE($7, price3),
+                   price4 = COALESCE($8, price4),
+                   cost = $9, stock = COALESCE($10, stock), unit = $11, is_active = $12,
+                   branch_id = $13,
+                   supplier_id = $14, supplier_name = $15,
+                   last_cost = COALESCE($9, last_cost), avg_cost = COALESCE($9, avg_cost),
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = $16
+               RETURNING *`,
+          writeConflictTax
+            ? [
+                name, skuTrim, barcode, category, price,
+                Number(price2) > 0 ? Number(price2) : null,
+                Number(price3) > 0 ? Number(price3) : null,
+                Number(price4) > 0 ? Number(price4) : null,
+                c, stock ?? null, unit || 'un', conflictTaxRate, activeValue,
+                storedBranchId,
+                sanitizeUuid(supplierId), supplierName || null,
+                conflict.id,
+              ]
+            : [
+                name, skuTrim, barcode, category, price,
+                Number(price2) > 0 ? Number(price2) : null,
+                Number(price3) > 0 ? Number(price3) : null,
+                Number(price4) > 0 ? Number(price4) : null,
+                c, stock ?? null, unit || 'un', activeValue,
+                storedBranchId,
+                sanitizeUuid(supplierId), supplierName || null,
+                conflict.id,
+              ],
+        );
+        if (
+          !writeConflictTax
+          && conflictRow
+          && Number.isFinite(Number(conflictRow.tax_rate))
+          && Number(conflictRow.tax_rate) !== Number(DEFAULT_VAT_RATE)
+        ) {
+          try {
+            await db.query(
+              `UPDATE products SET vat_override = $1 WHERE id = $2`,
+              [db.engine === 'postgres' ? true : 1, conflict.id],
+            );
+          } catch (_) { /* optional */ }
+        }
       }
 
       await broadcastTable('products');

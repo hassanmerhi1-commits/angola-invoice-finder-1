@@ -641,10 +641,16 @@ async function processStockAdjustment(client, data) {
     }
 
     // Optional VAT update on stock IN (Stock Entry can edit product IVA).
-    // Never clobber a locked / non-default rate with the global default (5%) —
-    // Adjust In lines often carry DEFAULT_VAT_RATE when the sheet had no IVA column.
+    // Any rate change requires acknowledgement — never silently write 5% (or any other
+    // rate) onto an existing product from Adjust In / import defaults.
     if (normalizedDirection === 'IN' && line.taxRate != null && line.taxRate !== '') {
-      const { DEFAULT_VAT_RATE, normalizeTaxRate, taxCodeForRate } = require('./taxDefaults');
+      const {
+        DEFAULT_VAT_RATE,
+        normalizeTaxRate,
+        taxCodeForRate,
+        shouldPreserveExistingTaxRate,
+        isTruthyFlag,
+      } = require('./taxDefaults');
       const rate = normalizeTaxRate(line.taxRate, Number.NaN);
       if (Number.isFinite(rate) && rate >= 0) {
         let skipTaxWrite = false;
@@ -655,21 +661,14 @@ async function processStockAdjustment(client, data) {
           );
           const cur = curRes.rows?.[0];
           if (cur) {
-            const curRate = Number(cur.tax_rate);
-            if (Number.isFinite(curRate) && Math.abs(curRate - rate) < 0.0001) {
+            const clientSetsOverride = isTruthyFlag(line.vatOverride ?? line.vat_override);
+            if (
+              shouldPreserveExistingTaxRate(cur, rate, {
+                clientSetsOverride,
+                forceVatChange: line.forceVatChange === true,
+              })
+            ) {
               skipTaxWrite = true;
-            } else {
-              const isDefault = Math.abs(rate - Number(DEFAULT_VAT_RATE)) < 0.0001;
-              const curNonDefault =
-                Number.isFinite(curRate) && Math.abs(curRate - Number(DEFAULT_VAT_RATE)) > 0.0001;
-              const locked =
-                cur.vat_override === true
-                || cur.vat_override === 1
-                || cur.vat_override === 't'
-                || cur.vat_override === 'true';
-              if (isDefault && (curNonDefault || locked)) {
-                skipTaxWrite = true;
-              }
             }
           }
         } catch (_) {
