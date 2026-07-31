@@ -20,7 +20,7 @@ import { resolveBranchScopeDisplayLabel } from '@/lib/branchScopeDisplay';
 import { looksLikeHeadOfficeBranch, normalizeIsMain } from '@/lib/branchAccess';
 import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
-import { normalizeTaxRate } from '@/lib/taxUtils';
+import { parseTaxRateOrNull } from '@/lib/taxUtils';
 import { saveProduct, getProducts as storageGetProducts, getStockMovements as localGetStockMovements, PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -178,7 +178,7 @@ export default function Inventory() {
     onHandStock: Number(p.onHandStock ?? p.on_hand_stock ?? p.stock) || 0,
     reservedStock: Number(p.reservedStock ?? p.reserved_stock ?? 0) || 0,
     unit: p.unit || 'UN',
-    taxRate: normalizeTaxRate(p.tax_rate ?? p.taxRate),
+    taxRate: parseTaxRateOrNull(p.tax_rate ?? p.taxRate) ?? 0,
     vatOverride: !!(p.vat_override ?? p.vatOverride),
     branchId: p.branch_id || p.branchId || null,
     supplierId: p.supplier_id || p.supplierId || null,

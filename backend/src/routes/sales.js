@@ -90,8 +90,25 @@ module.exports = function(broadcastTable) {
           sale.items = bySale.get(String(sale.id)) || [];
         }
       } else {
+        // Light list: empty items + line counts for grids (Vendas "Items" column).
+        const ids = sales.map((s) => s.id);
+        const countBySale = new Map();
+        if (ids.length > 0) {
+          const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+          const counts = await db.query(
+            `SELECT sale_id, COUNT(*) AS items_count
+             FROM sale_items
+             WHERE sale_id IN (${placeholders})
+             GROUP BY sale_id`,
+            ids,
+          );
+          for (const row of counts.rows || []) {
+            countBySale.set(String(row.sale_id), Number(row.items_count) || 0);
+          }
+        }
         for (const sale of sales) {
           sale.items = [];
+          sale.items_count = countBySale.get(String(sale.id)) || 0;
         }
       }
       res.json(sales);

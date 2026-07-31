@@ -32,7 +32,8 @@ import { cn, generateId } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Account } from '@/types/accounting';
 import { api } from '@/lib/api/client';
-import { getCachedList, setCachedList, unwrapListPayload, isCachedListFresh } from '@/lib/listCache';
+import { getCachedList, setCachedList, unwrapListPayload, isCachedListFresh, markCachedListStale } from '@/lib/listCache';
+import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
 import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
 import {
@@ -227,6 +228,22 @@ function useJournalEntries(
   useEffect(() => { void loadAll(); }, [loadAll]);
 
   useEffect(() => subscribeSupplierReturnsChanged(() => { void loadAll({ force: true }); }), [loadAll]);
+
+  // Soft refresh on remote journal posts — debounce so busy shops don't storm Tailscale.
+  const journalRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onJournalTableRefresh = useCallback(() => {
+    const key = `journalEntries:${branchId ?? 'all'}:${dateFrom ?? ''}:${dateTo ?? ''}`;
+    markCachedListStale(key);
+    if (journalRefreshTimer.current) clearTimeout(journalRefreshTimer.current);
+    journalRefreshTimer.current = setTimeout(() => {
+      journalRefreshTimer.current = null;
+      void loadAll();
+    }, 2500);
+  }, [branchId, dateFrom, dateTo, loadAll]);
+  useTableRefreshListener(['journal_entries'], onJournalTableRefresh);
+  useEffect(() => () => {
+    if (journalRefreshTimer.current) clearTimeout(journalRefreshTimer.current);
+  }, []);
 
   return { entries, refetch: () => loadAll({ force: true }), isLoading };
 }

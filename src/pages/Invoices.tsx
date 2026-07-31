@@ -27,7 +27,7 @@ import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
 import type { CreditNote } from '@/types/erp';
 import { api } from '@/lib/api/client';
-import { getCachedList, setCachedList } from '@/lib/listCache';
+import { getCachedList, setCachedList, isCachedListFresh, markCachedListsStaleByPrefix } from '@/lib/listCache';
 import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 import { PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
 import {
@@ -183,7 +183,10 @@ export default function Invoices() {
   const [prefillDoc, setPrefillDoc] = useState<ERPDocument | null>(null);
   const pendingSalesOrderIdRef = useRef<string | null>(null);
 
-  const refresh = useCallback(() => setRefreshKey(k => k + 1), []);
+  const refresh = useCallback(() => {
+    markCachedListsStaleByPrefix('invoicesDocs:');
+    setRefreshKey((k) => k + 1);
+  }, []);
 
   // Load documents — seed instantly from cache so the tab renders without waiting on the network.
   const [documents, setDocuments] = useState<ERPDocument[]>(
@@ -191,13 +194,20 @@ export default function Invoices() {
   );
 
   useEffect(() => {
-    const onSalesChanged = () => setRefreshKey((k) => k + 1);
-    const onCreditNotesChanged = () => setRefreshKey((k) => k + 1);
-    window.addEventListener(SALES_CHANGED_EVENT, onSalesChanged);
-    window.addEventListener(CREDIT_NOTES_CHANGED_EVENT, onCreditNotesChanged);
+    // Soft-stale only — every remote POS sale used to force a full Tailscale refetch
+    // while this tab was open, making Invoices feel permanently slow.
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const scheduleSoftRefresh = () => {
+      markCachedListsStaleByPrefix('invoicesDocs:');
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => setRefreshKey((k) => k + 1), 2500);
+    };
+    window.addEventListener(SALES_CHANGED_EVENT, scheduleSoftRefresh);
+    window.addEventListener(CREDIT_NOTES_CHANGED_EVENT, scheduleSoftRefresh);
     return () => {
-      window.removeEventListener(SALES_CHANGED_EVENT, onSalesChanged);
-      window.removeEventListener(CREDIT_NOTES_CHANGED_EVENT, onCreditNotesChanged);
+      if (debounce) clearTimeout(debounce);
+      window.removeEventListener(SALES_CHANGED_EVENT, scheduleSoftRefresh);
+      window.removeEventListener(CREDIT_NOTES_CHANGED_EVENT, scheduleSoftRefresh);
     };
   }, []);
 
@@ -217,6 +227,10 @@ export default function Invoices() {
     setSelectedDocId(null);
     const cached = getCachedList<ERPDocument[]>(cacheKey) ?? [];
     setDocuments(cached);
+    if (isCachedListFresh(cacheKey) && cached.length > 0) {
+      setListLoading(false);
+      return;
+    }
     // Soft refresh when we already have rows — keep table interactive.
     setListLoading(cached.length === 0);
 
@@ -242,7 +256,9 @@ export default function Invoices() {
         const loadFiscalCreditNotes = !type || type === 'nota_credito';
 
         const [storedDocs, salesDocs, purchaseDocs, cnRes] = await Promise.all([
-          getDocuments(type, branchFilter),
+          // Skip Electron erp_documents dump — API lists are canonical and the IPC scan was
+          // blocking every Invoices open over Tailscale.
+          getDocuments(type, branchFilter, { skipLocalDb: true }),
           loadSales
             ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog, listOpts)
             : Promise.resolve([]),

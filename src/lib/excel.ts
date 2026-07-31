@@ -205,7 +205,9 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
                 'Quantidade': r[4] || 0,
                 'Unidade': r[5] || 'UN',
                 'Categoria': r[6] || '',
-                'IVA %': r[7] != null && r[7] !== '' ? r[7] : DEFAULT_VAT_RATE,
+                // Only set IVA when the sheet actually has a value in that column —
+                // inventing 5% here made every re-import wipe 14%/7%/0%.
+                ...(r[7] != null && r[7] !== '' ? { 'IVA %': r[7] } : {}),
               };
             }
             if (colCount === 1) {

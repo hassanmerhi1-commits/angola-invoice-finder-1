@@ -373,6 +373,14 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
     startJobQueueWorker();
     const { drainRedundantMainQueueOnHq } = require('./sync/outbox');
     drainRedundantMainQueueOnHq().catch((e) => console.warn('[OUTBOX]', e.message));
+
+    // Repair drifted CoA stored balances (supplier leaves showing 0 while ledger has rows).
+    setTimeout(() => {
+      const { recomputeCoaCurrentBalances } = require('./accounting');
+      recomputeCoaCurrentBalances(db)
+        .then((r) => console.log('[COA] startup balance recompute:', JSON.stringify(r)))
+        .catch((e) => console.warn('[COA] startup balance recompute:', e.message));
+    }, 12_000);
   });
 })();
 

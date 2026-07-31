@@ -13,7 +13,13 @@ const {
 } = require('../lib/sqlDialect');
 const productActive = (alias) => coalesceActiveNotZero(db, `${alias}.is_active`);
 const branchMainActive = (alias) => coalesceMainTruthy(db, `${alias}.is_main`);
-const { DEFAULT_VAT_RATE, normalizeTaxRate } = require('../taxDefaults');
+const {
+  DEFAULT_VAT_RATE,
+  normalizeTaxRate,
+  isTruthyFlag,
+  shouldPreserveExistingTaxRate,
+  taxCodeForRate,
+} = require('../taxDefaults');
 const { checkOptimisticLock } = require('../middleware/security');
 const { requirePermission } = require('../middleware/requirePermission');
 const { attachUserBranchScope, resolveListBranchId, normalizeRequestedBranchId } = require('../middleware/branchScope');
@@ -1938,7 +1944,23 @@ module.exports = function(broadcastTable) {
       const mergedCost = cost != null && cost !== '' ? cost : existing.cost;
       const mergedStock = stock != null && stock !== '' ? stock : existing.stock;
       const mergedUnit = unit != null && unit !== '' ? unit : existing.unit;
-      const mergedTaxRate = taxRate != null && taxRate !== '' ? taxRate : existing.tax_rate;
+      const vatOverrideBody = req.body?.vatOverride ?? req.body?.vat_override;
+      const clientSetsOverride = isTruthyFlag(vatOverrideBody);
+      const forceVatChange =
+        req.body?.forceVatChange === true
+        || req.body?.forceVatChange === 'true'
+        || req.body?.force_vat_change === true;
+      let mergedTaxRate = taxRate != null && taxRate !== '' ? taxRate : existing.tax_rate;
+      if (
+        taxRate != null
+        && taxRate !== ''
+        && shouldPreserveExistingTaxRate(existing, taxRate, { clientSetsOverride, forceVatChange })
+      ) {
+        console.warn(
+          `[PRODUCTS] Preserved tax_rate=${existing.tax_rate} (ignored incoming ${taxRate}) for ${existing.sku || id}`,
+        );
+        mergedTaxRate = existing.tax_rate;
+      }
       const mergedBranchId =
         resolveProductBranchId(req, branchId) ?? sanitizeUuid(branchId) ?? existing.branch_id;
       const mergedIsActive = isActive !== false && isActive !== 0 ? 1 : isActive === false || isActive === 0 ? 0 : existing.is_active;
@@ -2003,33 +2025,33 @@ module.exports = function(broadcastTable) {
 
       if (skuKey) {
         const prevTax = Number(existing.tax_rate);
-        const nextTax = taxRate != null && taxRate !== '' ? Number(taxRate) : prevTax;
+        // Use the rate actually written (after preserve guard) — never cascade a rejected 5%.
+        const nextTax = Number(mergedTaxRate);
         const taxChanged =
-          taxRate != null
-          && taxRate !== ''
-          && Number.isFinite(prevTax)
+          Number.isFinite(prevTax)
           && Number.isFinite(nextTax)
           && Math.abs(prevTax - nextTax) > 0.0001;
 
         // Only HQ / explicit propagate may push IVA to other same-SKU rows.
-        // Filial edits must not rewrite catalog (and HQ price-only saves must not
-        // re-cascade a stale 5% over filial 14%).
+        // Never cascade default 5% onto rows that already hold a different rate
+        // (even if vat_override was missing — that is how 14% got wiped company-wide).
         if (taxChanged && shouldCascadePrices) {
           const vatTrue = db.engine === 'postgres' ? 'true' : '1';
+          const nextIsDefault = Math.abs(Number(nextTax) - Number(DEFAULT_VAT_RATE)) < 0.0001;
           await db.query(
             `UPDATE products
              SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP
              WHERE ${coalesceActiveNotZero(db, 'is_active')}
                AND ${sqlMovementSkuKey('products')} = LOWER($2)
                AND id <> $3
-               AND COALESCE(vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) != ${vatTrue}`,
+               AND COALESCE(vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) != ${vatTrue}
+               ${nextIsDefault ? 'AND ABS(COALESCE(tax_rate, 0) - $1) < 0.001' : ''}`,
             [nextTax, canonicalSkuString(skuKey), id],
           );
         }
 
         if (taxChanged) {
           try {
-            const { taxCodeForRate } = require('../taxDefaults');
             await db.query(
               `UPDATE products SET tax_code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
               [taxCodeForRate(nextTax), id],
@@ -2039,17 +2061,17 @@ module.exports = function(broadcastTable) {
 
         // Resolve VAT lock: filial IVA change always locks (form often sends vatOverride:false
         // by default — that used to wipe the auto-lock and let HQ 5% cascade back).
-        // Also lock any non-default filial rate so future HQ saves cannot push 5% over 14%/7%/0%.
-        const vatOverrideBody = req.body?.vatOverride ?? req.body?.vat_override;
+        // Also lock any non-default rate so future HQ saves cannot push 5% over 14%/7%/0%.
         let vatFlag;
-        if (!productIsHq && (
+        if (
           taxChanged
           || Number(mergedTaxRate) !== Number(DEFAULT_VAT_RATE)
           || (Number.isFinite(Number(existing.tax_rate)) && Number(existing.tax_rate) !== Number(DEFAULT_VAT_RATE))
-        )) {
+        ) {
+          // Keep lock when we preserved a non-default rate, or when IVA actually changed.
           vatFlag = true;
         } else if (vatOverrideBody !== undefined && vatOverrideBody !== null && vatOverrideBody !== '') {
-          vatFlag = vatOverrideBody === true || vatOverrideBody === 'true' || vatOverrideBody === 1 || vatOverrideBody === '1';
+          vatFlag = isTruthyFlag(vatOverrideBody);
         }
         if (vatFlag !== undefined) {
           try {
@@ -2213,7 +2235,21 @@ module.exports = function(broadcastTable) {
             const rawIva = p.taxRate ?? p.iva ?? p.tax_rate;
             const hasExplicitIva =
               rawIva !== undefined && rawIva !== null && String(rawIva).trim() !== '';
-            const upd = hasExplicitIva
+            let importTaxRate = hasExplicitIva ? normalizeTaxRate(rawIva) : null;
+            if (hasExplicitIva && existingId && importTaxRate != null) {
+              const existingRow = await db.query(
+                `SELECT tax_rate, vat_override FROM products WHERE id = $1 LIMIT 1`,
+                [existingId],
+              );
+              const er = existingRow.rows?.[0];
+              if (
+                er
+                && shouldPreserveExistingTaxRate(er, importTaxRate, { clientSetsOverride: false })
+              ) {
+                importTaxRate = null; // keep stored IVA
+              }
+            }
+            const upd = importTaxRate != null
               ? await db.query(
                   `UPDATE products
                    SET name = $1, sku = $2, barcode = $3, category = $4, price = $5, cost = $6,
@@ -2231,7 +2267,7 @@ module.exports = function(broadcastTable) {
                     cost,
                     stock,
                     String(p.unit || p.unidade || 'UN'),
-                    normalizeTaxRate(rawIva),
+                    importTaxRate,
                     storedBranchId,
                     sanitizeUuid(p.supplierId),
                     p.supplierName || null,
@@ -2264,16 +2300,13 @@ module.exports = function(broadcastTable) {
                   ],
                 );
             if (upd.rowCount > 0) updated++;
-            if (hasExplicitIva) {
-              const rate = normalizeTaxRate(rawIva);
-              if (Number(rate) !== Number(DEFAULT_VAT_RATE)) {
-                try {
-                  await db.query(
-                    `UPDATE products SET vat_override = $1 WHERE id = $2`,
-                    [db.engine === 'postgres' ? true : 1, existingId],
-                  );
-                } catch (_) { /* column may be missing */ }
-              }
+            if (importTaxRate != null && Number(importTaxRate) !== Number(DEFAULT_VAT_RATE)) {
+              try {
+                await db.query(
+                  `UPDATE products SET vat_override = $1 WHERE id = $2`,
+                  [db.engine === 'postgres' ? true : 1, existingId],
+                );
+              } catch (_) { /* column may be missing */ }
             }
           } else {
             const { parseTaxRateOrNull, isAllowedVatRate } = require('../taxDefaults');

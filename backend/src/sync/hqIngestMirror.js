@@ -319,9 +319,10 @@ async function mirrorJournalPostedEvent(payload, idempotencyKey) {
     );
     await db.query(
       `UPDATE chart_of_accounts
-       SET current_balance = current_balance + $1,
+       SET current_balance = COALESCE(current_balance, 0) + $1,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2`,
+       WHERE CAST(id AS TEXT) = CAST($2 AS TEXT)
+          OR CAST(code AS TEXT) = CAST($2 AS TEXT)`,
       [debit - credit, account.id],
     );
     mirroredLines += 1;

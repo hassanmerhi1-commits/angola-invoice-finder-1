@@ -36,6 +36,33 @@ function taxCodeForRate(rate) {
   return `IVA${r}`;
 }
 
+function isTruthyFlag(value) {
+  return value === true || value === 1 || value === '1' || value === 't' || value === 'true';
+}
+
+/**
+ * Protect stored IVA from silent 5% clobber (Excel/import/form defaults).
+ * Allow overwrite only when the client acknowledges an IVA change (vat_override true
+ * or forceVatChange), matching ProductDetailDialog which sets vatOverride on edit.
+ */
+function shouldPreserveExistingTaxRate(existing, nextRate, opts = {}) {
+  const cur = Number(existing?.tax_rate);
+  const next = Number(nextRate);
+  if (!Number.isFinite(next) || !Number.isFinite(cur)) return false;
+  if (Math.abs(cur - next) < 0.0001) return false;
+  if (opts.forceVatChange || opts.clientSetsOverride) return false;
+
+  const locked = isTruthyFlag(existing?.vat_override);
+  const nextIsDefault = Math.abs(next - Number(DEFAULT_VAT_RATE)) < 0.0001;
+  const curNonDefault = Math.abs(cur - Number(DEFAULT_VAT_RATE)) > 0.0001;
+
+  // Never silently replace 14/7/0 (or a locked rate) with default 5%.
+  if (nextIsDefault && (locked || curNonDefault)) return true;
+  // Locked rate: ignore unacknowledged tax changes of any kind.
+  if (locked) return true;
+  return false;
+}
+
 module.exports = {
   ALLOWED_VAT_RATES,
   DEFAULT_VAT_RATE,
@@ -44,4 +71,6 @@ module.exports = {
   isAllowedVatRate,
   normalizeTaxRate,
   taxCodeForRate,
+  isTruthyFlag,
+  shouldPreserveExistingTaxRate,
 };

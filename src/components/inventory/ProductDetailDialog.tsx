@@ -35,7 +35,7 @@ import { Switch } from '@/components/ui/switch';
 import { Check, X, Plus } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useBranchContext } from '@/contexts/BranchContext';
-import { ALLOWED_VAT_RATES, normalizeTaxRate } from '@/lib/taxUtils';
+import { ALLOWED_VAT_RATES, parseTaxRateOrNull } from '@/lib/taxUtils';
 import {
   mergeInventoryFoodCategorySelectOptions,
   resolveProductCategoryName,
@@ -271,7 +271,7 @@ export function ProductDetailDialog({
         name: src.name,
         category: resolveProductCategoryName(src.category, activeCategories),
         unit: src.unit,
-        iva: normalizeTaxRate(src.taxRate),
+        iva: parseTaxRateOrNull(src.taxRate),
         vatOverride: !!src.vatOverride,
         tipo: 'INVENTARIO',
         fornecedorName:

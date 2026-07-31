@@ -319,8 +319,12 @@ export async function getSaleInvoiceAsDocument(
   return mapSaleRowToDocument(sale, branchNames[bid] || '');
 }
 
-export async function getDocuments(type?: DocumentType, branchId?: string): Promise<ERPDocument[]> {
-  if (isElectronMode()) {
+export async function getDocuments(
+  type?: DocumentType,
+  branchId?: string,
+  opts?: { /** Skip Electron SQLite dump — list screens use API sales/purchases instead. */ skipLocalDb?: boolean },
+): Promise<ERPDocument[]> {
+  if (isElectronMode() && !opts?.skipLocalDb) {
     const rows = await dbGetAll<any>('erp_documents');
     const dbDocs = rows.map(mapDocFromDb);
     const localDocs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
@@ -333,6 +337,7 @@ export async function getDocuments(type?: DocumentType, branchId?: string): Prom
     if (branchId) docs = docs.filter(d => branchIdsEqual(d.branchId, branchId));
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
+  // List path / browser: localStorage only — never block on full erp_documents IPC dump.
   let docs = lsGet<ERPDocument[]>(STORAGE_KEY, []).map(normalizeSupplierPurchaseReturnDocument);
   if (type) docs = docs.filter(d => d.documentType === type);
   if (branchId) docs = docs.filter(d => branchIdsEqual(d.branchId, branchId));

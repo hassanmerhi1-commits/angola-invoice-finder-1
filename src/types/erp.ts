@@ -72,6 +72,8 @@ export interface Sale {
   cashierId: string;
   cashierName?: string;
   items: SaleItem[];
+  /** Present on light list responses when line items are omitted. */
+  itemsCount?: number;
   subtotal: number;
   taxAmount: number;
   discount: number;

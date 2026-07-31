@@ -141,7 +141,8 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     try {
       // Never blank the tree when we already have local/cache rows.
       if (!hasRowsRef.current) setIsLoading(true);
-      // Fast path: stored balances. Manual Refresh passes liveBalances for journal totals.
+      // Fast path: stored balances. Manual Refresh passes liveBalances which rebuilds
+      // and persists balances on the city server (so supplier leaves don't snap back to 0).
       const response = await api.chartOfAccounts.list(
         opts?.liveBalances ? { liveBalances: true } : undefined,
       );

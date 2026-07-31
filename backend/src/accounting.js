@@ -340,10 +340,11 @@ async function createJournalEntry(client, params) {
 
     const balanceChange = (line.debit || 0) - (line.credit || 0);
     await client.query(
-      `UPDATE chart_of_accounts SET 
-       current_balance = current_balance + $1,
+      `UPDATE chart_of_accounts SET
+       current_balance = COALESCE(current_balance, 0) + $1,
        updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2`,
+       WHERE CAST(id AS TEXT) = CAST($2 AS TEXT)
+          OR CAST(code AS TEXT) = CAST($2 AS TEXT)`,
       [balanceChange, account.id]
     );
   }
@@ -438,9 +439,10 @@ async function updateJournalEntry(client, entryId, params) {
     if (balanceChange !== 0) {
       await client.query(
         `UPDATE chart_of_accounts SET
-         current_balance = current_balance + $1,
+         current_balance = COALESCE(current_balance, 0) + $1,
          updated_at = CURRENT_TIMESTAMP
-         WHERE id = $2`,
+         WHERE CAST(id AS TEXT) = CAST($2 AS TEXT)
+            OR CAST(code AS TEXT) = CAST($2 AS TEXT)`,
         [balanceChange, old.account_id],
       );
     }
@@ -481,9 +483,10 @@ async function updateJournalEntry(client, entryId, params) {
     const balanceChange = debit - credit;
     await client.query(
       `UPDATE chart_of_accounts SET
-       current_balance = current_balance + $1,
+       current_balance = COALESCE(current_balance, 0) + $1,
        updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2`,
+       WHERE CAST(id AS TEXT) = CAST($2 AS TEXT)
+          OR CAST(code AS TEXT) = CAST($2 AS TEXT)`,
       [balanceChange, account.id],
     );
   }
@@ -504,8 +507,9 @@ async function updateJournalEntry(client, entryId, params) {
 
 /**
  * Rebuild chart_of_accounts.current_balance from opening + posted journal lines.
- * Fixes drift when lines were inserted without the balance bump (e.g. HQ mirror)
- * or after supplier/client leaves were created under parents that already held postings.
+ * Matches journal lines by account id OR account code (legacy rows stored the code
+ * in account_id). A strict id-only join left supplier/client leaves at 0 while
+ * ledger drill-down still showed movements.
  */
 async function recomputeCoaCurrentBalances(client, accountIds) {
   const ids = Array.isArray(accountIds)
@@ -514,66 +518,141 @@ async function recomputeCoaCurrentBalances(client, accountIds) {
 
   if (ids && ids.length === 0) return { updated: 0 };
 
+  const postedClause = '(je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)';
+  const lineMatchesAccount = `
+    CAST(jel.account_id AS TEXT) = CAST(coa2.id AS TEXT)
+    OR CAST(jel.account_id AS TEXT) = CAST(coa2.code AS TEXT)
+  `;
+  const lineMatchesSelf = `
+    CAST(jel.account_id AS TEXT) = CAST(chart_of_accounts.id AS TEXT)
+    OR CAST(jel.account_id AS TEXT) = CAST(chart_of_accounts.code AS TEXT)
+  `;
+
+  // Normalize legacy code-keyed lines to the account UUID when possible (Postgres TEXT/UUID both cast).
+  try {
+    await client.query(`
+      UPDATE journal_entry_lines jel
+      SET account_id = coa.id
+      FROM chart_of_accounts coa
+      WHERE CAST(jel.account_id AS TEXT) = CAST(coa.code AS TEXT)
+        AND CAST(jel.account_id AS TEXT) <> CAST(coa.id AS TEXT)
+    `);
+  } catch (e) {
+    // SQLite: rewrite with correlated subquery
+    try {
+      await client.query(`
+        UPDATE journal_entry_lines
+        SET account_id = (
+          SELECT coa.id FROM chart_of_accounts coa
+          WHERE CAST(coa.code AS TEXT) = CAST(journal_entry_lines.account_id AS TEXT)
+          LIMIT 1
+        )
+        WHERE EXISTS (
+          SELECT 1 FROM chart_of_accounts coa
+          WHERE CAST(coa.code AS TEXT) = CAST(journal_entry_lines.account_id AS TEXT)
+            AND CAST(coa.id AS TEXT) <> CAST(journal_entry_lines.account_id AS TEXT)
+        )
+      `);
+    } catch (e2) {
+      console.warn('[ACCOUNTING] journal line account_id normalize skipped:', e2.message || e.message);
+    }
+  }
+
   if (ids) {
     const r = await client.query(
       `UPDATE chart_of_accounts coa
        SET current_balance = COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0),
            updated_at = CURRENT_TIMESTAMP
        FROM (
-         SELECT jel.account_id AS id,
+         SELECT coa2.id AS id,
                 SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
          FROM journal_entry_lines jel
          INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-         WHERE je.is_posted = true
-           AND jel.account_id = ANY($1::text[])
-         GROUP BY jel.account_id
+         INNER JOIN chart_of_accounts coa2 ON (${lineMatchesAccount})
+         WHERE ${postedClause}
+           AND (
+             CAST(coa2.id AS TEXT) = ANY($1::text[])
+             OR CAST(coa2.code AS TEXT) = ANY($1::text[])
+           )
+         GROUP BY coa2.id
        ) j
-       WHERE coa.id = j.id`,
+       WHERE CAST(coa.id AS TEXT) = CAST(j.id AS TEXT)`,
       [ids],
     );
-    // Accounts with no journal lines → balance = opening only
     await client.query(
       `UPDATE chart_of_accounts
        SET current_balance = COALESCE(opening_balance, 0),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = ANY($1::text[])
+       WHERE (
+           CAST(id AS TEXT) = ANY($1::text[])
+           OR CAST(code AS TEXT) = ANY($1::text[])
+         )
          AND NOT EXISTS (
            SELECT 1
            FROM journal_entry_lines jel
-           INNER JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true
-           WHERE jel.account_id = chart_of_accounts.id
+           INNER JOIN journal_entries je ON je.id = jel.journal_entry_id AND ${postedClause}
+           WHERE ${lineMatchesSelf}
          )`,
       [ids],
     );
     return { updated: ids.length, rowCount: r.rowCount || 0 };
   }
 
-  const r = await client.query(
-    `UPDATE chart_of_accounts coa
-     SET current_balance = COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0),
-         updated_at = CURRENT_TIMESTAMP
-     FROM (
-       SELECT jel.account_id AS id,
-              SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
-       FROM journal_entry_lines jel
-       INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-       WHERE je.is_posted = true
-       GROUP BY jel.account_id
-     ) j
-     WHERE coa.id = j.id`,
-  );
-  await client.query(
-    `UPDATE chart_of_accounts
-     SET current_balance = COALESCE(opening_balance, 0),
-         updated_at = CURRENT_TIMESTAMP
-     WHERE NOT EXISTS (
-       SELECT 1
-       FROM journal_entry_lines jel
-       INNER JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true
-       WHERE jel.account_id = chart_of_accounts.id
-     )`,
-  );
-  return { updated: r.rowCount || 0 };
+  // Full rebuild — works on Postgres (UPDATE…FROM) and SQLite via the same shape when supported.
+  try {
+    const r = await client.query(
+      `UPDATE chart_of_accounts coa
+       SET current_balance = COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0),
+           updated_at = CURRENT_TIMESTAMP
+       FROM (
+         SELECT coa2.id AS id,
+                SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
+         FROM journal_entry_lines jel
+         INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+         INNER JOIN chart_of_accounts coa2 ON (${lineMatchesAccount})
+         WHERE ${postedClause}
+         GROUP BY coa2.id
+       ) j
+       WHERE CAST(coa.id AS TEXT) = CAST(j.id AS TEXT)`,
+    );
+    await client.query(
+      `UPDATE chart_of_accounts
+       SET current_balance = COALESCE(opening_balance, 0),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM journal_entry_lines jel
+         INNER JOIN journal_entries je ON je.id = jel.journal_entry_id AND ${postedClause}
+         WHERE ${lineMatchesSelf}
+       )`,
+    );
+    return { updated: r.rowCount || 0 };
+  } catch (e) {
+    // SQLite fallback: per-account recompute
+    console.warn('[ACCOUNTING] bulk COA recompute failed, using row loop:', e.message);
+    const accounts = await client.query(`SELECT id, code, COALESCE(opening_balance, 0) AS opening_balance FROM chart_of_accounts`);
+    let updated = 0;
+    for (const acc of accounts.rows || []) {
+      const netRes = await client.query(
+        `SELECT COALESCE(SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)), 0) AS net
+         FROM journal_entry_lines jel
+         INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+         WHERE ${postedClause}
+           AND (CAST(jel.account_id AS TEXT) = CAST($1 AS TEXT)
+                OR CAST(jel.account_id AS TEXT) = CAST($2 AS TEXT))`,
+        [acc.id, acc.code],
+      );
+      const net = Number(netRes.rows?.[0]?.net) || 0;
+      await client.query(
+        `UPDATE chart_of_accounts
+         SET current_balance = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE CAST(id AS TEXT) = CAST($2 AS TEXT)`,
+        [Number(acc.opening_balance) + net, acc.id],
+      );
+      updated += 1;
+    }
+    return { updated };
+  }
 }
 
 module.exports = {

@@ -9,40 +9,23 @@ module.exports = function(broadcastTable) {
   const router = express.Router();
 
   // Fast list uses stored current_balance (no journal aggregate).
-  // Pass ?liveBalances=1 to recompute from posted journals (slower; for Refresh / background merge).
+  // Pass ?liveBalances=1 to rebuild stored balances from journals, then return the fast list
+  // (Refresh must persist — otherwise supplier leaves flash correct on Refresh and go back to 0).
   router.get('/', async (req, res) => {
     try {
       const liveBalances =
         req.query.liveBalances === '1'
         || req.query.liveBalances === 'true'
         || req.query.liveBalances === 'yes';
-      const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
-      const balanceSelect = liveBalances
-        ? `COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0) AS current_balance`
-        : `COALESCE(coa.current_balance, coa.opening_balance, 0) AS current_balance`;
-      const journalJoin = liveBalances
-        ? `LEFT JOIN (
-          SELECT jel.account_id,
-                 SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
-          FROM journal_entry_lines jel
-          INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-          WHERE (je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)
-          GROUP BY jel.account_id
-        ) j ON ${idText('j.account_id')} = ${idText('coa.id')}
-           OR ${idText('j.account_id')} = ${idText('coa.code')}`
-        : '';
-      // Fast path: use stored children_count (maintained on write). Live path keeps the kids join.
-      const kidsJoin = liveBalances
-        ? `LEFT JOIN (
-          SELECT parent_id, COUNT(*) AS children_count
-          FROM chart_of_accounts
-          WHERE parent_id IS NOT NULL
-          GROUP BY parent_id
-        ) kids ON kids.parent_id = coa.id`
-        : '';
-      const childrenSelect = liveBalances
-        ? `COALESCE(kids.children_count, 0) as children_count`
-        : `COALESCE(coa.children_count, 0) as children_count`;
+      if (liveBalances) {
+        try {
+          const { recomputeCoaCurrentBalances } = require('../accounting');
+          await recomputeCoaCurrentBalances(db);
+          broadcastTable('chart_of_accounts');
+        } catch (e) {
+          console.warn('[CHART OF ACCOUNTS] liveBalances recompute failed:', e.message);
+        }
+      }
       const result = await db.query(`
         SELECT 
           coa.id,
@@ -61,12 +44,10 @@ module.exports = function(broadcastTable) {
           coa.updated_at,
           parent.name as parent_name,
           parent.code as parent_code,
-          ${childrenSelect},
-          ${balanceSelect}
+          COALESCE(coa.children_count, 0) as children_count,
+          COALESCE(coa.current_balance, coa.opening_balance, 0) AS current_balance
         FROM chart_of_accounts coa
         LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
-        ${kidsJoin}
-        ${journalJoin}
         WHERE coa.is_active = true
         ORDER BY coa.code
       `);

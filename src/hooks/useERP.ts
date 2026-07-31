@@ -15,7 +15,7 @@ import { getCachedList, isCachedListFresh, markCachedListStale, setCachedList } 
 import { TABLE_REFRESH_EVENT } from '@/lib/realtime/tableRefreshBridge';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
-import { normalizeTaxRate } from '@/lib/taxUtils';
+import { normalizeTaxRate, parseTaxRateOrNull } from '@/lib/taxUtils';
 import { applyUserBranchLockOnLogin, normalizeIsMain } from '@/lib/branchAccess';
 import { mapStockTransferRow } from '@/lib/stockTransferUtils';
 import {
@@ -107,7 +107,8 @@ function mapProduct(p: any): Product {
     minStock: p.minStock ?? p.min_stock,
     maxStock: p.maxStock ?? p.max_stock,
     unit: p.unit || 'UN',
-    taxRate: normalizeTaxRate(p.taxRate ?? p.tax_rate),
+    // Do not invent 5% when tax_rate is missing — that made every save wipe real IVA.
+    taxRate: parseTaxRateOrNull(p.taxRate ?? p.tax_rate) ?? 0,
     branchId: p.branchId ?? p.branch_id ?? '',
     supplierId: p.supplierId ?? p.supplier_id,
     supplierName: p.supplierName ?? p.supplier_name,
@@ -672,24 +673,30 @@ export function useCart() {
 // ============================================
 // SALES
 // ============================================
-function mapSaleRow(s: any): Sale {
+export function mapSaleRow(s: any): Sale {
+  const items = (s.items || []).map((i: any) => ({
+    productId: i.productId || i.product_id,
+    productName: i.productName || i.product_name,
+    sku: i.sku || '',
+    quantity: Number(i.quantity) || 0,
+    unitPrice: Number(i.unitPrice ?? i.unit_price) || 0,
+    discount: Number(i.discount) || 0,
+    taxRate: Number(i.taxRate ?? i.tax_rate) || 0,
+    taxAmount: Number(i.taxAmount ?? i.tax_amount) || 0,
+    subtotal: Number(i.subtotal ?? i.total) || 0,
+  }));
   return {
     id: s.id,
     invoiceNumber: s.invoiceNumber || s.invoice_number || '',
     branchId: s.branchId || s.branch_id || '',
     cashierId: s.cashierId || s.cashier_id || '',
     cashierName: s.cashierName || s.cashier_name || '',
-    items: (s.items || []).map((i: any) => ({
-      productId: i.productId || i.product_id,
-      productName: i.productName || i.product_name,
-      sku: i.sku || '',
-      quantity: Number(i.quantity) || 0,
-      unitPrice: Number(i.unitPrice ?? i.unit_price) || 0,
-      discount: Number(i.discount) || 0,
-      taxRate: Number(i.taxRate ?? i.tax_rate) || 0,
-      taxAmount: Number(i.taxAmount ?? i.tax_amount) || 0,
-      subtotal: Number(i.subtotal ?? i.total) || 0,
-    })),
+    items,
+    itemsCount: items.length > 0
+      ? items.length
+      : (s.items_count != null || s.itemsCount != null
+        ? Number(s.items_count ?? s.itemsCount) || 0
+        : undefined),
     subtotal: Number(s.subtotal || 0),
     taxAmount: Number(s.taxAmount || s.tax_amount || 0),
     discount: Number(s.discount || 0),

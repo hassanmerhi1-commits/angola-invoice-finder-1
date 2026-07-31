@@ -1,8 +1,9 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSales, useAuth } from '@/hooks/useERP';
+import { useSales, mapSaleRow } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { Sale } from '@/types/erp';
+import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -46,7 +47,7 @@ const statusConfig: Record<string, { labelKey: 'completed' | 'voided' | 'pending
 export default function Vendas() {
   const navigate = useNavigate();
   const { currentBranch, apiBranchId } = useBranchScope();
-  const { sales, refreshSales } = useSales(apiBranchId, { light: false });
+  const { sales, refreshSales } = useSales(apiBranchId, { light: true });
   const company = getCompanySettings();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
@@ -55,6 +56,13 @@ export default function Vendas() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+
+  const ensureSaleWithItems = useCallback(async (sale: Sale): Promise<Sale> => {
+    if (sale.items?.length) return sale;
+    const res = await api.sales.get(sale.id);
+    if (res.error || !res.data) return sale;
+    return mapSaleRow(res.data);
+  }, []);
 
   const filteredSales = useMemo(() => {
     const sorted = [...sales].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -74,10 +82,12 @@ export default function Vendas() {
     card: filteredSales.filter(s => s.paymentMethod === 'card' && s.status === 'completed').reduce((sum, s) => sum + s.total, 0),
   }), [filteredSales]);
 
-  const openDetail = useCallback((sale: Sale) => {
+  const openDetail = useCallback(async (sale: Sale) => {
     setSelectedSale(sale);
     setDetailOpen(true);
-  }, []);
+    const full = await ensureSaleWithItems(sale);
+    setSelectedSale(full);
+  }, [ensureSaleWithItems]);
 
   useEffect(() => {
     const goPos = () => navigate('/pos');
@@ -93,9 +103,10 @@ export default function Vendas() {
   const handleReprintThermal = async (sale: Sale) => {
     if (!currentBranch) return;
     try {
+      const full = await ensureSaleWithItems(sale);
       const config = getPrinterConfig();
-      await printReceipt(sale, currentBranch, config, false);
-      void recordSalePrint(sale, { format: 'thermal', source: 'vendas', reprint: true });
+      await printReceipt(full, currentBranch, config, false);
+      void recordSalePrint(full, { format: 'thermal', source: 'vendas', reprint: true });
       toast.success(t.vendasUi.thermalSent);
     } catch {
       toast.error(t.vendasUi.thermalPrintError);
@@ -105,8 +116,9 @@ export default function Vendas() {
   const handleReprintA4 = async (sale: Sale) => {
     if (!currentBranch) return;
     try {
-      await printA4Invoice(sale, currentBranch, { showBankDetails: true, documentType: 'FR' });
-      void recordSalePrint(sale, { format: 'a4', source: 'vendas', reprint: true });
+      const full = await ensureSaleWithItems(sale);
+      await printA4Invoice(full, currentBranch, { showBankDetails: true, documentType: 'FR' });
+      void recordSalePrint(full, { format: 'a4', source: 'vendas', reprint: true });
       toast.success(t.vendasUi.a4Sent);
     } catch {
       toast.error(t.vendasUi.a4PrintError);
@@ -222,7 +234,7 @@ export default function Vendas() {
                       <span className="text-[10px]">{t.vendasUi.payment[pay.labelKey]}</span>
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-right">{sale.items.length}</td>
+                  <td className="px-3 py-2 text-right">{sale.itemsCount ?? sale.items?.length ?? 0}</td>
                   <td className="px-3 py-2 text-right font-mono font-medium">{sale.total.toLocaleString(uiLocale)} Kz</td>
                   <td className="px-3 py-2 text-center">
                     <Badge variant={status.variant} className="text-[10px] px-1.5 py-0">{t.vendasUi.status[status.labelKey]}</Badge>

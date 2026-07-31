@@ -1795,7 +1795,9 @@ export const api = {
                 SELECT SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0))
                 FROM journal_entry_lines jel
                 INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-                WHERE jel.account_id = coa.id AND je.is_posted = 1
+                WHERE (CAST(jel.account_id AS TEXT) = CAST(coa.id AS TEXT)
+                       OR CAST(jel.account_id AS TEXT) = CAST(coa.code AS TEXT))
+                  AND (je.is_posted = 1 OR je.is_posted = true OR je.is_posted IS NULL)
               ), 0) AS current_balance
             FROM chart_of_accounts coa
             LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
@@ -1831,6 +1833,12 @@ export const api = {
       }
       return apiResult;
     },
+    recomputeBalances: () =>
+      apiFetch<{ success: boolean; updated?: number }>(
+        '/chart-of-accounts/recompute-balances',
+        { method: 'POST', body: '{}' },
+        { timeoutMs: 60000 },
+      ),
     get: (id: string) => {
       if (isElectronMode()) return ipcQuery<any>('SELECT * FROM chart_of_accounts WHERE id = $1', [id]).then(r => ({ data: r.data?.[0] }));
       return apiFetch<any>(`/chart-of-accounts/${id}`);

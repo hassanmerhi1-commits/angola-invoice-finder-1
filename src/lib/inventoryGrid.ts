@@ -8,7 +8,7 @@ import {
   invalidateLanInventoryGrid,
   lanCatalogScopeKey,
 } from '@/lib/lanCatalogCache';
-import { normalizeTaxRate } from '@/lib/taxUtils';
+import { parseTaxRateOrNull } from '@/lib/taxUtils';
 import {
   buildSellingPriceBySku,
   withSellingPriceFromMap,
@@ -134,7 +134,7 @@ export function mapInventoryGridRows(rows: any[]): Product[] {
       onHandStock: Number(p.onHandStock ?? p.on_hand_stock ?? p.stock) || 0,
       reservedStock: Number(p.reservedStock ?? p.reserved_stock ?? 0) || 0,
       unit: p.unit ?? 'UN',
-      taxRate: normalizeTaxRate(p.tax_rate ?? p.taxRate),
+      taxRate: parseTaxRateOrNull(p.tax_rate ?? p.taxRate) ?? 0,
       branchId: p.branch_id ?? p.branchId ?? '',
       supplierId: p.supplier_id ?? p.supplierId,
       supplierName: p.supplier_name ?? p.supplierName ?? '',
