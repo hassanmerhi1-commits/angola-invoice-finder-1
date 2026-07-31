@@ -1766,7 +1766,8 @@ export const api = {
       const apiResult = await apiFetch<any[]>(
         `/chart-of-accounts${qs}`,
         undefined,
-        { timeoutMs: opts?.liveBalances ? 45000 : 12000 },
+        // List always joins journals for correct supplier/client balances — needs headroom on Tailscale.
+        { timeoutMs: opts?.liveBalances ? 60000 : 35000 },
       );
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       // Shop clients: never fall back to heavy IPC journal aggregates over legacy WS.

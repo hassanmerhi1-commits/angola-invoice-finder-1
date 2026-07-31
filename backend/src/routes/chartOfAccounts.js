@@ -8,24 +8,31 @@ const { auditErpSafe } = require('../lib/erpAudit');
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
-  // Fast list uses stored current_balance (no journal aggregate).
-  // Pass ?liveBalances=1 to rebuild stored balances from journals, then return the fast list
-  // (Refresh must persist — otherwise supplier leaves flash correct on Refresh and go back to 0).
+  // List balances are always computed from posted journals (id OR code match), matching
+  // ledger drill-down. Stored current_balance drifts for supplier/client leaves and made
+  // the tree show 0 while double-click showed movements. ?liveBalances=1 also persists
+  // a recompute into current_balance for other reports.
   router.get('/', async (req, res) => {
     try {
-      const liveBalances =
+      const persistBalances =
         req.query.liveBalances === '1'
         || req.query.liveBalances === 'true'
         || req.query.liveBalances === 'yes';
-      if (liveBalances) {
-        try {
+      const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
+      const postedClause = db.engine === 'postgres'
+        ? '(je.is_posted IS DISTINCT FROM false)'
+        : '(je.is_posted = 1 OR je.is_posted IS NULL OR je.is_posted = true)';
+
+      if (persistBalances) {
+        // Persist in background — never block the list on a slow recompute.
+        setImmediate(() => {
           const { recomputeCoaCurrentBalances } = require('../accounting');
-          await recomputeCoaCurrentBalances(db);
-          broadcastTable('chart_of_accounts');
-        } catch (e) {
-          console.warn('[CHART OF ACCOUNTS] liveBalances recompute failed:', e.message);
-        }
+          recomputeCoaCurrentBalances(db)
+            .then(() => broadcastTable('chart_of_accounts'))
+            .catch((e) => console.warn('[CHART OF ACCOUNTS] persist recompute failed:', e.message));
+        });
       }
+
       const result = await db.query(`
         SELECT 
           coa.id,
@@ -45,17 +52,50 @@ module.exports = function(broadcastTable) {
           parent.name as parent_name,
           parent.code as parent_code,
           COALESCE(coa.children_count, 0) as children_count,
-          COALESCE(coa.current_balance, coa.opening_balance, 0) AS current_balance
+          COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0) AS current_balance
         FROM chart_of_accounts coa
         LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
+        LEFT JOIN (
+          SELECT matched.account_key AS account_key,
+                 SUM(matched.net) AS net
+          FROM (
+            SELECT ${idText('coa_m.id')} AS account_key,
+                   COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
+            FROM journal_entry_lines jel
+            INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+            INNER JOIN chart_of_accounts coa_m
+              ON ${idText('coa_m.id')} = ${idText('jel.account_id')}
+              OR ${idText('coa_m.code')} = ${idText('jel.account_id')}
+            WHERE ${postedClause}
+          ) matched
+          GROUP BY matched.account_key
+        ) j ON j.account_key = ${idText('coa.id')}
         WHERE coa.is_active = true
         ORDER BY coa.code
       `);
-      res.set('Cache-Control', liveBalances ? 'private, max-age=15' : 'private, max-age=60');
+      res.set('Cache-Control', 'private, max-age=15');
       res.json(result.rows);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
-      res.status(500).json({ error: 'Failed to fetch accounts' });
+      // Fallback to stored balances if the live join fails (older SQLite shapes).
+      try {
+        const fallback = await db.query(`
+          SELECT 
+            coa.id, coa.code, coa.name, coa.description, coa.account_type, coa.account_nature,
+            coa.parent_id, coa.level, coa.is_header, coa.is_active, coa.opening_balance,
+            coa.branch_id, coa.created_at, coa.updated_at,
+            parent.name as parent_name, parent.code as parent_code,
+            COALESCE(coa.children_count, 0) as children_count,
+            COALESCE(coa.current_balance, coa.opening_balance, 0) AS current_balance
+          FROM chart_of_accounts coa
+          LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
+          WHERE coa.is_active = true
+          ORDER BY coa.code
+        `);
+        res.json(fallback.rows);
+      } catch (e2) {
+        res.status(500).json({ error: 'Failed to fetch accounts' });
+      }
     }
   });
 

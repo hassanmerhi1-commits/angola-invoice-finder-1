@@ -107,6 +107,11 @@ export default function ChartOfAccounts() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { accounts, isLoading, refetch, createAccount, updateAccount, deleteAccount } = useChartOfAccounts();
 
+  // Bust stale local zeros: always re-pull journal balances when opening CoA.
+  useEffect(() => {
+    void refetch({ force: true, liveBalances: true });
+  }, [refetch]);
+
   const [activeTab, setActiveTab] = useState('todos');
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -868,23 +873,32 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
   // Roll up children AND keep postings on the parent itself (payments often landed
   // on 321 before supplier leaves existed — dropping own balance made them vanish).
   // Also include PGC code-prefix descendants when parent_id links are incomplete.
+  // Dedupe by id so parent_id children + code-prefix kids are not double-counted.
   const computeBalance = (acc: Account): number => {
     const own = Number(acc.current_balance) || 0;
     const byParent = allAccounts.filter((a) => a.parent_id === acc.id);
-    if (byParent.length > 0) {
-      return own + byParent.reduce((sum, kid) => sum + computeBalance(kid), 0);
-    }
     const prefixKids = allAccounts.filter(
       (a) =>
         a.id !== acc.id
+        && a.parent_id !== acc.id
         && String(a.code || '').startsWith(String(acc.code || ''))
         && String(a.code || '').length > String(acc.code || '').length,
     );
-    if (prefixKids.length === 0) return own;
-    return own + prefixKids.reduce((sum, kid) => sum + (Number(kid.current_balance) || 0), 0);
+    const kids = [...byParent, ...prefixKids];
+    if (kids.length === 0) return own;
+    const seen = new Set<string>();
+    let sum = own;
+    for (const kid of kids) {
+      if (seen.has(kid.id)) continue;
+      seen.add(kid.id);
+      sum += computeBalance(kid);
+    }
+    return sum;
   };
 
-  const balance = hasChildren || account.is_header ? computeBalance(account) : (Number(account.current_balance) || 0);
+  const balance = hasChildren || account.is_header || String(account.code || '').length <= 3
+    ? computeBalance(account)
+    : (Number(account.current_balance) || 0);
 
   return (
     <>

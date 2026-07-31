@@ -90,8 +90,8 @@ const createLocalId = () =>
     ? generateId()
     : `local-coa-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-/** CoA structure changes rarely; longer TTL avoids re-hitting city on every tab visit. */
-const COA_CACHE_FRESH_MS = 180_000;
+/** Structure can cache briefly; balances must not stick at stale zeros for minutes. */
+const COA_CACHE_FRESH_MS = 45_000;
 
 function readInitialAccounts(): Account[] {
   const mem = getCachedList<Account[]>('chartOfAccounts');
@@ -141,8 +141,7 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     try {
       // Never blank the tree when we already have local/cache rows.
       if (!hasRowsRef.current) setIsLoading(true);
-      // Fast path: stored balances. Manual Refresh passes liveBalances which rebuilds
-      // and persists balances on the city server (so supplier leaves don't snap back to 0).
+      // Server always returns journal-aggregated balances. liveBalances also persists recompute.
       const response = await api.chartOfAccounts.list(
         opts?.liveBalances ? { liveBalances: true } : undefined,
       );
@@ -162,8 +161,6 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
       }
       applyAccounts(remoteAccounts);
       setError(null);
-      // Do NOT auto-fetch liveBalances — that re-scans all journal lines over Tailscale
-      // and is what made CoA feel permanently slow. Refresh button opts in explicitly.
     } catch (err: any) {
       // Keep last good server data — don't flash zeroed seed over live balances.
       if (hasRowsRef.current) {

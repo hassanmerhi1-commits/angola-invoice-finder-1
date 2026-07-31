@@ -108,6 +108,21 @@ export default function AuditTrail() {
       fieldProformaNumber: t.auditTrailUi.fieldProformaNumber,
       fieldProformaId: t.auditTrailUi.fieldProformaId,
       fieldEmpty: t.auditTrailUi.fieldEmpty,
+      fieldName: t.auditTrailUi.fieldName,
+      fieldSku: t.auditTrailUi.fieldSku,
+      fieldPrice: t.auditTrailUi.fieldPrice,
+      fieldCost: t.auditTrailUi.fieldCost,
+      fieldStock: t.auditTrailUi.fieldStock,
+      fieldTaxRate: t.auditTrailUi.fieldTaxRate,
+      fieldVatOverride: t.auditTrailUi.fieldVatOverride,
+      fieldCategory: t.auditTrailUi.fieldCategory,
+      fieldBranchId: t.auditTrailUi.fieldBranchId,
+      fieldIpAddress: t.auditTrailUi.fieldIpAddress,
+      fieldWorkstation: t.auditTrailUi.fieldWorkstation,
+      detailChanges: t.auditTrailUi.detailChanges,
+      detailSnapshot: t.auditTrailUi.detailSnapshot,
+      detailContext: t.auditTrailUi.detailContext,
+      changeArrow: t.auditTrailUi.changeArrow,
       paymentCash: t.chartsUi.methodCash,
       paymentCard: t.chartsUi.methodCard,
       paymentTransfer: t.chartsUi.methodTransfer,
@@ -378,7 +393,7 @@ export default function AuditTrail() {
 
       {/* Detail Dialog */}
       <Dialog open={!!selectedEntry} onOpenChange={() => setSelectedEntry(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Eye className="w-4 h-4" /> {t.auditTrailUi.detailTitle}
@@ -409,7 +424,7 @@ export default function AuditTrail() {
                 <span className="text-muted-foreground text-xs">{t.auditTrailUi.detailDescription}:</span>
                 <p className="text-sm mt-1">{selectedEntry.description}</p>
               </div>
-              {selectedEntry.details && (
+              {(selectedEntry.details || selectedEntry.newValues || selectedEntry.oldValues || selectedEntry.metadata) && (
                 <>
                   <Separator />
                   <div>
@@ -417,6 +432,9 @@ export default function AuditTrail() {
                     <div className="mt-1">
                       <AuditDetailPanel
                         details={selectedEntry.details}
+                        oldValues={selectedEntry.oldValues}
+                        newValues={selectedEntry.newValues}
+                        metadata={selectedEntry.metadata}
                         labels={auditDetailLabels}
                         locale={uiLocale}
                       />

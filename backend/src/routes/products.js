@@ -1710,6 +1710,12 @@ module.exports = function(broadcastTable) {
             : skuTrim;
         // Preserve stored IVA unless the caller sent an explicit rate (never invent 5%).
         const nextTaxRate = hasExplicitTax ? parsedTax : null;
+        const beforeRes = await db.query(
+          `SELECT name, sku, price, cost, stock, tax_rate, vat_override, category, branch_id, is_active
+           FROM products WHERE id = $1 LIMIT 1`,
+          [existing.id],
+        );
+        const beforeRow = beforeRes.rows[0] || null;
         const result = await db.query(
           nextTaxRate != null
             ? `UPDATE products
@@ -1785,13 +1791,37 @@ module.exports = function(broadcastTable) {
           } catch (_) { /* optional */ }
         }
         await broadcastTable('products');
+        const afterRow = result.rows[0];
         auditErpSafe(req, {
           table: 'products',
-          id: result.rows[0]?.id,
+          id: afterRow?.id,
           action: 'update',
           branchId: storedBranchId || undefined,
           description: `Produto actualizado: ${name || canonicalSku} (${canonicalSku || ''})`,
-          newValues: { name, sku: canonicalSku, price: Number(price) || 0, branchId: storedBranchId },
+          oldValues: beforeRow
+            ? {
+                name: beforeRow.name,
+                sku: beforeRow.sku,
+                price: Number(beforeRow.price) || 0,
+                cost: Number(beforeRow.cost) || 0,
+                stock: Number(beforeRow.stock) || 0,
+                taxRate: Number(beforeRow.tax_rate),
+                vatOverride: isTruthyFlag(beforeRow.vat_override),
+                category: beforeRow.category || null,
+                branchId: beforeRow.branch_id || null,
+              }
+            : null,
+          newValues: {
+            name: afterRow?.name || name,
+            sku: afterRow?.sku || canonicalSku,
+            price: Number(afterRow?.price ?? price) || 0,
+            cost: Number(afterRow?.cost ?? c) || 0,
+            stock: Number(afterRow?.stock ?? stock) || 0,
+            taxRate: Number(afterRow?.tax_rate ?? nextTaxRate ?? beforeRow?.tax_rate),
+            vatOverride: isTruthyFlag(afterRow?.vat_override ?? beforeRow?.vat_override),
+            category: afterRow?.category || category || null,
+            branchId: storedBranchId,
+          },
         });
         return res.status(200).json(result.rows[0]);
       }
@@ -2133,18 +2163,26 @@ module.exports = function(broadcastTable) {
 
       invalidateSellingHintsCache();
       await broadcastTable('products');
+      const productAuditSnapshot = (row) => ({
+        name: row?.name || null,
+        sku: row?.sku || null,
+        price: Number(row?.price) || 0,
+        cost: Number(row?.cost) || 0,
+        stock: Number(row?.stock) || 0,
+        taxRate: Number(row?.tax_rate ?? row?.taxRate),
+        vatOverride: isTruthyFlag(row?.vat_override ?? row?.vatOverride),
+        category: row?.category || null,
+        branchId: row?.branch_id ?? row?.branchId ?? null,
+        isActive: row?.is_active !== false && row?.is_active !== 0,
+      });
       auditErpSafe(req, {
         table: 'products',
         id,
         action: 'update',
         branchId: updated?.branch_id || undefined,
         description: `Produto actualizado: ${updated?.name || ''} (${updated?.sku || id})`,
-        newValues: {
-          name: updated?.name,
-          sku: updated?.sku,
-          price: Number(updated?.price) || 0,
-          stock: Number(updated?.stock) || 0,
-        },
+        oldValues: productAuditSnapshot(existing),
+        newValues: productAuditSnapshot(updated),
       });
       res.json(updated);
     } catch (error) {
