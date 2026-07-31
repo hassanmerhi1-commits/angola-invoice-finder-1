@@ -1,8 +1,12 @@
 /**
- * One-time patch: set all active inventory products to 5% VAT (IVA5).
+ * HISTORICAL one-time patch id only.
+ *
+ * The original migration forced EVERY active product to 5% IVA. That must NEVER
+ * run again — if schema_patches was lost (restore/recreate), a backend restart
+ * would silently wipe 14%/7%/0% back to 5% ("worked for a while, then broke").
+ *
+ * We only ensure the patch marker exists so old code paths stay no-ops.
  */
-const { DEFAULT_VAT_RATE, DEFAULT_TAX_CODE } = require('./taxDefaults');
-
 const PATCH_ID = '020_inventory_vat_5';
 
 async function migrateInventoryVatTo5(db) {
@@ -31,44 +35,12 @@ async function migrateInventoryVatTo5(db) {
     return { skipped: true };
   }
 
-  const hasTaxCode = await db.query(
-    isPostgres
-      ? `SELECT 1 FROM information_schema.columns
-         WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'tax_code' LIMIT 1`
-      : `SELECT 1 FROM pragma_table_info('products') WHERE name = 'tax_code' LIMIT 1`,
-  );
-  const withTaxCode = (hasTaxCode.rows?.length ?? 0) > 0;
-
-  let updateResult;
-  if (withTaxCode) {
-    updateResult = await db.query(
-      isPostgres
-        ? `UPDATE products
-           SET tax_rate = $1, tax_code = $2, updated_at = CURRENT_TIMESTAMP
-           WHERE COALESCE(is_active, true) IS NOT FALSE`
-        : `UPDATE products
-           SET tax_rate = $1, tax_code = $2, updated_at = datetime('now')
-           WHERE COALESCE(is_active, 1) != 0`,
-      [DEFAULT_VAT_RATE, DEFAULT_TAX_CODE],
-    );
-  } else {
-    updateResult = await db.query(
-      isPostgres
-        ? `UPDATE products
-           SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP
-           WHERE COALESCE(is_active, true) IS NOT FALSE`
-        : `UPDATE products
-           SET tax_rate = $1, updated_at = datetime('now')
-           WHERE COALESCE(is_active, 1) != 0`,
-      [DEFAULT_VAT_RATE],
-    );
-  }
-
+  // Mark applied WITHOUT touching product tax rates.
   await db.query('INSERT INTO schema_patches (id) VALUES ($1)', [PATCH_ID]);
-
-  const updated = Number(updateResult.rowCount ?? 0);
-  console.log(`[DB] Inventory VAT patch: ${updated} product(s) set to ${DEFAULT_VAT_RATE}% (${DEFAULT_TAX_CODE})`);
-  return { updated };
+  console.log(
+    '[DB] Inventory VAT patch marker recorded — products were NOT modified (destructive 5% wipe disabled)',
+  );
+  return { skipped: true, reason: 'destructive_update_disabled', marked: true };
 }
 
 module.exports = { migrateInventoryVatTo5, PATCH_ID };

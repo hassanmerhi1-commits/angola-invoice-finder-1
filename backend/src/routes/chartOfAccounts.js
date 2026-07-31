@@ -8,10 +8,9 @@ const { auditErpSafe } = require('../lib/erpAudit');
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
-  // List balances are always computed from posted journals (id OR code match), matching
-  // ledger drill-down. Stored current_balance drifts for supplier/client leaves and made
-  // the tree show 0 while double-click showed movements. ?liveBalances=1 also persists
-  // a recompute into current_balance for other reports.
+  // List balances from posted journals. Split id vs code matching so Postgres can use
+  // indexes (the previous OR-join timed out on city → silent stored-zero fallback).
+  // Header/folder rows roll up on the client. ?liveBalances=1 also persists recompute.
   router.get('/', async (req, res) => {
     try {
       const persistBalances =
@@ -24,7 +23,7 @@ module.exports = function(broadcastTable) {
         : '(je.is_posted = 1 OR je.is_posted IS NULL OR je.is_posted = true)';
 
       if (persistBalances) {
-        // Persist in background — never block the list on a slow recompute.
+        // Normalize legacy code-keyed lines + persist balances off the request path.
         setImmediate(() => {
           const { recomputeCoaCurrentBalances } = require('../accounting');
           recomputeCoaCurrentBalances(db)
@@ -56,19 +55,25 @@ module.exports = function(broadcastTable) {
         FROM chart_of_accounts coa
         LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
         LEFT JOIN (
-          SELECT matched.account_key AS account_key,
-                 SUM(matched.net) AS net
+          SELECT u.account_key AS account_key,
+                 SUM(u.net) AS net
           FROM (
-            SELECT ${idText('coa_m.id')} AS account_key,
+            SELECT ${idText('jel.account_id')} AS account_key,
                    COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
             FROM journal_entry_lines jel
             INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-            INNER JOIN chart_of_accounts coa_m
-              ON ${idText('coa_m.id')} = ${idText('jel.account_id')}
-              OR ${idText('coa_m.code')} = ${idText('jel.account_id')}
             WHERE ${postedClause}
-          ) matched
-          GROUP BY matched.account_key
+            UNION ALL
+            SELECT ${idText('coa_c.id')} AS account_key,
+                   COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
+            FROM journal_entry_lines jel
+            INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+            INNER JOIN chart_of_accounts coa_c
+              ON ${idText('coa_c.code')} = ${idText('jel.account_id')}
+            WHERE ${postedClause}
+              AND ${idText('coa_c.id')} <> ${idText('jel.account_id')}
+          ) u
+          GROUP BY u.account_key
         ) j ON j.account_key = ${idText('coa.id')}
         WHERE coa.is_active = true
         ORDER BY coa.code
@@ -77,25 +82,8 @@ module.exports = function(broadcastTable) {
       res.json(result.rows);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
-      // Fallback to stored balances if the live join fails (older SQLite shapes).
-      try {
-        const fallback = await db.query(`
-          SELECT 
-            coa.id, coa.code, coa.name, coa.description, coa.account_type, coa.account_nature,
-            coa.parent_id, coa.level, coa.is_header, coa.is_active, coa.opening_balance,
-            coa.branch_id, coa.created_at, coa.updated_at,
-            parent.name as parent_name, parent.code as parent_code,
-            COALESCE(coa.children_count, 0) as children_count,
-            COALESCE(coa.current_balance, coa.opening_balance, 0) AS current_balance
-          FROM chart_of_accounts coa
-          LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
-          WHERE coa.is_active = true
-          ORDER BY coa.code
-        `);
-        res.json(fallback.rows);
-      } catch (e2) {
-        res.status(500).json({ error: 'Failed to fetch accounts' });
-      }
+      // Do NOT fall back to stored current_balance (often stale zeros for suppliers).
+      res.status(500).json({ error: 'Failed to fetch accounts' });
     }
   });
 
