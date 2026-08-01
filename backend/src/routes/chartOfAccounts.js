@@ -8,30 +8,22 @@ const { auditErpSafe } = require('../lib/erpAudit');
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
-  // List balances from posted journals — same id OR code match as ledger drill-down.
-  // Split UNION (not a single OR join) so Postgres can use indexes. UUID-only
-  // aggregation missed legacy code-keyed supplier/client lines → tree 0, ledger OK.
-  // ?liveBalances=1 normalizes code→UUID then persists recompute.
+  // List balances: recompute into current_balance (same rules as ledger), then
+  // return the stored column. Do NOT re-derive with a different join — that was
+  // why the tree showed 0 while double-click ledger still had movements.
   router.get('/', async (req, res) => {
     try {
-      const persistBalances =
-        req.query.liveBalances === '1'
-        || req.query.liveBalances === 'true'
-        || req.query.liveBalances === 'yes';
-      const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
-      const postedClause = db.engine === 'postgres'
-        ? '(je.is_posted IS DISTINCT FROM false)'
-        : '(je.is_posted = 1 OR je.is_posted IS NULL OR je.is_posted = true)';
-
-      const { recomputeCoaCurrentBalances } = require('../accounting');
-      if (persistBalances) {
-        // Await normalize+recompute so the response matches ledger (code-keyed lines).
-        try {
-          await recomputeCoaCurrentBalances(db);
-        } catch (e) {
-          console.warn('[CHART OF ACCOUNTS] live recompute failed:', e.message);
-        }
+      // Always heal balances on list — CoA page is useless with stale zeros.
+      try {
+        const { fastRecomputeCoaCurrentBalances } = require('../accounting');
+        await fastRecomputeCoaCurrentBalances(db);
+      } catch (e) {
+        console.warn('[CHART OF ACCOUNTS] fast recompute failed:', e.message);
       }
+
+      const activeClause = db.engine === 'postgres'
+        ? '(coa.is_active IS DISTINCT FROM false)'
+        : '(coa.is_active = 1 OR coa.is_active IS NULL OR coa.is_active = true)';
 
       const result = await db.query(`
         SELECT 
@@ -52,41 +44,17 @@ module.exports = function(broadcastTable) {
           parent.name as parent_name,
           parent.code as parent_code,
           COALESCE(coa.children_count, 0) as children_count,
-          COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0) AS current_balance
+          COALESCE(coa.current_balance, coa.opening_balance, 0) AS current_balance
         FROM chart_of_accounts coa
         LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
-        LEFT JOIN (
-          SELECT u.account_key AS account_key,
-                 SUM(u.net) AS net
-          FROM (
-            SELECT ${idText('jel.account_id')} AS account_key,
-                   COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
-            FROM journal_entry_lines jel
-            INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
-            WHERE ${postedClause}
-            UNION ALL
-            SELECT ${idText('coa_c.id')} AS account_key,
-                   COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
-            FROM journal_entry_lines jel
-            INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
-            INNER JOIN chart_of_accounts coa_c
-              ON ${idText('coa_c.code')} = ${idText('jel.account_id')}
-            WHERE ${postedClause}
-              AND ${idText('coa_c.id')} <> ${idText('jel.account_id')}
-          ) u
-          GROUP BY u.account_key
-        ) j ON j.account_key = ${idText('coa.id')}
-        WHERE coa.is_active = true
+        WHERE ${activeClause}
         ORDER BY coa.code
       `);
-      res.set('Cache-Control', 'private, max-age=15');
+      res.set('Cache-Control', 'no-store');
       res.json(result.rows);
-      if (persistBalances) {
-        try { broadcastTable('chart_of_accounts'); } catch (_) { /* ignore */ }
-      }
+      try { broadcastTable('chart_of_accounts'); } catch (_) { /* ignore */ }
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
-      // Do NOT fall back to stored current_balance (often stale zeros for suppliers).
       res.status(500).json({ error: 'Failed to fetch accounts' });
     }
   });

@@ -511,24 +511,8 @@ async function updateJournalEntry(client, entryId, params) {
  * in account_id). A strict id-only join left supplier/client leaves at 0 while
  * ledger drill-down still showed movements.
  */
-async function recomputeCoaCurrentBalances(client, accountIds) {
-  const ids = Array.isArray(accountIds)
-    ? [...new Set(accountIds.map((id) => String(id || '').trim()).filter(Boolean))]
-    : null;
-
-  if (ids && ids.length === 0) return { updated: 0 };
-
-  const postedClause = '(je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)';
-  const lineMatchesAccount = `
-    CAST(jel.account_id AS TEXT) = CAST(coa2.id AS TEXT)
-    OR CAST(jel.account_id AS TEXT) = CAST(coa2.code AS TEXT)
-  `;
-  const lineMatchesSelf = `
-    CAST(jel.account_id AS TEXT) = CAST(chart_of_accounts.id AS TEXT)
-    OR CAST(jel.account_id AS TEXT) = CAST(chart_of_accounts.code AS TEXT)
-  `;
-
-  // Normalize legacy code-keyed lines to the account UUID when possible (Postgres TEXT/UUID both cast).
+async function normalizeJournalAccountIds(client) {
+  // Normalize legacy code-keyed lines to the account UUID when possible.
   try {
     await client.query(`
       UPDATE journal_entry_lines jel
@@ -538,7 +522,6 @@ async function recomputeCoaCurrentBalances(client, accountIds) {
         AND CAST(jel.account_id AS TEXT) <> CAST(coa.id AS TEXT)
     `);
   } catch (e) {
-    // SQLite: rewrite with correlated subquery
     try {
       await client.query(`
         UPDATE journal_entry_lines
@@ -557,6 +540,85 @@ async function recomputeCoaCurrentBalances(client, accountIds) {
       console.warn('[ACCOUNTING] journal line account_id normalize skipped:', e2.message || e.message);
     }
   }
+}
+
+/**
+ * Fast path for CoA page refresh: normalize code→UUID, then aggregate by account_id
+ * only (indexed). Avoids the slow OR-join that timed out on city Tailscale.
+ */
+async function fastRecomputeCoaCurrentBalances(client) {
+  const postedClause = '(je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)';
+  await normalizeJournalAccountIds(client);
+
+  try {
+    // Reset then apply nets — accounts with no lines keep opening only.
+    await client.query(`
+      UPDATE chart_of_accounts
+      SET current_balance = COALESCE(opening_balance, 0),
+          updated_at = CURRENT_TIMESTAMP
+    `);
+    await client.query(`
+      UPDATE chart_of_accounts coa
+      SET current_balance = COALESCE(coa.opening_balance, 0) + j.net,
+          updated_at = CURRENT_TIMESTAMP
+      FROM (
+        SELECT jel.account_id AS id,
+               SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
+        FROM journal_entry_lines jel
+        INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+        WHERE ${postedClause}
+        GROUP BY jel.account_id
+      ) j
+      WHERE CAST(coa.id AS TEXT) = CAST(j.id AS TEXT)
+    `);
+    // Remap any remaining code-keyed lines that could not be normalized to UUID.
+    try {
+      await client.query(`
+        UPDATE chart_of_accounts coa
+        SET current_balance = COALESCE(coa.current_balance, 0) + j.net,
+            updated_at = CURRENT_TIMESTAMP
+        FROM (
+          SELECT coa_c.id AS id,
+                 SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
+          FROM journal_entry_lines jel
+          INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+          INNER JOIN chart_of_accounts coa_c
+            ON CAST(coa_c.code AS TEXT) = CAST(jel.account_id AS TEXT)
+          WHERE ${postedClause}
+            AND CAST(coa_c.id AS TEXT) <> CAST(jel.account_id AS TEXT)
+          GROUP BY coa_c.id
+        ) j
+        WHERE CAST(coa.id AS TEXT) = CAST(j.id AS TEXT)
+      `);
+    } catch (e2) {
+      console.warn('[ACCOUNTING] code-keyed COA balance pass skipped:', e2.message);
+    }
+    return { ok: true };
+  } catch (e) {
+    // SQLite / older shapes: fall back to full recompute.
+    console.warn('[ACCOUNTING] fast COA recompute failed, using full recompute:', e.message);
+    return recomputeCoaCurrentBalances(client);
+  }
+}
+
+async function recomputeCoaCurrentBalances(client, accountIds) {
+  const ids = Array.isArray(accountIds)
+    ? [...new Set(accountIds.map((id) => String(id || '').trim()).filter(Boolean))]
+    : null;
+
+  if (ids && ids.length === 0) return { updated: 0 };
+
+  const postedClause = '(je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)';
+  const lineMatchesAccount = `
+    CAST(jel.account_id AS TEXT) = CAST(coa2.id AS TEXT)
+    OR CAST(jel.account_id AS TEXT) = CAST(coa2.code AS TEXT)
+  `;
+  const lineMatchesSelf = `
+    CAST(jel.account_id AS TEXT) = CAST(chart_of_accounts.id AS TEXT)
+    OR CAST(jel.account_id AS TEXT) = CAST(chart_of_accounts.code AS TEXT)
+  `;
+
+  await normalizeJournalAccountIds(client);
 
   if (ids) {
     const r = await client.query(
@@ -671,5 +733,7 @@ module.exports = {
   formatSequenceNumber,
   DOCUMENT_SEQUENCE_CONFIG,
   resolveSequenceConfig,
+  normalizeJournalAccountIds,
+  fastRecomputeCoaCurrentBalances,
   recomputeCoaCurrentBalances,
 };
