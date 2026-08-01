@@ -572,7 +572,8 @@ async function normalizeJournalAccountIds(client) {
  * only (indexed). Avoids the slow OR-join that timed out on city Tailscale.
  */
 async function fastRecomputeCoaCurrentBalances(client) {
-  const postedClause = '(je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)';
+  // Postgres: is_posted is boolean — never compare to integer 1.
+  const postedClause = '(je.is_posted IS DISTINCT FROM false)';
   await normalizeJournalAccountIds(client);
 
   try {
@@ -635,7 +636,7 @@ async function recomputeCoaCurrentBalances(client, accountIds) {
 
   if (ids && ids.length === 0) return { updated: 0 };
 
-  const postedClause = '(je.is_posted = true OR je.is_posted = 1 OR je.is_posted IS NULL)';
+  const postedClause = '(je.is_posted IS DISTINCT FROM false)';
   const lineMatchesAccount = `
     CAST(jel.account_id AS TEXT) = CAST(coa2.id AS TEXT)
     OR CAST(jel.account_id AS TEXT) = CAST(coa2.code AS TEXT)

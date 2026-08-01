@@ -10,6 +10,8 @@
 const {
   resolveEntityAccountCode,
   findEntityLeafCode,
+  ensureSupplierSubAccount,
+  ensureClientSubAccount,
   SUPPLIER_PARENT_CODE,
   CLIENT_PARENT_CODE,
   SUPPLIER_GROUP_CODE,
@@ -102,16 +104,24 @@ async function resolveLeafFromPurchaseOrder(client, journalEntryId) {
 async function resolveLeafFromDocumentNumber(client, parentCode, description) {
   const desc = cleanText(description);
   if (!desc || parentCode !== '321') return null;
-  const tokens = desc.match(/\b(?:FC|OC|PO|CP)[-/\s]?\d[\w/-]*/gi) || [];
+  const tokens = [
+    ...(desc.match(/\b(?:FC|OC|PO|CP|FR|FT|PP)[-/\s]?\d[\w/-]*/gi) || []),
+    // Stock Adjust In docs: MKFR26/3324, FT5326S44847N/3222, CDG2026/565
+    ...(desc.match(/\b[A-Z]{0,6}\d[\w./-]{2,}\b/gi) || []),
+  ];
+  const seen = new Set();
   for (const raw of tokens) {
     const num = raw.replace(/\s+/g, '').toUpperCase();
-    const variants = [num, raw.trim(), num.replace(/^FC/, 'FC-').replace(/^OC/, 'OC-')];
+    if (seen.has(num) || num.length < 4) continue;
+    seen.add(num);
+    const variants = [num, raw.trim(), num.replace(/^(FC|OC|FR|FT|PP)/, '$1-')];
     for (const v of variants) {
       const pi = await client.query(
         `SELECT supplier_id, supplier_name, supplier_account_code
          FROM purchase_invoices
          WHERE UPPER(REPLACE(TRIM(COALESCE(invoice_number, '')), ' ', '')) = UPPER(REPLACE($1, ' ', ''))
             OR UPPER(TRIM(COALESCE(invoice_number, ''))) = UPPER($1)
+            OR UPPER(REPLACE(TRIM(COALESCE(invoice_number, '')), ' ', '')) LIKE '%' || UPPER(REPLACE($1, ' ', '')) || '%'
          LIMIT 1`,
         [v],
       ).catch(() => ({ rows: [] }));
@@ -243,14 +253,44 @@ async function resolveLeafFromExistingName(client, parentCode, description) {
   return findEntityLeafCode(client, group, parent, e.name, e.nif);
 }
 
+/**
+ * Stock Adjust In journals: "Entrada inventário FR MKFR26/2816 MERHAT"
+ * → supplier hint "MERHAT" (strip doc type + number tokens).
+ */
+function extractStockEntrySupplierHint(description) {
+  const desc = cleanText(description);
+  // May appear after a line-description prefix ("… — Entrada inventário …")
+  const m = desc.match(/entrada\s+invent[aá]rio\s+(.+)$/i);
+  if (!m) return null;
+  let rest = m[1].trim();
+  // Drop leading type tokens (may repeat: FT FT5326…)
+  for (let i = 0; i < 3; i += 1) {
+    const next = rest.replace(/^(FR|PP|FT|FC|OC|PO|AJ|GR)\s+/i, '').trim();
+    if (next === rest) break;
+    rest = next;
+  }
+  // Drop document number token(s) that contain digits
+  for (let i = 0; i < 2; i += 1) {
+    const next = rest.replace(/^\S*\d\S*(?:\s+|$)/, '').trim();
+    if (next === rest) break;
+    rest = next;
+  }
+  if (rest.length >= 3 && !/^(entrada|fornecedor|invent)/i.test(rest)) return rest;
+  return null;
+}
+
 function extractEntityHint(description) {
   const desc = cleanText(description);
   if (!desc || desc.length < 3) return null;
+
+  const stockHint = extractStockEntrySupplierHint(desc);
+  if (stockHint) return stockHint;
+
   const patterns = [
     /(?:fornecedor|supplier|cliente|customer|client)\s*[:\-]?\s*(.+)$/i,
     /(?:compra|purchase|pagamento|payment|recebimento|receipt|fc|oc)\s+[^\-–—]+[\-–—]\s*(.+)$/i,
     /(?:entrada\s+invent[aá]rio|stock\s+in)\s+[^\-–—]+[\-–—]\s*(.+)$/i,
-    /^(.+?)\s*[\-–—]\s*(.+)$/, // generic "DOC - NAME" → take right side if long enough
+    /^(.+?)\s*[\-–—]\s*(.+)$/,
   ];
   for (let i = 0; i < patterns.length; i += 1) {
     const m = desc.match(patterns[i]);
@@ -269,10 +309,29 @@ async function resolveLeafFromDescription(client, parentCode, description) {
   const byName = await resolveLeafFromExistingName(client, parentCode, full);
   if (byName) return byName;
 
-  // 2) Patterned hint → existing leaf only
+  // 2) Patterned / stock-entry hint
   const hint = extractEntityHint(full);
   if (!hint) return null;
-  return resolveLeafFromExistingName(client, parentCode, hint);
+
+  const byHint = await resolveLeafFromExistingName(client, parentCode, hint);
+  if (byHint) return byHint;
+
+  // 3) Create leaf for clear stock-entry supplier names (city Adjust In leftovers)
+  if (parentCode === '321' && extractStockEntrySupplierHint(full)) {
+    try {
+      const created = await ensureSupplierSubAccount(client, hint, null);
+      if (isLeafCode(created, '321')) return created;
+    } catch (e) {
+      console.warn('[COA REPAIR] ensureSupplierSubAccount:', e.message);
+    }
+  }
+  if (parentCode === '311') {
+    try {
+      const created = await ensureClientSubAccount(client, hint, null);
+      if (isLeafCode(created, '311')) return created;
+    } catch (_) { /* ignore */ }
+  }
+  return null;
 }
 
 async function accountIdForCode(client, code) {
@@ -360,27 +419,25 @@ async function resolveLeafForLine(db, row) {
  */
 async function bulkRemapByDocumentJoin(db) {
   let total = 0;
+  // Postgres: target table "jel" must not appear in FROM joins — only in WHERE.
   const statements = [
-    // Purchase orders → supplier leaf
-    `UPDATE journal_entry_lines jel
+    `UPDATE journal_entry_lines AS jel
      SET account_id = leaf.id
      FROM journal_entries je
      INNER JOIN purchase_orders po ON CAST(po.id AS TEXT) = CAST(je.reference_id AS TEXT)
-     INNER JOIN chart_of_accounts parent
-       ON CAST(parent.id AS TEXT) = CAST(jel.account_id AS TEXT) AND parent.code = '321'
+     INNER JOIN chart_of_accounts parent ON parent.code = '321'
      INNER JOIN chart_of_accounts leaf
        ON leaf.is_active = true AND leaf.is_header = false
       AND leaf.code LIKE '321%' AND LENGTH(leaf.code) > 3
       AND LOWER(TRIM(leaf.name)) = LOWER(TRIM(po.supplier_name))
      WHERE CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)
+       AND CAST(jel.account_id AS TEXT) = CAST(parent.id AS TEXT)
        AND NULLIF(TRIM(po.supplier_name), '') IS NOT NULL`,
-    // Purchase invoices → supplier leaf (by name)
-    `UPDATE journal_entry_lines jel
+    `UPDATE journal_entry_lines AS jel
      SET account_id = leaf.id
      FROM journal_entries je
      INNER JOIN purchase_invoices pi ON CAST(pi.id AS TEXT) = CAST(je.reference_id AS TEXT)
-     INNER JOIN chart_of_accounts parent
-       ON CAST(parent.id AS TEXT) = CAST(jel.account_id AS TEXT) AND parent.code = '321'
+     INNER JOIN chart_of_accounts parent ON parent.code = '321'
      INNER JOIN chart_of_accounts leaf
        ON leaf.is_active = true AND leaf.is_header = false
       AND leaf.code LIKE '321%' AND LENGTH(leaf.code) > 3
@@ -389,15 +446,13 @@ async function bulkRemapByDocumentJoin(db) {
           AND leaf.code = TRIM(pi.supplier_account_code))
         OR LOWER(TRIM(leaf.name)) = LOWER(TRIM(pi.supplier_name))
       )
-     WHERE CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)`,
-    // Payments → supplier/customer leaf
-    `UPDATE journal_entry_lines jel
+     WHERE CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)
+       AND CAST(jel.account_id AS TEXT) = CAST(parent.id AS TEXT)`,
+    `UPDATE journal_entry_lines AS jel
      SET account_id = leaf.id
      FROM journal_entries je
      INNER JOIN payments p ON CAST(p.id AS TEXT) = CAST(je.reference_id AS TEXT)
-     INNER JOIN chart_of_accounts parent
-       ON CAST(parent.id AS TEXT) = CAST(jel.account_id AS TEXT)
-      AND parent.code IN ('321', '311')
+     INNER JOIN chart_of_accounts parent ON parent.code IN ('321', '311')
      INNER JOIN chart_of_accounts leaf
        ON leaf.is_active = true AND leaf.is_header = false
       AND (
@@ -406,6 +461,7 @@ async function bulkRemapByDocumentJoin(db) {
       )
       AND LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(NULLIF(TRIM(p.entity_name), ''), '')))
      WHERE CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)
+       AND CAST(jel.account_id AS TEXT) = CAST(parent.id AS TEXT)
        AND NULLIF(TRIM(p.entity_name), '') IS NOT NULL
        AND LOWER(COALESCE(p.entity_type, '')) IN ('supplier', 'customer', 'client')`,
   ];
@@ -522,7 +578,7 @@ async function countParentEntityLines(db) {
  * Patch 024 marks “attempted”; residual keeps re-running each startup / CoA open.
  */
 async function ensureParentEntityCoaRepaired(db) {
-  const patchId = '024_repair_parent_entity_coa_v3';
+  const patchId = '025_repair_parent_entity_coa_v4';
   try {
     await db.query(`
       CREATE TABLE IF NOT EXISTS schema_patches (
@@ -561,7 +617,7 @@ async function ensureParentEntityCoaRepaired(db) {
     );
   }
   console.log(
-    `[SCHEMA] Parent 321/311 COA repair v3: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter}`,
+    `[SCHEMA] Parent 321/311 COA repair v4: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter}`,
   );
   return { ...result, remaining: remainingAfter };
 }

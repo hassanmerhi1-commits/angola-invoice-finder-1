@@ -37,9 +37,15 @@ async function main() {
   }
 
   if (!dryRun) {
-    await fastRecomputeCoaCurrentBalances(db);
-    const after = await countParentEntityLines(db);
-    console.log(`[repair-parent-coa-v3] Parent 321/311 lines after: ${after}`);
+    try {
+      await fastRecomputeCoaCurrentBalances(db);
+      const after = await countParentEntityLines(db);
+      console.log(`[repair-parent-coa-v3] Parent 321/311 lines after: ${after}`);
+    } catch (e) {
+      console.warn(`[repair-parent-coa-v3] recompute failed (remap still applied): ${e.message}`);
+      const after = await countParentEntityLines(db).catch(() => -1);
+      console.log(`[repair-parent-coa-v3] Parent 321/311 lines after: ${after}`);
+    }
   }
 
   process.exit(0);
