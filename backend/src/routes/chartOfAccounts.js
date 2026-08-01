@@ -47,21 +47,35 @@ module.exports = function(broadcastTable) {
   }
 
   // List balances computed LIVE from journals (parity with ledger).
-  // Never await full-table recompute here — that timed out on city and the UI kept zeros.
+  // When parent 321/311 still holds lines, repair BEFORE responding so leaves
+  // are not stuck at 0 on first paint (city Tailscale: 12s cap).
   router.get('/', async (req, res) => {
     try {
+      try {
+        const {
+          countParentEntityLines,
+          repairParentEntityCoaPostings,
+        } = require('../lib/repairParentEntityCoa');
+        const pending = await countParentEntityLines(db);
+        if (pending > 0) {
+          console.log(`[CHART OF ACCOUNTS] Sync-repairing ${pending} parent 321/311 line(s)…`);
+          await Promise.race([
+            repairParentEntityCoaPostings(db, { dryRun: false }),
+            new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('repair timeout after 12s')), 12000);
+            }),
+          ]);
+        }
+      } catch (e) {
+        console.warn('[CHART OF ACCOUNTS] sync entity leaf repair:', e.message);
+      }
+
       setImmediate(() => {
         const run = async () => {
           try {
-            const pending = await db.query(
-              `SELECT 1 AS ok
-               FROM journal_entry_lines jel
-               INNER JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
-               WHERE CAST(coa.code AS TEXT) IN ('321', '311')
-               LIMIT 1`,
-            );
-            if (pending.rows?.length) {
-              const { repairParentEntityCoaPostings } = require('../lib/repairParentEntityCoa');
+            const { countParentEntityLines, repairParentEntityCoaPostings } = require('../lib/repairParentEntityCoa');
+            const pending = await countParentEntityLines(db);
+            if (pending > 0) {
               await repairParentEntityCoaPostings(db, { dryRun: false });
             }
           } catch (e) {

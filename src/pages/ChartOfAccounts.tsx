@@ -108,27 +108,35 @@ export default function ChartOfAccounts() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { accounts, isLoading, refetch, createAccount, updateAccount, deleteAccount } = useChartOfAccounts();
 
-  // Bust stale local zeros: always re-pull journal balances when opening CoA.
-  // Second pull after repair/recompute finishes in the background on the server.
+  // Bust cache, force server remapping of parent 321→leaves, then reload balances.
   useEffect(() => {
+    let cancelled = false;
     try {
       localStorage.removeItem('kwanzaerp_chart_of_accounts');
       localStorage.removeItem('kwanzaerp_chart_of_accounts_v2');
       localStorage.removeItem('kwanzaerp_chart_of_accounts_v3');
     } catch { /* ignore */ }
     markCachedListStale('chartOfAccounts');
-    void refetch({ force: true, liveBalances: true });
+
+    const run = async () => {
+      try {
+        await api.chartOfAccounts.recomputeBalances();
+      } catch (e) {
+        console.warn('[CoA] recompute/repair on open failed:', e);
+      }
+      if (cancelled) return;
+      await refetch({ force: true, liveBalances: true });
+    };
+    void run();
+
     const t1 = window.setTimeout(() => {
+      if (cancelled) return;
       markCachedListStale('chartOfAccounts');
       void refetch({ force: true, liveBalances: true });
-    }, 2500);
-    const t2 = window.setTimeout(() => {
-      markCachedListStale('chartOfAccounts');
-      void refetch({ force: true, liveBalances: true });
-    }, 8000);
+    }, 4000);
     return () => {
+      cancelled = true;
       window.clearTimeout(t1);
-      window.clearTimeout(t2);
     };
   }, [refetch]);
 
