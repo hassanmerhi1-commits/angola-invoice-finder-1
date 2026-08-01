@@ -909,7 +909,8 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
   // API stores debit−credit. Credit-nature accounts (suppliers/clients) flip for display
   // so payables appear as a positive amount in the Credit column.
   const isCreditNature = account.account_nature === 'credit';
-  const displayBalance = isCreditNature ? -rawBalance : rawBalance;
+  const flipped = isCreditNature ? -rawBalance : rawBalance;
+  const displayBalance = Math.abs(flipped) < 0.005 ? 0 : flipped;
   const debitCol = !isCreditNature && displayBalance > 0
     ? displayBalance
     : (isCreditNature && displayBalance < 0 ? Math.abs(displayBalance) : 0);

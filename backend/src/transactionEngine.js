@@ -448,6 +448,7 @@ function buildStockAdjustmentJournalLines(direction, referenceType, totalValue, 
   const landingCosts = Math.round((parseFloat(freightOpts.landingCosts) || 0) * 100) / 100;
   const freightSourceAccount = String(freightOpts.freightSourceAccount || '').trim();
   const freightSourceName = String(freightOpts.freightSourceName || '').trim() || 'Pagamento frete';
+  const supplierAccountCode = String(freightOpts.supplierAccountCode || '').trim();
   const splitFreight = landingCosts > 0 && freightSourceAccount.length > 0;
   const merchandiseValue = splitFreight
     ? Math.max(Math.round((amount - landingCosts) * 100) / 100, 0)
@@ -461,7 +462,10 @@ function buildStockAdjustmentJournalLines(direction, referenceType, totalValue, 
       creditAccount = ACC.REVALUATION_RESERVE;
       creditDesc = 'Existências iniciais';
     } else if (ref === 'purchase') {
-      creditAccount = ACC.SUPPLIERS_CURRENT;
+      // Prefer the 8-digit supplier leaf — bare 321 parks balances on the parent.
+      creditAccount = /^321\d+$/i.test(supplierAccountCode)
+        ? supplierAccountCode
+        : ACC.SUPPLIERS_CURRENT;
       creditDesc = 'Fornecedores (entrada directa — preferir FC)';
     } else if (ref === 'transfer' || ref === 'transfer_in') {
       return [
@@ -578,6 +582,8 @@ async function processStockAdjustment(client, data) {
     landingCosts,
     freightSourceAccount,
     freightSourceName,
+    supplierId,
+    supplierName,
   } = data;
 
   const normalizedDirection = String(direction || '').trim().toUpperCase();
@@ -703,13 +709,31 @@ async function processStockAdjustment(client, data) {
 
   totalValue = Math.round(totalValue * 100) / 100;
 
+  let supplierAccountCode = '';
+  if (
+    normalizedDirection === 'IN'
+    && String(referenceType || '').toLowerCase() === 'purchase'
+    && (supplierId || supplierName)
+  ) {
+    try {
+      supplierAccountCode = await resolveEntityAccountCode(
+        client,
+        'supplier',
+        supplierId || null,
+        supplierName || '',
+      ) || '';
+    } catch (e) {
+      console.warn('[STOCK ADJUST] supplier COA resolve failed:', e.message);
+    }
+  }
+
   let journalEntryId = null;
   const journalLines = buildStockAdjustmentJournalLines(
     normalizedDirection,
     referenceType,
     totalValue,
     docLabel,
-    { landingCosts, freightSourceAccount, freightSourceName },
+    { landingCosts, freightSourceAccount, freightSourceName, supplierAccountCode },
   );
 
   if (journalLines.length > 0) {
@@ -938,6 +962,8 @@ async function replaceStockAdjustment(client, data) {
     landingCosts: data.landingCosts ?? data.landing_costs,
     freightSourceAccount: data.freightSourceAccount ?? data.freight_source_account,
     freightSourceName: data.freightSourceName ?? data.freight_source_name,
+    supplierId: data.supplierId ?? data.supplier_id,
+    supplierName: data.supplierName ?? data.supplier_name,
   });
 }
 

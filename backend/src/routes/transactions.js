@@ -286,6 +286,8 @@ module.exports = function(broadcastTable) {
         landingCosts: req.body.landingCosts ?? req.body.landing_costs,
         freightSourceAccount: req.body.freightSourceAccount ?? req.body.freight_source_account,
         freightSourceName: req.body.freightSourceName ?? req.body.freight_source_name,
+        supplierId: req.body.supplierId ?? req.body.supplier_id,
+        supplierName: req.body.supplierName ?? req.body.supplier_name,
       });
       await client.query('COMMIT');
       await broadcastTable('products');

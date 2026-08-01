@@ -51,10 +51,31 @@ module.exports = function(broadcastTable) {
   router.get('/', async (req, res) => {
     try {
       setImmediate(() => {
-        const { fastRecomputeCoaCurrentBalances } = require('../accounting');
-        fastRecomputeCoaCurrentBalances(db)
-          .then(() => { try { broadcastTable('chart_of_accounts'); } catch (_) {} })
-          .catch((e) => console.warn('[CHART OF ACCOUNTS] background recompute failed:', e.message));
+        const run = async () => {
+          try {
+            const pending = await db.query(
+              `SELECT 1 AS ok
+               FROM journal_entry_lines jel
+               INNER JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
+               WHERE CAST(coa.code AS TEXT) IN ('321', '311')
+               LIMIT 1`,
+            );
+            if (pending.rows?.length) {
+              const { repairParentEntityCoaPostings } = require('../lib/repairParentEntityCoa');
+              await repairParentEntityCoaPostings(db, { dryRun: false });
+            }
+          } catch (e) {
+            console.warn('[CHART OF ACCOUNTS] entity leaf repair failed:', e.message);
+          }
+          try {
+            const { fastRecomputeCoaCurrentBalances } = require('../accounting');
+            await fastRecomputeCoaCurrentBalances(db);
+            try { broadcastTable('chart_of_accounts'); } catch (_) {}
+          } catch (e) {
+            console.warn('[CHART OF ACCOUNTS] background recompute failed:', e.message);
+          }
+        };
+        void run();
       });
 
       const result = await db.query(`
@@ -113,10 +134,17 @@ module.exports = function(broadcastTable) {
 
   router.post('/recompute-balances', requirePermission('admin_settings', 'accounting_create'), async (req, res) => {
     try {
-      const { recomputeCoaCurrentBalances } = require('../accounting');
-      const result = await recomputeCoaCurrentBalances(db);
+      const { repairParentEntityCoaPostings } = require('../lib/repairParentEntityCoa');
+      const { fastRecomputeCoaCurrentBalances, recomputeCoaCurrentBalances } = require('../accounting');
+      const repair = await repairParentEntityCoaPostings(db, { dryRun: false });
+      let result;
+      try {
+        result = await fastRecomputeCoaCurrentBalances(db);
+      } catch (_) {
+        result = await recomputeCoaCurrentBalances(db);
+      }
       broadcastTable('chart_of_accounts');
-      res.json({ success: true, ...result });
+      res.json({ success: true, repair, ...result });
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
       res.status(500).json({ error: 'Failed to recompute account balances' });

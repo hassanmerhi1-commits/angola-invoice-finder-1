@@ -1245,6 +1245,16 @@ async function ensurePhaseSchema(db) {
     await ensureBranchPricingColumn(db);
     await ensureProductPriceOverrideColumn(db);
     await ensureProductVatOverrideColumn(db);
+    try {
+      const { ensureParentEntityCoaRepaired } = require('./repairParentEntityCoa');
+      const { fastRecomputeCoaCurrentBalances } = require('../accounting');
+      const repair = await ensureParentEntityCoaRepaired(db);
+      if (repair && !repair.skipped && repair.moved > 0) {
+        await fastRecomputeCoaCurrentBalances(db);
+      }
+    } catch (e) {
+      console.warn('[SCHEMA] parent entity COA repair:', e.message);
+    }
     await ensureSalesCreditPaymentMethod(db);
     await ensureSalesClientIdColumn(db);
     await ensureCaixaTables(db);
