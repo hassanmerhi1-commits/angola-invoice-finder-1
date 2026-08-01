@@ -580,7 +580,14 @@ async function repairParentEntityCoaPostings(db, opts = {}) {
 
     let viaClassify = false;
     if (!leafCode || !isLeafCode(leafCode, parentCode)) {
-      if (classifyOrphans && !dryRun) {
+      if (classifyOrphans) {
+        if (dryRun) {
+          details.push(
+            `would classify ${row.entry_number || row.line_id}: ${parentCode} → “${CLASSIFY_LEAF_NAMES[parentCode] || 'por classificar'}”`,
+          );
+          moved += 1;
+          continue;
+        }
         leafCode = await ensureClassifyLeaf(db, parentCode);
         viaClassify = !!leafCode;
       }
