@@ -188,7 +188,10 @@ async function resolveLeafFromStockMovement(client, journalEntryId) {
   const r = await client.query(
     `SELECT DISTINCT
         COALESCE(NULLIF(TRIM(p.supplier_id), ''), NULL) AS supplier_id,
-        COALESCE(NULLIF(TRIM(p.supplier_name), ''), NULLIF(TRIM(s.name), '')) AS supplier_name
+        COALESCE(
+          NULLIF(TRIM(p.supplier_name), ''),
+          NULLIF(TRIM(s.name), '')
+        ) AS supplier_name
      FROM journal_entries je
      INNER JOIN stock_movements sm
        ON CAST(sm.reference_id AS TEXT) = CAST(je.reference_id AS TEXT)
@@ -196,18 +199,79 @@ async function resolveLeafFromStockMovement(client, journalEntryId) {
      LEFT JOIN products p ON CAST(p.id AS TEXT) = CAST(sm.product_id AS TEXT)
      LEFT JOIN suppliers s ON CAST(s.id AS TEXT) = CAST(p.supplier_id AS TEXT)
      WHERE CAST(je.id AS TEXT) = CAST($1 AS TEXT)
-       AND (
-         NULLIF(TRIM(p.supplier_id), '') IS NOT NULL
-         OR NULLIF(TRIM(p.supplier_name), '') IS NOT NULL
-         OR NULLIF(TRIM(s.name), '') IS NOT NULL
-       )
-     LIMIT 8`,
+     LIMIT 20`,
     [journalEntryId],
   ).catch(() => ({ rows: [] }));
 
   for (const row of r.rows || []) {
-    const code = await safeResolveEntity(client, 'supplier', row.supplier_id, row.supplier_name);
+    const name = cleanText(row.supplier_name);
+    if (!row.supplier_id && !name) continue;
+    const code = await safeResolveEntity(client, 'supplier', row.supplier_id, name);
     if (isLeafCode(code, '321')) return code;
+  }
+  return null;
+}
+
+/**
+ * Match stock_movements by reference_number tokens from "Entrada inventário FR MKFR26/3324".
+ */
+async function resolveLeafFromStockReferenceNumber(client, description) {
+  const desc = cleanText(description);
+  if (!desc) return null;
+  const tokens = [
+    ...(desc.match(/\b(?:FR|FT|PP|FC|OC|PO)[-/\s]?\S+/gi) || []),
+    ...(desc.match(/\b[A-Z]{0,6}\d[\w./-]{2,}\b/gi) || []),
+  ]
+    .map((t) => cleanText(t).replace(/^FR\s+/i, '').trim())
+    .filter((t) => t.length >= 4);
+
+  const seen = new Set();
+  for (const token of tokens) {
+    const key = token.toUpperCase().replace(/\s+/g, '');
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const r = await client.query(
+      `SELECT DISTINCT
+          COALESCE(NULLIF(TRIM(p.supplier_id), ''), NULL) AS supplier_id,
+          COALESCE(NULLIF(TRIM(p.supplier_name), ''), NULLIF(TRIM(s.name), '')) AS supplier_name
+       FROM stock_movements sm
+       LEFT JOIN products p ON CAST(p.id AS TEXT) = CAST(sm.product_id AS TEXT)
+       LEFT JOIN suppliers s ON CAST(s.id AS TEXT) = CAST(p.supplier_id AS TEXT)
+       WHERE UPPER(REPLACE(TRIM(COALESCE(sm.reference_number, '')), ' ', '')) LIKE '%' || $1 || '%'
+          OR UPPER(TRIM(COALESCE(sm.reference_number, ''))) = UPPER($2)
+       LIMIT 12`,
+      [key, token],
+    ).catch(() => ({ rows: [] }));
+
+    for (const row of r.rows || []) {
+      if (!row.supplier_id && !cleanText(row.supplier_name)) continue;
+      const code = await safeResolveEntity(client, 'supplier', row.supplier_id, row.supplier_name);
+      if (isLeafCode(code, '321')) return code;
+    }
+  }
+  return null;
+}
+
+const CLASSIFY_LEAF_NAMES = {
+  '321': 'Fornecedores - por classificar',
+  '311': 'Clientes - por classificar',
+};
+
+/** Last-resort leaf so parent 321/311 never keeps residual postings. */
+async function ensureClassifyLeaf(client, parentCode) {
+  const name = CLASSIFY_LEAF_NAMES[parentCode] || `Por classificar (${parentCode})`;
+  try {
+    if (parentCode === '321') {
+      const code = await ensureSupplierSubAccount(client, name, null);
+      return isLeafCode(code, '321') ? code : null;
+    }
+    if (parentCode === '311') {
+      const code = await ensureClientSubAccount(client, name, null);
+      return isLeafCode(code, '311') ? code : null;
+    }
+  } catch (e) {
+    console.warn('[COA REPAIR] ensureClassifyLeaf:', e.message);
   }
   return null;
 }
@@ -408,6 +472,9 @@ async function resolveLeafForLine(db, row) {
   if (!leafCode && parentCode === '321') {
     leafCode = await resolveLeafFromStockMovement(db, row.journal_entry_id);
   }
+  if (!leafCode && parentCode === '321') {
+    leafCode = await resolveLeafFromStockReferenceNumber(db, text);
+  }
   if (!leafCode) leafCode = await resolveLeafFromDocumentNumber(db, parentCode, text);
   if (!leafCode) leafCode = await resolveLeafFromDescription(db, parentCode, text);
   return { parentCode, leafCode };
@@ -483,6 +550,7 @@ async function bulkRemapByDocumentJoin(db) {
  */
 async function repairParentEntityCoaPostings(db, opts = {}) {
   const dryRun = opts.dryRun === true;
+  const classifyOrphans = opts.classifyOrphans !== false;
   const parentIds = await loadParentIds(db);
   if (parentIds.size === 0) {
     return { moved: 0, skipped: 0, remaining: 0, bulkMoved: 0, details: ['no parent 321/311 accounts'] };
@@ -510,14 +578,21 @@ async function repairParentEntityCoaPostings(db, opts = {}) {
       continue;
     }
 
+    let viaClassify = false;
     if (!leafCode || !isLeafCode(leafCode, parentCode)) {
-      skipped += 1;
-      if (details.length < 40) {
-        details.push(
-          `unresolved ${row.entry_number || row.line_id}: ${parentCode} ref=${row.reference_type || '?'} “${cleanText(row.journal_description || row.line_description).slice(0, 60)}”`,
-        );
+      if (classifyOrphans && !dryRun) {
+        leafCode = await ensureClassifyLeaf(db, parentCode);
+        viaClassify = !!leafCode;
       }
-      continue;
+      if (!leafCode || !isLeafCode(leafCode, parentCode)) {
+        skipped += 1;
+        if (details.length < 40) {
+          details.push(
+            `unresolved ${row.entry_number || row.line_id}: ${parentCode} ref=${row.reference_type || '?'} “${cleanText(row.journal_description || row.line_description).slice(0, 60)}”`,
+          );
+        }
+        continue;
+      }
     }
 
     const leafId = await accountIdForCode(db, leafCode);
@@ -540,7 +615,9 @@ async function repairParentEntityCoaPostings(db, opts = {}) {
         leafId,
         row.line_id,
       ]);
-      details.push(`moved ${row.entry_number}: ${parentCode} → ${leafCode} (D${debit}/C${credit})`);
+      details.push(
+        `moved ${row.entry_number}: ${parentCode} → ${leafCode}${viaClassify ? ' (por classificar)' : ''} (D${debit}/C${credit})`,
+      );
       moved += 1;
     } catch (e) {
       details.push(`error ${row.entry_number}: ${e.message}`);
@@ -578,7 +655,7 @@ async function countParentEntityLines(db) {
  * Patch 024 marks “attempted”; residual keeps re-running each startup / CoA open.
  */
 async function ensureParentEntityCoaRepaired(db) {
-  const patchId = '025_repair_parent_entity_coa_v4';
+  const patchId = '026_repair_parent_entity_coa_v5';
   try {
     await db.query(`
       CREATE TABLE IF NOT EXISTS schema_patches (
@@ -617,7 +694,7 @@ async function ensureParentEntityCoaRepaired(db) {
     );
   }
   console.log(
-    `[SCHEMA] Parent 321/311 COA repair v4: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter}`,
+    `[SCHEMA] Parent 321/311 COA repair v5: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter}`,
   );
   return { ...result, remaining: remainingAfter };
 }
