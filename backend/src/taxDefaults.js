@@ -42,15 +42,27 @@ function isTruthyFlag(value) {
 
 /**
  * Protect stored IVA from silent clobber (Excel/import/form defaults).
- * Any rate change requires acknowledgement (vat_override true / forceVatChange),
- * matching ProductDetailDialog which sets vatOverride when the user edits IVA.
+ *
+ * vatOverride / forceVatChange acknowledge an intentional IVA edit — but never
+ * let that alone authorize overwriting a non-default rate with default 5%
+ * unless forceVatChange is explicitly set (user deliberately chose 5%).
  */
 function shouldPreserveExistingTaxRate(existing, nextRate, opts = {}) {
-  if (opts.forceVatChange || opts.clientSetsOverride) return false;
   const cur = Number(existing?.tax_rate);
   const next = Number(nextRate);
   if (!Number.isFinite(next) || !Number.isFinite(cur)) return false;
   if (Math.abs(cur - next) < 0.0001) return false;
+
+  const nextIsDefault = Math.abs(next - Number(DEFAULT_VAT_RATE)) < 0.0001;
+  const curNonDefault = Math.abs(cur - Number(DEFAULT_VAT_RATE)) > 0.0001;
+
+  // Hard rule: never silently (or via sticky vatOverride flag) replace 14/7/0 with 5.
+  // Only forceVatChange (explicit "I chose 5%") may do that.
+  if (nextIsDefault && curNonDefault && !opts.forceVatChange) {
+    return true;
+  }
+
+  if (opts.forceVatChange || opts.clientSetsOverride) return false;
   // Unacknowledged change of any kind — keep what is stored.
   return true;
 }

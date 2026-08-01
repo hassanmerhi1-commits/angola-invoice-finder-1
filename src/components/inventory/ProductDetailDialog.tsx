@@ -573,6 +573,11 @@ export function ProductDetailDialog({
       unit: formData.unit,
       taxRate: formData.iva,
       vatOverride: formData.vatOverride,
+      // Only force when the user actually changed IVA in this session (incl. to 5%).
+      forceVatChange:
+        !!effectiveProduct?.id
+        && formData.iva != null
+        && Number(formData.iva) !== Number(effectiveProduct?.taxRate),
       branchId: resolvedBranchId,
       supplierId: resolvedSupplierId,
       supplierName: resolvedSupplierName,

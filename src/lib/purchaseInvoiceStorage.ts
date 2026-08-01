@@ -629,6 +629,8 @@ export function resolveSellingPriceFromPurchaseLine(
 }
 
 function productToUpdatePayload(product: Record<string, unknown>, patch: Record<string, unknown>) {
+  // Do not send taxRate — purchase price updates must never rewrite IVA (missing/0
+  // used to become 14, and a wiped 5% would be re-saved forever).
   return {
     name: product.name,
     sku: product.sku,
@@ -640,7 +642,6 @@ function productToUpdatePayload(product: Record<string, unknown>, patch: Record<
     price4: Number(product.price4) || 0,
     cost: Number(product.cost) || 0,
     unit: product.unit ?? 'UN',
-    taxRate: Number(product.tax_rate ?? product.taxRate) || 14,
     branchId: product.branch_id ?? product.branchId,
     isActive: product.is_active !== 0 && product.isActive !== false,
     supplierId: product.supplier_id ?? product.supplierId,
