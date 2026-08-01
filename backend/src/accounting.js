@@ -565,7 +565,8 @@ async function fastRecomputeCoaCurrentBalances(client) {
         SELECT jel.account_id AS id,
                SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
         FROM journal_entry_lines jel
-        INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+        INNER JOIN journal_entries je
+          ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
         WHERE ${postedClause}
         GROUP BY jel.account_id
       ) j
@@ -581,7 +582,8 @@ async function fastRecomputeCoaCurrentBalances(client) {
           SELECT coa_c.id AS id,
                  SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
           FROM journal_entry_lines jel
-          INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+          INNER JOIN journal_entries je
+            ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
           INNER JOIN chart_of_accounts coa_c
             ON CAST(coa_c.code AS TEXT) = CAST(jel.account_id AS TEXT)
           WHERE ${postedClause}

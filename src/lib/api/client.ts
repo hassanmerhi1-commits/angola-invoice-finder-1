@@ -1795,7 +1795,8 @@ export const api = {
               COALESCE(coa.opening_balance, 0) + COALESCE((
                 SELECT SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0))
                 FROM journal_entry_lines jel
-                INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+                INNER JOIN journal_entries je
+                  ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
                 WHERE (CAST(jel.account_id AS TEXT) = CAST(coa.id AS TEXT)
                        OR CAST(jel.account_id AS TEXT) = CAST(coa.code AS TEXT))
                   AND (je.is_posted = 1 OR je.is_posted = true OR je.is_posted IS NULL)

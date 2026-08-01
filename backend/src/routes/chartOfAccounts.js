@@ -8,22 +8,54 @@ const { auditErpSafe } = require('../lib/erpAudit');
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
-  // List balances: recompute into current_balance (same rules as ledger), then
-  // return the stored column. Do NOT re-derive with a different join — that was
-  // why the tree showed 0 while double-click ledger still had movements.
+  const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
+  const postedClauseSql = () => (db.engine === 'postgres'
+    ? '(je.is_posted IS DISTINCT FROM false)'
+    : '(je.is_posted = 1 OR je.is_posted IS NULL OR je.is_posted = true)');
+  const activeClauseSql = (alias = 'coa') => (db.engine === 'postgres'
+    ? `(${alias}.is_active IS DISTINCT FROM false)`
+    : `(${alias}.is_active = 1 OR ${alias}.is_active IS NULL OR ${alias}.is_active = true)`);
+
+  /**
+   * Live journal net per account — SAME match rules as GET /:id/ledger
+   * (cast joins on journal id + account id OR PGC code).
+   */
+  function journalNetSubquery() {
+    const posted = postedClauseSql();
+    return `
+      SELECT u.account_key AS account_key, SUM(u.net) AS net
+      FROM (
+        SELECT ${idText('jel.account_id')} AS account_key,
+               COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
+        FROM journal_entry_lines jel
+        INNER JOIN journal_entries je
+          ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
+        WHERE ${posted}
+        UNION ALL
+        SELECT ${idText('coa_c.id')} AS account_key,
+               COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
+        FROM journal_entry_lines jel
+        INNER JOIN journal_entries je
+          ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
+        INNER JOIN chart_of_accounts coa_c
+          ON ${idText('coa_c.code')} = ${idText('jel.account_id')}
+        WHERE ${posted}
+          AND ${idText('coa_c.id')} <> ${idText('jel.account_id')}
+      ) u
+      GROUP BY u.account_key
+    `;
+  }
+
+  // List balances computed LIVE from journals (parity with ledger).
+  // Never await full-table recompute here — that timed out on city and the UI kept zeros.
   router.get('/', async (req, res) => {
     try {
-      // Always heal balances on list — CoA page is useless with stale zeros.
-      try {
+      setImmediate(() => {
         const { fastRecomputeCoaCurrentBalances } = require('../accounting');
-        await fastRecomputeCoaCurrentBalances(db);
-      } catch (e) {
-        console.warn('[CHART OF ACCOUNTS] fast recompute failed:', e.message);
-      }
-
-      const activeClause = db.engine === 'postgres'
-        ? '(coa.is_active IS DISTINCT FROM false)'
-        : '(coa.is_active = 1 OR coa.is_active IS NULL OR coa.is_active = true)';
+        fastRecomputeCoaCurrentBalances(db)
+          .then(() => { try { broadcastTable('chart_of_accounts'); } catch (_) {} })
+          .catch((e) => console.warn('[CHART OF ACCOUNTS] background recompute failed:', e.message));
+      });
 
       const result = await db.query(`
         SELECT 
@@ -44,18 +76,38 @@ module.exports = function(broadcastTable) {
           parent.name as parent_name,
           parent.code as parent_code,
           COALESCE(coa.children_count, 0) as children_count,
-          COALESCE(coa.current_balance, coa.opening_balance, 0) AS current_balance
+          COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0) AS current_balance
         FROM chart_of_accounts coa
         LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
-        WHERE ${activeClause}
+        LEFT JOIN (
+          ${journalNetSubquery()}
+        ) j ON j.account_key = ${idText('coa.id')}
+        WHERE ${activeClauseSql('coa')}
         ORDER BY coa.code
       `);
       res.set('Cache-Control', 'no-store');
       res.json(result.rows);
-      try { broadcastTable('chart_of_accounts'); } catch (_) { /* ignore */ }
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
-      res.status(500).json({ error: 'Failed to fetch accounts' });
+      try {
+        const fallback = await db.query(`
+          SELECT 
+            coa.id, coa.code, coa.name, coa.description, coa.account_type, coa.account_nature,
+            coa.parent_id, coa.level, coa.is_header, coa.is_active, coa.opening_balance,
+            coa.branch_id, coa.created_at, coa.updated_at,
+            parent.name as parent_name, parent.code as parent_code,
+            COALESCE(coa.children_count, 0) as children_count,
+            COALESCE(coa.current_balance, coa.opening_balance, 0) AS current_balance
+          FROM chart_of_accounts coa
+          LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
+          WHERE ${activeClauseSql('coa')}
+          ORDER BY coa.code
+        `);
+        res.set('Cache-Control', 'no-store');
+        res.json(fallback.rows);
+      } catch (e2) {
+        res.status(500).json({ error: 'Failed to fetch accounts' });
+      }
     }
   });
 

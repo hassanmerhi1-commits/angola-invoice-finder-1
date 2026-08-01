@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation, type TranslationKeys } from '@/i18n';
 import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
+import { markCachedListStale } from '@/lib/listCache';
 import { Account, AccountType, AccountFormData, getDefaultNature } from '@/types/accounting';
 import { resolveAccountDisplayName, resolveAccountTypeLabel } from '@/lib/chartOfAccountsDisplay';
 import { Button } from '@/components/ui/button';
@@ -109,6 +110,12 @@ export default function ChartOfAccounts() {
 
   // Bust stale local zeros: always re-pull journal balances when opening CoA.
   useEffect(() => {
+    try {
+      localStorage.removeItem('kwanzaerp_chart_of_accounts');
+      localStorage.removeItem('kwanzaerp_chart_of_accounts_v2');
+      localStorage.removeItem('kwanzaerp_chart_of_accounts_v3');
+    } catch { /* ignore */ }
+    markCachedListStale('chartOfAccounts');
     void refetch({ force: true, liveBalances: true });
   }, [refetch]);
 
@@ -896,9 +903,19 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
     return sum;
   };
 
-  const balance = hasChildren || account.is_header || String(account.code || '').length <= 3
+  const rawBalance = hasChildren || account.is_header || String(account.code || '').length <= 3
     ? computeBalance(account)
     : (Number(account.current_balance) || 0);
+  // API stores debit−credit. Credit-nature accounts (suppliers/clients) flip for display
+  // so payables appear as a positive amount in the Credit column.
+  const isCreditNature = account.account_nature === 'credit';
+  const displayBalance = isCreditNature ? -rawBalance : rawBalance;
+  const debitCol = !isCreditNature && displayBalance > 0
+    ? displayBalance
+    : (isCreditNature && displayBalance < 0 ? Math.abs(displayBalance) : 0);
+  const creditCol = isCreditNature && displayBalance > 0
+    ? displayBalance
+    : (!isCreditNature && displayBalance < 0 ? Math.abs(displayBalance) : 0);
 
   return (
     <>
@@ -924,13 +941,13 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
         <td className="px-3 py-1.5">{displayName}</td>
         <td className="px-3 py-1.5 text-center text-muted-foreground">AOA</td>
         <td className="px-3 py-1.5 text-right font-mono">
-          {balance >= 0 ? `${balance.toLocaleString(uiLocale)}` : ''}
+          {debitCol > 0 ? `${debitCol.toLocaleString(uiLocale)}` : ''}
         </td>
         <td className="px-3 py-1.5 text-right font-mono">
-          {balance < 0 ? `${Math.abs(balance).toLocaleString(uiLocale)}` : ''}
+          {creditCol > 0 ? `${creditCol.toLocaleString(uiLocale)}` : ''}
         </td>
-        <td className={cn("px-3 py-1.5 text-right font-mono font-medium", balance >= 0 ? "text-foreground" : "text-destructive")}>
-          {`${balance.toLocaleString(uiLocale)}`}
+        <td className={cn("px-3 py-1.5 text-right font-mono font-medium", displayBalance >= 0 ? "text-foreground" : "text-destructive")}>
+          {`${displayBalance.toLocaleString(uiLocale)}`}
         </td>
       </tr>
       {isExpanded && children.map(child => (
