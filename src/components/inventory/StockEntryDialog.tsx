@@ -239,9 +239,13 @@ export function StockEntryDialog({
     || '';
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
 
+  // HQ/admins: list every filial caixa/bank (same as Purchase Invoice freight).
+  // Filial users: only their branch registers.
+  const freightAllBranches = Boolean(canSwitchBranch);
+
   const refreshFreightTreasury = useCallback(async () => {
     const branchId = String(entryBranchId || '').trim();
-    if (!branchId) {
+    if (!freightAllBranches && !branchId) {
       setFreightCaixas([]);
       setFreightBankAccounts([]);
       return;
@@ -249,25 +253,33 @@ export function StockEntryDialog({
     setFreightTreasuryLoading(true);
     try {
       const [loadedCaixas, loadedBanks] = await Promise.all([
-        getCaixas(branchId, entryBranchName, { ensureIfEmpty: true }),
-        getBankAccounts(branchId),
+        getCaixas(branchId, entryBranchName, {
+          ensureIfEmpty: !freightAllBranches,
+          allBranches: freightAllBranches,
+        }),
+        getBankAccounts(freightAllBranches ? undefined : branchId, {
+          allBranches: freightAllBranches,
+        }),
       ]);
       setFreightCaixas(loadedCaixas);
       setFreightBankAccounts(loadedBanks);
       setForm((prev) => {
         const next = { ...prev };
         if (loadedCaixas.length > 0 && !loadedCaixas.some((c) => c.id === prev.freightCaixaId)) {
-          next.freightCaixaId = loadedCaixas[0].id;
+          // Prefer a caixa on the selected warehouse branch when listing all.
+          const local = loadedCaixas.find((c) => String(c.branchId || '') === branchId);
+          next.freightCaixaId = (local || loadedCaixas[0]).id;
         }
         if (loadedBanks.length > 0 && !loadedBanks.some((b) => b.id === prev.freightBankAccountId)) {
-          next.freightBankAccountId = loadedBanks[0].id;
+          const local = loadedBanks.find((b) => String(b.branchId || '') === branchId);
+          next.freightBankAccountId = (local || loadedBanks[0]).id;
         }
         return next;
       });
     } finally {
       setFreightTreasuryLoading(false);
     }
-  }, [entryBranchId, entryBranchName]);
+  }, [entryBranchId, entryBranchName, freightAllBranches]);
 
   useEffect(() => {
     if (!open) return;
@@ -1333,7 +1345,7 @@ export function StockEntryDialog({
                         ) : (
                           freightCaixas.map((c) => (
                             <SelectItem key={c.id} value={c.id}>
-                              {formatFreightCaixaLabel(c, uiLocale)}
+                              {formatFreightCaixaLabel(c, uiLocale, freightAllBranches)}
                             </SelectItem>
                           ))
                         )}
@@ -1356,7 +1368,7 @@ export function StockEntryDialog({
                         ) : (
                           freightBankAccounts.map((a) => (
                             <SelectItem key={a.id} value={a.id}>
-                              {formatFreightBankLabel(a)}
+                              {formatFreightBankLabel(a, freightAllBranches)}
                             </SelectItem>
                           ))
                         )}

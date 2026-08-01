@@ -22,12 +22,40 @@ function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+/** Strip common company suffixes so "ATLAS LDA" matches leaf "ATLAS". */
+function normalizeEntityName(value) {
+  return cleanText(value)
+    .replace(/[.,]/g, ' ')
+    .replace(/\b(lda|ltda|sa|s\.a|sarl|llc|inc|co)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function namesLooselyMatch(a, b) {
+  const na = normalizeEntityName(a);
+  const nb = normalizeEntityName(b);
+  if (!na || !nb || na.length < 3 || nb.length < 3) return false;
+  if (na === nb) return true;
+  if (na.length >= 5 && nb.includes(na)) return true;
+  if (nb.length >= 5 && na.includes(nb)) return true;
+  return false;
+}
+
 function isLeafCode(code, parentCode) {
   const c = cleanText(code);
   if (!c || c === parentCode) return false;
   if (parentCode === '321') return /^321\d{5,}$/i.test(c);
   if (parentCode === '311') return /^311\d{5,}$/i.test(c);
   return c.startsWith(parentCode) && c.length > parentCode.length;
+}
+
+/** Parent lines may store UUID or legacy PGC code in account_id. */
+function parentAccountMatchSql(parentAlias = 'parent') {
+  return `(
+    CAST(jel.account_id AS TEXT) = CAST(${parentAlias}.id AS TEXT)
+    OR CAST(jel.account_id AS TEXT) = CAST(${parentAlias}.code AS TEXT)
+  )`;
 }
 
 async function safeResolveEntity(client, entityType, entityId, entityName) {
@@ -52,20 +80,87 @@ async function loadParentIds(client) {
 /** Join payment by reference_id — ignore reference_type (city data often mismatches). */
 async function resolveLeafFromPayment(client, journalEntryId) {
   const r = await client.query(
-    `SELECT p.entity_type, p.entity_id, p.entity_name
+    `SELECT p.entity_type, p.entity_id, p.entity_name,
+            COALESCE(NULLIF(TRIM(s.name), ''), NULLIF(TRIM(c.name), '')) AS master_name
      FROM journal_entries je
      INNER JOIN payments p ON CAST(p.id AS TEXT) = CAST(je.reference_id AS TEXT)
+     LEFT JOIN suppliers s ON CAST(s.id AS TEXT) = CAST(p.entity_id AS TEXT)
+     LEFT JOIN clients c ON CAST(c.id AS TEXT) = CAST(p.entity_id AS TEXT)
      WHERE CAST(je.id AS TEXT) = CAST($1 AS TEXT)
-       AND LOWER(COALESCE(p.entity_type, '')) IN ('supplier', 'customer', 'client')
      LIMIT 1`,
     [journalEntryId],
   ).catch(() => ({ rows: [] }));
   const row = r.rows?.[0];
   if (!row) return null;
-  const entityType = String(row.entity_type).toLowerCase() === 'client' ? 'customer' : row.entity_type;
-  const code = await safeResolveEntity(client, entityType, row.entity_id, row.entity_name);
+
+  let entityType = String(row.entity_type || '').toLowerCase();
+  if (entityType === 'client') entityType = 'customer';
+  if (!entityType || !['supplier', 'customer'].includes(entityType)) {
+    if (row.master_name && row.entity_id) {
+      // Infer from which master table matched
+      const sup = await client.query(
+        `SELECT 1 FROM suppliers WHERE CAST(id AS TEXT) = CAST($1 AS TEXT) LIMIT 1`,
+        [row.entity_id],
+      ).catch(() => ({ rows: [] }));
+      entityType = sup.rows?.[0] ? 'supplier' : 'customer';
+    } else {
+      return null;
+    }
+  }
+
+  const name = cleanText(row.master_name) || cleanText(row.entity_name);
+  const code = await safeResolveEntity(client, entityType, row.entity_id, name);
   const parent = entityType === 'supplier' ? '321' : '311';
-  return isLeafCode(code, parent) ? code : null;
+  if (isLeafCode(code, parent)) return code;
+
+  // Fuzzy fallback onto an existing leaf by master/payment name
+  if (name) {
+    const fuzzy = await resolveLeafFromExistingName(client, parent, name);
+    if (fuzzy) return fuzzy;
+    try {
+      const created = entityType === 'supplier'
+        ? await ensureSupplierSubAccount(client, name, null)
+        : await ensureClientSubAccount(client, name, null);
+      if (isLeafCode(created, parent)) return created;
+    } catch (_) { /* ignore */ }
+  }
+  return null;
+}
+
+/** Match "Pagamento PAG-2026-00655 - ATLAS" via payment_number in journal text. */
+async function resolveLeafFromPaymentNumber(client, parentCode, description) {
+  const desc = cleanText(description);
+  if (!desc) return null;
+  const tokens = desc.match(/\bPAG[- ]?\d{4}[- ]?\d+\b/gi) || [];
+  for (const raw of tokens) {
+    const num = raw.replace(/\s+/g, '').toUpperCase();
+    const variants = [num, raw.trim(), num.replace(/^PAG/, 'PAG-')];
+    for (const v of variants) {
+      const r = await client.query(
+        `SELECT p.entity_type, p.entity_id, p.entity_name,
+                COALESCE(NULLIF(TRIM(s.name), ''), NULLIF(TRIM(c.name), '')) AS master_name
+         FROM payments p
+         LEFT JOIN suppliers s ON CAST(s.id AS TEXT) = CAST(p.entity_id AS TEXT)
+         LEFT JOIN clients c ON CAST(c.id AS TEXT) = CAST(p.entity_id AS TEXT)
+         WHERE UPPER(REPLACE(TRIM(COALESCE(p.payment_number, '')), ' ', '')) = UPPER(REPLACE($1, ' ', ''))
+            OR UPPER(TRIM(COALESCE(p.payment_number, ''))) = UPPER($1)
+         LIMIT 1`,
+        [v],
+      ).catch(() => ({ rows: [] }));
+      const row = r.rows?.[0];
+      if (!row) continue;
+      let entityType = String(row.entity_type || '').toLowerCase();
+      if (entityType === 'client') entityType = 'customer';
+      if (!['supplier', 'customer'].includes(entityType)) {
+        entityType = parentCode === '311' ? 'customer' : 'supplier';
+      }
+      const name = cleanText(row.master_name) || cleanText(row.entity_name);
+      const code = await safeResolveEntity(client, entityType, row.entity_id, name);
+      const parent = entityType === 'supplier' ? '321' : '311';
+      if (parent === parentCode && isLeafCode(code, parent)) return code;
+    }
+  }
+  return null;
 }
 
 async function resolveLeafFromPurchaseInvoice(client, journalEntryId) {
@@ -282,9 +377,10 @@ async function ensureClassifyLeaf(client, parentCode) {
  */
 async function resolveLeafFromExistingName(client, parentCode, description) {
   const desc = cleanText(description);
-  if (!desc || desc.length < 5) return null;
+  if (!desc || desc.length < 3) return null;
   const group = parentCode === CLIENT_PARENT_CODE ? CLIENT_GROUP_CODE : SUPPLIER_GROUP_CODE;
   const parent = parentCode === CLIENT_PARENT_CODE ? CLIENT_PARENT_CODE : SUPPLIER_PARENT_CODE;
+  const descNorm = normalizeEntityName(desc);
 
   const r = await client.query(
     `SELECT code, name
@@ -294,27 +390,76 @@ async function resolveLeafFromExistingName(client, parentCode, description) {
        AND LENGTH(code) > LENGTH($2)
        AND is_header = false
        AND is_active = true
-       AND LENGTH(TRIM(name)) >= 5
-       AND LOWER($3) LIKE '%' || LOWER(TRIM(name)) || '%'
+       AND LENGTH(TRIM(name)) >= 3
+       AND (
+         LOWER($3) LIKE '%' || LOWER(TRIM(name)) || '%'
+         OR LOWER(TRIM(name)) LIKE '%' || LOWER($3) || '%'
+       )
      ORDER BY LENGTH(TRIM(name)) DESC
-     LIMIT 1`,
+     LIMIT 25`,
     [`${group}%`, parent, desc],
   );
-  if (r.rows?.[0]?.code) return r.rows[0].code;
+  // Prefer longest exact/loose match (avoid short false hits like "COM")
+  let best = null;
+  let bestLen = 0;
+  for (const row of r.rows || []) {
+    const name = cleanText(row.name);
+    if (name.length < 4 && !desc.toLowerCase().includes(name.toLowerCase())) continue;
+    if (namesLooselyMatch(desc, name) || desc.toLowerCase().includes(name.toLowerCase())) {
+      if (name.length > bestLen) {
+        best = row.code;
+        bestLen = name.length;
+      }
+    }
+  }
+  if (best) return best;
+
+  // Normalized scan when SQL LIKE missed suffix differences
+  const allLeaves = await client.query(
+    `SELECT code, name FROM chart_of_accounts
+     WHERE code LIKE $1 AND code <> $2 AND LENGTH(code) > LENGTH($2)
+       AND is_header = false AND is_active = true AND LENGTH(TRIM(name)) >= 4`,
+    [`${group}%`, parent],
+  ).catch(() => ({ rows: [] }));
+  for (const row of allLeaves.rows || []) {
+    const nn = normalizeEntityName(row.name);
+    if (!nn || nn.length < 4) continue;
+    if (descNorm === nn || descNorm.includes(nn) || nn.includes(descNorm)) {
+      if (nn.length > bestLen) {
+        best = row.code;
+        bestLen = nn.length;
+      }
+    }
+  }
+  if (best) return best;
 
   const table = parentCode === CLIENT_PARENT_CODE ? 'clients' : 'suppliers';
   const ent = await client.query(
     `SELECT id, name, nif FROM ${table}
      WHERE is_active = true
-       AND LENGTH(TRIM(name)) >= 5
-       AND LOWER($1) LIKE '%' || LOWER(TRIM(name)) || '%'
+       AND LENGTH(TRIM(name)) >= 4
+       AND (
+         LOWER($1) LIKE '%' || LOWER(TRIM(name)) || '%'
+         OR LOWER(TRIM(name)) LIKE '%' || LOWER($1) || '%'
+       )
      ORDER BY LENGTH(TRIM(name)) DESC
-     LIMIT 1`,
+     LIMIT 8`,
     [desc],
   ).catch(() => ({ rows: [] }));
-  const e = ent.rows?.[0];
-  if (!e) return null;
-  return findEntityLeafCode(client, group, parent, e.name, e.nif);
+  for (const e of ent.rows || []) {
+    if (!namesLooselyMatch(desc, e.name) && !desc.toLowerCase().includes(cleanText(e.name).toLowerCase())) {
+      continue;
+    }
+    const code = await findEntityLeafCode(client, group, parent, e.name, e.nif);
+    if (code) return code;
+    try {
+      const created = parentCode === '311'
+        ? await ensureClientSubAccount(client, e.name, e.nif)
+        : await ensureSupplierSubAccount(client, e.name, e.nif);
+      if (isLeafCode(created, parentCode)) return created;
+    } catch (_) { /* ignore */ }
+  }
+  return null;
 }
 
 /**
@@ -380,8 +525,8 @@ async function resolveLeafFromDescription(client, parentCode, description) {
   const byHint = await resolveLeafFromExistingName(client, parentCode, hint);
   if (byHint) return byHint;
 
-  // 3) Create leaf for clear stock-entry supplier names (city Adjust In leftovers)
-  if (parentCode === '321' && extractStockEntrySupplierHint(full)) {
+  // 3) Create leaf when we have a usable entity hint (stock Adjust In or other)
+  if (parentCode === '321' && hint) {
     try {
       const created = await ensureSupplierSubAccount(client, hint, null);
       if (isLeafCode(created, '321')) return created;
@@ -389,7 +534,7 @@ async function resolveLeafFromDescription(client, parentCode, description) {
       console.warn('[COA REPAIR] ensureSupplierSubAccount:', e.message);
     }
   }
-  if (parentCode === '311') {
+  if (parentCode === '311' && hint) {
     try {
       const created = await ensureClientSubAccount(client, hint, null);
       if (isLeafCode(created, '311')) return created;
@@ -466,6 +611,7 @@ async function resolveLeafForLine(db, row) {
   const text = [row.line_description, row.journal_description].filter(Boolean).join(' — ');
 
   let leafCode = await resolveLeafFromPayment(db, row.journal_entry_id);
+  if (!leafCode) leafCode = await resolveLeafFromPaymentNumber(db, parentCode, text);
   if (!leafCode) leafCode = await resolveLeafFromPurchaseInvoice(db, row.journal_entry_id);
   if (!leafCode) leafCode = await resolveLeafFromPurchaseOrder(db, row.journal_entry_id);
   if (!leafCode) leafCode = await resolveLeafFromOpenItem(db, row.journal_entry_id);
@@ -487,23 +633,34 @@ async function resolveLeafForLine(db, row) {
 async function bulkRemapByDocumentJoin(db) {
   let total = 0;
   // Postgres: target table "jel" must not appear in FROM joins — only in WHERE.
+  const parentMatch = parentAccountMatchSql('parent');
   const statements = [
+    // PO → supplier leaf (exact or supplier master)
     `UPDATE journal_entry_lines AS jel
      SET account_id = leaf.id
      FROM journal_entries je
      INNER JOIN purchase_orders po ON CAST(po.id AS TEXT) = CAST(je.reference_id AS TEXT)
+     LEFT JOIN suppliers s ON CAST(s.id AS TEXT) = CAST(po.supplier_id AS TEXT)
      INNER JOIN chart_of_accounts parent ON parent.code = '321'
      INNER JOIN chart_of_accounts leaf
        ON leaf.is_active = true AND leaf.is_header = false
       AND leaf.code LIKE '321%' AND LENGTH(leaf.code) > 3
-      AND LOWER(TRIM(leaf.name)) = LOWER(TRIM(po.supplier_name))
+      AND (
+        LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(NULLIF(TRIM(po.supplier_name), ''), '')))
+        OR LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(NULLIF(TRIM(s.name), ''), '')))
+      )
      WHERE CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)
-       AND CAST(jel.account_id AS TEXT) = CAST(parent.id AS TEXT)
-       AND NULLIF(TRIM(po.supplier_name), '') IS NOT NULL`,
+       AND ${parentMatch}
+       AND (
+         NULLIF(TRIM(po.supplier_name), '') IS NOT NULL
+         OR NULLIF(TRIM(s.name), '') IS NOT NULL
+       )`,
+    // PI → supplier leaf (code, invoice name, or supplier master)
     `UPDATE journal_entry_lines AS jel
      SET account_id = leaf.id
      FROM journal_entries je
      INNER JOIN purchase_invoices pi ON CAST(pi.id AS TEXT) = CAST(je.reference_id AS TEXT)
+     LEFT JOIN suppliers s ON CAST(s.id AS TEXT) = CAST(pi.supplier_id AS TEXT)
      INNER JOIN chart_of_accounts parent ON parent.code = '321'
      INNER JOIN chart_of_accounts leaf
        ON leaf.is_active = true AND leaf.is_header = false
@@ -511,14 +668,22 @@ async function bulkRemapByDocumentJoin(db) {
       AND (
         (NULLIF(TRIM(pi.supplier_account_code), '') IS NOT NULL
           AND leaf.code = TRIM(pi.supplier_account_code))
-        OR LOWER(TRIM(leaf.name)) = LOWER(TRIM(pi.supplier_name))
+        OR LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(pi.supplier_name, '')))
+        OR LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(s.name, '')))
       )
      WHERE CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)
-       AND CAST(jel.account_id AS TEXT) = CAST(parent.id AS TEXT)`,
+       AND ${parentMatch}`,
+    // Payments → leaf via entity_name or suppliers/clients master
     `UPDATE journal_entry_lines AS jel
      SET account_id = leaf.id
      FROM journal_entries je
      INNER JOIN payments p ON CAST(p.id AS TEXT) = CAST(je.reference_id AS TEXT)
+     LEFT JOIN suppliers s
+       ON LOWER(COALESCE(p.entity_type, '')) = 'supplier'
+      AND CAST(s.id AS TEXT) = CAST(p.entity_id AS TEXT)
+     LEFT JOIN clients c
+       ON LOWER(COALESCE(p.entity_type, '')) IN ('customer', 'client')
+      AND CAST(c.id AS TEXT) = CAST(p.entity_id AS TEXT)
      INNER JOIN chart_of_accounts parent ON parent.code IN ('321', '311')
      INNER JOIN chart_of_accounts leaf
        ON leaf.is_active = true AND leaf.is_header = false
@@ -526,11 +691,46 @@ async function bulkRemapByDocumentJoin(db) {
         (parent.code = '321' AND leaf.code LIKE '321%' AND LENGTH(leaf.code) > 3)
         OR (parent.code = '311' AND leaf.code LIKE '311%' AND LENGTH(leaf.code) > 3)
       )
-      AND LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(NULLIF(TRIM(p.entity_name), ''), '')))
+      AND (
+        LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(NULLIF(TRIM(p.entity_name), ''), '')))
+        OR LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(NULLIF(TRIM(s.name), ''), '')))
+        OR LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(NULLIF(TRIM(c.name), ''), '')))
+      )
      WHERE CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)
-       AND CAST(jel.account_id AS TEXT) = CAST(parent.id AS TEXT)
-       AND NULLIF(TRIM(p.entity_name), '') IS NOT NULL
-       AND LOWER(COALESCE(p.entity_type, '')) IN ('supplier', 'customer', 'client')`,
+       AND ${parentMatch}
+       AND (
+         NULLIF(TRIM(p.entity_name), '') IS NOT NULL
+         OR NULLIF(TRIM(s.name), '') IS NOT NULL
+         OR NULLIF(TRIM(c.name), '') IS NOT NULL
+       )`,
+    // Leaf name appears in journal/line description (longest name wins via DISTINCT ON)
+    `UPDATE journal_entry_lines AS jel
+     SET account_id = matched.leaf_id
+     FROM (
+       SELECT DISTINCT ON (jel2.id)
+              jel2.id AS line_id,
+              leaf.id AS leaf_id
+       FROM journal_entry_lines jel2
+       INNER JOIN journal_entries je ON CAST(je.id AS TEXT) = CAST(jel2.journal_entry_id AS TEXT)
+       INNER JOIN chart_of_accounts parent ON parent.code IN ('321', '311')
+       INNER JOIN chart_of_accounts leaf
+         ON leaf.is_active = true AND leaf.is_header = false
+        AND (
+          (parent.code = '321' AND leaf.code LIKE '321%' AND LENGTH(leaf.code) > 3)
+          OR (parent.code = '311' AND leaf.code LIKE '311%' AND LENGTH(leaf.code) > 3)
+        )
+        AND LENGTH(TRIM(leaf.name)) >= 5
+        AND (
+          LOWER(COALESCE(je.description, '')) LIKE '%' || LOWER(TRIM(leaf.name)) || '%'
+          OR LOWER(COALESCE(jel2.description, '')) LIKE '%' || LOWER(TRIM(leaf.name)) || '%'
+        )
+       WHERE (
+         CAST(jel2.account_id AS TEXT) = CAST(parent.id AS TEXT)
+         OR CAST(jel2.account_id AS TEXT) = CAST(parent.code AS TEXT)
+       )
+       ORDER BY jel2.id, LENGTH(TRIM(leaf.name)) DESC
+     ) matched
+     WHERE jel.id = matched.line_id`,
   ];
 
   for (const sql of statements) {
@@ -538,6 +738,7 @@ async function bulkRemapByDocumentJoin(db) {
       const r = await db.query(sql);
       const n = Number(r.rowCount || r.changes || 0);
       total += n;
+      if (n > 0) console.log(`[COA REPAIR] bulk remap +${n}`);
     } catch (e) {
       console.warn('[COA REPAIR] bulk remap skipped:', e.message);
     }
@@ -662,7 +863,7 @@ async function countParentEntityLines(db) {
  * Patch 024 marks “attempted”; residual keeps re-running each startup / CoA open.
  */
 async function ensureParentEntityCoaRepaired(db) {
-  const patchId = '026_repair_parent_entity_coa_v5';
+  const patchId = '027_repair_parent_entity_coa_v6';
   try {
     await db.query(`
       CREATE TABLE IF NOT EXISTS schema_patches (
@@ -701,7 +902,7 @@ async function ensureParentEntityCoaRepaired(db) {
     );
   }
   console.log(
-    `[SCHEMA] Parent 321/311 COA repair v5: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter}`,
+    `[SCHEMA] Parent 321/311 COA repair v6: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter}`,
   );
   return { ...result, remaining: remainingAfter };
 }
