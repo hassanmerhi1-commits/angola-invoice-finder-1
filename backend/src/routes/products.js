@@ -2150,21 +2150,30 @@ module.exports = function(broadcastTable) {
           && Math.abs(prevTax - nextTax) > 0.0001;
 
         // Only HQ / explicit propagate may push IVA to other same-SKU rows.
-        // Never cascade default 5% onto rows that already hold a different rate
-        // (even if vat_override was missing — that is how 14% got wiped company-wide).
+        // Skip rows with a real filial vat_override. Do NOT no-op when cascading to 5% —
+        // intentional HQ 5% (forceVatChange) must reach unlocked branches.
         if (taxChanged && shouldCascadePrices) {
           const vatTrue = db.engine === 'postgres' ? 'true' : '1';
-          const nextIsDefault = Math.abs(Number(nextTax) - Number(DEFAULT_VAT_RATE)) < 0.0001;
           await db.query(
             `UPDATE products
              SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP
              WHERE ${coalesceActiveNotZero(db, 'is_active')}
                AND ${sqlMovementSkuKey('products')} = LOWER($2)
                AND id <> $3
-               AND COALESCE(vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) != ${vatTrue}
-               ${nextIsDefault ? 'AND ABS(COALESCE(tax_rate, 0) - $1) < 0.001' : ''}`,
+               AND COALESCE(vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) != ${vatTrue}`,
             [nextTax, canonicalSkuString(skuKey), id],
           );
+          try {
+            await db.query(
+              `UPDATE products
+               SET tax_code = $1, updated_at = CURRENT_TIMESTAMP
+               WHERE ${coalesceActiveNotZero(db, 'is_active')}
+                 AND ${sqlMovementSkuKey('products')} = LOWER($2)
+                 AND id <> $3
+                 AND COALESCE(vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) != ${vatTrue}`,
+              [taxCodeForRate(nextTax), canonicalSkuString(skuKey), id],
+            );
+          } catch (_) { /* tax_code optional */ }
         }
 
         if (taxChanged) {
@@ -2176,16 +2185,13 @@ module.exports = function(broadcastTable) {
           } catch (_) { /* tax_code may be missing */ }
         }
 
-        // Resolve VAT lock: filial IVA change always locks (form often sends vatOverride:false
-        // by default — that used to wipe the auto-lock and let HQ 5% cascade back).
-        // Also lock any non-default rate so future HQ saves cannot push 5% over 14%/7%/0%.
+        // VAT lock: only intentional FILIAL IVA edits lock the row (so HQ can still
+        // cascade to other branches). HQ/Sede saves clear the lock on this row.
+        // Never mass-lock every non-default rate — that blocked Sede→branch IVA forever.
         let vatFlag;
-        if (
-          taxChanged
-          || Number(mergedTaxRate) !== Number(DEFAULT_VAT_RATE)
-          || (Number.isFinite(Number(existing.tax_rate)) && Number(existing.tax_rate) !== Number(DEFAULT_VAT_RATE))
-        ) {
-          // Keep lock when we preserved a non-default rate, or when IVA actually changed.
+        if (taxChanged && shouldCascadePrices) {
+          vatFlag = false;
+        } else if (taxChanged && !shouldCascadePrices) {
           vatFlag = true;
         } else if (vatOverrideBody !== undefined && vatOverrideBody !== null && vatOverrideBody !== '') {
           vatFlag = isTruthyFlag(vatOverrideBody);

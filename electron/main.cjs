@@ -1677,6 +1677,15 @@ function mapElectronProductRowToApiBody(data) {
   if (vatOverride !== undefined && vatOverride !== null && vatOverride !== '') {
     body.vatOverride = vatOverride === true || vatOverride === 1 || vatOverride === '1' || vatOverride === 'true';
   }
+  if (data.forceVatChange === true || data.forceVatChange === 'true' || data.force_vat_change === true) {
+    body.forceVatChange = true;
+  }
+  if (data.propagatePrices === true || data.propagatePrices === 'true') {
+    body.propagatePrices = true;
+  }
+  if (data.preserveStock === true || data.preserveStock === 'true') {
+    body.preserveStock = true;
+  }
   return body;
 }
 

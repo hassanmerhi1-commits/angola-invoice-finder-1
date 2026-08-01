@@ -333,17 +333,24 @@ async function ensureProductVatOverrideColumn(db) {
     } catch (err) {
       if (err.code !== '42701') console.warn('[SCHEMA] products.vat_override:', err.message);
     }
+    // One-time: clear mass-backfill locks that blocked Sede IVA from reaching filiais.
+    // Intentional filial overrides are re-applied when a filial edits IVA.
     try {
-      // Lock existing non-default rates so HQ 5% cascade cannot wipe 14%/7%/0%.
-      await db.query(
-        `UPDATE products
-         SET vat_override = TRUE
-         WHERE COALESCE(vat_override, FALSE) = FALSE
-           AND tax_rate IS NOT NULL
-           AND ABS(tax_rate - 5) > 0.001`,
-      );
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS schema_patches (
+          id TEXT PRIMARY KEY,
+          applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      const patchId = '021_clear_mass_vat_override';
+      const already = await db.query('SELECT 1 AS ok FROM schema_patches WHERE id = $1 LIMIT 1', [patchId]);
+      if (!already.rows?.length) {
+        await db.query(`UPDATE products SET vat_override = FALSE WHERE vat_override IS DISTINCT FROM FALSE`);
+        await db.query('INSERT INTO schema_patches (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [patchId]);
+        console.log('[SCHEMA] Cleared mass vat_override locks so HQ IVA can cascade to branches');
+      }
     } catch (err) {
-      console.warn('[SCHEMA] products.vat_override backfill:', err.message);
+      console.warn('[SCHEMA] clear mass vat_override:', err.message);
     }
     return;
   }
@@ -364,12 +371,17 @@ async function ensureProductVatOverrideColumn(db) {
     }
     try {
       db.sqlite.exec(`
-        UPDATE products
-        SET vat_override = 1
-        WHERE COALESCE(vat_override, 0) = 0
-          AND tax_rate IS NOT NULL
-          AND ABS(tax_rate - 5) > 0.001
+        CREATE TABLE IF NOT EXISTS schema_patches (
+          id TEXT PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
       `);
+      const row = db.sqlite.prepare('SELECT 1 AS ok FROM schema_patches WHERE id = ? LIMIT 1').get('021_clear_mass_vat_override');
+      if (!row) {
+        db.sqlite.exec('UPDATE products SET vat_override = 0 WHERE COALESCE(vat_override, 0) != 0');
+        db.sqlite.prepare('INSERT OR IGNORE INTO schema_patches (id) VALUES (?)').run('021_clear_mass_vat_override');
+        console.log('[SCHEMA] Cleared mass vat_override locks so HQ IVA can cascade to branches');
+      }
     } catch (_) {}
   }
 }
