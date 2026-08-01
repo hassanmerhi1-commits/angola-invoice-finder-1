@@ -42,14 +42,20 @@ import {
   X,
   Hash,
   StickyNote,
-  Search,
   FileSpreadsheet,
 } from 'lucide-react';
 import { Product, Branch } from '@/types/erp';
 import { useBranches } from '@/hooks/useERP';
 import { useToast } from '@/hooks/use-toast';
+import { getCaixas, getBankAccounts } from '@/lib/accountingStorage';
+import {
+  formatFreightBankLabel,
+  formatFreightCaixaLabel,
+  resolveFreightTreasuryGl,
+  type FreightPaymentSource,
+} from '@/lib/freightTreasury';
+import type { Caixa, BankAccount } from '@/types/accounting';
 import { useTranslation } from '@/i18n';
-import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { api } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import {
@@ -138,87 +144,6 @@ interface StockEntryDialogProps {
   ) => void | Promise<void>;
 }
 
-function FreightAccountPickerDialog({
-  open,
-  onClose,
-  onSelect,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onSelect: (code: string, name: string) => void;
-}) {
-  const { t, language } = useTranslation();
-  const [search, setSearch] = useState('');
-  const accounts = useMemo(() => {
-    try {
-      const data =
-        localStorage.getItem('kwanzaerp_chart_of_accounts_v2')
-        || localStorage.getItem('kwanzaerp_chart_of_accounts');
-      const all: Array<{ code: string; name: string; is_active: boolean }> = data ? JSON.parse(data) : [];
-      return all.filter((a) => a.is_active !== false).sort((a, b) => a.code.localeCompare(b.code));
-    } catch {
-      return [];
-    }
-  }, [open]);
-
-  const filtered = useMemo(() => {
-    if (!search) return accounts;
-    const q = search.toLowerCase();
-    return accounts.filter((a) => {
-      const displayName = resolveAccountDisplayName(a, language, t);
-      return (
-        a.code.toLowerCase().includes(q)
-        || a.name.toLowerCase().includes(q)
-        || displayName.toLowerCase().includes(q)
-      );
-    });
-  }, [accounts, search, language, t]);
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-xl max-h-[70vh]">
-        <DialogHeader>
-          <DialogTitle>{t.stockEntryUi.choosePaymentAccount}</DialogTitle>
-        </DialogHeader>
-        <Input
-          placeholder={t.stockEntryUi.accountSearchPlaceholder}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          autoFocus
-        />
-        <ScrollArea className="h-[350px]">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t.stockEntryUi.colAccountCode}</TableHead>
-                <TableHead>{t.stockEntryUi.colAccountName}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((a) => {
-                const displayName = resolveAccountDisplayName(a, language, t);
-                return (
-                  <TableRow
-                    key={a.code}
-                    className="cursor-pointer hover:bg-accent"
-                    onClick={() => {
-                      onSelect(a.code, displayName);
-                      onClose();
-                    }}
-                  >
-                    <TableCell className="font-mono">{a.code}</TableCell>
-                    <TableCell>{displayName}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </ScrollArea>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 const REASON_ICONS: Record<StockEntryReason, typeof PackagePlus> = {
   adjustment: ClipboardList,
   purchase: ShoppingCart,
@@ -255,6 +180,9 @@ const emptyForm = () => ({
   otherCostsDescription: '',
   freightSourceAccount: '451',
   freightSourceName: 'Caixa',
+  freightPaymentSource: 'caixa' as FreightPaymentSource,
+  freightCaixaId: '',
+  freightBankAccountId: '',
 });
 
 export function StockEntryDialog({
@@ -283,7 +211,9 @@ export function StockEntryDialog({
   const linesRef = useRef(form.lines);
   linesRef.current = form.lines;
   const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
-  const [freightAccountPickerOpen, setFreightAccountPickerOpen] = useState(false);
+  const [freightTreasuryLoading, setFreightTreasuryLoading] = useState(false);
+  const [freightCaixas, setFreightCaixas] = useState<Caixa[]>([]);
+  const [freightBankAccounts, setFreightBankAccounts] = useState<BankAccount[]>([]);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importLookupProducts, setImportLookupProducts] = useState<Product[]>([]);
   const [importCatalogLoading, setImportCatalogLoading] = useState(false);
@@ -303,6 +233,88 @@ export function StockEntryDialog({
     ? (form.entryBranchId || warehouseId)
     : (warehouseId || form.entryBranchId);
   const entryBranchId = effectiveWarehouseId || currentBranch?.id || '';
+  const entryBranchName =
+    branches.find((b) => b.id === entryBranchId)?.name
+    || currentBranch?.name
+    || '';
+  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+
+  const refreshFreightTreasury = useCallback(async () => {
+    const branchId = String(entryBranchId || '').trim();
+    if (!branchId) {
+      setFreightCaixas([]);
+      setFreightBankAccounts([]);
+      return;
+    }
+    setFreightTreasuryLoading(true);
+    try {
+      const [loadedCaixas, loadedBanks] = await Promise.all([
+        getCaixas(branchId, entryBranchName, { ensureIfEmpty: true }),
+        getBankAccounts(branchId),
+      ]);
+      setFreightCaixas(loadedCaixas);
+      setFreightBankAccounts(loadedBanks);
+      setForm((prev) => {
+        const next = { ...prev };
+        if (loadedCaixas.length > 0 && !loadedCaixas.some((c) => c.id === prev.freightCaixaId)) {
+          next.freightCaixaId = loadedCaixas[0].id;
+        }
+        if (loadedBanks.length > 0 && !loadedBanks.some((b) => b.id === prev.freightBankAccountId)) {
+          next.freightBankAccountId = loadedBanks[0].id;
+        }
+        return next;
+      });
+    } finally {
+      setFreightTreasuryLoading(false);
+    }
+  }, [entryBranchId, entryBranchName]);
+
+  useEffect(() => {
+    if (!open) return;
+    void refreshFreightTreasury();
+  }, [open, refreshFreightTreasury]);
+
+  useEffect(() => {
+    const landing = (Number(form.freightCost) || 0) + (Number(form.otherCosts) || 0);
+    if (!open || landing <= 0) return;
+    let cancelled = false;
+    void resolveFreightTreasuryGl({
+      paymentSource: form.freightPaymentSource,
+      caixaId: form.freightCaixaId || undefined,
+      bankAccountId: form.freightBankAccountId || undefined,
+      branchId: entryBranchId,
+      freightSourceAccount: form.freightSourceAccount,
+      freightSourceName: form.freightSourceName,
+      caixas: freightCaixas,
+      bankAccounts: freightBankAccounts,
+    }).then((treasury) => {
+      if (cancelled) return;
+      setForm((p) => {
+        if (
+          p.freightSourceAccount === treasury.accountCode
+          && p.freightSourceName === treasury.accountName
+        ) {
+          return p;
+        }
+        return {
+          ...p,
+          freightSourceAccount: treasury.accountCode || p.freightSourceAccount,
+          freightSourceName: treasury.accountName || p.freightSourceName,
+        };
+      });
+    });
+    return () => { cancelled = true; };
+  }, [
+    open,
+    form.freightCost,
+    form.otherCosts,
+    form.freightPaymentSource,
+    form.freightCaixaId,
+    form.freightBankAccountId,
+    entryBranchId,
+    freightCaixas,
+    freightBankAccounts,
+  ]);
 
   const productsForImport = useMemo(() => {
     const byId = new Map<string, Product>();
@@ -1000,6 +1012,39 @@ export function StockEntryDialog({
       return;
     }
 
+    let resolvedFreightAccount = form.freightSourceAccount;
+    let resolvedFreightName = form.freightSourceName;
+    if (totalLandingCosts > 0) {
+      if (form.freightPaymentSource === 'caixa' && !form.freightCaixaId) {
+        toast({
+          title: t.common.error,
+          description: t.stockEntryUi.selectFreightCaixa,
+          variant: 'destructive',
+        });
+        return;
+      }
+      if (form.freightPaymentSource === 'bank' && freightBankAccounts.length > 0 && !form.freightBankAccountId) {
+        toast({
+          title: t.common.error,
+          description: t.stockEntryUi.selectFreightBank,
+          variant: 'destructive',
+        });
+        return;
+      }
+      const treasury = await resolveFreightTreasuryGl({
+        paymentSource: form.freightPaymentSource,
+        caixaId: form.freightCaixaId || undefined,
+        bankAccountId: form.freightBankAccountId || undefined,
+        branchId: entryBranchId,
+        freightSourceAccount: form.freightSourceAccount,
+        freightSourceName: form.freightSourceName,
+        caixas: freightCaixas,
+        bankAccounts: freightBankAccounts,
+      });
+      resolvedFreightAccount = treasury.accountCode;
+      resolvedFreightName = treasury.accountName;
+    }
+
     const itemsWithFreight = fulfilledItems.map((item) => ({
       ...item,
       freightAllocation: freightAllocations[item.productId] || 0,
@@ -1018,8 +1063,8 @@ export function StockEntryDialog({
         currencyRate: form.currencyRate,
         notes: buildNotes(),
         totalLandingCosts,
-        freightSourceAccount: totalLandingCosts > 0 ? form.freightSourceAccount : undefined,
-        freightSourceName: totalLandingCosts > 0 ? form.freightSourceName : undefined,
+        freightSourceAccount: totalLandingCosts > 0 ? resolvedFreightAccount : undefined,
+        freightSourceName: totalLandingCosts > 0 ? resolvedFreightName : undefined,
       });
       resetForm();
       onOpenChange(false);
@@ -1248,29 +1293,81 @@ export function StockEntryDialog({
               />
             </div>
             {totalLandingCosts > 0 && (
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 sm:col-span-2">
                 <Label className="text-sm font-medium">{t.stockEntryUi.freightPaymentSource}</Label>
-                <div className="flex gap-1">
-                  <Input
-                    readOnly
-                    value={`${form.freightSourceAccount} — ${resolveAccountDisplayName(
-                      { code: form.freightSourceAccount, name: form.freightSourceName },
-                      language,
-                      t,
-                    )}`}
-                    className="h-9 bg-background text-xs font-mono flex-1 min-w-0"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-9 w-9 shrink-0"
-                    title={t.stockEntryUi.choosePaymentAccount}
-                    onClick={() => setFreightAccountPickerOpen(true)}
+                <div className="flex flex-wrap gap-2">
+                  <Select
+                    value={form.freightPaymentSource}
+                    onValueChange={(v) =>
+                      setForm((p) => ({ ...p, freightPaymentSource: v as FreightPaymentSource }))
+                    }
                   >
-                    <Search className="h-4 w-4" />
-                  </Button>
+                    <SelectTrigger className="h-9 w-[160px] bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="caixa">{t.stockEntryUi.freightSourceCaixa}</SelectItem>
+                      <SelectItem value="bank">{t.stockEntryUi.freightSourceBank}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {form.freightPaymentSource === 'caixa' ? (
+                    <Select
+                      value={form.freightCaixaId || undefined}
+                      onValueChange={(v) => setForm((p) => ({ ...p, freightCaixaId: v }))}
+                      disabled={freightTreasuryLoading}
+                    >
+                      <SelectTrigger className="h-9 min-w-[220px] flex-1 bg-background">
+                        <SelectValue
+                          placeholder={
+                            freightTreasuryLoading
+                              ? t.stockEntryUi.freightTreasuryLoading
+                              : t.stockEntryUi.selectFreightCaixa
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {freightCaixas.length === 0 ? (
+                          <SelectItem value="__none__" disabled>
+                            {t.stockEntryUi.noFreightCaixas}
+                          </SelectItem>
+                        ) : (
+                          freightCaixas.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {formatFreightCaixaLabel(c, uiLocale)}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Select
+                      value={form.freightBankAccountId || undefined}
+                      onValueChange={(v) => setForm((p) => ({ ...p, freightBankAccountId: v }))}
+                      disabled={freightTreasuryLoading}
+                    >
+                      <SelectTrigger className="h-9 min-w-[220px] flex-1 bg-background">
+                        <SelectValue placeholder={t.stockEntryUi.selectFreightBank} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {freightBankAccounts.length === 0 ? (
+                          <SelectItem value="__none__" disabled>
+                            {t.stockEntryUi.noFreightBanks}
+                          </SelectItem>
+                        ) : (
+                          freightBankAccounts.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {formatFreightBankLabel(a)}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
+                <p className="text-[11px] text-muted-foreground font-mono">
+                  GL {form.freightSourceAccount}
+                  {form.freightSourceName ? ` — ${form.freightSourceName}` : ''}
+                </p>
               </div>
             )}
           </div>
@@ -1560,13 +1657,6 @@ export function StockEntryDialog({
             dialogContentRef.current,
           )}
       </DialogContent>
-      <FreightAccountPickerDialog
-        open={freightAccountPickerOpen}
-        onClose={() => setFreightAccountPickerOpen(false)}
-        onSelect={(code, name) =>
-          setForm((p) => ({ ...p, freightSourceAccount: code, freightSourceName: name }))
-        }
-      />
       <ExcelImportDialog<ExcelStockEntryLine>
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
