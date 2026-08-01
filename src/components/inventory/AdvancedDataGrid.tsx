@@ -301,12 +301,14 @@ export function AdvancedDataGrid({
       {/* Info Bar */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b text-xs">
         <span className="text-muted-foreground">
-          {filteredProducts.length} de {products.length} produtos
+          {t.inventoryGridUi.productsCount
+            .replace('{filtered}', String(filteredProducts.length))
+            .replace('{total}', String(products.length))}
         </span>
         {hasActiveFilters && (
           <Button variant="outline" size="sm" className="h-6 text-xs text-foreground" onClick={clearAllFilters}>
             <X className="w-3 h-3 mr-1" />
-            Limpar Filtros
+            {t.inventoryGridUi.clearFilters}
           </Button>
         )}
       </div>
@@ -338,23 +340,25 @@ export function AdvancedDataGrid({
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="w-48 bg-popover border border-border shadow-lg z-50">
                         <DropdownMenuItem onClick={() => handleSort(col.key)}>
-                          {isSorted && sortDirection === 'asc' ? '↓ Ordenar Desc' : '↑ Ordenar Asc'}
+                          {isSorted && sortDirection === 'asc'
+                            ? t.inventoryGridUi.sortDesc
+                            : t.inventoryGridUi.sortAsc}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => {
                           setSimpleFilters(prev => ({ ...prev, [col.key]: { type: 'all' } }));
                           setCustomFilters(prev => { const n = { ...prev }; delete n[col.key]; return n; });
                         }}>
-                          (Todos)
+                          {t.inventoryGridUi.filterAll}
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => setCustomDialogCol(col.key)}>
-                          (Personalizado...)
+                          {t.inventoryGridUi.filterCustom}
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => setSimpleFilters(prev => ({ ...prev, [col.key]: { type: 'blanks' } }))}>
-                          (Em branco)
+                          {t.inventoryGridUi.filterBlanks}
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => setSimpleFilters(prev => ({ ...prev, [col.key]: { type: 'nonblanks' } }))}>
-                          (Não em branco)
+                          {t.inventoryGridUi.filterNonBlanks}
                         </DropdownMenuItem>
                         {uniqueValues[col.key]?.length > 0 && (
                           <>
@@ -421,7 +425,7 @@ export function AdvancedDataGrid({
             {filteredProducts.length === 0 && (
               <tr>
                 <td colSpan={visibleColumns.length} className="text-center py-8 text-muted-foreground text-sm">
-                  Nenhum produto encontrado
+                  {t.inventoryGridUi.noProductsFound}
                 </td>
               </tr>
             )}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
+import { useTranslation } from '@/i18n';
 
 export type FilterOperator =
   | 'equals'
@@ -43,28 +44,6 @@ export interface CustomFilterState {
   logic: 'and' | 'or';
 }
 
-const TEXT_OPERATORS: { value: FilterOperator; label: string }[] = [
-  { value: 'equals', label: 'equals' },
-  { value: 'not_equals', label: 'does not equal' },
-  { value: 'contains', label: 'contains' },
-  { value: 'not_contains', label: 'does not contain' },
-  { value: 'begins_with', label: 'begins with' },
-  { value: 'ends_with', label: 'ends with' },
-  { value: 'is_blank', label: 'is blank' },
-  { value: 'is_not_blank', label: 'is not blank' },
-];
-
-const NUMBER_OPERATORS: { value: FilterOperator; label: string }[] = [
-  { value: 'equals', label: 'equals' },
-  { value: 'not_equals', label: 'does not equal' },
-  { value: 'less_than', label: 'is less than' },
-  { value: 'less_equal', label: 'is less than or equal to' },
-  { value: 'greater_than', label: 'is greater than' },
-  { value: 'greater_equal', label: 'is greater than or equal to' },
-  { value: 'is_blank', label: 'is blank' },
-  { value: 'is_not_blank', label: 'is not blank' },
-];
-
 interface CustomFilterDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -84,6 +63,8 @@ export function CustomFilterDialog({
   onApply,
   initialFilter,
 }: CustomFilterDialogProps) {
+  const { t } = useTranslation();
+  const g = t.inventoryGridUi;
   const [condition1, setCondition1] = useState<FilterCondition>(
     initialFilter?.condition1 ?? { ...emptyCondition }
   );
@@ -92,7 +73,31 @@ export function CustomFilterDialog({
   );
   const [logic, setLogic] = useState<'and' | 'or'>(initialFilter?.logic ?? 'and');
 
-  const operators = columnType === 'number' ? NUMBER_OPERATORS : TEXT_OPERATORS;
+  const operators = useMemo(() => {
+    if (columnType === 'number') {
+      return [
+        { value: 'equals' as const, label: g.opEquals },
+        { value: 'not_equals' as const, label: g.opNotEquals },
+        { value: 'less_than' as const, label: g.opLessThan },
+        { value: 'less_equal' as const, label: g.opLessEqual },
+        { value: 'greater_than' as const, label: g.opGreaterThan },
+        { value: 'greater_equal' as const, label: g.opGreaterEqual },
+        { value: 'is_blank' as const, label: g.opIsBlank },
+        { value: 'is_not_blank' as const, label: g.opIsNotBlank },
+      ];
+    }
+    return [
+      { value: 'equals' as const, label: g.opEquals },
+      { value: 'not_equals' as const, label: g.opNotEquals },
+      { value: 'contains' as const, label: g.opContains },
+      { value: 'not_contains' as const, label: g.opNotContains },
+      { value: 'begins_with' as const, label: g.opBeginsWith },
+      { value: 'ends_with' as const, label: g.opEndsWith },
+      { value: 'is_blank' as const, label: g.opIsBlank },
+      { value: 'is_not_blank' as const, label: g.opIsNotBlank },
+    ];
+  }, [columnType, g]);
+
   const noValueOps: FilterOperator[] = ['is_blank', 'is_not_blank'];
 
   const handleApply = () => {
@@ -108,14 +113,13 @@ export function CustomFilterDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
-          <DialogTitle>Custom Filter</DialogTitle>
+          <DialogTitle>{g.customFilterTitle}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <p className="text-sm text-muted-foreground">
-            Show rows where: <strong>{columnLabel}</strong>
+            {g.customFilterShowRows} <strong>{columnLabel}</strong>
           </p>
 
-          {/* Condition 1 */}
           <div className="flex items-center gap-2">
             <Select
               value={condition1.operator}
@@ -145,7 +149,6 @@ export function CustomFilterDialog({
             />
           </div>
 
-          {/* AND / OR */}
           <RadioGroup
             value={logic}
             onValueChange={(v) => setLogic(v as 'and' | 'or')}
@@ -161,7 +164,6 @@ export function CustomFilterDialog({
             </div>
           </RadioGroup>
 
-          {/* Condition 2 */}
           <div className="flex items-center gap-2">
             <Select
               value={condition2.operator}
@@ -193,10 +195,10 @@ export function CustomFilterDialog({
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" size="sm" onClick={handleCancel}>
-            Cancel
+            {g.filterCancel}
           </Button>
           <Button size="sm" onClick={handleApply}>
-            OK
+            {g.filterOk}
           </Button>
         </DialogFooter>
       </DialogContent>
