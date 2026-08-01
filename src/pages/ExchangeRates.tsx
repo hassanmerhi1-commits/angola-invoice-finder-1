@@ -80,7 +80,7 @@ export default function ExchangeRates() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Taxas de Câmbio</h1>
+          <h1 className="text-2xl font-bold text-foreground">{t.exchangeRatesUi.title}</h1>
           <p className="text-muted-foreground">{t.exchangeRatesUi.subtitle}</p>
         </div>
         <div className="flex gap-2">

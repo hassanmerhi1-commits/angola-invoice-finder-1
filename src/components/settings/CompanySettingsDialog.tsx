@@ -23,7 +23,6 @@ import {
   CreditCard,
   FileText,
   Shield,
-  RefreshCw,
   DollarSign
 } from 'lucide-react';
 import {
@@ -47,7 +46,9 @@ export function CompanySettingsDialog({
   open,
   onOpenChange,
 }: CompanySettingsDialogProps) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const locale = language === 'en' ? 'en-US' : 'pt-AO';
+  const cs = t.companySettingsUi;
   const [settings, setSettings] = useState<CompanySettings>(() => {
     try {
       return getCompanySettings();
@@ -85,22 +86,22 @@ export function CompanySettingsDialog({
 
     // Validate file type
     if (!file.type.startsWith('image/')) {
-      toast.error('Por favor selecione uma imagem');
+      toast.error(cs.selectImageError);
       return;
     }
 
     // Validate file size (max 500KB)
     if (file.size > 500 * 1024) {
-      toast.error('A imagem deve ter menos de 500KB');
+      toast.error(cs.imageTooLarge);
       return;
     }
 
     try {
       const base64 = await fileToBase64(file);
       setSettings(prev => ({ ...prev, logo: base64 }));
-      toast.success('Logo carregado');
+      toast.success(cs.logoUploaded);
     } catch (error) {
-      toast.error('Erro ao carregar logo');
+      toast.error(cs.logoUploadError);
     }
   };
 
@@ -111,7 +112,7 @@ export function CompanySettingsDialog({
   const handleSave = async () => {
     // Validate NIF
     if (!validateNIF(settings.nif)) {
-      toast.error(t.companySettingsUi.nifInvalid10Digits);
+      toast.error(cs.nifInvalid10Digits);
       return;
     }
 
@@ -129,21 +130,21 @@ export function CompanySettingsDialog({
         
       // Persist to the server (shared) so every LAN client picks it up, and mirror locally.
       await saveCompanySettingsToServer(toSave);
-      toast.success(t.companySettingsUi.savedSuccess);
+      toast.success(cs.savedSuccess);
       onOpenChange(false);
     } catch (error) {
       console.error('Error saving company settings:', error);
-      toast.error(t.companySettingsUi.saveError);
+      toast.error(cs.saveError);
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleReset = () => {
-    if (confirm(t.companySettingsUi.resetConfirm)) {
+    if (confirm(cs.resetConfirm)) {
       const defaultSettings = resetCompanySettings();
       setSettings(defaultSettings);
-      toast.info(t.companySettingsUi.resetDone);
+      toast.info(cs.resetDone);
     }
   };
 
@@ -153,58 +154,58 @@ export function CompanySettingsDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Building2 className="w-5 h-5" />
-            Configurações da Empresa
+            {cs.title}
           </DialogTitle>
           <DialogDescription>
-            Configure os dados da empresa para facturas e recibos
+            {cs.description}
           </DialogDescription>
         </DialogHeader>
 
         <Tabs defaultValue="general" className="w-full">
           <TabsList className="grid w-full grid-cols-5">
-            <TabsTrigger value="general">Geral</TabsTrigger>
-            <TabsTrigger value="contact">Contacto</TabsTrigger>
-            <TabsTrigger value="fiscal">Fiscal</TabsTrigger>
-            <TabsTrigger value="cambio">Câmbio</TabsTrigger>
-            <TabsTrigger value="branding">Marca</TabsTrigger>
+            <TabsTrigger value="general">{cs.tabGeneral}</TabsTrigger>
+            <TabsTrigger value="contact">{cs.tabContact}</TabsTrigger>
+            <TabsTrigger value="fiscal">{cs.tabFiscal}</TabsTrigger>
+            <TabsTrigger value="cambio">{cs.tabExchange}</TabsTrigger>
+            <TabsTrigger value="branding">{cs.tabBranding}</TabsTrigger>
           </TabsList>
 
           {/* General Info */}
           <TabsContent value="general" className="space-y-4 mt-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Nome Legal da Empresa *</Label>
+                <Label htmlFor="name">{cs.legalName}</Label>
                 <Input
                   id="name"
                   value={settings.name}
                   onChange={(e) => handleChange('name', e.target.value)}
-                  placeholder="Empresa, Lda"
+                  placeholder={cs.legalNamePlaceholder}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tradeName">Nome Comercial</Label>
+                <Label htmlFor="tradeName">{cs.tradeName}</Label>
                 <Input
                   id="tradeName"
                   value={settings.tradeName || ''}
                   onChange={(e) => handleChange('tradeName', e.target.value)}
-                  placeholder="Nome fantasia"
+                  placeholder={cs.tradeNamePlaceholder}
                 />
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="address">Morada *</Label>
+              <Label htmlFor="address">{cs.address}</Label>
               <Input
                 id="address"
                 value={settings.address}
                 onChange={(e) => handleChange('address', e.target.value)}
-                placeholder={t.companySettingsUi.addressPlaceholder}
+                placeholder={cs.addressPlaceholder}
               />
             </div>
 
             <div className="grid grid-cols-3 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="city">Cidade *</Label>
+                <Label htmlFor="city">{cs.city}</Label>
                 <Input
                   id="city"
                   value={settings.city}
@@ -213,7 +214,7 @@ export function CompanySettingsDialog({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="province">Província</Label>
+                <Label htmlFor="province">{cs.province}</Label>
                 <Input
                   id="province"
                   value={settings.province || ''}
@@ -222,7 +223,7 @@ export function CompanySettingsDialog({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="postalCode">Código Postal</Label>
+                <Label htmlFor="postalCode">{cs.postalCode}</Label>
                 <Input
                   id="postalCode"
                   value={settings.postalCode || ''}
@@ -239,7 +240,7 @@ export function CompanySettingsDialog({
               <div className="space-y-2">
                 <Label htmlFor="phone" className="flex items-center gap-2">
                   <Phone className="w-4 h-4" />
-                  Telefone *
+                  {cs.phone}
                 </Label>
                 <Input
                   id="phone"
@@ -251,7 +252,7 @@ export function CompanySettingsDialog({
               <div className="space-y-2">
                 <Label htmlFor="email" className="flex items-center gap-2">
                   <Mail className="w-4 h-4" />
-                  Email
+                  {t.common.email}
                 </Label>
                 <Input
                   id="email"
@@ -266,7 +267,7 @@ export function CompanySettingsDialog({
             <div className="space-y-2">
               <Label htmlFor="website" className="flex items-center gap-2">
                 <Globe className="w-4 h-4" />
-                Website
+                {cs.website}
               </Label>
               <Input
                 id="website"
@@ -281,13 +282,13 @@ export function CompanySettingsDialog({
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 <CreditCard className="w-4 h-4" />
-                Dados Bancários
+                {cs.bankDetails}
               </Label>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="bankName">Banco</Label>
+                <Label htmlFor="bankName">{cs.bank}</Label>
                 <Input
                   id="bankName"
                   value={settings.bankName || ''}
@@ -312,7 +313,7 @@ export function CompanySettingsDialog({
             <div className="space-y-2">
               <Label htmlFor="nif" className="flex items-center gap-2">
                 <Shield className="w-4 h-4" />
-                NIF (Número de Identificação Fiscal) *
+                {cs.nifLabel}
               </Label>
               <Input
                 id="nif"
@@ -322,13 +323,13 @@ export function CompanySettingsDialog({
                 maxLength={10}
               />
               <p className="text-xs text-muted-foreground">
-                O NIF deve ter 10 dígitos
+                {cs.nifHint}
               </p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="agtCertificateNumber">Nº Certificado AGT</Label>
+                <Label htmlFor="agtCertificateNumber">{cs.agtCertificate}</Label>
                 <Input
                   id="agtCertificateNumber"
                   value={settings.agtCertificateNumber || ''}
@@ -337,7 +338,7 @@ export function CompanySettingsDialog({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="licenseNumber">Nº Licença</Label>
+                <Label htmlFor="licenseNumber">{cs.licenseNumber}</Label>
                 <Input
                   id="licenseNumber"
                   value={settings.licenseNumber || ''}
@@ -348,7 +349,7 @@ export function CompanySettingsDialog({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="invoicePrefix">Prefixo de Factura</Label>
+              <Label htmlFor="invoicePrefix">{cs.invoicePrefix}</Label>
               <Input
                 id="invoicePrefix"
                 value={settings.invoicePrefix || ''}
@@ -363,24 +364,24 @@ export function CompanySettingsDialog({
             <div className="space-y-2">
               <Label htmlFor="invoiceNotes" className="flex items-center gap-2">
                 <FileText className="w-4 h-4" />
-                Notas da Factura
+                {cs.invoiceNotes}
               </Label>
               <Textarea
                 id="invoiceNotes"
                 value={settings.invoiceNotes || ''}
                 onChange={(e) => handleChange('invoiceNotes', e.target.value)}
-                placeholder={t.companySettingsUi.invoiceNotesPlaceholder}
+                placeholder={cs.invoiceNotesPlaceholder}
                 rows={3}
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="footerText">Texto do Rodapé</Label>
+              <Label htmlFor="footerText">{cs.footerText}</Label>
               <Input
                 id="footerText"
                 value={settings.footerText || ''}
                 onChange={(e) => handleChange('footerText', e.target.value)}
-                placeholder={t.companySettingsUi.footerTextPlaceholder}
+                placeholder={cs.footerTextPlaceholder}
               />
             </div>
           </TabsContent>
@@ -390,9 +391,9 @@ export function CompanySettingsDialog({
             <div className="flex items-center gap-2 mb-4">
               <DollarSign className="w-5 h-5 text-primary" />
               <div>
-                <h3 className="font-medium">Taxas de Câmbio</h3>
+                <h3 className="font-medium">{cs.exchangeRates}</h3>
                 <p className="text-sm text-muted-foreground">
-                  Configure as taxas de conversão para moedas estrangeiras
+                  {cs.exchangeRatesSubtitle}
                 </p>
               </div>
             </div>
@@ -400,7 +401,7 @@ export function CompanySettingsDialog({
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="exchangeRateUSD" className="flex items-center gap-2">
-                  🇺🇸 Dólar (USD)
+                  🇺🇸 {cs.dollarUsd}
                 </Label>
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-muted-foreground">1 USD =</span>
@@ -419,7 +420,7 @@ export function CompanySettingsDialog({
               </div>
               <div className="space-y-2">
                 <Label htmlFor="exchangeRateEUR" className="flex items-center gap-2">
-                  🇪🇺 Euro (EUR)
+                  🇪🇺 {cs.euroEur}
                 </Label>
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-muted-foreground">1 EUR =</span>
@@ -440,20 +441,20 @@ export function CompanySettingsDialog({
 
             {settings.exchangeRateUpdatedAt && (
               <p className="text-xs text-muted-foreground mt-2">
-                Última actualização: {new Date(settings.exchangeRateUpdatedAt).toLocaleString('pt-AO')}
+                {cs.lastUpdated}: {new Date(settings.exchangeRateUpdatedAt).toLocaleString(locale)}
               </p>
             )}
 
             <Separator />
 
             <div className="p-4 bg-muted/50 rounded-lg">
-              <h4 className="font-medium text-sm mb-2">Conversão Exemplo</h4>
+              <h4 className="font-medium text-sm mb-2">{cs.conversionExample}</h4>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-muted-foreground">100 USD =</p>
                   <p className="font-mono font-medium">
                     {settings.exchangeRateUSD 
-                      ? `${(100 * Number(settings.exchangeRateUSD)).toLocaleString('pt-AO')} AOA`
+                      ? `${(100 * Number(settings.exchangeRateUSD)).toLocaleString(locale)} AOA`
                       : '—'}
                   </p>
                 </div>
@@ -461,7 +462,7 @@ export function CompanySettingsDialog({
                   <p className="text-muted-foreground">100 EUR =</p>
                   <p className="font-mono font-medium">
                     {settings.exchangeRateEUR 
-                      ? `${(100 * Number(settings.exchangeRateEUR)).toLocaleString('pt-AO')} AOA`
+                      ? `${(100 * Number(settings.exchangeRateEUR)).toLocaleString(locale)} AOA`
                       : '—'}
                   </p>
                 </div>
@@ -472,7 +473,7 @@ export function CompanySettingsDialog({
           {/* Branding */}
           <TabsContent value="branding" className="space-y-4 mt-4">
             <div className="space-y-4">
-              <Label>Logo da Empresa</Label>
+              <Label>{cs.companyLogo}</Label>
               
               <div className="flex items-center gap-4">
                 {settings.logo ? (
@@ -493,7 +494,7 @@ export function CompanySettingsDialog({
                   </div>
                 ) : (
                   <div className="h-20 w-32 border-2 border-dashed rounded-lg flex items-center justify-center bg-muted">
-                    <span className="text-xs text-muted-foreground">Sem logo</span>
+                    <span className="text-xs text-muted-foreground">{cs.noLogo}</span>
                   </div>
                 )}
                 
@@ -510,10 +511,10 @@ export function CompanySettingsDialog({
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <Upload className="w-4 h-4 mr-2" />
-                    Carregar Logo
+                    {cs.uploadLogo}
                   </Button>
                   <p className="text-xs text-muted-foreground">
-                    PNG, JPG ou SVG. Máximo 500KB.
+                    {cs.logoHint}
                   </p>
                 </div>
               </div>
@@ -522,7 +523,7 @@ export function CompanySettingsDialog({
             <Separator />
 
             <div className="space-y-2">
-              <Label htmlFor="primaryColor">Cor Principal</Label>
+              <Label htmlFor="primaryColor">{cs.primaryColor}</Label>
               <div className="flex gap-2">
                 <Input
                   id="primaryColor"
@@ -541,7 +542,7 @@ export function CompanySettingsDialog({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="logoWidth">Largura do Logo (px)</Label>
+              <Label htmlFor="logoWidth">{cs.logoWidth}</Label>
               <Input
                 id="logoWidth"
                 type="number"
@@ -560,15 +561,15 @@ export function CompanySettingsDialog({
         <div className="flex justify-between">
           <Button variant="ghost" onClick={handleReset}>
             <RotateCcw className="w-4 h-4 mr-2" />
-            Repor Padrão
+            {cs.resetDefaults}
           </Button>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button onClick={handleSave} disabled={isSaving}>
               <Save className="w-4 h-4 mr-2" />
-              {isSaving ? t.companySettingsUi.saving : t.common.save}
+              {isSaving ? cs.saving : t.common.save}
             </Button>
           </div>
         </div>

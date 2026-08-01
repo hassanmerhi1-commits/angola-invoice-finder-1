@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
+import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { nextEntityAccountCode } from '@/lib/entityAccounts';
 import { Plus } from 'lucide-react';
 
@@ -64,7 +65,7 @@ export function SupplierFormDialog({
   supplier = null,
   onSaved,
 }: SupplierFormDialogProps) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const { toast } = useToast();
   const { createSupplier, saveSupplier, refreshSuppliers } = useSuppliers();
   const { accounts, createAccount, refetch: refetchAccounts } = useChartOfAccounts();
@@ -309,7 +310,7 @@ export function SupplierFormDialog({
                       <SelectContent>
                         {supplierParentOptions.map((acc) => (
                           <SelectItem key={acc.code} value={acc.code}>
-                            {acc.code} — {acc.name}
+                            {acc.code} — {resolveAccountDisplayName(acc, language, t)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -367,7 +368,7 @@ export function SupplierFormDialog({
                       <SelectContent>
                         {supplierParentOptions.map((acc) => (
                           <SelectItem key={acc.code} value={acc.code}>
-                            {acc.code} — {acc.name}
+                            {acc.code} — {resolveAccountDisplayName(acc, language, t)}
                           </SelectItem>
                         ))}
                       </SelectContent>

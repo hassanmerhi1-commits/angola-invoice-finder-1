@@ -109,6 +109,7 @@ export default function ChartOfAccounts() {
   const { accounts, isLoading, refetch, createAccount, updateAccount, deleteAccount } = useChartOfAccounts();
 
   // Bust stale local zeros: always re-pull journal balances when opening CoA.
+  // Second pull after repair/recompute finishes in the background on the server.
   useEffect(() => {
     try {
       localStorage.removeItem('kwanzaerp_chart_of_accounts');
@@ -117,6 +118,18 @@ export default function ChartOfAccounts() {
     } catch { /* ignore */ }
     markCachedListStale('chartOfAccounts');
     void refetch({ force: true, liveBalances: true });
+    const t1 = window.setTimeout(() => {
+      markCachedListStale('chartOfAccounts');
+      void refetch({ force: true, liveBalances: true });
+    }, 2500);
+    const t2 = window.setTimeout(() => {
+      markCachedListStale('chartOfAccounts');
+      void refetch({ force: true, liveBalances: true });
+    }, 8000);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
   }, [refetch]);
 
   const [activeTab, setActiveTab] = useState('todos');
@@ -674,13 +687,18 @@ export default function ChartOfAccounts() {
       </div>
 
       {/* Selected account info bar */}
-      {selectedAccount && (
-        <div className="h-6 bg-primary/10 border-t flex items-center px-3 text-[10px] gap-4">
-          <span className="font-bold">{selectedAccount.code} - {resolveAccountDisplayName(selectedAccount, language, t)}</span>
-          <span>{t.chartOfAccountsUi.typeLabel}: {resolveAccountTypeLabel(selectedAccount.account_type, t)}</span>
-          <span>{t.chartOfAccountsUi.balanceLabel}: {Number(selectedAccount.current_balance).toLocaleString(uiLocale)} Kz</span>
-        </div>
-      )}
+      {selectedAccount && (() => {
+        const footerRaw = Number(selectedAccount.current_balance) || 0;
+        const footerFlipped = selectedAccount.account_nature === 'credit' ? -footerRaw : footerRaw;
+        const footerBalance = Math.abs(footerFlipped) < 0.005 ? 0 : footerFlipped;
+        return (
+          <div className="h-6 bg-primary/10 border-t flex items-center px-3 text-[10px] gap-4">
+            <span className="font-bold">{selectedAccount.code} - {resolveAccountDisplayName(selectedAccount, language, t)}</span>
+            <span>{t.chartOfAccountsUi.typeLabel}: {resolveAccountTypeLabel(selectedAccount.account_type, t)}</span>
+            <span>{t.chartOfAccountsUi.balanceLabel}: {footerBalance.toLocaleString(uiLocale)} Kz</span>
+          </div>
+        );
+      })()}
 
       {/* Create/Edit Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={(open) => { setIsDialogOpen(open); if (!open) { setIsAddingInlineParent(false); setInlineParentName(''); setInlineParentCode(''); } }}>
@@ -906,11 +924,18 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
   const rawBalance = hasChildren || account.is_header || String(account.code || '').length <= 3
     ? computeBalance(account)
     : (Number(account.current_balance) || 0);
+  const ownBalance = Number(account.current_balance) || 0;
   // API stores debit−credit. Credit-nature accounts (suppliers/clients) flip for display
   // so payables appear as a positive amount in the Credit column.
   const isCreditNature = account.account_nature === 'credit';
   const flipped = isCreditNature ? -rawBalance : rawBalance;
   const displayBalance = Math.abs(flipped) < 0.005 ? 0 : flipped;
+  const ownFlipped = isCreditNature ? -ownBalance : ownBalance;
+  const ownDisplay = Math.abs(ownFlipped) < 0.005 ? 0 : ownFlipped;
+  const showOwnResidual =
+    (String(account.code) === '321' || String(account.code) === '311')
+    && hasChildren
+    && Math.abs(ownDisplay) >= 0.005;
   const debitCol = !isCreditNature && displayBalance > 0
     ? displayBalance
     : (isCreditNature && displayBalance < 0 ? Math.abs(displayBalance) : 0);
@@ -939,7 +964,14 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
             <span className="font-mono text-muted-foreground">{account.code}</span>
           </div>
         </td>
-        <td className="px-3 py-1.5">{displayName}</td>
+        <td className="px-3 py-1.5">
+          {displayName}
+          {showOwnResidual && (
+            <span className="ml-2 text-[10px] text-amber-700 dark:text-amber-400 font-normal">
+              ({t.chartOfAccountsUi.ownResidual.replace('{amount}', ownDisplay.toLocaleString(uiLocale))})
+            </span>
+          )}
+        </td>
         <td className="px-3 py-1.5 text-center text-muted-foreground">AOA</td>
         <td className="px-3 py-1.5 text-right font-mono">
           {debitCol > 0 ? `${debitCol.toLocaleString(uiLocale)}` : ''}

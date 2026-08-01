@@ -14,6 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Printer } from 'lucide-react';
 import { printHtml } from '@/lib/printHtml';
 import { toast } from 'sonner';
+import { useTranslation } from '@/i18n';
 
 interface ShelfLabelPrintDialogProps {
   open: boolean;
@@ -30,6 +31,8 @@ const LABEL_SIZES: Record<LabelSize, { width: number; height: number; label: str
 };
 
 export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLabelPrintDialogProps) {
+  const { t, language } = useTranslation();
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const [labelSize, setLabelSize] = useState<LabelSize>('medium');
   const [columns, setColumns] = useState(3);
   const [showBarcode, setShowBarcode] = useState(true);
@@ -40,7 +43,7 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
 
   const handlePrint = async () => {
     if (products.length === 0) {
-      toast.error('Nenhum produto seleccionado para etiquetas.');
+      toast.error(t.inventoryUi.shelfLabelNoProducts);
       return;
     }
     const size = LABEL_SIZES[labelSize];
@@ -59,9 +62,9 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
             <div class="sku">${product.sku || ''}</div>
             ${showBarcode && product.barcode ? `<div class="barcode">||||| ${product.barcode} |||||</div>` : ''}
             <div class="prices">
-            <div class="price-main">${priceWithIVA.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz</div>
-              ${showBasePrice ? `<div class="price-base">s/IVA: ${product.price.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz</div>` : ''}
-              ${taxRate > 0 ? `<div class="tax-info">IVA ${taxRate}%</div>` : '<div class="tax-info">Isento</div>'}
+            <div class="price-main">${priceWithIVA.toLocaleString(locale, { minimumFractionDigits: 2 })} Kz</div>
+              ${showBasePrice ? `<div class="price-base">${t.inventoryUi.shelfLabelExVat} ${product.price.toLocaleString(locale, { minimumFractionDigits: 2 })} Kz</div>` : ''}
+              ${taxRate > 0 ? `<div class="tax-info">IVA ${taxRate}%</div>` : `<div class="tax-info">${t.inventoryUi.shelfLabelExempt}</div>`}
             </div>
           </div>
         `);
@@ -74,7 +77,7 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
       <html>
       <head>
         <meta charset="utf-8">
-        <title>Etiquetas de Prateleira</title>
+        <title>${t.inventoryUi.shelfLabelPrintDocTitle}</title>
         <style>
           @page { margin: 5mm; }
           * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -147,7 +150,7 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
       onOpenChange(false);
     } catch (error) {
       console.error('[labels] print error:', error);
-      toast.error('Falha ao imprimir etiquetas.');
+      toast.error(t.inventoryUi.shelfLabelPrintFailed);
     } finally {
       setPrinting(false);
     }
@@ -159,32 +162,32 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Printer className="w-5 h-5" />
-            Imprimir Etiquetas de Prateleira
+            {t.inventoryUi.shelfLabelTitle}
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="text-sm text-muted-foreground">
-            {products.length} produto(s) seleccionado(s)
+            {t.inventoryUi.shelfLabelSelected.replace('{count}', String(products.length))}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <Label className="text-xs">Tamanho da Etiqueta</Label>
+              <Label className="text-xs">{t.inventoryUi.shelfLabelSize}</Label>
               <Select value={labelSize} onValueChange={(v) => setLabelSize(v as LabelSize)}>
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="small">Pequena (40×25mm)</SelectItem>
-                  <SelectItem value="medium">Média (58×30mm)</SelectItem>
-                  <SelectItem value="large">Grande (80×40mm)</SelectItem>
+                  <SelectItem value="small">{t.inventoryUi.shelfLabelSmall}</SelectItem>
+                  <SelectItem value="medium">{t.inventoryUi.shelfLabelMedium}</SelectItem>
+                  <SelectItem value="large">{t.inventoryUi.shelfLabelLarge}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs">Colunas por Página</Label>
+              <Label className="text-xs">{t.inventoryUi.shelfLabelColumns}</Label>
               <Input
                 type="number"
                 min={1}
@@ -197,7 +200,7 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs">Cópias por Produto</Label>
+            <Label className="text-xs">{t.inventoryUi.shelfLabelCopies}</Label>
             <Input
               type="number"
               min={1}
@@ -215,7 +218,7 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
                 checked={showBarcode}
                 onCheckedChange={(v) => setShowBarcode(!!v)}
               />
-              <Label htmlFor="showBarcode" className="text-xs">Mostrar Código de Barras</Label>
+              <Label htmlFor="showBarcode" className="text-xs">{t.inventoryUi.shelfLabelShowBarcode}</Label>
             </div>
             <div className="flex items-center gap-2">
               <Checkbox
@@ -223,23 +226,23 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
                 checked={showBasePrice}
                 onCheckedChange={(v) => setShowBasePrice(!!v)}
               />
-              <Label htmlFor="showBasePrice" className="text-xs">Mostrar Preço sem IVA</Label>
+              <Label htmlFor="showBasePrice" className="text-xs">{t.inventoryUi.shelfLabelShowBasePrice}</Label>
             </div>
           </div>
 
           {/* Preview */}
           <div className="border border-border rounded-md p-3 bg-muted/30">
-            <div className="text-xs font-medium mb-2">Pré-visualização:</div>
+            <div className="text-xs font-medium mb-2">{t.inventoryUi.shelfLabelPreview}</div>
             <div className="border border-dashed border-border p-2 bg-background rounded text-center" style={{ maxWidth: '180px' }}>
-              <div className="text-xs font-bold truncate">{products[0]?.name || 'Nome do Produto'}</div>
+              <div className="text-xs font-bold truncate">{products[0]?.name || t.common.product}</div>
               <div className="text-[10px] text-muted-foreground">{products[0]?.sku || 'SKU'}</div>
               {showBarcode && <div className="text-[10px] font-mono my-0.5">||||| {products[0]?.barcode || '0000000'} |||||</div>}
               <div className="text-sm font-bold mt-1">
-                {((products[0]?.price || 0) * (1 + (products[0]?.taxRate || 0) / 100)).toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+                {((products[0]?.price || 0) * (1 + (products[0]?.taxRate || 0) / 100)).toLocaleString(locale, { minimumFractionDigits: 2 })} Kz
               </div>
               {showBasePrice && (
                 <div className="text-[10px] text-muted-foreground">
-                  s/IVA: {(products[0]?.price || 0).toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+                  {t.inventoryUi.shelfLabelExVat} {(products[0]?.price || 0).toLocaleString(locale, { minimumFractionDigits: 2 })} Kz
                 </div>
               )}
               <div className="text-[9px] text-muted-foreground">IVA {products[0]?.taxRate || 0}%</div>
@@ -248,11 +251,11 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={printing}>
-              Cancelar
+              {t.common.cancel}
             </Button>
             <Button size="sm" onClick={handlePrint} disabled={printing || products.length === 0}>
               <Printer className="w-4 h-4 mr-1" />
-              {printing ? 'A imprimir...' : 'Imprimir'}
+              {printing ? t.inventoryUi.shelfLabelPrinting : t.common.print}
             </Button>
           </div>
         </div>

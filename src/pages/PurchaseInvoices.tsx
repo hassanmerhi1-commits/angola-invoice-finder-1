@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } fr
 import { cn, generateId } from '@/lib/utils';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
+import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import QRCode from 'qrcode';
 import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
 import { resolveUserBranch, branchIdsEquivalent } from '@/lib/branchAccess';
@@ -570,7 +571,7 @@ function AccountPickerDialog({
   onClose: () => void;
   onSelect: (code: string, name: string) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [search, setSearch] = useState('');
   const accounts = useMemo(() => {
     try {
@@ -585,10 +586,15 @@ function AccountPickerDialog({
   const filtered = useMemo(() => {
     if (!search) return accounts;
     const q = search.toLowerCase();
-    return accounts.filter(a =>
-      a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q)
-    );
-  }, [accounts, search]);
+    return accounts.filter(a => {
+      const displayName = resolveAccountDisplayName(a, language, t);
+      return (
+        a.code.toLowerCase().includes(q)
+        || a.name.toLowerCase().includes(q)
+        || displayName.toLowerCase().includes(q)
+      );
+    });
+  }, [accounts, search, language, t]);
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -606,12 +612,19 @@ function AccountPickerDialog({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map(a => (
-                <TableRow key={a.code} className="cursor-pointer hover:bg-accent" onClick={() => { onSelect(a.code, a.name); onClose(); }}>
-                  <TableCell className="font-mono">{a.code}</TableCell>
-                  <TableCell>{a.name}</TableCell>
-                </TableRow>
-              ))}
+              {filtered.map(a => {
+                const displayName = resolveAccountDisplayName(a, language, t);
+                return (
+                  <TableRow
+                    key={a.code}
+                    className="cursor-pointer hover:bg-accent"
+                    onClick={() => { onSelect(a.code, displayName); onClose(); }}
+                  >
+                    <TableCell className="font-mono">{a.code}</TableCell>
+                    <TableCell>{displayName}</TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </ScrollArea>

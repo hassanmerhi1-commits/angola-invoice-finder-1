@@ -199,9 +199,11 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     void fetchAccounts({ force: true });
   });
 
-  // Journal/payment posts may drift stored balances — soft-stale only (no Tailscale storm).
+  // Journal/payment posts may drift stored balances — refetch CoA so leaf balances update.
   useTableRefreshListener(['journal_entries', 'payments'], () => {
+    if (!enabled) return;
     markCachedListStale('chartOfAccounts');
+    void fetchAccounts({ force: true, liveBalances: true });
   });
 
   // Auto-seed branch caixa accounts once after first load — only refetch if something was created.

@@ -23,7 +23,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Printer, FileSpreadsheet, FileDown, RefreshCw, Loader2 } from 'lucide-react';
-import { useTranslation } from '@/i18n';
+import { useTranslation, type TranslationKeys } from '@/i18n';
+import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { useTrialBalance } from '@/hooks/useChartOfAccounts';
 import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
 import type { TrialBalanceRow } from '@/types/accounting';
@@ -59,12 +60,18 @@ function balanceToDebitCredit(amount: number, nature: string): { debit: number; 
   return { debit: n > 0 ? n : 0, credit: n < 0 ? Math.abs(n) : 0 };
 }
 
-function mapRowToAccountBalance(row: TrialBalanceRow, typeLabel: string, filterKey: string): AccountBalance {
+function mapRowToAccountBalance(
+  row: TrialBalanceRow,
+  typeLabel: string,
+  filterKey: string,
+  language: 'en' | 'pt',
+  t: TranslationKeys,
+): AccountBalance {
   const opening = balanceToDebitCredit(Number(row.opening_balance), row.account_nature);
   const closing = balanceToDebitCredit(Number(row.closing_balance), row.account_nature);
   return {
     accountCode: row.code,
-    accountName: row.name,
+    accountName: resolveAccountDisplayName({ code: row.code, name: row.name }, language, t),
     accountType: typeLabel,
     filterKey,
     openingDebit: opening.debit,
@@ -117,12 +124,12 @@ export default function TrialBalanceReport() {
     const rows = data.filter(rowHasActivity).map((row) => {
       const filterKey = API_TYPE_TO_FILTER[row.account_type] || row.account_type;
       const typeLabel = typeLabels[filterKey as keyof typeof typeLabels] || row.account_type;
-      return mapRowToAccountBalance(row, typeLabel, filterKey);
+      return mapRowToAccountBalance(row, typeLabel, filterKey, language, t);
     });
 
     if (accountType === 'all') return rows;
     return rows.filter((a) => a.filterKey === accountType);
-  }, [data, accountType, typeLabels]);
+  }, [data, accountType, typeLabels, language, t]);
 
   const totals = accounts.reduce(
     (acc, account) => ({

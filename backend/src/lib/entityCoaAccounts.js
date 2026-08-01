@@ -187,13 +187,13 @@ async function ensureClientSubAccount(client, clientName, clientNif, parentCode)
 
 /**
  * Resolve the leaf COA code for a supplier or customer payment/purchase posting.
- * Creates the leaf when missing. Falls back to 321/311 only if create is impossible.
+ * Creates the leaf when missing. Throws when an entity is known but no leaf can be made
+ * (never silently post to bare 321/311).
  */
 async function resolveEntityAccountCode(client, entityType, entityId, entityName) {
   const isSupplier = entityType === 'supplier';
   const groupCode = isSupplier ? SUPPLIER_GROUP_CODE : CLIENT_GROUP_CODE;
   const parentCode = isSupplier ? SUPPLIER_PARENT_CODE : CLIENT_PARENT_CODE;
-  const fallback = parentCode;
 
   let name = cleanText(entityName);
   let nif = null;
@@ -224,7 +224,15 @@ async function resolveEntityAccountCode(client, entityType, entityId, entityName
     if (created) return created;
   }
 
-  return fallback;
+  // Never silently post to bare 321/311 when we have an entity — fail loud.
+  if (name || entityId) {
+    throw new Error(
+      `Could not resolve ${isSupplier ? 'supplier' : 'customer'} COA leaf`
+      + (name ? ` for "${name}"` : '')
+      + ` (parent ${parentCode}). Create the account under ${parentCode} first.`,
+    );
+  }
+  return parentCode;
 }
 
 module.exports = {

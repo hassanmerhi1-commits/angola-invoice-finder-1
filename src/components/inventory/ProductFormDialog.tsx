@@ -321,7 +321,7 @@ export function ProductFormDialog({
               </div>
 
               <div>
-                <Label htmlFor="price">Preço de Venda (Kz) *</Label>
+                <Label htmlFor="price">{t.productFormUi.salePriceKz}</Label>
                 <NumericInput
                   id="price"
                   min={0}
@@ -371,7 +371,7 @@ export function ProductFormDialog({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label htmlFor="minStock">Stock Mínimo</Label>
+                  <Label htmlFor="minStock">{t.productFormUi.minStock}</Label>
                   <NumericInput
                     id="minStock"
                     integer
@@ -382,7 +382,7 @@ export function ProductFormDialog({
                   />
                 </div>
                 <div>
-                  <Label htmlFor="maxStock">Stock Máximo</Label>
+                  <Label htmlFor="maxStock">{t.productFormUi.maxStock}</Label>
                   <NumericInput
                     id="maxStock"
                     integer

@@ -11,8 +11,9 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useNotifications, Notification } from '@/hooks/useNotifications';
 import { formatDistanceToNow } from 'date-fns';
-import { pt } from 'date-fns/locale';
+import { pt, enUS } from 'date-fns/locale';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from '@/i18n';
 
 const iconMap: Record<string, React.ReactNode> = {
   low_stock: <Package className="w-4 h-4 text-orange-500" />,
@@ -32,6 +33,8 @@ const severityDot: Record<Notification['severity'], string> = {
 };
 
 export function NotificationBell() {
+  const { t, language } = useTranslation();
+  const dfLocale = language === 'pt' ? pt : enUS;
   const { notifications, unreadCount, markAsRead, markAllAsRead, clearAll, scanAll, refreshFromServer } = useNotifications();
   const navigate = useNavigate();
   const [scanning, setScanning] = useState(false);
@@ -73,7 +76,7 @@ export function NotificationBell() {
       </PopoverTrigger>
       <PopoverContent className="w-80 p-0" align="end">
         <div className="flex items-center justify-between px-4 py-3 border-b">
-          <h4 className="font-semibold text-sm">Notificações</h4>
+          <h4 className="font-semibold text-sm">{t.notificationsUi.title}</h4>
           <div className="flex gap-1">
             <Button
               variant="ghost"
@@ -81,18 +84,18 @@ export function NotificationBell() {
               className="text-xs h-7"
               disabled={scanning}
               onClick={() => void handleScan()}
-              title="Scan low stock / overdue AR / period close"
+              title={t.notificationsUi.scanTitle}
             >
               {scanning ? '…' : 'Scan'}
             </Button>
             {unreadCount > 0 && (
               <Button variant="ghost" size="sm" className="text-xs h-7" onClick={markAllAsRead}>
-                Marcar lidas
+                {t.notificationsUi.markAllRead}
               </Button>
             )}
             {notifications.length > 0 && (
               <Button variant="ghost" size="sm" className="text-xs h-7 text-muted-foreground" onClick={clearAll}>
-                Limpar
+                {t.notificationsUi.clear}
               </Button>
             )}
           </div>
@@ -102,7 +105,7 @@ export function NotificationBell() {
           {notifications.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">
               <Bell className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              Sem notificações
+              {t.notificationsUi.empty}
             </div>
           ) : (
             <div>
@@ -125,7 +128,7 @@ export function NotificationBell() {
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{notif.message}</p>
                         <p className="text-[10px] text-muted-foreground mt-1">
-                          {formatDistanceToNow(new Date(notif.timestamp), { addSuffix: true, locale: pt })}
+                          {formatDistanceToNow(new Date(notif.timestamp), { addSuffix: true, locale: dfLocale })}
                         </p>
                       </div>
                     </div>

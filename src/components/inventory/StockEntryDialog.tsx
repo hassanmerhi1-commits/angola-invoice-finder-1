@@ -49,6 +49,7 @@ import { Product, Branch } from '@/types/erp';
 import { useBranches } from '@/hooks/useERP';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
+import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { api } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import {
@@ -146,7 +147,7 @@ function FreightAccountPickerDialog({
   onClose: () => void;
   onSelect: (code: string, name: string) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [search, setSearch] = useState('');
   const accounts = useMemo(() => {
     try {
@@ -163,10 +164,15 @@ function FreightAccountPickerDialog({
   const filtered = useMemo(() => {
     if (!search) return accounts;
     const q = search.toLowerCase();
-    return accounts.filter(
-      (a) => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q),
-    );
-  }, [accounts, search]);
+    return accounts.filter((a) => {
+      const displayName = resolveAccountDisplayName(a, language, t);
+      return (
+        a.code.toLowerCase().includes(q)
+        || a.name.toLowerCase().includes(q)
+        || displayName.toLowerCase().includes(q)
+      );
+    });
+  }, [accounts, search, language, t]);
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -189,19 +195,22 @@ function FreightAccountPickerDialog({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((a) => (
-                <TableRow
-                  key={a.code}
-                  className="cursor-pointer hover:bg-accent"
-                  onClick={() => {
-                    onSelect(a.code, a.name);
-                    onClose();
-                  }}
-                >
-                  <TableCell className="font-mono">{a.code}</TableCell>
-                  <TableCell>{a.name}</TableCell>
-                </TableRow>
-              ))}
+              {filtered.map((a) => {
+                const displayName = resolveAccountDisplayName(a, language, t);
+                return (
+                  <TableRow
+                    key={a.code}
+                    className="cursor-pointer hover:bg-accent"
+                    onClick={() => {
+                      onSelect(a.code, displayName);
+                      onClose();
+                    }}
+                  >
+                    <TableCell className="font-mono">{a.code}</TableCell>
+                    <TableCell>{displayName}</TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </ScrollArea>
@@ -1244,7 +1253,11 @@ export function StockEntryDialog({
                 <div className="flex gap-1">
                   <Input
                     readOnly
-                    value={`${form.freightSourceAccount} — ${form.freightSourceName}`}
+                    value={`${form.freightSourceAccount} — ${resolveAccountDisplayName(
+                      { code: form.freightSourceAccount, name: form.freightSourceName },
+                      language,
+                      t,
+                    )}`}
                     className="h-9 bg-background text-xs font-mono flex-1 min-w-0"
                   />
                   <Button

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from '@/i18n';
+import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { api } from '@/lib/api/client';
 import {
   buildJournalDetailRows,
@@ -237,7 +238,13 @@ export function JournalEntryDetailDialog({
                   {display.lines.map((line) => (
                     <tr key={line.id}>
                       <td className="px-3 py-1.5 font-mono">{line.accountCode}</td>
-                      <td className="px-3 py-1.5">{line.accountName}</td>
+                      <td className="px-3 py-1.5">
+                        {resolveAccountDisplayName(
+                          { code: line.accountCode, name: line.accountName },
+                          language,
+                          t,
+                        )}
+                      </td>
                       <td className="px-3 py-1.5 text-muted-foreground">{line.description}</td>
                       <td className="px-3 py-1.5 text-right font-mono text-green-700">
                         {line.debit ? line.debit.toLocaleString(uiLocale) : ''}

@@ -329,6 +329,20 @@ async function createJournalEntry(client, params) {
       throw new Error(`Conta contabilística não encontrada: ${line.accountCode}`);
     }
 
+    // Control accounts 321/311 must not receive operational AP/AR lines.
+    // Manual / adjustment journals may still post to the parent when needed.
+    const acctCode = String(account.code || line.accountCode || '').trim();
+    const refType = String(referenceType || '').trim().toLowerCase();
+    const allowParent =
+      params.allowParentEntityAccount === true
+      || line.allowParentEntityAccount === true
+      || isEditableJournalReferenceType(refType);
+    if (!allowParent && (acctCode === '321' || acctCode === '311')) {
+      throw new Error(
+        `Cannot post to parent account ${acctCode}. Use the supplier/customer leaf (e.g. ${acctCode}00001).`,
+      );
+    }
+
     const lineId = randomUUID();
     await client.query(
       `INSERT INTO journal_entry_lines 
@@ -471,6 +485,17 @@ async function updateJournalEntry(client, entryId, params) {
     const account = await findAccountByCode(client, line.accountCode);
     if (!account) {
       throw new Error(`Conta contabilística não encontrada: ${line.accountCode}`);
+    }
+
+    const acctCode = String(account.code || line.accountCode || '').trim();
+    const allowParent =
+      params.allowParentEntityAccount === true
+      || line.allowParentEntityAccount === true
+      || isEditableJournalReferenceType(entry.reference_type);
+    if (!allowParent && (acctCode === '321' || acctCode === '311')) {
+      throw new Error(
+        `Cannot post to parent account ${acctCode}. Use the supplier/customer leaf (e.g. ${acctCode}00001).`,
+      );
     }
 
     await client.query(

@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
+import { useTranslation } from '@/i18n';
 
 type SearchResult = {
   clients: { id: string; name: string; nif?: string; href: string }[];
@@ -17,6 +18,8 @@ const EMPTY: SearchResult = { clients: [], products: [], sales: [], purchaseInvo
 
 export function GlobalSearch() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
+  const gs = t.globalSearchUi;
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
@@ -60,7 +63,7 @@ export function GlobalSearch() {
 
   const sections: { title: string; rows: { key: string; label: string; href: string }[] }[] = [
     {
-      title: 'Clients',
+      title: gs.clients,
       rows: results.clients.map((r) => ({
         key: `c-${r.id}`,
         label: `${r.name}${r.nif ? ` · ${r.nif}` : ''}`,
@@ -68,7 +71,7 @@ export function GlobalSearch() {
       })),
     },
     {
-      title: 'Products',
+      title: gs.products,
       rows: results.products.map((r) => ({
         key: `p-${r.id}`,
         label: `${r.name}${r.sku ? ` · ${r.sku}` : ''}`,
@@ -76,7 +79,7 @@ export function GlobalSearch() {
       })),
     },
     {
-      title: 'Sales',
+      title: gs.sales,
       rows: results.sales.map((r) => ({
         key: `s-${r.id}`,
         label: `${r.invoiceNumber || r.id}${r.customerName ? ` · ${r.customerName}` : ''}`,
@@ -84,7 +87,7 @@ export function GlobalSearch() {
       })),
     },
     {
-      title: 'Purchases',
+      title: gs.purchases,
       rows: results.purchaseInvoices.map((r) => ({
         key: `pi-${r.id}`,
         label: `${r.invoiceNumber || r.id}${r.supplierName ? ` · ${r.supplierName}` : ''}`,
@@ -99,22 +102,22 @@ export function GlobalSearch() {
         type="button"
         className="hidden md:inline-flex items-center gap-2 h-7 px-2 rounded-md border border-sidebar-border bg-sidebar-accent text-xs text-sidebar-foreground/80 hover:text-sidebar-foreground"
         onClick={() => setOpen(true)}
-        title="Search (Ctrl+K)"
+        title={gs.buttonTitle}
       >
         <Search className="h-3.5 w-3.5" />
-        <span>Search</span>
+        <span>{gs.buttonLabel}</span>
         <kbd className="text-[10px] opacity-70">Ctrl+K</kbd>
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden">
           <DialogHeader className="px-4 pt-4 pb-2">
-            <DialogTitle className="text-base">Global search</DialogTitle>
+            <DialogTitle className="text-base">{gs.dialogTitle}</DialogTitle>
           </DialogHeader>
           <div className="px-4 pb-3">
             <Input
               autoFocus
-              placeholder="Client, SKU, invoice…"
+              placeholder={gs.placeholder}
               value={q}
               onChange={(e) => void runSearch(e.target.value)}
             />
@@ -122,11 +125,11 @@ export function GlobalSearch() {
           <div className="max-h-80 overflow-y-auto border-t px-2 py-2">
             {loading && (
               <div className="flex items-center gap-2 px-2 py-3 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> Searching…
+                <Loader2 className="h-4 w-4 animate-spin" /> {gs.searching}
               </div>
             )}
             {!loading && q.trim().length >= 2 && sections.length === 0 && (
-              <p className="px-2 py-3 text-sm text-muted-foreground">No matches.</p>
+              <p className="px-2 py-3 text-sm text-muted-foreground">{gs.noMatches}</p>
             )}
             {sections.map((section) => (
               <div key={section.title} className="mb-2">

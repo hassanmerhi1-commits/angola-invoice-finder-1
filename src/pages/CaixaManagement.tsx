@@ -347,7 +347,7 @@ export default function CaixaManagement() {
       amount: transactionData.amount,
       direction: transactionData.type === 'withdrawal' ? 'out' : 'in',
       counterAccountCode: '452',
-      description: transactionData.description || `Movimento manual: ${transactionData.type}`,
+      description: transactionData.description || `Manual movement: ${transactionData.type}`,
       referenceType: 'manual',
       referenceId: manualTxn.id,
       createdBy: user?.name || t.caixaUi.systemUser,
@@ -419,19 +419,19 @@ export default function CaixaManagement() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Gestão de Caixa</h1>
+          <h1 className="text-2xl font-bold">{t.caixaUi.title}</h1>
           <p className="text-muted-foreground">
-            Controlo de caixa e sessões diárias - {currentBranch?.name || 'Todas as filiais'}
+            {t.caixaUi.subtitle.replace('{branch}', currentBranch?.name || t.caixaUi.allBranches)}
           </p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setIsTransferDialogOpen(true)} className="gap-2">
             <ArrowRightLeft className="w-4 h-4" />
-            Transferência
+            {t.caixaUi.transfer}
           </Button>
           <Button onClick={() => { setFormData(initialFormData); setIsCreateDialogOpen(true); }} className="gap-2">
             <Plus className="w-4 h-4" />
-            Nova Caixa
+            {t.caixaUi.newCashRegister}
           </Button>
         </div>
       </div>
@@ -444,7 +444,7 @@ export default function CaixaManagement() {
               <Wallet className="w-5 h-5 text-muted-foreground" />
               <div>
                 <div className="text-2xl font-bold">{stats.total}</div>
-                <div className="text-sm text-muted-foreground">Total Caixas</div>
+                <div className="text-sm text-muted-foreground">{t.caixaUi.totalRegisters}</div>
               </div>
             </div>
           </CardContent>
@@ -455,7 +455,7 @@ export default function CaixaManagement() {
               <DoorOpen className="w-5 h-5 text-primary" />
               <div>
                 <div className="text-2xl font-bold text-primary">{stats.openCaixas}</div>
-                <div className="text-sm text-muted-foreground">Abertas</div>
+                <div className="text-sm text-muted-foreground">{t.caixaUi.openCount}</div>
               </div>
             </div>
           </CardContent>
@@ -463,9 +463,9 @@ export default function CaixaManagement() {
         <Card>
           <CardContent className="pt-4">
             <div className="text-2xl font-bold">
-              {stats.totalBalance.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+              {stats.totalBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
             </div>
-            <div className="text-sm text-muted-foreground">Saldo Total</div>
+            <div className="text-sm text-muted-foreground">{t.caixaUi.totalBalance}</div>
           </CardContent>
         </Card>
         <Card>
@@ -476,7 +476,7 @@ export default function CaixaManagement() {
                 <div className="text-xl font-bold text-primary">
                   +{stats.todayIn.toLocaleString(uiLocale)} Kz
                 </div>
-                <div className="text-sm text-muted-foreground">Entradas Hoje</div>
+                <div className="text-sm text-muted-foreground">{t.caixaUi.inToday}</div>
               </div>
             </div>
           </CardContent>
@@ -489,7 +489,7 @@ export default function CaixaManagement() {
                 <div className="text-xl font-bold text-destructive">
                   -{stats.todayOut.toLocaleString(uiLocale)} Kz
                 </div>
-                <div className="text-sm text-muted-foreground">Saídas Hoje</div>
+                <div className="text-sm text-muted-foreground">{t.caixaUi.outToday}</div>
               </div>
             </div>
           </CardContent>
@@ -502,13 +502,13 @@ export default function CaixaManagement() {
           <Card className="col-span-full">
             <CardContent className="py-12 text-center">
               <Wallet className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-              <h3 className="text-lg font-medium mb-2">Nenhuma caixa configurada</h3>
+              <h3 className="text-lg font-medium mb-2">{t.caixaUi.noRegistersConfigured}</h3>
               <p className="text-muted-foreground mb-4">
-                Crie uma caixa para começar a gerir os fundos da filial
+                {t.caixaUi.noRegistersHint}
               </p>
               <Button onClick={() => setIsCreateDialogOpen(true)}>
                 <Plus className="w-4 h-4 mr-2" />
-                Criar Caixa
+                {t.caixaUi.createCashRegister}
               </Button>
             </CardContent>
           </Card>
@@ -537,27 +537,27 @@ export default function CaixaManagement() {
                     </div>
                     <Badge variant={isOpen ? 'default' : 'secondary'} className="gap-1">
                       {isOpen ? <DoorOpen className="w-3 h-3" /> : <DoorClosed className="w-3 h-3" />}
-                      {isOpen ? 'Aberta' : 'Fechada'}
+                      {isOpen ? t.caixaUi.statusOpen : t.caixaUi.statusClosed}
                     </Badge>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {/* Balance */}
                   <div>
-                    <p className="text-sm text-muted-foreground">Saldo Actual</p>
+                    <p className="text-sm text-muted-foreground">{t.caixaUi.currentBalance}</p>
                     <p className="text-2xl font-bold">
-                      {caixa.currentBalance.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+                      {caixa.currentBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
                     </p>
                   </div>
 
                   {/* Limits */}
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div className="p-2 bg-muted rounded">
-                      <p className="text-xs text-muted-foreground">Limite Transacção</p>
+                      <p className="text-xs text-muted-foreground">{t.caixaUi.transactionLimitLabel}</p>
                       <p className="font-medium">{(caixa.pettyLimit || 0).toLocaleString(uiLocale)} Kz</p>
                     </div>
                     <div className="p-2 bg-muted rounded">
-                      <p className="text-xs text-muted-foreground">Limite Diário</p>
+                      <p className="text-xs text-muted-foreground">{t.caixaUi.dailyLimitLabel}</p>
                       <p className="font-medium">{(caixa.dailyLimit || 0).toLocaleString(uiLocale)} Kz</p>
                     </div>
                   </div>
@@ -572,7 +572,7 @@ export default function CaixaManagement() {
                         </span>
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Por: {todaySession.openedBy}
+                        {t.caixaUi.openedBy.replace('{name}', todaySession.openedBy)}
                       </p>
                     </div>
                   )}
@@ -587,7 +587,7 @@ export default function CaixaManagement() {
                         onClick={() => handleOpenSessionDialog(caixa)}
                       >
                         <DoorOpen className="w-4 h-4" />
-                        Abrir Caixa
+                        {t.caixaUi.openCashRegister}
                       </Button>
                     ) : (
                       <>
@@ -598,7 +598,7 @@ export default function CaixaManagement() {
                           onClick={() => handleOpenTransactionDialog(caixa)}
                         >
                           <Banknote className="w-4 h-4" />
-                          Movimento
+                          {t.caixaUi.movement}
                         </Button>
                         <Button 
                           variant="destructive" 
@@ -607,7 +607,7 @@ export default function CaixaManagement() {
                           onClick={() => handleCloseSessionDialog(caixa)}
                         >
                           <DoorClosed className="w-4 h-4" />
-                          Fechar
+                          {t.caixaUi.close}
                         </Button>
                       </>
                     )}
@@ -616,11 +616,11 @@ export default function CaixaManagement() {
                   <div className="flex gap-2">
                     <Button variant="ghost" size="sm" className="flex-1" onClick={() => handleViewCaixa(caixa)}>
                       <Eye className="w-4 h-4 mr-1" />
-                      Ver
+                      {t.caixaUi.view}
                     </Button>
                     <Button variant="ghost" size="sm" className="flex-1" onClick={() => handleOpenEditDialog(caixa)}>
                       <Settings2 className="w-4 h-4 mr-1" />
-                      Config
+                      {t.caixaUi.config}
                     </Button>
                   </div>
                 </CardContent>
@@ -634,12 +634,12 @@ export default function CaixaManagement() {
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Nova Caixa</DialogTitle>
-            <DialogDescription>Configure a nova caixa para a filial</DialogDescription>
+            <DialogTitle>{t.caixaUi.newCashRegisterTitle}</DialogTitle>
+            <DialogDescription>{t.caixaUi.newCashRegisterDesc}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label>Nome da Caixa *</Label>
+              <Label>{t.caixaUi.cashRegisterName} *</Label>
               <Input
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
@@ -647,7 +647,7 @@ export default function CaixaManagement() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Saldo Inicial (Kz)</Label>
+              <Label>{t.caixaUi.openingBalanceLabel}</Label>
               <Input
                 type="number"
                 min="0"
@@ -659,7 +659,7 @@ export default function CaixaManagement() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Limite por Transacção (Kz)</Label>
+                <Label>{t.caixaUi.limitPerTransaction}</Label>
                 <Input
                   type="number"
                   min="0"
@@ -667,10 +667,10 @@ export default function CaixaManagement() {
                   onChange={(e) => setFormData({ ...formData, pettyLimit: parseFloat(e.target.value) || 0 })}
                   placeholder="50000"
                 />
-                <p className="text-xs text-muted-foreground">Valor máximo por operação individual</p>
+                <p className="text-xs text-muted-foreground">{t.caixaUi.limitPerTransactionHint}</p>
               </div>
               <div className="space-y-2">
-                <Label>Limite Diário (Kz)</Label>
+                <Label>{t.caixaUi.dailyLimitField}</Label>
                 <Input
                   type="number"
                   min="0"
@@ -678,13 +678,13 @@ export default function CaixaManagement() {
                   onChange={(e) => setFormData({ ...formData, dailyLimit: parseFloat(e.target.value) || 0 })}
                   placeholder="200000"
                 />
-                <p className="text-xs text-muted-foreground">Total máximo de saídas por dia</p>
+                <p className="text-xs text-muted-foreground">{t.caixaUi.dailyLimitHint}</p>
               </div>
             </div>
             <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
               <div>
-                <Label>Requer Aprovação</Label>
-                <p className="text-xs text-muted-foreground">Operações acima do limite precisam de aprovação</p>
+                <Label>{t.caixaUi.requiresApproval}</Label>
+                <p className="text-xs text-muted-foreground">{t.caixaUi.requiresApprovalHint}</p>
               </div>
               <Switch
                 checked={formData.requiresApproval}
@@ -693,8 +693,8 @@ export default function CaixaManagement() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleCreateCaixa}>Criar Caixa</Button>
+            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={handleCreateCaixa}>{t.caixaUi.createCashRegister}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -703,12 +703,12 @@ export default function CaixaManagement() {
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Configurar Caixa</DialogTitle>
-            <DialogDescription>Ajuste os limites e configurações</DialogDescription>
+            <DialogTitle>{t.caixaUi.configureTitle}</DialogTitle>
+            <DialogDescription>{t.caixaUi.configureDesc}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label>Nome da Caixa</Label>
+              <Label>{t.caixaUi.cashRegisterName}</Label>
               <Input
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
@@ -716,7 +716,7 @@ export default function CaixaManagement() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Limite por Transacção (Kz)</Label>
+                <Label>{t.caixaUi.limitPerTransaction}</Label>
                 <Input
                   type="number"
                   min="0"
@@ -725,7 +725,7 @@ export default function CaixaManagement() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Limite Diário (Kz)</Label>
+                <Label>{t.caixaUi.dailyLimitField}</Label>
                 <Input
                   type="number"
                   min="0"
@@ -736,8 +736,8 @@ export default function CaixaManagement() {
             </div>
             <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
               <div>
-                <Label>Requer Aprovação</Label>
-                <p className="text-xs text-muted-foreground">Operações acima do limite precisam de aprovação</p>
+                <Label>{t.caixaUi.requiresApproval}</Label>
+                <p className="text-xs text-muted-foreground">{t.caixaUi.requiresApprovalHint}</p>
               </div>
               <Switch
                 checked={formData.requiresApproval}
@@ -746,8 +746,8 @@ export default function CaixaManagement() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleEditCaixa}>Guardar</Button>
+            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={handleEditCaixa}>{t.common.save}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -756,19 +756,18 @@ export default function CaixaManagement() {
       <AlertDialog open={isOpenSessionDialogOpen} onOpenChange={setIsOpenSessionDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Abrir Sessão de Caixa</AlertDialogTitle>
+            <AlertDialogTitle>{t.caixaUi.openSessionTitle}</AlertDialogTitle>
             <AlertDialogDescription>
-              Vai abrir a caixa "{selectedCaixa?.name}" com um saldo de{' '}
-              <strong>{selectedCaixa?.currentBalance.toLocaleString(uiLocale)} Kz</strong>.
-              <br /><br />
-              Esta acção iniciará o registo de movimentos para hoje.
+              {t.caixaUi.openSessionDesc
+                .replace('{name}', selectedCaixa?.name || '')
+                .replace('{balance}', selectedCaixa?.currentBalance.toLocaleString(uiLocale) || '0')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
             <AlertDialogAction onClick={handleOpenSession}>
               <DoorOpen className="w-4 h-4 mr-2" />
-              Abrir Caixa
+              {t.caixaUi.openCashRegister}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -780,38 +779,38 @@ export default function CaixaManagement() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <DoorClosed className="w-5 h-5" />
-              Fechar Sessão de Caixa
+              {t.caixaUi.closeSessionTitle}
             </DialogTitle>
             <DialogDescription>
-              Confirme o saldo de fecho para a caixa "{selectedCaixa?.name}"
+              {t.caixaUi.closeSessionDesc.replace('{name}', selectedCaixa?.name || '')}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             {selectedSession && (
               <div className="grid grid-cols-2 gap-4 p-4 bg-muted rounded-lg">
                 <div>
-                  <p className="text-sm text-muted-foreground">Saldo Abertura</p>
+                  <p className="text-sm text-muted-foreground">{t.caixaUi.openingBalance}</p>
                   <p className="font-bold">{selectedSession.openingBalance.toLocaleString(uiLocale)} Kz</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Saldo Esperado</p>
+                  <p className="text-sm text-muted-foreground">{t.caixaUi.expectedBalance}</p>
                   <p className="font-bold">
                     {(selectedSession.openingBalance + selectedSession.totalIn - selectedSession.totalOut).toLocaleString(uiLocale)} Kz
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Total Entradas</p>
+                  <p className="text-sm text-muted-foreground">{t.caixaUi.totalIn}</p>
                   <p className="font-bold text-primary">+{selectedSession.totalIn.toLocaleString(uiLocale)} Kz</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Total Saídas</p>
+                  <p className="text-sm text-muted-foreground">{t.caixaUi.totalOut}</p>
                   <p className="font-bold text-destructive">-{selectedSession.totalOut.toLocaleString(uiLocale)} Kz</p>
                 </div>
               </div>
             )}
             
             <div className="space-y-2">
-              <Label>Saldo de Fecho Contado (Kz) *</Label>
+              <Label>{t.caixaUi.countedClosingBalance}</Label>
               <Input
                 type="number"
                 min="0"
@@ -833,7 +832,7 @@ export default function CaixaManagement() {
                   {closingBalance === (selectedSession.openingBalance + selectedSession.totalIn - selectedSession.totalOut) ? (
                     <>
                       <Check className="w-5 h-5 text-primary" />
-                      <span className="font-medium text-primary">Saldo confere</span>
+                      <span className="font-medium text-primary">{t.caixaUi.balanceMatches}</span>
                     </>
                   ) : (
                     <>
@@ -849,7 +848,7 @@ export default function CaixaManagement() {
             )}
             
             <div className="space-y-2">
-              <Label>Notas de Fecho</Label>
+              <Label>{t.caixaUi.closingNotes}</Label>
               <Textarea
                 value={closingNotes}
                 onChange={(e) => setClosingNotes(e.target.value)}
@@ -859,10 +858,10 @@ export default function CaixaManagement() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCloseSessionDialogOpen(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setIsCloseSessionDialogOpen(false)}>{t.common.cancel}</Button>
             <Button variant="destructive" onClick={handleCloseSession}>
               <DoorClosed className="w-4 h-4 mr-2" />
-              Fechar Caixa
+              {t.caixaUi.closeCashRegister}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -872,14 +871,14 @@ export default function CaixaManagement() {
       <Dialog open={isTransactionDialogOpen} onOpenChange={setIsTransactionDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Registar Movimento</DialogTitle>
+            <DialogTitle>{t.caixaUi.recordMovementTitle}</DialogTitle>
             <DialogDescription>
-              Adicione um movimento manual à caixa "{selectedCaixa?.name}"
+              {t.caixaUi.recordMovementDesc.replace('{name}', selectedCaixa?.name || '')}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label>Tipo de Movimento</Label>
+              <Label>{t.caixaUi.movementType}</Label>
               <Select 
                 value={transactionData.type} 
                 onValueChange={(v) => setTransactionData({ ...transactionData, type: v as any })}
@@ -891,19 +890,19 @@ export default function CaixaManagement() {
                   <SelectItem value="deposit">
                     <span className="flex items-center gap-2">
                       <ArrowDownRight className="w-4 h-4 text-primary" />
-                      Entrada / Depósito
+                      {t.caixaUi.typeDeposit}
                     </span>
                   </SelectItem>
                   <SelectItem value="withdrawal">
                     <span className="flex items-center gap-2">
                       <ArrowUpRight className="w-4 h-4 text-destructive" />
-                      Saída / Levantamento
+                      {t.caixaUi.typeWithdrawal}
                     </span>
                   </SelectItem>
                   <SelectItem value="adjustment">
                     <span className="flex items-center gap-2">
                       <Settings2 className="w-4 h-4" />
-                      Ajuste
+                      {t.caixaUi.typeAdjustment}
                     </span>
                   </SelectItem>
                 </SelectContent>
@@ -911,7 +910,7 @@ export default function CaixaManagement() {
             </div>
 
             <div className="space-y-2">
-              <Label>Valor (Kz) *</Label>
+              <Label>{t.caixaUi.amountLabel}</Label>
               <Input
                 type="number"
                 min="0"
@@ -929,27 +928,27 @@ export default function CaixaManagement() {
             </div>
 
             <div className="space-y-2">
-              <Label>Descrição *</Label>
+              <Label>{t.caixaUi.descriptionRequired}</Label>
               <Input
                 value={transactionData.description}
                 onChange={(e) => setTransactionData({ ...transactionData, description: e.target.value })}
-                placeholder="Motivo do movimento"
+                placeholder={t.caixaUi.descriptionPlaceholder}
               />
             </div>
 
             <div className="space-y-2">
-              <Label>Beneficiário / Fonte</Label>
+              <Label>{t.caixaUi.payeeLabel}</Label>
               <Input
                 value={transactionData.payee}
                 onChange={(e) => setTransactionData({ ...transactionData, payee: e.target.value })}
-                placeholder="Nome da pessoa ou entidade"
+                placeholder={t.caixaUi.payeePlaceholder}
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsTransactionDialogOpen(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setIsTransactionDialogOpen(false)}>{t.common.cancel}</Button>
             <Button onClick={handleAddTransaction}>
-              Registar Movimento
+              {t.caixaUi.recordMovement}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -963,7 +962,7 @@ export default function CaixaManagement() {
               <Wallet className="w-5 h-5" />
               {selectedCaixa?.name}
               <Badge variant={selectedCaixa?.status === 'open' ? 'default' : 'secondary'}>
-                {selectedCaixa?.status === 'open' ? 'Aberta' : 'Fechada'}
+                {selectedCaixa?.status === 'open' ? t.caixaUi.statusOpen : t.caixaUi.statusClosed}
               </Badge>
             </DialogTitle>
             <DialogDescription>{selectedCaixa?.branchName}</DialogDescription>
@@ -971,33 +970,33 @@ export default function CaixaManagement() {
 
           <Tabs defaultValue="transactions">
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="transactions">Movimentos</TabsTrigger>
-              <TabsTrigger value="sessions">Sessões</TabsTrigger>
+              <TabsTrigger value="transactions">{t.caixaUi.tabMovements}</TabsTrigger>
+              <TabsTrigger value="sessions">{t.caixaUi.tabSessions}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="transactions" className="space-y-4">
               <div className="p-4 bg-muted rounded-lg">
-                <p className="text-sm text-muted-foreground">Saldo Actual</p>
+                <p className="text-sm text-muted-foreground">{t.caixaUi.currentBalance}</p>
                 <p className="text-3xl font-bold">
-                  {selectedCaixa?.currentBalance.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+                  {selectedCaixa?.currentBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
                 </p>
               </div>
 
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Data</TableHead>
-                    <TableHead>Tipo</TableHead>
-                    <TableHead>Descrição</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
-                    <TableHead className="text-right">Saldo</TableHead>
+                    <TableHead>{t.caixaUi.colDate}</TableHead>
+                    <TableHead>{t.caixaUi.colType}</TableHead>
+                    <TableHead>{t.caixaUi.colDescription}</TableHead>
+                    <TableHead className="text-right">{t.caixaUi.colAmount}</TableHead>
+                    <TableHead className="text-right">{t.caixaUi.colBalance}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {caixaTransactions.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                        Nenhum movimento registado
+                        {t.caixaUi.noMovements}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -1034,19 +1033,19 @@ export default function CaixaManagement() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Data</TableHead>
-                    <TableHead>Abertura</TableHead>
-                    <TableHead>Fecho</TableHead>
-                    <TableHead>Entradas</TableHead>
-                    <TableHead>Saídas</TableHead>
-                    <TableHead>Estado</TableHead>
+                    <TableHead>{t.caixaUi.colDate}</TableHead>
+                    <TableHead>{t.caixaUi.colOpening}</TableHead>
+                    <TableHead>{t.caixaUi.colClosing}</TableHead>
+                    <TableHead>{t.caixaUi.colIn}</TableHead>
+                    <TableHead>{t.caixaUi.colOut}</TableHead>
+                    <TableHead>{t.caixaUi.colStatus}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {sessions.filter(s => s.caixaId === selectedCaixa?.id).length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                        Nenhuma sessão registada
+                        {t.caixaUi.noSessions}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -1067,7 +1066,7 @@ export default function CaixaManagement() {
                           <TableCell className="text-destructive">-{session.totalOut.toLocaleString(uiLocale)}</TableCell>
                           <TableCell>
                             <Badge variant={session.status === 'open' ? 'default' : 'secondary'}>
-                              {session.status === 'open' ? 'Aberta' : 'Fechada'}
+                              {session.status === 'open' ? t.caixaUi.statusOpen : t.caixaUi.statusClosed}
                             </Badge>
                           </TableCell>
                         </TableRow>

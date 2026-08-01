@@ -9,7 +9,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Printer, Scale, RefreshCw, Loader2, FileDown, FileSpreadsheet } from 'lucide-react';
-import { useTranslation } from '@/i18n';
+import { useTranslation, type TranslationKeys } from '@/i18n';
+import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { useBalanceSheet } from '@/hooks/useChartOfAccounts';
 import type { AccountType, BalanceSheetAccountRow } from '@/types/accounting';
 import { buildLineItemsTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
@@ -48,11 +49,13 @@ function appendAccounts(
   items: BalanceItem[],
   accounts: BalanceSheetAccountRow[],
   filter: (r: BalanceSheetAccountRow) => boolean,
+  language: 'en' | 'pt',
+  t: TranslationKeys,
 ) {
   for (const row of accounts.filter((r) => hasBalance(r) && filter(r))) {
     items.push({
       code: row.code,
-      description: row.name,
+      description: resolveAccountDisplayName({ code: row.code, name: row.name }, language, t),
       currentPeriod: row.current_balance,
       previousPeriod: row.previous_balance,
       indent: Math.min(3, Math.max(1, row.level || 1)),
@@ -74,7 +77,7 @@ export default function BalanceSheetReport() {
     const assetItems: BalanceItem[] = [
       { code: '', description: t.balanceSheetUi.assetsHeader, currentPeriod: 0, previousPeriod: 0, isHeader: true },
     ];
-    appendAccounts(assetItems, rows, (r) => r.account_type === 'asset');
+    appendAccounts(assetItems, rows, (r) => r.account_type === 'asset', language, t);
     const totalAssetsCurrent = sumType(rows, 'asset', 'current_balance');
     const totalAssetsPrevious = sumType(rows, 'asset', 'previous_balance');
     assetItems.push({
@@ -95,7 +98,7 @@ export default function BalanceSheetReport() {
       },
       { code: '', description: t.balanceSheetUi.equity, currentPeriod: 0, previousPeriod: 0, isSubtotal: true },
     ];
-    appendAccounts(leItems, rows, (r) => r.account_type === 'equity');
+    appendAccounts(leItems, rows, (r) => r.account_type === 'equity', language, t);
     if (Math.abs(netResultCurrent) > 0.005 || Math.abs(netResultPrevious) > 0.005) {
       leItems.push({
         code: '88',
@@ -121,7 +124,7 @@ export default function BalanceSheetReport() {
       previousPeriod: 0,
       isSubtotal: true,
     });
-    appendAccounts(leItems, rows, (r) => r.account_type === 'liability');
+    appendAccounts(leItems, rows, (r) => r.account_type === 'liability', language, t);
     const totalLiabilitiesCurrent = sumType(rows, 'liability', 'current_balance');
     const totalLiabilitiesPrevious = sumType(rows, 'liability', 'previous_balance');
     leItems.push({
@@ -160,7 +163,7 @@ export default function BalanceSheetReport() {
         totalPreviousLiabilities: totalLiabilitiesPrevious,
       },
     };
-  }, [rows, t]);
+  }, [rows, t, language]);
 
   const formatMoney = (value: number) => {
     if (Math.abs(value) < 0.005) return '-';

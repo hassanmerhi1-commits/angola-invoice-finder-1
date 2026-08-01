@@ -160,7 +160,7 @@ export function logTransaction(params: {
     id: generateId(),
     timestamp: new Date().toISOString(),
     userId: currentUser?.id || 'system',
-    userName: currentUser?.name || 'Sistema',
+    userName: currentUser?.name || 'System',
     userRole: currentUser?.role || 'system',
     branchId: params.branchId || currentBranch?.id || '',
     branchName: params.branchName || currentBranch?.name || '',
@@ -269,83 +269,83 @@ export function getTransactionStats(filter?: TransactionFilter) {
   };
 }
 
-// Action display names (Portuguese)
+// Action display names (English)
 export const ACTION_LABELS: Record<TransactionAction, string> = {
   // Sales
-  sale_created: 'Venda Realizada',
-  sale_voided: 'Venda Anulada',
-  sale_refunded: 'Venda Reembolsada',
-  invoice_printed: 'Factura Impressa',
-  invoice_reprinted: 'Factura Reimpressa',
+  sale_created: 'Sale Created',
+  sale_voided: 'Sale Voided',
+  sale_refunded: 'Sale Refunded',
+  invoice_printed: 'Invoice Printed',
+  invoice_reprinted: 'Invoice Reprinted',
   // Inventory
-  product_created: 'Produto Criado',
-  product_updated: 'Produto Actualizado',
-  product_deleted: 'Produto Eliminado',
-  stock_adjusted: 'Stock Ajustado',
-  stock_imported: 'Stock Importado',
-  price_changed: 'Preço Alterado',
+  product_created: 'Product Created',
+  product_updated: 'Product Updated',
+  product_deleted: 'Product Deleted',
+  stock_adjusted: 'Stock Adjusted',
+  stock_imported: 'Stock Imported',
+  price_changed: 'Price Changed',
   // Clients
-  client_created: 'Cliente Criado',
-  client_updated: 'Cliente Actualizado',
-  client_deleted: 'Cliente Eliminado',
-  client_imported: 'Clientes Importados',
+  client_created: 'Client Created',
+  client_updated: 'Client Updated',
+  client_deleted: 'Client Deleted',
+  client_imported: 'Clients Imported',
   // Suppliers
-  supplier_created: 'Fornecedor Criado',
-  supplier_updated: 'Fornecedor Actualizado',
-  supplier_deleted: 'Fornecedor Eliminado',
-  supplier_imported: 'Fornecedores Importados',
+  supplier_created: 'Supplier Created',
+  supplier_updated: 'Supplier Updated',
+  supplier_deleted: 'Supplier Deleted',
+  supplier_imported: 'Suppliers Imported',
   // Stock Transfer
-  transfer_requested: 'Transferência Solicitada',
-  transfer_approved: 'Transferência Aprovada',
-  transfer_received: 'Transferência Recebida',
-  transfer_cancelled: 'Transferência Cancelada',
+  transfer_requested: 'Transfer Requested',
+  transfer_approved: 'Transfer Approved',
+  transfer_received: 'Transfer Received',
+  transfer_cancelled: 'Transfer Cancelled',
   // Purchases
-  purchase_created: 'Compra Registada',
-  purchase_received: 'Compra Recebida',
-  purchase_cancelled: 'Compra Cancelada',
-  supplier_return: 'Devolução ao Fornecedor',
+  purchase_created: 'Purchase Recorded',
+  purchase_received: 'Purchase Received',
+  purchase_cancelled: 'Purchase Cancelled',
+  supplier_return: 'Supplier Return',
   // User
-  user_login: 'Início de Sessão',
-  user_logout: 'Fim de Sessão',
-  user_created: 'Utilizador Criado',
-  user_updated: 'Utilizador Actualizado',
-  user_deleted: 'Utilizador Eliminado',
-  password_changed: 'Palavra-passe Alterada',
+  user_login: 'Login',
+  user_logout: 'Logout',
+  user_created: 'User Created',
+  user_updated: 'User Updated',
+  user_deleted: 'User Deleted',
+  password_changed: 'Password Changed',
   // Settings
-  settings_updated: 'Configurações Actualizadas',
-  branch_created: 'Filial Criada',
-  branch_updated: 'Filial Actualizada',
-  branch_deleted: 'Filial Eliminada',
-  category_created: 'Categoria Criada',
-  category_updated: 'Categoria Actualizada',
-  category_deleted: 'Categoria Eliminada',
+  settings_updated: 'Settings Updated',
+  branch_created: 'Branch Created',
+  branch_updated: 'Branch Updated',
+  branch_deleted: 'Branch Deleted',
+  category_created: 'Category Created',
+  category_updated: 'Category Updated',
+  category_deleted: 'Category Deleted',
   // Fiscal
-  saft_exported: 'SAF-T Exportado',
-  day_closed: 'Dia Fechado',
-  day_opened: 'Dia Aberto',
-  proforma_created: 'Pro Forma Criada',
-  proforma_status_changed: 'Pro Forma Actualizada',
-  proforma_converted: 'Pro Forma Convertida',
-  proforma_deleted: 'Pro Forma Eliminada',
+  saft_exported: 'SAF-T Exported',
+  day_closed: 'Day Closed',
+  day_opened: 'Day Opened',
+  proforma_created: 'Proforma Created',
+  proforma_status_changed: 'Proforma Updated',
+  proforma_converted: 'Proforma Converted',
+  proforma_deleted: 'Proforma Deleted',
   // Reports
-  report_generated: 'Relatório Gerado',
-  report_exported: 'Relatório Exportado',
-  data_exported: 'Dados Exportados',
-  data_imported: 'Dados Importados',
+  report_generated: 'Report Generated',
+  report_exported: 'Report Exported',
+  data_exported: 'Data Exported',
+  data_imported: 'Data Imported',
 };
 
-// Category display names (Portuguese)
+// Category display names (English)
 export const CATEGORY_LABELS: Record<TransactionCategory, string> = {
-  sales: 'Vendas',
-  inventory: 'Inventário',
-  clients: 'Clientes',
-  suppliers: 'Fornecedores',
-  stock_transfer: 'Transferências',
-  purchase: 'Compras',
-  user: 'Utilizadores',
-  settings: 'Configurações',
+  sales: 'Sales',
+  inventory: 'Inventory',
+  clients: 'Clients',
+  suppliers: 'Suppliers',
+  stock_transfer: 'Transfers',
+  purchase: 'Purchases',
+  user: 'Users',
+  settings: 'Settings',
   fiscal: 'Fiscal',
-  reports: 'Relatórios',
+  reports: 'Reports',
 };
 
 // Category colors
@@ -363,22 +363,22 @@ export const CATEGORY_COLORS: Record<TransactionCategory, string> = {
 };
 
 // Export transaction history to Excel
-export async function exportTransactionHistoryToExcel(records: TransactionRecord[], filename = 'historico_transacoes') {
+export async function exportTransactionHistoryToExcel(records: TransactionRecord[], filename = 'transaction_history') {
   const data = records.map(r => ({
-    'Data/Hora': new Date(r.timestamp).toLocaleString('pt-AO'),
-    'Utilizador': r.userName,
-    'Função': r.userRole,
-    'Filial': r.branchName,
-    'Categoria': CATEGORY_LABELS[r.category] || r.category,
-    'Acção': ACTION_LABELS[r.action] || r.action,
-    'Tipo Entidade': r.entityType,
-    'Número': r.entityNumber || '',
-    'Nome': r.entityName || '',
-    'Descrição': r.description,
-    'Valor': r.amount ? r.amount.toLocaleString('pt-AO') : '',
+    'Date/Time': new Date(r.timestamp).toLocaleString('en-GB'),
+    'User': r.userName,
+    'Role': r.userRole,
+    'Branch': r.branchName,
+    'Category': CATEGORY_LABELS[r.category] || r.category,
+    'Action': ACTION_LABELS[r.action] || r.action,
+    'Entity Type': r.entityType,
+    'Number': r.entityNumber || '',
+    'Name': r.entityName || '',
+    'Description': r.description,
+    'Amount': r.amount ? r.amount.toLocaleString('en-GB') : '',
   }));
 
-  await exportReportExcel(data, filename, { title: 'Histórico de Transacções' });
+  await exportReportExcel(data, filename, { title: 'Transaction History' });
 }
 
 // Clear old transactions (keep last N days)

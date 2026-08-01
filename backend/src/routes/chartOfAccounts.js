@@ -558,9 +558,13 @@ module.exports = function(broadcastTable) {
         ? 'LEFT JOIN branches b ON b.id::text = je.branch_id::text'
         : 'LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(je.branch_id AS TEXT)';
 
-      // Leaf accounts: parent walk alone (just this id). Headers also expand by PGC code prefix
-      // when parent_id links are incomplete — that LIKE is expensive on busy trees.
-      const expandByCode = root.is_header === true || root.is_header === 1 || root.is_header === '1';
+      // Control accounts 321/311: always expand by PGC code prefix so ledger
+      // shows leaf activity under the parent even when is_header is false.
+      const codeStr = String(root.code || '');
+      const expandByCode =
+        root.is_header === true || root.is_header === 1 || root.is_header === '1'
+        || codeStr === '321' || codeStr === '311'
+        || codeStr === '32' || codeStr === '31';
       if (expandByCode) {
         codeParamSql = `$${paramIndex++}`;
         params.push(String(root.code || ''));

@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
+import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
@@ -312,7 +313,9 @@ function JournalsTrialBalancePanel({ branchId }: { branchId?: string }) {
               {rows.map(row => (
                 <tr key={row.id} className="hover:bg-accent/30">
                   <td className="px-3 py-1.5 font-mono">{row.code}</td>
-                  <td className="px-3 py-1.5">{row.name}</td>
+                  <td className="px-3 py-1.5">
+                    {resolveAccountDisplayName({ code: row.code, name: row.name }, language, t)}
+                  </td>
                   <td className="px-3 py-1.5 text-right font-mono text-green-600">
                     {Number(row.total_debits) > 0 ? Number(row.total_debits).toLocaleString(uiLocale) : ''}
                   </td>
@@ -649,10 +652,15 @@ export default function Journals() {
   const filteredAccounts = useMemo(() => {
     if (!accountSearch) return pickerAccounts.slice(0, 50);
     const term = accountSearch.toLowerCase();
-    return pickerAccounts.filter(a =>
-      a.code.toLowerCase().includes(term) || a.name.toLowerCase().includes(term)
-    ).slice(0, 50);
-  }, [pickerAccounts, accountSearch]);
+    return pickerAccounts.filter(a => {
+      const displayName = resolveAccountDisplayName(a, language, t);
+      return (
+        a.code.toLowerCase().includes(term)
+        || a.name.toLowerCase().includes(term)
+        || displayName.toLowerCase().includes(term)
+      );
+    }).slice(0, 50);
+  }, [pickerAccounts, accountSearch, language, t]);
 
   // Reset new entry form
   // When true, user edited the balancing (last) line amounts — stop overwriting credit/debit.
@@ -749,7 +757,11 @@ export default function Journals() {
     const mappedLines: NewEntryLine[] = lines.map((line) => ({
       id: generateId(),
       accountCode: line.accountCode || '',
-      accountName: line.accountName || '',
+      accountName: resolveAccountDisplayName(
+        { code: line.accountCode || '', name: line.accountName || '' },
+        language,
+        t,
+      ),
       accountBalance: accountsByCode.get(line.accountCode)?.current_balance != null
         ? Number(accountsByCode.get(line.accountCode)!.current_balance) || 0
         : null,
@@ -778,7 +790,7 @@ export default function Journals() {
         if (field === 'accountCode') {
           const match = accountsByCode.get(value.trim());
           if (match) {
-            updated.accountName = match.name;
+            updated.accountName = resolveAccountDisplayName(match, language, t);
             updated.accountBalance = Number(match.current_balance) || 0;
           } else if (!value.trim()) {
             updated.accountName = '';
@@ -811,7 +823,7 @@ export default function Journals() {
       return {
         ...l,
         accountCode: account.code,
-        accountName: account.name,
+        accountName: resolveAccountDisplayName(account, language, t),
         accountBalance: Number(account.current_balance) || 0,
       };
     }));
@@ -1363,7 +1375,9 @@ export default function Journals() {
                                     }}
                                   >
                                     <span className="w-16 shrink-0 font-mono text-primary">{acct.code}</span>
-                                    <span className="min-w-0 flex-1 truncate">{acct.name}</span>
+                                    <span className="min-w-0 flex-1 truncate">
+                                      {resolveAccountDisplayName(acct, language, t)}
+                                    </span>
                                     <span className="w-24 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground">
                                       {Number(acct.current_balance || 0).toLocaleString(uiLocale)} Kz
                                     </span>
@@ -1375,7 +1389,15 @@ export default function Journals() {
                         </td>
                         <td className="px-2 py-2 align-top">
                           <Input
-                            value={line.accountName}
+                            value={
+                              line.accountCode
+                                ? resolveAccountDisplayName(
+                                  { code: line.accountCode, name: line.accountName },
+                                  language,
+                                  t,
+                                )
+                                : line.accountName
+                            }
                             disabled
                             className="h-9 bg-muted/40"
                           />

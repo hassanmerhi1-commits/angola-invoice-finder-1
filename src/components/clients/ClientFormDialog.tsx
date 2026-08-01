@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
+import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { validateNIF } from '@/lib/companySettings';
 import { ENTITY_ACCOUNT_CODE_LENGTH, nextEntityAccountCode } from '@/lib/entityAccounts';
 import { Plus } from 'lucide-react';
@@ -63,7 +64,7 @@ export function ClientFormDialog({
   client = null,
   onSaved,
 }: ClientFormDialogProps) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const { toast } = useToast();
   const { createClient, saveClient } = useClients();
   const { accounts, createAccount, refetch: refetchAccounts } = useChartOfAccounts();
@@ -322,7 +323,7 @@ export function ClientFormDialog({
                       <SelectContent>
                         {clientParentOptions.map((acc) => (
                           <SelectItem key={acc.code} value={acc.code}>
-                            {acc.code} — {acc.name}
+                            {acc.code} — {resolveAccountDisplayName(acc, language, t)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -370,7 +371,7 @@ export function ClientFormDialog({
                         <SelectContent>
                           {clientParentOptions.map((acc) => (
                             <SelectItem key={acc.code} value={acc.code}>
-                              {acc.code} — {acc.name}
+                              {acc.code} — {resolveAccountDisplayName(acc, language, t)}
                             </SelectItem>
                           ))}
                         </SelectContent>

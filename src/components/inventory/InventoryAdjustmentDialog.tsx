@@ -363,10 +363,10 @@ export function InventoryAdjustmentDialog({
             </div>
             <Select value={selectedCategory} onValueChange={setSelectedCategory}>
               <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Categoria" />
+                <SelectValue placeholder={t.inventoryAdjustUi.categoryPlaceholder} />
               </SelectTrigger>
               <SelectContent className="bg-background border shadow-lg z-50">
-                <SelectItem value="all">Todas Categorias</SelectItem>
+                <SelectItem value="all">{t.inventoryAdjustUi.allCategories}</SelectItem>
                 {categories.map(cat => (
                   <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                 ))}
@@ -378,13 +378,13 @@ export function InventoryAdjustmentDialog({
               onClick={() => setShowOnlyDifferences(!showOnlyDifferences)}
             >
               <AlertTriangle className="w-4 h-4 mr-1" />
-              Só Diferenças
+              {t.inventoryAdjustUi.onlyDifferences}
             </Button>
             <label className="cursor-pointer">
               <Button variant="outline" size="sm" asChild>
                 <span>
                   <Upload className="w-4 h-4 mr-1" />
-                  Importar Excel
+                  {t.inventoryAdjustUi.importExcel}
                 </span>
               </Button>
               <input
@@ -396,30 +396,30 @@ export function InventoryAdjustmentDialog({
             </label>
             <Button variant="ghost" size="sm" onClick={handleClearAll}>
               <RotateCcw className="w-4 h-4 mr-1" />
-              Limpar
+              {t.inventoryAdjustUi.clear}
             </Button>
           </div>
 
           {/* Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
             <div className="p-3 bg-muted rounded-lg text-center">
-              <p className="text-xs text-muted-foreground">Produtos</p>
+              <p className="text-xs text-muted-foreground">{t.inventoryAdjustUi.products}</p>
               <p className="text-lg font-bold">{summary.totalProducts}</p>
             </div>
             <div className="p-3 bg-muted rounded-lg text-center">
-              <p className="text-xs text-muted-foreground">Contados</p>
+              <p className="text-xs text-muted-foreground">{t.inventoryAdjustUi.counted}</p>
               <p className="text-lg font-bold">{summary.modifiedCount}</p>
             </div>
             <div className="p-3 bg-muted rounded-lg text-center">
-              <p className="text-xs text-muted-foreground">Com Diferença</p>
+              <p className="text-xs text-muted-foreground">{t.inventoryAdjustUi.withDifference}</p>
               <p className="text-lg font-bold text-amber-600">{summary.withDifferenceCount}</p>
             </div>
             <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 rounded-lg text-center">
-              <p className="text-xs text-muted-foreground">Aumentos</p>
+              <p className="text-xs text-muted-foreground">{t.inventoryAdjustUi.increases}</p>
               <p className="text-lg font-bold text-emerald-600">+{summary.totalIncrease}</p>
             </div>
             <div className="p-3 bg-red-50 dark:bg-red-950/30 rounded-lg text-center">
-              <p className="text-xs text-muted-foreground">Reduções</p>
+              <p className="text-xs text-muted-foreground">{t.inventoryAdjustUi.decreases}</p>
               <p className="text-lg font-bold text-destructive">-{summary.totalDecrease}</p>
             </div>
           </div>
@@ -430,12 +430,12 @@ export function InventoryAdjustmentDialog({
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
                   <TableHead className="w-[100px]">{t.inventoryAdjustUi.colCode}</TableHead>
-                  <TableHead>Produto</TableHead>
-                  <TableHead className="w-[100px]">Categoria</TableHead>
-                  <TableHead className="w-[60px] text-center">Un.</TableHead>
-                  <TableHead className="w-[100px] text-center">Stock Sistema</TableHead>
+                  <TableHead>{t.inventoryAdjustUi.colProduct}</TableHead>
+                  <TableHead className="w-[100px]">{t.inventoryAdjustUi.colCategory}</TableHead>
+                  <TableHead className="w-[60px] text-center">{t.inventoryAdjustUi.colUnit}</TableHead>
+                  <TableHead className="w-[100px] text-center">{t.inventoryAdjustUi.colSystemStock}</TableHead>
                   <TableHead className="w-[120px] text-center">{t.inventoryAdjustUi.colPhysicalCount}</TableHead>
-                  <TableHead className="w-[100px] text-center">Diferença</TableHead>
+                  <TableHead className="w-[100px] text-center">{t.inventoryAdjustUi.colDifference}</TableHead>
                   <TableHead className="w-[80px]"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -444,7 +444,7 @@ export function InventoryAdjustmentDialog({
                   <TableRow>
                     <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
                       <Calculator className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                      <p>Nenhum produto encontrado</p>
+                      <p>{t.inventoryAdjustUi.noProductsFound}</p>
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -503,7 +503,7 @@ export function InventoryAdjustmentDialog({
                           size="sm"
                           className="h-7 text-xs"
                           onClick={() => handleSetAsSystem(item.productId, item.systemStock)}
-                          title="Definir contagem igual ao sistema"
+                          title={t.inventoryAdjustUi.setEqualToSystem}
                         >
                           <CheckCircle2 className="w-3 h-3" />
                         </Button>

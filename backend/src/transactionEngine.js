@@ -238,7 +238,7 @@ async function resolveCustomerReceivableAccount(client, clientId) {
   const name = String(row.name || '').trim();
   // Always resolve/create the 8-digit leaf (311xxxxx) — never post credit sales to header 311.
   const accountCode = await resolveEntityAccountCode(client, 'customer', clientId, name);
-  return { accountCode: accountCode || ACC.CLIENTS_CURRENT, client: row };
+  return { accountCode, client: row };
 }
 
 const INVENTORY_MERCHANDISE_ACCOUNT = ACC.PURCHASES_MERCHANDISE;
@@ -462,10 +462,10 @@ function buildStockAdjustmentJournalLines(direction, referenceType, totalValue, 
       creditAccount = ACC.REVALUATION_RESERVE;
       creditDesc = 'Existências iniciais';
     } else if (ref === 'purchase') {
-      // Prefer the 8-digit supplier leaf — bare 321 parks balances on the parent.
-      creditAccount = /^321\d+$/i.test(supplierAccountCode)
-        ? supplierAccountCode
-        : ACC.SUPPLIERS_CURRENT;
+      if (!/^321\d+$/i.test(supplierAccountCode)) {
+        throw new Error('Stock purchase journal requires a supplier leaf account (321xxxxx)');
+      }
+      creditAccount = supplierAccountCode;
       creditDesc = 'Fornecedores (entrada directa — preferir FC)';
     } else if (ref === 'transfer' || ref === 'transfer_in') {
       return [
@@ -713,17 +713,22 @@ async function processStockAdjustment(client, data) {
   if (
     normalizedDirection === 'IN'
     && String(referenceType || '').toLowerCase() === 'purchase'
-    && (supplierId || supplierName)
   ) {
-    try {
-      supplierAccountCode = await resolveEntityAccountCode(
-        client,
-        'supplier',
-        supplierId || null,
-        supplierName || '',
-      ) || '';
-    } catch (e) {
-      console.warn('[STOCK ADJUST] supplier COA resolve failed:', e.message);
+    if (!supplierId && !supplierName) {
+      throw new Error(
+        'Stock purchase adjustment requires supplierId or supplierName so the AP leaf (321xxxxx) can be posted.',
+      );
+    }
+    supplierAccountCode = await resolveEntityAccountCode(
+      client,
+      'supplier',
+      supplierId || null,
+      supplierName || '',
+    );
+    if (!/^321\d+$/i.test(String(supplierAccountCode || ''))) {
+      throw new Error(
+        `Could not resolve supplier COA leaf for stock purchase (got ${supplierAccountCode || 'none'}).`,
+      );
     }
   }
 

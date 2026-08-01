@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { format } from 'date-fns';
-import { pt } from 'date-fns/locale';
+import { pt, enUS } from 'date-fns/locale';
 import { useTranslation } from '@/i18n';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -77,6 +77,7 @@ const CATEGORY_ICONS: Record<TransactionCategory, React.ReactNode> = {
 export function TransactionHistoryReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const dfLocale = language === 'pt' ? pt : enUS;
   const { apiBranchId: scopeBranchId } = useBranchScope();
   const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter({
     allValue: '',
@@ -139,7 +140,7 @@ export function TransactionHistoryReport() {
   // Export to Excel
   const handleExport = async () => {
     const dateStr = format(new Date(), 'yyyy-MM-dd');
-    await exportTransactionHistoryToExcel(filteredRecords, `historico_transacoes_${dateStr}`);
+    await exportTransactionHistoryToExcel(filteredRecords, `transaction_history_${dateStr}`);
   };
 
   return (
@@ -151,21 +152,21 @@ export function TransactionHistoryReport() {
             <History className="w-6 h-6 text-primary" />
           </div>
           <div>
-            <h2 className="text-2xl font-bold">Histórico de Transacções</h2>
-            <p className="text-muted-foreground">Registo completo de todas as operações do sistema</p>
+            <h2 className="text-2xl font-bold">{t.transactionHistoryUi.title}</h2>
+            <p className="text-muted-foreground">{t.transactionHistoryUi.subtitle}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => setShowFilters(!showFilters)}>
             <Filter className="w-4 h-4 mr-2" />
-            Filtros
+            {t.transactionHistoryUi.filters}
             {hasActiveFilters && (
-              <Badge variant="secondary" className="ml-2">Activos</Badge>
+              <Badge variant="secondary" className="ml-2">{t.transactionHistoryUi.filtersActive}</Badge>
             )}
           </Button>
           <Button variant="outline" onClick={handleExport} disabled={filteredRecords.length === 0}>
             <Download className="w-4 h-4 mr-2" />
-            Exportar Excel
+            {t.transactionHistoryUi.exportExcel}
           </Button>
         </div>
       </div>
@@ -176,8 +177,8 @@ export function TransactionHistoryReport() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Total Transacções</p>
-                <p className="text-2xl font-bold">{stats.totalTransactions.toLocaleString()}</p>
+                <p className="text-sm text-muted-foreground">{t.transactionHistoryUi.totalTransactions}</p>
+                <p className="text-2xl font-bold">{stats.totalTransactions.toLocaleString(locale)}</p>
               </div>
               <History className="w-8 h-8 text-muted-foreground" />
             </div>
@@ -187,7 +188,7 @@ export function TransactionHistoryReport() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Utilizadores Activos</p>
+                <p className="text-sm text-muted-foreground">{t.transactionHistoryUi.activeUsers}</p>
                 <p className="text-2xl font-bold">{Object.keys(stats.byUser).length}</p>
               </div>
               <User className="w-8 h-8 text-muted-foreground" />
@@ -198,8 +199,8 @@ export function TransactionHistoryReport() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Vendas</p>
-                <p className="text-2xl font-bold">{(stats.byCategory['sales'] || 0).toLocaleString()}</p>
+                <p className="text-sm text-muted-foreground">{t.transactionHistoryUi.sales}</p>
+                <p className="text-2xl font-bold">{(stats.byCategory['sales'] || 0).toLocaleString(locale)}</p>
               </div>
               <ShoppingCart className="w-8 h-8 text-muted-foreground" />
             </div>
@@ -209,8 +210,8 @@ export function TransactionHistoryReport() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Valor Total</p>
-                <p className="text-2xl font-bold">{stats.totalAmount.toLocaleString('pt-AO')} Kz</p>
+                <p className="text-sm text-muted-foreground">{t.transactionHistoryUi.totalValue}</p>
+                <p className="text-2xl font-bold">{stats.totalAmount.toLocaleString(locale)} {t.common.currency}</p>
               </div>
               <BarChart3 className="w-8 h-8 text-muted-foreground" />
             </div>
@@ -223,11 +224,11 @@ export function TransactionHistoryReport() {
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">Filtros de Pesquisa</CardTitle>
+              <CardTitle className="text-lg">{t.transactionHistoryUi.searchFilters}</CardTitle>
               {hasActiveFilters && (
                 <Button variant="ghost" size="sm" onClick={clearFilters}>
                   <X className="w-4 h-4 mr-1" />
-                  Limpar Filtros
+                  {t.transactionHistoryUi.clearFilters}
                 </Button>
               )}
             </div>
@@ -236,12 +237,12 @@ export function TransactionHistoryReport() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Date From */}
               <div className="space-y-2">
-                <Label>Data Início</Label>
+                <Label>{t.transactionHistoryUi.dateFrom}</Label>
                 <Popover open={dateFromOpen} onOpenChange={setDateFromOpen}>
                   <PopoverTrigger asChild>
                     <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !dateFrom && "text-muted-foreground")}>
                       <CalendarIcon className="mr-2 h-4 w-4" />
-                      {dateFrom ? format(dateFrom, 'dd/MM/yyyy') : 'Seleccionar...'}
+                      {dateFrom ? format(dateFrom, 'dd/MM/yyyy') : t.transactionHistoryUi.selectDate}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-0 bg-background border shadow-lg z-50" align="start">
@@ -252,7 +253,7 @@ export function TransactionHistoryReport() {
                         setDateFrom(day);
                         if (day) setDateFromOpen(false);
                       }}
-                      locale={pt}
+                      locale={dfLocale}
                       initialFocus
                     />
                   </PopoverContent>
@@ -261,12 +262,12 @@ export function TransactionHistoryReport() {
 
               {/* Date To */}
               <div className="space-y-2">
-                <Label>Data Fim</Label>
+                <Label>{t.transactionHistoryUi.dateTo}</Label>
                 <Popover open={dateToOpen} onOpenChange={setDateToOpen}>
                   <PopoverTrigger asChild>
                     <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !dateTo && "text-muted-foreground")}>
                       <CalendarIcon className="mr-2 h-4 w-4" />
-                      {dateTo ? format(dateTo, 'dd/MM/yyyy') : 'Seleccionar...'}
+                      {dateTo ? format(dateTo, 'dd/MM/yyyy') : t.transactionHistoryUi.selectDate}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-0 bg-background border shadow-lg z-50" align="start">
@@ -277,7 +278,7 @@ export function TransactionHistoryReport() {
                         setDateTo(day);
                         if (day) setDateToOpen(false);
                       }}
-                      locale={pt}
+                      locale={dfLocale}
                       initialFocus
                     />
                   </PopoverContent>
@@ -286,16 +287,16 @@ export function TransactionHistoryReport() {
 
               {/* User Select */}
               <div className="space-y-2">
-                <Label>Utilizador</Label>
+                <Label>{t.transactionHistoryUi.user}</Label>
                 <Select
                   value={selectedUser}
                   onValueChange={(v) => setSelectedUser(v === ALL_SELECT_VALUE ? '' : v)}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Todos os utilizadores" />
+                    <SelectValue placeholder={t.transactionHistoryUi.allUsers} />
                   </SelectTrigger>
                   <SelectContent className="bg-background border shadow-lg z-50">
-                    <SelectItem value={ALL_SELECT_VALUE}>Todos</SelectItem>
+                    <SelectItem value={ALL_SELECT_VALUE}>{t.common.all}</SelectItem>
                     {users.map(user => (
                       <SelectItem key={user.id} value={user.id}>{user.name}</SelectItem>
                     ))}
@@ -305,7 +306,7 @@ export function TransactionHistoryReport() {
 
               {/* Branch Select */}
               <div className="space-y-2">
-                <Label>Filial</Label>
+                <Label>{t.transactionHistoryUi.branch}</Label>
                 <Select
                   value={selectedBranch}
                   onValueChange={(v) => setSelectedBranch(v === ALL_SELECT_VALUE ? '' : v)}
@@ -325,13 +326,13 @@ export function TransactionHistoryReport() {
 
               {/* Category Select */}
               <div className="space-y-2">
-                <Label>Categoria</Label>
+                <Label>{t.transactionHistoryUi.category}</Label>
                 <Select
                   value={selectedCategory}
                   onValueChange={(v) => setSelectedCategory(v === ALL_SELECT_VALUE ? '' : v)}
                 >
                   <SelectTrigger>
-                  <SelectValue placeholder={t.salesAnalysisUi.allCategories} />
+                  <SelectValue placeholder={t.transactionHistoryUi.allCategories} />
                   </SelectTrigger>
                   <SelectContent className="bg-background border shadow-lg z-50">
                     <SelectItem value={ALL_SELECT_VALUE}>{t.common.all}</SelectItem>
@@ -402,7 +403,7 @@ export function TransactionHistoryReport() {
                   <TableHead>{t.transactionHistoryUi.category}</TableHead>
                   <TableHead>{t.transactionHistoryUi.action}</TableHead>
                   <TableHead>{t.common.description}</TableHead>
-                  <TableHead className="w-[100px]">Valor</TableHead>
+                  <TableHead className="w-[100px]">{t.transactionHistoryUi.amount}</TableHead>
                   <TableHead className="w-[60px]"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -449,7 +450,7 @@ export function TransactionHistoryReport() {
                           <p className="text-sm truncate">{record.description}</p>
                           {record.entityNumber && (
                             <p className="text-xs text-muted-foreground">
-                              Ref: {record.entityNumber}
+                              {t.transactionHistoryUi.refPrefix} {record.entityNumber}
                             </p>
                           )}
                         </div>
@@ -498,13 +499,13 @@ export function TransactionHistoryReport() {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-xs text-muted-foreground">Data/Hora</Label>
+                  <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.dateTime}</Label>
                   <p className="font-medium">
                     {format(new Date(selectedRecord.timestamp), 'dd/MM/yyyy HH:mm:ss')}
                   </p>
                 </div>
                 <div>
-                  <Label className="text-xs text-muted-foreground">ID da Transacção</Label>
+                  <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.transactionId}</Label>
                   <p className="font-mono text-sm">{selectedRecord.id}</p>
                 </div>
               </div>
@@ -513,7 +514,7 @@ export function TransactionHistoryReport() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-xs text-muted-foreground">Utilizador</Label>
+                  <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.user}</Label>
                   <div className="flex items-center gap-2 mt-1">
                     <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                       <User className="w-4 h-4 text-primary" />
@@ -525,7 +526,7 @@ export function TransactionHistoryReport() {
                   </div>
                 </div>
                 <div>
-                  <Label className="text-xs text-muted-foreground">Filial</Label>
+                  <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.branch}</Label>
                   <div className="flex items-center gap-2 mt-1">
                     <Building className="w-4 h-4 text-muted-foreground" />
                     <p className="font-medium">{selectedRecord.branchName || t.common.dash}</p>
@@ -536,7 +537,7 @@ export function TransactionHistoryReport() {
               <Separator />
 
               <div>
-                <Label className="text-xs text-muted-foreground">Categoria / Acção</Label>
+                <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.categoryAction}</Label>
                 <div className="flex items-center gap-2 mt-1">
                   <Badge className={cn("gap-1", CATEGORY_COLORS[selectedRecord.category])}>
                     {CATEGORY_ICONS[selectedRecord.category]}
@@ -548,36 +549,36 @@ export function TransactionHistoryReport() {
               </div>
 
               <div>
-                <Label className="text-xs text-muted-foreground">Descrição</Label>
+                <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.description}</Label>
                 <p className="mt-1">{selectedRecord.description}</p>
               </div>
 
               {selectedRecord.entityNumber && (
                 <div>
-                  <Label className="text-xs text-muted-foreground">Referência</Label>
+                  <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.reference}</Label>
                   <p className="font-mono mt-1">{selectedRecord.entityNumber}</p>
                 </div>
               )}
 
               {selectedRecord.entityName && (
                 <div>
-                  <Label className="text-xs text-muted-foreground">Entidade</Label>
+                  <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.entity}</Label>
                   <p className="mt-1">{selectedRecord.entityName}</p>
                 </div>
               )}
 
               {selectedRecord.amount !== undefined && selectedRecord.amount !== 0 && (
                 <div>
-                  <Label className="text-xs text-muted-foreground">Valor</Label>
+                  <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.amount}</Label>
                   <p className="text-xl font-bold text-primary mt-1">
-                    {selectedRecord.amount.toLocaleString('pt-AO')} Kz
+                    {selectedRecord.amount.toLocaleString(locale)} {t.common.currency}
                   </p>
                 </div>
               )}
 
               {selectedRecord.details && Object.keys(selectedRecord.details).length > 0 && (
                 <div>
-                  <Label className="text-xs text-muted-foreground">Detalhes Adicionais</Label>
+                  <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.additionalDetails}</Label>
                   <pre className="mt-1 p-3 bg-muted rounded-lg text-xs overflow-auto max-h-32">
                     {JSON.stringify(selectedRecord.details, null, 2)}
                   </pre>
@@ -588,13 +589,13 @@ export function TransactionHistoryReport() {
                 <div className="grid grid-cols-2 gap-4">
                   {selectedRecord.previousValue !== undefined && (
                     <div>
-                      <Label className="text-xs text-muted-foreground">Valor Anterior</Label>
+                      <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.previousValue}</Label>
                       <p className="font-mono text-sm mt-1">{String(selectedRecord.previousValue)}</p>
                     </div>
                   )}
                   {selectedRecord.newValue !== undefined && (
                     <div>
-                      <Label className="text-xs text-muted-foreground">Novo Valor</Label>
+                      <Label className="text-xs text-muted-foreground">{t.transactionHistoryUi.newValue}</Label>
                       <p className="font-mono text-sm mt-1">{String(selectedRecord.newValue)}</p>
                     </div>
                   )}

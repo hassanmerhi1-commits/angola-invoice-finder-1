@@ -377,7 +377,7 @@ export default function UserManagement() {
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Badge className={ROLE_COLORS[role]}>
-                                {ROLE_NAMES[role]}
+                                {t.userManagementUi.roles[role]}
                               </Badge>
                               {hasCustom && (
                                 <Badge variant="outline" className="text-orange-500 border-orange-500 text-xs">
@@ -453,7 +453,7 @@ export default function UserManagement() {
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <Badge className={ROLE_COLORS[role]}>
-                        {ROLE_NAMES[role]}
+                        {t.userManagementUi.roles[role]}
                       </Badge>
                       <span className="text-sm text-muted-foreground">
                         {usersWithRole} users
@@ -506,7 +506,7 @@ export default function UserManagement() {
                       {(Object.keys(ROLE_NAMES) as UserRole[]).map(role => (
                         <TableHead key={role} className="text-center">
                           <Badge className={ROLE_COLORS[role]} variant="outline">
-                            {ROLE_NAMES[role]}
+                            {t.userManagementUi.roles[role]}
                           </Badge>
                         </TableHead>
                       ))}
@@ -624,7 +624,7 @@ export default function UserManagement() {
                     <SelectItem key={role} value={role}>
                       <div className="flex items-center gap-2">
                         <div className={`w-3 h-3 rounded-full ${ROLE_COLORS[role]}`} />
-                        {ROLE_NAMES[role]}
+                        {t.userManagementUi.roles[role]}
                       </div>
                     </SelectItem>
                   ))}
@@ -765,7 +765,7 @@ export default function UserManagement() {
                     <SelectItem key={role} value={role}>
                       <div className="flex items-center gap-2">
                         <div className={`w-3 h-3 rounded-full ${ROLE_COLORS[role]}`} />
-                        {ROLE_NAMES[role]}
+                        {t.userManagementUi.roles[role]}
                       </div>
                     </SelectItem>
                   ))}
