@@ -8,9 +8,10 @@ const { auditErpSafe } = require('../lib/erpAudit');
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
-  // List balances from posted journals. Split id vs code matching so Postgres can use
-  // indexes (the previous OR-join timed out on city → silent stored-zero fallback).
-  // Header/folder rows roll up on the client. ?liveBalances=1 also persists recompute.
+  // List balances from posted journals (same source as ledger drill-down).
+  // Postgres: account_id is UUID FK — GROUP BY account_id only (fast, indexed).
+  // SQLite/legacy: also match lines that stored the PGC code in account_id.
+  // ?liveBalances=1 persists recompute into current_balance (background).
   router.get('/', async (req, res) => {
     try {
       const persistBalances =
@@ -23,7 +24,6 @@ module.exports = function(broadcastTable) {
         : '(je.is_posted = 1 OR je.is_posted IS NULL OR je.is_posted = true)';
 
       if (persistBalances) {
-        // Normalize legacy code-keyed lines + persist balances off the request path.
         setImmediate(() => {
           const { recomputeCoaCurrentBalances } = require('../accounting');
           recomputeCoaCurrentBalances(db)
@@ -31,6 +31,37 @@ module.exports = function(broadcastTable) {
             .catch((e) => console.warn('[CHART OF ACCOUNTS] persist recompute failed:', e.message));
         });
       }
+
+      // Fast path: aggregate by UUID account_id (matches how journals are posted).
+      const journalAgg = db.engine === 'postgres'
+        ? `
+          SELECT jel.account_id AS account_key,
+                 SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
+          FROM journal_entry_lines jel
+          INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+          WHERE ${postedClause}
+          GROUP BY jel.account_id
+        `
+        : `
+          SELECT u.account_key AS account_key, SUM(u.net) AS net
+          FROM (
+            SELECT ${idText('jel.account_id')} AS account_key,
+                   COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
+            FROM journal_entry_lines jel
+            INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
+            WHERE ${postedClause}
+            UNION ALL
+            SELECT ${idText('coa_c.id')} AS account_key,
+                   COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
+            FROM journal_entry_lines jel
+            INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
+            INNER JOIN chart_of_accounts coa_c
+              ON ${idText('coa_c.code')} = ${idText('jel.account_id')}
+            WHERE ${postedClause}
+              AND ${idText('coa_c.id')} <> ${idText('jel.account_id')}
+          ) u
+          GROUP BY u.account_key
+        `;
 
       const result = await db.query(`
         SELECT 
@@ -55,26 +86,8 @@ module.exports = function(broadcastTable) {
         FROM chart_of_accounts coa
         LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
         LEFT JOIN (
-          SELECT u.account_key AS account_key,
-                 SUM(u.net) AS net
-          FROM (
-            SELECT ${idText('jel.account_id')} AS account_key,
-                   COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
-            FROM journal_entry_lines jel
-            INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
-            WHERE ${postedClause}
-            UNION ALL
-            SELECT ${idText('coa_c.id')} AS account_key,
-                   COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0) AS net
-            FROM journal_entry_lines jel
-            INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
-            INNER JOIN chart_of_accounts coa_c
-              ON ${idText('coa_c.code')} = ${idText('jel.account_id')}
-            WHERE ${postedClause}
-              AND ${idText('coa_c.id')} <> ${idText('jel.account_id')}
-          ) u
-          GROUP BY u.account_key
-        ) j ON j.account_key = ${idText('coa.id')}
+          ${journalAgg}
+        ) j ON ${db.engine === 'postgres' ? 'j.account_key = coa.id' : `j.account_key = ${idText('coa.id')}`}
         WHERE coa.is_active = true
         ORDER BY coa.code
       `);

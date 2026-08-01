@@ -73,16 +73,19 @@ const loadLocalAccounts = (t: any): Account[] => {
     if (raw) {
       const parsed = JSON.parse(raw) as Account[];
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return sortAccountsByCode(parsed.filter(a => a.is_active !== false));
+        // Ignore caches that look like the zeroed PGC seed (no real balances).
+        const hasAnyBalance = parsed.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
+        if (hasAnyBalance) {
+          return sortAccountsByCode(parsed.filter(a => a.is_active !== false));
+        }
       }
     }
   } catch (error) {
     console.error('[useChartOfAccounts] Failed to read local chart of accounts:', error);
   }
 
-  const seeded = createSeedChartOfAccounts(t);
-  localStorage.setItem(LOCAL_COA_STORAGE_KEY, JSON.stringify(seeded));
-  return sortAccountsByCode(seeded);
+  // Seed structure only for empty DBs — never persist as if it were live balances.
+  return sortAccountsByCode(createSeedChartOfAccounts(t));
 };
 
 const saveLocalAccounts = (accounts: Account[]) => {
@@ -100,12 +103,17 @@ const COA_CACHE_FRESH_MS = 45_000;
 
 function readInitialAccounts(): Account[] {
   const mem = getCachedList<Account[]>('chartOfAccounts');
-  if (mem && mem.length > 0) return mem;
+  if (mem && mem.length > 0) {
+    const hasBal = mem.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
+    if (hasBal) return mem;
+  }
   try {
     const raw = typeof window !== 'undefined' ? localStorage.getItem(LOCAL_COA_STORAGE_KEY) : null;
     if (raw) {
       const parsed = JSON.parse(raw) as Account[];
       if (Array.isArray(parsed) && parsed.length > 0) {
+        const hasAnyBalance = parsed.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
+        if (!hasAnyBalance) return [];
         const sorted = sortAccountsByCode(parsed.filter((a) => a.is_active !== false));
         setCachedList('chartOfAccounts', sorted);
         return sorted;

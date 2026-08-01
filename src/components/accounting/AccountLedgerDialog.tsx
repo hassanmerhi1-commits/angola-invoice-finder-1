@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -81,10 +81,9 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
   const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
-  const [startDate, setStartDate] = useState(() => currentMonthBounds().from);
-  const [endDate, setEndDate] = useState(() => currentMonthBounds().to);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [truncated, setTruncated] = useState(false);
-  const pendingOpenReset = useRef(false);
 
   const refTypeLabels: Record<string, string> = useMemo(() => ({
     sale: t.ledgerUi.refSale,
@@ -152,23 +151,14 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     if (!open || !account) return;
     setSearchTerm('');
     setTypeFilter('all');
-    pendingOpenReset.current = true;
-    // Reset to current month each open — keeps first paint fast over Tailscale.
-    const bounds = currentMonthBounds();
-    setStartDate(bounds.from);
-    setEndDate(bounds.to);
   }, [open, account?.id]);
 
   useEffect(() => {
     if (!open || !account) return;
-    if (pendingOpenReset.current) {
-      const bounds = currentMonthBounds();
-      if (startDate !== bounds.from || endDate !== bounds.to) return;
-      pendingOpenReset.current = false;
-    }
+    // Default is all dates. Do NOT force "this month" on open — that hid all
+    // history (esp. on the 1st of a new month → empty ledger / balances look 0).
     void fetchLedger();
   }, [open, account?.id, startDate, endDate, fetchLedger]);
-
   const filtered = useMemo(() => entries.filter((e) => {
     if (typeFilter !== 'all' && e.reference_type !== typeFilter) return false;
     if (!searchTerm) return true;
