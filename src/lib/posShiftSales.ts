@@ -21,17 +21,17 @@ export function isSameShiftCashier(
   cashier: User | null | undefined,
 ): boolean {
   if (!cashier) return false;
-  const id = String(cashier.id || '').trim();
+  const id = String(cashier.id || '').trim().toLowerCase();
   const name = String(cashier.name || '').trim().toLowerCase();
   const username = String(cashier.username || '').trim().toLowerCase();
-  const saleCashierId = String(sale.cashierId || '').trim();
+  const saleCashierId = String(sale.cashierId || '').trim().toLowerCase();
   const saleCashierName = String(sale.cashierName || '').trim().toLowerCase();
   if (id && saleCashierId && saleCashierId === id) return true;
   if (name && saleCashierName && saleCashierName === name) return true;
   if (username && saleCashierName && saleCashierName === username) return true;
   // Some POS builds store username in cashierId when the UUID was unavailable offline.
-  if (username && saleCashierId && saleCashierId.toLowerCase() === username) return true;
-  if (name && saleCashierId && saleCashierId.toLowerCase() === name) return true;
+  if (username && saleCashierId && saleCashierId === username) return true;
+  if (name && saleCashierId && saleCashierId === name) return true;
   return false;
 }
 
@@ -71,12 +71,12 @@ export function recoveredShiftOpenedAt(
       if (!isSameShiftCashier(sale, cashier)) continue;
       consider(sale);
     }
+    // Never fall back to another cashier's earliest sale — that mixes shifts on EOD.
+    return earliestIso;
   }
 
-  // If cashier rows don't match (offline name drift), fall back to earliest branch sale today.
-  if (earliestMs >= openedMs) {
-    for (const sale of sales) consider(sale);
-  }
+  // No cashier context: heal from earliest branch sale today.
+  for (const sale of sales) consider(sale);
 
   return earliestIso;
 }
@@ -130,47 +130,19 @@ export function filterShiftSalesForCashier(
 ): Sale[] {
   if (!cashier || !session) return [];
   const effective = withRecoveredShiftStart(session, sales, cashier, day);
-  const recoveredLateOpen = effective.openedAt !== session.openedAt;
 
   const matchesBranch = (sale: Sale) =>
     !session.branchId
     || !sale.branchId
     || branchIdsEquivalent(sale.branchId, session.branchId);
 
-  let filtered = sales.filter((sale) => {
+  // Strict: only this cashier's sales. Never expand to the whole branch —
+  // that made every Soyo-02 cashier see combined EOD totals.
+  const filtered = sales.filter((sale) => {
     const sameDay = saleLocalDate(sale.createdAt) === day;
     const sameCashier = isSameShiftCashier(sale, cashier);
     return sameDay && sameCashier && matchesBranch(sale) && saleInShift(sale, effective);
   });
-
-  // After a forced re-open (update restart), cashier name/id on older rows can differ
-  // slightly — still show today's branch sales in the recovered window so EOD works.
-  if (filtered.length === 0 && recoveredLateOpen) {
-    filtered = sales.filter((sale) => {
-      const sameDay = saleLocalDate(sale.createdAt) === day;
-      return sameDay && matchesBranch(sale) && saleInShift(sale, effective);
-    });
-  }
-
-  // Even without openedAt heal: if this cashier has no name match but the branch has
-  // today's sales and the session was opened very recently while sales exist earlier,
-  // treat as recovered late open using earliest branch sale.
-  if (filtered.length === 0) {
-    const branchDaySales = sales.filter(
-      (sale) => saleLocalDate(sale.createdAt) === day && matchesBranch(sale),
-    );
-    if (branchDaySales.length > 0) {
-      const openedMs = new Date(session.openedAt).getTime();
-      const earliestBranch = branchDaySales.reduce((min, s) => {
-        const t = new Date(s.createdAt).getTime();
-        return Number.isFinite(t) && t < min ? t : min;
-      }, openedMs);
-      if (Number.isFinite(earliestBranch) && earliestBranch < openedMs - 60_000) {
-        const recoveredSession = { ...session, openedAt: new Date(earliestBranch).toISOString() };
-        filtered = branchDaySales.filter((sale) => saleInShift(sale, recoveredSession));
-      }
-    }
-  }
 
   return dedupeShiftSales(filtered).sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
@@ -209,6 +181,19 @@ export function filterShiftCashRefunds(
     if (issuedDay !== day) return false;
     if (!creditNoteInShift(note, effective)) return false;
     const original = saleById.get(note.originalInvoiceId);
+    if (cashier && original && !isSameShiftCashier(original, cashier)) {
+      return false;
+    }
+    // Credit notes issued by this cashier (even if original sale list is incomplete).
+    if (cashier && !original) {
+      const issuer = String(note.issuedBy || '').trim().toLowerCase();
+      const id = String(cashier.id || '').trim().toLowerCase();
+      const name = String(cashier.name || '').trim().toLowerCase();
+      const username = String(cashier.username || '').trim().toLowerCase();
+      if (issuer && issuer !== id && issuer !== name && issuer !== username) {
+        return false;
+      }
+    }
     const method = String(original?.paymentMethod || note.originalPaymentMethod || '').toLowerCase();
     // When the original sale isn't in the loaded list and no method is stored, include the
     // note so it stays visible; the server reconciliation is authoritative for the amount.

@@ -174,9 +174,7 @@ export function PosEndOfDayReportDialog({
       byPayment[key] = (byPayment[key] || 0) + sale.total;
     }
     const cashRefundsTotal = shiftCashRefunds.reduce((sum, note) => sum + note.total, 0);
-    const listedExpensesTotal = shiftCashExpenses.reduce((sum, exp) => sum + exp.totalAmount, 0);
-    // Prefer session counter when list filter misses rows (cross-terminal / stale list).
-    const cashExpensesTotal = Math.max(listedExpensesTotal, session?.expensesTotal || 0);
+    const cashExpensesTotal = shiftCashExpenses.reduce((sum, exp) => sum + exp.totalAmount, 0);
     const netCash = (byPayment.cash || 0) - cashRefundsTotal - cashExpensesTotal;
     return {
       byPayment,
@@ -188,9 +186,9 @@ export function PosEndOfDayReportDialog({
       cashExpensesTotal,
       netCash,
       refundCount: shiftCashRefunds.length,
-      expenseCount: shiftCashExpenses.length || (cashExpensesTotal > 0 ? 1 : 0),
+      expenseCount: shiftCashExpenses.length,
     };
-  }, [cashierSales, shiftCashRefunds, shiftCashExpenses, session?.expensesTotal]);
+  }, [cashierSales, shiftCashRefunds, shiftCashExpenses]);
 
   const buildPrintHtml = () => {
     return `
@@ -229,21 +227,16 @@ export function PosEndOfDayReportDialog({
     await printHtml(buildPrintHtml());
   };
 
-  // Authoritative drawer math. Cash sales and credit-note refunds come from the server
-  // reconciliation (so they count even when issued on another terminal); expenses come
-  // from the shift-filtered local data; manual deposits/withdrawals are whatever the
-  // session counted beyond sales/refunds/expenses. This avoids relying on the fragile
-  // in-session event counters that miss cross-terminal activity.
+  // Drawer math is per cashier (this shift's sales/refunds/expenses).
+  // Do NOT use branch-wide GL erpCashSalesTotal here — that mixed both cashiers on Soyo-02.
   const drawer = useMemo(() => {
     const opening = session?.openingBalance || 0;
-    const cashSales = glRecon?.erpCashSalesTotal ?? (totals.byPayment.cash || 0);
-    const cashRefunds = glRecon?.erpCashRefundsTotal ?? totals.cashRefundsTotal;
-    const cashExpenses = Math.max(totals.cashExpensesTotal, session?.expensesTotal || 0);
+    const cashSales = totals.byPayment.cash || 0;
+    const cashRefunds = totals.cashRefundsTotal;
+    const cashExpenses = totals.cashExpensesTotal;
     // Non-sale inflows the session recorded (manual deposits / reforços).
-    const manualIn = Math.max(0, (session?.totalIn || 0) - (session?.salesTotal || 0));
-    // Whatever the session's cash-out can't be explained by known expenses + authoritative
-    // refunds is treated as a manual withdrawal (sangria). This avoids double-counting the
-    // refunds/expenses we already subtract explicitly below.
+    const sessionSalesCash = Math.min(session?.salesTotal || 0, session?.totalIn || 0);
+    const manualIn = Math.max(0, (session?.totalIn || 0) - sessionSalesCash);
     const manualOut = Math.max(
       0,
       (session?.totalOut || 0) - (session?.expensesTotal || 0) - cashRefunds,
@@ -251,7 +244,7 @@ export function PosEndOfDayReportDialog({
     const cashIn = cashSales + manualIn;
     const expected = opening + cashIn - cashRefunds - cashExpenses - manualOut;
     return { opening, cashSales, cashRefunds, cashExpenses, manualIn, manualOut, cashIn, expected };
-  }, [session, glRecon, totals]);
+  }, [session, totals]);
   const expectedCash = drawer.expected;
   const counted = parseFloat(countedCash);
   const countedValue = Number.isFinite(counted) ? counted : 0;
