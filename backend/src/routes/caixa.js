@@ -768,6 +768,8 @@ function caixaRouter(broadcastTable) {
       }
       const { id } = req.params;
       const body = req.body || {};
+      const closingBalance = body.closingBalance ?? body.countedCash;
+      const closedAt = body.closedAt || new Date().toISOString();
       const result = await applyCaixaClose({
         session: {
           id,
@@ -775,7 +777,7 @@ function caixaRouter(broadcastTable) {
           branchId: body.branchId,
           date: body.date,
           openingBalance: body.openingBalance,
-          closingBalance: body.closingBalance ?? body.countedCash,
+          closingBalance,
           totalIn: body.totalIn,
           totalOut: body.totalOut,
           salesTotal: body.salesTotal,
@@ -784,11 +786,64 @@ function caixaRouter(broadcastTable) {
           openedBy: body.openedBy,
           closedBy: body.closedBy,
           openedAt: body.openedAt,
-          closedAt: body.closedAt || new Date().toISOString(),
+          closedAt,
           notes: body.notes,
         },
         caixa: body.caixa,
       });
+
+      // Client session id often diverges from the city open row (local UUID never
+      // synced / old session_* ids). Seal EVERY leftover open shift for this branch
+      // so EOD cannot leave yesterday's cash sitting in an "open" city session.
+      const branchId = body.branchId;
+      let sealedExtra = 0;
+      if (branchId) {
+        const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
+        const branchCol = db.engine === 'postgres' ? 'branch_id::text' : 'CAST(branch_id AS TEXT)';
+        const norm = (expr) => `REPLACE(LOWER(TRIM(COALESCE(${expr}, ''))), '-', '')`;
+        const openSessionWhere = `
+           status = 'open'
+             AND (
+               ${branchCol} = $1
+               OR ${branchCol} = $2
+               OR ${norm(branchCol)} = ${norm('$1')}
+               OR ${norm(branchCol)} = ${norm('$2')}
+             )`;
+        const leftovers = await db.query(
+          `SELECT id, caixa_id, opening_balance, total_in, total_out, sales_total, expenses_total,
+                  adjustments, opened_by, opened_at, date
+           FROM caixa_sessions
+           WHERE ${openSessionWhere}`,
+          [resolvedBranchId, branchId],
+        );
+        for (const row of leftovers.rows || []) {
+          if (String(row.id) === String(id)) continue;
+          await applyCaixaClose({
+            session: {
+              id: row.id,
+              caixaId: row.caixa_id,
+              branchId: resolvedBranchId,
+              date: row.date,
+              openingBalance: row.opening_balance,
+              closingBalance: closingBalance != null
+                ? Number(closingBalance)
+                : (Number(row.opening_balance || 0) + Number(row.total_in || 0) - Number(row.total_out || 0)),
+              totalIn: row.total_in,
+              totalOut: row.total_out,
+              salesTotal: row.sales_total,
+              expensesTotal: row.expenses_total,
+              adjustments: row.adjustments,
+              openedBy: row.opened_by,
+              closedBy: body.closedBy || 'system',
+              openedAt: row.opened_at,
+              closedAt,
+              notes: body.notes || 'Closed with branch end-of-day (id mismatch seal)',
+            },
+          });
+          sealedExtra += 1;
+        }
+      }
+
       if (broadcastTable) {
         await broadcastTable('caixa_sessions');
         await broadcastTable('caixas');
@@ -798,13 +853,14 @@ function caixaRouter(broadcastTable) {
         id,
         action: 'close',
         branchId: body.branchId,
-        description: `Caixa fechada — ${body.branchId || id}`,
+        description: `Caixa fechada — ${body.branchId || id}${sealedExtra ? ` (+${sealedExtra} leftover)` : ''}`,
         newValues: {
-          closingBalance: body.closingBalance ?? body.countedCash,
+          closingBalance,
           closedBy: body.closedBy,
+          sealedExtra,
         },
       });
-      res.json(result);
+      res.json({ ...result, sealedExtra });
     } catch (error) {
       console.error('[CAIXA] session close:', error);
       res.status(500).json({ error: error.message || 'Failed to close caixa session' });

@@ -1452,12 +1452,12 @@ export const api = {
       );
     },
     openSession: (body: Record<string, unknown>) =>
-      apiFetch<any>('/caixa/sessions/open', { method: 'POST', body: JSON.stringify(body) }, { timeoutMs: 8000 }),
+      apiFetch<any>('/caixa/sessions/open', { method: 'POST', body: JSON.stringify(body) }, { timeoutMs: 30000 }),
     closeSession: (sessionId: string, body: Record<string, unknown>) =>
       apiFetch<any>(`/caixa/sessions/${encodeURIComponent(sessionId)}/close`, {
         method: 'POST',
         body: JSON.stringify(body),
-      }, { timeoutMs: 8000 }),
+      }, { timeoutMs: 30000 }),
     postGlEntry: (body: Record<string, unknown>) =>
       apiFetch<any>('/caixa/gl/post', { method: 'POST', body: JSON.stringify(body) }),
   },

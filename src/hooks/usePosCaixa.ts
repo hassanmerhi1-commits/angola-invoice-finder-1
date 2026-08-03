@@ -13,6 +13,20 @@ import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import type { Caixa, CaixaSession } from '@/types/accounting';
 
 const POS_CAIXA_CACHE_PREFIX = 'nexor:pos-caixa-open:v1:';
+const POS_CAIXA_DEBUG_KEY = 'nexor:caixa-debug-log';
+
+function logCaixaDebug(event: string, detail?: Record<string, unknown>): void {
+  const entry = { t: new Date().toISOString(), event, ...detail };
+  try {
+    console.info('[caixa]', event, detail || {});
+    const raw = localStorage.getItem(POS_CAIXA_DEBUG_KEY);
+    const list: unknown[] = raw ? JSON.parse(raw) : [];
+    const next = [...(Array.isArray(list) ? list : []), entry].slice(-80);
+    localStorage.setItem(POS_CAIXA_DEBUG_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+}
 
 function readPosCaixaCache(branchId: string): CaixaSession | null {
   try {
@@ -462,10 +476,39 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       const snapshot = { ...session };
       const caixaSnap = caixa;
 
+      logCaixaDebug('close:start', {
+        sessionId: snapshot.id,
+        branchId: snapshot.branchId,
+        countedCash,
+        openingBalance: snapshot.openingBalance,
+        totalIn: snapshot.totalIn,
+        totalOut: snapshot.totalOut,
+        salesTotal: snapshot.salesTotal,
+      });
+
+      // Prefer the city open-session id when local id is stale (session_* / never synced).
+      let closeId = snapshot.id;
+      try {
+        const remoteOpen = await api.caixa.getOpenSession(snapshot.branchId || branchId || '', {
+          syncExpenses: false,
+        });
+        const remote = remoteOpen.data as CaixaSession | null | undefined;
+        if (!remoteOpen.error && remote?.id && remote.status === 'open') {
+          if (remote.id !== snapshot.id) {
+            logCaixaDebug('close:id-mismatch', { localId: snapshot.id, cityId: remote.id });
+          }
+          closeId = remote.id;
+        }
+      } catch (err) {
+        logCaixaDebug('close:lookup-failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
       // City close first — only then clear local. Otherwise a failed close unlocks
       // the open-register dialog while the city shift (and old cash) is still open.
       try {
-        const closeRes = await api.caixa.closeSession(snapshot.id, {
+        const closeRes = await api.caixa.closeSession(closeId, {
           caixaId: snapshot.caixaId,
           branchId: snapshot.branchId,
           date: snapshot.date,
@@ -494,10 +537,46 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
             : undefined,
         });
         if (closeRes.error) {
-          console.warn('[usePosCaixa] server close sync:', closeRes.error);
+          logCaixaDebug('close:server-error', { error: closeRes.error, status: closeRes.status });
           throw new Error(closeRes.error);
         }
+        logCaixaDebug('close:server-ok', {
+          sealedExtra: (closeRes.data as { sealedExtra?: number } | undefined)?.sealedExtra,
+        });
+
+        // Verify city has no open shift left for this branch (id-mismatch / race).
+        const still = await api.caixa.getOpenSession(snapshot.branchId || branchId || '');
+        if (!still.error && still.data && (still.data as CaixaSession).status === 'open') {
+          const leftover = still.data as CaixaSession;
+          logCaixaDebug('close:still-open', {
+            leftoverId: leftover.id,
+            openingBalance: leftover.openingBalance,
+            totalIn: leftover.totalIn,
+          });
+          // One more seal attempt via forceNew-style close of the leftover id.
+          const seal = await api.caixa.closeSession(leftover.id, {
+            caixaId: leftover.caixaId,
+            branchId: leftover.branchId || snapshot.branchId,
+            date: leftover.date,
+            openingBalance: leftover.openingBalance,
+            closingBalance: countedCash,
+            totalIn: leftover.totalIn,
+            totalOut: leftover.totalOut,
+            salesTotal: leftover.salesTotal,
+            expensesTotal: leftover.expensesTotal,
+            adjustments: leftover.adjustments,
+            openedBy: leftover.openedBy,
+            closedBy,
+            openedAt: leftover.openedAt,
+            notes: notes || 'Second-pass seal after EOD verify',
+          });
+          if (seal.error) {
+            logCaixaDebug('close:seal-failed', { error: seal.error });
+            throw new Error(seal.error);
+          }
+        }
       } catch (err) {
+        logCaixaDebug('close:failed', { error: err instanceof Error ? err.message : String(err) });
         console.warn('[usePosCaixa] server close sync:', err);
         throw err instanceof Error ? err : new Error(String(err));
       }
@@ -509,6 +588,7 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       }
       if (branchId) clearPosCaixaCache(branchId);
       setSession(null);
+      logCaixaDebug('close:local-cleared', { sessionId: snapshot.id });
     },
     [session, caixa, branchId],
   );
