@@ -601,6 +601,7 @@ function caixaRouter(broadcastTable) {
         openingBalance,
         openedBy,
         date,
+        forceNew,
       } = req.body || {};
 
       if (!branchId) return res.status(400).json({ error: 'branchId required' });
@@ -608,19 +609,60 @@ function caixaRouter(broadcastTable) {
       const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
       const branchCol = db.engine === 'postgres' ? 'branch_id::text' : 'CAST(branch_id AS TEXT)';
       const norm = (expr) => `REPLACE(LOWER(TRIM(COALESCE(${expr}, ''))), '-', '')`;
-      const existing = await db.query(
-        `SELECT id FROM caixa_sessions
-         WHERE status = 'open'
+      const openSessionWhere = `
+         status = 'open'
            AND (
              ${branchCol} = $1
              OR ${branchCol} = $2
              OR ${norm(branchCol)} = ${norm('$1')}
              OR ${norm(branchCol)} = ${norm('$2')}
-           )
+           )`;
+
+      // Intentional new shift (after EOD): close any leftover open session first.
+      // Without this, a racey reopen reused yesterday's session with all cash still in it.
+      const wantForceNew = forceNew === true || forceNew === 1 || forceNew === '1' || forceNew === 'true';
+      if (wantForceNew) {
+        const leftovers = await db.query(
+          `SELECT id, caixa_id, opening_balance, total_in, total_out, sales_total, expenses_total,
+                  adjustments, opened_by, opened_at, date
+           FROM caixa_sessions
+           WHERE ${openSessionWhere}`,
+          [resolvedBranchId, branchId],
+        );
+        const nowIso = new Date().toISOString();
+        for (const row of leftovers.rows || []) {
+          await applyCaixaClose({
+            session: {
+              id: row.id,
+              caixaId: row.caixa_id,
+              branchId: resolvedBranchId,
+              date: row.date,
+              openingBalance: row.opening_balance,
+              closingBalance: Number(row.opening_balance || 0)
+                + Number(row.total_in || 0)
+                - Number(row.total_out || 0),
+              totalIn: row.total_in,
+              totalOut: row.total_out,
+              salesTotal: row.sales_total,
+              expensesTotal: row.expenses_total,
+              adjustments: row.adjustments,
+              openedBy: row.opened_by,
+              closedBy: openedBy || 'system',
+              openedAt: row.opened_at,
+              closedAt: nowIso,
+              notes: 'Auto-closed before opening a new shift',
+            },
+          });
+        }
+      }
+
+      const existing = await db.query(
+        `SELECT id FROM caixa_sessions
+         WHERE ${openSessionWhere}
          LIMIT 1`,
         [resolvedBranchId, branchId],
       );
-      if (existing.rows.length > 0) {
+      if (existing.rows.length > 0 && !wantForceNew) {
         const row = await db.query(`SELECT * FROM caixa_sessions WHERE id = $1`, [existing.rows[0].id]);
         return res.json(mapSessionRow(row.rows[0]));
       }
@@ -663,7 +705,7 @@ function caixaRouter(broadcastTable) {
         action: 'open',
         branchId,
         description: `Caixa aberta — ${branchName || branchId} (saldo ${openBal})`,
-        newValues: { openingBalance: openBal, openedBy },
+        newValues: { openingBalance: openBal, openedBy, forceNew: wantForceNew },
       });
       res.status(201).json(mapSessionRow(row.rows[0]));
     } catch (error) {

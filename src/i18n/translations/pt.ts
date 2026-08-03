@@ -403,6 +403,8 @@ export const pt: TranslationKeys = {
       openedToast: "Caixa aberta",
       reopenedShiftHint: "Turno já aberto recuperado — o dia não foi fechado.",
       openError: "Não foi possível abrir a caixa",
+      closeError: "Não foi possível fechar a caixa no servidor — verifique a ligação e tente novamente antes de abrir um novo turno",
+      closedToast: "Caixa fechada",
       requiredToSell: "Abra a caixa primeiro",
       reconcileTitle: "Fechar turno — conferência de caixa",
       openingBalanceLabel: "Fundo de maneio",

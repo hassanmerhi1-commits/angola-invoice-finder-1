@@ -20,6 +20,7 @@ import { format } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
 import { api } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import { filterShiftSalesForCashier, filterShiftCashRefunds, filterShiftCashExpenses, todayLocalDate, withRecoveredShiftStart } from '@/lib/posShiftSales';
 
 interface CaixaGlReconciliation {
@@ -269,6 +270,10 @@ export function PosEndOfDayReportDialog({
     try {
       await onCloseCaixa(countedValue, closeNotes.trim() || undefined);
       onOpenChange(false);
+    } catch (err) {
+      console.error('[PosEndOfDay] close caixa failed:', err);
+      // Keep dialog open so the cashier can retry — reopen with old city cash is worse.
+      toast.error(t.posUi.caixa.closeError);
     } finally {
       setClosing(false);
     }

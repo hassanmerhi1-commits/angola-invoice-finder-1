@@ -933,15 +933,55 @@ export async function openCaixaSession(
   };
 
   // Always write localStorage — thin clients cannot rely on Electron IPC DB (:4546 disabled).
+  // Close any leftover open shift for this branch so reopen after EOD cannot reclaim old cash.
   const sessions = lsGet<CaixaSession[]>(STORAGE_KEYS.caixaSessions, []);
+  const nowIso = new Date().toISOString();
   const nextLs = [
-    ...sessions.filter((s) => s.id !== session.id && !(s.status === 'open' && branchIdsEquivalent(s.branchId, branchId))),
+    ...sessions
+      .filter((s) => s.id !== session.id)
+      .map((s) => {
+        if (s.status === 'open' && branchIdsEquivalent(s.branchId, branchId)) {
+          return {
+            ...s,
+            status: 'closed' as const,
+            closedAt: nowIso,
+            closedBy: openedBy,
+            notes: s.notes || 'Auto-closed before opening a new shift',
+            closingBalance:
+              s.closingBalance
+              ?? (Number(s.openingBalance || 0) + Number(s.totalIn || 0) - Number(s.totalOut || 0)),
+          };
+        }
+        return s;
+      }),
     session,
   ];
   lsSet(STORAGE_KEYS.caixaSessions, nextLs);
 
   if (isElectronMode()) {
     try {
+      const dbSessions = await getCaixaSessions();
+      for (const s of dbSessions) {
+        if (
+          s.id !== session.id
+          && s.status === 'open'
+          && branchIdsEquivalent(s.branchId, branchId)
+        ) {
+          await dbInsert(
+            'caixa_sessions',
+            mapCaixaSessionToDb({
+              ...s,
+              status: 'closed',
+              closedAt: nowIso,
+              closedBy: openedBy,
+              notes: s.notes || 'Auto-closed before opening a new shift',
+              closingBalance:
+                s.closingBalance
+                ?? (Number(s.openingBalance || 0) + Number(s.totalIn || 0) - Number(s.totalOut || 0)),
+            }),
+          );
+        }
+      }
       await dbInsert('caixa_sessions', mapCaixaSessionToDb(session));
     } catch (err) {
       console.warn('[accountingStorage] caixa_sessions DB insert failed; localStorage kept:', err);

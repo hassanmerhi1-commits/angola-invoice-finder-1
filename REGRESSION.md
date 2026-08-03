@@ -26,6 +26,13 @@ These rules stop the Tailscale “same bug again” loop. Prefer changing produc
 - `docker-compose.yml` mounts `./backend/package.json` so `/api/health` `appVersion` matches `git pull`.
 - After pull: `docker compose up -d --force-recreate backend` then `npm run build:webapp`.
 
+## POS caixa close → reopen
+
+- `closeSession` must **await** city `POST …/close` before clearing UI / unlocking open-register.
+- Intentional open from the drawer dialog must send `forceNew: true` and must **not** reclaim a leftover local/remote open shift (that ignored the new opening cash).
+- Refresh must not replace a newer local open session with an older remote leftover.
+- Chart of Accounts cash (45x) still holds cash until bank deposit — that is not the same as the POS shift drawer.
+
 ## Smoke after city deploy
 
 1. `GET /api/health` → `appVersion` equals released tag (e.g. `1.1.109`).
@@ -33,3 +40,4 @@ These rules stop the Tailscale “same bug again” loop. Prefer changing produc
 3. Double-click a leaf → movements within a few seconds (90-day window).
 4. Adjust In Save → toast without waiting for full inventory reload.
 5. New purchase Save → toast without waiting for full invoice list / full CoA download.
+6. Close register with counted cash → open again → opening amount is only the new drawer count (not yesterday’s total).

@@ -714,14 +714,9 @@ export default function POS() {
     if (!user) return;
     setOpeningCaixa(true);
     try {
-      const sess = await openCaixaSessionForBranch(openingCash, user.name || user.username || 'POS');
-      const reclaimed =
-        !!sess?.openedAt
-        && Date.now() - new Date(sess.openedAt).getTime() > 5 * 60 * 1000;
+      await openCaixaSessionForBranch(openingCash, user.name || user.username || 'POS');
       toast.success(t.posUi.caixa.openedToast, {
-        description: reclaimed
-          ? t.posUi.caixa.reopenedShiftHint
-          : `${t.posUi.caixa.openingCashLabel}: ${openingCash.toLocaleString('pt-AO')} Kz`,
+        description: `${t.posUi.caixa.openingCashLabel}: ${openingCash.toLocaleString('pt-AO')} Kz`,
       });
     } catch (err) {
       console.error('[POS] Failed to open caixa:', err);

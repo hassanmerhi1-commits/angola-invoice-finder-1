@@ -401,6 +401,8 @@ export const en = {
       openedToast: "Cash register opened",
       reopenedShiftHint: "Existing open shift restored — your day was not closed.",
       openError: "Could not open the cash register",
+      closeError: "Could not close the register on the server — check the connection and try again before opening a new shift",
+      closedToast: "Cash register closed",
       requiredToSell: "Open the cash register first",
       reconcileTitle: "Close shift — cash reconciliation",
       openingBalanceLabel: "Opening cash",

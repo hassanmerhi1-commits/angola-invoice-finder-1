@@ -267,6 +267,13 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       // a stale localStorage cache hides caixa expenses paid after the session opened.
       void fetchRemoteOpenSession(branchId, { syncExpenses: options?.syncExpenses }).then((remote) => {
         if (remote.kind === 'open') {
+          if (sticky && remote.session.id !== sticky.id) {
+            // After EOD + reopen, a late probe can still see the old city shift.
+            // Never replace a newer local open with an older remote leftover.
+            const stickyAt = new Date(sticky.openedAt || sticky.createdAt || 0).getTime();
+            const remoteAt = new Date(remote.session.openedAt || remote.session.createdAt || 0).getTime();
+            if (stickyAt >= remoteAt) return;
+          }
           const merged =
             sticky && remote.session.id === sticky.id
               ? mergeSessionTotals(remote.session, sticky)
@@ -393,21 +400,9 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
     async (openingCash: number, openedBy: string) => {
       if (!branchId) return null;
 
-      // Fast reclaim — no network.
-      const cached = findCachedOpenSession(branchId);
-      if (cached?.status === 'open') {
-        setSession(cached);
-        writePosCaixaCache(branchId, cached);
-        void resyncOpenSessionToServer(cached, branchName || branchId);
-        return cached;
-      }
-      const localExisting = await loadLocalOpenSession(branchId);
-      if (localExisting) {
-        setSession(localExisting);
-        writePosCaixaCache(branchId, localExisting);
-        void resyncOpenSessionToServer(localExisting, branchName || branchId);
-        return localExisting;
-      }
+      // Dialog open is always intentional — never reclaim a leftover local/remote
+      // "open" shift (that ignored the new drawer count and brought old cash back).
+      // Crash recovery lives in refresh()/cache on POS mount, not here.
 
       // Local-first register metadata (avoid Tailscale round-trips before POS unlocks).
       const cx =
@@ -418,50 +413,43 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
         }));
       setCaixa(cx);
 
-      // Brief remote probe — if server already has an open shift, reuse it.
-      const remote = await withTimeout(
-        fetchRemoteOpenSession(branchId),
-        2500,
-        { kind: 'error', error: 'timeout' } as RemoteOpenLookup,
-      );
-      if (remote.kind === 'open') {
-        setSession(remote.session);
-        writePosCaixaCache(branchId, remote.session);
-        return remote.session;
-      }
-
-      // Unlock POS immediately with a local session; sync city in the background.
       const sess = await openCaixaSession(cx.id, branchId, openingCash, openedBy);
       setSession(sess);
       writePosCaixaCache(branchId, sess);
 
-      void (async () => {
-        try {
-          // If a slow remote reply arrives with an existing open session, prefer it.
-          const late = await withTimeout(
-            fetchRemoteOpenSession(branchId),
-            5000,
-            { kind: 'none' } as RemoteOpenLookup,
-          );
-          if (late.kind === 'open' && late.session.id !== sess.id) {
-            setSession(late.session);
-            writePosCaixaCache(branchId, late.session);
-            return;
+      // Await city open with forceNew so leftovers are closed before any refresh
+      // can resurrect yesterday's totals into this shift.
+      try {
+        const openRes = await api.caixa.openSession({
+          id: sess.id,
+          caixaId: sess.caixaId,
+          branchId: sess.branchId,
+          branchName: branchName || branchId,
+          openingBalance: sess.openingBalance,
+          openedBy: sess.openedBy,
+          date: sess.date || todayLocalDate(),
+          openedAt: sess.openedAt,
+          forceNew: true,
+        });
+        if (openRes.error) {
+          console.warn('[usePosCaixa] server open sync:', openRes.error);
+        } else {
+          const remote = openRes.data ? mapServerSession(openRes.data as Record<string, unknown>) : null;
+          if (remote?.id && remote.status === 'open') {
+            // Prefer server row when forceNew created/returned it; keep our opening cash
+            // if the server somehow omitted it.
+            const adopted = {
+              ...remote,
+              openingBalance: Number(remote.openingBalance) || sess.openingBalance,
+            };
+            setSession(adopted);
+            writePosCaixaCache(branchId, adopted);
+            return adopted;
           }
-          await api.caixa.openSession({
-            id: sess.id,
-            caixaId: sess.caixaId,
-            branchId: sess.branchId,
-            branchName: branchName || branchId,
-            openingBalance: sess.openingBalance,
-            openedBy: sess.openedBy,
-            date: sess.date || todayLocalDate(),
-            openedAt: sess.openedAt,
-          });
-        } catch (err) {
-          console.warn('[usePosCaixa] server open sync:', err);
         }
-      })();
+      } catch (err) {
+        console.warn('[usePosCaixa] server open sync:', err);
+      }
 
       return sess;
     },
@@ -474,50 +462,53 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       const snapshot = { ...session };
       const caixaSnap = caixa;
 
-      // Clear UI immediately so the cashier is not stuck on a slow Tailscale close.
-      if (branchId) clearPosCaixaCache(branchId);
-      setSession(null);
+      // City close first — only then clear local. Otherwise a failed close unlocks
+      // the open-register dialog while the city shift (and old cash) is still open.
+      try {
+        const closeRes = await api.caixa.closeSession(snapshot.id, {
+          caixaId: snapshot.caixaId,
+          branchId: snapshot.branchId,
+          date: snapshot.date,
+          openingBalance: snapshot.openingBalance,
+          closingBalance: countedCash,
+          totalIn: snapshot.totalIn,
+          totalOut: snapshot.totalOut,
+          salesTotal: snapshot.salesTotal,
+          expensesTotal: snapshot.expensesTotal,
+          adjustments: snapshot.adjustments,
+          openedBy: snapshot.openedBy,
+          closedBy,
+          openedAt: snapshot.openedAt,
+          notes,
+          caixa: caixaSnap
+            ? {
+                id: caixaSnap.id,
+                branchId: caixaSnap.branchId,
+                branchName: caixaSnap.branchName,
+                name: caixaSnap.name,
+                openingBalance: caixaSnap.openingBalance,
+                currentBalance: countedCash,
+                closingBalance: countedCash,
+                status: 'closed',
+              }
+            : undefined,
+        });
+        if (closeRes.error) {
+          console.warn('[usePosCaixa] server close sync:', closeRes.error);
+          throw new Error(closeRes.error);
+        }
+      } catch (err) {
+        console.warn('[usePosCaixa] server close sync:', err);
+        throw err instanceof Error ? err : new Error(String(err));
+      }
 
       try {
         await closeCaixaSession(snapshot.id, countedCash, closedBy, notes);
       } catch (err) {
         console.warn('[usePosCaixa] local close failed:', err);
       }
-
-      void (async () => {
-        try {
-          await api.caixa.closeSession(snapshot.id, {
-            caixaId: snapshot.caixaId,
-            branchId: snapshot.branchId,
-            date: snapshot.date,
-            openingBalance: snapshot.openingBalance,
-            closingBalance: countedCash,
-            totalIn: snapshot.totalIn,
-            totalOut: snapshot.totalOut,
-            salesTotal: snapshot.salesTotal,
-            expensesTotal: snapshot.expensesTotal,
-            adjustments: snapshot.adjustments,
-            openedBy: snapshot.openedBy,
-            closedBy,
-            openedAt: snapshot.openedAt,
-            notes,
-            caixa: caixaSnap
-              ? {
-                  id: caixaSnap.id,
-                  branchId: caixaSnap.branchId,
-                  branchName: caixaSnap.branchName,
-                  name: caixaSnap.name,
-                  openingBalance: caixaSnap.openingBalance,
-                  currentBalance: countedCash,
-                  closingBalance: countedCash,
-                  status: 'closed',
-                }
-              : undefined,
-          });
-        } catch (err) {
-          console.warn('[usePosCaixa] server close sync:', err);
-        }
-      })();
+      if (branchId) clearPosCaixaCache(branchId);
+      setSession(null);
     },
     [session, caixa, branchId],
   );
