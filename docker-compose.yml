@@ -41,8 +41,8 @@ services:
       AUTO_BACKUP_KEEP: "14"
       # Optional offsite copy — mount a host folder and uncomment:
       # BACKUP_OFFSITE_DIR: /app/backups-offsite
-      # Shown in /api/health appVersion — bump on release so deploys are verifiable.
-      NEXOR_APP_VERSION: 1.1.97
+      # Shown in /api/health shellVersion. appVersion prefers mounted package.json.
+      NEXOR_APP_VERSION: ${NEXOR_APP_VERSION:-1.1.109}
       # Persist across container recreates — set JWT_SECRET in .env or every redeploy
       # invalidates all shop sessions ("Invalid or expired token").
       JWT_SECRET: ${JWT_SECRET:-}
@@ -57,6 +57,8 @@ services:
       # Hot-reload source from the host so repair/verify scripts stay current without rebuild.
       - ./backend/src:/app/src
       - ./backend/scripts:/app/scripts
+      # So /api/health appVersion matches git pull (image package.json otherwise stays stale).
+      - ./backend/package.json:/app/package.json:ro
       # Built Vite UI (npm run build:webapp → backend/webapp). Required for browser /app.
       - ./backend/webapp:/app/webapp
       # Writable import drop folder (scripts may copy erp.db here). Prefer docker cp to /tmp.

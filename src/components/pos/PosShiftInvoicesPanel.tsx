@@ -182,12 +182,10 @@ export function PosShiftInvoicesPanel({
           invoice: t.posUi.endOfDayInvoice,
           customer: t.posUi.shiftInvoices.customer,
           payment: t.checkoutUi.paymentForm,
-          status: t.common.status,
           total: t.common.total,
           walkIn: t.posUi.walkInCustomer,
           shiftSince: shiftOpenedLabel,
           paymentLabel,
-          statusLabel: (sale) => statusLabel(resolveShiftSaleStatus(sale, issues)),
         },
       });
       if (!result.success) {

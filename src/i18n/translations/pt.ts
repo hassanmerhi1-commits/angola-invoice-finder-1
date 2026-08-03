@@ -1295,6 +1295,7 @@ export const pt: TranslationKeys = {
     allDates: "Todas as datas",
     thisMonth: "Este mês",
     showingLatest: "A mostrar os últimos {limit} movimentos — restrinja o período para ver entradas mais antigas.",
+    defaultRangeHint: "A mostrar os últimos 90 dias — use Todas as datas para o histórico completo.",
     filterByType: "Todos os tipos",
   },
 

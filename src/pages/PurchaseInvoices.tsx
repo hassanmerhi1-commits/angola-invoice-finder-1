@@ -1860,7 +1860,7 @@ export default function PurchaseInvoices() {
         updatedAt: now,
       };
       await savePurchaseInvoice(updated, { metadataOnly: true });
-      await loadInvoiceList();
+      scheduleLoadInvoiceList();
       setSelectedListInvoiceId(updated.id);
       toast({
         title: t.purchaseInvoicesUi.markedPaidTitle,
@@ -1870,7 +1870,7 @@ export default function PurchaseInvoices() {
       const message = err instanceof Error ? err.message : t.purchaseInvoicesUi.unknownError;
       toast({ title: t.common.error, description: message, variant: 'destructive' });
     }
-  }, [loadInvoiceList, toast, t]);
+  }, [scheduleLoadInvoiceList, toast, t]);
 
   const broadcastPurchaseAccountingSync = useCallback(async (
     warehouseId: string,
@@ -2730,26 +2730,32 @@ export default function PurchaseInvoices() {
         labelDeductibleVat: t.purchaseInvoicesUi.deductibleVat,
       });
       const saveResult = await savePurchaseInvoice(updatedInvoice);
-      if (totalLandingCosts > 0 || saveResult.accounting?.journalEntryId) {
-        const repost = await api.purchaseInvoices.repostAccounting(updatedInvoice.id);
-        const journalOk = !!(repost.data?.journalEntryId || saveResult.accounting?.journalEntryId);
-        const journalErr = repost.data?.errors?.find((e) => String(e).toLowerCase().includes('journal'))
-          || saveResult.accounting?.errors?.find((e) => String(e).toLowerCase().includes('journal'))
-          || (totalLandingCosts > 0 && !journalOk ? t.purchaseInvoicesUi.freightJournalFailed : null);
-        if (journalErr) {
-          toast({
-            title: t.purchaseInvoicesUi.freightJournalFailedTitle,
-            description: String(journalErr),
-            variant: 'destructive',
-          });
-        }
+      // Only repair when the primary save did not post freight/journal; don't block Save on success.
+      if (totalLandingCosts > 0 && !saveResult.accounting?.journalEntryId) {
+        void api.purchaseInvoices.repostAccounting(updatedInvoice.id).then((repost) => {
+          const journalOk = !!(repost.data?.journalEntryId || saveResult.accounting?.journalEntryId);
+          const journalErr = repost.data?.errors?.find((e) => String(e).toLowerCase().includes('journal'))
+            || saveResult.accounting?.errors?.find((e) => String(e).toLowerCase().includes('journal'))
+            || (!journalOk ? t.purchaseInvoicesUi.freightJournalFailed : null);
+          if (journalErr) {
+            toast({
+              title: t.purchaseInvoicesUi.freightJournalFailedTitle,
+              description: String(journalErr),
+              variant: 'destructive',
+            });
+          }
+        }).catch((e) => {
+          console.warn('[PurchaseInvoices] background repost:', e);
+        });
       }
-      await syncPurchaseInvoiceDocument(updatedInvoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix);
+      void syncPurchaseInvoiceDocument(updatedInvoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix).catch((docErr) => {
+        console.warn('[PurchaseInvoices] document sync:', docErr);
+      });
       toast({
         title: t.purchaseInvoicesUi.purchaseInvoiceUpdatedTitle,
         description: `${updatedInvoice.invoiceNumber} — ${updatedInvoice.supplierName}`,
       });
-      await loadInvoiceList();
+      scheduleLoadInvoiceList({ includeInvoiceId: updatedInvoice.id });
       editingInvoiceRef.current = null;
       resetCreateFormState();
       clearPurchaseCreateIntent();
@@ -2887,26 +2893,32 @@ export default function PurchaseInvoices() {
       }
 
       if (!serverPostedStock || !serverPostedPayable) {
-        try {
-          const repair = await api.purchaseInvoices.repostAccounting(invoice.id);
-          if (repair.data?.stockMovementIds?.length) {
-            txResult.stockMovementIds = repair.data.stockMovementIds;
+        // Document is saved — repair accounting in background (do not hold Save spinner).
+        void (async () => {
+          try {
+            const repair = await api.purchaseInvoices.repostAccounting(invoice.id);
+            const stockOk = (repair.data?.stockMovementIds?.length ?? 0) > 0 || serverPostedStock;
+            const payableOk = !!(repair.data?.openItemId || serverPostedPayable);
+            if (repair.error || repair.data?.errors?.length || !stockOk || !payableOk) {
+              const msg = repair.error
+                || (repair.data?.errors || []).join('; ')
+                || t.purchaseInvoicesUi.purchaseSavedPartialSync;
+              toast({
+                title: t.purchaseInvoicesUi.transactionEngineFailureTitle,
+                description: msg,
+                variant: 'destructive',
+              });
+            }
+            scheduleLoadInvoiceList({ includeInvoiceId: invoice.id });
+          } catch (repairErr) {
+            const msg = repairErr instanceof Error ? repairErr.message : String(repairErr);
+            toast({
+              title: t.purchaseInvoicesUi.transactionEngineFailureTitle,
+              description: msg,
+              variant: 'destructive',
+            });
           }
-          if (repair.data?.openItemId) {
-            txResult.openItemId = repair.data.openItemId;
-          }
-          if (repair.data?.errors?.length) {
-            txResult.errors.push(...repair.data.errors);
-          }
-          if (repair.error) {
-            txResult.errors.push(repair.error);
-          }
-          txResult.success =
-            (txResult.stockMovementIds?.length ?? 0) > 0 && !!txResult.openItemId;
-        } catch (repairErr) {
-          const msg = repairErr instanceof Error ? repairErr.message : String(repairErr);
-          txResult.errors.push(msg);
-        }
+        })();
       }
 
       if (txResult.pendingSync) {
@@ -2914,7 +2926,7 @@ export default function PurchaseInvoices() {
           title: t.purchaseInvoicesUi.purchaseInvoiceSavedTitle,
           description: `${invoice.invoiceNumber} — ${t.clientSyncUi.pendingLabel}`,
         });
-        await loadInvoiceList();
+        scheduleLoadInvoiceList({ includeInvoiceId: invoice.id });
         resetCreateFormState();
         clearPurchaseCreateIntent();
         setMode('list');
@@ -2967,21 +2979,24 @@ export default function PurchaseInvoices() {
       const stillNoStock = (posted.stockMovementIds?.length ?? 0) === 0;
       const stillNoPayable = !posted.openItemId;
       const stillNoJournal = totalLandingCosts > 0 && !txResult.journalEntryId;
+      const repairingInBackground = stillNoStock || stillNoPayable;
       const txError = txResult.errors.join('; ');
       toast({
-        title: stillNoStock || stillNoPayable || stillNoJournal
+        title: (!repairingInBackground && stillNoJournal)
           ? t.purchaseInvoicesUi.transactionEngineFailureTitle
           : t.purchaseInvoicesUi.purchaseInvoiceSavedTitle,
-        description: stillNoStock || stillNoPayable || stillNoJournal
-          ? (txError || (stillNoJournal ? t.purchaseInvoicesUi.freightJournalFailed : t.purchaseInvoicesUi.purchaseSavedPartialSync))
-          : `${invoice.invoiceNumber} — ${invoice.supplierName} — ${invoice.total.toLocaleString(uiLocale)} ${invoice.currency}`,
-        variant: stillNoStock || stillNoPayable || stillNoJournal ? 'destructive' : undefined,
+        description: repairingInBackground
+          ? (txError || t.purchaseInvoicesUi.purchaseSavedPartialSync)
+          : stillNoJournal
+            ? (txError || t.purchaseInvoicesUi.freightJournalFailed)
+            : `${invoice.invoiceNumber} — ${invoice.supplierName} — ${invoice.total.toLocaleString(uiLocale)} ${invoice.currency}`,
+        variant: (!repairingInBackground && stillNoJournal) ? 'destructive' : undefined,
       });
       if (stillNoStock || stillNoPayable || stillNoJournal) {
         setSaveError(txError || (stillNoJournal ? t.purchaseInvoicesUi.freightJournalFailed : t.purchaseInvoicesUi.purchaseSavedPartialSync));
       }
 
-      await loadInvoiceList({ includeInvoiceId: invoice.id, keepInvoice: invoice });
+      scheduleLoadInvoiceList({ includeInvoiceId: invoice.id });
 
       const toolbarBranch = String(listBranchId || currentBranch?.id || '').trim();
       if (
@@ -3020,7 +3035,7 @@ export default function PurchaseInvoices() {
       savingPurchaseRef.current = false;
       setSavingPurchase(false);
     }
-  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList, ensurePurchaseAccountingPosted, broadcastPurchaseAccountingSync, listBranchId]);
+  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList, scheduleLoadInvoiceList, ensurePurchaseAccountingPosted, broadcastPurchaseAccountingSync, listBranchId]);
 
   // ═══════════════ RENDER ═══════════════
 

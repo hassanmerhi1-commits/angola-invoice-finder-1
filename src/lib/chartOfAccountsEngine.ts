@@ -286,70 +286,26 @@ export async function ensureSupplierAccount(
   supplierNif?: string,
   parentCode?: string,
 ): Promise<string> {
-  // ALWAYS try to load from the backend API first — it's the source of truth
+  // Fast path: tiny ensure endpoint (no full CoA download over Tailscale).
   try {
-    const accounts = await tryLoadAccountsFromApi();
-    if (accounts && accounts.length > 0) {
-      // Search across the whole supplier group (case-insensitive, trimmed) to avoid duplicates
-      const normalizedName = supplierName.trim().toLowerCase();
-      const existing = accounts.find(a =>
-        a.code.startsWith(SUPPLIER_GROUP_CODE) &&
-        a.code.length > 3 &&
-        !a.is_header &&
-        a.is_active !== false &&
-        (
-          a.name?.trim().toLowerCase() === normalizedName ||
-          (supplierNif && supplierNif.trim() && a.description?.includes(supplierNif.trim()))
-        )
-      );
-
-      if (existing) {
-        console.log(`[CoA Engine] Found existing supplier account ${existing.code} — ${supplierName}`);
-        return existing.code;
-      }
-
-      // Not found — create via API (with proper UUID id) under the chosen parent
-      const resolvedParentCode = resolveSupplierParentCode(accounts, parentCode);
-      const parent = accounts.find(a => a.code === resolvedParentCode);
-      if (parent) {
-        const code = nextEntityAccountCode(resolvedParentCode, accounts);
-
-        const newAccount: Account = {
-          id: generateId(), // MUST be a valid UUID for the backend
-          code,
-          name: supplierName.trim(),
-          description: supplierNif ? `NIF: ${supplierNif}` : undefined,
-          account_type: 'liability',
-          account_nature: 'credit',
-          parent_id: parent.id,
-          parent_name: parent.name,
-          parent_code: resolvedParentCode,
-          level: (parent.level ?? 2) + 1,
-          is_header: false,
-          is_active: true,
-          opening_balance: 0,
-          current_balance: 0,
-          branch_id: null,
-          children_count: 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        } as Account;
-
-        const created = await tryApiCreateAccount(newAccount);
-        if (created) {
-          console.log(`[CoA Engine] Created supplier account ${code} — ${supplierName} (via API)`);
-        }
-        // Also cache locally
-        accounts.push(newAccount);
-        saveAccountsLocal(accounts);
-        return code;
-      }
+    const res = await api.chartOfAccounts.ensureSupplier({
+      name: supplierName,
+      nif: supplierNif || null,
+      parentCode,
+      supplierId,
+    });
+    if (!res.error && res.data?.code) {
+      console.log(`[CoA Engine] Ensured supplier account ${res.data.code} — ${supplierName}`);
+      return res.data.code;
+    }
+    if (res.error) {
+      console.warn('[CoA Engine] ensure-supplier API:', res.error);
     }
   } catch (e) {
-    console.warn('[CoA Engine] API lookup failed, falling back to localStorage:', e);
+    console.warn('[CoA Engine] ensure-supplier failed, falling back:', e);
   }
 
-  // Fallback: localStorage
+  // Fallback: localStorage only (offline / old city without ensure-supplier).
   const localAccounts = loadAccountsLocal();
   const normalizedName = supplierName.trim().toLowerCase();
   const localExisting = localAccounts.find(a =>

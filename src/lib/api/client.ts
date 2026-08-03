@@ -1840,6 +1840,18 @@ export const api = {
         { method: 'POST', body: '{}' },
         { timeoutMs: 60000 },
       ),
+    /** Find-or-create one supplier leaf — do not use list() for this. */
+    ensureSupplier: (body: {
+      name: string;
+      nif?: string | null;
+      parentCode?: string;
+      supplierId?: string;
+    }) =>
+      apiFetch<{ id: string | null; code: string; name: string; description?: string | null }>(
+        '/chart-of-accounts/ensure-supplier',
+        { method: 'POST', body: JSON.stringify(body) },
+        { timeoutMs: 30000 },
+      ),
     get: (id: string) => {
       if (isElectronMode()) return ipcQuery<any>('SELECT * FROM chart_of_accounts WHERE id = $1', [id]).then(r => ({ data: r.data?.[0] }));
       return apiFetch<any>(`/chart-of-accounts/${id}`);

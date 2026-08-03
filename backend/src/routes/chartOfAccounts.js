@@ -295,6 +295,48 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  // Find-or-create one supplier leaf (321xxxxx) — used by purchase Save.
+  // Never download the full chart for a single ensure (Tailscale).
+  router.post('/ensure-supplier', requirePermission('purchase_create', 'accounting_create', 'admin_settings'), async (req, res) => {
+    let client = null;
+    try {
+      const name = String(req.body?.name || req.body?.supplierName || '').trim();
+      const nif = String(req.body?.nif || req.body?.supplierNif || '').trim() || null;
+      const parentCode = String(req.body?.parentCode || req.body?.accountParentCode || '').trim() || undefined;
+      if (!name) {
+        return res.status(400).json({ error: 'Supplier name is required' });
+      }
+      const { ensureSupplierSubAccount } = require('../lib/entityCoaAccounts');
+      if (db.engine === 'postgres' && db.pool) {
+        client = await db.pool.connect();
+      }
+      const q = client || db;
+      const code = await ensureSupplierSubAccount(q, name, nif, parentCode);
+      if (!code) {
+        return res.status(500).json({ error: 'Failed to ensure supplier account' });
+      }
+      const row = await q.query(
+        `SELECT id, code, name, description, parent_id FROM chart_of_accounts WHERE code = $1 LIMIT 1`,
+        [code],
+      );
+      try { broadcastTable('chart_of_accounts'); } catch (_) { /* ignore */ }
+      res.json({
+        id: row.rows[0]?.id || null,
+        code,
+        name: row.rows[0]?.name || name,
+        description: row.rows[0]?.description || null,
+        parent_id: row.rows[0]?.parent_id || null,
+      });
+    } catch (error) {
+      console.error('[CHART OF ACCOUNTS ensure-supplier]', error);
+      res.status(500).json({ error: error.message || 'Failed to ensure supplier account' });
+    } finally {
+      if (client) {
+        try { client.release(); } catch (_) { /* ignore */ }
+      }
+    }
+  });
+
   // Get accounts by type
   router.get('/type/:type', async (req, res) => {
     try {
@@ -480,15 +522,15 @@ module.exports = function(broadcastTable) {
   // Get account ledger (posted lines for this account + all descendants —
   // chart headers roll up child balances, so drill-down must include children).
   // Include code-prefix children (PGC) when parent_id links are missing/incomplete.
-  // Supplier/client AP/AR spans all filials — never filter by toolbar branchId.
+  // Supplier/client AP/AR spans all filiais — never filter by toolbar branchId.
   router.get('/:id/ledger', async (req, res) => {
     try {
       const { id } = req.params;
-      const { start_date, end_date, limit: limitRaw } = req.query;
-      const parsedLimit = parseInt(String(limitRaw || '500'), 10);
+      let { start_date, end_date, limit: limitRaw } = req.query;
+      const parsedLimit = parseInt(String(limitRaw || '300'), 10);
       const limit = Number.isFinite(parsedLimit)
         ? Math.min(Math.max(parsedLimit, 1), 2000)
-        : 500;
+        : 300;
 
       // Never OR uuid id with varchar code in one predicate — Postgres then types $1 as
       // uuid and rejects `code = $1` (operator does not exist: character varying = uuid).
@@ -539,15 +581,101 @@ module.exports = function(broadcastTable) {
           )`
         : `COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10))`;
 
-      let dateFilter = '';
-      // $1 = root id. Code param only when expanding by PGC prefix (headers).
-      // Leaf queries must NOT bind an unused $2 — Postgres then errors:
-      // "could not determine data type of parameter $2".
-      const params = [String(root.id)];
-      let paramIndex = 2;
-      let codeParamSql = null;
+      // Control accounts 321/311: always expand by PGC code prefix so ledger
+      // shows leaf activity under the parent even when is_header is false.
+      const codeStr = String(root.code || '');
+      const expandByCode =
+        root.is_header === true || root.is_header === 1 || root.is_header === '1'
+        || codeStr === '321' || codeStr === '311'
+        || codeStr === '32' || codeStr === '31';
 
-      // Filter on effective date (entry_date or created_at) — many rows have null entry_date.
+      // Parent/control accounts without a date window scan huge trees on Tailscale —
+      // default last 90 days (client can clear dates for full history).
+      let defaultedRange = false;
+      if (expandByCode && !start_date && !end_date) {
+        const to = new Date();
+        const from = new Date(to);
+        from.setUTCDate(from.getUTCDate() - 90);
+        start_date = from.toISOString().slice(0, 10);
+        end_date = to.toISOString().slice(0, 10);
+        defaultedRange = true;
+      }
+
+      // Resolve matching CoA rows first (small set), then hit journal lines by uuid
+      // so Postgres can use idx_journal_lines_account — the old JOIN … OR cast(code)
+      // + DISTINCT scanned the whole journal for every double-click.
+      let treeSql;
+      let treeParams;
+      if (expandByCode) {
+        treeSql = `
+          WITH RECURSIVE by_parent AS (
+            SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}
+            UNION
+            SELECT c.id, c.code, c.name
+            FROM chart_of_accounts c
+            INNER JOIN by_parent t ON ${idText('c.parent_id')} = ${idText('t.id')}
+          ),
+          by_code AS (
+            SELECT id, code, name
+            FROM chart_of_accounts
+            WHERE ${activeClause}
+              AND CAST($2 AS TEXT) <> ''
+              AND (
+                ${idText('code')} = ${idText('$2')}
+                OR (
+                  length(${idText('code')}) > length(CAST($2 AS TEXT))
+                  AND ${idText('code')} LIKE CAST($2 AS TEXT) || '%'
+                )
+              )
+          )
+          SELECT id, code, name FROM by_parent
+          UNION
+          SELECT id, code, name FROM by_code`;
+        treeParams = [String(root.id), String(root.code || '')];
+      } else {
+        treeSql = `SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}`;
+        treeParams = [String(root.id)];
+      }
+      const treeRes = await db.query(treeSql, treeParams);
+      const treeRows = treeRes.rows || [];
+      const accountIds = [...new Set(treeRows.map((r) => String(r.id)).filter(Boolean))];
+      const accountCodes = [...new Set(treeRows.map((r) => String(r.code || '').trim()).filter(Boolean))];
+      const nameByKey = new Map();
+      for (const r of treeRows) {
+        nameByKey.set(String(r.id), r);
+        if (r.code) nameByKey.set(String(r.code), r);
+      }
+
+      if (accountIds.length === 0) {
+        return res.json([]);
+      }
+
+      const params = [];
+      let paramIndex = 1;
+      let accountMatchSql;
+      if (db.engine === 'postgres') {
+        params.push(accountIds);
+        const idsParam = `$${paramIndex++}::uuid[]`;
+        params.push(accountCodes.length ? accountCodes : ['__none__']);
+        const codesParam = `$${paramIndex++}::text[]`;
+        // Prefer uuid equality (index); keep code text match for legacy lines.
+        accountMatchSql = `(
+          jel.account_id = ANY(${idsParam})
+          OR ${idText('jel.account_id')} = ANY(${codesParam})
+        )`;
+      } else {
+        const idPlaceholders = accountIds.map(() => `$${paramIndex++}`);
+        params.push(...accountIds);
+        const codes = accountCodes.length ? accountCodes : ['__none__'];
+        const codePlaceholders = codes.map(() => `$${paramIndex++}`);
+        params.push(...codes);
+        accountMatchSql = `(
+          ${idText('jel.account_id')} IN (${idPlaceholders.join(',')})
+          OR ${idText('jel.account_id')} IN (${codePlaceholders.join(',')})
+        )`;
+      }
+
+      let dateFilter = '';
       if (start_date) {
         dateFilter += ` AND (${entryDateExpr}) >= $${paramIndex++}`;
         params.push(String(start_date).slice(0, 10));
@@ -561,61 +689,18 @@ module.exports = function(broadcastTable) {
         ? 'LEFT JOIN branches b ON b.id::text = je.branch_id::text'
         : 'LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(je.branch_id AS TEXT)';
 
-      // Control accounts 321/311: always expand by PGC code prefix so ledger
-      // shows leaf activity under the parent even when is_header is false.
-      const codeStr = String(root.code || '');
-      const expandByCode =
-        root.is_header === true || root.is_header === 1 || root.is_header === '1'
-        || codeStr === '321' || codeStr === '311'
-        || codeStr === '32' || codeStr === '31';
-      if (expandByCode) {
-        codeParamSql = `$${paramIndex++}`;
-        params.push(String(root.code || ''));
-      }
-      const byCodeCte = expandByCode
-        ? `,
-        by_code AS (
-          SELECT id, code, name
-          FROM chart_of_accounts
-          WHERE ${activeClause}
-            AND CAST(${codeParamSql} AS TEXT) <> ''
-            AND (
-              ${idText('code')} = ${idText(codeParamSql)}
-              OR (
-                length(${idText('code')}) > length(CAST(${codeParamSql} AS TEXT))
-                AND ${idText('code')} LIKE CAST(${codeParamSql} AS TEXT) || '%'
-              )
-            )
-        )`
-        : '';
-      const accountTreeSelect = expandByCode
-        ? `SELECT id, code, name FROM by_parent
-          UNION
-          SELECT id, code, name FROM by_code`
-        : `SELECT id, code, name FROM by_parent`;
-
-      // Split parent walk + code-prefix into separate CTEs.
-      // Postgres rejects a 3-arm UNION inside one WITH RECURSIVE (self-ref must be
-      // only in the recursive term) — that made city ledger return 500 / empty.
       const limitParam = `$${paramIndex++}`;
       params.push(limit);
+
+      const jeJoin = db.engine === 'postgres'
+        ? 'INNER JOIN journal_entries je ON je.id = jel.journal_entry_id'
+        : `INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}`;
+
       const result = await db.query(`
-        WITH RECURSIVE by_parent AS (
-          SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}
-          UNION
-          SELECT c.id, c.code, c.name
-          FROM chart_of_accounts c
-          INNER JOIN by_parent t ON ${idText('c.parent_id')} = ${idText('t.id')}
-        )${byCodeCte},
-        account_tree AS (
-          ${accountTreeSelect}
-        )
-        SELECT DISTINCT
+        SELECT
           jel.id,
           jel.journal_entry_id,
           jel.account_id,
-          atree.code AS account_code,
-          atree.name AS account_name,
           jel.description,
           jel.debit_amount,
           jel.credit_amount,
@@ -629,21 +714,28 @@ module.exports = function(broadcastTable) {
           je.is_posted,
           je.created_at as journal_created_at
         FROM journal_entry_lines jel
-        INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
-        INNER JOIN account_tree atree ON (
-          ${idText('atree.id')} = ${idText('jel.account_id')}
-          OR ${idText('atree.code')} = ${idText('jel.account_id')}
-        )
+        ${jeJoin}
         ${branchJoin}
         WHERE ${postedClause}
+          AND ${accountMatchSql}
           ${dateFilter}
         ORDER BY (${entryDateExpr}) DESC, je.created_at DESC
         LIMIT ${limitParam}
       `, params);
 
+      const rows = (result.rows || []).map((row) => {
+        const meta = nameByKey.get(String(row.account_id))
+          || nameByKey.get(String(row.account_id || '').trim());
+        return {
+          ...row,
+          account_code: meta?.code || root.code,
+          account_name: meta?.name || root.name,
+        };
+      });
+
       // Leaf with opening balance only: surface it as a synthetic line so drill-down
       // is not empty while the chart still shows a non-zero balance.
-      if ((result.rows || []).length === 0) {
+      if (rows.length === 0) {
         const opening = Number(root.opening_balance) || 0;
         const kids = await db.query(
           `SELECT COUNT(*) AS n FROM chart_of_accounts
@@ -690,8 +782,13 @@ module.exports = function(broadcastTable) {
       }
 
       res.set('X-Ledger-Limit', String(limit));
-      res.set('X-Ledger-Has-More', String((result.rows || []).length >= limit));
-      res.json(result.rows);
+      res.set('X-Ledger-Has-More', String(rows.length >= limit));
+      if (defaultedRange) {
+        res.set('X-Ledger-Default-Range', '90d');
+        res.set('X-Ledger-Start', String(start_date));
+        res.set('X-Ledger-End', String(end_date));
+      }
+      res.json(rows);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
       res.status(500).json({ error: error.message || 'Failed to fetch account ledger' });

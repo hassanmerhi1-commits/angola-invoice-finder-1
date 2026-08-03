@@ -1293,6 +1293,7 @@ export const en = {
     allDates: "All dates",
     thisMonth: "This month",
     showingLatest: "Showing the latest {limit} movements — narrow the date range for older entries.",
+    defaultRangeHint: "Showing last 90 days — use All dates for full history.",
     filterByType: "All types",
   },
 

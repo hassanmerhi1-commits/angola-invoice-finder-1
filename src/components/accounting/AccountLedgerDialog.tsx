@@ -38,7 +38,7 @@ import { NEXOR_PILL_BTN, NEXOR_PILL_BTN_PRIMARY } from '@/lib/nexorToolbarStyles
 import { NEXOR_STAT_CARD } from '@/lib/nexorToneStyles';
 import { formatDisplayDate } from '@/lib/formatDisplayDate';
 
-const LEDGER_FETCH_LIMIT = 500;
+const LEDGER_FETCH_LIMIT = 300;
 
 function currentMonthBounds(): { from: string; to: string } {
   const now = new Date();
@@ -46,6 +46,20 @@ function currentMonthBounds(): { from: string; to: string } {
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const lastDay = String(new Date(y, now.getMonth() + 1, 0).getDate()).padStart(2, '0');
   return { from: `${y}-${m}-01`, to: `${y}-${m}-${lastDay}` };
+}
+
+/** Default open window — full history on parent accounts was multi-second on Tailscale. */
+function lastDaysBounds(days: number): { from: string; to: string } {
+  const to = new Date();
+  const from = new Date(to);
+  from.setDate(from.getDate() - days);
+  const iso = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+  return { from: iso(from), to: iso(to) };
 }
 
 interface LedgerEntry {
@@ -81,8 +95,8 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
   const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [startDate, setStartDate] = useState(() => lastDaysBounds(90).from);
+  const [endDate, setEndDate] = useState(() => lastDaysBounds(90).to);
   const [truncated, setTruncated] = useState(false);
 
   const refTypeLabels: Record<string, string> = useMemo(() => ({
@@ -104,9 +118,8 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     if (!account) return;
     setIsLoading(true);
     try {
-      // Prefer account code first — avoids legacy city backends that crash on
-      // `WHERE id = $1 OR code = $1` when $1 is a UUID (varchar = uuid).
-      const keys = [account.code, account.id].filter((k, i, arr) => !!k && arr.indexOf(k) === i);
+      // Prefer UUID id (index-friendly). Fall back to code only on legacy city errors.
+      const keys = [account.id, account.code].filter((k, i, arr) => !!k && arr.indexOf(k) === i);
       let res: Awaited<ReturnType<typeof api.chartOfAccounts.getLedger>> | null = null;
       for (const key of keys) {
         res = await api.chartOfAccounts.getLedger(
@@ -151,12 +164,14 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     if (!open || !account) return;
     setSearchTerm('');
     setTypeFilter('all');
+    // Reset to a fast recent window each open (user can click All dates).
+    const bounds = lastDaysBounds(90);
+    setStartDate(bounds.from);
+    setEndDate(bounds.to);
   }, [open, account?.id]);
 
   useEffect(() => {
     if (!open || !account) return;
-    // Default is all dates. Do NOT force "this month" on open — that hid all
-    // history (esp. on the 1st of a new month → empty ledger / balances look 0).
     void fetchLedger();
   }, [open, account?.id, startDate, endDate, fetchLedger]);
   const filtered = useMemo(() => entries.filter((e) => {
@@ -474,6 +489,11 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
         {truncated && (
           <div className="shrink-0 rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
             {t.ledgerUi.showingLatest.replace('{limit}', String(LEDGER_FETCH_LIMIT))}
+          </div>
+        )}
+        {!truncated && startDate && endDate && (
+          <div className="shrink-0 rounded-lg border border-slate-200/80 bg-slate-50/90 px-3 py-2 text-xs text-slate-600">
+            {t.ledgerUi.defaultRangeHint}
           </div>
         )}
 

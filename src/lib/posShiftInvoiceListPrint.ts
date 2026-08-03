@@ -11,16 +11,15 @@ export type ShiftInvoiceListLabels = {
   invoice: string;
   customer: string;
   payment: string;
-  status: string;
   total: string;
   walkIn: string;
   shiftSince?: string | null;
   paymentLabel: (method: string) => string;
-  statusLabel: (sale: Sale) => string;
 };
 
 /**
  * A4-style list of shift invoices (one row per sale) — not full thermal receipts.
+ * Columns: time, invoice, customer, total, payment method.
  */
 export async function printShiftInvoiceList(opts: {
   sales: Sale[];
@@ -43,16 +42,16 @@ export async function printShiftInvoiceList(opts: {
       const time = new Date(sale.createdAt).toLocaleTimeString(locale, {
         hour: '2-digit',
         minute: '2-digit',
+        second: '2-digit',
       });
       const customer = (sale.customerName || '').trim() || L.walkIn;
-      const total = (Number(sale.total) || 0).toLocaleString(locale);
+      const total = `${(Number(sale.total) || 0).toLocaleString(locale)} Kz`;
       return `<tr>
         <td>${escapeHtml(time)}</td>
         <td class="mono">${escapeHtml(sale.invoiceNumber || '')}</td>
         <td>${escapeHtml(customer)}</td>
-        <td>${escapeHtml(L.paymentLabel(sale.paymentMethod || ''))}</td>
-        <td>${escapeHtml(L.statusLabel(sale))}</td>
         <td class="num">${escapeHtml(total)}</td>
+        <td>${escapeHtml(L.paymentLabel(sale.paymentMethod || ''))}</td>
       </tr>`;
     })
     .join('\n');
@@ -89,9 +88,8 @@ export async function printShiftInvoiceList(opts: {
         <th>${escapeHtml(L.time)}</th>
         <th>${escapeHtml(L.invoice)}</th>
         <th>${escapeHtml(L.customer)}</th>
-        <th>${escapeHtml(L.payment)}</th>
-        <th>${escapeHtml(L.status)}</th>
         <th class="num">${escapeHtml(L.total)}</th>
+        <th>${escapeHtml(L.payment)}</th>
       </tr>
     </thead>
     <tbody>
@@ -99,8 +97,9 @@ export async function printShiftInvoiceList(opts: {
     </tbody>
     <tfoot>
       <tr>
-        <td colspan="5">${escapeHtml(L.total)}</td>
+        <td colspan="3">${escapeHtml(L.total)}</td>
         <td class="num">${escapeHtml(grand.toLocaleString(locale))} Kz</td>
+        <td></td>
       </tr>
     </tfoot>
   </table>

@@ -959,7 +959,7 @@ export default function Inventory() {
       });
     }
 
-    await refreshInventoryAfterStockAdjust(targetWarehouseId);
+    void refreshInventoryAfterStockAdjust(targetWarehouseId);
 
     if (totalApplied === 0) {
       throw new Error(allErrors.slice(0, 3).join('; ') || t.stockEntryUi.saveFailed);
@@ -1055,7 +1055,7 @@ export default function Inventory() {
         });
       }
 
-      await refreshInventoryAfterStockAdjust(targetWarehouseId);
+      void refreshInventoryAfterStockAdjust(targetWarehouseId);
       if (result.applied === 0) {
         throw new Error(result.errors.slice(0, 3).join('; ') || t.stockEntryUi.saveFailed);
       }
@@ -1149,7 +1149,7 @@ export default function Inventory() {
         });
       }
 
-      await refreshInventoryAfterStockAdjust(targetWarehouseId);
+      void refreshInventoryAfterStockAdjust(targetWarehouseId);
       if (result.applied === 0) {
         throw new Error(result.errors.slice(0, 3).join('; ') || t.stockExitUi.saveFailed);
       }
