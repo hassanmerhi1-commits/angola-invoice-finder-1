@@ -733,6 +733,116 @@ export async function printViaBrowser(
   });
 }
 
+/**
+ * Print many shift receipts in one job (page-break between each invoice).
+ * One copy per sale — use for end-of-shift batch reprint.
+ */
+export async function printReceiptsBatch(
+  sales: Sale[],
+  branch: Branch,
+  options: { paperWidth?: 58 | 80; direct?: boolean; allowDialogFallback?: boolean } = {},
+): Promise<{ success: boolean; count: number }> {
+  const list = (sales || []).filter((s) => s && String(s.status || '').toLowerCase() !== 'voided');
+  if (list.length === 0) return { success: false, count: 0 };
+
+  const paperMm = normalizePaperWidth(options.paperWidth ?? getPrinterConfig().paperWidth);
+  const company = getCompanySettings();
+  const printableMm = paperMm === 80 ? 66 : 44;
+  const width = `${paperMm}mm`;
+  const contentWidth = `${printableMm}mm`;
+  const baseFont = paperMm === 80 ? 12 : 10;
+  const largeFont = paperMm === 80 ? 14 : 11;
+  const totalFont = paperMm === 80 ? 15 : 12;
+  const smallFont = paperMm === 80 ? 10 : 9;
+
+  const bodies: string[] = [];
+  for (const sale of list) {
+    let qrCodeDataURL = '';
+    try {
+      const { generateAGTQRCodeDataURL } = await import('./agtQRCode');
+      qrCodeDataURL = await generateAGTQRCodeDataURL(sale, branch, { size: 100, margin: 1 });
+    } catch (error) {
+      console.warn('[thermal] QR skipped for batch print:', sale.invoiceNumber, error);
+    }
+    bodies.push(buildReceiptCopyBody(sale, branch, paperMm, company, qrCodeDataURL, undefined));
+  }
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Recibos do turno (${list.length})</title>
+  <style>
+    @page { size: ${width} auto; margin: 0; }
+    .receipt-copy {
+      width: ${contentWidth};
+      max-width: ${contentWidth};
+      margin: 0;
+      padding-left: 2mm;
+    }
+    * {
+      margin: 0; padding: 0; box-sizing: border-box; color: #000;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    html, body { background: #fff; }
+    body {
+      font-family: 'Courier New', monospace;
+      font-size: ${baseFont}px;
+      font-weight: 700;
+      -webkit-font-smoothing: none;
+      line-height: 1.25;
+      width: ${width};
+      max-width: ${width};
+      padding: 0;
+      color: #000;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
+    }
+    .receipt-copy + .receipt-copy {
+      page-break-before: always;
+      break-before: page;
+    }
+    .center { text-align: center; }
+    .bold { font-weight: bold; }
+    .large { font-size: ${largeFont}px; }
+    .small { font-size: ${smallFont}px; }
+    .divider { border-top: 1px dashed #000; margin: 4px 0; }
+    .double-divider { border-top: 3px solid #000; margin: 4px 0; }
+    .row { display: flex; justify-content: space-between; gap: 6px; margin: 2px 0; }
+    .row span:first-child { overflow-wrap: anywhere; }
+    .row span:last-child { white-space: nowrap; text-align: right; }
+    .item-name { margin-top: 4px; overflow-wrap: anywhere; }
+    .item-details { display: flex; justify-content: space-between; gap: 6px; padding-left: 8px; font-size: ${smallFont + 1}px; }
+    .item-details span:last-child { white-space: nowrap; }
+    .total-row { font-size: ${totalFont}px; font-weight: bold; margin: 5px 0; }
+    .footer { margin-top: 15px; font-size: 10px; }
+    @media print {
+      html, body, * {
+        -webkit-print-color-adjust: exact; print-color-adjust: exact; color: #000 !important;
+      }
+      .qr { filter: grayscale(100%) contrast(1000%); image-rendering: pixelated; }
+    }
+  </style>
+</head>
+<body data-batch="${list.length}">
+  ${bodies.join('\n')}
+</body>
+</html>`;
+
+  const config = getPrinterConfig();
+  const deviceName = config.deviceName;
+  const useSilent = !!(options.direct && deviceName?.trim());
+  const { printHtml } = await import('./printHtml');
+  await printHtml(html, {
+    direct: options.direct,
+    silent: useSilent,
+    deviceName,
+    pageWidthMm: paperMm,
+    allowDialogFallback: options.allowDialogFallback ?? !useSilent,
+  });
+  return { success: true, count: list.length };
+}
+
 function normalizePrintReceiptOptions(
   openDrawerOrOptions: boolean | PrintReceiptOptions = false,
 ): PrintReceiptOptions {

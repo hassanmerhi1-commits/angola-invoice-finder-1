@@ -123,7 +123,19 @@ export function listCreditableSales(
   return sales
     .filter((sale) => sale.status === 'completed')
     .map((sale) => getSaleCreditContext(sale, creditedQtyBySale))
-    .filter((ctx) => !ctx.fullyCredited)
+    .filter((ctx) => {
+      // Light sales lists omit line items (items=[]). Those must still appear —
+      // otherwise every invoice looks "fully credited" and the CN picker is empty.
+      const itemCount = ctx.sale.items?.length || 0;
+      if (itemCount === 0) {
+        const hinted =
+          Number(ctx.sale.itemsCount) > 0
+          || Number(ctx.sale.total) > 0
+          || Number(ctx.sale.subtotal) > 0;
+        return hinted;
+      }
+      return !ctx.fullyCredited;
+    })
     .sort((a, b) => new Date(b.sale.createdAt).getTime() - new Date(a.sale.createdAt).getTime());
 }
 

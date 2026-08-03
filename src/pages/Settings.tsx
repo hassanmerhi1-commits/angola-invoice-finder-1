@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
+import { useAuth } from '@/hooks/useERP';
 import { ChangePasswordCard } from '@/components/settings/ChangePasswordCard';
 import { InteractionSettingsCard } from '@/components/settings/InteractionSettingsCard';
 import { PosPricingSettingsCard } from '@/components/settings/PosPricingSettingsCard';
@@ -41,9 +42,11 @@ const DEFAULT_SECTION: SettingsSectionId = 'general';
 
 export default function Settings() {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const mustChangePassword = !!user?.mustChangePassword;
 
   const sectionParam = searchParams.get('section');
   const activeSection: SettingsSectionId = isSettingsSectionId(sectionParam)
@@ -103,15 +106,29 @@ export default function Settings() {
   }, [isElectron]);
 
   useEffect(() => {
-    const focus = (location.state as { focus?: string } | null)?.focus;
+    const focusFromQuery = searchParams.get('focus');
+    const focusFromState = (location.state as { focus?: string } | null)?.focus;
+    const focus = focusFromQuery || focusFromState;
     if (focus === 'password') {
       setActiveSection('general');
       requestAnimationFrame(() => {
         document.getElementById('change-password')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
-      navigate(location.pathname, { replace: true, state: {} });
+      // Drop focus= from URL/state so we don't keep re-scrolling; keep other params.
+      if (focusFromQuery) {
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.delete('focus');
+            return next;
+          },
+          { replace: true },
+        );
+      } else {
+        navigate(location.pathname, { replace: true, state: {} });
+      }
     }
-  }, [location.pathname, location.state, navigate, setActiveSection]);
+  }, [location.pathname, location.state, navigate, searchParams, setActiveSection, setSearchParams]);
 
   useEffect(() => {
     if (!isElectron) return;
@@ -212,6 +229,19 @@ export default function Settings() {
       toast.error('Could not launch installer. Run the downloaded .exe manually.');
     }
   };
+
+  // First login / default password: only the change-password card (no admin sections).
+  if (mustChangePassword) {
+    return (
+      <div className="mx-auto max-w-lg space-y-6 py-8">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">{t.nav.settings}</h1>
+          <p className="text-muted-foreground">{t.auth.mustChangePasswordDesc}</p>
+        </div>
+        <ChangePasswordCard />
+      </div>
+    );
+  }
 
   const renderSectionContent = () => {
     switch (activeSection) {

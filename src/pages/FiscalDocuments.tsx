@@ -1235,6 +1235,7 @@ export default function FiscalDocuments() {
         initialSaleId={initialCreditSaleId}
         sales={sales}
         creditNotes={creditNotes}
+        branchId={apiBranchId}
         submitting={creditNoteSubmitting}
         onOpenChange={(open) => {
           if (open && !canCreateCreditNote) {

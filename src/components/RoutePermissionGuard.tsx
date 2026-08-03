@@ -11,13 +11,19 @@ import { canAccessRoute } from '@/lib/routePermissions';
  * user got there (sidebar, top menu, toolbar, or a direct URL). Redirects to the
  * dashboard with a toast instead of rendering a page they can't use. Backend
  * RBAC remains the final enforcement layer.
+ *
+ * Exception: /settings must stay reachable when mustChangePassword is set —
+ * otherwise ProtectedRoute ↔ this guard bounce forever (screen flicker on first login).
  */
 export function RoutePermissionGuard() {
   const { user } = useAuth();
   const location = useLocation();
   const { t } = useTranslation();
   const path = resolveAppPathname(location.pathname);
-  const allowed = canAccessRoute(user?.role, user?.permissionOverrides, path);
+  const forcePasswordChange = !!user?.mustChangePassword && path === '/settings';
+  const allowed =
+    forcePasswordChange
+    || canAccessRoute(user?.role, user?.permissionOverrides, path);
   const notifiedFor = useRef<string | null>(null);
 
   useEffect(() => {
@@ -28,6 +34,11 @@ export function RoutePermissionGuard() {
   }, [allowed, path, t]);
 
   if (!allowed) {
+    // Prefer password-change escape hatch over bouncing to "/" (which immediately
+    // sends mustChangePassword users back to /settings and loops).
+    if (user?.mustChangePassword) {
+      return <Navigate to="/settings?focus=password" replace />;
+    }
     return <Navigate to="/" replace />;
   }
 

@@ -11,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Eye, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Eye, RefreshCw, AlertTriangle, Printer, ListOrdered } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { filterShiftSalesForCashier, withRecoveredShiftStart } from '@/lib/posShiftSales';
@@ -21,6 +21,10 @@ import {
   resolveShiftSaleStatus,
   type PosShiftSaleStatus,
 } from '@/lib/posShiftSaleIssues';
+import { getPrinterConfig, printReceiptsBatch } from '@/lib/thermalPrinter';
+import { recordSalePrint } from '@/lib/recordPrintAudit';
+import { printShiftInvoiceList } from '@/lib/posShiftInvoiceListPrint';
+import { toast } from 'sonner';
 
 interface Props {
   sales: Sale[];
@@ -61,10 +65,21 @@ export function PosShiftInvoicesPanel({
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const [refreshing, setRefreshing] = useState(false);
+  const [printingAll, setPrintingAll] = useState(false);
+  const [printingList, setPrintingList] = useState(false);
 
   const shiftSales = useMemo(
     () => filterShiftSalesForCashier(sales, cashier, session),
     [sales, cashier, session],
+  );
+
+  const printableSales = useMemo(
+    () =>
+      shiftSales.filter((sale) => {
+        const status = String(sale.status || '').toLowerCase();
+        return status !== 'voided' && status !== 'cancelled';
+      }),
+    [shiftSales],
   );
 
   const issues = useMemo(
@@ -117,6 +132,79 @@ export function PosShiftInvoicesPanel({
     }
   };
 
+  const handlePrintAll = async () => {
+    if (!branch || printableSales.length === 0 || printingAll) return;
+    setPrintingAll(true);
+    try {
+      const config = getPrinterConfig();
+      const result = await printReceiptsBatch(printableSales, branch, {
+        paperWidth: config.paperWidth,
+        direct: !!config.deviceName?.trim(),
+        allowDialogFallback: true,
+      });
+      if (!result.success || result.count === 0) {
+        toast.error(t.posUi.shiftInvoices.printAllError);
+        return;
+      }
+      for (const sale of printableSales) {
+        void recordSalePrint(sale, {
+          format: 'thermal',
+          source: 'shift_invoices_batch',
+          reprint: true,
+        });
+      }
+      toast.success(
+        t.posUi.shiftInvoices.printAllSuccess.replace('{count}', String(result.count)),
+      );
+    } catch (e) {
+      console.error('[shift invoices] print all failed:', e);
+      toast.error(t.posUi.shiftInvoices.printAllError);
+    } finally {
+      setPrintingAll(false);
+    }
+  };
+
+  const handlePrintList = async () => {
+    if (printableSales.length === 0 || printingList) return;
+    setPrintingList(true);
+    try {
+      const result = await printShiftInvoiceList({
+        sales: printableSales,
+        branch,
+        cashier,
+        session,
+        locale,
+        labels: {
+          title: t.posUi.shiftInvoices.listTitle,
+          cashier: t.posUi.endOfDayCashier,
+          date: t.posUi.endOfDayDate,
+          time: t.posUi.endOfDayTime,
+          invoice: t.posUi.endOfDayInvoice,
+          customer: t.posUi.shiftInvoices.customer,
+          payment: t.checkoutUi.paymentForm,
+          status: t.common.status,
+          total: t.common.total,
+          walkIn: t.posUi.walkInCustomer,
+          shiftSince: shiftOpenedLabel,
+          paymentLabel,
+          statusLabel: (sale) => statusLabel(resolveShiftSaleStatus(sale, issues)),
+        },
+      });
+      if (!result.success) {
+        toast.error(t.posUi.shiftInvoices.printListError);
+        return;
+      }
+      toast.success(
+        t.posUi.shiftInvoices.printListSuccess.replace('{count}', String(result.count)),
+      );
+    } catch (e) {
+      console.error('[shift invoices] print list failed:', e);
+      toast.error(t.posUi.shiftInvoices.printListError);
+    } finally {
+      setPrintingList(false);
+    }
+  };
+
   if (!session) {
     return (
       <div className="flex flex-col items-center justify-center h-full py-8 px-4 text-center">
@@ -135,19 +223,47 @@ export function PosShiftInvoicesPanel({
             {t.posUi.shiftInvoices.count.replace('{count}', String(shiftSales.length))}
           </p>
         </div>
-        {onRefresh && (
+        <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
-            className="h-7 text-xs shrink-0"
-            disabled={refreshing}
-            onClick={() => void handleRefresh()}
+            className="h-7 text-xs"
+            disabled={printingList || printableSales.length === 0}
+            onClick={() => void handlePrintList()}
           >
-            <RefreshCw className={cn('w-3.5 h-3.5 mr-1', refreshing && 'animate-spin')} />
-            {t.common.refresh}
+            <ListOrdered className={cn('w-3.5 h-3.5 mr-1', printingList && 'animate-pulse')} />
+            {printingList
+              ? t.posUi.shiftInvoices.printingList
+              : t.posUi.shiftInvoices.printList}
           </Button>
-        )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={printingAll || printableSales.length === 0 || !branch}
+            onClick={() => void handlePrintAll()}
+          >
+            <Printer className={cn('w-3.5 h-3.5 mr-1', printingAll && 'animate-pulse')} />
+            {printingAll
+              ? t.posUi.shiftInvoices.printingAll
+              : t.posUi.shiftInvoices.printAll}
+          </Button>
+          {onRefresh && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs shrink-0"
+              disabled={refreshing}
+              onClick={() => void handleRefresh()}
+            >
+              <RefreshCw className={cn('w-3.5 h-3.5 mr-1', refreshing && 'animate-spin')} />
+              {t.common.refresh}
+            </Button>
+          )}
+        </div>
       </div>
 
       {checkoutFailures.length > 0 && (

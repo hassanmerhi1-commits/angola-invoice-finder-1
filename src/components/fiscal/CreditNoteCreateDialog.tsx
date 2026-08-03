@@ -29,6 +29,8 @@ import {
   getSaleCreditContext,
   listCreditableSales,
 } from '@/lib/creditNoteUtils';
+import { api } from '@/lib/api/client';
+import { mapSaleRow } from '@/hooks/useERP';
 import type { CreditNote, CreditNoteItem, Sale } from '@/types/erp';
 
 type CreditNoteCreateDialogProps = {
@@ -36,6 +38,8 @@ type CreditNoteCreateDialogProps = {
   onOpenChange: (open: boolean) => void;
   sales: Sale[];
   creditNotes: CreditNote[];
+  /** Prefer sales for this branch when refreshing with full line items. */
+  branchId?: string | null;
   initialSaleId?: string | null;
   onSubmit: (payload: {
     sale: Sale;
@@ -52,6 +56,7 @@ export function CreditNoteCreateDialog({
   onOpenChange,
   sales,
   creditNotes,
+  branchId,
   initialSaleId,
   onSubmit,
   submitting = false,
@@ -67,12 +72,17 @@ export function CreditNoteCreateDialog({
   const [creditDescription, setCreditDescription] = useState('');
   const [creditItems, setCreditItems] = useState<CreditNoteItem[]>([]);
   const [restoreStock, setRestoreStock] = useState(true);
+  const [pickerSales, setPickerSales] = useState<Sale[]>([]);
+  const [loadingSales, setLoadingSales] = useState(false);
+  const [loadingSaleId, setLoadingSaleId] = useState<string | null>(null);
 
   const creditedQtyBySale = useMemo(() => getCreditedQtyBySale(creditNotes), [creditNotes]);
 
+  const sourceSales = pickerSales.length > 0 ? pickerSales : sales;
+
   const creditableSales = useMemo(
-    () => listCreditableSales(sales, creditNotes),
-    [sales, creditNotes],
+    () => listCreditableSales(sourceSales, creditNotes),
+    [sourceSales, creditNotes],
   );
 
   const filteredEntries = useMemo(
@@ -98,15 +108,67 @@ export function CreditNoteCreateDialog({
     setCreditDescription('');
     setCreditItems([]);
     setRestoreStock(true);
+    setLoadingSaleId(null);
   }, []);
 
-  const applySale = useCallback((sale: Sale) => {
-    const ctx = getSaleCreditContext(sale, creditedQtyBySale);
-    if (ctx.fullyCredited || sale.status !== 'completed') return;
-    setSelectedSale(sale);
-    setRestoreStock(true);
-    setCreditItems(buildCreditItemsFromContext(ctx));
-  }, [creditedQtyBySale]);
+  const ensureSaleWithItems = useCallback(async (sale: Sale): Promise<Sale | null> => {
+    if (sale.items && sale.items.length > 0) return sale;
+    try {
+      const res = await api.sales.get(sale.id);
+      if (res.data) return mapSaleRow(res.data);
+    } catch (e) {
+      console.warn('[CreditNote] failed to load sale lines:', e);
+    }
+    return null;
+  }, []);
+
+  const applySale = useCallback(async (sale: Sale) => {
+    if (sale.status !== 'completed') return;
+    setLoadingSaleId(sale.id);
+    try {
+      const full = await ensureSaleWithItems(sale);
+      if (!full || !full.items?.length) return;
+      const ctx = getSaleCreditContext(full, creditedQtyBySale);
+      if (ctx.fullyCredited) return;
+      setSelectedSale(full);
+      setRestoreStock(true);
+      setCreditItems(buildCreditItemsFromContext(ctx));
+    } finally {
+      setLoadingSaleId(null);
+    }
+  }, [creditedQtyBySale, ensureSaleWithItems]);
+
+  // Fiscal pages use light sales lists (no line items). Load full rows when the dialog opens.
+  useEffect(() => {
+    if (!open) {
+      setPickerSales([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingSales(true);
+    void (async () => {
+      try {
+        const res = await api.sales.list(branchId || undefined, {
+          limit: 300,
+          light: false,
+        });
+        if (cancelled) return;
+        const rows = Array.isArray(res.data)
+          ? res.data
+          : (res.data as { items?: unknown[] } | undefined)?.items;
+        if (Array.isArray(rows) && rows.length > 0) {
+          setPickerSales(rows.map(mapSaleRow));
+        }
+      } catch (e) {
+        console.warn('[CreditNote] full sales refresh failed:', e);
+      } finally {
+        if (!cancelled) setLoadingSales(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, branchId]);
 
   useEffect(() => {
     if (!open) {
@@ -114,9 +176,11 @@ export function CreditNoteCreateDialog({
       return;
     }
     if (!initialSaleId) return;
-    const sale = sales.find((s) => s.id === initialSaleId);
-    if (sale) applySale(sale);
-  }, [open, initialSaleId, sales, applySale, resetForm]);
+    const sale =
+      pickerSales.find((s) => s.id === initialSaleId)
+      || sales.find((s) => s.id === initialSaleId);
+    if (sale) void applySale(sale);
+  }, [open, initialSaleId, sales, pickerSales, applySale, resetForm]);
 
   const paymentMethodLabel = (method: Sale['paymentMethod']) => {
     if (method === 'cash') return t.pos.cash;
@@ -187,26 +251,37 @@ export function CreditNoteCreateDialog({
                 />
               </div>
               <p className="text-xs text-muted-foreground shrink-0">
-                {fd.invoicePickerCount.replace('{count}', String(filteredEntries.length))}
+                {loadingSales
+                  ? fd.loadingCreditableInvoices
+                  : fd.invoicePickerCount.replace('{count}', String(filteredEntries.length))}
               </p>
               <div className="flex-1 min-h-0 rounded-lg border overflow-hidden">
                 {filteredEntries.length === 0 ? (
                   <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
                     <div className="space-y-2">
                       <AlertCircle className="w-8 h-8 mx-auto opacity-50" />
-                      <p className="font-medium">{fd.noCreditableInvoices}</p>
-                      <p>{fd.noCreditableInvoicesHint}</p>
+                      <p className="font-medium">
+                        {loadingSales ? fd.loadingCreditableInvoices : fd.noCreditableInvoices}
+                      </p>
+                      {!loadingSales && <p>{fd.noCreditableInvoicesHint}</p>}
                     </div>
                   </div>
                 ) : (
                   <ScrollArea className="h-full">
                     <div className="divide-y">
-                      {filteredEntries.map(({ sale, lines, totalRemaining }) => (
+                      {filteredEntries.map(({ sale, lines, totalRemaining }) => {
+                        const remainingHint =
+                          lines.length > 0
+                            ? totalRemaining
+                            : (Number(sale.itemsCount) || '…');
+                        const selecting = loadingSaleId === sale.id;
+                        return (
                         <button
                           key={sale.id}
                           type="button"
-                          className="w-full p-3 text-left hover:bg-muted/70 transition-colors"
-                          onClick={() => applySale(sale)}
+                          className="w-full p-3 text-left hover:bg-muted/70 transition-colors disabled:opacity-60"
+                          disabled={!!loadingSaleId}
+                          onClick={() => void applySale(sale)}
                         >
                           <div className="flex justify-between gap-3">
                             <div className="min-w-0">
@@ -215,6 +290,9 @@ export function CreditNoteCreateDialog({
                                 <Badge variant="outline" className="text-[10px]">
                                   {fiscalInvoiceTypeLabel(sale.invoiceType || 'FT', t.posUi)}
                                 </Badge>
+                                {selecting && (
+                                  <span className="text-[10px] text-muted-foreground">{fd.loadingSaleLines}</span>
+                                )}
                               </div>
                               <p className="text-sm text-muted-foreground truncate">
                                 {sale.customerName || fd.finalConsumer}
@@ -228,10 +306,11 @@ export function CreditNoteCreateDialog({
                             <div className="text-right shrink-0">
                               <p className="font-semibold">{sale.total.toLocaleString(uiLocale)} Kz</p>
                               <p className="text-xs text-muted-foreground">
-                                {totalRemaining} {fd.colRemainingQty.toLowerCase()}
+                                {remainingHint} {fd.colRemainingQty.toLowerCase()}
                               </p>
                             </div>
                           </div>
+                          {lines.length > 0 && (
                           <div className="mt-1.5 flex flex-wrap gap-1">
                             {lines.filter((l) => l.remainingQty > 0).slice(0, 3).map((line) => (
                               <Badge key={line.item.productId} variant="secondary" className="text-[10px] font-normal">
@@ -239,8 +318,10 @@ export function CreditNoteCreateDialog({
                               </Badge>
                             ))}
                           </div>
+                          )}
                         </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   </ScrollArea>
                 )}
