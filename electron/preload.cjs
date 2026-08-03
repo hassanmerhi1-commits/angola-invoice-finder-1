@@ -131,6 +131,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   app: {
     relaunch: () => ipcRenderer.invoke('app:relaunch'),
     getVersion: () => ipcRenderer.invoke('app:version'),
+    setUiLanguage: (lang) => ipcRenderer.invoke('app:setUiLanguage', lang),
+    getPrinterConfig: () => ipcRenderer.invoke('app:getPrinterConfig'),
+    setPrinterConfig: (config) => ipcRenderer.invoke('app:setPrinterConfig', config),
   },
 
   // Auto-updater
@@ -217,10 +220,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   getApiUrl: () => ipcRenderer.invoke('sync:getApiUrl'),
-
-  app: {
-    setUiLanguage: (lang) => ipcRenderer.invoke('app:setUiLanguage', lang),
-  },
 
   // Platform info
   platform: process.platform,

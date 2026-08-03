@@ -7,6 +7,7 @@ import { userHasPermission } from '@/lib/permissions';
 import { getCompanySettings } from '@/lib/companySettings';
 import {
   printPosThermalReceipts,
+  hydratePrinterConfigFromDisk,
 } from '@/lib/thermalPrinter';
 import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { isOfflineSaleStub, offlineSalePrintWarning } from '@/lib/saleOfflineGuard';
@@ -98,6 +99,11 @@ export default function POS() {
     syncFromCache();
     window.addEventListener('company-settings-updated', syncFromCache);
     return () => window.removeEventListener('company-settings-updated', syncFromCache);
+  }, []);
+
+  // Restore thermal printer from Electron userData when this window's localStorage is empty.
+  useEffect(() => {
+    void hydratePrinterConfigFromDisk();
   }, []);
 
   // Effective ex-VAT unit price for the active price level + client % adjustment.

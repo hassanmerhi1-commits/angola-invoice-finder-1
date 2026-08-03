@@ -209,6 +209,10 @@ export function filterShiftCashRefunds(
  *
  * Uses the open-shift window only (not calendar day) so overnight open registers
  * still show expenses, matching how the drawer session counters work.
+ *
+ * Expenses are caixa/drawer movements — the payment UI picks a cash box, not a
+ * cashier — so this list is intentionally NOT filtered by cashier. Callers decide
+ * whether to show them as shared info or fold them into drawer close once.
  */
 export function filterShiftCashExpenses(
   expenses: Expense[],

@@ -596,7 +596,8 @@ export default function Journals() {
 
   useEffect(() => {
     if (newEntryOpen) {
-      void refetchChartAccounts({ force: true });
+      // Soft refetch — cache is enough for account picker codes/names.
+      void refetchChartAccounts();
     }
   }, [newEntryOpen, refetchChartAccounts]);
 

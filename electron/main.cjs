@@ -2491,6 +2491,33 @@ ipcMain.handle('app:setUiLanguage', (_, lang) => {
   return true;
 });
 
+function printerConfigFilePath() {
+  return path.join(app.getPath('userData'), 'kwanza_printer_config.json');
+}
+
+ipcMain.handle('app:getPrinterConfig', () => {
+  try {
+    const file = printerConfigFilePath();
+    if (!fs.existsSync(file)) return null;
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (e) {
+    console.warn('[App] could not read printer config:', e.message);
+    return null;
+  }
+});
+
+ipcMain.handle('app:setPrinterConfig', (_, config) => {
+  try {
+    if (!config || typeof config !== 'object') return { success: false, error: 'invalid config' };
+    fs.writeFileSync(printerConfigFilePath(), JSON.stringify(config), 'utf8');
+    return { success: true };
+  } catch (e) {
+    console.warn('[App] could not persist printer config:', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
 // ============= SETUP WIZARD SUPPORT =============
 ipcMain.handle('setup:getConfig', async () => {
   try {

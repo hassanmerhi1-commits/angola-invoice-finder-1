@@ -33,6 +33,8 @@ export function AppLayout() {
 
   useEffect(() => {
     if (!user) return;
+    // Cashiers stay on POS — daily checklist is for back-office roles only.
+    if (user.role === 'cashier') return;
     if (shouldShowDailyTodoDialog()) {
       ensureDayTodos(todayKey());
       setDailyTodoOpen(true);
@@ -49,13 +51,14 @@ export function AppLayout() {
   }, [user]);
 
   useEffect(() => {
+    if (user?.role === 'cashier') return;
     const onShow = () => {
       ensureDayTodos(todayKey());
       setDailyTodoOpen(true);
     };
     window.addEventListener('nexor:show-daily-todos', onShow);
     return () => window.removeEventListener('nexor:show-daily-todos', onShow);
-  }, []);
+  }, [user?.role]);
 
   useEffect(() => {
     const onGlobalPrint = () => {
@@ -94,7 +97,10 @@ export function AppLayout() {
       <div data-statusbar>
         <StatusBar />
       </div>
-      <DailyTodoDialog open={dailyTodoOpen} onOpenChange={setDailyTodoOpen} />
+      <DailyTodoDialog
+        open={dailyTodoOpen && user?.role !== 'cashier'}
+        onOpenChange={setDailyTodoOpen}
+      />
     </div>
   );
 }

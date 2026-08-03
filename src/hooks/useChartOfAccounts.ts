@@ -153,7 +153,7 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     try {
       // Never blank the tree when we already have local/cache rows.
       if (!hasRowsRef.current) setIsLoading(true);
-      // Server always returns journal-aggregated balances. liveBalances also persists recompute.
+      // Stored balances by default (fast). liveBalances joins journals for ledger parity.
       const response = await api.chartOfAccounts.list(
         opts?.liveBalances ? { liveBalances: true } : undefined,
       );
@@ -199,11 +199,12 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     void fetchAccounts({ force: true });
   });
 
-  // Journal/payment posts may drift stored balances — refetch CoA so leaf balances update.
+  // After posts, refresh stored balances (server recomputes in background). Avoid live join —
+  // that blocked Journals/Invoices whenever a sale posted over Tailscale.
   useTableRefreshListener(['journal_entries', 'payments'], () => {
     if (!enabled) return;
     markCachedListStale('chartOfAccounts');
-    void fetchAccounts({ force: true, liveBalances: true });
+    void fetchAccounts({ force: true });
   });
 
   // Auto-seed branch caixa accounts once after first load — only refetch if something was created.

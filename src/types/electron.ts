@@ -213,6 +213,9 @@ export interface ElectronAPI {
   app: {
     relaunch: () => Promise<void>;
     getVersion: () => Promise<string>;
+    setUiLanguage?: (lang: 'en' | 'pt') => Promise<boolean>;
+    getPrinterConfig?: () => Promise<Record<string, unknown> | null>;
+    setPrinterConfig?: (config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   };
 
   // Auto-updater

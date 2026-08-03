@@ -255,9 +255,65 @@ export default function Invoices() {
         const loadPurchase = !type || type === 'fatura_compra';
         const loadFiscalCreditNotes = !type || type === 'nota_credito';
 
+        const mergeAndPaint = (
+          salesDocs: ERPDocument[],
+          purchaseDocs: ERPDocument[],
+          fiscalCreditDocs: ERPDocument[],
+          storedDocs: ERPDocument[],
+        ) => {
+          const salesByNumber = new Map(
+            salesDocs.filter((d) => d.documentNumber).map((d) => [d.documentNumber, d]),
+          );
+          const merged: ERPDocument[] = [];
+          const seenNumbers = new Set<string>();
+          for (const doc of storedDocs) {
+            if (doc.documentType === 'fatura_venda' && doc.documentNumber && salesByNumber.has(doc.documentNumber)) {
+              continue;
+            }
+            // Local erp_documents copies are stale; fiscal API is canonical for credit notes.
+            if (doc.documentType === 'nota_credito') continue;
+            // Tab-scoped local docs: skip purchase rows when not loading purchases, etc.
+            if (type === 'fatura_venda' && doc.documentType === 'fatura_compra') continue;
+            if (type === 'fatura_compra' && doc.documentType === 'fatura_venda') continue;
+            merged.push(doc);
+            if (doc.documentNumber) seenNumbers.add(doc.documentNumber);
+          }
+          for (const doc of [...salesDocs, ...purchaseDocs, ...fiscalCreditDocs]) {
+            if (!doc.documentNumber || seenNumbers.has(doc.documentNumber)) continue;
+            seenNumbers.add(doc.documentNumber);
+            merged.push(doc);
+          }
+          merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          const result = type ? merged.filter((d) => d.documentType === type) : merged;
+          if (!cancelled) {
+            setDocuments(result);
+            setCachedList(cacheKey, result);
+          }
+        };
+
+        // "All" tab: paint sales first so the grid is usable; purchases/CN fill in after.
+        if (!type) {
+          const [storedDocs, salesDocs] = await Promise.all([
+            // Skip Electron erp_documents dump — API lists are canonical and the IPC scan was
+            // blocking every Invoices open over Tailscale.
+            getDocuments(type, branchFilter, { skipLocalDb: true }),
+            getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog, listOpts),
+          ]);
+          mergeAndPaint(salesDocs, [], [], storedDocs);
+          if (!cancelled) setListLoading(false);
+
+          const [purchaseDocs, cnRes] = await Promise.all([
+            getPurchaseInvoicesAsDocuments(listBranchId, branchNames, branchCatalog, isHeadOffice, listOpts),
+            api.fiscalDocuments.listCreditNotes(listBranchId, listOpts),
+          ]);
+          const fiscalCreditDocs = (cnRes.data || []).map((cn: CreditNote) =>
+            mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
+          );
+          mergeAndPaint(salesDocs, purchaseDocs, fiscalCreditDocs, storedDocs);
+          return;
+        }
+
         const [storedDocs, salesDocs, purchaseDocs, cnRes] = await Promise.all([
-          // Skip Electron erp_documents dump — API lists are canonical and the IPC scan was
-          // blocking every Invoices open over Tailscale.
           getDocuments(type, branchFilter, { skipLocalDb: true }),
           loadSales
             ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog, listOpts)
@@ -270,38 +326,10 @@ export default function Invoices() {
             : Promise.resolve({ data: [] as CreditNote[] }),
         ]);
 
-        const salesByNumber = new Map(
-          salesDocs.filter((d) => d.documentNumber).map((d) => [d.documentNumber, d]),
-        );
         const fiscalCreditDocs = (cnRes.data || []).map((cn: CreditNote) =>
           mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
         );
-        const merged: ERPDocument[] = [];
-        const seenNumbers = new Set<string>();
-        for (const doc of storedDocs) {
-          if (doc.documentType === 'fatura_venda' && doc.documentNumber && salesByNumber.has(doc.documentNumber)) {
-            continue;
-          }
-          // Local erp_documents copies are stale; fiscal API is canonical for credit notes.
-          if (doc.documentType === 'nota_credito') continue;
-          // Tab-scoped local docs: skip purchase rows when not loading purchases, etc.
-          if (type === 'fatura_venda' && doc.documentType === 'fatura_compra') continue;
-          if (type === 'fatura_compra' && doc.documentType === 'fatura_venda') continue;
-          merged.push(doc);
-          if (doc.documentNumber) seenNumbers.add(doc.documentNumber);
-        }
-        for (const doc of [...salesDocs, ...purchaseDocs, ...fiscalCreditDocs]) {
-          if (!doc.documentNumber || seenNumbers.has(doc.documentNumber)) continue;
-          seenNumbers.add(doc.documentNumber);
-          merged.push(doc);
-        }
-
-        merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        const result = type ? merged.filter((d) => d.documentType === type) : merged;
-        if (!cancelled) {
-          setDocuments(result);
-          setCachedList(cacheKey, result);
-        }
+        mergeAndPaint(salesDocs, purchaseDocs, fiscalCreditDocs, storedDocs);
       } catch (err) {
         console.error('[Invoices] load failed:', err);
         // Keep showing the last cached list instead of blanking the tab on a transient failure.

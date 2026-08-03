@@ -46,36 +46,18 @@ module.exports = function(broadcastTable) {
     `;
   }
 
-  // List balances computed LIVE from journals (parity with ledger).
-  // When parent 321/311 still holds lines, repair BEFORE responding so leaves
-  // are not stuck at 0 on first paint (city Tailscale: 12s cap).
+  // Fast by default (stored current_balance). Pass ?liveBalances=1 for journal-join parity.
+  // Parent 321/311 remap + balance recompute always run in the background — never block list GET.
   router.get('/', async (req, res) => {
+    const wantLive = /^(1|true|yes)$/i.test(String(req.query.liveBalances || ''));
     try {
-      try {
-        const {
-          countParentEntityLines,
-          repairParentEntityCoaPostings,
-        } = require('../lib/repairParentEntityCoa');
-        const pending = await countParentEntityLines(db);
-        if (pending > 0) {
-          console.log(`[CHART OF ACCOUNTS] Sync-repairing ${pending} parent 321/311 line(s)…`);
-          await Promise.race([
-            repairParentEntityCoaPostings(db, { dryRun: false }),
-            new Promise((_, reject) => {
-              setTimeout(() => reject(new Error('repair timeout after 12s')), 12000);
-            }),
-          ]);
-        }
-      } catch (e) {
-        console.warn('[CHART OF ACCOUNTS] sync entity leaf repair:', e.message);
-      }
-
       setImmediate(() => {
         const run = async () => {
           try {
             const { countParentEntityLines, repairParentEntityCoaPostings } = require('../lib/repairParentEntityCoa');
             const pending = await countParentEntityLines(db);
             if (pending > 0) {
+              console.log(`[CHART OF ACCOUNTS] Background-repairing ${pending} parent 321/311 line(s)…`);
               await repairParentEntityCoaPostings(db, { dryRun: false });
             }
           } catch (e) {
@@ -91,6 +73,15 @@ module.exports = function(broadcastTable) {
         };
         void run();
       });
+
+      const balanceExpr = wantLive
+        ? `COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0)`
+        : `COALESCE(coa.current_balance, coa.opening_balance, 0)`;
+      const joinLive = wantLive
+        ? `LEFT JOIN (
+          ${journalNetSubquery()}
+        ) j ON j.account_key = ${idText('coa.id')}`
+        : '';
 
       const result = await db.query(`
         SELECT 
@@ -111,12 +102,10 @@ module.exports = function(broadcastTable) {
           parent.name as parent_name,
           parent.code as parent_code,
           COALESCE(coa.children_count, 0) as children_count,
-          COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0) AS current_balance
+          ${balanceExpr} AS current_balance
         FROM chart_of_accounts coa
         LEFT JOIN chart_of_accounts parent ON coa.parent_id = parent.id
-        LEFT JOIN (
-          ${journalNetSubquery()}
-        ) j ON j.account_key = ${idText('coa.id')}
+        ${joinLive}
         WHERE ${activeClauseSql('coa')}
         ORDER BY coa.code
       `);

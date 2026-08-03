@@ -156,9 +156,19 @@ export function PosEndOfDayReportDialog({
     [creditNotes, sales, cashier, session, effectiveSession, today],
   );
 
-  const shiftCashExpenses = useMemo(
-    () => filterShiftCashExpenses(expenses, effectiveSession || session, sales, cashier, session?.caixaId, today),
-    [expenses, session, effectiveSession, sales, cashier, today],
+  // All cashiers on this caixa — used only to peel refunds out of session.totalOut
+  // so another cashier's refund does not land as "manual cash out" on this report.
+  const allCaixaCashRefundsTotal = useMemo(
+    () => filterShiftCashRefunds(creditNotes, sales, null, effectiveSession || session, today)
+      .reduce((sum, note) => sum + note.total, 0),
+    [creditNotes, sales, session, effectiveSession, today],
+  );
+
+  // Caixa expenses are shared (payment picks a cash box, not a cashier).
+  // Show them once as info — do not fold into each cashier's net or expected drawer.
+  const shiftCaixaExpenses = useMemo(
+    () => filterShiftCashExpenses(expenses, effectiveSession || session, sales, null, session?.caixaId, today),
+    [expenses, session, effectiveSession, sales, today],
   );
 
   const totals = useMemo(() => {
@@ -174,8 +184,9 @@ export function PosEndOfDayReportDialog({
       byPayment[key] = (byPayment[key] || 0) + sale.total;
     }
     const cashRefundsTotal = shiftCashRefunds.reduce((sum, note) => sum + note.total, 0);
-    const cashExpensesTotal = shiftCashExpenses.reduce((sum, exp) => sum + exp.totalAmount, 0);
-    const netCash = (byPayment.cash || 0) - cashRefundsTotal - cashExpensesTotal;
+    const cashExpensesTotal = shiftCaixaExpenses.reduce((sum, exp) => sum + exp.totalAmount, 0);
+    // Personal net: this cashier's cash sales − their refunds only.
+    const netCash = (byPayment.cash || 0) - cashRefundsTotal;
     return {
       byPayment,
       subtotal,
@@ -186,9 +197,9 @@ export function PosEndOfDayReportDialog({
       cashExpensesTotal,
       netCash,
       refundCount: shiftCashRefunds.length,
-      expenseCount: shiftCashExpenses.length,
+      expenseCount: shiftCaixaExpenses.length,
     };
-  }, [cashierSales, shiftCashRefunds, shiftCashExpenses]);
+  }, [cashierSales, shiftCashRefunds, shiftCaixaExpenses]);
 
   const buildPrintHtml = () => {
     return `
@@ -214,8 +225,8 @@ export function PosEndOfDayReportDialog({
     <div><span>${t.posUi.endOfDaySalesCount}</span><span>${totals.count}</span></div>
     <div><span>${t.pos.cash}</span><span>${(totals.byPayment.cash || 0).toLocaleString(locale)} Kz</span></div>
     ${totals.cashRefundsTotal > 0 ? `<div><span>${t.posUi.endOfDayCashRefunds.replace('{count}', String(totals.refundCount))}</span><span>-${totals.cashRefundsTotal.toLocaleString(locale)} Kz</span></div>` : ''}
-    ${totals.cashExpensesTotal > 0 ? `<div><span>${t.posUi.endOfDayCashExpenses.replace('{count}', String(totals.expenseCount))}</span><span>-${totals.cashExpensesTotal.toLocaleString(locale)} Kz</span></div>` : ''}
-    ${(totals.cashRefundsTotal > 0 || totals.cashExpensesTotal > 0) ? `<div><span>${t.posUi.endOfDayNetCash}</span><span>${totals.netCash.toLocaleString(locale)} Kz</span></div>` : ''}
+    ${totals.cashExpensesTotal > 0 ? `<div><span>${t.posUi.endOfDaySharedCaixaExpenses.replace('{count}', String(totals.expenseCount))}</span><span>-${totals.cashExpensesTotal.toLocaleString(locale)} Kz</span></div>` : ''}
+    ${totals.cashRefundsTotal > 0 ? `<div><span>${t.posUi.endOfDayNetCash}</span><span>${totals.netCash.toLocaleString(locale)} Kz</span></div>` : ''}
     <div><span>${t.pos.card}</span><span>${(totals.byPayment.card || 0).toLocaleString(locale)} Kz</span></div>
     <div><span>${t.pos.transfer}</span><span>${(totals.byPayment.transfer || 0).toLocaleString(locale)} Kz</span></div>
     <div class="grand"><span>${t.common.total}</span><span>${totals.total.toLocaleString(locale)} Kz</span></div>
@@ -227,24 +238,26 @@ export function PosEndOfDayReportDialog({
     await printHtml(buildPrintHtml());
   };
 
-  // Drawer math is per cashier (this shift's sales/refunds/expenses).
-  // Do NOT use branch-wide GL erpCashSalesTotal here — that mixed both cashiers on Soyo-02.
+  // Drawer math is per cashier (this cashier's sales/refunds).
+  // Expenses stay caixa-shared and are listed separately — not deducted here —
+  // otherwise every cashier on the same cash box loses the same expense twice.
   const drawer = useMemo(() => {
     const opening = session?.openingBalance || 0;
     const cashSales = totals.byPayment.cash || 0;
     const cashRefunds = totals.cashRefundsTotal;
-    const cashExpenses = totals.cashExpensesTotal;
+    const cashExpenses = 0;
+    const sharedExpenses = totals.cashExpensesTotal;
     // Non-sale inflows the session recorded (manual deposits / reforços).
     const sessionSalesCash = Math.min(session?.salesTotal || 0, session?.totalIn || 0);
     const manualIn = Math.max(0, (session?.totalIn || 0) - sessionSalesCash);
     const manualOut = Math.max(
       0,
-      (session?.totalOut || 0) - (session?.expensesTotal || 0) - cashRefunds,
+      (session?.totalOut || 0) - (session?.expensesTotal || 0) - allCaixaCashRefundsTotal,
     );
     const cashIn = cashSales + manualIn;
-    const expected = opening + cashIn - cashRefunds - cashExpenses - manualOut;
-    return { opening, cashSales, cashRefunds, cashExpenses, manualIn, manualOut, cashIn, expected };
-  }, [session, totals]);
+    const expected = opening + cashIn - cashRefunds - manualOut;
+    return { opening, cashSales, cashRefunds, cashExpenses, sharedExpenses, manualIn, manualOut, cashIn, expected };
+  }, [session, totals, allCaixaCashRefundsTotal]);
   const expectedCash = drawer.expected;
   const counted = parseFloat(countedCash);
   const countedValue = Number.isFinite(counted) ? counted : 0;
@@ -332,17 +345,22 @@ export function PosEndOfDayReportDialog({
             {totals.cashExpensesTotal > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">
-                  {t.posUi.endOfDayCashExpenses.replace('{count}', String(totals.expenseCount))}
+                  {t.posUi.endOfDaySharedCaixaExpenses.replace('{count}', String(totals.expenseCount))}
                 </span>
                 <span className="font-mono font-semibold text-amber-700">
                   -{totals.cashExpensesTotal.toLocaleString(locale)} Kz
                 </span>
               </div>
             )}
-            <div className="flex items-center justify-between font-medium pt-1 border-t border-amber-500/20">
-              <span>{t.posUi.endOfDayNetCash}</span>
-              <span className="font-mono">{totals.netCash.toLocaleString(locale)} Kz</span>
-            </div>
+            {totals.cashRefundsTotal > 0 && (
+              <div className="flex items-center justify-between font-medium pt-1 border-t border-amber-500/20">
+                <span>{t.posUi.endOfDayNetCash}</span>
+                <span className="font-mono">{totals.netCash.toLocaleString(locale)} Kz</span>
+              </div>
+            )}
+            {totals.cashExpensesTotal > 0 && (
+              <p className="text-xs text-muted-foreground pt-1">{t.posUi.endOfDaySharedCaixaExpensesHint}</p>
+            )}
           </div>
         )}
 
@@ -365,11 +383,11 @@ export function PosEndOfDayReportDialog({
                   </span>
                 </>
               )}
-              {drawer.cashExpenses > 0 && (
+              {drawer.sharedExpenses > 0 && (
                 <>
-                  <span className="text-muted-foreground pl-2">{t.posUi.caixa.cashOutExpensesLabel}</span>
-                  <span className="text-right font-mono text-amber-700">
-                    -{drawer.cashExpenses.toLocaleString(locale)} Kz
+                  <span className="text-muted-foreground pl-2">{t.posUi.caixa.sharedExpensesLabel}</span>
+                  <span className="text-right font-mono text-muted-foreground">
+                    (-{drawer.sharedExpenses.toLocaleString(locale)} Kz)
                   </span>
                 </>
               )}

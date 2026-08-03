@@ -183,10 +183,13 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     [user],
   );
 
+  const showDailyChecklist = user?.role !== 'cashier';
+
   const openDailyTodos = useCallback(() => {
+    if (!showDailyChecklist) return;
     ensureDayTodos(todayKey());
     window.dispatchEvent(new CustomEvent('nexor:show-daily-todos'));
-  }, []);
+  }, [showDailyChecklist]);
 
   // ========== MENU BAR ==========
   const menuItems = [
@@ -274,7 +277,9 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { label: t.topNav.utilities.changePassword, icon: Shield, path: '/settings', state: { focus: 'password' } },
         { label: t.topNav.utilities.maintenance, icon: Settings, path: '/settings' },
         { label: t.topNav.utilities.calculator, icon: Calculator, action: () => setCalculatorOpen(true) },
-        { label: t.topNav.utilities.dailyChecklist, icon: ListTodo, action: openDailyTodos },
+        ...(showDailyChecklist
+          ? [{ label: t.topNav.utilities.dailyChecklist, icon: ListTodo, action: openDailyTodos }]
+          : []),
         { label: 'separator' },
         { label: t.topNav.utilities.sync, icon: Upload, path: '/data-sync' },
       ],
@@ -634,17 +639,19 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <ServerConnectionIndicator />
           <SyncPendingBadge />
           <GlobalSearch />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent"
-            onClick={openDailyTodos}
-            title={t.topNav.utilities.dailyChecklist}
-            aria-label={t.topNav.utilities.dailyChecklist}
-          >
-            <ListTodo className="w-4 h-4" />
-          </Button>
+          {showDailyChecklist && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent"
+              onClick={openDailyTodos}
+              title={t.topNav.utilities.dailyChecklist}
+              aria-label={t.topNav.utilities.dailyChecklist}
+            >
+              <ListTodo className="w-4 h-4" />
+            </Button>
+          )}
           <LanguageSwitcher />
 
           {canSwitchBranch ? (
@@ -716,15 +723,17 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
             {tab.label}
           </NavLink>
         ))}
-        <button
-          type="button"
-          onClick={openDailyTodos}
-          className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-t-lg transition-all text-muted-foreground hover:text-foreground hover:bg-muted/50 ml-0.5"
-          title={t.topNav.utilities.dailyChecklist}
-        >
-          <ListTodo className="w-3.5 h-3.5" />
-          {t.dailyTodosUi.shortTab}
-        </button>
+        {showDailyChecklist && (
+          <button
+            type="button"
+            onClick={openDailyTodos}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-t-lg transition-all text-muted-foreground hover:text-foreground hover:bg-muted/50 ml-0.5"
+            title={t.topNav.utilities.dailyChecklist}
+          >
+            <ListTodo className="w-3.5 h-3.5" />
+            {t.dailyTodosUi.shortTab}
+          </button>
+        )}
       </div>
 
       {/* ====== ROW 3: Action Toolbar ====== */}
@@ -800,15 +809,17 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
               <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
             </div>
           ) : null}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-sidebar-foreground"
-            onClick={openDailyTodos}
-            aria-label={t.topNav.utilities.dailyChecklist}
-          >
-            <ListTodo className="w-5 h-5" />
-          </Button>
+          {showDailyChecklist && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-sidebar-foreground"
+              onClick={openDailyTodos}
+              aria-label={t.topNav.utilities.dailyChecklist}
+            >
+              <ListTodo className="w-5 h-5" />
+            </Button>
+          )}
           <Button variant="ghost" size="icon" className="h-8 w-8 text-sidebar-foreground" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
             <Menu className="w-5 h-5" />
           </Button>

@@ -74,7 +74,12 @@ export function PrinterSettingsDialog({
                   ? result.defaultPrinter
                   : undefined);
               if (suggested) {
-                setConfig((prev) => ({ ...prev, deviceName: suggested, posAutoPrint: true }));
+                const next = { ...getPrinterConfig(), deviceName: suggested, posAutoPrint: true };
+                setConfig(next);
+                // Persist immediately — previously the UI showed a suggestion but
+                // closing without Save left localStorage empty, so every login's
+                // first sale re-opened this dialog.
+                savePrinterConfig(next);
               }
             }
           })

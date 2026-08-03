@@ -1021,6 +1021,31 @@ export function getPrinterConfig(): PrinterConfig {
   return { ...DEFAULT_PRINTER_CONFIG };
 }
 
+/** Restore printer from Electron userData when this window's localStorage is empty (e.g. secondary login). */
+export async function hydratePrinterConfigFromDisk(): Promise<PrinterConfig> {
+  const local = getPrinterConfig();
+  if (local.deviceName?.trim()) return local;
+  try {
+    const disk = await window.electronAPI?.app?.getPrinterConfig?.();
+    if (disk && typeof disk === 'object' && typeof (disk as any).deviceName === 'string' && (disk as any).deviceName.trim()) {
+      const merged: PrinterConfig = {
+        ...DEFAULT_PRINTER_CONFIG,
+        ...disk,
+        type: normalizePrinterType((disk as any).type),
+        paperWidth: normalizePaperWidth((disk as any).paperWidth),
+        deviceName: String((disk as any).deviceName),
+        posAutoPrint: (disk as any).posAutoPrint !== false,
+      } as PrinterConfig;
+      localStorage.setItem('kwanza_printer_config', JSON.stringify(merged));
+      localStorage.setItem('kwanza_printer_configured', 'true');
+      return merged;
+    }
+  } catch (e) {
+    console.warn('[printer] hydrate from disk failed:', e);
+  }
+  return local;
+}
+
 // Save printer configuration
 export function savePrinterConfig(config: PrinterConfig): void {
   const paperWidth = normalizePaperWidth(config.paperWidth);
@@ -1034,5 +1059,11 @@ export function savePrinterConfig(config: PrinterConfig): void {
   localStorage.setItem('kwanza_printer_config', JSON.stringify(normalized));
   if (normalized.deviceName?.trim()) {
     localStorage.setItem('kwanza_printer_configured', 'true');
+  }
+  // Machine-level copy so logout / secondary Electron windows keep the same printer.
+  try {
+    void window.electronAPI?.app?.setPrinterConfig?.(normalized as unknown as Record<string, unknown>);
+  } catch {
+    /* ignore */
   }
 }
