@@ -23,6 +23,7 @@ import { getInvoicesWorkspaceTab, NEXOR_INVOICES_NEW, NEXOR_INVOICES_NEW_RECEIPT
 import { NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 import { dispatchToolbarEvent, NEXOR_TOOLBAR, NEXOR_SUPPLIERS_NEW } from '@/lib/nexorToolbarEvents';
 import { NEXOR_TOOLBAR_BTN } from '@/lib/nexorToolbarStyles';
+import { themeChrome } from '@/themes/active';
 import { 
   Building2, User as UserIcon, LogOut, Settings, Menu,
   LayoutDashboard, ShoppingCart, FileText, Package,
@@ -681,14 +682,14 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     <header className="sticky top-0 z-50">
       <OfflineModeBanner />
       {/* ====== ROW 1: Menu Bar ====== */}
-      <div className="h-10 px-3 bg-sidebar text-sidebar-foreground hidden lg:flex items-center justify-between border-b border-sidebar-border shadow-sm">
+      <div className={themeChrome.navRow1}>
         <div className="flex items-center gap-1">
           {/* Logo */}
-          <div className="flex items-center gap-2 pr-4 mr-2 border-r border-sidebar-border">
-            <div className="w-6 h-6 rounded-lg overflow-hidden bg-sidebar-accent flex items-center justify-center">
+          <div className={themeChrome.navBrandBorder}>
+            <div className={themeChrome.navLogoRing}>
               <img src={logo || defaultLogo} alt={companyName} className="w-full h-full object-contain" />
             </div>
-            <span className="font-bold text-sm tracking-tight text-sidebar-primary">
+            <span className={themeChrome.navBrand}>
               {companyName}
             </span>
           </div>
@@ -696,7 +697,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           {visibleMenus.map((menu) => (
             <DropdownMenu key={menu.label}>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-7 px-2.5 text-xs font-medium text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent rounded-md">
+                <Button variant="ghost" size="sm" className={themeChrome.navMenuBtn}>
                   {menu.label}
                 </Button>
               </DropdownMenuTrigger>
@@ -735,7 +736,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
               type="button"
               variant="ghost"
               size="icon"
-              className="h-7 w-7 text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent"
+              className={themeChrome.checklistIconBtn}
               onClick={openDailyTodos}
               title={t.topNav.utilities.dailyChecklist}
               aria-label={t.topNav.utilities.dailyChecklist}
@@ -797,7 +798,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       </div>
 
       {/* ====== ROW 2: Main Tabs ====== */}
-      <div className="h-10 px-2 bg-card hidden lg:flex items-end gap-0.5 border-b overflow-x-auto">
+      <div className={themeChrome.navTabsRow}>
         {visibleMainTabs.map((tab) => (
           <NavLink
             key={tab.path}
@@ -805,9 +806,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
             end={tab.path === '/'}
             className={({ isActive }) => cn(
               "flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-t-lg transition-all relative",
-              isActive
-                ? "bg-background text-primary border-t-2 border-x border-t-primary border-x-border -mb-px shadow-sm"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              isActive ? themeChrome.navTabActive : themeChrome.navTabIdle
             )}
           >
             <tab.icon className="w-3.5 h-3.5" />
@@ -818,7 +817,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <button
             type="button"
             onClick={openDailyTodos}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-t-lg transition-all text-muted-foreground hover:text-foreground hover:bg-muted/50 ml-0.5"
+            className={themeChrome.checklistTab}
             title={t.topNav.utilities.dailyChecklist}
           >
             <ListTodo className="w-3.5 h-3.5" />
@@ -829,7 +828,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
 
       {/* ====== ROW 3: Action Toolbar ====== */}
       {actionButtons.length > 0 && (
-        <div className="h-10 px-3 bg-background hidden lg:flex items-center gap-1.5 border-b overflow-x-auto">
+        <div className={themeChrome.toolbarRow}>
           {actionButtons.filter(Boolean).map((btn, idx) => (
             <Button
               key={`${btn.actionKey}-${idx}`}
@@ -878,7 +877,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       )}
 
       {/* ====== Mobile Header ====== */}
-      <div className="h-14 px-4 flex lg:hidden items-center justify-between bg-sidebar text-sidebar-foreground border-b border-sidebar-border shadow-sm">
+      <div className={themeChrome.navRow1Mobile}>
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-sidebar-accent flex items-center justify-center">
             <img src={logo || defaultLogo} alt={companyName} className="w-full h-full object-contain" />

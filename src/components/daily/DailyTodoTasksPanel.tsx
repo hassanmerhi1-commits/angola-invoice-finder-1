@@ -21,6 +21,7 @@ import {
   resolveDailyTodoAction,
   type DailyTodoAction,
 } from '@/lib/dailyTodoActions';
+import { themeChrome } from '@/themes/active';
 
 interface DailyTodoTasksPanelProps {
   selectedDay: string;
@@ -65,6 +66,28 @@ function actionHint(
       return d.taskOpenPos;
     default:
       return d.taskOpenWorkspace;
+  }
+}
+
+function actionRowClass(action: DailyTodoAction | null): string {
+  switch (action) {
+    case 'review_invoices':
+      return themeChrome.rowInvoices;
+    case 'low_stock':
+      return themeChrome.rowStock;
+    case 'reconcile_caixa':
+    case 'pos':
+      return themeChrome.rowCaixa;
+    case 'overdue_ar':
+      return themeChrome.rowAr;
+    case 'overdue_ap':
+      return themeChrome.rowAp;
+    case 'payments':
+      return themeChrome.rowPayments;
+    case 'purchase_invoices':
+      return themeChrome.rowPurchases;
+    default:
+      return themeChrome.rowDefault;
   }
 }
 
@@ -125,9 +148,9 @@ export function DailyTodoTasksPanel({
 
   return (
     <div className="space-y-3">
-      <div className="space-y-3 rounded-md border bg-muted/20 p-3">
+      <div className={themeChrome.schedulePanel}>
         <div className="flex flex-wrap items-center gap-2">
-          <Label className="text-xs shrink-0">{d.scheduleFor}</Label>
+          <Label className={themeChrome.scheduleLabel}>{d.scheduleFor}</Label>
           <div className="flex items-center gap-1">
             <Button
               type="button"
@@ -208,7 +231,7 @@ export function DailyTodoTasksPanel({
             return (
               <div
                 key={item.id}
-                className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2"
+                className={`flex items-start gap-2 rounded-md border px-3 py-2 transition-colors ${actionRowClass(action)}`}
               >
                 <Checkbox
                   id={`${selectedDay}-${item.id}`}
@@ -240,7 +263,7 @@ export function DailyTodoTasksPanel({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 shrink-0 text-muted-foreground"
+                    className="h-7 w-7 shrink-0 text-primary/70 hover:text-primary hover:bg-primary/10"
                     onClick={() => openTask(item, true)}
                     aria-label={actionHint(action, d)}
                     title={d.taskOpenFullPage}

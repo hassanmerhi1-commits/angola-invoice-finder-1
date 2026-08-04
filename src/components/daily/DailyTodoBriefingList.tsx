@@ -157,7 +157,7 @@ export function DailyTodoBriefingList({
               key={item.id}
               type="button"
               onClick={openTarget}
-              className="flex w-full items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+              className="flex w-full items-start gap-2 rounded-md border border-amber-300 bg-amber-100/80 px-3 py-2 text-left hover:bg-amber-100 transition-colors shadow-sm shadow-amber-200/40"
             >
               <Package className="h-4 w-4 mt-0.5 shrink-0 text-orange-500" />
               <div className="min-w-0 flex-1">
@@ -179,15 +179,15 @@ export function DailyTodoBriefingList({
               key={item.id}
               type="button"
               onClick={openTarget}
-              className="flex w-full items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+              className="flex w-full items-start gap-2 rounded-md border border-sky-300 bg-sky-100/80 px-3 py-2 text-left hover:bg-sky-100 transition-colors shadow-sm shadow-sky-200/40"
             >
-              <Printer className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
+              <Printer className="h-4 w-4 mt-0.5 shrink-0 text-sky-600" />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium truncate">{item.documentNumber}</p>
                 <p className="text-xs text-muted-foreground truncate">{item.customerName}</p>
-                <p className="text-xs font-semibold mt-0.5">{formatKz(item.total, locale)} Kz</p>
+                <p className="text-xs font-semibold mt-0.5 text-sky-800">{formatKz(item.total, locale)} Kz</p>
               </div>
-              <Badge variant="outline" className="shrink-0 text-xs font-normal">
+              <Badge variant="outline" className="shrink-0 text-xs font-normal border-sky-200 bg-sky-50 text-sky-800">
                 {d.briefingNotPrinted}
               </Badge>
             </button>
@@ -199,7 +199,7 @@ export function DailyTodoBriefingList({
               key={item.id}
               type="button"
               onClick={openTarget}
-              className="flex w-full items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+              className="flex w-full items-start gap-2 rounded-md border border-indigo-300 bg-indigo-100/70 px-3 py-2 text-left hover:bg-indigo-100 transition-colors shadow-sm shadow-indigo-200/40"
             >
               <Tag className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
               <div className="min-w-0 flex-1">
@@ -207,7 +207,7 @@ export function DailyTodoBriefingList({
                 <p className="text-xs text-muted-foreground truncate">{item.supplierName}</p>
                 <p className="text-xs text-muted-foreground">{item.date}</p>
               </div>
-              <Badge variant="secondary" className="shrink-0 text-xs font-normal">
+              <Badge variant="secondary" className="shrink-0 text-xs font-normal bg-indigo-100 text-indigo-800">
                 {d.briefingPricesUpdated}
               </Badge>
             </button>
@@ -219,7 +219,11 @@ export function DailyTodoBriefingList({
               key={item.id}
               type="button"
               onClick={openTarget}
-              className="flex w-full items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+              className={`flex w-full items-start gap-2 rounded-md border px-3 py-2 text-left transition-colors shadow-sm ${
+                kind === 'receivables'
+                  ? 'border-emerald-300 bg-emerald-100/80 hover:bg-emerald-100 shadow-emerald-200/40'
+                  : 'border-rose-300 bg-rose-100/80 hover:bg-rose-100 shadow-rose-200/40'
+              }`}
             >
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium truncate">{item.entityName}</p>

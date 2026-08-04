@@ -14,7 +14,8 @@ import {
   PieChart, Truck, CheckCircle, Search, BookOpen, ArrowRightLeft,
   Users, Calendar, AlertTriangle, CreditCard, GitBranch,
 } from 'lucide-react';
-import { NEXOR_STAT_CARD, NEXOR_SECTION_LABEL, NEXOR_TONE_TILE, type NexorTone } from '@/lib/nexorToneStyles';
+import { NEXOR_STAT_CARD_TONE, NEXOR_SECTION_LABEL, NEXOR_TONE_TILE, NEXOR_FLOW_STEP, type NexorTone } from '@/lib/nexorToneStyles';
+import { themeChrome } from '@/themes/active';
 import { NEXOR_FEATURE_SHORTCUT_BTN } from '@/lib/nexorToolbarStyles';
 
 const DashboardChartsSection = lazy(() => import('@/components/dashboard/DashboardChartsSection'));
@@ -136,7 +137,7 @@ export default function Dashboard() {
 
   return (
     <div className="h-full flex flex-col lg:flex-row nexor-page-surface">
-      <div className="flex-1 p-6 overflow-auto space-y-6">
+      <div className={themeChrome.dashboardSurface}>
         {/* Company Header */}
         <div className="flex items-center gap-3">
           {logo && (
@@ -152,50 +153,50 @@ export default function Dashboard() {
 
         {/* KPI Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Card className={`cursor-pointer ${NEXOR_STAT_CARD} hover:shadow-md transition-shadow`} onClick={() => navigate('/vendas')}>
+          <Card className={`cursor-pointer ${NEXOR_STAT_CARD_TONE.sky} hover:shadow-md transition-shadow`} onClick={() => navigate('/vendas')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-slate-500 font-medium">{d.kpis.salesToday}</span>
-                <span className="p-1.5 rounded-lg bg-sky-50"><ShoppingCart className="w-4 h-4 text-sky-600" /></span>
+                <span className="text-xs text-primary/80 font-medium">{d.kpis.salesToday}</span>
+                <span className="p-1.5 rounded-lg bg-primary/10"><ShoppingCart className="w-4 h-4 text-primary" /></span>
               </div>
               <p className="text-xl font-semibold text-slate-800">{fmt(kpis?.todaySales?.total ?? 0)} Kz</p>
-              <p className="text-[10px] text-slate-500">
+              <p className="text-[10px] text-primary/70">
                 {d.kpis.transactions.replace('{count}', String(kpis?.todaySales?.count ?? 0))}
               </p>
             </CardContent>
           </Card>
-          <Card className={`cursor-pointer ${NEXOR_STAT_CARD} hover:shadow-md transition-shadow`} onClick={() => navigate('/reports')}>
+          <Card className={`cursor-pointer ${NEXOR_STAT_CARD_TONE.emerald} hover:shadow-md transition-shadow`} onClick={() => navigate('/reports')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-slate-500 font-medium">{d.kpis.salesMonth}</span>
-                <span className="p-1.5 rounded-lg bg-emerald-50"><TrendingUp className="w-4 h-4 text-emerald-600" /></span>
+                <span className="text-xs text-success font-medium">{d.kpis.salesMonth}</span>
+                <span className="p-1.5 rounded-lg bg-success/15"><TrendingUp className="w-4 h-4 text-success" /></span>
               </div>
               <p className="text-xl font-semibold text-slate-800">{fmt(kpis?.monthSales?.total ?? 0)} Kz</p>
-              <p className="text-[10px] text-slate-500">
+              <p className="text-[10px] text-success/80">
                 {d.kpis.invoicesCount.replace('{count}', String(kpis?.monthSales?.count ?? 0))}
               </p>
             </CardContent>
           </Card>
-          <Card className={`cursor-pointer ${NEXOR_STAT_CARD} hover:shadow-md transition-shadow`} onClick={() => navigate('/receivables')}>
+          <Card className={`cursor-pointer ${NEXOR_STAT_CARD_TONE.amber} hover:shadow-md transition-shadow`} onClick={() => navigate('/receivables')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-slate-500 font-medium">{d.kpis.accountsReceivable}</span>
-                <span className="p-1.5 rounded-lg bg-amber-50"><CreditCard className="w-4 h-4 text-amber-700" /></span>
+                <span className="text-xs text-warning-foreground font-medium">{d.kpis.accountsReceivable}</span>
+                <span className="p-1.5 rounded-lg bg-warning/15"><CreditCard className="w-4 h-4 text-warning" /></span>
               </div>
               <p className="text-xl font-semibold text-slate-800">{fmt(kpis?.openAR?.total ?? 0)} Kz</p>
-              <p className="text-[10px] text-slate-500">
+              <p className="text-[10px] text-warning-foreground/70">
                 {d.kpis.openItems.replace('{count}', String(kpis?.openAR?.count ?? 0))}
               </p>
             </CardContent>
           </Card>
-          <Card className={`cursor-pointer ${NEXOR_STAT_CARD} hover:shadow-md transition-shadow`} onClick={() => navigate('/payables')}>
+          <Card className={`cursor-pointer ${NEXOR_STAT_CARD_TONE.rose} hover:shadow-md transition-shadow`} onClick={() => navigate('/payables')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-slate-500 font-medium">{d.kpis.accountsPayable}</span>
-                <span className="p-1.5 rounded-lg bg-rose-50"><Truck className="w-4 h-4 text-rose-600" /></span>
+                <span className="text-xs text-rose-700/80 font-medium">{d.kpis.accountsPayable}</span>
+                <span className="p-1.5 rounded-lg bg-rose-100/90"><Truck className="w-4 h-4 text-rose-600" /></span>
               </div>
               <p className="text-xl font-semibold text-slate-800">{fmt(kpis?.openAP?.total ?? 0)} Kz</p>
-              <p className="text-[10px] text-slate-500">
+              <p className="text-[10px] text-rose-700/70">
                 {d.kpis.openItems.replace('{count}', String(kpis?.openAP?.count ?? 0))}
               </p>
             </CardContent>
@@ -256,7 +257,7 @@ export default function Dashboard() {
         )}
 
         {/* Document Flow */}
-        <Card className="border-slate-200/80 bg-white/90 shadow-sm overflow-hidden">
+        <Card className={themeChrome.documentFlowCard}>
           <CardContent className="p-5">
             <h3 className={`${NEXOR_SECTION_LABEL} mb-4`}>{d.documentFlowTitle}</h3>
             <div className="flex items-center justify-between gap-1 flex-wrap">
@@ -266,13 +267,13 @@ export default function Dashboard() {
                     onClick={() =>
                       navigate(step.path, 'state' in step && step.state ? { state: step.state } : undefined)
                     }
-                    className="w-full group flex items-center gap-2.5 px-4 py-3 rounded-xl bg-slate-50/80 hover:bg-slate-100/90 border border-slate-200/60 hover:border-slate-300/80 transition-all duration-200"
+                    className={`w-full group flex items-center gap-2.5 px-4 py-3 rounded-xl border transition-all duration-200 ${NEXOR_FLOW_STEP[idx % NEXOR_FLOW_STEP.length]}`}
                   >
-                    <step.icon className="w-5 h-5 text-slate-500 flex-shrink-0 group-hover:text-sky-600 transition-colors" />
-                    <span className="text-xs font-medium text-slate-700 truncate">{step.label}</span>
+                    <step.icon className="w-5 h-5 flex-shrink-0 transition-colors" />
+                    <span className="text-xs font-semibold truncate">{step.label}</span>
                   </button>
                   {idx < documentFlow.length - 1 && (
-                    <ArrowRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                    <ArrowRight className={themeChrome.documentFlowArrow} />
                   )}
                 </div>
               ))}

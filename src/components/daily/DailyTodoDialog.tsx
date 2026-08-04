@@ -17,16 +17,27 @@ import { useDailyBriefing } from '@/hooks/useDailyBriefing';
 import { DailyTodoTasksPanel } from '@/components/daily/DailyTodoTasksPanel';
 import { DailyTodoBriefingList } from '@/components/daily/DailyTodoBriefingList';
 import { ensureDayTodos, markDailyTodoShown, todayKey, type DailyTodoItem } from '@/lib/dailyTodos';
+import { themeChrome } from '@/themes/active';
 
 interface DailyTodoDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-function TabCount({ count }: { count: number }) {
+function TabCount({ count, tone = 'tasks' }: { count: number; tone?: 'tasks' | 'amber' | 'emerald' | 'rose' | 'indigo' }) {
   if (count <= 0) return null;
+  const toneClass =
+    tone === 'amber'
+      ? 'bg-amber-100 text-amber-800 border-amber-200'
+      : tone === 'emerald'
+        ? 'bg-lime-100 text-lime-800 border-lime-200'
+        : tone === 'rose'
+          ? 'bg-rose-100 text-rose-800 border-rose-200'
+          : tone === 'indigo'
+            ? 'bg-rose-100 text-rose-800 border-rose-200'
+            : themeChrome.badgeTasks;
   return (
-    <Badge variant="secondary" className="ml-1 h-5 min-w-5 px-1 text-[10px] font-semibold">
+    <Badge variant="outline" className={`ml-1 h-5 min-w-5 px-1 text-[10px] font-semibold border ${toneClass}`}>
       {count > 99 ? '99+' : count}
     </Badge>
   );
@@ -69,40 +80,42 @@ export function DailyTodoDialog({ open, onOpenChange }: DailyTodoDialogProps) {
         if (!next) handleClose(isToday);
       }}
     >
-      <DialogContent className="max-w-md sm:max-w-2xl">
+      <DialogContent className={themeChrome.checklistDialog}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ListTodo className="h-5 w-5 text-primary" />
+            <span className={themeChrome.checklistIcon}>
+              <ListTodo className="h-5 w-5" />
+            </span>
             {d.title}
           </DialogTitle>
           <DialogDescription>{d.subtitleBriefing}</DialogDescription>
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 p-1">
-            <TabsTrigger value="tasks" className="text-xs sm:text-sm">
+          <TabsList className={themeChrome.checklistTabsList}>
+            <TabsTrigger value="tasks" className={themeChrome.tabActiveTasks}>
               {d.tabTasks}
-              <TabCount count={pendingTasks} />
+              <TabCount count={pendingTasks} tone="tasks" />
             </TabsTrigger>
-            <TabsTrigger value="lowStock" className="text-xs sm:text-sm">
+            <TabsTrigger value="lowStock" className={themeChrome.tabActiveStock}>
               {d.tabLowStock}
-              <TabCount count={briefing.counts.lowStock} />
+              <TabCount count={briefing.counts.lowStock} tone="amber" />
             </TabsTrigger>
-            <TabsTrigger value="receivables" className="text-xs sm:text-sm">
+            <TabsTrigger value="receivables" className={themeChrome.tabActiveAr}>
               {d.tabReceivables}
-              <TabCount count={briefing.counts.receivables} />
+              <TabCount count={briefing.counts.receivables} tone="emerald" />
             </TabsTrigger>
-            <TabsTrigger value="payables" className="text-xs sm:text-sm">
+            <TabsTrigger value="payables" className={themeChrome.tabActiveAp}>
               {d.tabPayables}
-              <TabCount count={briefing.counts.payables} />
+              <TabCount count={briefing.counts.payables} tone="rose" />
             </TabsTrigger>
-            <TabsTrigger value="toPrint" className="text-xs sm:text-sm">
+            <TabsTrigger value="toPrint" className={themeChrome.tabActivePrint}>
               {d.tabToPrint}
-              <TabCount count={briefing.counts.unprinted} />
+              <TabCount count={briefing.counts.unprinted} tone="tasks" />
             </TabsTrigger>
-            <TabsTrigger value="priceChanges" className="text-xs sm:text-sm">
+            <TabsTrigger value="priceChanges" className={themeChrome.tabActivePrices}>
               {d.tabPriceChanges}
-              <TabCount count={briefing.counts.priceChanges} />
+              <TabCount count={briefing.counts.priceChanges} tone="indigo" />
             </TabsTrigger>
           </TabsList>
 
@@ -178,7 +191,7 @@ export function DailyTodoDialog({ open, onOpenChange }: DailyTodoDialogProps) {
             {isToday ? d.skipToday : t.common.close}
           </Button>
           {isToday && (
-            <Button type="button" onClick={() => handleClose(true)} className="gap-1">
+            <Button type="button" onClick={() => handleClose(true)} className={themeChrome.checklistStartBtn}>
               <CheckCircle2 className="h-4 w-4" />
               {d.startDay}
             </Button>
