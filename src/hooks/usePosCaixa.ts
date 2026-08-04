@@ -7,7 +7,7 @@ import {
   closeCaixaSession,
 } from '@/lib/accountingStorage';
 import { api } from '@/lib/api/client';
-import { todayLocalDate } from '@/lib/posShiftSales';
+import { todayLocalDate, markPosCaixaClosed, getPosCaixaLastClosedAt } from '@/lib/posShiftSales';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import type { Caixa, CaixaSession } from '@/types/accounting';
@@ -588,7 +588,10 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       }
       if (branchId) clearPosCaixaCache(branchId);
       setSession(null);
-      logCaixaDebug('close:local-cleared', { sessionId: snapshot.id });
+      const closedAt = new Date().toISOString();
+      if (snapshot.branchId) markPosCaixaClosed(snapshot.branchId, closedAt);
+      if (branchId && branchId !== snapshot.branchId) markPosCaixaClosed(branchId, closedAt);
+      logCaixaDebug('close:local-cleared', { sessionId: snapshot.id, closedAt });
     },
     [session, caixa, branchId],
   );
@@ -648,6 +651,10 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
         const prevMs = new Date(prev.openedAt).getTime();
         const nextMs = new Date(openedAt).getTime();
         if (!Number.isFinite(nextMs) || nextMs >= prevMs) return prev;
+        // Do not backdate across a successful EOD close watermark.
+        const lastClosed = getPosCaixaLastClosedAt(prev.branchId || branchId);
+        const lastClosedMs = lastClosed ? new Date(lastClosed).getTime() : NaN;
+        if (Number.isFinite(lastClosedMs) && nextMs < lastClosedMs) return prev;
         const next = { ...prev, openedAt };
         writePosCaixaCache(branchId, next);
         return next;

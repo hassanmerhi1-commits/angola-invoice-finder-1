@@ -31,6 +31,7 @@ These rules stop the Tailscale “same bug again” loop. Prefer changing produc
 - `closeSession` must **await** city `POST …/close` before clearing UI / unlocking open-register.
 - Close must seal **all** open sessions for the branch (local id often ≠ city UUID / old `session_*` ids).
 - Intentional open from the drawer dialog must send `forceNew: true` and must **not** reclaim a leftover local/remote open shift (that ignored the new opening cash).
+- After a successful EOD close, persist a last-closed watermark and **do not** backdate `openedAt` to earlier same-day sales (`recoveredShiftOpenedAt`). That recovery is only for crash/update reopen without closing.
 - Refresh must not replace a newer local open session with an older remote leftover.
 - Chart of Accounts cash (45x) still holds cash until bank deposit — that is not the same as the POS shift drawer.
 

@@ -4,6 +4,40 @@ import type { Expense } from '@/types/accounting';
 import type { User } from '@/types/erp';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
 
+const LAST_CLOSED_PREFIX = 'nexor:pos-caixa-last-closed:v1:';
+
+/** Persist successful EOD close so same-day reopen does not reclaim earlier sales. */
+export function markPosCaixaClosed(branchId: string, closedAt = new Date().toISOString()): void {
+  const key = String(branchId || '').trim();
+  if (!key) return;
+  try {
+    localStorage.setItem(`${LAST_CLOSED_PREFIX}${key}`, closedAt);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getPosCaixaLastClosedAt(branchId: string | null | undefined): string | null {
+  const key = String(branchId || '').trim();
+  if (!key) return null;
+  try {
+    const direct = localStorage.getItem(`${LAST_CLOSED_PREFIX}${key}`);
+    if (direct) return direct;
+    // Remapped branch ids after update — scan for an equivalent key.
+    for (let i = 0; i < localStorage.length; i++) {
+      const lsKey = localStorage.key(i);
+      if (!lsKey?.startsWith(LAST_CLOSED_PREFIX)) continue;
+      const id = lsKey.slice(LAST_CLOSED_PREFIX.length);
+      if (branchIdsEquivalent(id, key)) {
+        return localStorage.getItem(lsKey);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 export function saleLocalDate(createdAt: string): string {
   const d = new Date(createdAt);
   const y = d.getFullYear();
@@ -39,6 +73,9 @@ export function isSameShiftCashier(
  * When a cashier was forced to re-open after an update (without closing),
  * backdate the shift start to the first same-day sale so invoices reappear.
  * Returns the original openedAt when nothing needs healing.
+ *
+ * Never backdate across a successful EOD close — that made "close register"
+ * look broken: reopen pulled all earlier same-day sales (and cash) back in.
  */
 export function recoveredShiftOpenedAt(
   sales: Sale[],
@@ -50,6 +87,9 @@ export function recoveredShiftOpenedAt(
   const openedMs = new Date(session.openedAt).getTime();
   if (!Number.isFinite(openedMs)) return session.openedAt;
 
+  const lastClosedIso = getPosCaixaLastClosedAt(session.branchId);
+  const lastClosedMs = lastClosedIso ? new Date(lastClosedIso).getTime() : NaN;
+
   let earliestMs = openedMs;
   let earliestIso = session.openedAt;
 
@@ -60,6 +100,8 @@ export function recoveredShiftOpenedAt(
     }
     const saleMs = new Date(sale.createdAt).getTime();
     if (!Number.isFinite(saleMs)) return;
+    // Sales at/before the last EOD close belong to the previous shift (same calendar day).
+    if (Number.isFinite(lastClosedMs) && saleMs <= lastClosedMs) return;
     if (saleMs < earliestMs) {
       earliestMs = saleMs;
       earliestIso = sale.createdAt;
