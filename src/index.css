@@ -5,8 +5,113 @@
 @tailwind utilities;
 
 @layer base {
-  /* Default + warm try-out: coral / honey / apricot */
+  /* Default fallback = medium (balanced) until data-color-theme is applied */
   :root,
+  [data-color-theme='medium'] {
+    --background: 210 36% 97%;
+    --foreground: 222 28% 22%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 28% 22%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 28% 22%;
+    --table-grid-border: 214 18% 55%;
+    --primary: 199 72% 42%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 199 28% 95%;
+    --secondary-foreground: 210 30% 28%;
+    --muted: 210 24% 95%;
+    --muted-foreground: 215 16% 44%;
+    --accent: 168 35% 94%;
+    --accent-foreground: 168 45% 28%;
+    --destructive: 0 68% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 210 22% 88%;
+    --input: 210 22% 88%;
+    --ring: 199 72% 42%;
+    --radius: 0.75rem;
+
+    --success: 158 52% 38%;
+    --success-foreground: 158 50% 22%;
+    --warning: 36 88% 46%;
+    --warning-foreground: 28 70% 28%;
+    --info: 214 72% 48%;
+    --info-foreground: 214 55% 30%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(199 72% 42%), hsl(168 55% 40%));
+    --gradient-accent: linear-gradient(135deg, hsl(214 72% 52%), hsl(199 72% 42%));
+
+    --shadow-sm: 0 1px 2px 0 hsl(210 30% 30% / 0.05);
+    --shadow-md: 0 1px 3px 0 hsl(210 30% 30% / 0.07), 0 1px 2px -1px hsl(199 50% 40% / 0.06);
+    --shadow-lg: 0 4px 6px -1px hsl(210 30% 30% / 0.08), 0 2px 4px -2px hsl(199 50% 40% / 0.06);
+    --shadow-xl: 0 10px 15px -3px hsl(210 30% 30% / 0.09), 0 4px 6px -4px hsl(199 50% 40% / 0.07);
+    --shadow-glow: 0 2px 10px -2px hsl(199 72% 42% / 0.22);
+
+    --sidebar-background: 199 40% 98%;
+    --sidebar-foreground: 210 30% 28%;
+    --sidebar-primary: 199 72% 42%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 168 30% 94%;
+    --sidebar-accent-foreground: 168 40% 26%;
+    --sidebar-border: 199 22% 88%;
+    --sidebar-ring: 199 72% 42%;
+
+    --nexor-body-glow-a: 199 72% 42%;
+    --nexor-body-glow-b: 158 52% 38%;
+    --nexor-body-glow-c: 36 88% 46%;
+  }
+
+  [data-color-theme='light'] {
+    --background: 220 20% 98%;
+    --foreground: 222 20% 20%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 20% 20%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 20% 20%;
+    --table-grid-border: 220 12% 58%;
+    --primary: 214 55% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 215 20% 30%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 215 14% 46%;
+    --accent: 214 30% 96%;
+    --accent-foreground: 214 40% 35%;
+    --destructive: 0 60% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 13% 90%;
+    --input: 220 13% 90%;
+    --ring: 214 55% 45%;
+
+    --success: 158 40% 38%;
+    --success-foreground: 158 45% 22%;
+    --warning: 38 70% 46%;
+    --warning-foreground: 32 60% 30%;
+    --info: 214 55% 48%;
+    --info-foreground: 214 50% 30%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(214 55% 45%), hsl(199 50% 48%));
+    --gradient-accent: linear-gradient(135deg, hsl(214 55% 50%), hsl(220 20% 70%));
+
+    --shadow-sm: 0 1px 2px 0 hsl(220 20% 30% / 0.04);
+    --shadow-md: 0 1px 3px 0 hsl(220 20% 30% / 0.06);
+    --shadow-lg: 0 4px 6px -1px hsl(220 20% 30% / 0.07);
+    --shadow-xl: 0 10px 15px -3px hsl(220 20% 30% / 0.08);
+    --shadow-glow: 0 1px 4px 0 hsl(214 55% 45% / 0.12);
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 215 20% 28%;
+    --sidebar-primary: 214 55% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 96%;
+    --sidebar-accent-foreground: 215 20% 28%;
+    --sidebar-border: 220 13% 90%;
+    --sidebar-ring: 214 55% 45%;
+
+    --nexor-body-glow-a: 214 55% 45%;
+    --nexor-body-glow-b: 220 20% 70%;
+    --nexor-body-glow-c: 158 40% 45%;
+  }
+
   [data-color-theme='warm'] {
     --background: 32 45% 97%;
     --foreground: 20 30% 18%;
@@ -28,7 +133,6 @@
     --border: 30 28% 86%;
     --input: 30 28% 86%;
     --ring: 18 82% 48%;
-    --radius: 0.75rem;
 
     --success: 95 42% 36%;
     --success-foreground: 95 45% 18%;
@@ -60,7 +164,8 @@
     --nexor-body-glow-c: 350 55% 55%;
   }
 
-  /* Saved cool teal/cyan palette — restore with setColorTheme('cool') */
+  /* cold + legacy "cool" id */
+  [data-color-theme='cold'],
   [data-color-theme='cool'] {
     --background: 200 42% 96%;
     --foreground: 222 32% 18%;
@@ -174,6 +279,17 @@
       radial-gradient(ellipse 70% 45% at 100% 0%, hsl(var(--nexor-body-glow-b) / 0.12), transparent 50%),
       radial-gradient(ellipse 50% 35% at 80% 100%, hsl(var(--nexor-body-glow-c) / 0.08), transparent 45%);
     background-attachment: fixed;
+  }
+
+  /* Text size prefs scale rem-based Tailwind utilities via html font-size. */
+  html[data-text-size='small'] {
+    font-size: 87.5%;
+  }
+  html[data-text-size='medium'] {
+    font-size: 100%;
+  }
+  html[data-text-size='large'] {
+    font-size: 112.5%;
   }
 }
 

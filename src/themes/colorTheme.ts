@@ -1,25 +1,29 @@
-/**
- * Color theme switcher for the colorful UI experiment.
- * Cool (teal/cyan) is preserved; warm (coral/amber) is the current try-out.
- *
- * Flip ACTIVE_COLOR_THEME or call setColorTheme('cool'|'warm') to restore.
- */
-export type ColorThemeId = 'cool' | 'warm';
+import { getThemePreset, isColorThemeId, type ColorThemeId } from '@/themes/registry';
+
+export type { ColorThemeId } from '@/themes/types';
+export { COLOR_THEME_IDS, THEME_PRESET_LIST, getThemePreset } from '@/themes/registry';
 
 export const COLOR_THEME_STORAGE_KEY = 'nexor:color-theme';
 
-/** Default while we try warmer colors. Cool teal remains available. */
-export const ACTIVE_COLOR_THEME: ColorThemeId = 'warm';
+/** Default when nothing is stored yet. */
+export const DEFAULT_COLOR_THEME: ColorThemeId = 'medium';
+
+function migrateLegacyThemeId(raw: string | null): ColorThemeId | null {
+  if (!raw) return null;
+  if (raw === 'cool') return 'cold';
+  if (isColorThemeId(raw)) return raw;
+  return null;
+}
 
 export function resolveColorTheme(preferred?: ColorThemeId | null): ColorThemeId {
-  if (preferred === 'cool' || preferred === 'warm') return preferred;
+  if (preferred && isColorThemeId(preferred)) return preferred;
   try {
-    const stored = localStorage.getItem(COLOR_THEME_STORAGE_KEY);
-    if (stored === 'cool' || stored === 'warm') return stored;
+    const migrated = migrateLegacyThemeId(localStorage.getItem(COLOR_THEME_STORAGE_KEY));
+    if (migrated) return migrated;
   } catch {
     /* ignore */
   }
-  return ACTIVE_COLOR_THEME;
+  return DEFAULT_COLOR_THEME;
 }
 
 export function applyColorTheme(theme: ColorThemeId = resolveColorTheme()) {
@@ -31,9 +35,13 @@ export function applyColorTheme(theme: ColorThemeId = resolveColorTheme()) {
   }
 }
 
+/** Persist and reload so Tailwind chrome class maps pick up the new preset. */
 export function setColorTheme(theme: ColorThemeId) {
+  if (!isColorThemeId(theme)) return;
   applyColorTheme(theme);
-  // Soft reload so Tailwind class maps that are imported statically refresh if needed.
-  // Most chrome is CSS-variable driven; tone class maps still need a refresh when flipping mid-session.
   window.location.reload();
+}
+
+export function getCurrentColorTheme(): ColorThemeId {
+  return resolveColorTheme();
 }

@@ -1,33 +1,12 @@
-import { resolveColorTheme } from '@/themes/colorTheme';
-import {
-  coolChrome,
-  coolFlowStep,
-  coolPageSurface,
-  coolSectionLabel,
-  coolStatCardTone,
-  coolToneIcon,
-  coolToneTile,
-  coolToolbar,
-} from '@/themes/coolPreset';
-import {
-  warmChrome,
-  warmFlowStep,
-  warmPageSurface,
-  warmSectionLabel,
-  warmStatCardTone,
-  warmToneIcon,
-  warmToneTile,
-  warmToolbar,
-} from '@/themes/warmPreset';
+import { getThemePreset, resolveColorTheme } from '@/themes/colorTheme';
 
-const theme = resolveColorTheme();
-const isWarm = theme === 'warm';
+const preset = getThemePreset(resolveColorTheme());
 
-export const themeChrome = isWarm ? warmChrome : coolChrome;
-export const themeToneIcon = isWarm ? warmToneIcon : coolToneIcon;
-export const themeToneTile = isWarm ? warmToneTile : coolToneTile;
-export const themeStatCardTone = isWarm ? warmStatCardTone : coolStatCardTone;
-export const themeFlowStep = isWarm ? warmFlowStep : coolFlowStep;
-export const themePageSurface = isWarm ? warmPageSurface : coolPageSurface;
-export const themeSectionLabel = isWarm ? warmSectionLabel : coolSectionLabel;
-export const themeToolbar = isWarm ? warmToolbar : coolToolbar;
+export const themeChrome = preset.chrome;
+export const themeToneIcon = preset.toneIcon;
+export const themeToneTile = preset.toneTile;
+export const themeStatCardTone = preset.statCardTone;
+export const themeFlowStep = preset.flowStep;
+export const themePageSurface = preset.pageSurface;
+export const themeSectionLabel = preset.sectionLabel;
+export const themeToolbar = preset.toolbar;

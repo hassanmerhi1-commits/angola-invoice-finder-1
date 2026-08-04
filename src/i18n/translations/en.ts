@@ -2976,6 +2976,23 @@ export const en = {
     portuguese: "Portuguese",
   },
 
+  colorTheme: {
+    select: "Color theme",
+    light: "Light",
+    medium: "Medium",
+    warm: "Warm",
+    cold: "Cold",
+    current: "Active",
+  },
+
+  textSize: {
+    select: "Text size",
+    small: "Small",
+    medium: "Medium",
+    large: "Large",
+    current: "Active",
+  },
+
   // Top navigation (menu bar + toolbar)
   topNav: {
     menus: {

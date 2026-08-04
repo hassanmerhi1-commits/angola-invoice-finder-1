@@ -2979,6 +2979,23 @@ export const pt: TranslationKeys = {
     portuguese: "Português",
   },
 
+  colorTheme: {
+    select: "Tema de cores",
+    light: "Claro",
+    medium: "Médio",
+    warm: "Quente",
+    cold: "Frio",
+    current: "Activo",
+  },
+
+  textSize: {
+    select: "Tamanho do texto",
+    small: "Pequeno",
+    medium: "Médio",
+    large: "Grande",
+    current: "Activo",
+  },
+
   // Top navigation (menu bar + toolbar)
   topNav: {
     menus: {

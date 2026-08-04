@@ -41,6 +41,8 @@ import {
 import { ensureDayTodos, todayKey } from '@/lib/dailyTodos';
 import { useTranslation } from '@/i18n';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
+import { ColorThemeSwitcher } from '@/components/ColorThemeSwitcher';
+import { TextSizeSwitcher } from '@/components/TextSizeSwitcher';
 import { ServerConnectionIndicator } from '@/components/layout/ServerConnectionIndicator';
 import { OfflineModeBanner } from '@/components/layout/OfflineModeBanner';
 import { SyncPendingBadge } from '@/components/layout/SyncPendingBadge';
@@ -744,7 +746,9 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
               <ListTodo className="w-4 h-4" />
             </Button>
           )}
-          <LanguageSwitcher />
+          <ColorThemeSwitcher compact />
+          <TextSizeSwitcher compact />
+          <LanguageSwitcher compact />
 
           {canSwitchBranch ? (
             <Select value={scopeId} onValueChange={setOperatingScope}>
@@ -914,6 +918,8 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
               <ListTodo className="w-5 h-5" />
             </Button>
           )}
+          <ColorThemeSwitcher />
+          <TextSizeSwitcher />
           <Button variant="ghost" size="icon" className="h-8 w-8 text-sidebar-foreground" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
             <Menu className="w-5 h-5" />
           </Button>
