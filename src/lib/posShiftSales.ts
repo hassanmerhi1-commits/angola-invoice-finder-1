@@ -142,7 +142,12 @@ export function saleInShift(sale: Sale, session: CaixaSession | null | undefined
   const shiftStart = new Date(session.openedAt).getTime();
   if (!Number.isFinite(shiftStart)) return false;
   const saleTime = new Date(sale.createdAt).getTime();
-  return Number.isFinite(saleTime) && saleTime >= shiftStart;
+  if (!Number.isFinite(saleTime) || saleTime < shiftStart) return false;
+  // Belt-and-suspenders vs dual-window sticky: never show sales from before last EOD.
+  const lastClosedIso = getPosCaixaLastClosedAt(session.branchId);
+  const lastClosedMs = lastClosedIso ? new Date(lastClosedIso).getTime() : NaN;
+  if (Number.isFinite(lastClosedMs) && saleTime <= lastClosedMs) return false;
+  return true;
 }
 
 export function dedupeShiftSales(rows: Sale[]): Sale[] {
@@ -196,7 +201,11 @@ function eventInShift(isoTimestamp: string | undefined, session: CaixaSession | 
   const shiftStart = new Date(session.openedAt).getTime();
   if (!Number.isFinite(shiftStart)) return false;
   const eventTime = new Date(isoTimestamp).getTime();
-  return Number.isFinite(eventTime) && eventTime >= shiftStart;
+  if (!Number.isFinite(eventTime) || eventTime < shiftStart) return false;
+  const lastClosedIso = getPosCaixaLastClosedAt(session.branchId);
+  const lastClosedMs = lastClosedIso ? new Date(lastClosedIso).getTime() : NaN;
+  if (Number.isFinite(lastClosedMs) && eventTime <= lastClosedMs) return false;
+  return true;
 }
 
 function creditNoteInShift(note: CreditNote, session: CaixaSession | null | undefined): boolean {

@@ -1176,7 +1176,7 @@ function invalidateInventoryGridResultCache() {
   inventoryGridResultCache.clear();
 }
 
-async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded, { repair = false } = {}) {
+async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded, { repair = false, enrichSuppliers = false } = {}) {
   const { loadReservedHoldsForBranch, applySoftReservesToRows } = require('../lib/softReserve');
   const applyHolds = async (rows) => {
     if (consolidated || !branchId) return rows;
@@ -1193,7 +1193,11 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
   }
 
   const mainBranchIds = await loadMainBranchIds();
-  const supplierPromise = loadLatestPurchaseSupplierBySku();
+  // Skip PI lines_json supplier scan on normal lista opens — products.supplier_* is enough.
+  // Opt in with ?suppliers=1 or repair=1 when a caller needs inferred suppliers.
+  const supplierPromise = enrichSuppliers || repair
+    ? loadLatestPurchaseSupplierBySku()
+    : Promise.resolve(null);
   let rows;
   if (consolidated) {
     if (repair) {
@@ -1220,7 +1224,9 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
     }
   }
   const supplierBySku = await supplierPromise;
-  rows = enrichRowsWithPurchaseSuppliers(rows, supplierBySku);
+  if (supplierBySku) {
+    rows = enrichRowsWithPurchaseSuppliers(rows, supplierBySku);
+  }
   if (!repair) {
     writeInventoryGridResultCache(branchId, consolidated, rows);
   } else {
@@ -1492,6 +1498,10 @@ module.exports = function(broadcastTable) {
         req.query.consolidated === '1' || req.query.consolidated === 'true';
       const repair =
         req.query.repair === '1' || req.query.repair === 'true';
+      const enrichSuppliers =
+        repair
+        || req.query.suppliers === '1'
+        || req.query.suppliers === 'true';
       let branchId = resolveListBranchId(req, req.query.branchId);
       if (wantConsolidated) {
         const scope = req.branchScope;
@@ -1503,7 +1513,10 @@ module.exports = function(broadcastTable) {
         return res.json({ rows: [], count: 0 });
       }
       const priceBySku = await loadSellingPriceHintsBySku();
-      const rows = await listInventoryGridRows(branchId, wantConsolidated, priceBySku, { repair });
+      const rows = await listInventoryGridRows(branchId, wantConsolidated, priceBySku, {
+        repair,
+        enrichSuppliers,
+      });
       res.setHeader('Cache-Control', 'private, max-age=5');
       res.json({
         rows,

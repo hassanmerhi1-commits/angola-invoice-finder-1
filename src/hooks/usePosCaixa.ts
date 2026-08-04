@@ -113,6 +113,68 @@ function clearPosCaixaCache(branchId: string): void {
   } catch {
     /* ignore */
   }
+  // Also seal leftover "open" rows in the durable sessions list — otherwise a second
+  // Electron window can revive the shift via getOpenCaixaSessionForBranch.
+  try {
+    const key = 'kwanzaerp_caixa_sessions';
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    const list: CaixaSession[] = JSON.parse(raw);
+    let changed = false;
+    const next = list.map((s) => {
+      if (s.status !== 'open') return s;
+      if (!branchIdsEquivalent(s.branchId, branchId)) return s;
+      changed = true;
+      return {
+        ...s,
+        status: 'closed' as const,
+        closedAt: s.closedAt || new Date().toISOString(),
+      };
+    });
+    if (changed) localStorage.setItem(key, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+}
+
+export const CAIXA_CLOSED_EVENT = 'nexor:caixa-closed';
+const CAIXA_CLOSED_PING_PREFIX = 'nexor:pos-caixa-closed-ping:v1:';
+
+function broadcastCaixaClosed(branchId: string, closedAt = new Date().toISOString()): void {
+  try {
+    window.dispatchEvent(
+      new CustomEvent(CAIXA_CLOSED_EVENT, { detail: { branchId, at: closedAt } }),
+    );
+  } catch {
+    /* ignore */
+  }
+  // Cross-window signal (CustomEvent stays in one renderer; storage fires elsewhere).
+  try {
+    localStorage.setItem(`${CAIXA_CLOSED_PING_PREFIX}${branchId}`, closedAt);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** City confirmed no open shift — seal leftover local open rows so they cannot re-open city. */
+async function sealLocalAfterCityClosed(branchId: string): Promise<void> {
+  clearPosCaixaCache(branchId);
+  try {
+    const local = await getOpenCaixaSessionForBranch(branchId);
+    if (!local || local.status !== 'open') return;
+    const counted =
+      Number(local.openingBalance || 0)
+      + Number(local.totalIn || 0)
+      - Number(local.totalOut || 0);
+    await closeCaixaSession(
+      local.id,
+      counted,
+      'system',
+      'Sealed after city confirmed register closed',
+    );
+  } catch (err) {
+    console.warn('[usePosCaixa] seal local after city closed:', err);
+  }
 }
 
 function mergeSessionTotals(server: CaixaSession, cached: CaixaSession): CaixaSession {
@@ -226,26 +288,6 @@ async function loadBranchCaixaMeta(
   return ensureBranchCaixa(branchId, branchName, { ensureIfEmpty: true });
 }
 
-async function resyncOpenSessionToServer(
-  sess: CaixaSession,
-  branchName: string,
-): Promise<void> {
-  try {
-    await api.caixa.openSession({
-      id: sess.id,
-      caixaId: sess.caixaId,
-      branchId: sess.branchId,
-      branchName: branchName || sess.branchId,
-      openingBalance: sess.openingBalance,
-      openedBy: sess.openedBy,
-      date: sess.date || todayLocalDate(),
-      openedAt: sess.openedAt,
-    });
-  } catch (err) {
-    console.warn('[usePosCaixa] re-sync open session:', err);
-  }
-}
-
 /**
  * Cash-register (caixa) session state for the POS, scoped to the active branch.
  * Open session persists until end-of-day close — not re-prompted on POS navigation / app restart.
@@ -275,7 +317,8 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
 
     if (sticky?.status === 'open') {
       setSession(sticky);
-      writePosCaixaCache(branchId, sticky);
+      // Do not rewrite cache yet — another window may have just closed; writing open
+      // here raced city lookup and resurrected the shift in sibling instances.
       setLoading(false);
       // Always pull server totals (expenses/refunds), even on silent refresh — otherwise
       // a stale localStorage cache hides caixa expenses paid after the session opened.
@@ -286,7 +329,10 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
             // Never replace a newer local open with an older remote leftover.
             const stickyAt = new Date(sticky.openedAt || sticky.createdAt || 0).getTime();
             const remoteAt = new Date(remote.session.openedAt || remote.session.createdAt || 0).getTime();
-            if (stickyAt >= remoteAt) return;
+            if (stickyAt >= remoteAt) {
+              writePosCaixaCache(branchId, sticky);
+              return;
+            }
           }
           const merged =
             sticky && remote.session.id === sticky.id
@@ -294,8 +340,24 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
               : remote.session;
           setSession(merged);
           writePosCaixaCache(branchId, merged);
+          return;
         }
-        // On error or none: keep sticky — restart/update must not drop an open day.
+        if (remote.kind === 'none') {
+          // City authoritatively has no open shift (EOD closed from this or another
+          // window). Drop sticky — keeping it rewrote the cache and brought invoices back.
+          logCaixaDebug('refresh:city-none-drop-sticky', {
+            stickyId: sticky.id,
+            branchId,
+          });
+          void sealLocalAfterCityClosed(branchId);
+          if (sticky.branchId && !branchIdsEquivalent(sticky.branchId, branchId)) {
+            void sealLocalAfterCityClosed(sticky.branchId);
+          }
+          setSession(null);
+          return;
+        }
+        // On error: keep sticky — restart/update must not drop an open day.
+        writePosCaixaCache(branchId, sticky);
       });
       const metaToken = ++metaLoadRef.current;
       void loadBranchCaixaMeta(branchId, branchName || branchId, false)
@@ -327,25 +389,11 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
         return;
       }
 
-      const local = await loadLocalOpenSession(branchId);
-      if (local) {
-        setSession(local);
-        writePosCaixaCache(branchId, local);
-        setLoading(false);
-        void resyncOpenSessionToServer(local, branchName || branchId);
-        const metaToken = ++metaLoadRef.current;
-        void loadBranchCaixaMeta(branchId, branchName || branchId, false)
-          .then((cx) => {
-            if (metaToken === metaLoadRef.current && cx) setCaixa(cx);
-          })
-          .catch(() => {});
-        return;
-      }
-
       if (remote.kind === 'error') {
-        // Network / auth glitch after update — keep UI from forcing a false "open caixa".
+        // Network / auth glitch — keep local evidence; do not force a false "open register".
         console.warn('[usePosCaixa] open-session lookup failed; not clearing local shift:', remote.error);
-        const anyCached = findCachedOpenSession(branchId) || (() => {
+        const local = await loadLocalOpenSession(branchId);
+        const anyCached = local || findCachedOpenSession(branchId) || (() => {
           try {
             for (let i = 0; i < localStorage.length; i++) {
               const key = localStorage.key(i);
@@ -374,9 +422,10 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
         return;
       }
 
-      // Server says none — do NOT clear local sticky cache. Thin clients often open
-      // local-first and city sync fails; wiping cache forces a second "open register".
-      // Only show the open dialog when we truly have no local evidence.
+      // City says none — authoritative. Never resurrect a leftover local open row
+      // (that re-opened city and brought shift invoices back in a second instance).
+      logCaixaDebug('refresh:city-none-clear-local', { branchId });
+      await sealLocalAfterCityClosed(branchId);
       setSession(null);
       setLoading(false);
 
@@ -409,6 +458,39 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
   useTableRefreshListener('caixa_sessions', () => {
     void refresh({ silent: true });
   });
+
+  // Another window closed the register — drop our sticky open shift.
+  useEffect(() => {
+    if (!branchId) return;
+    const dropLocal = () => {
+      clearPosCaixaCache(branchId);
+      setSession(null);
+      void refresh({ silent: true });
+    };
+    const onClosed = (event: Event) => {
+      const detail = (event as CustomEvent<{ branchId?: string }>).detail;
+      if (detail?.branchId && !branchIdsEquivalent(detail.branchId, branchId)) return;
+      dropLocal();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key) return;
+      if (event.key.startsWith(CAIXA_CLOSED_PING_PREFIX)) {
+        const keyBranch = event.key.slice(CAIXA_CLOSED_PING_PREFIX.length);
+        if (branchIdsEquivalent(keyBranch, branchId)) dropLocal();
+        return;
+      }
+      if (event.key.startsWith(POS_CAIXA_CACHE_PREFIX) && event.newValue == null) {
+        const keyBranch = event.key.slice(POS_CAIXA_CACHE_PREFIX.length);
+        if (branchIdsEquivalent(keyBranch, branchId)) dropLocal();
+      }
+    };
+    window.addEventListener(CAIXA_CLOSED_EVENT, onClosed);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(CAIXA_CLOSED_EVENT, onClosed);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [branchId, refresh]);
 
   const openSession = useCallback(
     async (openingCash: number, openedBy: string) => {
@@ -587,10 +669,15 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
         console.warn('[usePosCaixa] local close failed:', err);
       }
       if (branchId) clearPosCaixaCache(branchId);
+      if (snapshot.branchId && !branchIdsEquivalent(snapshot.branchId, branchId || '')) {
+        clearPosCaixaCache(snapshot.branchId);
+      }
       setSession(null);
       const closedAt = new Date().toISOString();
       if (snapshot.branchId) markPosCaixaClosed(snapshot.branchId, closedAt);
       if (branchId && branchId !== snapshot.branchId) markPosCaixaClosed(branchId, closedAt);
+      if (snapshot.branchId) broadcastCaixaClosed(snapshot.branchId, closedAt);
+      else if (branchId) broadcastCaixaClosed(branchId, closedAt);
       logCaixaDebug('close:local-cleared', { sessionId: snapshot.id, closedAt });
     },
     [session, caixa, branchId],

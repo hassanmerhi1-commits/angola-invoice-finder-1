@@ -685,51 +685,53 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       <OfflineModeBanner />
       {/* ====== ROW 1: Menu Bar ====== */}
       <div className={themeChrome.navRow1}>
-        <div className="flex items-center gap-1">
-          {/* Logo */}
-          <div className={themeChrome.navBrandBorder}>
-            <div className={themeChrome.navLogoRing}>
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+          {/* Logo + company — never wrap when text prefs change */}
+          <div className={`${themeChrome.navBrandBorder} shrink-0 max-w-[min(12rem,28vw)]`}>
+            <div className={`${themeChrome.navLogoRing} shrink-0`}>
               <img src={logo || defaultLogo} alt={companyName} className="w-full h-full object-contain" />
             </div>
-            <span className={themeChrome.navBrand}>
+            <span className={`${themeChrome.navBrand} min-w-0 truncate whitespace-nowrap`} title={companyName}>
               {companyName}
             </span>
           </div>
 
-          {visibleMenus.map((menu) => (
-            <DropdownMenu key={menu.label}>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className={themeChrome.navMenuBtn}>
-                  {menu.label}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="min-w-[220px] animate-scale-in">
-                {menu.items.map((item, idx) =>
-                  item.label === 'separator' ? (
-                    <DropdownMenuSeparator key={idx} />
-                  ) : (
-                    <DropdownMenuItem
-                      key={item.label}
-                      onClick={() => {
-                        if ('action' in item && typeof item.action === 'function') item.action();
-                        else if ('path' in item && typeof item.path === 'string') {
-                          const navState = 'state' in item ? (item as { state?: object }).state : undefined;
-                          navigate(item.path, navState ? { state: navState } : undefined);
-                        }
-                      }}
-                      className="text-xs gap-2"
-                    >
-                      {item.icon && <item.icon className="w-3.5 h-3.5 text-muted-foreground" />}
-                      {item.label}
-                    </DropdownMenuItem>
-                  )
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ))}
+          <div className="flex min-w-0 items-center gap-0.5 overflow-x-auto">
+            {visibleMenus.map((menu) => (
+              <DropdownMenu key={menu.label}>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className={`${themeChrome.navMenuBtn} shrink-0 whitespace-nowrap`}>
+                    {menu.label}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-[220px] animate-scale-in">
+                  {menu.items.map((item, idx) =>
+                    item.label === 'separator' ? (
+                      <DropdownMenuSeparator key={idx} />
+                    ) : (
+                      <DropdownMenuItem
+                        key={item.label}
+                        onClick={() => {
+                          if ('action' in item && typeof item.action === 'function') item.action();
+                          else if ('path' in item && typeof item.path === 'string') {
+                            const navState = 'state' in item ? (item as { state?: object }).state : undefined;
+                            navigate(item.path, navState ? { state: navState } : undefined);
+                          }
+                        }}
+                        className="text-xs gap-2"
+                      >
+                        {item.icon && <item.icon className="w-3.5 h-3.5 text-muted-foreground" />}
+                        {item.label}
+                      </DropdownMenuItem>
+                    )
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ))}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <ServerConnectionIndicator />
           <SyncPendingBadge />
           <GlobalSearch />
@@ -886,7 +888,9 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-sidebar-accent flex items-center justify-center">
             <img src={logo || defaultLogo} alt={companyName} className="w-full h-full object-contain" />
           </div>
-          <span className="font-bold text-sm tracking-tight">{companyName}</span>
+          <span className="font-bold text-sm tracking-tight truncate max-w-[10rem] whitespace-nowrap" title={companyName}>
+            {companyName}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           {canSwitchBranch ? (

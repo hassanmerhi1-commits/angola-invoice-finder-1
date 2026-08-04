@@ -943,13 +943,18 @@ export const api = {
       if (opts?.dateTo) params.set('dateTo', opts.dateTo);
       const qs = params.toString();
       const endpoint = `/sales${qs ? `?${qs}` : ''}`;
-      const { mergeSaleRows, readPendingSalesCache } = await import('@/lib/sync/pendingSalesCache');
-      const { getLocalSales } = await import('@/lib/sync/offlineFirst');
+      // Overlap chunk load with the network request (was sequential; added Tailscale latency).
+      const [pendingMod, offlineMod, apiResult] = await Promise.all([
+        import('@/lib/sync/pendingSalesCache'),
+        import('@/lib/sync/offlineFirst'),
+        apiFetch<any[]>(endpoint),
+      ]);
+      const { mergeSaleRows, readPendingSalesCache } = pendingMod;
+      const { getLocalSales } = offlineMod;
 
       let serverRows: any[] | undefined;
       let serverError: string | undefined;
 
-      const apiResult = await apiFetch<any[]>(endpoint);
       if (apiResult.data !== undefined) {
         serverRows = apiResult.data;
       } else {
@@ -997,8 +1002,7 @@ export const api = {
         const localRows = await getLocalSales(branchId);
         const pendingRows = readPendingSalesCache(branchId);
         if (serverRows?.length) {
-          const { prunePendingSalesCacheForServerRows } = await import('@/lib/sync/pendingSalesCache');
-          prunePendingSalesCacheForServerRows(serverRows);
+          pendingMod.prunePendingSalesCacheForServerRows(serverRows);
         }
         merged = mergeSaleRows(merged, [...localRows, ...pendingRows]);
       }

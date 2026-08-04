@@ -5,13 +5,6 @@ export const DEFAULT_TEXT_SIZE: TextSizeId = 'medium';
 
 export const TEXT_SIZE_IDS: TextSizeId[] = ['small', 'medium', 'large'];
 
-/** Root font-size — Tailwind rem utilities scale with this. */
-export const TEXT_SIZE_ROOT: Record<TextSizeId, string> = {
-  small: '87.5%', // ~14px
-  medium: '100%', // ~16px
-  large: '112.5%', // ~18px
-};
-
 export function isTextSizeId(value: string | null | undefined): value is TextSizeId {
   return value === 'small' || value === 'medium' || value === 'large';
 }
@@ -27,10 +20,15 @@ export function resolveTextSize(preferred?: TextSizeId | null): TextSizeId {
   return DEFAULT_TEXT_SIZE;
 }
 
+/**
+ * Prefer dataset + CSS zoom on main content (not html font-size),
+ * so the dense top nav / menus stay readable and don't wrap.
+ */
 export function applyTextSize(size: TextSizeId = resolveTextSize()) {
   const root = document.documentElement;
   root.dataset.textSize = size;
-  root.style.fontSize = TEXT_SIZE_ROOT[size];
+  // Clear any legacy root font-size from earlier builds.
+  root.style.removeProperty('font-size');
   try {
     localStorage.setItem(TEXT_SIZE_STORAGE_KEY, size);
   } catch {
@@ -38,7 +36,7 @@ export function applyTextSize(size: TextSizeId = resolveTextSize()) {
   }
 }
 
-/** Instant — no reload required (unlike color chrome class maps). */
+/** Instant — no reload required. */
 export function setTextSize(size: TextSizeId) {
   if (!isTextSizeId(size)) return;
   applyTextSize(size);

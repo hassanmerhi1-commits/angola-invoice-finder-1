@@ -281,15 +281,15 @@
     background-attachment: fixed;
   }
 
-  /* Text size prefs scale rem-based Tailwind utilities via html font-size. */
-  html[data-text-size='small'] {
-    font-size: 87.5%;
+  /* Text size: zoom page content only — keeps TopNav chrome from wrapping/crushing. */
+  html[data-text-size='small'] [data-nexor-scale] {
+    zoom: 0.9;
   }
-  html[data-text-size='medium'] {
-    font-size: 100%;
+  html[data-text-size='medium'] [data-nexor-scale] {
+    zoom: 1;
   }
-  html[data-text-size='large'] {
-    font-size: 112.5%;
+  html[data-text-size='large'] [data-nexor-scale] {
+    zoom: 1.1;
   }
 }
 
