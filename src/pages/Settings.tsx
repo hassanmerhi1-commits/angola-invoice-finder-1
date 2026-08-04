@@ -127,6 +127,23 @@ export default function Settings() {
       } else {
         navigate(location.pathname, { replace: true, state: {} });
       }
+    } else if (focus === 'system') {
+      setActiveSection('system');
+      if (focusFromQuery) {
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.delete('focus');
+            return next;
+          },
+          { replace: true },
+        );
+      } else {
+        navigate(location.pathname + (searchParams.get('section') ? `?section=${searchParams.get('section')}` : '?section=system'), {
+          replace: true,
+          state: {},
+        });
+      }
     }
   }, [location.pathname, location.state, navigate, searchParams, setActiveSection, setSearchParams]);
 

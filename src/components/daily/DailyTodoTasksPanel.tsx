@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Plus, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,12 +15,22 @@ import {
   updateDayTodo,
   type DailyTodoItem,
 } from '@/lib/dailyTodos';
+import {
+  getDailyTodoActionTarget,
+  navigateDailyTodoAction,
+  resolveDailyTodoAction,
+  type DailyTodoAction,
+} from '@/lib/dailyTodoActions';
 
 interface DailyTodoTasksPanelProps {
   selectedDay: string;
   items: DailyTodoItem[];
   onSelectDay: (dateKey: string) => void;
   onItemsChange: (items: DailyTodoItem[]) => void;
+  /** Close checklist after navigating to a task workspace (ERP inbox pattern). */
+  onOpenWorkspace?: () => void;
+  /** Prefer switching an in-dialog briefing tab when available. */
+  onOpenBriefingTab?: (tab: NonNullable<ReturnType<typeof getDailyTodoActionTarget>['briefingTab']>) => void;
 }
 
 function formatDayLabel(dateKey: string, locale: string): string {
@@ -31,15 +42,44 @@ function formatDayLabel(dateKey: string, locale: string): string {
   });
 }
 
+function actionHint(
+  action: DailyTodoAction,
+  d: ReturnType<typeof useTranslation>['t']['dailyTodosUi'],
+): string {
+  switch (action) {
+    case 'review_invoices':
+      return d.taskOpenInvoices;
+    case 'low_stock':
+      return d.taskOpenInventory;
+    case 'reconcile_caixa':
+      return d.taskOpenCaixa;
+    case 'overdue_ar':
+      return d.taskOpenReceivables;
+    case 'overdue_ap':
+      return d.taskOpenPayables;
+    case 'payments':
+      return d.taskOpenPayments;
+    case 'purchase_invoices':
+      return d.taskOpenPurchaseInvoices;
+    case 'pos':
+      return d.taskOpenPos;
+    default:
+      return d.taskOpenWorkspace;
+  }
+}
+
 export function DailyTodoTasksPanel({
   selectedDay,
   items,
   onSelectDay,
   onItemsChange,
+  onOpenWorkspace,
+  onOpenBriefingTab,
 }: DailyTodoTasksPanelProps) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const d = t.dailyTodosUi;
+  const navigate = useNavigate();
   const [newText, setNewText] = useState('');
 
   const today = todayKey();
@@ -58,6 +98,24 @@ export function DailyTodoTasksPanel({
     const next = addDayTodo(selectedDay, trimmed);
     onItemsChange([...next]);
     setNewText('');
+  };
+
+  const openTask = (item: DailyTodoItem, preferWorkspace = false) => {
+    const action = resolveDailyTodoAction(item);
+    if (!action) return;
+    const target = getDailyTodoActionTarget(action);
+    if (
+      !preferWorkspace
+      && target.briefingTab
+      && onOpenBriefingTab
+      && action !== 'reconcile_caixa'
+      && action !== 'pos'
+    ) {
+      onOpenBriefingTab(target.briefingTab);
+      return;
+    }
+    navigateDailyTodoAction(navigate, action);
+    onOpenWorkspace?.();
   };
 
   const addPlaceholder = useMemo(() => {
@@ -139,41 +197,70 @@ export function DailyTodoTasksPanel({
         )}
       </div>
 
+      <p className="text-xs text-muted-foreground">{d.taskOpenHint}</p>
+
       <div className="space-y-2 max-h-[min(36vh,260px)] overflow-y-auto pr-1">
         {items.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">{d.emptyDay}</p>
         ) : (
-          items.map((item) => (
-            <div
-              key={item.id}
-              className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2"
-            >
-              <Checkbox
-                id={`${selectedDay}-${item.id}`}
-                checked={item.done}
-                onCheckedChange={(checked) =>
-                  onItemsChange(updateDayTodo(selectedDay, item.id, { done: checked === true }))
-                }
-                className="mt-0.5"
-              />
-              <label
-                htmlFor={`${selectedDay}-${item.id}`}
-                className={`flex-1 text-sm cursor-pointer ${item.done ? 'line-through text-muted-foreground' : ''}`}
+          items.map((item) => {
+            const action = resolveDailyTodoAction(item);
+            return (
+              <div
+                key={item.id}
+                className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2"
               >
-                {item.text}
-              </label>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 shrink-0 text-muted-foreground"
-                onClick={() => onItemsChange(removeDayTodo(selectedDay, item.id))}
-                aria-label={t.common.delete}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          ))
+                <Checkbox
+                  id={`${selectedDay}-${item.id}`}
+                  checked={item.done}
+                  onCheckedChange={(checked) =>
+                    onItemsChange(updateDayTodo(selectedDay, item.id, { done: checked === true }))
+                  }
+                  className="mt-0.5"
+                  aria-label={d.taskMarkDone}
+                />
+                <button
+                  type="button"
+                  className={`min-w-0 flex-1 text-left ${action ? 'hover:text-primary' : ''} ${
+                    item.done ? 'line-through text-muted-foreground' : ''
+                  }`}
+                  onClick={() => openTask(item)}
+                  disabled={!action}
+                  title={action ? actionHint(action, d) : undefined}
+                >
+                  <span className="text-sm block">{item.text}</span>
+                  {action ? (
+                    <span className="text-[11px] text-muted-foreground font-normal no-underline">
+                      {actionHint(action, d)}
+                    </span>
+                  ) : null}
+                </button>
+                {action ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0 text-muted-foreground"
+                    onClick={() => openTask(item, true)}
+                    aria-label={actionHint(action, d)}
+                    title={d.taskOpenFullPage}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-muted-foreground"
+                  onClick={() => onItemsChange(removeDayTodo(selectedDay, item.id))}
+                  aria-label={t.common.delete}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            );
+          })
         )}
       </div>
 

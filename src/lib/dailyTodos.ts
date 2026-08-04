@@ -1,7 +1,16 @@
+import {
+  DEFAULT_TODO_ACTIONS,
+  inferActionFromText,
+  resolveDailyTodoAction,
+  type DailyTodoAction,
+} from '@/lib/dailyTodoActions';
+
 export interface DailyTodoItem {
   id: string;
   text: string;
   done: boolean;
+  /** Stable destination when the user opens this task (ERP activity pattern). */
+  action?: DailyTodoAction;
 }
 
 export interface DailyTodosState {
@@ -14,6 +23,7 @@ export interface DailyTodosState {
 const STORAGE_KEY = 'nexor:daily-todos:v1';
 export const DAILY_TODOS_CHANGED_EVENT = 'nexor:daily-todos-changed';
 
+/** Fallback English labels when seeding before i18n is available. */
 const DEFAULT_TEMPLATE = [
   'Review pending sales invoices and receipts',
   'Check inventory / low-stock items',
@@ -26,6 +36,14 @@ let stateCache: DailyTodosState | null = null;
 
 function newId(): string {
   return `todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeItem(item: Partial<DailyTodoItem> & { id: string; text: string; done: boolean }): DailyTodoItem {
+  const action =
+    item.action
+    ?? resolveDailyTodoAction({ text: item.text, action: item.action })
+    ?? undefined;
+  return action ? { id: item.id, text: item.text, done: item.done, action } : { id: item.id, text: item.text, done: item.done };
 }
 
 /** Local calendar date YYYY-MM-DD (not UTC). */
@@ -52,7 +70,13 @@ function defaultState(): DailyTodosState {
 }
 
 function seedTemplateItems(templateItems: string[]): DailyTodoItem[] {
-  return templateItems.map((text) => ({ id: newId(), text, done: false }));
+  return templateItems.map((text, index) => {
+    const action =
+      inferActionFromText(text)
+      ?? DEFAULT_TODO_ACTIONS[index]
+      ?? undefined;
+    return normalizeItem({ id: newId(), text, done: false, action });
+  });
 }
 
 function parseStoredState(raw: string): DailyTodosState {
@@ -63,13 +87,15 @@ function parseStoredState(raw: string): DailyTodosState {
       const items = bucket?.items;
       days[key] = {
         items: Array.isArray(items)
-          ? items.filter(
-              (item): item is DailyTodoItem =>
-                !!item &&
-                typeof item.id === 'string' &&
-                typeof item.text === 'string' &&
-                typeof item.done === 'boolean',
-            )
+          ? items
+              .filter(
+                (item): item is DailyTodoItem =>
+                  !!item
+                  && typeof item.id === 'string'
+                  && typeof item.text === 'string'
+                  && typeof item.done === 'boolean',
+              )
+              .map((item) => normalizeItem(item))
           : [],
       };
     }
@@ -148,11 +174,12 @@ export function getDayTodos(dateKey: string): DailyTodoItem[] {
 
 export function saveDayTodos(dateKey: string, items: DailyTodoItem[]): DailyTodoItem[] {
   const state = readDailyTodosState();
+  const normalized = items.map((item) => normalizeItem(item));
   writeDailyTodosState({
     ...state,
-    days: { ...state.days, [dateKey]: { items } },
+    days: { ...state.days, [dateKey]: { items: normalized } },
   });
-  return items;
+  return normalized;
 }
 
 /**
@@ -161,7 +188,7 @@ export function saveDayTodos(dateKey: string, items: DailyTodoItem[]): DailyTodo
 export function ensureDayTodos(dateKey: string): DailyTodoItem[] {
   const state = readDailyTodosState();
   if (Object.prototype.hasOwnProperty.call(state.days, dateKey)) {
-    return [...(state.days[dateKey]?.items ?? [])];
+    return [...(state.days[dateKey]?.items ?? [])].map((item) => normalizeItem(item));
   }
 
   const isToday = dateKey === todayKey();
@@ -182,7 +209,11 @@ export function addDayTodo(dateKey: string, text: string): DailyTodoItem[] {
     ? [...(state.days[dateKey]?.items ?? [])]
     : ensureDayTodos(dateKey);
 
-  const items = [...current, { id: newId(), text: trimmed, done: false }];
+  const action = inferActionFromText(trimmed) ?? undefined;
+  const items = [
+    ...current,
+    normalizeItem({ id: newId(), text: trimmed, done: false, action }),
+  ];
   return saveDayTodos(dateKey, items);
 }
 
@@ -193,7 +224,8 @@ export function updateDayTodo(
 ): DailyTodoItem[] {
   const current = getDayTodos(dateKey);
   const base = current.length > 0 ? current : ensureDayTodos(dateKey);
-  const items = base.map((item) => (item.id === id ? { ...item, ...patch } : item));
+  const items = base.map((item) =>
+    (item.id === id ? normalizeItem({ ...item, ...patch }) : item));
   return saveDayTodos(dateKey, items);
 }
 

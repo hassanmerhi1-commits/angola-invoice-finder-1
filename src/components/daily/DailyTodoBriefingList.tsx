@@ -40,6 +40,8 @@ interface DailyTodoBriefingListProps {
   unprinted?: UnprintedBriefingItem[];
   priceChanges?: PriceChangeBriefingItem[];
   onRefresh: () => void;
+  /** Close the checklist after jumping to a full page (inbox → workspace). */
+  onNavigateAway?: () => void;
 }
 
 export function DailyTodoBriefingList({
@@ -51,6 +53,7 @@ export function DailyTodoBriefingList({
   unprinted = [],
   priceChanges = [],
   onRefresh,
+  onNavigateAway,
 }: DailyTodoBriefingListProps) {
   const { t, language } = useTranslation();
   const d = t.dailyTodosUi;
@@ -61,7 +64,10 @@ export function DailyTodoBriefingList({
     if (kind === 'lowStock') navigate('/inventory');
     else if (kind === 'toPrint') navigate('/invoices');
     else if (kind === 'priceChanges') navigate('/purchase-invoices');
+    else if (kind === 'receivables') navigate('/receivables');
+    else if (kind === 'payables') navigate('/payables');
     else navigate('/payments');
+    onNavigateAway?.();
   };
 
   const openButtonLabel =
@@ -71,7 +77,11 @@ export function DailyTodoBriefingList({
         ? d.briefingOpenInvoices
         : kind === 'priceChanges'
           ? d.briefingOpenPurchaseInvoices
-          : d.briefingOpenPayments;
+          : kind === 'receivables'
+            ? d.briefingOpenReceivables
+            : kind === 'payables'
+              ? d.briefingOpenPayables
+              : d.briefingOpenPayments;
 
   const dueLabel = (item: DueBriefingItem) => {
     if (item.daysUntilDue === null) return d.briefingNoDueDate;
@@ -168,7 +178,7 @@ export function DailyTodoBriefingList({
             <button
               key={item.id}
               type="button"
-              onClick={() => navigate('/invoices')}
+              onClick={openTarget}
               className="flex w-full items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
             >
               <Printer className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
@@ -188,7 +198,7 @@ export function DailyTodoBriefingList({
             <button
               key={item.id}
               type="button"
-              onClick={() => navigate('/purchase-invoices')}
+              onClick={openTarget}
               className="flex w-full items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
             >
               <Tag className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />

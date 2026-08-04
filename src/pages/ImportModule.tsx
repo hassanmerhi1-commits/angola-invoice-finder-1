@@ -169,9 +169,6 @@ export default function ImportModule() {
         <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0">
           {[
             { key: 'importacoes', labelKey: 'tabImports', icon: Globe },
-            { key: 'custos', labelKey: 'tabLandedCost', icon: Calculator },
-            { key: 'cambio', labelKey: 'tabFx', icon: DollarSign },
-            { key: 'alfandega', labelKey: 'tabCustoms', icon: FileText },
           ].map(tab => (
             <TabsTrigger key={tab.key} value={tab.key}
               className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-1.5 gap-1">
@@ -234,16 +231,6 @@ export default function ImportModule() {
             </div>
           )}
         </TabsContent>
-
-        {['custos', 'cambio', 'alfandega'].map(tab => (
-          <TabsContent key={tab} value={tab} className="flex-1 m-0 p-4">
-            <Card><CardContent className="pt-6 text-center text-muted-foreground">
-              <Calculator className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>{tab === 'custos' ? t.importsUi.landedCostTitle : tab === 'cambio' ? t.importsUi.fxTitle : t.importsUi.customsDocsTitle}</p>
-              <p className="text-xs mt-1">{t.placeholderUi.inDevelopmentDesc}</p>
-            </CardContent></Card>
-          </TabsContent>
-        ))}
       </Tabs>
 
       {selectedOrder && (

@@ -719,6 +719,7 @@ export default function Inventory() {
       nexorToolbarNewProduct?: boolean;
       openCountSheet?: boolean;
       openReconcile?: boolean;
+      openAdjustStock?: boolean;
     } | null;
     if (st?.openCountSheet) {
       openCountSheetDialog();
@@ -730,11 +731,29 @@ export default function Inventory() {
       navigate(location.pathname, { replace: true, state: null });
       return;
     }
+    if (st?.openAdjustStock) {
+      const bid = listBranchId || currentBranch?.id || '';
+      setAdjustmentBranchId(bid);
+      if (canSwitchBranch) void loadPerBranchBreakdown();
+      setAdjustmentDialogOpen(true);
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
     if (!st?.nexorToolbarNewProduct) return;
     setSelectedProduct(null);
     setDialogOpen(true);
     navigate('.', { replace: true, state: {} });
-  }, [location.state, navigate, openCountSheetDialog, openReconciliationDialog, location.pathname]);
+  }, [
+    location.state,
+    navigate,
+    openCountSheetDialog,
+    openReconciliationDialog,
+    location.pathname,
+    listBranchId,
+    currentBranch?.id,
+    canSwitchBranch,
+    loadPerBranchBreakdown,
+  ]);
 
   const handleSaveProduct = async (product: Product & { preserveStock?: boolean }) => {
     const targetBranchId =

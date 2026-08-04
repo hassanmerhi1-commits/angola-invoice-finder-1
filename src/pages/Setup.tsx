@@ -606,7 +606,29 @@ export default function Setup() {
                     onChange={e => setIpFileContent(e.target.value)}
                     placeholder="C:\\NEXOR ERP\\data\\nexor-heart.nexor"
                   />
-                  <Button variant="outline" size="icon">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    title="Browse"
+                    onClick={() => {
+                      const input = document.createElement('input');
+                      input.type = 'file';
+                      input.accept = '.nexor,application/octet-stream';
+                      input.onchange = () => {
+                        const file = input.files?.[0];
+                        if (!file) return;
+                        // Electron/browser File often exposes path on desktop builds.
+                        const anyFile = file as File & { path?: string };
+                        if (anyFile.path) {
+                          setIpFileContent(anyFile.path);
+                          return;
+                        }
+                        setIpFileContent(file.name);
+                      };
+                      input.click();
+                    }}
+                  >
                     <FolderOpen className="h-4 w-4" />
                   </Button>
                 </div>

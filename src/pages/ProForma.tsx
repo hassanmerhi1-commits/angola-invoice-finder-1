@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useProducts, useClients, useAuth } from '@/hooks/useERP';
@@ -42,6 +42,7 @@ export default function ProFormaPage() {
   const { t, language } = useTranslation();
   const p = t.proFormaUi;
   const navigate = useNavigate();
+  const location = useLocation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { currentBranch, apiBranchId } = useBranchScope();
   const { user } = useAuth();
@@ -68,6 +69,19 @@ export default function ProFormaPage() {
   useEffect(() => {
     getStats().then(setStats);
   }, [proformas, getStats]);
+
+  useEffect(() => {
+    const onNew = () => setShowCreateDialog(true);
+    window.addEventListener('nexor:proforma-new', onNew);
+    return () => window.removeEventListener('nexor:proforma-new', onNew);
+  }, []);
+
+  useEffect(() => {
+    const st = location.state as { openProformaCreate?: boolean } | null;
+    if (!st?.openProformaCreate) return;
+    setShowCreateDialog(true);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
 
   // Create form state
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);

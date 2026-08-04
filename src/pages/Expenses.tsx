@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
@@ -111,6 +112,8 @@ export default function Expenses() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
+  const navigate = useNavigate();
+  const location = useLocation();
   const { currentBranch, apiBranchId, treasuryAllBranches, userBranch } = useBranchScope();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -236,13 +239,23 @@ export default function Expenses() {
   useEffect(() => {
     const onRefresh = () => { void loadData(); };
     const onBanksChanged = () => { void refreshBanksForExpense(); };
+    const onNew = () => handleOpenDialog();
     window.addEventListener('nexor:expenses-changed', onRefresh);
     window.addEventListener('nexor:bank-accounts-changed', onBanksChanged);
+    window.addEventListener('nexor:expenses-new', onNew);
     return () => {
       window.removeEventListener('nexor:expenses-changed', onRefresh);
       window.removeEventListener('nexor:bank-accounts-changed', onBanksChanged);
+      window.removeEventListener('nexor:expenses-new', onNew);
     };
   }, [apiBranchId, expenseBranchId, expenseBranchName, treasuryAllBranches, t.expensesUi.caixaEmptyHint, t.expensesUi.caixaEmptyHintAll, t.expensesUi.caixaNeedsBranch, t.branchUi.headOffice, refreshBanksForExpense]);
+
+  useEffect(() => {
+    const st = location.state as { openExpenseCreate?: boolean } | null;
+    if (!st?.openExpenseCreate) return;
+    handleOpenDialog();
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter(exp => {
@@ -678,49 +691,58 @@ export default function Expenses() {
                         {format(new Date(expense.createdAt), 'dd/MM/yyyy', { locale: dfLocale })}
                       </TableCell>
                       <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreHorizontal className="w-4 h-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="bg-popover border">
-                            {expense.status === 'draft' && (
-                              <>
-                                <DropdownMenuItem onClick={() => handleOpenDialog(expense)}>
-                                  {t.common.edit}
+                        {(
+                          expense.status === 'draft'
+                          || expense.status === 'pending_approval'
+                          || expense.status === 'approved'
+                          || expense.status === 'paid'
+                        ) ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <MoreHorizontal className="w-4 h-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="bg-popover border">
+                              {expense.status === 'draft' && (
+                                <>
+                                  <DropdownMenuItem onClick={() => handleOpenDialog(expense)}>
+                                    {t.common.edit}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleSubmitForApproval(expense)}>
+                                    {t.expensesUi.sendForApproval}
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                              {expense.status === 'pending_approval' && (
+                                <>
+                                  <DropdownMenuItem onClick={() => handleApprove(expense)} className="text-green-600">
+                                    <CheckCircle className="w-4 h-4 mr-2" />
+                                    {t.expensesUi.approve}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleReject(expense)} className="text-destructive">
+                                    <XCircle className="w-4 h-4 mr-2" />
+                                    {t.expensesUi.reject}
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                              {expense.status === 'approved' && (
+                                <DropdownMenuItem onClick={() => void handlePay(expense)} className="text-green-600">
+                                  <Receipt className="w-4 h-4 mr-2" />
+                                  {t.expensesUi.markAsPaid}
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleSubmitForApproval(expense)}>
-                                  {t.expensesUi.sendForApproval}
+                              )}
+                              {expense.status === 'paid' && (
+                                <DropdownMenuItem onClick={() => void handleRepostGl(expense)}>
+                                  <Receipt className="w-4 h-4 mr-2" />
+                                  {t.expensesUi.repostToLedger}
                                 </DropdownMenuItem>
-                              </>
-                            )}
-                            {expense.status === 'pending_approval' && (
-                              <>
-                                <DropdownMenuItem onClick={() => handleApprove(expense)} className="text-green-600">
-                                  <CheckCircle className="w-4 h-4 mr-2" />
-                                  {t.expensesUi.approve}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleReject(expense)} className="text-destructive">
-                                  <XCircle className="w-4 h-4 mr-2" />
-                                  {t.expensesUi.reject}
-                                </DropdownMenuItem>
-                              </>
-                            )}
-                            {expense.status === 'approved' && (
-                              <DropdownMenuItem onClick={() => void handlePay(expense)} className="text-green-600">
-                                <Receipt className="w-4 h-4 mr-2" />
-                                {t.expensesUi.markAsPaid}
-                              </DropdownMenuItem>
-                            )}
-                            {expense.status === 'paid' && (
-                              <DropdownMenuItem onClick={() => void handleRepostGl(expense)}>
-                                <Receipt className="w-4 h-4 mr-2" />
-                                {t.expensesUi.repostToLedger}
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   );

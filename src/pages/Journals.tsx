@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
@@ -508,6 +508,8 @@ function createEmptyLine(description = ''): NewEntryLine {
 export default function Journals() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { hasPermission } = usePermissions(user?.id);
   const canBackdatePost = hasPermission('backdate_post');
@@ -714,6 +716,16 @@ export default function Journals() {
     resetNewEntry();
     setNewEntryOpen(true);
   }
+
+  useEffect(() => {
+    const st = location.state as { openJournalCreate?: boolean; journalPreset?: string } | null;
+    if (!st?.openJournalCreate) return;
+    openNewEntry();
+    if (st.journalPreset === 'credit' || st.journalPreset === 'debit') {
+      setNewEntryType('manual');
+    }
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
 
   async function openEditEntry(entry?: JournalDisplayEntry | null) {
     const target = entry || selectedEntry;

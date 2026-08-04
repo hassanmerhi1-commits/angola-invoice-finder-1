@@ -109,8 +109,8 @@ export default function Dashboard() {
   const documentFlow = useMemo(() => [
     { label: t.documents.proforma, icon: ClipboardList, path: '/proforma' },
     { label: d.documentFlow.salesInvoice, icon: FileText, path: '/invoices' },
-    { label: t.documents.receipt, icon: Receipt, path: '/invoices' },
-    { label: t.documents.payment, icon: DollarSign, path: '/payments' },
+    { label: t.documents.receipt, icon: Receipt, path: '/payments', state: { openReceipt: true } },
+    { label: t.documents.payment, icon: DollarSign, path: '/payments', state: { openPayment: true } },
     { label: d.documentFlow.statement, icon: FileCheck, path: '/extracto' },
   ], [t, d]);
 
@@ -176,7 +176,7 @@ export default function Dashboard() {
               </p>
             </CardContent>
           </Card>
-          <Card className={`cursor-pointer ${NEXOR_STAT_CARD} hover:shadow-md transition-shadow`} onClick={() => navigate('/payments')}>
+          <Card className={`cursor-pointer ${NEXOR_STAT_CARD} hover:shadow-md transition-shadow`} onClick={() => navigate('/receivables')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-slate-500 font-medium">{d.kpis.accountsReceivable}</span>
@@ -188,7 +188,7 @@ export default function Dashboard() {
               </p>
             </CardContent>
           </Card>
-          <Card className={`cursor-pointer ${NEXOR_STAT_CARD} hover:shadow-md transition-shadow`} onClick={() => navigate('/payments')}>
+          <Card className={`cursor-pointer ${NEXOR_STAT_CARD} hover:shadow-md transition-shadow`} onClick={() => navigate('/payables')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-slate-500 font-medium">{d.kpis.accountsPayable}</span>
@@ -263,7 +263,9 @@ export default function Dashboard() {
               {documentFlow.map((step, idx) => (
                 <div key={step.label} className="flex items-center gap-2 flex-1 min-w-0">
                   <button
-                    onClick={() => navigate(step.path)}
+                    onClick={() =>
+                      navigate(step.path, 'state' in step && step.state ? { state: step.state } : undefined)
+                    }
                     className="w-full group flex items-center gap-2.5 px-4 py-3 rounded-xl bg-slate-50/80 hover:bg-slate-100/90 border border-slate-200/60 hover:border-slate-300/80 transition-all duration-200"
                   >
                     <step.icon className="w-5 h-5 text-slate-500 flex-shrink-0 group-hover:text-sky-600 transition-colors" />

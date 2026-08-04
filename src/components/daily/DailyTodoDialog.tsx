@@ -112,6 +112,8 @@ export function DailyTodoDialog({ open, onOpenChange }: DailyTodoDialogProps) {
               items={items}
               onSelectDay={selectDay}
               onItemsChange={setItems}
+              onOpenBriefingTab={(tab) => setActiveTab(tab)}
+              onOpenWorkspace={() => handleClose(isToday)}
             />
           </TabsContent>
 
@@ -122,6 +124,7 @@ export function DailyTodoDialog({ open, onOpenChange }: DailyTodoDialogProps) {
               error={briefing.error}
               lowStock={briefing.lowStock}
               onRefresh={briefing.refresh}
+              onNavigateAway={() => handleClose(isToday)}
             />
           </TabsContent>
 
@@ -132,6 +135,7 @@ export function DailyTodoDialog({ open, onOpenChange }: DailyTodoDialogProps) {
               error={briefing.error}
               dueItems={briefing.receivables}
               onRefresh={briefing.refresh}
+              onNavigateAway={() => handleClose(isToday)}
             />
           </TabsContent>
 
@@ -142,6 +146,7 @@ export function DailyTodoDialog({ open, onOpenChange }: DailyTodoDialogProps) {
               error={briefing.error}
               dueItems={briefing.payables}
               onRefresh={briefing.refresh}
+              onNavigateAway={() => handleClose(isToday)}
             />
           </TabsContent>
 
@@ -152,6 +157,7 @@ export function DailyTodoDialog({ open, onOpenChange }: DailyTodoDialogProps) {
               error={briefing.error}
               unprinted={briefing.unprintedInvoices}
               onRefresh={briefing.refresh}
+              onNavigateAway={() => handleClose(isToday)}
             />
           </TabsContent>
 
@@ -162,6 +168,7 @@ export function DailyTodoDialog({ open, onOpenChange }: DailyTodoDialogProps) {
               error={briefing.error}
               priceChanges={briefing.priceChanges}
               onRefresh={briefing.refresh}
+              onNavigateAway={() => handleClose(isToday)}
             />
           </TabsContent>
         </Tabs>

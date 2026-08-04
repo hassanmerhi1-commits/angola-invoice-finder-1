@@ -231,18 +231,18 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       label: t.topNav.menus.accounting,
       items: [
         { label: t.topNav.accounting.receipt, icon: Receipt, path: '/payments', state: { openReceipt: true } },
-        { label: t.topNav.accounting.receiveMethod, icon: Wallet, path: '/payments' },
-        { label: t.topNav.accounting.creditAmount, icon: CreditCard, path: '/payments' },
+        { label: t.topNav.accounting.receiveMethod, icon: Wallet, path: '/payments', state: { openReceipt: true } },
+        { label: t.topNav.accounting.creditAmount, icon: CreditCard, path: '/payments', state: { openReceipt: true } },
         { label: 'separator' },
         { label: t.topNav.accounting.receivables, icon: ArrowDownCircle, path: '/receivables' },
         { label: t.topNav.accounting.payables, icon: ArrowUpCircle, path: '/payables' },
         { label: 'separator' },
-        { label: t.topNav.accounting.payment, icon: DollarSign, path: '/expenses' },
-        { label: t.topNav.accounting.chequePayment, icon: FileText, path: '/payments' },
+        { label: t.topNav.accounting.payment, icon: DollarSign, path: '/payments', state: { openPayment: true } },
+        { label: t.topNav.accounting.chequePayment, icon: FileText, path: '/payments', state: { openPayment: true, paymentMethod: 'cheque' } },
         { label: 'separator' },
-        { label: t.topNav.accounting.multiCredit, icon: Plus, path: '/journals' },
-        { label: t.topNav.accounting.multiDebit, icon: Plus, path: '/journals' },
-        { label: t.topNav.accounting.journalEntry, icon: BookOpen, path: '/chart-of-accounts' },
+        { label: t.topNav.accounting.multiCredit, icon: Plus, path: '/journals', state: { openJournalCreate: true, journalPreset: 'credit' } },
+        { label: t.topNav.accounting.multiDebit, icon: Plus, path: '/journals', state: { openJournalCreate: true, journalPreset: 'debit' } },
+        { label: t.topNav.accounting.journalEntry, icon: BookOpen, path: '/journals', state: { openJournalCreate: true } },
         { label: t.nav.accountingPeriods, icon: CalendarCheck, path: '/accounting-periods' },
       ],
     },
@@ -250,7 +250,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       label: t.topNav.menus.transactions,
       items: [
         { label: t.topNav.transactions.stockTransfer, icon: ArrowRightLeft, path: '/stock-transfer' },
-        { label: t.topNav.transactions.inventoryAdjustment, icon: RefreshCw, path: '/inventory' },
+        { label: t.topNav.transactions.inventoryAdjustment, icon: RefreshCw, path: '/inventory', state: { openAdjustStock: true } },
         { label: t.topNav.transactions.purchaseReturn, icon: Truck, path: '/purchase-invoices', state: { openReturns: true } },
       ],
     },
@@ -275,7 +275,11 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       label: t.topNav.menus.utilities,
       items: [
         { label: t.topNav.utilities.changePassword, icon: Shield, path: '/settings', state: { focus: 'password' } },
-        { label: t.topNav.utilities.maintenance, icon: Settings, path: '/settings' },
+        {
+          label: t.topNav.utilities.maintenance,
+          icon: Settings,
+          action: () => navigate('/settings?section=system'),
+        },
         { label: t.topNav.utilities.calculator, icon: Calculator, action: () => setCalculatorOpen(true) },
         ...(showDailyChecklist
           ? [{ label: t.topNav.utilities.dailyChecklist, icon: ListTodo, action: openDailyTodos }]
@@ -287,8 +291,19 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     {
       label: t.topNav.menus.help,
       items: [
-        { label: t.topNav.help.about, icon: Info, action: () => toast.info(`${companyName} — NEXOR ERP`) },
-        { label: t.topNav.help.help, icon: HelpCircle, path: '/settings' },
+        {
+          label: t.topNav.help.about,
+          icon: Info,
+          action: () =>
+            toast.info(`${companyName} — NEXOR ERP`, {
+              description: t.topNav.help.aboutHint,
+            }),
+        },
+        {
+          label: t.topNav.help.help,
+          icon: HelpCircle,
+          action: () => navigate('/settings?section=general', { state: { focus: 'password' } }),
+        },
       ],
     },
   ];
@@ -362,6 +377,38 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
       navigate('/pos', { state: NEXOR_POS_NEW_SALE_NAV_STATE });
       return;
     }
+    if (p === '/clients' || p.startsWith('/clients/')) {
+      window.dispatchEvent(new CustomEvent('nexor:clients-new'));
+      navigate('/clients');
+      return;
+    }
+    if (p === '/expenses' || p.startsWith('/expenses/')) {
+      window.dispatchEvent(new CustomEvent('nexor:expenses-new'));
+      navigate('/expenses', { state: { openExpenseCreate: true } });
+      return;
+    }
+    if (p === '/payments' || p.startsWith('/payments/')) {
+      navigate('/payments', { state: { openReceipt: true } });
+      return;
+    }
+    if (p === '/journals' || p.startsWith('/journals/')) {
+      navigate('/journals', { state: { openJournalCreate: true } });
+      return;
+    }
+    if (p.includes('fiscal')) {
+      navigate('/fiscal-documents', { state: { openCreditNoteCreate: true } });
+      return;
+    }
+    if (p.includes('proforma')) {
+      window.dispatchEvent(new CustomEvent('nexor:proforma-new'));
+      navigate('/proforma', { state: { openProformaCreate: true } });
+      return;
+    }
+    if (p === '/stock-transfer' || p.startsWith('/stock-transfer/')) {
+      navigate('/stock-transfer');
+      window.dispatchEvent(new CustomEvent(NEXOR_TOOLBAR.ALL));
+      return;
+    }
   }, [location.pathname, navigate]);
 
   useEffect(() => {
@@ -381,7 +428,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           navigate('/purchase-orders');
           return;
         case 'journalEntry':
-          navigate('/journals');
+          navigate('/journals', { state: { openJournalCreate: true } });
           return;
         case 'salesInvoice':
           navigate('/invoices');
@@ -396,7 +443,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           navigate('/payments', { state: { openReceipt: true } });
           return;
         case 'payment':
-          navigate('/payments');
+          navigate('/payments', { state: { openPayment: true } });
           return;
         case 'newSale':
           if (path === '/pos' || path.startsWith('/pos/')) {
@@ -495,27 +542,63 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     const p = resolveAppPathname(location.pathname);
     if (p === '/' || p === '') return [];
 
-    const base: ToolbarButtonConfig[] = [
+    const listOnly: ToolbarButtonConfig[] = [
+      { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen },
+    ];
+    const crud: ToolbarButtonConfig[] = [
       { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen },
       { actionKey: 'new', label: t.topNav.toolbar.new, icon: Plus },
       { actionKey: 'delete', label: t.topNav.toolbar.delete, icon: Trash2 },
       { actionKey: 'edit', label: t.topNav.toolbar.edit, icon: Pencil },
     ];
+    const listNew: ToolbarButtonConfig[] = [
+      { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen },
+      { actionKey: 'new', label: t.topNav.toolbar.new, icon: Plus },
+    ];
+    const listNewEdit: ToolbarButtonConfig[] = [
+      { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen },
+      { actionKey: 'new', label: t.topNav.toolbar.new, icon: Plus },
+      { actionKey: 'edit', label: t.topNav.toolbar.edit, icon: Pencil },
+    ];
 
-    // Before `includes('invoices')` — `/purchase-invoices` matches that substring and would get the wrong toolbar.
+    // Before `includes('invoices')` — `/purchase-invoices` matches that substring.
     if (p === '/purchase-invoices' || p.startsWith('/purchase-invoices/')) {
-      return base;
+      return listNewEdit;
     }
     if (p === '/purchase-orders' || p.startsWith('/purchase-orders/')) {
-      return base;
+      return listNew;
     }
     if (p === '/suppliers' || p.startsWith('/suppliers/')) {
-      return base;
+      return crud;
+    }
+    if (p === '/clients' || p.startsWith('/clients/')) {
+      return listNew;
+    }
+    if (p === '/expenses' || p.startsWith('/expenses/')) {
+      return listNew;
+    }
+    if (p === '/payments' || p.startsWith('/payments/')) {
+      return [
+        { actionKey: 'receipt', label: t.topNav.toolbar.receipt, icon: Receipt },
+        { actionKey: 'payment', label: t.topNav.toolbar.payment, icon: DollarSign },
+      ];
+    }
+    if (p === '/journals' || p.startsWith('/journals/')) {
+      return [
+        { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen },
+        { actionKey: 'journalEntry', label: t.topNav.toolbar.journalEntry, icon: BookOpen },
+      ];
+    }
+    if (p === '/caixa' || p.startsWith('/caixa/')) {
+      return listOnly;
+    }
+    if (p === '/receivables' || p.startsWith('/receivables/') || p === '/payables' || p.startsWith('/payables/')) {
+      return listOnly;
     }
 
     if (p === '/inventory' || p.startsWith('/inventory/')) {
       return [
-        ...base,
+        ...crud,
         { actionKey: 'transfer', label: t.topNav.toolbar.transfer, icon: ArrowRightLeft },
         { actionKey: 'adjustEntry', label: t.topNav.toolbar.adjustEntry, icon: PackagePlus },
         { actionKey: 'adjustExit', label: t.topNav.toolbar.adjustExit, icon: PackageMinus },
@@ -529,7 +612,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     }
     if (p === '/stock-transfer' || p.startsWith('/stock-transfer/')) {
       return [
-        ...base,
+        { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen },
         { actionKey: 'transfer', label: t.topNav.toolbar.transfer, icon: ArrowRightLeft },
       ];
     }
@@ -555,7 +638,8 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     }
     if (p.includes('fiscal') || p.includes('proforma')) {
       return [
-        ...base,
+        { actionKey: 'all', label: t.topNav.toolbar.all, icon: FolderOpen },
+        { actionKey: 'new', label: t.topNav.toolbar.new, icon: Plus },
         { actionKey: 'print', label: t.topNav.file.print, icon: Printer },
         { actionKey: 'agtSend', label: t.topNav.toolbar.agtSend, icon: Upload },
       ];
@@ -574,7 +658,8 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { actionKey: 'void', label: t.topNav.toolbar.void, icon: X },
       ];
     }
-    return base;
+    // Settings, reports, users, branches, sync, etc. — no fake CRUD toolbar.
+    return [];
   };
 
   // Grey out any toolbar action the logged-in role lacks permission for, so the
@@ -585,6 +670,12 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     if (!perm || canDo(perm)) return btn;
     return { ...btn, disabled: true };
   });
+  const showToolbarFilter =
+    toolbarPath === '/inventory' || toolbarPath.startsWith('/inventory/');
+  const showToolbarExcel =
+    showToolbarFilter
+    || toolbarPath === '/invoices'
+    || toolbarPath.startsWith('/invoices/');
 
   return (
     <header className="sticky top-0 z-50">
@@ -687,7 +778,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
                 <p className="font-semibold text-sm">{user?.name}</p>
                 <p className="text-xs text-muted-foreground">{user?.email}</p>
               </div>
-              <DropdownMenuItem className="text-xs gap-2 mt-1" onClick={() => navigate('/settings')}>
+              <DropdownMenuItem className="text-xs gap-2 mt-1" onClick={() => navigate('/settings', { state: { focus: 'password' } })}>
                 <Shield className="w-3.5 h-3.5" />
                 {t.topNav.userMenu.profile}
               </DropdownMenuItem>
@@ -761,24 +852,28 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
             </Button>
           ))}
           <div className="flex-1" />
-          <Button
-            variant="outline"
-            size="sm"
-            className={NEXOR_TOOLBAR_BTN}
-            onClick={() => dispatchToolbarEvent(NEXOR_TOOLBAR.FILTER)}
-          >
-            <Filter className="w-3.5 h-3.5" />
-            {t.topNav.toolbar.filter}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className={NEXOR_TOOLBAR_BTN}
-            onClick={() => dispatchToolbarEvent(NEXOR_TOOLBAR.EXCEL)}
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            {t.topNav.toolbar.excel}
-          </Button>
+          {showToolbarFilter && (
+            <Button
+              variant="outline"
+              size="sm"
+              className={NEXOR_TOOLBAR_BTN}
+              onClick={() => dispatchToolbarEvent(NEXOR_TOOLBAR.FILTER)}
+            >
+              <Filter className="w-3.5 h-3.5" />
+              {t.topNav.toolbar.filter}
+            </Button>
+          )}
+          {showToolbarExcel && (
+            <Button
+              variant="outline"
+              size="sm"
+              className={NEXOR_TOOLBAR_BTN}
+              onClick={() => dispatchToolbarEvent(NEXOR_TOOLBAR.EXCEL)}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              {t.topNav.toolbar.excel}
+            </Button>
+          )}
         </div>
       )}
 
