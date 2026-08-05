@@ -590,29 +590,34 @@ module.exports = function(broadcastTable) {
         isHeader
         || codeStr === '321' || codeStr === '311'
         || codeStr === '32' || codeStr === '31';
-      // Cash (45x) / bank (43x) parents fan out into every POS/sale line when we
-      // also LIKE '45%' — that sorted tens of thousands of rows before LIMIT.
-      // Prefer parent_id walk only for those high-volume trees.
+      // Cash (45x) / bank (43x): rolling up every leaf timed out (>30s) on busy DBs.
+      // Headers stay leaf-only (open a caixa/bank leaf for movements).
       const isHighVolumeTreasury = /^(43|45)/.test(codeStr);
-      const useCodePrefix = expandByCode && !isHighVolumeTreasury && codeStr.length >= 2;
+      const useCodePrefix =
+        expandByCode
+        && !isHighVolumeTreasury
+        && codeStr.length >= 2;
+      // Parent walk for non-treasury headers only (e.g. 32/31). Treasury headers: root only.
+      const expandTree =
+        !isHighVolumeTreasury
+        && (expandByCode || isHeader);
 
-      // Parent/control / treasury without a date window — keep the window tight.
+      // Parent/control without a date window — keep the window tight.
       let defaultedRange = false;
-      if ((expandByCode || isHighVolumeTreasury) && !start_date && !end_date) {
+      if ((expandTree || isHighVolumeTreasury) && !start_date && !end_date) {
         const to = new Date();
         const from = new Date(to);
-        const days = isHighVolumeTreasury ? 30 : 90;
+        const days = isHighVolumeTreasury ? 7 : 90;
         from.setUTCDate(from.getUTCDate() - days);
         start_date = from.toISOString().slice(0, 10);
         end_date = to.toISOString().slice(0, 10);
         defaultedRange = true;
       }
 
-      // Resolve matching CoA rows first (small set), then hit journal lines by uuid
-      // so Postgres can use idx_journal_lines_account — avoid OR cast(code) in the hot path.
+      // Resolve matching CoA rows first (small set), then hit journal lines by uuid.
       let treeSql;
       let treeParams;
-      if (expandByCode || isHighVolumeTreasury) {
+      if (expandTree) {
         if (useCodePrefix) {
           treeSql = `
             WITH RECURSIVE by_parent AS (
@@ -668,46 +673,50 @@ module.exports = function(broadcastTable) {
         return res.json([]);
       }
 
+      // Cap fan-out — never scan dozens of busy cash leaves in one ORDER BY.
+      const queryAccountIds = accountIds.length > 8
+        ? [String(root.id)]
+        : accountIds;
+
       const params = [];
       let paramIndex = 1;
       let accountMatchSql;
       if (db.engine === 'postgres') {
-        // UUID-only — uses idx_journal_lines_account. Legacy code-in-account_id
-        // rows are rare after normalize; skip OR text cast (kills the plan).
-        params.push(accountIds);
+        params.push(queryAccountIds);
         accountMatchSql = `jel.account_id = ANY($${paramIndex++}::uuid[])`;
       } else {
-        const idPlaceholders = accountIds.map(() => `$${paramIndex++}`);
-        params.push(...accountIds);
+        const idPlaceholders = queryAccountIds.map(() => `$${paramIndex++}`);
+        params.push(...queryAccountIds);
         accountMatchSql = `${idText('jel.account_id')} IN (${idPlaceholders.join(',')})`;
       }
 
-      // Filter/order on real entry_date (indexed) — the old COALESCE(text) expression
-      // forced a full sort of every matching cash line before LIMIT.
+      // Prefer denormalized jel.entry_date (idx_jel_account_entry_date).
+      const lineDateExpr = db.engine === 'postgres'
+        ? 'COALESCE(jel.entry_date, je.entry_date)'
+        : `COALESCE(jel.entry_date, ${entryDateExpr})`;
+      // Sargable filter on the indexed column when present (migration 070).
+      const dateCol = db.engine === 'postgres' ? 'jel.entry_date' : lineDateExpr;
+
       let dateFilter = '';
       if (db.engine === 'postgres') {
         if (start_date) {
-          dateFilter += ` AND je.entry_date >= $${paramIndex++}::date`;
+          dateFilter += ` AND ${dateCol} >= $${paramIndex++}::date`;
           params.push(String(start_date).slice(0, 10));
         }
         if (end_date) {
-          dateFilter += ` AND je.entry_date <= $${paramIndex++}::date`;
+          dateFilter += ` AND ${dateCol} <= $${paramIndex++}::date`;
           params.push(String(end_date).slice(0, 10));
         }
       } else {
         if (start_date) {
-          dateFilter += ` AND (${entryDateExpr}) >= $${paramIndex++}`;
+          dateFilter += ` AND (${lineDateExpr}) >= $${paramIndex++}`;
           params.push(String(start_date).slice(0, 10));
         }
         if (end_date) {
-          dateFilter += ` AND (${entryDateExpr}) <= $${paramIndex++}`;
+          dateFilter += ` AND (${lineDateExpr}) <= $${paramIndex++}`;
           params.push(String(end_date).slice(0, 10));
         }
       }
-
-      const branchJoin = db.engine === 'postgres'
-        ? 'LEFT JOIN branches b ON b.id::text = je.branch_id::text'
-        : 'LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(je.branch_id AS TEXT)';
 
       const limitParam = `$${paramIndex++}`;
       params.push(limit);
@@ -717,9 +726,10 @@ module.exports = function(broadcastTable) {
         : `INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}`;
 
       const orderBy = db.engine === 'postgres'
-        ? 'ORDER BY je.entry_date DESC NULLS LAST, je.created_at DESC NULLS LAST'
-        : `ORDER BY (${entryDateExpr}) DESC, je.created_at DESC`;
+        ? `ORDER BY ${dateCol} DESC NULLS LAST, je.created_at DESC NULLS LAST`
+        : `ORDER BY (${lineDateExpr}) DESC, je.created_at DESC`;
 
+      // No branches join in the hot path — attach names after LIMIT.
       const result = await db.query(`
         SELECT
           jel.id,
@@ -729,17 +739,15 @@ module.exports = function(broadcastTable) {
           jel.debit_amount,
           jel.credit_amount,
           je.entry_number,
-          ${entryDateExpr} AS entry_date,
+          ${lineDateExpr} AS entry_date,
           je.description as journal_description,
           je.reference_type,
           je.reference_id,
           je.branch_id,
-          b.name AS branch_name,
           je.is_posted,
           je.created_at as journal_created_at
         FROM journal_entry_lines jel
         ${jeJoin}
-        ${branchJoin}
         WHERE ${postedClause}
           AND ${accountMatchSql}
           ${dateFilter}
@@ -747,62 +755,45 @@ module.exports = function(broadcastTable) {
         LIMIT ${limitParam}
       `, params);
 
-      const rows = (result.rows || []).map((row) => {
+      const rawRows = result.rows || [];
+      const branchIds = [...new Set(rawRows.map((r) => String(r.branch_id || '').trim()).filter(Boolean))];
+      const branchNameById = new Map();
+      if (branchIds.length > 0) {
+        try {
+          const br = db.engine === 'postgres'
+            ? await db.query(
+              `SELECT id::text AS id, name FROM branches WHERE id::text = ANY($1::text[])`,
+              [branchIds],
+            )
+            : await db.query(
+              `SELECT CAST(id AS TEXT) AS id, name FROM branches WHERE CAST(id AS TEXT) IN (${branchIds.map((_, i) => `$${i + 1}`).join(',')})`,
+              branchIds,
+            );
+          for (const b of br.rows || []) {
+            branchNameById.set(String(b.id), b.name);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const rows = rawRows.map((row) => {
         const meta = nameByKey.get(String(row.account_id))
           || nameByKey.get(String(row.account_id || '').trim());
         return {
           ...row,
+          branch_name: branchNameById.get(String(row.branch_id || '').trim()) || null,
           account_code: meta?.code || root.code,
           account_name: meta?.name || root.name,
         };
       });
 
-      // Leaf with opening balance only: surface it as a synthetic line so drill-down
-      // is not empty while the chart still shows a non-zero balance.
-      if (rows.length === 0) {
+      // Leaf with opening balance only — never run unbounded SUM for headers / cash parents.
+      if (rows.length === 0 && !isHeader && queryAccountIds.length === 1) {
         const opening = Number(root.opening_balance) || 0;
         const stored = Number(root.current_balance) || 0;
-        const kids = await db.query(
-          `SELECT COUNT(*) AS n FROM chart_of_accounts
-           WHERE ${idText('parent_id')} = ${idText('$1')}`,
-          [String(root.id)],
-        );
-        const childCount = Number(kids.rows[0]?.n || kids.rows[0]?.count || 0);
-        // Prefer stored balance — unbounded SUM over cash history was another
-        // multi-second stall when the date window happened to be empty.
-        let current = stored || opening;
-        if (childCount === 0 && opening === 0 && stored === 0) {
-          const ownNetParams = [String(root.id)];
-          let ownNetDate = '';
-          if (db.engine === 'postgres' && start_date) {
-            ownNetParams.push(String(start_date).slice(0, 10));
-            ownNetDate += ` AND je.entry_date >= $${ownNetParams.length}::date`;
-          }
-          if (db.engine === 'postgres' && end_date) {
-            ownNetParams.push(String(end_date).slice(0, 10));
-            ownNetDate += ` AND je.entry_date <= $${ownNetParams.length}::date`;
-          }
-          const ownNet = await db.query(
-            `SELECT COALESCE(SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)), 0) AS net
-             FROM journal_entry_lines jel
-             INNER JOIN journal_entries je ON ${
-               db.engine === 'postgres'
-                 ? 'je.id = jel.journal_entry_id'
-                 : `${idText('je.id')} = ${idText('jel.journal_entry_id')}`
-             }
-             WHERE ${postedClause}
-               AND ${
-                 db.engine === 'postgres'
-                   ? 'jel.account_id = $1::uuid'
-                   : `${idText('jel.account_id')} = ${idText('$1')}`
-               }
-               ${ownNetDate}`,
-            ownNetParams,
-          );
-          current = opening + (Number(ownNet.rows[0]?.net) || 0);
-        }
-        if (childCount === 0 && (opening !== 0 || current !== 0 || stored !== 0)) {
-          const amt = opening !== 0 ? opening : (current !== 0 ? current : stored);
+        if (opening !== 0 || stored !== 0) {
+          const amt = opening !== 0 ? opening : stored;
           return res.json([{
             id: `opening-${root.id}`,
             journal_entry_id: null,
@@ -825,8 +816,11 @@ module.exports = function(broadcastTable) {
 
       res.set('X-Ledger-Limit', String(limit));
       res.set('X-Ledger-Has-More', String(rows.length >= limit));
+      if (isHighVolumeTreasury && isHeader) {
+        res.set('X-Ledger-Open-Leaf', '1');
+      }
       if (defaultedRange) {
-        res.set('X-Ledger-Default-Range', isHighVolumeTreasury ? '30d' : '90d');
+        res.set('X-Ledger-Default-Range', isHighVolumeTreasury ? '7d' : '90d');
         res.set('X-Ledger-Start', String(start_date));
         res.set('X-Ledger-End', String(end_date));
       }

@@ -344,13 +344,26 @@ async function createJournalEntry(client, params) {
     }
 
     const lineId = randomUUID();
-    await client.query(
-      `INSERT INTO journal_entry_lines 
-       (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [lineId, entryId, account.id, line.description || description,
-        line.debit || 0, line.credit || 0]
-    );
+    const lineEntryDate = entryDate || new Date().toISOString().split('T')[0];
+    try {
+      await client.query(
+        `INSERT INTO journal_entry_lines
+         (id, journal_entry_id, account_id, description, debit_amount, credit_amount, entry_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [lineId, entryId, account.id, line.description || description,
+          line.debit || 0, line.credit || 0, lineEntryDate],
+      );
+    } catch (e) {
+      // Pre-migration DBs without entry_date column.
+      if (!/entry_date|42703/i.test(String(e.message || e))) throw e;
+      await client.query(
+        `INSERT INTO journal_entry_lines
+         (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [lineId, entryId, account.id, line.description || description,
+          line.debit || 0, line.credit || 0],
+      );
+    }
 
     const balanceChange = (line.debit || 0) - (line.credit || 0);
     await client.query(
@@ -498,12 +511,23 @@ async function updateJournalEntry(client, entryId, params) {
       );
     }
 
-    await client.query(
-      `INSERT INTO journal_entry_lines
-       (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [randomUUID(), entryId, account.id, line.description || description, debit, credit],
-    );
+    const lineEntryDate = newDate || entry.entry_date || new Date().toISOString().split('T')[0];
+    try {
+      await client.query(
+        `INSERT INTO journal_entry_lines
+         (id, journal_entry_id, account_id, description, debit_amount, credit_amount, entry_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [randomUUID(), entryId, account.id, line.description || description, debit, credit, lineEntryDate],
+      );
+    } catch (e) {
+      if (!/entry_date|42703/i.test(String(e.message || e))) throw e;
+      await client.query(
+        `INSERT INTO journal_entry_lines
+         (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [randomUUID(), entryId, account.id, line.description || description, debit, credit],
+      );
+    }
 
     const balanceChange = debit - credit;
     await client.query(

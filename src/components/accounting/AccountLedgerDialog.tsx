@@ -38,11 +38,12 @@ import { NEXOR_PILL_BTN, NEXOR_PILL_BTN_PRIMARY } from '@/lib/nexorToolbarStyles
 import { NEXOR_STAT_CARD } from '@/lib/nexorToneStyles';
 import { formatDisplayDate } from '@/lib/formatDisplayDate';
 
-const LEDGER_FETCH_LIMIT = 300;
+const LEDGER_FETCH_LIMIT = 100;
 /** Fast first paint on double-click. */
 const INITIAL_LEDGER_DAYS = 7;
 /** Quietly widen to this while the user is already viewing. */
 const PREFETCH_LEDGER_DAYS = 30;
+const PREFETCH_LEDGER_LIMIT = 200;
 
 function currentMonthBounds(): { from: string; to: string } {
   const now = new Date();
@@ -148,24 +149,30 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
   const loadLedgerRows = useCallback(async (
     from: string | undefined,
     to: string | undefined,
+    limit = LEDGER_FETCH_LIMIT,
   ): Promise<{ rows: LedgerEntry[]; error?: string } | null> => {
     if (!account) return null;
-    const keys = [account.id, account.code].filter((k, i, arr) => !!k && arr.indexOf(k) === i);
-    let res: Awaited<ReturnType<typeof api.chartOfAccounts.getLedger>> | null = null;
-    for (const key of keys) {
-      res = await api.chartOfAccounts.getLedger(
-        String(key),
-        from || undefined,
-        to || undefined,
-        undefined,
-        { limit: LEDGER_FETCH_LIMIT },
-      );
-      if (!res.error && res.data !== undefined) break;
+    let res = await api.chartOfAccounts.getLedger(
+      String(account.id),
+      from || undefined,
+      to || undefined,
+      undefined,
+      { limit },
+    );
+    if (res.error && account.code) {
       const raw = String(res.error || '');
-      if (!/character varying|uuid|operator does not exist|42883/i.test(raw)) break;
+      if (/character varying|uuid|operator does not exist|42883/i.test(raw)) {
+        res = await api.chartOfAccounts.getLedger(
+          String(account.code),
+          from || undefined,
+          to || undefined,
+          undefined,
+          { limit },
+        );
+      }
     }
-    if (!res || res.error) {
-      return { rows: [], error: String(res?.error || t.ledgerUi.loadError) };
+    if (res.error) {
+      return { rows: [], error: String(res.error || t.ledgerUi.loadError) };
     }
     return { rows: (res.data || []) as LedgerEntry[] };
   }, [account, t.ledgerUi.loadError]);
@@ -211,11 +218,11 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
         if (month.from < startDate) {
           setIsExpanding(true);
           const expandId = ++reqIdRef.current;
-          const wider = await loadLedgerRows(month.from, month.to);
+          const wider = await loadLedgerRows(month.from, month.to, PREFETCH_LEDGER_LIMIT);
           if (expandId !== reqIdRef.current) return;
           if (wider && !wider.error) {
             setEntries(wider.rows);
-            setTruncated(wider.rows.length >= LEDGER_FETCH_LIMIT);
+            setTruncated(wider.rows.length >= PREFETCH_LEDGER_LIMIT);
             suppressDateFetchRef.current = true;
             setStartDate(month.from);
             setEndDate(month.to);

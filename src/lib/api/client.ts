@@ -1953,6 +1953,8 @@ export const api = {
       const qs = p.toString();
       const apiResult = await apiFetch<any[]>(
         `/chart-of-accounts/${encodeURIComponent(id)}/ledger${qs ? `?${qs}` : ''}`,
+        {},
+        { timeoutMs: 45000 },
       );
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
 

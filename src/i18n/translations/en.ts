@@ -1275,7 +1275,7 @@ export const en = {
     totalCredit: "Total credit",
     currentBalance: "Current balance",
     noMovements: "No movements recorded for this account",
-    noMovementsHint: "If the balance is not zero, open the child accounts (or expand the header) — movements are often posted on sub-accounts.",
+    noMovementsHint: "If the balance is not zero, open a child leaf account (e.g. a specific caixa 45xx) — cash/bank headers no longer roll up every POS line.",
     loadError: "Could not load account movements",
     serverUnreachable: "City server unreachable — check Tailscale and that the API is running (port 3000)",
     serverNeedsRebuild: "City backend is outdated — on the city PC run: git pull && docker compose up -d --force-recreate --build backend",

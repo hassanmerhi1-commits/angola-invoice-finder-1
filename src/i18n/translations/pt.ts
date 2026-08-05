@@ -1277,7 +1277,7 @@ export const pt: TranslationKeys = {
     totalCredit: "Total Crédito",
     currentBalance: "Saldo Actual",
     noMovements: "Nenhum movimento registado nesta conta",
-    noMovementsHint: "Se o saldo não é zero, abra as subcontas (ou expanda o cabeçalho) — os movimentos costumam estar nas contas filhas.",
+    noMovementsHint: "Se o saldo não é zero, abra uma conta folha (ex.: caixa 45xx) — cabeçalhos de caixa/banco já não agregam todas as linhas do POS.",
     loadError: "Não foi possível carregar os movimentos da conta",
     serverUnreachable: "Servidor da cidade inacessível — verifique o Tailscale e se a API está a correr (porta 3000)",
     serverNeedsRebuild: "Backend da cidade desatualizado — no PC da cidade: git pull && docker compose up -d --force-recreate --build backend",
