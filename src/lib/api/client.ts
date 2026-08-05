@@ -1055,6 +1055,7 @@ export const api = {
         reprint?: boolean;
         source?: string;
         documentNumber?: string;
+        clientRequestId?: string;
       },
     ) =>
       apiFetch<any>(`/sales/${encodeURIComponent(id)}/mark-printed`, {

@@ -29,6 +29,16 @@ async function commitSaleCreation(client, sale, body) {
       [idemKey, sale.id],
     );
   }
+  // Thermal print often happens on the POS before the outbox reaches the city —
+  // honour an already-printed flag so checklist "to print" stays empty.
+  if (body.printedAt || body.alreadyPrinted || body.printed_at) {
+    await client.query(
+      `UPDATE sales SET printed_at = COALESCE(printed_at, CURRENT_TIMESTAMP) WHERE id = $1`,
+      [sale.id],
+    );
+    sale.printed_at = sale.printed_at || new Date().toISOString();
+    sale.printedAt = sale.printedAt || sale.printed_at;
+  }
   // Outbox must not abort a completed sale transaction.
   const { runOptionalInSavepoint } = require('../lib/pgSavepoint');
   await runOptionalInSavepoint(client, 'sale_outbox', async () => {
@@ -246,12 +256,34 @@ module.exports = function(broadcastTable) {
 
   router.post('/:id/mark-printed', requireAuth, async (req, res) => {
     try {
-      const { format, reprint, source, documentNumber } = req.body || {};
-      const result = await db.query(
-        `UPDATE sales SET printed_at = CURRENT_TIMESTAMP
+      const { format, reprint, source, documentNumber, clientRequestId } = req.body || {};
+      const idOrKey = String(req.params.id || '').trim();
+      const invoiceNo = String(documentNumber || '').trim();
+      const crid = String(clientRequestId || '').trim();
+
+      // POS often prints before/while offline sync finishes — stub id is the
+      // client_request_id, so resolve by id, invoice number, or client_request_id.
+      let result = await db.query(
+        `UPDATE sales SET printed_at = COALESCE(printed_at, CURRENT_TIMESTAMP)
          WHERE id = $1 RETURNING id, invoice_number, printed_at`,
-        [req.params.id],
+        [idOrKey],
       );
+      if (!result.rows[0] && invoiceNo) {
+        result = await db.query(
+          `UPDATE sales SET printed_at = COALESCE(printed_at, CURRENT_TIMESTAMP)
+           WHERE UPPER(TRIM(invoice_number)) = UPPER(TRIM($1))
+           RETURNING id, invoice_number, printed_at`,
+          [invoiceNo],
+        );
+      }
+      if (!result.rows[0] && (crid || idOrKey)) {
+        result = await db.query(
+          `UPDATE sales SET printed_at = COALESCE(printed_at, CURRENT_TIMESTAMP)
+           WHERE client_request_id = $1
+           RETURNING id, invoice_number, printed_at`,
+          [crid || idOrKey],
+        );
+      }
       if (!result.rows[0]) {
         return res.status(404).json({ error: 'Sale not found' });
       }

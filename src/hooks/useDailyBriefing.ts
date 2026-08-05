@@ -121,6 +121,10 @@ export function useDailyBriefing(branchId?: string, enabled = true) {
     const warnings: string[] = [];
 
     try {
+      // POS may have printed offline stubs — push those marks before listing "to print".
+      const { flushPendingPrintMarks } = await import('@/lib/sync/pendingPrintMarks');
+      await flushPendingPrintMarks();
+
       let receivableRows: any[] = [];
       let payableRows: any[] = [];
 

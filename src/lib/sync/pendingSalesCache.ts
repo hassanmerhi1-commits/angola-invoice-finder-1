@@ -95,6 +95,37 @@ export function clearPendingSaleMatches(row: PendingSaleRow): void {
   }
 }
 
+/** Mark a pending offline stub as already thermally printed (city mark comes later). */
+export function stampPendingSalePrinted(
+  id?: string | null,
+  clientRequestId?: string | null,
+  documentNumber?: string | null,
+): void {
+  const tokens = [id, clientRequestId, documentNumber]
+    .map((v) => String(v || '').trim())
+    .filter(Boolean);
+  if (tokens.length === 0) return;
+  const tokenSet = new Set(tokens.map((t) => t.toUpperCase()));
+  const rows = readAll();
+  let changed = false;
+  const next = rows.map((row) => {
+    const candidates = [
+      rowString(row, 'id'),
+      rowString(row, 'clientRequestId', 'client_request_id'),
+      normalizedInvoice(row),
+    ].filter(Boolean);
+    if (!candidates.some((c) => tokenSet.has(c.toUpperCase()))) return row;
+    changed = true;
+    return {
+      ...row,
+      alreadyPrinted: true,
+      printedAt: row.printedAt || row.printed_at || new Date().toISOString(),
+      printed_at: row.printed_at || row.printedAt || new Date().toISOString(),
+    };
+  });
+  if (changed) writeAll(next);
+}
+
 export function prunePendingSalesCacheForServerRows(serverRows: PendingSaleRow[]): void {
   for (const row of serverRows) {
     clearPendingSaleMatches(row);

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -39,6 +39,10 @@ import { NEXOR_STAT_CARD } from '@/lib/nexorToneStyles';
 import { formatDisplayDate } from '@/lib/formatDisplayDate';
 
 const LEDGER_FETCH_LIMIT = 300;
+/** Fast first paint on double-click. */
+const INITIAL_LEDGER_DAYS = 7;
+/** Quietly widen to this while the user is already viewing. */
+const PREFETCH_LEDGER_DAYS = 30;
 
 function currentMonthBounds(): { from: string; to: string } {
   const now = new Date();
@@ -48,7 +52,6 @@ function currentMonthBounds(): { from: string; to: string } {
   return { from: `${y}-${m}-01`, to: `${y}-${m}-${lastDay}` };
 }
 
-/** Default open window — full history on parent accounts was multi-second on Tailscale. */
 function lastDaysBounds(days: number): { from: string; to: string } {
   const to = new Date();
   const from = new Date(to);
@@ -93,11 +96,39 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isExpanding, setIsExpanding] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
-  const [startDate, setStartDate] = useState(() => lastDaysBounds(90).from);
-  const [endDate, setEndDate] = useState(() => lastDaysBounds(90).to);
+  const [startDate, setStartDate] = useState(() => lastDaysBounds(INITIAL_LEDGER_DAYS).from);
+  const [endDate, setEndDate] = useState(() => lastDaysBounds(INITIAL_LEDGER_DAYS).to);
   const [truncated, setTruncated] = useState(false);
+  const [ledgerAccountId, setLedgerAccountId] = useState<string | null>(null);
+
+  const reqIdRef = useRef(0);
+  /** When true, skip the next date-effect fetch (used after silent month prefetch). */
+  const suppressDateFetchRef = useRef(false);
+  /** Auto week→month widen; cancelled if the user picks dates. */
+  const autoExpandRef = useRef(true);
+
+  // Reset range in the same render as account change so we don't fire a stale
+  // fetch with the previous account's dates (that doubled wait on cash accounts).
+  if (open && account?.id && account.id !== ledgerAccountId) {
+    setLedgerAccountId(account.id);
+    const bounds = lastDaysBounds(INITIAL_LEDGER_DAYS);
+    setStartDate(bounds.from);
+    setEndDate(bounds.to);
+    setSearchTerm('');
+    setTypeFilter('all');
+    setEntries([]);
+    setIsExpanding(false);
+    autoExpandRef.current = true;
+    suppressDateFetchRef.current = false;
+  }
+  if (!open && ledgerAccountId) {
+    setLedgerAccountId(null);
+    autoExpandRef.current = false;
+    reqIdRef.current += 1;
+  }
 
   const refTypeLabels: Record<string, string> = useMemo(() => ({
     sale: t.ledgerUi.refSale,
@@ -114,66 +145,111 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     manual: t.ledgerUi.refManual,
   }), [t]);
 
+  const loadLedgerRows = useCallback(async (
+    from: string | undefined,
+    to: string | undefined,
+  ): Promise<{ rows: LedgerEntry[]; error?: string } | null> => {
+    if (!account) return null;
+    const keys = [account.id, account.code].filter((k, i, arr) => !!k && arr.indexOf(k) === i);
+    let res: Awaited<ReturnType<typeof api.chartOfAccounts.getLedger>> | null = null;
+    for (const key of keys) {
+      res = await api.chartOfAccounts.getLedger(
+        String(key),
+        from || undefined,
+        to || undefined,
+        undefined,
+        { limit: LEDGER_FETCH_LIMIT },
+      );
+      if (!res.error && res.data !== undefined) break;
+      const raw = String(res.error || '');
+      if (!/character varying|uuid|operator does not exist|42883/i.test(raw)) break;
+    }
+    if (!res || res.error) {
+      return { rows: [], error: String(res?.error || t.ledgerUi.loadError) };
+    }
+    return { rows: (res.data || []) as LedgerEntry[] };
+  }, [account, t.ledgerUi.loadError]);
+
+  const applyLedgerError = useCallback((raw: string) => {
+    const friendly = /ETIMEDOUT|ECONNREFUSED|4546|db:query|unreachable|failed to fetch|network|timeout|socket hang up|ECONNRESET|EPIPE/i.test(raw)
+      ? t.ledgerUi.serverUnreachable
+      : /character varying|uuid|operator does not exist|42883|could not determine data type/i.test(raw)
+        ? t.ledgerUi.serverNeedsRebuild
+        : raw || t.ledgerUi.loadError;
+    toast.error(friendly);
+  }, [t.ledgerUi.loadError, t.ledgerUi.serverUnreachable, t.ledgerUi.serverNeedsRebuild]);
+
   const fetchLedger = useCallback(async () => {
     if (!account) return;
+    const reqId = ++reqIdRef.current;
     setIsLoading(true);
+    setIsExpanding(false);
     try {
-      // Prefer UUID id (index-friendly). Fall back to code only on legacy city errors.
-      const keys = [account.id, account.code].filter((k, i, arr) => !!k && arr.indexOf(k) === i);
-      let res: Awaited<ReturnType<typeof api.chartOfAccounts.getLedger>> | null = null;
-      for (const key of keys) {
-        res = await api.chartOfAccounts.getLedger(
-          String(key),
-          startDate || undefined,
-          endDate || undefined,
-          undefined,
-          { limit: LEDGER_FETCH_LIMIT },
-        );
-        if (!res.error && res.data !== undefined) break;
-        const raw = String(res.error || '');
-        // Try next key when city still has the old OR-typed predicate.
-        if (!/character varying|uuid|operator does not exist|42883/i.test(raw)) break;
-      }
-      if (!res || res.error) {
-        console.error('Failed to fetch ledger:', res?.error);
-        const raw = String(res?.error || '');
-        const friendly = /ETIMEDOUT|ECONNREFUSED|4546|db:query|unreachable|failed to fetch|network|timeout|socket hang up|ECONNRESET|EPIPE/i.test(raw)
-          ? t.ledgerUi.serverUnreachable
-          : /character varying|uuid|operator does not exist|42883|could not determine data type/i.test(raw)
-            ? t.ledgerUi.serverNeedsRebuild
-            : raw || t.ledgerUi.loadError;
-        toast.error(friendly);
+      const result = await loadLedgerRows(startDate || undefined, endDate || undefined);
+      if (reqId !== reqIdRef.current) return;
+      if (!result) return;
+      if (result.error) {
+        console.error('Failed to fetch ledger:', result.error);
+        applyLedgerError(result.error);
         setEntries([]);
         setTruncated(false);
+        setIsLoading(false);
         return;
       }
-      const rows = res.data || [];
-      setEntries(rows);
-      setTruncated(rows.length >= LEDGER_FETCH_LIMIT);
+      setEntries(result.rows);
+      setTruncated(result.rows.length >= LEDGER_FETCH_LIMIT);
+      setIsLoading(false);
+
+      // After the fast week paints, quietly widen to ~30 days while viewing.
+      if (
+        autoExpandRef.current
+        && startDate
+        && endDate
+      ) {
+        autoExpandRef.current = false;
+        const month = lastDaysBounds(PREFETCH_LEDGER_DAYS);
+        if (month.from < startDate) {
+          setIsExpanding(true);
+          const expandId = ++reqIdRef.current;
+          const wider = await loadLedgerRows(month.from, month.to);
+          if (expandId !== reqIdRef.current) return;
+          if (wider && !wider.error) {
+            setEntries(wider.rows);
+            setTruncated(wider.rows.length >= LEDGER_FETCH_LIMIT);
+            suppressDateFetchRef.current = true;
+            setStartDate(month.from);
+            setEndDate(month.to);
+          }
+          if (expandId === reqIdRef.current) setIsExpanding(false);
+        }
+      }
     } catch (e) {
+      if (reqId !== reqIdRef.current) return;
       console.error('Failed to fetch ledger:', e);
       toast.error(e instanceof Error ? e.message : t.ledgerUi.loadError);
       setEntries([]);
       setTruncated(false);
-    } finally {
       setIsLoading(false);
     }
-  }, [account, startDate, endDate, t.ledgerUi.loadError, t.ledgerUi.serverUnreachable, t.ledgerUi.serverNeedsRebuild]);
+  }, [account, startDate, endDate, loadLedgerRows, applyLedgerError, t.ledgerUi.loadError]);
 
   useEffect(() => {
     if (!open || !account) return;
-    setSearchTerm('');
-    setTypeFilter('all');
-    // Reset to a fast recent window each open (user can click All dates).
-    const bounds = lastDaysBounds(90);
-    setStartDate(bounds.from);
-    setEndDate(bounds.to);
-  }, [open, account?.id]);
-
-  useEffect(() => {
-    if (!open || !account) return;
+    if (suppressDateFetchRef.current) {
+      suppressDateFetchRef.current = false;
+      return;
+    }
     void fetchLedger();
   }, [open, account?.id, startDate, endDate, fetchLedger]);
+
+  const lockRangeAndSet = useCallback((from: string, to: string) => {
+    autoExpandRef.current = false;
+    setIsExpanding(false);
+    reqIdRef.current += 1;
+    setStartDate(from);
+    setEndDate(to);
+  }, []);
+
   const filtered = useMemo(() => entries.filter((e) => {
     if (typeFilter !== 'all' && e.reference_type !== typeFilter) return false;
     if (!searchTerm) return true;
@@ -459,16 +535,27 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
               ))}
             </SelectContent>
           </Select>
-          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-9 text-sm w-40 rounded-lg border-slate-200/80 bg-white" title={t.ledgerUi.startDate} />
-          <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-9 text-sm w-40 rounded-lg border-slate-200/80 bg-white" title={t.ledgerUi.endDate} />
+          <Input
+            type="date"
+            value={startDate}
+            onChange={(e) => lockRangeAndSet(e.target.value, endDate)}
+            className="h-9 text-sm w-40 rounded-lg border-slate-200/80 bg-white"
+            title={t.ledgerUi.startDate}
+          />
+          <Input
+            type="date"
+            value={endDate}
+            onChange={(e) => lockRangeAndSet(startDate, e.target.value)}
+            className="h-9 text-sm w-40 rounded-lg border-slate-200/80 bg-white"
+            title={t.ledgerUi.endDate}
+          />
           <Button
             variant="outline"
             size="sm"
             className={NEXOR_PILL_BTN}
             onClick={() => {
               const bounds = currentMonthBounds();
-              setStartDate(bounds.from);
-              setEndDate(bounds.to);
+              lockRangeAndSet(bounds.from, bounds.to);
             }}
           >
             {t.ledgerUi.thisMonth}
@@ -477,10 +564,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
             variant="outline"
             size="sm"
             className={NEXOR_PILL_BTN}
-            onClick={() => {
-              setStartDate('');
-              setEndDate('');
-            }}
+            onClick={() => lockRangeAndSet('', '')}
           >
             {t.ledgerUi.allDates}
           </Button>
@@ -491,7 +575,13 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
             {t.ledgerUi.showingLatest.replace('{limit}', String(LEDGER_FETCH_LIMIT))}
           </div>
         )}
-        {!truncated && startDate && endDate && (
+        {isExpanding && (
+          <div className="shrink-0 rounded-lg border border-sky-200/80 bg-sky-50/90 px-3 py-2 text-xs text-sky-900 flex items-center gap-2">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin shrink-0" />
+            {t.ledgerUi.expandingRangeHint}
+          </div>
+        )}
+        {!truncated && !isExpanding && startDate && endDate && (
           <div className="shrink-0 rounded-lg border border-slate-200/80 bg-slate-50/90 px-3 py-2 text-xs text-slate-600">
             {t.ledgerUi.defaultRangeHint}
           </div>

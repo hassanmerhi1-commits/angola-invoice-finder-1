@@ -73,6 +73,7 @@ const MIGRATION_FILES = [
   '066_bank_transactions.sql',
   '067_so_ship_and_location.sql',
   '068_bank_recon_cleared.sql',
+  '069_coa_ledger_indexes.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */

@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  CheckCheck,
   ExternalLink,
   Loader2,
   Package,
@@ -7,10 +8,13 @@ import {
   RefreshCw,
   Tag,
 } from 'lucide-react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useTranslation } from '@/i18n';
+import { api } from '@/lib/api/client';
 import type {
   DueBriefingItem,
   LowStockBriefingItem,
@@ -59,6 +63,7 @@ export function DailyTodoBriefingList({
   const d = t.dailyTodosUi;
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const navigate = useNavigate();
+  const [markingPrinted, setMarkingPrinted] = useState(false);
 
   const openTarget = () => {
     if (kind === 'lowStock') navigate('/inventory');
@@ -111,20 +116,73 @@ export function DailyTodoBriefingList({
           ? priceChanges.length
           : dueItems.length;
 
+  const markAllPrinted = async () => {
+    if (unprinted.length === 0 || markingPrinted) return;
+    setMarkingPrinted(true);
+    try {
+      let ok = 0;
+      // Small batches so Tailscale does not time out on large backlogs.
+      const batchSize = 8;
+      for (let i = 0; i < unprinted.length; i += batchSize) {
+        const chunk = unprinted.slice(i, i + batchSize);
+        const results = await Promise.all(
+          chunk.map((item) =>
+            api.sales.markPrinted(item.id, {
+              format: 'thermal',
+              reprint: false,
+              source: 'checklist',
+              documentNumber: item.documentNumber,
+            }),
+          ),
+        );
+        ok += results.filter((r) => !r.error).length;
+      }
+      if (ok > 0) {
+        toast.success(d.briefingMarkAllPrintedDone.replace('{count}', String(ok)));
+        onRefresh();
+      } else {
+        toast.error(d.briefingMarkAllPrintedError);
+      }
+    } catch {
+      toast.error(d.briefingMarkAllPrintedError);
+    } finally {
+      setMarkingPrinted(false);
+    }
+  };
+
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1 text-xs px-2"
-          onClick={() => void onRefresh()}
-          disabled={loading}
-        >
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          {d.briefingRefresh}
-        </Button>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 text-xs px-2"
+            onClick={() => void onRefresh()}
+            disabled={loading || markingPrinted}
+          >
+            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            {d.briefingRefresh}
+          </Button>
+          {kind === 'toPrint' && unprinted.length > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 text-xs px-2"
+              onClick={() => void markAllPrinted()}
+              disabled={loading || markingPrinted}
+            >
+              {markingPrinted ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <CheckCheck className="h-3.5 w-3.5" />
+              )}
+              {d.briefingMarkAllPrinted}
+            </Button>
+          ) : null}
+        </div>
         <Button type="button" variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={openTarget}>
           <ExternalLink className="h-3.5 w-3.5" />
           {openButtonLabel}

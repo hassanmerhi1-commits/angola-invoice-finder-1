@@ -584,54 +584,73 @@ module.exports = function(broadcastTable) {
       // Control accounts 321/311: always expand by PGC code prefix so ledger
       // shows leaf activity under the parent even when is_header is false.
       const codeStr = String(root.code || '');
+      const isHeader =
+        root.is_header === true || root.is_header === 1 || root.is_header === '1';
       const expandByCode =
-        root.is_header === true || root.is_header === 1 || root.is_header === '1'
+        isHeader
         || codeStr === '321' || codeStr === '311'
         || codeStr === '32' || codeStr === '31';
+      // Cash (45x) / bank (43x) parents fan out into every POS/sale line when we
+      // also LIKE '45%' — that sorted tens of thousands of rows before LIMIT.
+      // Prefer parent_id walk only for those high-volume trees.
+      const isHighVolumeTreasury = /^(43|45)/.test(codeStr);
+      const useCodePrefix = expandByCode && !isHighVolumeTreasury && codeStr.length >= 2;
 
-      // Parent/control accounts without a date window scan huge trees on Tailscale —
-      // default last 90 days (client can clear dates for full history).
+      // Parent/control / treasury without a date window — keep the window tight.
       let defaultedRange = false;
-      if (expandByCode && !start_date && !end_date) {
+      if ((expandByCode || isHighVolumeTreasury) && !start_date && !end_date) {
         const to = new Date();
         const from = new Date(to);
-        from.setUTCDate(from.getUTCDate() - 90);
+        const days = isHighVolumeTreasury ? 30 : 90;
+        from.setUTCDate(from.getUTCDate() - days);
         start_date = from.toISOString().slice(0, 10);
         end_date = to.toISOString().slice(0, 10);
         defaultedRange = true;
       }
 
       // Resolve matching CoA rows first (small set), then hit journal lines by uuid
-      // so Postgres can use idx_journal_lines_account — the old JOIN … OR cast(code)
-      // + DISTINCT scanned the whole journal for every double-click.
+      // so Postgres can use idx_journal_lines_account — avoid OR cast(code) in the hot path.
       let treeSql;
       let treeParams;
-      if (expandByCode) {
-        treeSql = `
-          WITH RECURSIVE by_parent AS (
-            SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}
-            UNION
-            SELECT c.id, c.code, c.name
-            FROM chart_of_accounts c
-            INNER JOIN by_parent t ON ${idText('c.parent_id')} = ${idText('t.id')}
-          ),
-          by_code AS (
-            SELECT id, code, name
-            FROM chart_of_accounts
-            WHERE ${activeClause}
-              AND CAST($2 AS TEXT) <> ''
-              AND (
-                ${idText('code')} = ${idText('$2')}
-                OR (
-                  length(${idText('code')}) > length(CAST($2 AS TEXT))
-                  AND ${idText('code')} LIKE CAST($2 AS TEXT) || '%'
+      if (expandByCode || isHighVolumeTreasury) {
+        if (useCodePrefix) {
+          treeSql = `
+            WITH RECURSIVE by_parent AS (
+              SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}
+              UNION
+              SELECT c.id, c.code, c.name
+              FROM chart_of_accounts c
+              INNER JOIN by_parent t ON ${idText('c.parent_id')} = ${idText('t.id')}
+            ),
+            by_code AS (
+              SELECT id, code, name
+              FROM chart_of_accounts
+              WHERE ${activeClause}
+                AND CAST($2 AS TEXT) <> ''
+                AND (
+                  ${idText('code')} = ${idText('$2')}
+                  OR (
+                    length(${idText('code')}) > length(CAST($2 AS TEXT))
+                    AND ${idText('code')} LIKE CAST($2 AS TEXT) || '%'
+                  )
                 )
-              )
-          )
-          SELECT id, code, name FROM by_parent
-          UNION
-          SELECT id, code, name FROM by_code`;
-        treeParams = [String(root.id), String(root.code || '')];
+            )
+            SELECT id, code, name FROM by_parent
+            UNION
+            SELECT id, code, name FROM by_code`;
+          treeParams = [String(root.id), String(root.code || '')];
+        } else {
+          treeSql = `
+            WITH RECURSIVE by_parent AS (
+              SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}
+              UNION
+              SELECT c.id, c.code, c.name
+              FROM chart_of_accounts c
+              INNER JOIN by_parent t ON ${idText('c.parent_id')} = ${idText('t.id')}
+            )
+            SELECT id, code, name FROM by_parent`;
+          treeParams = [String(root.id)];
+        }
       } else {
         treeSql = `SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}`;
         treeParams = [String(root.id)];
@@ -639,7 +658,6 @@ module.exports = function(broadcastTable) {
       const treeRes = await db.query(treeSql, treeParams);
       const treeRows = treeRes.rows || [];
       const accountIds = [...new Set(treeRows.map((r) => String(r.id)).filter(Boolean))];
-      const accountCodes = [...new Set(treeRows.map((r) => String(r.code || '').trim()).filter(Boolean))];
       const nameByKey = new Map();
       for (const r of treeRows) {
         nameByKey.set(String(r.id), r);
@@ -654,35 +672,37 @@ module.exports = function(broadcastTable) {
       let paramIndex = 1;
       let accountMatchSql;
       if (db.engine === 'postgres') {
+        // UUID-only — uses idx_journal_lines_account. Legacy code-in-account_id
+        // rows are rare after normalize; skip OR text cast (kills the plan).
         params.push(accountIds);
-        const idsParam = `$${paramIndex++}::uuid[]`;
-        params.push(accountCodes.length ? accountCodes : ['__none__']);
-        const codesParam = `$${paramIndex++}::text[]`;
-        // Prefer uuid equality (index); keep code text match for legacy lines.
-        accountMatchSql = `(
-          jel.account_id = ANY(${idsParam})
-          OR ${idText('jel.account_id')} = ANY(${codesParam})
-        )`;
+        accountMatchSql = `jel.account_id = ANY($${paramIndex++}::uuid[])`;
       } else {
         const idPlaceholders = accountIds.map(() => `$${paramIndex++}`);
         params.push(...accountIds);
-        const codes = accountCodes.length ? accountCodes : ['__none__'];
-        const codePlaceholders = codes.map(() => `$${paramIndex++}`);
-        params.push(...codes);
-        accountMatchSql = `(
-          ${idText('jel.account_id')} IN (${idPlaceholders.join(',')})
-          OR ${idText('jel.account_id')} IN (${codePlaceholders.join(',')})
-        )`;
+        accountMatchSql = `${idText('jel.account_id')} IN (${idPlaceholders.join(',')})`;
       }
 
+      // Filter/order on real entry_date (indexed) — the old COALESCE(text) expression
+      // forced a full sort of every matching cash line before LIMIT.
       let dateFilter = '';
-      if (start_date) {
-        dateFilter += ` AND (${entryDateExpr}) >= $${paramIndex++}`;
-        params.push(String(start_date).slice(0, 10));
-      }
-      if (end_date) {
-        dateFilter += ` AND (${entryDateExpr}) <= $${paramIndex++}`;
-        params.push(String(end_date).slice(0, 10));
+      if (db.engine === 'postgres') {
+        if (start_date) {
+          dateFilter += ` AND je.entry_date >= $${paramIndex++}::date`;
+          params.push(String(start_date).slice(0, 10));
+        }
+        if (end_date) {
+          dateFilter += ` AND je.entry_date <= $${paramIndex++}::date`;
+          params.push(String(end_date).slice(0, 10));
+        }
+      } else {
+        if (start_date) {
+          dateFilter += ` AND (${entryDateExpr}) >= $${paramIndex++}`;
+          params.push(String(start_date).slice(0, 10));
+        }
+        if (end_date) {
+          dateFilter += ` AND (${entryDateExpr}) <= $${paramIndex++}`;
+          params.push(String(end_date).slice(0, 10));
+        }
       }
 
       const branchJoin = db.engine === 'postgres'
@@ -695,6 +715,10 @@ module.exports = function(broadcastTable) {
       const jeJoin = db.engine === 'postgres'
         ? 'INNER JOIN journal_entries je ON je.id = jel.journal_entry_id'
         : `INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}`;
+
+      const orderBy = db.engine === 'postgres'
+        ? 'ORDER BY je.entry_date DESC NULLS LAST, je.created_at DESC NULLS LAST'
+        : `ORDER BY (${entryDateExpr}) DESC, je.created_at DESC`;
 
       const result = await db.query(`
         SELECT
@@ -719,7 +743,7 @@ module.exports = function(broadcastTable) {
         WHERE ${postedClause}
           AND ${accountMatchSql}
           ${dateFilter}
-        ORDER BY (${entryDateExpr}) DESC, je.created_at DESC
+        ${orderBy}
         LIMIT ${limitParam}
       `, params);
 
@@ -737,30 +761,48 @@ module.exports = function(broadcastTable) {
       // is not empty while the chart still shows a non-zero balance.
       if (rows.length === 0) {
         const opening = Number(root.opening_balance) || 0;
+        const stored = Number(root.current_balance) || 0;
         const kids = await db.query(
           `SELECT COUNT(*) AS n FROM chart_of_accounts
-           WHERE ${idText('parent_id')} = ${idText('$1')}
-              OR (
-                ${activeClause}
-                AND CAST($2 AS TEXT) <> ''
-                AND length(${idText('code')}) > length(CAST($2 AS TEXT))
-                AND ${idText('code')} LIKE CAST($2 AS TEXT) || '%'
-              )`,
-          [String(root.id), String(root.code || '')],
+           WHERE ${idText('parent_id')} = ${idText('$1')}`,
+          [String(root.id)],
         );
         const childCount = Number(kids.rows[0]?.n || kids.rows[0]?.count || 0);
-        const ownNet = await db.query(
-          `SELECT COALESCE(SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)), 0) AS net
-           FROM journal_entry_lines jel
-           INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}
-           WHERE ${postedClause}
-             AND (${idText('jel.account_id')} = ${idText('$1')} OR ${idText('jel.account_id')} = ${idText('$2')})`,
-          [String(root.id), String(root.code || '')],
-        );
-        const net = Number(ownNet.rows[0]?.net) || 0;
-        const current = opening + net;
-        if (childCount === 0 && (opening !== 0 || current !== 0 || Number(root.current_balance) !== 0)) {
-          const amt = opening !== 0 ? opening : (current !== 0 ? current : Number(root.current_balance) || 0);
+        // Prefer stored balance — unbounded SUM over cash history was another
+        // multi-second stall when the date window happened to be empty.
+        let current = stored || opening;
+        if (childCount === 0 && opening === 0 && stored === 0) {
+          const ownNetParams = [String(root.id)];
+          let ownNetDate = '';
+          if (db.engine === 'postgres' && start_date) {
+            ownNetParams.push(String(start_date).slice(0, 10));
+            ownNetDate += ` AND je.entry_date >= $${ownNetParams.length}::date`;
+          }
+          if (db.engine === 'postgres' && end_date) {
+            ownNetParams.push(String(end_date).slice(0, 10));
+            ownNetDate += ` AND je.entry_date <= $${ownNetParams.length}::date`;
+          }
+          const ownNet = await db.query(
+            `SELECT COALESCE(SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)), 0) AS net
+             FROM journal_entry_lines jel
+             INNER JOIN journal_entries je ON ${
+               db.engine === 'postgres'
+                 ? 'je.id = jel.journal_entry_id'
+                 : `${idText('je.id')} = ${idText('jel.journal_entry_id')}`
+             }
+             WHERE ${postedClause}
+               AND ${
+                 db.engine === 'postgres'
+                   ? 'jel.account_id = $1::uuid'
+                   : `${idText('jel.account_id')} = ${idText('$1')}`
+               }
+               ${ownNetDate}`,
+            ownNetParams,
+          );
+          current = opening + (Number(ownNet.rows[0]?.net) || 0);
+        }
+        if (childCount === 0 && (opening !== 0 || current !== 0 || stored !== 0)) {
+          const amt = opening !== 0 ? opening : (current !== 0 ? current : stored);
           return res.json([{
             id: `opening-${root.id}`,
             journal_entry_id: null,
@@ -784,7 +826,7 @@ module.exports = function(broadcastTable) {
       res.set('X-Ledger-Limit', String(limit));
       res.set('X-Ledger-Has-More', String(rows.length >= limit));
       if (defaultedRange) {
-        res.set('X-Ledger-Default-Range', '90d');
+        res.set('X-Ledger-Default-Range', isHighVolumeTreasury ? '30d' : '90d');
         res.set('X-Ledger-Start', String(start_date));
         res.set('X-Ledger-End', String(end_date));
       }

@@ -1,5 +1,10 @@
 import { api } from '@/lib/api/client';
 import type { DocumentType, ERPDocument } from '@/types/documents';
+import {
+  enqueuePendingPrintMark,
+  flushPendingPrintMarks,
+  removePendingPrintMark,
+} from '@/lib/sync/pendingPrintMarks';
 
 export type PrintFormat = 'thermal' | 'a4' | 'html';
 export type PrintSource =
@@ -41,21 +46,78 @@ const DOC_LABEL_PT: Record<DocumentType, string> = {
 
 /** Record a sales/POS invoice print in audit_log (and update printed_at). */
 export async function recordSalePrint(
-  sale: { id: string; invoiceNumber?: string | null },
+  sale: {
+    id: string;
+    invoiceNumber?: string | null;
+    clientRequestId?: string | null;
+    client_request_id?: string | null;
+    pendingSync?: boolean | null;
+  },
   opts: RecordPrintOptions & { format: PrintFormat },
 ): Promise<void> {
   if (!sale?.id) return;
-  try {
-    await api.sales.markPrinted(sale.id, {
+  const clientRequestId = String(
+    sale.clientRequestId || sale.client_request_id || '',
+  ).trim() || undefined;
+  const documentNumber = sale.invoiceNumber ? String(sale.invoiceNumber) : undefined;
+  const meta = {
+    format: opts.format,
+    reprint: opts.reprint ?? false,
+    source: opts.source,
+    documentNumber,
+    clientRequestId,
+  };
+
+  // Offline stub: city does not have the row yet — queue and stamp local payload.
+  if (sale.pendingSync) {
+    enqueuePendingPrintMark({
+      id: sale.id,
+      documentNumber,
+      clientRequestId: clientRequestId || sale.id,
       format: opts.format,
-      reprint: opts.reprint ?? false,
       source: opts.source,
-      documentNumber: sale.invoiceNumber ?? undefined,
+    });
+    try {
+      const { stampPendingSalePrinted } = await import('@/lib/sync/pendingSalesCache');
+      stampPendingSalePrinted(sale.id, clientRequestId, documentNumber);
+    } catch {
+      /* optional helper */
+    }
+    void flushPendingPrintMarks();
+    return;
+  }
+
+  try {
+    const res = await api.sales.markPrinted(sale.id, meta);
+    if (res.error) {
+      enqueuePendingPrintMark({
+        id: sale.id,
+        documentNumber,
+        clientRequestId: clientRequestId || sale.id,
+        format: opts.format,
+        source: opts.source,
+      });
+      void flushPendingPrintMarks();
+      return;
+    }
+    removePendingPrintMark({
+      id: sale.id,
+      documentNumber,
+      clientRequestId,
     });
   } catch (e) {
     console.warn('[recordSalePrint]', e);
+    enqueuePendingPrintMark({
+      id: sale.id,
+      documentNumber,
+      clientRequestId: clientRequestId || sale.id,
+      format: opts.format,
+      source: opts.source,
+    });
   }
 }
+
+export { flushPendingPrintMarks };
 
 /** Record any ERP document print in audit_log. */
 export async function recordDocumentPrint(

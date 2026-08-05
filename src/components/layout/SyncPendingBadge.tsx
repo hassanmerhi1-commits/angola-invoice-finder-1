@@ -103,6 +103,9 @@ export function SyncPendingBadge() {
       } else {
         toast.message(ui.syncNothing);
       }
+      if (flushed > 0) {
+        void import('@/lib/sync/pendingPrintMarks').then((m) => m.flushPendingPrintMarks());
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : ui.syncStillOffline);
     } finally {
