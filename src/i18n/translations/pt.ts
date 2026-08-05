@@ -1315,8 +1315,8 @@ export const pt: TranslationKeys = {
     allDates: "Todas as datas",
     thisMonth: "Este mês",
     showingLatest: "A mostrar os últimos {limit} movimentos — restrinja o período para ver entradas mais antigas.",
-    defaultRangeHint: "Abre nos últimos 7 dias e depois carrega os últimos 30 enquanto vê. Escolha datas mais antigas quando quiser.",
-    expandingRangeHint: "A carregar os últimos 30 dias…",
+    defaultRangeHint: "Mostra os últimos 7 dias. Use Este mês / datas para mais — abra uma conta folha (não o cabeçalho 45/321).",
+    expandingRangeHint: "A carregar movimentos antigos…",
     filterByType: "Todos os tipos",
   },
 

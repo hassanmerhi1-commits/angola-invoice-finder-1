@@ -4,6 +4,7 @@ const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
 const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
 const { auditErpSafe } = require('../lib/erpAudit');
+const { fetchAccountLedger } = require('../lib/coaLedgerQuery');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -519,21 +520,17 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // Get account ledger (posted lines for this account + all descendants —
-  // chart headers roll up child balances, so drill-down must include children).
-  // Include code-prefix children (PGC) when parent_id links are missing/incomplete.
-  // Supplier/client AP/AR spans all filiais — never filter by toolbar branchId.
+  // Get account ledger — single account + date window only (see coaLedgerQuery.js).
+  // Never expands children: rolling up 321/45 killed the query on busy DBs.
   router.get('/:id/ledger', async (req, res) => {
     try {
       const { id } = req.params;
       let { start_date, end_date, limit: limitRaw } = req.query;
-      const parsedLimit = parseInt(String(limitRaw || '300'), 10);
+      const parsedLimit = parseInt(String(limitRaw || '100'), 10);
       const limit = Number.isFinite(parsedLimit)
-        ? Math.min(Math.max(parsedLimit, 1), 2000)
-        : 300;
+        ? Math.min(Math.max(parsedLimit, 1), 500)
+        : 100;
 
-      // Never OR uuid id with varchar code in one predicate — Postgres then types $1 as
-      // uuid and rejects `code = $1` (operator does not exist: character varying = uuid).
       const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
       const key = String(id || '').trim();
       const looksLikeUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key);
@@ -546,13 +543,11 @@ module.exports = function(broadcastTable) {
           [key],
         );
       } else {
-        // Account codes (e.g. "31", "451") — match code only; never touch uuid id.
         rootRes = await db.query(
           `${rootSelect} WHERE ${idText('code')} = ${idText('$1')} LIMIT 1`,
           [key],
         );
       }
-      // Fallback: UUID that was not found as id, or code typed like a uuid (rare).
       if (!rootRes.rows[0] && looksLikeUuid) {
         rootRes = await db.query(
           `${rootSelect} WHERE ${idText('code')} = ${idText('$1')} LIMIT 1`,
@@ -568,263 +563,24 @@ module.exports = function(broadcastTable) {
       if (!root) {
         return res.status(404).json({ error: 'Account not found' });
       }
-      const activeClause = db.engine === 'postgres'
-        ? '(is_active IS DISTINCT FROM false)'
-        : '(is_active = 1 OR is_active IS NULL OR is_active = true)';
-      const postedClause = db.engine === 'postgres'
-        ? '(je.is_posted IS DISTINCT FROM false)'
-        : '(je.is_posted = 1 OR je.is_posted IS NULL OR je.is_posted = true)';
-      const entryDateExpr = db.engine === 'postgres'
-        ? `COALESCE(
-            NULLIF(TRIM(je.entry_date::text), ''),
-            CASE WHEN je.created_at IS NOT NULL THEN to_char(je.created_at::date, 'YYYY-MM-DD') END
-          )`
-        : `COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10))`;
 
-      // Control accounts 321/311: always expand by PGC code prefix so ledger
-      // shows leaf activity under the parent even when is_header is false.
-      const codeStr = String(root.code || '');
-      const isHeader =
-        root.is_header === true || root.is_header === 1 || root.is_header === '1';
-      const expandByCode =
-        isHeader
-        || codeStr === '321' || codeStr === '311'
-        || codeStr === '32' || codeStr === '31';
-      // Cash (45x) / bank (43x): rolling up every leaf timed out (>30s) on busy DBs.
-      // Headers stay leaf-only (open a caixa/bank leaf for movements).
-      const isHighVolumeTreasury = /^(43|45)/.test(codeStr);
-      const useCodePrefix =
-        expandByCode
-        && !isHighVolumeTreasury
-        && codeStr.length >= 2;
-      // Parent walk for non-treasury headers only (e.g. 32/31). Treasury headers: root only.
-      const expandTree =
-        !isHighVolumeTreasury
-        && (expandByCode || isHeader);
-
-      // Parent/control without a date window — keep the window tight.
-      let defaultedRange = false;
-      if ((expandTree || isHighVolumeTreasury) && !start_date && !end_date) {
-        const to = new Date();
-        const from = new Date(to);
-        const days = isHighVolumeTreasury ? 7 : 90;
-        from.setUTCDate(from.getUTCDate() - days);
-        start_date = from.toISOString().slice(0, 10);
-        end_date = to.toISOString().slice(0, 10);
-        defaultedRange = true;
-      }
-
-      // Resolve matching CoA rows first (small set), then hit journal lines by uuid.
-      let treeSql;
-      let treeParams;
-      if (expandTree) {
-        if (useCodePrefix) {
-          treeSql = `
-            WITH RECURSIVE by_parent AS (
-              SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}
-              UNION
-              SELECT c.id, c.code, c.name
-              FROM chart_of_accounts c
-              INNER JOIN by_parent t ON ${idText('c.parent_id')} = ${idText('t.id')}
-            ),
-            by_code AS (
-              SELECT id, code, name
-              FROM chart_of_accounts
-              WHERE ${activeClause}
-                AND CAST($2 AS TEXT) <> ''
-                AND (
-                  ${idText('code')} = ${idText('$2')}
-                  OR (
-                    length(${idText('code')}) > length(CAST($2 AS TEXT))
-                    AND ${idText('code')} LIKE CAST($2 AS TEXT) || '%'
-                  )
-                )
-            )
-            SELECT id, code, name FROM by_parent
-            UNION
-            SELECT id, code, name FROM by_code`;
-          treeParams = [String(root.id), String(root.code || '')];
-        } else {
-          treeSql = `
-            WITH RECURSIVE by_parent AS (
-              SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}
-              UNION
-              SELECT c.id, c.code, c.name
-              FROM chart_of_accounts c
-              INNER JOIN by_parent t ON ${idText('c.parent_id')} = ${idText('t.id')}
-            )
-            SELECT id, code, name FROM by_parent`;
-          treeParams = [String(root.id)];
-        }
-      } else {
-        treeSql = `SELECT id, code, name FROM chart_of_accounts WHERE ${idText('id')} = ${idText('$1')}`;
-        treeParams = [String(root.id)];
-      }
-      const treeRes = await db.query(treeSql, treeParams);
-      const treeRows = treeRes.rows || [];
-      const accountIds = [...new Set(treeRows.map((r) => String(r.id)).filter(Boolean))];
-      const nameByKey = new Map();
-      for (const r of treeRows) {
-        nameByKey.set(String(r.id), r);
-        if (r.code) nameByKey.set(String(r.code), r);
-      }
-
-      if (accountIds.length === 0) {
-        return res.json([]);
-      }
-
-      // Cap fan-out — never scan dozens of busy cash leaves in one ORDER BY.
-      const queryAccountIds = accountIds.length > 8
-        ? [String(root.id)]
-        : accountIds;
-
-      const params = [];
-      let paramIndex = 1;
-      let accountMatchSql;
-      if (db.engine === 'postgres') {
-        params.push(queryAccountIds);
-        accountMatchSql = `jel.account_id = ANY($${paramIndex++}::uuid[])`;
-      } else {
-        const idPlaceholders = queryAccountIds.map(() => `$${paramIndex++}`);
-        params.push(...queryAccountIds);
-        accountMatchSql = `${idText('jel.account_id')} IN (${idPlaceholders.join(',')})`;
-      }
-
-      // Prefer denormalized jel.entry_date (idx_jel_account_entry_date).
-      const lineDateExpr = db.engine === 'postgres'
-        ? 'COALESCE(jel.entry_date, je.entry_date)'
-        : `COALESCE(jel.entry_date, ${entryDateExpr})`;
-      // Sargable filter on the indexed column when present (migration 070).
-      const dateCol = db.engine === 'postgres' ? 'jel.entry_date' : lineDateExpr;
-
-      let dateFilter = '';
-      if (db.engine === 'postgres') {
-        if (start_date) {
-          dateFilter += ` AND ${dateCol} >= $${paramIndex++}::date`;
-          params.push(String(start_date).slice(0, 10));
-        }
-        if (end_date) {
-          dateFilter += ` AND ${dateCol} <= $${paramIndex++}::date`;
-          params.push(String(end_date).slice(0, 10));
-        }
-      } else {
-        if (start_date) {
-          dateFilter += ` AND (${lineDateExpr}) >= $${paramIndex++}`;
-          params.push(String(start_date).slice(0, 10));
-        }
-        if (end_date) {
-          dateFilter += ` AND (${lineDateExpr}) <= $${paramIndex++}`;
-          params.push(String(end_date).slice(0, 10));
-        }
-      }
-
-      const limitParam = `$${paramIndex++}`;
-      params.push(limit);
-
-      const jeJoin = db.engine === 'postgres'
-        ? 'INNER JOIN journal_entries je ON je.id = jel.journal_entry_id'
-        : `INNER JOIN journal_entries je ON ${idText('je.id')} = ${idText('jel.journal_entry_id')}`;
-
-      const orderBy = db.engine === 'postgres'
-        ? `ORDER BY ${dateCol} DESC NULLS LAST, je.created_at DESC NULLS LAST`
-        : `ORDER BY (${lineDateExpr}) DESC, je.created_at DESC`;
-
-      // No branches join in the hot path — attach names after LIMIT.
-      const result = await db.query(`
-        SELECT
-          jel.id,
-          jel.journal_entry_id,
-          jel.account_id,
-          jel.description,
-          jel.debit_amount,
-          jel.credit_amount,
-          je.entry_number,
-          ${lineDateExpr} AS entry_date,
-          je.description as journal_description,
-          je.reference_type,
-          je.reference_id,
-          je.branch_id,
-          je.is_posted,
-          je.created_at as journal_created_at
-        FROM journal_entry_lines jel
-        ${jeJoin}
-        WHERE ${postedClause}
-          AND ${accountMatchSql}
-          ${dateFilter}
-        ${orderBy}
-        LIMIT ${limitParam}
-      `, params);
-
-      const rawRows = result.rows || [];
-      const branchIds = [...new Set(rawRows.map((r) => String(r.branch_id || '').trim()).filter(Boolean))];
-      const branchNameById = new Map();
-      if (branchIds.length > 0) {
-        try {
-          const br = db.engine === 'postgres'
-            ? await db.query(
-              `SELECT id::text AS id, name FROM branches WHERE id::text = ANY($1::text[])`,
-              [branchIds],
-            )
-            : await db.query(
-              `SELECT CAST(id AS TEXT) AS id, name FROM branches WHERE CAST(id AS TEXT) IN (${branchIds.map((_, i) => `$${i + 1}`).join(',')})`,
-              branchIds,
-            );
-          for (const b of br.rows || []) {
-            branchNameById.set(String(b.id), b.name);
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-
-      const rows = rawRows.map((row) => {
-        const meta = nameByKey.get(String(row.account_id))
-          || nameByKey.get(String(row.account_id || '').trim());
-        return {
-          ...row,
-          branch_name: branchNameById.get(String(row.branch_id || '').trim()) || null,
-          account_code: meta?.code || root.code,
-          account_name: meta?.name || root.name,
-        };
+      const result = await fetchAccountLedger(db, root, {
+        start_date,
+        end_date,
+        limit,
       });
 
-      // Leaf with opening balance only — never run unbounded SUM for headers / cash parents.
-      if (rows.length === 0 && !isHeader && queryAccountIds.length === 1) {
-        const opening = Number(root.opening_balance) || 0;
-        const stored = Number(root.current_balance) || 0;
-        if (opening !== 0 || stored !== 0) {
-          const amt = opening !== 0 ? opening : stored;
-          return res.json([{
-            id: `opening-${root.id}`,
-            journal_entry_id: null,
-            account_id: root.id,
-            account_code: root.code,
-            account_name: root.name,
-            description: 'Saldo de abertura',
-            debit_amount: amt > 0 ? amt : 0,
-            credit_amount: amt < 0 ? Math.abs(amt) : 0,
-            entry_number: 'OPEN',
-            entry_date: '',
-            journal_description: 'Opening balance',
-            reference_type: 'opening',
-            reference_id: null,
-            is_posted: true,
-            journal_created_at: null,
-          }]);
-        }
-      }
-
-      res.set('X-Ledger-Limit', String(limit));
-      res.set('X-Ledger-Has-More', String(rows.length >= limit));
-      if (isHighVolumeTreasury && isHeader) {
+      res.set('X-Ledger-Limit', String(result.hardLimit));
+      res.set('X-Ledger-Has-More', String(result.rows.length >= result.hardLimit));
+      if (result.isHeader || result.isHighVolumeParent) {
         res.set('X-Ledger-Open-Leaf', '1');
       }
-      if (defaultedRange) {
-        res.set('X-Ledger-Default-Range', isHighVolumeTreasury ? '7d' : '90d');
-        res.set('X-Ledger-Start', String(start_date));
-        res.set('X-Ledger-End', String(end_date));
+      if (result.defaultedRange) {
+        res.set('X-Ledger-Default-Range', 'bounded');
+        res.set('X-Ledger-Start', result.startDate);
+        res.set('X-Ledger-End', result.endDate);
       }
-      res.json(rows);
+      res.json(result.rows);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
       res.status(500).json({ error: error.message || 'Failed to fetch account ledger' });

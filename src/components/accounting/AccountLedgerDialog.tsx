@@ -41,9 +41,6 @@ import { formatDisplayDate } from '@/lib/formatDisplayDate';
 const LEDGER_FETCH_LIMIT = 100;
 /** Fast first paint on double-click. */
 const INITIAL_LEDGER_DAYS = 7;
-/** Quietly widen to this while the user is already viewing. */
-const PREFETCH_LEDGER_DAYS = 30;
-const PREFETCH_LEDGER_LIMIT = 200;
 
 function currentMonthBounds(): { from: string; to: string } {
   const now = new Date();
@@ -108,8 +105,8 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
   const reqIdRef = useRef(0);
   /** When true, skip the next date-effect fetch (used after silent month prefetch). */
   const suppressDateFetchRef = useRef(false);
-  /** Auto week→month widen; cancelled if the user picks dates. */
-  const autoExpandRef = useRef(true);
+  /** Auto week→month widen disabled — second fetch made busy accounts feel stuck. */
+  const autoExpandRef = useRef(false);
 
   // Reset range in the same render as account change so we don't fire a stale
   // fetch with the previous account's dates (that doubled wait on cash accounts).
@@ -122,7 +119,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     setTypeFilter('all');
     setEntries([]);
     setIsExpanding(false);
-    autoExpandRef.current = true;
+    autoExpandRef.current = false;
     suppressDateFetchRef.current = false;
   }
   if (!open && ledgerAccountId) {
@@ -206,30 +203,6 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
       setEntries(result.rows);
       setTruncated(result.rows.length >= LEDGER_FETCH_LIMIT);
       setIsLoading(false);
-
-      // After the fast week paints, quietly widen to ~30 days while viewing.
-      if (
-        autoExpandRef.current
-        && startDate
-        && endDate
-      ) {
-        autoExpandRef.current = false;
-        const month = lastDaysBounds(PREFETCH_LEDGER_DAYS);
-        if (month.from < startDate) {
-          setIsExpanding(true);
-          const expandId = ++reqIdRef.current;
-          const wider = await loadLedgerRows(month.from, month.to, PREFETCH_LEDGER_LIMIT);
-          if (expandId !== reqIdRef.current) return;
-          if (wider && !wider.error) {
-            setEntries(wider.rows);
-            setTruncated(wider.rows.length >= PREFETCH_LEDGER_LIMIT);
-            suppressDateFetchRef.current = true;
-            setStartDate(month.from);
-            setEndDate(month.to);
-          }
-          if (expandId === reqIdRef.current) setIsExpanding(false);
-        }
-      }
     } catch (e) {
       if (reqId !== reqIdRef.current) return;
       console.error('Failed to fetch ledger:', e);
@@ -571,7 +544,11 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
             variant="outline"
             size="sm"
             className={NEXOR_PILL_BTN}
-            onClick={() => lockRangeAndSet('', '')}
+            onClick={() => {
+              // Server rejects unbounded "all dates" on busy accounts — load last 90 days instead.
+              const bounds = lastDaysBounds(90);
+              lockRangeAndSet(bounds.from, bounds.to);
+            }}
           >
             {t.ledgerUi.allDates}
           </Button>

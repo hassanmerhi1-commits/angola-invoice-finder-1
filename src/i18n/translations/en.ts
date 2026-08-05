@@ -1313,8 +1313,8 @@ export const en = {
     allDates: "All dates",
     thisMonth: "This month",
     showingLatest: "Showing the latest {limit} movements — narrow the date range for older entries.",
-    defaultRangeHint: "Opens on the last 7 days, then loads the last 30 while you view. Pick older dates anytime.",
-    expandingRangeHint: "Loading the last 30 days…",
+    defaultRangeHint: "Shows the last 7 days. Use This month / date pickers for more — open a leaf account (not the 45/321 header).",
+    expandingRangeHint: "Loading older movements…",
     filterByType: "All types",
   },
 
