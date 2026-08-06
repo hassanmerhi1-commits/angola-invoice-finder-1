@@ -19,8 +19,8 @@ These rules stop the Tailscale “same bug again” loop. Prefer changing produc
 - Inventory grid reload, invoice list reload, CoA full list: **fire-and-forget**, never block Save.
 - After Adjust In / Out / count: prefer **patching local inventory rows** from `productUpdates` (or optimistic deltas). Do **not** await `reloadInventoryList` + stock-movements on Save.
 - Product create/edit: patch inventory grid row; **do not** await full inventory-grid reload after success.
-- Purchase Save: `PRODUCTS_CHANGED` with `lightweight: true`; do **not** force `refreshProducts()` + `refreshSuppliers()` on every save.
-- CoA: after journal/payment/chart broadcasts, **debounce** refetch; create/update account merges into local list (do not block Save on full CoA download).
+- Purchase Save: upsert invoice into local list immediately; defer full list reconcile (~4s). SEDE all-branch list capped (~120 rows).
+- CoA / Journals: do not `force` full CoA download on every journal create/reverse; soft refetch only.
 - Do **not** call `chartOfAccounts.list()` to resolve one supplier leaf — use `POST /chart-of-accounts/ensure-supplier`.
 - Await `repostAccounting` only when the create/update response shows stock/payable/journal post failed; otherwise background + toast on failure.
 

@@ -873,10 +873,8 @@ export default function Inventory() {
       toast.error(message || t.inventoryUi.importError);
     }
 
-    await reloadInventoryList();
+    void reloadInventoryList();
   };
-
-  // Handle stock adjustments from physical count — defined after refreshInventoryAfterStockAdjust below.
 
   const entryReferenceType = (reason: StockEntryReason): string => {
     if (reason === 'purchase') return 'purchase';
@@ -1835,19 +1833,25 @@ export default function Inventory() {
         categories={[...new Set(physicalCountProducts.map((p) => p.category).filter(Boolean))]}
         onReconcile={(adjustments) => {
           const currentUser = JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}');
-          
-          adjustments.forEach(adj => {
-            const product = inventoryRows.find(p => p.id === adj.productId);
+          const writeOpts = { skipListMerge: true, lightweightChangedEvent: true } as const;
+
+          adjustments.forEach((adj) => {
+            const product = inventoryRows.find((p) => p.id === adj.productId);
             if (product) {
-              // Update product stock to the counted value
-              updateProduct({
+              const next = {
                 ...product,
                 stock: adj.countedStock,
                 updatedAt: new Date().toISOString(),
+              };
+              patchInventoryRow(next);
+              void updateProduct(next, writeOpts).then((saved) => {
+                patchInventoryRow({ ...saved, branchId: saved.branchId || product.branchId });
+              }).catch((err) => {
+                console.warn('[Inventory] reconciliation product update:', err);
               });
 
               const movementType = adj.difference > 0 ? 'IN' : 'OUT';
-              saveStockMovement({
+              void saveStockMovement({
                 id: `sm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 productId: adj.productId,
                 productName: product.name,
@@ -1863,7 +1867,11 @@ export default function Inventory() {
             }
           });
 
-          void reloadInventoryList();
+          window.dispatchEvent(
+            new CustomEvent(PRODUCTS_CHANGED_EVENT, {
+              detail: { branchId: currentBranch?.id || listBranchId, lightweight: true },
+            }),
+          );
         }}
         currentUser={JSON.parse(localStorage.getItem('kwanzaerp_current_user') || '{}')?.name}
       />

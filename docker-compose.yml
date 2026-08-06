@@ -42,7 +42,7 @@ services:
       # Optional offsite copy — mount a host folder and uncomment:
       # BACKUP_OFFSITE_DIR: /app/backups-offsite
       # Shown in /api/health shellVersion. appVersion prefers mounted package.json.
-      NEXOR_APP_VERSION: ${NEXOR_APP_VERSION:-1.1.121}
+      NEXOR_APP_VERSION: ${NEXOR_APP_VERSION:-1.1.122}
       # Persist across container recreates — set JWT_SECRET in .env or every redeploy
       # invalidates all shop sessions ("Invalid or expired token").
       JWT_SECRET: ${JWT_SECRET:-}

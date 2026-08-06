@@ -1562,16 +1562,29 @@ export function useClients(deferInitialLoad = false) {
     const payload = { ...client, name, nif };
     const result = await api.clients.update(client.id, payload);
     if (!result.data) await storage.saveClient(payload);
+    const saved = result.data ? mapClientApiRow(result.data) : payload;
+    setClients((prev) => {
+      const next = [saved, ...prev.filter((c) => c.id !== saved.id)].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+      );
+      setCachedList(clientsCacheKey, next);
+      return next;
+    });
     markCachedListStale(clientsCacheKey);
-    await refreshClients({ force: true });
+    void refreshClients({ force: true });
     notifyClientsChanged();
   }, [refreshClients, notifyClientsChanged]);
 
   const deleteClient = useCallback(async (clientId: string) => {
     const result = await api.clients.delete(clientId);
     if (!result.data) await storage.deleteClient(clientId);
+    setClients((prev) => {
+      const next = prev.filter((c) => c.id !== clientId);
+      setCachedList(clientsCacheKey, next);
+      return next;
+    });
     markCachedListStale(clientsCacheKey);
-    await refreshClients({ force: true });
+    void refreshClients({ force: true });
     notifyClientsChanged();
   }, [refreshClients, notifyClientsChanged]);
 
@@ -1591,10 +1604,18 @@ export function useClients(deferInitialLoad = false) {
       (String((row as { id?: unknown }).id ?? '').length > 0 ||
         typeof (row as { name?: unknown }).name === 'string');
     if (apiOk) {
+      const saved = mapClientApiRow(row);
+      setClients((prev) => {
+        const next = [saved, ...prev.filter((c) => c.id !== saved.id)].sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+        );
+        setCachedList(clientsCacheKey, next);
+        return next;
+      });
       markCachedListStale(clientsCacheKey);
-      await refreshClients({ force: true });
+      void refreshClients({ force: true });
       notifyClientsChanged();
-      return mapClientApiRow(row);
+      return saved;
     }
 
     // Network/timeout after server may already have inserted — recover by NIF, never mint a new id.
@@ -1604,10 +1625,18 @@ export function useClients(deferInitialLoad = false) {
         (c: any) => String(c?.nif || '').replace(/\s/g, '').trim() === nif,
       );
       if (match?.id) {
+        const saved = mapClientApiRow(match);
+        setClients((prev) => {
+          const next = [saved, ...prev.filter((c) => c.id !== saved.id)].sort((a, b) =>
+            a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+          );
+          setCachedList(clientsCacheKey, next);
+          return next;
+        });
         markCachedListStale(clientsCacheKey);
-        await refreshClients({ force: true });
+        void refreshClients({ force: true });
         notifyClientsChanged();
-        return mapClientApiRow(match);
+        return saved;
       }
     } catch {
       /* ignore */
@@ -1790,16 +1819,27 @@ export function useSuppliers(deferInitialLoad = false) {
   const saveSupplier = useCallback(async (supplier: Supplier) => {
     const result = await api.suppliers.update(supplier.id, supplier);
     if (!result.data) await storage.saveSupplier(supplier);
+    const saved = result.data ? mapSupplier(result.data) : supplier;
+    setSuppliers((prev) => {
+      const next = [saved, ...prev.filter((s) => s.id !== saved.id)];
+      setCachedList(suppliersCacheKey, next);
+      return next;
+    });
     markCachedListStale(suppliersCacheKey);
-    await refreshSuppliers({ force: true });
+    void refreshSuppliers({ force: true });
     notifySuppliersChanged();
   }, [refreshSuppliers, notifySuppliersChanged]);
 
   const deleteSupplier = useCallback(async (supplierId: string) => {
     const result = await api.suppliers.delete(supplierId);
     if (!result.data) await storage.deleteSupplier(supplierId);
+    setSuppliers((prev) => {
+      const next = prev.filter((s) => s.id !== supplierId);
+      setCachedList(suppliersCacheKey, next);
+      return next;
+    });
     markCachedListStale(suppliersCacheKey);
-    await refreshSuppliers({ force: true });
+    void refreshSuppliers({ force: true });
     notifySuppliersChanged();
   }, [refreshSuppliers, notifySuppliersChanged]);
 
@@ -1815,8 +1855,13 @@ export function useSuppliers(deferInitialLoad = false) {
       } catch (e) {
         console.warn('[ERP] ensureSupplierAccount after create skipped:', e);
       }
+      setSuppliers((prev) => {
+        const next = [mapped, ...prev.filter((s) => s.id !== mapped.id)];
+        setCachedList(suppliersCacheKey, next);
+        return next;
+      });
       markCachedListStale(suppliersCacheKey);
-      await refreshSuppliers({ force: true });
+      void refreshSuppliers({ force: true });
       notifySuppliersChanged();
       return mapped;
     }

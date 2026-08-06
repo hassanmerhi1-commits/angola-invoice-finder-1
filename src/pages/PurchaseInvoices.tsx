@@ -9,7 +9,7 @@ import { resolveUserBranch, branchIdsEquivalent } from '@/lib/branchAccess';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import { api } from '@/lib/api/client';
-import { getCachedList, setCachedList } from '@/lib/listCache';
+import { getCachedList, setCachedList, isCachedListFresh } from '@/lib/listCache';
 import { recordPurchaseInvoicePrint } from '@/lib/recordPrintAudit';
 import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { useToast } from '@/hooks/use-toast';
@@ -1565,7 +1565,10 @@ export default function PurchaseInvoices() {
       try {
         setListLoadError(null);
         const includeId = String(opts?.includeInvoiceId || '').trim();
-        let piInvoices = await getPurchaseInvoices(listBranchId, branches);
+        let piInvoices = await getPurchaseInvoices(listBranchId, branches, {
+          // SEDE all-branch list: cap payload — full history was multi-second on Tailscale.
+          limit: listBranchId ? 300 : 120,
+        });
         if (includeId && !piInvoices.some((i) => i.id === includeId)) {
           const extra = await fetchPurchaseInvoiceFromServer(includeId);
           if (extra) piInvoices = [extra, ...piInvoices];
@@ -1609,13 +1612,24 @@ export default function PurchaseInvoices() {
     }
   }, [listBranchId, branches, toast, t]);
 
-  const scheduleLoadInvoiceList = useCallback((opts?: { includeInvoiceId?: string }) => {
+  const scheduleLoadInvoiceList = useCallback((opts?: { includeInvoiceId?: string; delayMs?: number }) => {
     if (loadInvoiceListRef.current) clearTimeout(loadInvoiceListRef.current);
+    const delay = opts?.delayMs ?? 600;
     loadInvoiceListRef.current = setTimeout(() => {
       loadInvoiceListRef.current = null;
       void loadInvoiceList(opts);
-    }, 600);
+    }, delay);
   }, [loadInvoiceList]);
+
+  /** Put/update one invoice in local list + cache — no Tailscale full refetch. */
+  const upsertInvoiceInList = useCallback((invoice: PurchaseInvoice) => {
+    setInvoices((prev) => {
+      const merged = [invoice, ...prev.filter((i) => i.id !== invoice.id)];
+      merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setCachedList(`purchaseInvoices:${listBranchId ?? 'all'}`, merged);
+      return merged;
+    });
+  }, [listBranchId]);
 
   const refreshReturnMetrics = useCallback(async () => {
     try {
@@ -1657,6 +1671,12 @@ export default function PurchaseInvoices() {
         setReturnCount(0);
       }
     })();
+    const cacheKey = `purchaseInvoices:${listBranchId ?? 'all'}`;
+    // Warm revisit: paint from cache, soft-refresh only when stale.
+    if (isCachedListFresh(cacheKey) && (getCachedList<PurchaseInvoice[]>(cacheKey)?.length ?? 0) > 0) {
+      scheduleLoadInvoiceList({ delayMs: 2500 });
+      return;
+    }
     scheduleLoadInvoiceList();
   }, [listBranchId, scheduleLoadInvoiceList]);
 
@@ -2765,7 +2785,8 @@ export default function PurchaseInvoices() {
         title: t.purchaseInvoicesUi.purchaseInvoiceUpdatedTitle,
         description: `${updatedInvoice.invoiceNumber} — ${updatedInvoice.supplierName}`,
       });
-      scheduleLoadInvoiceList({ includeInvoiceId: updatedInvoice.id });
+      upsertInvoiceInList(updatedInvoice);
+      scheduleLoadInvoiceList({ includeInvoiceId: updatedInvoice.id, delayMs: 4000 });
       editingInvoiceRef.current = null;
       resetCreateFormState();
       clearPurchaseCreateIntent();
@@ -2936,7 +2957,8 @@ export default function PurchaseInvoices() {
           title: t.purchaseInvoicesUi.purchaseInvoiceSavedTitle,
           description: `${invoice.invoiceNumber} — ${t.clientSyncUi.pendingLabel}`,
         });
-        scheduleLoadInvoiceList({ includeInvoiceId: invoice.id });
+        upsertInvoiceInList(invoice);
+        scheduleLoadInvoiceList({ includeInvoiceId: invoice.id, delayMs: 4000 });
         resetCreateFormState();
         clearPurchaseCreateIntent();
         setMode('list');
@@ -2953,11 +2975,7 @@ export default function PurchaseInvoices() {
         openItemId: txResult.openItemId,
       };
 
-      setInvoices((prev) => {
-        const merged = [invoice, ...prev.filter((i) => i.id !== invoice.id)];
-        merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        return merged;
-      });
+      upsertInvoiceInList(invoice);
 
       void broadcastPurchaseAccountingSync(resolvedWarehouseId, resolvedBranchId);
 
@@ -3006,7 +3024,8 @@ export default function PurchaseInvoices() {
         setSaveError(txError || (stillNoJournal ? t.purchaseInvoicesUi.freightJournalFailed : t.purchaseInvoicesUi.purchaseSavedPartialSync));
       }
 
-      scheduleLoadInvoiceList({ includeInvoiceId: invoice.id });
+      // List already updated locally — soft background reconcile only (don't steal Tailscale).
+      scheduleLoadInvoiceList({ includeInvoiceId: invoice.id, delayMs: 4000 });
 
       const toolbarBranch = String(listBranchId || currentBranch?.id || '').trim();
       if (
@@ -3045,7 +3064,7 @@ export default function PurchaseInvoices() {
       savingPurchaseRef.current = false;
       setSavingPurchase(false);
     }
-  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList, scheduleLoadInvoiceList, ensurePurchaseAccountingPosted, broadcastPurchaseAccountingSync, listBranchId]);
+  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList, scheduleLoadInvoiceList, ensurePurchaseAccountingPosted, broadcastPurchaseAccountingSync, listBranchId, upsertInvoiceInList]);
 
   // ═══════════════ RENDER ═══════════════
 

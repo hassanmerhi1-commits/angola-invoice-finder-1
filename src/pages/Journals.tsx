@@ -787,7 +787,7 @@ export default function Journals() {
         ? mappedLines
         : [...mappedLines, ...Array.from({ length: 2 - mappedLines.length }, () => createEmptyLine())],
     );
-    void refetchChartAccounts({ force: true });
+    void refetchChartAccounts();
   }
 
   function updateLine(lineId: string, field: keyof NewEntryLine, value: string) {
@@ -954,8 +954,9 @@ export default function Journals() {
 
       setNewEntryOpen(false);
       resetNewEntry();
-      await refetch();
-      void refetchChartAccounts({ force: true });
+      // Optimistic: prepend/replace in list via refetch soft; don't yank full CoA over Tailscale.
+      void refetch();
+      void refetchChartAccounts();
     } catch (err) {
       toast.error(
         err instanceof Error
@@ -992,8 +993,8 @@ export default function Journals() {
             .replace('{reverse}', response.data?.reverseEntryId || ''),
         );
       }
-      await refetch();
-      void refetchChartAccounts({ force: true });
+      void refetch();
+      void refetchChartAccounts();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t.journalsUi.reverseFailed);
     } finally {
