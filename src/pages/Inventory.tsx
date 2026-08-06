@@ -224,6 +224,7 @@ export default function Inventory() {
   }, [listBranchId, isHeadOffice, refreshInventoryGrid]);
 
   useEffect(() => {
+    let lightweightRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     const onProductsChanged = (e: Event) => {
       const detail = (e as CustomEvent<{
         branchId?: string;
@@ -242,14 +243,21 @@ export default function Inventory() {
         invalidateInventoryGridCache(detail.branchId, false);
       }
       if (detail?.lightweight) {
-        void refreshInventoryGrid();
+        // Coalesce remote sale/purchase bursts — one grid refetch, not one per event.
+        if (lightweightRefreshTimer) clearTimeout(lightweightRefreshTimer);
+        lightweightRefreshTimer = setTimeout(() => {
+          lightweightRefreshTimer = null;
+          void refreshInventoryGrid();
+        }, 400);
         return;
       }
       void reloadInventoryList();
-      // Detailed-qty breakdown is loaded by the qtd-detalhada tab effect, not here.
     };
     window.addEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
-    return () => window.removeEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
+    return () => {
+      window.removeEventListener(PRODUCTS_CHANGED_EVENT, onProductsChanged);
+      if (lightweightRefreshTimer) clearTimeout(lightweightRefreshTimer);
+    };
   }, [listBranchId, isHeadOffice, reloadInventoryList, refreshInventoryGrid]);
 
   const stockMovementsScopeRef = useRef<string>('');
@@ -773,12 +781,12 @@ export default function Inventory() {
       ...(isHeadOffice ? { propagatePrices: true } : {}),
     };
     patchInventoryRow(gridProduct);
-    const writeOpts = { skipListMerge: true, lightweightChangedEvent: false } as const;
-    let savedRow: Product | null = null;
+    // Patch UI immediately; do not await a full Tailscale inventory-grid reload.
+    const writeOpts = { skipListMerge: true, lightweightChangedEvent: true } as const;
     try {
       if (selectedProduct) {
         const saved = await updateProduct(gridProduct, writeOpts);
-        savedRow = { ...saved, branchId: saved.branchId || gridProduct.branchId };
+        const savedRow = { ...saved, branchId: saved.branchId || gridProduct.branchId };
         patchInventoryRow(savedRow);
         setSelectedProduct((prev) =>
           prev && prev.id === product.id ? { ...prev, ...saved } : prev,
@@ -786,14 +794,10 @@ export default function Inventory() {
         toast.success(t.productFormUi.productUpdated);
       } else {
         const saved = await addProduct(gridProduct, writeOpts);
-        savedRow = { ...saved, branchId: saved.branchId || gridProduct.branchId };
+        const savedRow = { ...saved, branchId: saved.branchId || gridProduct.branchId };
         patchInventoryRow(savedRow);
         toast.success(t.productFormUi.productCreated);
         setSelectedProduct(null);
-      }
-      await reloadInventoryList();
-      if (savedRow) {
-        patchInventoryRow(savedRow);
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);

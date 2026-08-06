@@ -193,18 +193,30 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     }
   }, [t, applyAccounts]);
 
-  useTableRefreshListener(['chart_of_accounts'], () => {
+  const coaRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleCoaRefresh = useCallback((delayMs = 1200) => {
     if (!enabled) return;
     markCachedListStale('chartOfAccounts');
-    void fetchAccounts({ force: true });
+    if (coaRefreshTimer.current) clearTimeout(coaRefreshTimer.current);
+    coaRefreshTimer.current = setTimeout(() => {
+      coaRefreshTimer.current = null;
+      void fetchAccounts({ force: true });
+    }, delayMs);
+  }, [enabled, fetchAccounts]);
+
+  useEffect(() => () => {
+    if (coaRefreshTimer.current) clearTimeout(coaRefreshTimer.current);
+  }, []);
+
+  useTableRefreshListener(['chart_of_accounts'], () => {
+    // Coalesce Adjust In / purchase / sale CoA broadcasts into one refetch.
+    scheduleCoaRefresh(500);
   });
 
-  // After posts, refresh stored balances (server recomputes in background). Avoid live join —
-  // that blocked Journals/Invoices whenever a sale posted over Tailscale.
+  // After posts, balances recompute in background on the server. Stale-mark + delayed
+  // refresh — never block Journals/Invoices with an immediate full CoA download.
   useTableRefreshListener(['journal_entries', 'payments'], () => {
-    if (!enabled) return;
-    markCachedListStale('chartOfAccounts');
-    void fetchAccounts({ force: true });
+    scheduleCoaRefresh(1500);
   });
 
   // Auto-seed branch caixa accounts once after first load — only refetch if something was created.
@@ -216,8 +228,7 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
       if (branches.length === 0) return;
       void ensureBranchCaixaAccounts(branches, accounts).then((created) => {
         if (!created) return;
-        markCachedListStale('chartOfAccounts');
-        void fetchAccounts({ force: true });
+        scheduleCoaRefresh(400);
       });
     };
 
@@ -230,7 +241,7 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
         run(branches.map((b: any) => ({ id: b.id, name: b.name })));
       } catch { /* ignore */ }
     });
-  }, [enabled, isLoading, accounts, fetchAccounts]);
+  }, [enabled, isLoading, accounts, scheduleCoaRefresh]);
 
   useEffect(() => {
     if (!enabled) {
@@ -240,13 +251,27 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     void fetchAccounts();
   }, [enabled, fetchAccounts]);
 
+  const mergeAccountIntoList = useCallback((account: Account) => {
+    setAccounts((prev) => {
+      const idx = prev.findIndex((a) => a.id === account.id || a.code === account.code);
+      const next = idx >= 0
+        ? prev.map((a, i) => (i === idx ? { ...a, ...account } : a))
+        : sortAccountsByCode([...prev, account]);
+      const sorted = sortAccountsByCode(next);
+      setCachedList('chartOfAccounts', sorted);
+      return sorted;
+    });
+  }, []);
+
   const createAccount = async (data: AccountFormData): Promise<Account> => {
     try {
       const response = await api.chartOfAccounts.create(data);
       if (response.error) throw new Error(response.error);
+      const created = response.data as Account;
       markCachedListStale('chartOfAccounts');
-      await fetchAccounts({ force: true });
-      return response.data;
+      if (created?.id) mergeAccountIntoList(created);
+      else scheduleCoaRefresh(300);
+      return created;
     } catch (err) {
       if (!isOfflineError(err)) throw err;
 
@@ -289,9 +314,11 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     try {
       const response = await api.chartOfAccounts.update(id, data);
       if (response.error) throw new Error(response.error);
+      const updated = response.data as Account;
       markCachedListStale('chartOfAccounts');
-      await fetchAccounts({ force: true });
-      return response.data;
+      if (updated?.id) mergeAccountIntoList(updated);
+      else scheduleCoaRefresh(300);
+      return updated;
     } catch (err) {
       if (!isOfflineError(err)) throw err;
 
@@ -329,7 +356,11 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
       const response = await api.chartOfAccounts.delete(id);
       if (response.error) throw new Error(response.error);
       markCachedListStale('chartOfAccounts');
-      await fetchAccounts({ force: true });
+      setAccounts((prev) => {
+        const next = prev.filter((a) => a.id !== id);
+        setCachedList('chartOfAccounts', next);
+        return next;
+      });
     } catch (err) {
       if (!isOfflineError(err)) throw err;
 
