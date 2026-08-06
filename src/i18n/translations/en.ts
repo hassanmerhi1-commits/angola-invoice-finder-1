@@ -1742,6 +1742,8 @@ export const en = {
     date: "Date",
     lines: "Lines",
     noInvoicesWithReturnableBalance: "No confirmed invoice with returnable balance available for this branch",
+    loadingInvoiceLines: "Loading invoice lines…",
+    noReturnableLinesOnInvoice: "This invoice has no returnable product lines (already fully returned, or lines missing).",
     viewTitle: "Return {number}",
     sourceInvoiceShort: "Source invoice",
     branch: "Branch",

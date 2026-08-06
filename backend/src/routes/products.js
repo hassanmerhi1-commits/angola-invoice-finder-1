@@ -35,6 +35,11 @@ const {
 } = require('../lib/productSkuResolve');
 const { ensureFilialProductsForWarehouse } = require('../lib/filialStockRepair');
 const { auditErpSafe } = require('../lib/erpAudit');
+const {
+  readInventoryGridResultCache,
+  writeInventoryGridResultCache,
+  invalidateInventoryGridResultCache,
+} = require('../lib/inventoryGridServerCache');
 
 /** Avoid running full filial reconcile on every grid poll (locks SQLite, trips health checks). */
 const filialGridReconcileAt = new Map();
@@ -1136,44 +1141,6 @@ function mergeFastPickerRowsIntoGrid(gridRows, fastRows) {
     bySku.set(key, row);
   }
   return Array.from(bySku.values());
-}
-
-/** Short in-memory cache so rapid Sede↔filial dropdown switches reuse a warm grid. */
-const inventoryGridResultCache = new Map();
-const INVENTORY_GRID_RESULT_TTL_MS = 45_000;
-const INVENTORY_GRID_HQ_TTL_MS = 90_000;
-
-function inventoryGridResultCacheKey(branchId, consolidated) {
-  return consolidated ? 'hq' : `b:${String(branchId || '').trim()}`;
-}
-
-function inventoryGridResultTtlMs(consolidated) {
-  return consolidated ? INVENTORY_GRID_HQ_TTL_MS : INVENTORY_GRID_RESULT_TTL_MS;
-}
-
-function readInventoryGridResultCache(branchId, consolidated) {
-  const key = inventoryGridResultCacheKey(branchId, consolidated);
-  const hit = inventoryGridResultCache.get(key);
-  if (!hit) return null;
-  if (Date.now() - hit.at > inventoryGridResultTtlMs(consolidated)) {
-    inventoryGridResultCache.delete(key);
-    return null;
-  }
-  return hit.rows;
-}
-
-function writeInventoryGridResultCache(branchId, consolidated, rows) {
-  const key = inventoryGridResultCacheKey(branchId, consolidated);
-  inventoryGridResultCache.set(key, { at: Date.now(), rows });
-  // Bound memory: keep newest ~40 scopes.
-  if (inventoryGridResultCache.size > 40) {
-    const oldest = inventoryGridResultCache.keys().next().value;
-    if (oldest != null) inventoryGridResultCache.delete(oldest);
-  }
-}
-
-function invalidateInventoryGridResultCache() {
-  inventoryGridResultCache.clear();
 }
 
 async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded, { repair = false, enrichSuppliers = false } = {}) {

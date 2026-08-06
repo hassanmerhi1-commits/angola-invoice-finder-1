@@ -788,6 +788,37 @@ async function processStockAdjustment(client, data) {
       `lines=${lines.length} value=${totalValue} journal=${journalEntryId || 'n/a'}`
   );
 
+  // Compact snapshots so clients can patch inventory rows without a full grid refetch.
+  const touchedIds = [
+    ...new Set(
+      movementIds.length
+        ? (
+            await client.query(
+              `SELECT DISTINCT product_id FROM stock_movements WHERE id = ANY($1::uuid[])`,
+              [movementIds],
+            )
+          ).rows.map((r) => String(r.product_id))
+        : [],
+    ),
+  ];
+  let productUpdates = [];
+  if (touchedIds.length > 0) {
+    const snap = await client.query(
+      `SELECT id, sku, stock, cost, avg_cost, last_cost, tax_rate
+       FROM products WHERE id = ANY($1::uuid[])`,
+      [touchedIds],
+    );
+    productUpdates = snap.rows.map((r) => ({
+      productId: String(r.id),
+      sku: r.sku != null ? String(r.sku) : '',
+      stock: Math.max(0, parseFloat(r.stock) || 0),
+      cost: parseFloat(r.cost) || 0,
+      avgCost: parseFloat(r.avg_cost) || 0,
+      lastCost: parseFloat(r.last_cost) || 0,
+      taxRate: r.tax_rate != null && r.tax_rate !== '' ? Number(r.tax_rate) : undefined,
+    }));
+  }
+
   return {
     documentId,
     referenceNumber: docNumber,
@@ -795,6 +826,7 @@ async function processStockAdjustment(client, data) {
     journalEntryId,
     totalValue,
     direction: normalizedDirection,
+    productUpdates,
   };
 }
 

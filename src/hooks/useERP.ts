@@ -1777,13 +1777,15 @@ export function useSuppliers(deferInitialLoad = false) {
   }, [refreshSuppliers, deferInitialLoad]);
 
   useEffect(() => {
-    const onSuppliersChanged = () => {
+    const onSuppliersChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ lightweight?: boolean }>)?.detail;
       markCachedListStale(suppliersCacheKey);
+      if (detail?.lightweight) return;
       void refreshSuppliers({ force: true });
     };
     window.addEventListener(storage.SUPPLIERS_CHANGED_EVENT, onSuppliersChanged);
     return () => window.removeEventListener(storage.SUPPLIERS_CHANGED_EVENT, onSuppliersChanged);
-  }, [refreshSuppliers]);
+  }, [refreshSuppliers, suppliersCacheKey]);
 
   const saveSupplier = useCallback(async (supplier: Supplier) => {
     const result = await api.suppliers.update(supplier.id, supplier);

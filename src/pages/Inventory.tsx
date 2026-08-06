@@ -230,7 +230,11 @@ export default function Inventory() {
         toBranchId?: string;
         fromBranchId?: string;
         lightweight?: boolean;
+        skipGridRefresh?: boolean;
       }>)?.detail;
+      if (detail?.skipGridRefresh) {
+        return;
+      }
       invalidateInventoryGridCache(listBranchId, isHeadOffice);
       if (detail?.toBranchId) invalidateInventoryGridCache(detail.toBranchId, false);
       if (detail?.fromBranchId) invalidateInventoryGridCache(detail.fromBranchId, false);
@@ -883,14 +887,48 @@ export default function Inventory() {
   };
 
   const refreshInventoryAfterStockAdjust = useCallback(
-    async (targetWarehouseId: string) => {
+    (
+      targetWarehouseId: string,
+      productUpdates?: import('@/lib/inventoryStockAdjust').StockProductUpdate[],
+    ) => {
+      // Branch-scoped view: patch from server (or optimistic) snapshots — no full grid reload.
+      // HQ consolidated totals need a lightweight grid refresh (warehouse stock ≠ HQ sum).
+      const canPatchLocally =
+        !isHeadOffice
+        && Array.isArray(productUpdates)
+        && productUpdates.length > 0;
+
+      if (canPatchLocally) {
+        for (const u of productUpdates!) {
+          const existing =
+            productsById.get(u.productId)
+            ?? inventoryRows.find(
+              (p) =>
+                p.id === u.productId
+                || (u.sku && p.sku && p.sku.toLowerCase() === u.sku.toLowerCase()),
+            );
+          if (!existing) continue;
+          patchInventoryRow({
+            ...existing,
+            stock: u.stock,
+            onHandStock: u.stock,
+            ...(u.cost != null && Number.isFinite(u.cost) ? { cost: u.cost } : {}),
+            ...(u.avgCost != null && Number.isFinite(u.avgCost) ? { avgCost: u.avgCost } : {}),
+            ...(u.lastCost != null && Number.isFinite(u.lastCost) ? { lastCost: u.lastCost } : {}),
+            ...(u.taxRate != null && Number.isFinite(u.taxRate) ? { taxRate: u.taxRate } : {}),
+          });
+        }
+        // applyStockAdjustmentLines already fired skipGridRefresh; nothing else to do.
+        return;
+      }
+
       window.dispatchEvent(
-        new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: targetWarehouseId } }),
+        new CustomEvent(PRODUCTS_CHANGED_EVENT, {
+          detail: { branchId: targetWarehouseId, lightweight: true },
+        }),
       );
-      await reloadInventoryList();
-      await loadStockMovements();
     },
-    [reloadInventoryList, loadStockMovements],
+    [isHeadOffice, productsById, inventoryRows, patchInventoryRow],
   );
 
   const handleApplyAdjustments = useCallback(async (
@@ -931,6 +969,14 @@ export default function Inventory() {
     const decreases = adjustments.filter((a) => a.difference < 0);
     const allErrors: string[] = [];
     let totalApplied = 0;
+    const mergedUpdates: import('@/lib/inventoryStockAdjust').StockProductUpdate[] = [];
+    const prevStock = new Map(
+      adjustments.map((a) => {
+        const product = adjustmentProducts.find((p) => p.id === a.productId)
+          ?? inventoryRows.find((p) => p.id === a.productId);
+        return [a.productId, Number(product?.stock ?? 0)] as const;
+      }),
+    );
 
     if (increases.length > 0) {
       const result = await applyStockAdjustmentLines({
@@ -941,9 +987,11 @@ export default function Inventory() {
         referenceNumber: docRef,
         notes: movementNotes,
         createdBy: currentUser?.id || currentUser?.name || 'system',
+        previousStockById: prevStock,
       });
       totalApplied += result.applied;
       allErrors.push(...result.errors);
+      if (result.productUpdates?.length) mergedUpdates.push(...result.productUpdates);
     }
 
     if (decreases.length > 0) {
@@ -955,9 +1003,17 @@ export default function Inventory() {
         referenceNumber: `${docRef}-OUT`,
         notes: movementNotes,
         createdBy: currentUser?.id || currentUser?.name || 'system',
+        previousStockById: prevStock,
       });
       totalApplied += result.applied;
       allErrors.push(...result.errors);
+      if (result.productUpdates?.length) {
+        // Later OUT wins over earlier IN for the same product in one count doc.
+        const byId = new Map(mergedUpdates.map((u) => [u.productId, u]));
+        for (const u of result.productUpdates) byId.set(u.productId, u);
+        mergedUpdates.length = 0;
+        mergedUpdates.push(...byId.values());
+      }
     }
 
     for (const adj of adjustments) {
@@ -978,7 +1034,7 @@ export default function Inventory() {
       });
     }
 
-    void refreshInventoryAfterStockAdjust(targetWarehouseId);
+    refreshInventoryAfterStockAdjust(targetWarehouseId, mergedUpdates);
 
     if (totalApplied === 0) {
       throw new Error(allErrors.slice(0, 3).join('; ') || t.stockEntryUi.saveFailed);
@@ -1004,6 +1060,7 @@ export default function Inventory() {
         quantity: number;
         effectiveCost?: number;
         cost: number;
+        taxRate?: number;
       }[],
       meta: {
         reason: StockEntryReason;
@@ -1055,6 +1112,12 @@ export default function Inventory() {
         landingCosts: meta.totalLandingCosts,
         freightSourceAccount: meta.freightSourceAccount,
         freightSourceName: meta.freightSourceName,
+        previousStockById: new Map(
+          items.map((item) => [
+            item.productId,
+            Number(productsById.get(item.productId)?.stock ?? 0),
+          ]),
+        ),
       });
 
       for (const item of items) {
@@ -1074,7 +1137,7 @@ export default function Inventory() {
         });
       }
 
-      void refreshInventoryAfterStockAdjust(targetWarehouseId);
+      refreshInventoryAfterStockAdjust(targetWarehouseId, result.productUpdates);
       if (result.applied === 0) {
         throw new Error(result.errors.slice(0, 3).join('; ') || t.stockEntryUi.saveFailed);
       }
@@ -1143,6 +1206,12 @@ export default function Inventory() {
         entryDate: meta.exitDate,
         notes,
         createdBy: currentUser?.id || currentUser?.name || 'system',
+        previousStockById: new Map(
+          items.map((item) => [
+            item.productId,
+            Number(productsById.get(item.productId)?.stock ?? 0),
+          ]),
+        ),
       });
 
       for (const item of items) {
@@ -1168,7 +1237,7 @@ export default function Inventory() {
         });
       }
 
-      void refreshInventoryAfterStockAdjust(targetWarehouseId);
+      refreshInventoryAfterStockAdjust(targetWarehouseId, result.productUpdates);
       if (result.applied === 0) {
         throw new Error(result.errors.slice(0, 3).join('; ') || t.stockExitUi.saveFailed);
       }

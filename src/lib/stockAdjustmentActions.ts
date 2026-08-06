@@ -16,7 +16,9 @@ function notifyProductsChanged(warehouseId: string) {
   if (typeof window === 'undefined') return;
   invalidateInventoryGridCacheForBranches([warehouseId]);
   window.dispatchEvent(
-    new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: warehouseId } }),
+    new CustomEvent(PRODUCTS_CHANGED_EVENT, {
+      detail: { branchId: warehouseId, lightweight: true },
+    }),
   );
 }
 

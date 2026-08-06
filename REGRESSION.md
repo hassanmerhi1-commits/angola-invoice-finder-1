@@ -17,6 +17,8 @@ These rules stop the Tailscale “same bug again” loop. Prefer changing produc
 
 - Primary POST success → toast / close dialog immediately.
 - Inventory grid reload, invoice list reload, CoA full list: **fire-and-forget**, never block Save.
+- After Adjust In / Out / count: prefer **patching local inventory rows** from `productUpdates` (or optimistic deltas). Do **not** await `reloadInventoryList` + stock-movements on Save.
+- Purchase Save: `PRODUCTS_CHANGED` with `lightweight: true`; do **not** force `refreshProducts()` + `refreshSuppliers()` on every save.
 - Do **not** call `chartOfAccounts.list()` to resolve one supplier leaf — use `POST /chart-of-accounts/ensure-supplier`.
 - Await `repostAccounting` only when the create/update response shows stock/payable/journal post failed; otherwise background + toast on failure.
 

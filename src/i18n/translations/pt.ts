@@ -1744,6 +1744,8 @@ export const pt: TranslationKeys = {
     date: "Data",
     lines: "Linhas",
     noInvoicesWithReturnableBalance: "Nenhuma fatura confirmada com saldo devolvível disponível para esta filial",
+    loadingInvoiceLines: "A carregar linhas da fatura…",
+    noReturnableLinesOnInvoice: "Esta fatura não tem linhas devolvíveis (já devolvida por completo, ou linhas em falta).",
     viewTitle: "Devolução {number}",
     sourceInvoiceShort: "Fatura Origem",
     branch: "Filial",

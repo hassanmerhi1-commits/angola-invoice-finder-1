@@ -1877,20 +1877,28 @@ export default function PurchaseInvoices() {
     branchId: string,
   ) => {
     invalidateInventoryGridCacheForBranches([warehouseId, branchId].filter(Boolean));
+    // Lightweight: Inventory refreshes grid only; useERP skips full product-list force refresh.
     window.dispatchEvent(
-      new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: { branchId: warehouseId } }),
+      new CustomEvent(PRODUCTS_CHANGED_EVENT, {
+        detail: { branchId: warehouseId, lightweight: true },
+      }),
     );
     window.dispatchEvent(
       new CustomEvent(OPEN_ITEMS_CHANGED_EVENT, { detail: { branchId } }),
     );
-    window.dispatchEvent(new CustomEvent(SUPPLIERS_CHANGED_EVENT, { detail: {} }));
+    // Stale-mark suppliers for next open; do not force a full suppliers download on Save.
+    window.dispatchEvent(
+      new CustomEvent(SUPPLIERS_CHANGED_EVENT, { detail: { lightweight: true } }),
+    );
+    // repairFilialStock is expensive on Tailscale — defer; inventory-grid already reconciles on load.
     if (warehouseId) {
-      void api.products.repairFilialStock(warehouseId).catch((repairErr) => {
-        console.warn('[PurchaseInvoices] repairFilialStock:', repairErr);
-      });
+      window.setTimeout(() => {
+        void api.products.repairFilialStock(warehouseId).catch((repairErr) => {
+          console.warn('[PurchaseInvoices] repairFilialStock:', repairErr);
+        });
+      }, 2500);
     }
-    void Promise.all([refreshProducts(), refreshSuppliers()]).catch(() => {});
-  }, [refreshProducts, refreshSuppliers]);
+  }, []);
 
   const ensurePurchaseAccountingPosted = useCallback(async (
     invoiceId: string,
@@ -3386,6 +3394,8 @@ export default function PurchaseInvoices() {
               openCreateSignal={openReturnCreateSignal}
               preselectInvoiceId={returnPreselectInvoiceId}
               onReturnsChanged={refreshReturnMetrics}
+              listBranchId={listBranchId}
+              consolidated={isConsolidatedView}
             />
           </TabsContent>
         </Tabs>

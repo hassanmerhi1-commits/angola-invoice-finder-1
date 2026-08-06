@@ -14,6 +14,8 @@ import { pt } from 'date-fns/locale';
 import {
   PurchaseInvoice,
   getPurchaseInvoices,
+  getPurchaseInvoiceById,
+  invoiceBelongsToBranch,
 } from '@/lib/purchaseInvoiceStorage';
 import {
   SupplierReturn,
@@ -50,6 +52,17 @@ import {
   Search, Plus, Save, Eye, RotateCcw, CheckCircle, XCircle,
   Package,
 } from 'lucide-react';
+import { normalizeProductSkuKey } from '@/lib/productDedupe';
+import { ALL_BRANCHES_SCOPE_ID } from '@/lib/branchAccess';
+
+/** Purchased qty on a PI line — API/local rows sometimes omit totalQty. */
+function invoiceLineQty(line: { totalQty?: number; quantity?: number; packaging?: number }): number {
+  const total = Number(line.totalQty);
+  if (Number.isFinite(total) && total > 0) return total;
+  const qty = Number(line.quantity) || 0;
+  const pkg = Number(line.packaging) || 1;
+  return Math.max(0, qty * (pkg > 0 ? pkg : 1));
+}
 
 const RETURN_STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   pending: 'secondary',
@@ -77,12 +90,18 @@ interface PurchaseReturnsTabProps {
   openCreateSignal?: number;
   preselectInvoiceId?: string | null;
   onReturnsChanged?: () => void;
+  /** Same scope as Compras list (apiBranchId / toolbar). */
+  listBranchId?: string | null;
+  /** When true (Sede “todas”), list returnable invoices from every branch. */
+  consolidated?: boolean;
 }
 
 export function PurchaseReturnsTab({
   openCreateSignal = 0,
   preselectInvoiceId = null,
   onReturnsChanged,
+  listBranchId = null,
+  consolidated = false,
 }: PurchaseReturnsTabProps) {
   const { toast } = useToast();
   const { t, language } = useTranslation();
@@ -90,7 +109,15 @@ export function PurchaseReturnsTab({
   const { currentBranch, branches } = useBranchContext();
   const { user } = useAuth();
   const openCreateRef = useRef(openCreateSignal);
-  const branchId = currentBranch?.id;
+  const branchId = useMemo(() => {
+    const fromList = String(listBranchId || '').trim();
+    if (fromList && fromList !== ALL_BRANCHES_SCOPE_ID) return fromList;
+    return String(currentBranch?.id || '').trim() || undefined;
+  }, [listBranchId, currentBranch?.id]);
+  const isAllBranches =
+    consolidated
+    || String(listBranchId || '').trim() === ALL_BRANCHES_SCOPE_ID
+    || !branchId;
 
   const statusLabel = useCallback((status: string) => {
     switch (status) {
@@ -129,6 +156,7 @@ export function PurchaseReturnsTab({
   const [notes, setNotes] = useState('');
   const [returnLines, setReturnLines] = useState<ReturnLineForm[]>([]);
   const [saving, setSaving] = useState(false);
+  const [loadingLines, setLoadingLines] = useState(false);
 
   // View dialog
   const [viewReturn, setViewReturn] = useState<SupplierReturn | null>(null);
@@ -156,15 +184,42 @@ export function PurchaseReturnsTab({
 
   // Load data
   const loadData = useCallback(async () => {
+    const scope = isAllBranches ? undefined : branchId;
     const [rets, invs] = await Promise.all([
-      getSupplierReturns(branchId),
-      getPurchaseInvoices(branchId),
+      getSupplierReturns(scope),
+      getPurchaseInvoices(scope, branches, { limit: 500 }),
     ]);
     setReturns(rets);
-    setInvoices(invs.filter(i => i.status === 'confirmed'));
-  }, [branchId]);
+    // Confirmed (and legacy rows missing status) — never draft/cancelled.
+    setInvoices(
+      invs.filter((i) => {
+        const st = String(i.status || 'confirmed').toLowerCase();
+        return st === 'confirmed' || st === '';
+      }),
+    );
+  }, [branchId, isAllBranches, branches]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const returnableInvoices = useMemo(() => {
+    return invoices.filter((inv) => {
+      if (inv.purchaseReturnsStatus === 'full') return false;
+      if (!isAllBranches && branchId) {
+        if (!invoiceBelongsToBranch(inv, branchId, branches)) return false;
+      }
+      const lines = Array.isArray(inv.lines) ? inv.lines : [];
+      // List API returns NULL lines_json for speed — still show the invoice; lines load on select.
+      if (lines.length === 0) return true;
+      return lines.some((line) => {
+        const purchased = invoiceLineQty(line);
+        const remaining = Math.max(
+          purchased - getAlreadyReturnedQty(inv.id, line.id, line.productId),
+          0,
+        );
+        return remaining > 0;
+      });
+    });
+  }, [invoices, isAllBranches, branchId, branches, getAlreadyReturnedQty]);
 
   // Filter returns
   const filteredReturns = useMemo(() => {
@@ -184,25 +239,54 @@ export function PurchaseReturnsTab({
   const buildReturnLinesForInvoice = useCallback(async (inv: PurchaseInvoice): Promise<ReturnLineForm[]> => {
     const stockBySku = new Map<string, number>();
     const stockByProductId = new Map<string, number>();
-    try {
-      const resp = await api.products.list(inv.branchId);
-      for (const p of resp.data || []) {
-        stockByProductId.set(p.id, Number(p.stock) || 0);
-        const skuKey = String(p.sku || '').trim().toLowerCase();
-        if (skuKey) stockBySku.set(skuKey, Number(p.stock) || 0);
+    const warehouseId = inv.warehouseId || inv.branchId;
+
+    const ingestRows = (rows: any[]) => {
+      for (const p of rows) {
+        const stock = Number(p.stock ?? p.ledger_stock ?? p.ledgerStock ?? 0) || 0;
+        if (p.id) stockByProductId.set(String(p.id), stock);
+        const skuKey = normalizeProductSkuKey(p.sku || p.productCode);
+        if (skuKey) {
+          stockBySku.set(skuKey, Math.max(stockBySku.get(skuKey) || 0, stock));
+        }
       }
+    };
+
+    try {
+      const grid = await api.products.inventoryGrid({ branchId: warehouseId });
+      const rows = Array.isArray(grid.data?.rows)
+        ? grid.data.rows
+        : Array.isArray(grid.data)
+          ? grid.data
+          : [];
+      if (rows.length > 0) ingestRows(rows);
     } catch {
-      // Stock display falls back to invoice-only limits
+      try {
+        const resp = await api.products.list(warehouseId);
+        const rows = Array.isArray(resp.data) ? resp.data : [];
+        if (rows.length > 0) ingestRows(rows);
+      } catch {
+        /* stock optional for line selection */
+      }
     }
 
-    return inv.lines.map(line => {
+    const lines = Array.isArray(inv.lines) ? inv.lines : [];
+    return lines.map((line) => {
+      const purchased = invoiceLineQty(line);
       const invoiceRemainingQty = Math.max(
-        line.totalQty - getAlreadyReturnedQty(inv.id, line.id, line.productId),
+        purchased - getAlreadyReturnedQty(inv.id, line.id, line.productId),
         0,
       );
-      const skuKey = String(line.productCode || '').trim().toLowerCase();
-      const stockOnHand = stockBySku.get(skuKey) ?? stockByProductId.get(line.productId) ?? 0;
-      const maxQty = Math.min(invoiceRemainingQty, stockOnHand);
+      const skuKey = normalizeProductSkuKey(line.productCode);
+      const hasSkuStock = skuKey ? stockBySku.has(skuKey) : false;
+      const hasIdStock = !!line.productId && stockByProductId.has(line.productId);
+      const stockOnHand = hasSkuStock
+        ? (stockBySku.get(skuKey) || 0)
+        : hasIdStock
+          ? (stockByProductId.get(line.productId) || 0)
+          : invoiceRemainingQty;
+      // Cap by invoice remaining so the user can always choose lines; stock is advisory.
+      const maxQty = invoiceRemainingQty;
       return {
         sourceLineId: line.id,
         productId: line.productId,
@@ -211,29 +295,49 @@ export function PurchaseReturnsTab({
         invoiceRemainingQty,
         stockOnHand,
         maxQty,
-        quantity: maxQty,
+        quantity: maxQty > 0 ? maxQty : 0,
         unitCost: line.unitPrice,
         taxRate: line.ivaRate,
         selected: maxQty > 0,
       };
-    });
+    }).filter((l) => l.invoiceRemainingQty > 0);
   }, [getAlreadyReturnedQty]);
 
-  // Select invoice → populate lines
+  // Select invoice → load full document (list omits lines) → populate return lines
   const handleSelectInvoice = useCallback(async (inv: PurchaseInvoice) => {
-    setSelectedInvoice(inv);
-    setReturnLines(await buildReturnLinesForInvoice(inv));
     setInvoicePickerOpen(false);
+    setLoadingLines(true);
+    setReturnLines([]);
+    try {
+      const full = (await getPurchaseInvoiceById(inv.id)) || inv;
+      setSelectedInvoice(full);
+      setReturnLines(await buildReturnLinesForInvoice(full));
+    } catch (err) {
+      console.warn('[PurchaseReturns] load invoice lines failed:', err);
+      setSelectedInvoice(inv);
+      setReturnLines(await buildReturnLinesForInvoice(inv));
+    } finally {
+      setLoadingLines(false);
+    }
   }, [buildReturnLinesForInvoice]);
 
   useEffect(() => {
     if (!preselectInvoiceId || invoices.length === 0) return;
     const inv = invoices.find((i) => i.id === preselectInvoiceId);
-    if (inv && inv.status === 'confirmed' && inv.purchaseReturnsStatus !== 'full') {
-      handleSelectInvoice(inv);
+    if (
+      inv
+      && String(inv.status || 'confirmed').toLowerCase() === 'confirmed'
+      && inv.purchaseReturnsStatus !== 'full'
+    ) {
+      void handleSelectInvoice(inv);
       setCreateOpen(true);
     }
   }, [preselectInvoiceId, invoices, handleSelectInvoice]);
+
+  // Refresh invoice list when opening the picker (same branch scope as Compras).
+  useEffect(() => {
+    if (invoicePickerOpen) void loadData();
+  }, [invoicePickerOpen, loadData]);
 
   // Create return
   const handleCreate = useCallback(async () => {
@@ -748,9 +852,18 @@ export function PurchaseReturnsTab({
             </div>
 
             {/* Lines from invoice */}
-            {selectedInvoice && returnLines.length > 0 && (
+            {selectedInvoice && (
               <div>
                 <Label className="mb-2 block">{t.purchaseReturnsUi.invoiceLinesLabel}</Label>
+                {loadingLines ? (
+                  <p className="text-sm text-muted-foreground border rounded-lg px-3 py-6 text-center">
+                    {t.purchaseReturnsUi.loadingInvoiceLines}
+                  </p>
+                ) : returnLines.length === 0 ? (
+                  <p className="text-sm text-muted-foreground border rounded-lg px-3 py-6 text-center">
+                    {t.purchaseReturnsUi.noReturnableLinesOnInvoice}
+                  </p>
+                ) : (
                  <div className="border rounded-lg overflow-hidden">
                   <Table>
                     <TableHeader>
@@ -771,13 +884,19 @@ export function PurchaseReturnsTab({
                         const lineSubtotal = line.quantity * line.unitCost;
                         const lineTax = lineSubtotal * (line.taxRate / 100);
                         return (
-                          <TableRow key={idx} className={`h-8 text-[11px] ${!line.selected ? 'opacity-40' : ''}`}>
+                          <TableRow key={line.sourceLineId || idx} className={`h-8 text-[11px] ${!line.selected ? 'opacity-40' : ''}`}>
                             <TableCell>
                               <Checkbox
                                 checked={line.selected}
                                 onCheckedChange={v => {
                                   const updated = [...returnLines];
-                                  updated[idx].selected = !!v;
+                                  updated[idx] = {
+                                    ...updated[idx],
+                                    selected: !!v,
+                                    quantity: !!v
+                                      ? (updated[idx].quantity > 0 ? updated[idx].quantity : updated[idx].maxQty)
+                                      : updated[idx].quantity,
+                                  };
                                   setReturnLines(updated);
                                 }}
                               />
@@ -795,7 +914,11 @@ export function PurchaseReturnsTab({
                                 onChange={e => {
                                   const val = Math.min(Number(e.target.value) || 0, line.maxQty);
                                   const updated = [...returnLines];
-                                  updated[idx].quantity = val;
+                                  updated[idx] = {
+                                    ...updated[idx],
+                                    quantity: val,
+                                    selected: val > 0 ? true : updated[idx].selected,
+                                  };
                                   setReturnLines(updated);
                                 }}
                                 className="h-6 text-[11px] w-[80px] text-right ml-auto"
@@ -813,9 +936,10 @@ export function PurchaseReturnsTab({
                     </TableBody>
                   </Table>
                 </div>
+                )}
 
                 {/* Summary */}
-                {(() => {
+                {returnLines.length > 0 && (() => {
                   const selected = returnLines.filter(l => l.selected && l.quantity > 0);
                   const sub = selected.reduce((s, l) => s + l.quantity * l.unitCost, 0);
                   const tax = selected.reduce((s, l) => s + l.quantity * l.unitCost * (l.taxRate / 100), 0);
@@ -874,7 +998,7 @@ export function PurchaseReturnsTab({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                  {invoices.filter(inv => inv.branchId === branchId).filter(inv => inv.lines.some(line => Math.max(line.totalQty - getAlreadyReturnedQty(inv.id, line.id, line.productId), 0) > 0)).map(inv => (
+                  {returnableInvoices.map(inv => (
                   <TableRow
                     key={inv.id}
                     className="cursor-pointer hover:bg-accent h-8 text-[11px]"
@@ -884,10 +1008,10 @@ export function PurchaseReturnsTab({
                     <TableCell>{inv.supplierName}</TableCell>
                     <TableCell>{inv.date}</TableCell>
                     <TableCell className="text-right font-mono">{fmtKz(inv.total)}</TableCell>
-                    <TableCell className="text-right">{inv.lines.length}</TableCell>
+                    <TableCell className="text-right">{inv.lines?.length || 0}</TableCell>
                   </TableRow>
                 ))}
-                 {invoices.filter(inv => inv.branchId === branchId).filter(inv => inv.lines.some(line => Math.max(line.totalQty - getAlreadyReturnedQty(inv.id, line.id, line.productId), 0) > 0)).length === 0 && (
+                 {returnableInvoices.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                        {t.purchaseReturnsUi.noInvoicesWithReturnableBalance}

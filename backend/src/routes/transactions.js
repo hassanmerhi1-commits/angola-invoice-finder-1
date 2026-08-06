@@ -290,6 +290,9 @@ module.exports = function(broadcastTable) {
         supplierName: req.body.supplierName ?? req.body.supplier_name,
       });
       await client.query('COMMIT');
+      try {
+        require('../lib/inventoryGridServerCache').invalidateInventoryGridResultCache();
+      } catch (_) { /* ignore */ }
       await broadcastTable('products');
       await broadcastTable('chart_of_accounts');
       res.status(201).json(result);
@@ -320,6 +323,9 @@ module.exports = function(broadcastTable) {
         reason: req.body?.reason,
       });
       await client.query('COMMIT');
+      try {
+        require('../lib/inventoryGridServerCache').invalidateInventoryGridResultCache();
+      } catch (_) { /* ignore */ }
       await broadcastTable('products');
       await broadcastTable('journal_entries');
       res.json(result);
@@ -354,6 +360,9 @@ module.exports = function(broadcastTable) {
         voidReason: req.body.voidReason,
       });
       await client.query('COMMIT');
+      try {
+        require('../lib/inventoryGridServerCache').invalidateInventoryGridResultCache();
+      } catch (_) { /* ignore */ }
       await broadcastTable('products');
       await broadcastTable('chart_of_accounts');
       await broadcastTable('journal_entries');

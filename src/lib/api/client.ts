@@ -3569,6 +3569,16 @@ export const api = {
         journalEntryId: string | null;
         totalValue: number;
         direction: string;
+        pendingSync?: boolean;
+        productUpdates?: {
+          productId: string;
+          sku?: string;
+          stock: number;
+          cost?: number;
+          avgCost?: number;
+          lastCost?: number;
+          taxRate?: number;
+        }[];
       }>('/transactions/stock-adjustment', { method: 'POST', body: JSON.stringify(data) }, { timeoutMs: 90000 });
       if (result.error && hasSyncOutbox() && shouldQueueOnNetworkError(result.error)) {
         const queued = await queueAdjustmentLines();
