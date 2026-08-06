@@ -1289,12 +1289,14 @@ export default function PurchaseInvoices() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { apiBranchId, currentBranch, isConsolidatedView, allBranches: branches, treasuryAllBranches } = useBranchScope();
-  const listBranchId = useMemo(
-    () => resolveUserBranch(branches, apiBranchId || currentBranch?.id)?.id
+  // Sede / consolidated: no branch filter (all filiais). Do NOT fall back to currentBranch.id —
+  // that wrongly limited Compras to SEDE-only invoices.
+  const listBranchId = useMemo(() => {
+    if (isConsolidatedView) return undefined;
+    return resolveUserBranch(branches, apiBranchId || currentBranch?.id)?.id
       || apiBranchId
-      || currentBranch?.id,
-    [branches, apiBranchId, currentBranch?.id],
-  );
+      || currentBranch?.id;
+  }, [isConsolidatedView, branches, apiBranchId, currentBranch?.id]);
   const { suppliers, refreshSuppliers, createSupplier } = useSuppliers();
   const { toast } = useToast();
   const navigate = useNavigate();
