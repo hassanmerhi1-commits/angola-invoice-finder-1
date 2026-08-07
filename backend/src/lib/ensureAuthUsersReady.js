@@ -38,10 +38,13 @@ async function repairUserPassword(user, account) {
 
   if (!needsRepair) return false;
   const passwordHash = await hashPassword(preferred);
+  const forceChange =
+    process.env.NODE_ENV !== 'test'
+    && process.env.E2E_ALLOW_DEFAULT_PASSWORD !== '1';
   try {
     await db.query(
-      'UPDATE users SET password_hash = $1, must_change_password = true, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [passwordHash, user.id],
+      'UPDATE users SET password_hash = $1, must_change_password = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+      [passwordHash, forceChange ? 1 : 0, user.id],
     );
   } catch (err) {
     // Column may not exist until ensurePhaseSchema / migration 060.

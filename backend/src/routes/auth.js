@@ -188,10 +188,14 @@ router.post('/login', loginRateLimiter(), async (req, res) => {
     await upgradePasswordHashIfLegacy(db, user.id, password, user.password_hash);
 
     // Known factory defaults → force password change even if column was never set.
+    // Skip in automated tests / Playwright (seed still uses "changeme").
+    const allowDefaultPassword =
+      process.env.NODE_ENV === 'test'
+      || process.env.E2E_ALLOW_DEFAULT_PASSWORD === '1';
     const DEFAULT_PLAINTEXTS = new Set(['changeme', 'admin', 'caixa1']);
     let mustChange =
       user.must_change_password === true || user.must_change_password === 1;
-    if (!mustChange && DEFAULT_PLAINTEXTS.has(String(password))) {
+    if (!mustChange && !allowDefaultPassword && DEFAULT_PLAINTEXTS.has(String(password))) {
       mustChange = true;
       try {
         await db.query(

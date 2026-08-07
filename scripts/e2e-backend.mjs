@@ -76,6 +76,9 @@ const env = {
   NEXOR_INSTALL_DIR: installDir,
   PORT: process.env.E2E_BACKEND_PORT || '39081',
   NODE_ENV: 'test',
+  // Seed admin uses factory default "changeme"; do not force password change in e2e.
+  E2E_ALLOW_DEFAULT_PASSWORD: '1',
+  E2E_DISABLE_LOGIN_RATE_LIMIT: '1',
   ...(electron
     ? { ELECTRON_RUN_AS_NODE: '1', ELECTRON_NO_ATTACH_CONSOLE: '1' }
     : {}),
