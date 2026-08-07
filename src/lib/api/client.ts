@@ -328,11 +328,7 @@ async function apiFetch<T>(
       timeoutMs: fetchOpts?.timeoutMs ?? 25000,
     });
     let r = await doHttp();
-    // Silent one-shot retry — Tailscale idle sockets often fail the first hop.
-    if (!r.ok && r.status === 0 && /socket hang up|ECONNRESET|EPIPE|timeout|ETIMEDOUT|network/i.test(String(r.error || ''))) {
-      await new Promise((res) => setTimeout(res, 200));
-      r = await doHttp();
-    }
+    // httpJson already retries once with a fresh socket — avoid a third Tailscale hop here.
     if (r.ok) {
       return { data: r.json as T, status: r.status };
     }

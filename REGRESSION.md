@@ -21,6 +21,8 @@ These rules stop the Tailscale “same bug again” loop. Prefer changing produc
 - Product create/edit: patch inventory grid row; **do not** await full inventory-grid reload after success.
 - Purchase Save: upsert invoice into local list immediately; defer full list reconcile (~4s). SEDE all-branch list capped (~120 rows).
 - CoA / Journals: do not `force` full CoA download on every journal create/reverse; soft refetch only.
+- Electron LAN (`httpJson`): short-lived keep-alive (~4s); on hang-up retry once with `Connection: close` (do not triple-retry in `apiFetch`).
+- Invoices list: paint cache immediately, always background-revalidate (SWR) — do not hard-skip network when cache is “fresh”.
 - Do **not** call `chartOfAccounts.list()` to resolve one supplier leaf — use `POST /chart-of-accounts/ensure-supplier`.
 - Await `repostAccounting` only when the create/update response shows stock/payable/journal post failed; otherwise background + toast on failure.
 

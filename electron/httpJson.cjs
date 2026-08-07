@@ -1,12 +1,33 @@
 /**
  * Node HTTP(S) JSON requests — same path as curl, bypasses renderer fetch / CORS.
  *
- * Shop → city over Tailscale often drops idle TCP. Node's default keep-alive agent
- * then resurfaces as "socket hang up" on the next click; a second attempt works.
- * We disable keep-alive and silently retry once on retriable network errors.
+ * Shop → city over Tailscale often drops long-idle TCP. We use a *short-lived*
+ * keep-alive pool (few seconds) so bursty UI clicks reuse one socket, then fall
+ * back to a fresh Connection:close hop on retriable network errors.
  */
 const http = require('http');
 const https = require('https');
+
+/** Keep idle sockets only briefly — Tailscale/NAT often kills longer idles. */
+const KEEP_ALIVE_MSECS = 4000;
+const MAX_SOCKETS = 6;
+const MAX_FREE_SOCKETS = 3;
+
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: KEEP_ALIVE_MSECS,
+  maxSockets: MAX_SOCKETS,
+  maxFreeSockets: MAX_FREE_SOCKETS,
+  scheduling: 'lifo',
+});
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: KEEP_ALIVE_MSECS,
+  maxSockets: MAX_SOCKETS,
+  maxFreeSockets: MAX_FREE_SOCKETS,
+  scheduling: 'lifo',
+});
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -21,10 +42,16 @@ function isRetriableNetworkError(err) {
   );
 }
 
+function agentFor(protocol, forceNewConnection) {
+  if (forceNewConnection) return false;
+  return protocol === 'https:' ? httpsAgent : httpAgent;
+}
+
 function httpJsonRequestOnce(targetUrl, opts = {}) {
   const method = String(opts.method || 'GET').toUpperCase();
   const timeoutMs = Number(opts.timeoutMs) || 20000;
   const headers = opts.headers && typeof opts.headers === 'object' ? opts.headers : {};
+  const forceNewConnection = opts.forceNewConnection === true;
   const bodyRaw = opts.body != null
     ? (typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body))
     : null;
@@ -33,17 +60,18 @@ function httpJsonRequestOnce(targetUrl, opts = {}) {
     try {
       const u = new URL(String(targetUrl));
       const mod = u.protocol === 'https:' ? https : http;
+      const agent = agentFor(u.protocol, forceNewConnection);
       const req = mod.request(
         {
           hostname: u.hostname,
           port: u.port || (u.protocol === 'https:' ? 443 : 80),
           path: `${u.pathname}${u.search}`,
           method,
-          // Fresh TCP each request — avoids Tailscale/NAT killing idle keep-alive sockets.
-          agent: false,
+          agent,
           headers: {
             Accept: 'application/json',
-            Connection: 'close',
+            // Short keep-alive when pooled; force close on explicit fresh-socket retry.
+            Connection: forceNewConnection ? 'close' : 'keep-alive',
             ...(bodyRaw
               ? {
                   'Content-Type': headers['Content-Type'] || 'application/json',
@@ -100,8 +128,9 @@ async function httpJsonRequest(targetUrl, opts = {}) {
   if (first.ok || first.status > 0) return first;
   if (!isRetriableNetworkError(first)) return first;
 
-  await sleep(180);
-  const second = await httpJsonRequestOnce(targetUrl, opts);
+  // Dead keep-alive socket: one fresh TCP hop (Connection: close).
+  await sleep(120);
+  const second = await httpJsonRequestOnce(targetUrl, { ...opts, forceNewConnection: true });
   if (second.ok || second.status > 0) return second;
   return {
     ...second,
