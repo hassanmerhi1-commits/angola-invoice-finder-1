@@ -408,18 +408,37 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
   }, [refreshProducts, listEnabled]);
 
   useEffect(() => {
+    let lightweightRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     const handleProductsChanged = (event: Event) => {
-      const customEvent = event as CustomEvent<{ branchId?: string; lightweight?: boolean }>;
-      if (customEvent.detail?.lightweight) return;
+      const customEvent = event as CustomEvent<{
+        branchId?: string;
+        lightweight?: boolean;
+        skipListRefresh?: boolean;
+      }>;
+      if (customEvent.detail?.skipListRefresh) return;
       const changedBranchId = customEvent.detail?.branchId;
       const affectsAllBranches = !changedBranchId || changedBranchId === 'all';
-      if (!branchId || affectsAllBranches || changedBranchId === branchId) {
-        markCachedListStale(productsCacheKey);
-        void refreshProducts({ force: true });
+      if (branchId && !affectsAllBranches && changedBranchId !== branchId) {
+        return;
       }
+      markCachedListStale(productsCacheKey);
+      // Inventory creates use lightweight:true — previously ignored here, so the
+      // purchase product picker kept a stale list until cache TTL expired.
+      if (customEvent.detail?.lightweight) {
+        if (lightweightRefreshTimer) clearTimeout(lightweightRefreshTimer);
+        lightweightRefreshTimer = setTimeout(() => {
+          lightweightRefreshTimer = null;
+          void refreshProducts({ force: true });
+        }, 300);
+        return;
+      }
+      void refreshProducts({ force: true });
     };
     window.addEventListener(storage.PRODUCTS_CHANGED_EVENT, handleProductsChanged as EventListener);
-    return () => window.removeEventListener(storage.PRODUCTS_CHANGED_EVENT, handleProductsChanged as EventListener);
+    return () => {
+      window.removeEventListener(storage.PRODUCTS_CHANGED_EVENT, handleProductsChanged as EventListener);
+      if (lightweightRefreshTimer) clearTimeout(lightweightRefreshTimer);
+    };
   }, [branchId, refreshProducts, productsCacheKey]);
 
   type ProductWriteOptions = { skipListMerge?: boolean; lightweightChangedEvent?: boolean };
@@ -524,6 +543,13 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     }
     const changedBranch =
       savedProduct.branchId || branchId || catalogBranchIds[0] || 'all';
+    // Bust inventory session cache even when Inventory is not mounted — otherwise
+    // opening Inventory within 120s still shows the pre-create list.
+    invalidateInventoryGridCacheForBranches([
+      savedProduct.branchId,
+      branchId,
+      options?.branchId,
+    ].filter(Boolean) as string[]);
     dispatchProductsChanged(changedBranch, {
       ...options,
       lightweightChangedEvent: options?.lightweightChangedEvent ?? true,
@@ -580,6 +606,11 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
       }
     }
     const changedBranch = resolved.branchId || branchId || 'all';
+    invalidateInventoryGridCacheForBranches([
+      resolved.branchId,
+      branchId,
+      options?.branchId,
+    ].filter(Boolean) as string[]);
     dispatchProductsChanged(changedBranch, options);
     return resolved;
   }, [

@@ -185,8 +185,12 @@ async function findExistingProductForUpsert({ sku, name, branchId }) {
   if (skuTrim) {
     const bySku = await findExistingProductBySku(skuTrim, storedBranchId ?? branchId);
     if (bySku) return { id: bySku, matchedBy: 'sku' };
+    // Typed SKU not found — never fall back to name match (that steals the new
+    // code onto an old row and makes Inventory look like the product was never created).
+    return null;
   }
 
+  // Name match only when SKU is empty / auto — used for Adjust In style upserts.
   if (nameTrim) {
     const byName = await findExistingProductByName(nameTrim, storedBranchId ?? branchId);
     if (byName?.id) return { id: byName.id, matchedBy: 'name', existingSku: byName.sku };
@@ -340,6 +344,20 @@ const INVENTORY_LIST_COLUMNS = `
             cost, first_cost, last_cost, avg_cost, stock, unit, tax_rate,
             branch_id, supplier_id, supplier_name, is_active, created_at, updated_at`;
 
+function preferNonDefaultTaxRate(a, b) {
+  const { DEFAULT_VAT_RATE } = require('../taxDefaults');
+  const left = Number(a);
+  const right = Number(b);
+  const def = Number(DEFAULT_VAT_RATE);
+  const leftOk = Number.isFinite(left);
+  const rightOk = Number.isFinite(right);
+  if (leftOk && Math.abs(left - def) > 0.0001) return left;
+  if (rightOk && Math.abs(right - def) > 0.0001) return right;
+  if (leftOk) return left;
+  if (rightOk) return right;
+  return def;
+}
+
 function mergeGridSkuRow(prev, row, warehouseBranchId, mainBranchIds = []) {
   const pick =
     rowDisplayScore(row, warehouseBranchId, mainBranchIds)
@@ -357,6 +375,8 @@ function mergeGridSkuRow(prev, row, warehouseBranchId, mainBranchIds = []) {
     first_cost: maxN(pick.first_cost, other.first_cost),
     last_cost: maxN(pick.last_cost, other.last_cost),
     avg_cost: maxN(pick.avg_cost, other.avg_cost),
+    // Prefer filial/non-default IVA so a catalog twin at 5% does not hide line 14%.
+    tax_rate: preferNonDefaultTaxRate(pick.tax_rate, other.tax_rate),
   };
 }
 

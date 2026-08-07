@@ -72,14 +72,14 @@ export function useInventoryGrid(opts: {
 
     void (async () => {
       try {
-        // Reuse fresh session cache on tab revisits / remounts / branch re-select (≤120s).
+        // Stale-while-revalidate: paint warm/fresh cache instantly, but always
+        // refetch so creates done on other screens (Purchases) appear immediately.
         if (isInventoryGridCacheFresh(opts.branchId, opts.consolidated, 120_000)) {
           const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
           if (cached?.length) {
             if (gen !== generationRef.current) return;
             setRows(cached);
             setLoading(false);
-            return;
           }
         }
         const fresh = await fetchInventoryGrid({

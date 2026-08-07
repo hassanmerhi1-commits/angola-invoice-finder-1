@@ -63,7 +63,13 @@ function shouldPreserveExistingTaxRate(existing, nextRate, opts = {}) {
   }
 
   if (opts.forceVatChange || opts.clientSetsOverride) return false;
-  // Unacknowledged change of any kind — keep what is stored.
+
+  // Allow upgrading the app default (5%) to a real rate (0/7/14) when the caller
+  // sends an explicit next rate — otherwise purchase/create IVA sticks at 5%.
+  const curIsDefault = Math.abs(cur - Number(DEFAULT_VAT_RATE)) < 0.0001;
+  if (curIsDefault && !nextIsDefault) return false;
+
+  // Unacknowledged change of any other kind — keep what is stored.
   return true;
 }
 

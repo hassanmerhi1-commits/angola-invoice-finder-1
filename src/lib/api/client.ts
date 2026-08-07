@@ -887,6 +887,7 @@ export const api = {
         unit: data?.unit,
         taxRate: data?.taxRate ?? data?.iva,
         vatOverride: data?.vatOverride ?? data?.vat_override,
+        forceVatChange: data?.forceVatChange ?? data?.force_vat_change,
         branchId,
         isActive: data?.isActive,
         supplierId: data?.supplierId,

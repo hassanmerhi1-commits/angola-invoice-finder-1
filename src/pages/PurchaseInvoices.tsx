@@ -1424,6 +1424,20 @@ export default function PurchaseInvoices() {
     { light: true, enabled: mode === 'create' || poCreateOpen },
   );
 
+  // Force a fresh product list when opening create/PO — Inventory creates can land
+  // while this hook was disabled or still holding a warm 3-minute cache.
+  useEffect(() => {
+    if (mode === 'create' || poCreateOpen) {
+      void refreshProducts({ force: true });
+    }
+  }, [mode, poCreateOpen, productsBranchId, refreshProducts]);
+
+  useEffect(() => {
+    if (productPickerOpen || poProductPickerOpen) {
+      void refreshProducts({ force: true });
+    }
+  }, [productPickerOpen, poProductPickerOpen, refreshProducts]);
+
   // Purchase orders
   const { orders, createOrder, approveOrder, receiveOrder, cancelOrder, refreshOrders } = usePurchaseOrders(listBranchId);
 

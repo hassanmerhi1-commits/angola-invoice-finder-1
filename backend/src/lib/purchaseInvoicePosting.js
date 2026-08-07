@@ -402,9 +402,58 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
           notes: `Fatura de Compra ${inv.invoiceNumber} — ${inv.supplierName || ''}`.trim(),
           createdBy: inv.createdBy || inv.created_by || null,
         });
+        const resolvedId = movement.product_id || line.productId;
         if (unitCost > 0) {
-          const resolvedId = movement.product_id || line.productId;
           await applyWeightedAverageCostAfterIn(client, resolvedId, qty, unitCost);
+        }
+        // Sync product master IVA from the purchase line when upgrading default 5% → 0/7/14.
+        // Purchase line IVA used to never touch products.tax_rate, so Inventory kept showing 5%.
+        const lineIva = Number(line.ivaRate ?? line.taxRate ?? line.iva_rate);
+        if (resolvedId && Number.isFinite(lineIva) && lineIva >= 0) {
+          try {
+            const {
+              DEFAULT_VAT_RATE,
+              taxCodeForRate,
+              shouldPreserveExistingTaxRate,
+              isAllowedVatRate,
+            } = require('../taxDefaults');
+            if (isAllowedVatRate(lineIva)) {
+              const curRes = await client.query(
+                `SELECT tax_rate, vat_override FROM products WHERE id = $1`,
+                [resolvedId],
+              );
+              const cur = curRes.rows?.[0];
+              if (
+                cur
+                && !shouldPreserveExistingTaxRate(cur, lineIva, {
+                  clientSetsOverride: true,
+                })
+              ) {
+                await client.query(
+                  `UPDATE products SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+                  [lineIva, resolvedId],
+                );
+                try {
+                  await client.query(
+                    `UPDATE products SET tax_code = $1 WHERE id = $2`,
+                    [taxCodeForRate(lineIva), resolvedId],
+                  );
+                } catch (_) { /* tax_code optional */ }
+                if (Math.abs(lineIva - Number(DEFAULT_VAT_RATE)) > 0.0001) {
+                  try {
+                    await client.query(
+                      `UPDATE products SET vat_override = $1 WHERE id = $2`,
+                      [true, resolvedId],
+                    );
+                  } catch (_) { /* vat_override optional */ }
+                }
+              }
+            }
+          } catch (taxErr) {
+            result.warnings.push(
+              `IVA sync ${line.productCode || resolvedId}: ${taxErr?.message || String(taxErr)}`,
+            );
+          }
         }
         return movement;
       });
