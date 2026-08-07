@@ -447,11 +447,15 @@ router.post('/users', requireAdmin, async (req, res) => {
 
     const id = crypto.randomUUID();
     const passwordHash = await hashPassword(plainPassword);
+    // Production: new accounts must change password on first login.
+    // E2E/unit: skip so automated API flows can use the password they just set.
+    const mustChangeOnCreate =
+      process.env.NODE_ENV === 'test' || process.env.E2E_ALLOW_DEFAULT_PASSWORD === '1' ? 0 : 1;
 
     await db.query(
       `INSERT INTO users (id, email, username, name, role, branch_id, password_hash, is_active, must_change_password, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [id, normalizedEmail, normalizedUsername, name, role, branchId || null, passwordHash],
+       VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [id, normalizedEmail, normalizedUsername, name, role, branchId || null, passwordHash, mustChangeOnCreate],
     );
 
     const created = await db.query(
@@ -538,7 +542,12 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
       passwordHash = await hashPassword(String(password));
       // Admin/temp reset for another user → force change on next login.
       // Changing own password here clears the flag.
-      mustChangePassword = id !== req.user?.id;
+      // E2E/unit skips the force so API tests can log in with the password they set.
+      if (process.env.NODE_ENV === 'test' || process.env.E2E_ALLOW_DEFAULT_PASSWORD === '1') {
+        mustChangePassword = false;
+      } else {
+        mustChangePassword = id !== req.user?.id;
+      }
     }
 
     await db.query(

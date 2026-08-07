@@ -200,11 +200,13 @@ async function bumpSequenceFromExistingSales(client, documentType, prefix, scope
   }
   if (maxNum <= 0) return 0;
 
+  const db = require('./db');
+  const { sqlScalarMax } = require('./lib/sqlDialect');
   await client.query(
     `INSERT INTO document_sequences (id, document_type, prefix, fiscal_year, branch_id, current_number)
      VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (document_type, fiscal_year, branch_id)
-     DO UPDATE SET current_number = GREATEST(document_sequences.current_number, EXCLUDED.current_number)`,
+     DO UPDATE SET current_number = ${sqlScalarMax(db, 'document_sequences.current_number', 'EXCLUDED.current_number')}`,
     [randomUUID(), documentType, prefix, yr, normalizedScope.branchId, maxNum],
   );
   return maxNum;

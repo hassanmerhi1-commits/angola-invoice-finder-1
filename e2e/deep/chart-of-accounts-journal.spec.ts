@@ -47,7 +47,9 @@ test.describe('Chart of accounts + journal E2E', () => {
     const journalDialog = page.getByRole('dialog', { name: /new manual entry/i });
     await expect(journalDialog).toBeVisible();
 
-    await journalDialog.getByPlaceholder('Entry description...').fill(journalDescription);
+    await journalDialog
+      .getByPlaceholder(/entry (title|description)/i)
+      .fill(journalDescription);
 
     const accountInputs = journalDialog.getByPlaceholder('e.g., 451');
     await accountInputs.nth(0).fill(accountCode);
