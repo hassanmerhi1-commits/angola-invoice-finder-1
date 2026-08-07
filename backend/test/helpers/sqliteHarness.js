@@ -31,6 +31,19 @@ function createSqliteHarness() {
 
   const db = require(path.join(BACKEND_SRC, 'db'));
 
+  // db.js CREATE TABLE is frozen for existing installs; phase schema (and CI temp DBs)
+  // must still get columns added by ensurePhaseSchema — call the sync-safe bits here.
+  try {
+    if (db.sqlite) {
+      const movCols = db.sqlite.pragma('table_info(stock_movements)');
+      if (Array.isArray(movCols) && !movCols.some((c) => c.name === 'location_id')) {
+        db.sqlite.exec('ALTER TABLE stock_movements ADD COLUMN location_id TEXT');
+      }
+    }
+  } catch (_) {
+    /* ignore */
+  }
+
   async function withClient(fn) {
     const client = await db.pool.connect();
     try {

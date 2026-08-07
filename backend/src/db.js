@@ -247,6 +247,7 @@ function ensureAppTablesAndColumns() {
       id TEXT PRIMARY KEY,
       product_id TEXT NOT NULL,
       warehouse_id TEXT,
+      location_id TEXT,
       movement_type TEXT NOT NULL,
       quantity REAL NOT NULL,
       unit_cost REAL DEFAULT 0,

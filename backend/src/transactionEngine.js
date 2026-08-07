@@ -618,6 +618,7 @@ async function processStockAdjustment(client, data) {
   }
 
   const movementIds = [];
+  const touchedProductIds = new Set();
   let totalValue = 0;
 
   for (const line of lines) {
@@ -640,6 +641,7 @@ async function processStockAdjustment(client, data) {
 
     movementIds.push(movement.id);
     const resolvedProductId = movement.product_id || line.productId;
+    if (resolvedProductId) touchedProductIds.add(String(resolvedProductId));
     totalValue += qty * unitCost;
 
     if (normalizedDirection === 'IN' && unitCost > 0) {
@@ -789,24 +791,15 @@ async function processStockAdjustment(client, data) {
   );
 
   // Compact snapshots so clients can patch inventory rows without a full grid refetch.
-  const touchedIds = [
-    ...new Set(
-      movementIds.length
-        ? (
-            await client.query(
-              `SELECT DISTINCT product_id FROM stock_movements WHERE id = ANY($1::uuid[])`,
-              [movementIds],
-            )
-          ).rows.map((r) => String(r.product_id))
-        : [],
-    ),
-  ];
+  // Use portable IN (...) placeholders — ANY($1::uuid[]) is Postgres-only and breaks SQLite.
+  const touchedIds = [...touchedProductIds];
   let productUpdates = [];
   if (touchedIds.length > 0) {
+    const placeholders = touchedIds.map((_, i) => `$${i + 1}`).join(', ');
     const snap = await client.query(
       `SELECT id, sku, stock, cost, avg_cost, last_cost, tax_rate
-       FROM products WHERE id = ANY($1::uuid[])`,
-      [touchedIds],
+       FROM products WHERE id IN (${placeholders})`,
+      touchedIds,
     );
     productUpdates = snap.rows.map((r) => ({
       productId: String(r.id),
