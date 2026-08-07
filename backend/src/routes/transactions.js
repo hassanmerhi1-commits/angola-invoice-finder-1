@@ -580,7 +580,7 @@ module.exports = function(broadcastTable) {
       }
       return res.status(201).json(result);
     } catch (error) {
-      await client.query('ROLLBACK');
+      try { await client.query('ROLLBACK'); } catch (_) { /* no open transaction (e.g. backdate denied before BEGIN) */ }
       console.error('[TX API ERROR]', error.message);
       console.error('[TX API ERROR STACK]', error.stack);
       console.error('[TX API ERROR PAYLOAD]', JSON.stringify({

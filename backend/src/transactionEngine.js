@@ -2425,7 +2425,14 @@ async function processSale(client, saleData) {
   });
 
   console.log(`[TX ENGINE] Sale ${invoiceNumber} (${invoiceType}) ✓`);
-  return { id: saleId, invoice_number: invoiceNumber, invoice_type: invoiceType, total: totalAmount, status: 'completed' };
+  return {
+    id: saleId,
+    invoice_number: invoiceNumber,
+    invoice_type: invoiceType,
+    total: totalAmount,
+    status: 'completed',
+    payment_method: paymentMethod,
+  };
 }
 
 // ==================== CREATE PURCHASE ORDER ====================

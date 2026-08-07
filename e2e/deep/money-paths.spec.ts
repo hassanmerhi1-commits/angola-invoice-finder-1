@@ -12,7 +12,7 @@ async function createClient(
   request: APIRequestContext,
   auth: E2eAuthContext,
 ): Promise<{ id: string; name: string; nif: string }> {
-  const nif = `5${Date.now().toString().slice(-8)}`;
+  const nif = `5${Date.now().toString().slice(-9)}`;
   const name = `E2E Client ${nif}`;
   const res = await request.post(`${E2E_BACKEND_URL}/api/clients`, {
     headers: {

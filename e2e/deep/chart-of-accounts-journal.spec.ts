@@ -49,6 +49,7 @@ test.describe('Chart of accounts + journal E2E', () => {
 
     await journalDialog
       .getByPlaceholder(/entry (title|description)/i)
+      .first()
       .fill(journalDescription);
 
     const accountInputs = journalDialog.getByPlaceholder('e.g., 451');

@@ -69,8 +69,8 @@ module.exports = function(broadcastTable) {
       const existingRes = await conn.query(
         `SELECT * FROM clients
          WHERE REPLACE(COALESCE(nif, ''), ' ', '') = $1
-         ORDER BY CASE WHEN COALESCE(is_active, true) THEN 0 ELSE 1 END,
-                  created_at ASC NULLS LAST, id ASC
+         ORDER BY CASE WHEN COALESCE(is_active, 1) THEN 0 ELSE 1 END,
+                  created_at ASC, id ASC
          LIMIT 1`,
         [normalizedNif],
       );
