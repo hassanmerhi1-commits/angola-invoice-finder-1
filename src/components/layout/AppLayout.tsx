@@ -16,6 +16,7 @@ import { DailyTodoDialog } from '@/components/daily/DailyTodoDialog';
 import { ensureDayTodos, shouldShowDailyTodoDialog, todayKey } from '@/lib/dailyTodos';
 import { hydrateCompanySettingsFromServer } from '@/lib/companySettings';
 import { useRealtimeSyncBridge } from '@/hooks/useRealtimeSyncBridge';
+import { prefetchCoreRoutes } from '@/lib/routePrefetch';
 
 function resolveAppPathname(pathname: string): string {
   const p = pathname.replace(/\/$/, '') || '/';
@@ -42,6 +43,29 @@ export function AppLayout() {
   }, [user]);
 
   useRealtimeSyncBridge(!!user);
+
+  // Prefetch main route chunks while the UI is idle so Inventory/POS/Purchases open faster.
+  useEffect(() => {
+    if (!user) return;
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    let idleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const run = () => prefetchCoreRoutes();
+    if (typeof w.requestIdleCallback === 'function') {
+      idleId = w.requestIdleCallback(run, { timeout: 2500 });
+    } else {
+      timeoutId = setTimeout(run, 1200);
+    }
+    return () => {
+      if (idleId != null && typeof w.cancelIdleCallback === 'function') {
+        w.cancelIdleCallback(idleId);
+      }
+      if (timeoutId != null) clearTimeout(timeoutId);
+    };
+  }, [user]);
 
   // Keep the shared company profile (name, NIF, address, logo, ...) in sync with the
   // server: hydrate once after login, then refetch whenever any terminal updates it.

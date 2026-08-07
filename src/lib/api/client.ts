@@ -843,10 +843,16 @@ export const api = {
       const qs = sp.toString();
       return apiFetch<any[]>(`/products/low-stock${qs ? `?${qs}` : ''}`);
     },
-    inventoryGrid: (opts: { branchId?: string; consolidated?: boolean }) => {
+    inventoryGrid: (opts: {
+      branchId?: string;
+      consolidated?: boolean;
+      /** Skip bulky sellingPrices map when the client already has session hints. */
+      omitSellingPrices?: boolean;
+    }) => {
       const sp = new URLSearchParams();
       if (opts.branchId) sp.set('branchId', opts.branchId);
       if (opts.consolidated) sp.set('consolidated', '1');
+      if (opts.omitSellingPrices) sp.set('omitSellingPrices', '1');
       const qs = sp.toString();
       return apiFetch<{ rows: any[]; count: number; sellingPrices?: Record<string, number> }>(
         `/products/inventory-grid${qs ? `?${qs}` : ''}`,

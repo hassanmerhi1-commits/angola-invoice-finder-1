@@ -48,6 +48,7 @@ import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
 import { Supplier, Product, PurchaseOrder } from '@/types/erp';
 import { ProductDetailDialog } from '@/components/inventory/ProductDetailDialog';
+import { SupplierFormDialog } from '@/components/suppliers/SupplierFormDialog';
 import { AttachmentPanel } from '@/components/documents/AttachmentPanel';
 import { InlineLineGrid } from '@/components/purchase/InlineLineGrid';
 import { PurchaseReturnsTab } from '@/components/purchase/PurchaseReturnsTab';
@@ -297,102 +298,6 @@ function SupplierPickerDialog({
             </TableBody>
           </Table>
         </ScrollArea>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-type NewSupplierFormState = {
-  name: string;
-  nif: string;
-  email: string;
-  phone: string;
-  address: string;
-  city: string;
-  country: string;
-  contactPerson: string;
-  notes: string;
-};
-
-function emptyNewSupplierForm(): NewSupplierFormState {
-  return {
-    name: '', nif: '', email: '', phone: '', address: '', city: '',
-    country: 'Angola', contactPerson: '', notes: '',
-  };
-}
-
-function CreateSupplierDialog({
-  open,
-  onOpenChange,
-  form,
-  setForm,
-  onSave,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  form: NewSupplierFormState;
-  setForm: React.Dispatch<React.SetStateAction<NewSupplierFormState>>;
-  onSave: () => void | Promise<void>;
-}) {
-  const { t } = useTranslation();
-  const [saving, setSaving] = useState(false);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>{t.purchaseInvoicesUi.newSupplierDialogTitle}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div>
-            <Label>{t.purchaseInvoicesUi.labelName}</Label>
-            <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder={t.purchaseInvoicesUi.supplierNamePlaceholder} />
-          </div>
-          <div>
-            <Label>{t.purchaseInvoicesUi.labelVatId}</Label>
-            <Input value={form.nif} onChange={e => setForm(f => ({ ...f, nif: e.target.value }))} placeholder={t.purchaseInvoicesUi.placeholderTaxId} />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <Label>{t.purchaseInvoicesUi.labelEmail}</Label>
-              <Input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelEmail} />
-            </div>
-            <div>
-              <Label>{t.purchaseInvoicesUi.labelPhone}</Label>
-              <Input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelPhone} />
-            </div>
-          </div>
-          <div>
-            <Label>{t.purchaseInvoicesUi.labelAddress}</Label>
-            <Input value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelAddress} />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <Label>{t.purchaseInvoicesUi.labelCity}</Label>
-              <Input value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} placeholder={t.purchaseInvoicesUi.labelCity} />
-            </div>
-            <div>
-              <Label>{t.purchaseInvoicesUi.labelCountry}</Label>
-              <Input value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} />
-            </div>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>{t.common.cancel}</Button>
-          <Button
-            disabled={!form.name.trim() || saving}
-            onClick={async () => {
-              setSaving(true);
-              try {
-                await onSave();
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            <Save className="h-4 w-4 mr-1" /> {t.common.save}
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -1309,7 +1214,7 @@ export default function PurchaseInvoices() {
       || apiBranchId
       || currentBranch?.id;
   }, [isConsolidatedView, branches, apiBranchId, currentBranch?.id]);
-  const { suppliers, refreshSuppliers, createSupplier } = useSuppliers();
+  const { suppliers, refreshSuppliers } = useSuppliers(true);
   const { toast } = useToast();
   const navigate = useNavigate();
   /** Prevents repeated startCreate+navigate while session intent stays hot (fixes render thrash / frozen UI). */
@@ -1337,7 +1242,6 @@ export default function PurchaseInvoices() {
   const [activeTab, setActiveTab] = useState('fatura');
   const [showCreateProduct, setShowCreateProduct] = useState(false);
   const [showCreateSupplier, setShowCreateSupplier] = useState(false);
-  const [newSupplierForm, setNewSupplierForm] = useState({ name: '', nif: '', email: '', phone: '', address: '', city: '', country: 'Angola', contactPerson: '', notes: '' });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savingPurchase, setSavingPurchase] = useState(false);
   const [nextFcPreview, setNextFcPreview] = useState<string | null>(null);
@@ -1437,6 +1341,13 @@ export default function PurchaseInvoices() {
       void refreshProducts({ force: true });
     }
   }, [productPickerOpen, poProductPickerOpen, refreshProducts]);
+
+  // Suppliers are deferred on list open — load when create / PO / picker needs them.
+  useEffect(() => {
+    if (mode === 'create' || poCreateOpen || supplierPickerOpen || showCreateSupplier) {
+      void refreshSuppliers();
+    }
+  }, [mode, poCreateOpen, supplierPickerOpen, showCreateSupplier, refreshSuppliers]);
 
   // Purchase orders
   const { orders, createOrder, approveOrder, receiveOrder, cancelOrder, refreshOrders } = usePurchaseOrders(listBranchId);
@@ -1699,12 +1610,15 @@ export default function PurchaseInvoices() {
       }
     })();
     const cacheKey = `purchaseInvoices:${listBranchId ?? 'all'}`;
-    // Warm revisit: paint from cache, soft-refresh only when stale.
-    if (isCachedListFresh(cacheKey) && (getCachedList<PurchaseInvoice[]>(cacheKey)?.length ?? 0) > 0) {
-      scheduleLoadInvoiceList({ delayMs: 2500 });
+    // Invoices-style SWR: paint this scope's cache immediately, then revalidate.
+    const cached = getCachedList<PurchaseInvoice[]>(cacheKey) ?? [];
+    setInvoices(cached);
+    setListLoadError(null);
+    if (isCachedListFresh(cacheKey) && cached.length > 0) {
+      scheduleLoadInvoiceList({ delayMs: 800 });
       return;
     }
-    scheduleLoadInvoiceList();
+    scheduleLoadInvoiceList({ delayMs: cached.length > 0 ? 200 : 0 });
   }, [listBranchId, scheduleLoadInvoiceList]);
 
   useEffect(() => {
@@ -2147,34 +2061,12 @@ export default function PurchaseInvoices() {
     }));
   }, []);
 
-  const saveNewSupplier = useCallback(async () => {
-    if (!newSupplierForm.name.trim()) {
-      throw new Error(t.purchaseInvoicesUi.supplierNamePlaceholder || 'Nome obrigatório');
-    }
-    const created = await createSupplier({
-      name: newSupplierForm.name.trim(),
-      nif: newSupplierForm.nif.trim() || '',
-      email: newSupplierForm.email.trim(),
-      phone: newSupplierForm.phone.trim(),
-      address: newSupplierForm.address.trim(),
-      city: newSupplierForm.city.trim(),
-      country: newSupplierForm.country.trim() || 'Angola',
-      contactPerson: newSupplierForm.contactPerson.trim(),
-      notes: newSupplierForm.notes.trim(),
-      isActive: true,
-      balance: 0,
-      paymentTerms: '30_days',
-    } as Supplier);
-    setShowCreateSupplier(false);
+  const handleSupplierCreated = useCallback(async (created: Supplier) => {
     await refreshSuppliers();
     if (mode === 'create') {
       await handleSelectSupplier(created);
     }
-    toast({
-      title: t.purchaseInvoicesUi.supplierCreatedTitle,
-      description: t.purchaseInvoicesUi.supplierCreatedDesc.replace('{name}', created.name),
-    });
-  }, [createSupplier, newSupplierForm, refreshSuppliers, mode, handleSelectSupplier, toast, t]);
+  }, [refreshSuppliers, mode, handleSelectSupplier]);
 
   // Add product line
   const handleAddProduct = useCallback((p: Product) => {
@@ -3181,10 +3073,7 @@ export default function PurchaseInvoices() {
             <Button
               variant="outline"
               className="gap-2"
-              onClick={() => {
-                setNewSupplierForm(emptyNewSupplierForm());
-                setShowCreateSupplier(true);
-              }}
+              onClick={() => setShowCreateSupplier(true)}
             >
               <Plus className="h-4 w-4" /> {t.purchaseInvoicesUi.addSupplier}
             </Button>
@@ -3835,20 +3724,10 @@ export default function PurchaseInvoices() {
           </DialogContent>
         </Dialog>
 
-        <CreateSupplierDialog
+        <SupplierFormDialog
           open={showCreateSupplier}
           onOpenChange={setShowCreateSupplier}
-          form={newSupplierForm}
-          setForm={setNewSupplierForm}
-          onSave={async () => {
-            try {
-              await saveNewSupplier();
-            } catch (err: unknown) {
-              const message = err instanceof Error ? err.message : t.purchaseInvoicesUi.createSupplierFailed;
-              toast({ title: t.common.error, description: message, variant: 'destructive' });
-              throw err;
-            }
-          }}
+          onSaved={(created) => { void handleSupplierCreated(created); }}
         />
       </div>
     );
@@ -4352,7 +4231,6 @@ export default function PurchaseInvoices() {
         onRefresh={refreshSuppliers}
         onCreateNew={() => {
           setSupplierPickerOpen(false);
-          setNewSupplierForm(emptyNewSupplierForm());
           setShowCreateSupplier(true);
         }}
       />
@@ -4396,20 +4274,10 @@ export default function PurchaseInvoices() {
         }}
       />
 
-      <CreateSupplierDialog
+      <SupplierFormDialog
         open={showCreateSupplier}
         onOpenChange={setShowCreateSupplier}
-        form={newSupplierForm}
-        setForm={setNewSupplierForm}
-        onSave={async () => {
-          try {
-            await saveNewSupplier();
-          } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : t.purchaseInvoicesUi.createSupplierFailed;
-            toast({ title: t.common.error, description: message, variant: 'destructive' });
-            throw err;
-          }
-        }}
+        onSaved={(created) => { void handleSupplierCreated(created); }}
       />
 
       <AlertDialog open={discardCloseOpen} onOpenChange={setDiscardCloseOpen}>

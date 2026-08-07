@@ -1489,6 +1489,9 @@ module.exports = function(broadcastTable) {
         repair
         || req.query.suppliers === '1'
         || req.query.suppliers === 'true';
+      const omitSellingPrices =
+        req.query.omitSellingPrices === '1'
+        || req.query.omitSellingPrices === 'true';
       let branchId = resolveListBranchId(req, req.query.branchId);
       if (wantConsolidated) {
         const scope = req.branchScope;
@@ -1499,7 +1502,10 @@ module.exports = function(broadcastTable) {
       } else if (branchId === undefined) {
         return res.json({ rows: [], count: 0 });
       }
-      const priceBySku = await loadSellingPriceHintsBySku();
+      // Skip the expensive selling-price scan when the client already has session hints.
+      const priceBySku = omitSellingPrices && !repair
+        ? new Map()
+        : await loadSellingPriceHintsBySku();
       const rows = await listInventoryGridRows(branchId, wantConsolidated, priceBySku, {
         repair,
         enrichSuppliers,
@@ -1508,7 +1514,9 @@ module.exports = function(broadcastTable) {
       res.json({
         rows,
         count: rows.length,
-        sellingPrices: Object.fromEntries(priceBySku),
+        ...((omitSellingPrices && !repair)
+          ? {}
+          : { sellingPrices: Object.fromEntries(priceBySku) }),
       });
       // Expensive write-back only on explicit repair — not every grid open.
       if (repair) {

@@ -141,13 +141,27 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
   }, []);
 
   const fetchAccounts = useCallback(async (opts?: { force?: boolean; liveBalances?: boolean }) => {
-    if (
+    const softFromFreshCache =
       !opts?.force
       && !opts?.liveBalances
       && isCachedListFresh('chartOfAccounts', COA_CACHE_FRESH_MS)
-      && hasRowsRef.current
-    ) {
+      && hasRowsRef.current;
+
+    if (softFromFreshCache) {
+      // Keep UI responsive; soft-revalidate stored balances in the background
+      // (never liveBalances — that path is reserved for explicit Refresh).
       setIsLoading(false);
+      void (async () => {
+        try {
+          const response = await api.chartOfAccounts.list();
+          if (response.error || !response.data?.length) return;
+          const sorted = sortAccountsByCode(response.data);
+          applyAccounts(sorted);
+          saveLocalAccounts(sorted);
+        } catch {
+          /* keep painted cache */
+        }
+      })();
       return;
     }
     try {

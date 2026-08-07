@@ -216,9 +216,12 @@ export async function fetchInventoryGrid(opts: {
   }
 
   try {
+    const sessionHints = readSellingPriceHintsSession();
+    const omitSellingPrices = Object.keys(sessionHints).length > 0;
     const res = await api.products.inventoryGrid({
       branchId: opts.branchId,
       consolidated: opts.consolidated,
+      omitSellingPrices,
     });
     if (res.error) {
       throw new Error(res.error);
@@ -231,7 +234,10 @@ export async function fetchInventoryGrid(opts: {
     if (!rawRows) {
       throw new Error('Failed to load inventory grid');
     }
-    const hints = (res.data?.sellingPrices ?? {}) as Record<string, number>;
+    const hints = {
+      ...sessionHints,
+      ...((res.data?.sellingPrices ?? {}) as Record<string, number>),
+    };
     if (Object.keys(hints).length > 0) {
       writeSellingPriceHintsSession(hints);
     }

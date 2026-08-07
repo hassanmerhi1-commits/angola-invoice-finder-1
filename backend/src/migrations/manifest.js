@@ -75,6 +75,7 @@ const MIGRATION_FILES = [
   '068_bank_recon_cleared.sql',
   '069_coa_ledger_indexes.sql',
   '070_jel_entry_date.sql',
+  '071_stock_movements_warehouse_product.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */

@@ -72,20 +72,22 @@ export function useInventoryGrid(opts: {
 
     void (async () => {
       try {
-        // Stale-while-revalidate: paint warm/fresh cache instantly, but always
-        // refetch so creates done on other screens (Purchases) appear immediately.
+        // Warm + fresh: skip network. Product creates / stock posts invalidate
+        // session cache (and fire PRODUCTS_CHANGED), so dirtiness is event-driven.
         if (isInventoryGridCacheFresh(opts.branchId, opts.consolidated, 120_000)) {
           const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
           if (cached?.length) {
             if (gen !== generationRef.current) return;
             setRows(cached);
             setLoading(false);
+            return;
           }
         }
+        // Soft revalidate: paint warm rows, then force a network round-trip.
         const fresh = await fetchInventoryGrid({
           branchId: opts.branchId,
           consolidated: opts.consolidated,
-          bypassCache: false,
+          bypassCache: true,
         });
         if (gen !== generationRef.current) return;
         setRows(fresh);

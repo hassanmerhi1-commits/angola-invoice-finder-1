@@ -87,12 +87,20 @@ export function usePosProducts() {
   );
 
   useEffect(() => {
+    // Sales already patch qty via applySoldQuantities; debounce full grid refresh
+    // so a burst of SALES_CHANGED / PRODUCTS_CHANGED doesn't hammer Tailscale.
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const onStockChanged = () => {
-      void refreshProducts();
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        void refreshProducts();
+      }, 1800);
     };
     window.addEventListener(SALES_CHANGED_EVENT, onStockChanged);
     window.addEventListener(PRODUCTS_CHANGED_EVENT, onStockChanged);
     return () => {
+      if (timer) clearTimeout(timer);
       window.removeEventListener(SALES_CHANGED_EVENT, onStockChanged);
       window.removeEventListener(PRODUCTS_CHANGED_EVENT, onStockChanged);
     };

@@ -258,6 +258,12 @@ function ensureAppTablesAndColumns() {
       created_by TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id);
+    CREATE INDEX IF NOT EXISTS idx_stock_movements_warehouse ON stock_movements(warehouse_id);
+    CREATE INDEX IF NOT EXISTS idx_stock_movements_warehouse_product ON stock_movements(warehouse_id, product_id);
+    CREATE INDEX IF NOT EXISTS idx_stock_movements_warehouse_created ON stock_movements(warehouse_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_stock_movements_ref ON stock_movements(reference_type, reference_id);
+    CREATE INDEX IF NOT EXISTS idx_stock_movements_date ON stock_movements(created_at);
 
     CREATE TABLE IF NOT EXISTS open_items (
       id TEXT PRIMARY KEY,
