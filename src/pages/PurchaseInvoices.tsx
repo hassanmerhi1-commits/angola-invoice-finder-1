@@ -792,13 +792,13 @@ function buildPurchaseInvoiceJournalLines({
   ];
 }
 
-// ─────────── Invoice View Dialog ───────────
-function InvoiceViewDialog({
-  open, onClose, invoice, onCreateReturn,
+// ─────────── Invoice View (full page) ───────────
+function InvoiceViewPage({
+  invoice, loading, onClose, onCreateReturn,
 }: {
-  open: boolean;
-  onClose: () => void;
   invoice: PurchaseInvoice | null;
+  loading?: boolean;
+  onClose: () => void;
   onCreateReturn?: (invoice: PurchaseInvoice) => void;
 }) {
   const { t, language } = useTranslation();
@@ -836,6 +836,7 @@ function InvoiceViewDialog({
 
   if (!invoice) return null;
 
+  const lines = invoice.lines ?? [];
   const company = getCompanySettings();
   const companyName = company.tradeName || company.name || 'NEXOR ERP';
   const companyLocation = [company.city, company.province, company.country].filter(Boolean).join(' - ');
@@ -854,7 +855,7 @@ function InvoiceViewDialog({
   const previewBarcodeWidth = Math.max(120, (previewBarcodeBars.at(-1)?.x || 0) + 6);
   const previewTaxRate = invoice.ivaTotal > 0 && invoice.subtotal > 0 ? (invoice.ivaTotal / invoice.subtotal) * 100 : 0;
   const previewGross = invoice.subtotal + invoice.ivaTotal;
-  const previewDiscount = invoice.lines.reduce((s, l) => s + ((l.totalQty * l.unitPrice) - l.total), 0);
+  const previewDiscount = lines.reduce((s, l) => s + ((l.totalQty * l.unitPrice) - l.total), 0);
 
   const handlePrint = async () => {
     const escapeHtml = (value: unknown) => String(value ?? '')
@@ -887,7 +888,7 @@ function InvoiceViewDialog({
     const issueDate = new Date(invoice.date || invoice.createdAt || Date.now());
     const dueDate = new Date(invoice.paymentDate || invoice.date || Date.now());
     const subtotalWithTax = invoice.subtotal + invoice.ivaTotal;
-    const lines = invoice.lines.map(l => `
+    const printLinesHtml = lines.map(l => `
       <tr>
         <td class="mono">${escapeHtml(l.productCode || l.barcode || '')}</td>
         <td>${escapeHtml(l.description)}</td>
@@ -1017,7 +1018,7 @@ function InvoiceViewDialog({
               <th class="num" style="width:23mm">IVA VALOR</th>
             </tr>
           </thead>
-          <tbody>${lines}</tbody>
+          <tbody>${printLinesHtml}</tbody>
         </table>
 
         <div class="bottom">
@@ -1045,7 +1046,7 @@ function InvoiceViewDialog({
               <table class="totals">
                 <tbody>
                   <tr><td class="label">VALOR</td><td class="value">${money(subtotalWithTax)}</td></tr>
-                  <tr><td class="label">DESCONTO</td><td class="value">${money(invoice.lines.reduce((s, l) => s + ((l.totalQty * l.unitPrice) - l.total), 0))}</td></tr>
+                  <tr><td class="label">DESCONTO</td><td class="value">${money(previewDiscount)}</td></tr>
                   <tr><td class="label">SUB TOTAL</td><td class="value">${money(subtotalWithTax)}</td></tr>
                   <tr><td class="label">IMPOSTO</td><td class="value">${money(invoice.ivaTotal)}</td></tr>
                   <tr class="grand"><td class="label">TOTAL</td><td class="value">${escapeHtml(invoice.currency)} ${money(invoice.total)}</td></tr>
@@ -1066,42 +1067,47 @@ function InvoiceViewDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-6xl max-h-[92vh]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-3">
-            <span className="text-orange-600 font-bold">{t.purchaseInvoicesUi.editorTitle}</span>
-            <span>{invoice.invoiceNumber}</span>
-            <Badge variant={getPurchaseInvoiceStatusBadge(t, invoice.status).variant}>
-              {getPurchaseInvoiceStatusBadge(t, invoice.status).label}
-            </Badge>
-            {invoice.status === 'confirmed' && invoice.purchaseReturnsStatus !== 'full' && onCreateReturn && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1"
-                onClick={() => {
-                  onCreateReturn(invoice);
-                  onClose();
-                }}
-              >
-                <RotateCcw className="h-4 w-4" /> {t.purchaseInvoicesUi.returnFromInvoice}
-              </Button>
-            )}
-            <Button variant="outline" size="sm" className="ml-auto gap-1" onClick={handlePrint}>
-              <Printer className="h-4 w-4" /> {t.purchaseInvoicesUi.poPrint}
-            </Button>
-          </DialogTitle>
-        </DialogHeader>
-        <div className="px-6 pb-2">
-          <AttachmentPanel
-            entityType="purchase_invoice"
-            entityId={invoice.id}
-            title={language === 'pt' ? 'Anexos' : 'Attachments'}
-          />
-        </div>
-        <ScrollArea className="max-h-[78vh] bg-muted/40 rounded-md">
-          <div className="mx-auto my-4 bg-white text-black shadow-xl border p-6 text-[10px]" style={{ width: '210mm', minHeight: '297mm' }}>
+    <div className="flex flex-col h-full min-h-0 bg-background">
+      <div className="flex items-center gap-3 px-4 py-2 border-b shrink-0 flex-wrap">
+        <Button variant="outline" size="sm" className="gap-1" onClick={onClose}>
+          <ArrowLeft className="h-4 w-4" /> {t.common.close}
+        </Button>
+        <span className="text-orange-600 font-bold">{t.purchaseInvoicesUi.editorTitle}</span>
+        <span className="font-mono font-semibold">{invoice.invoiceNumber}</span>
+        <Badge variant={getPurchaseInvoiceStatusBadge(t, invoice.status).variant}>
+          {getPurchaseInvoiceStatusBadge(t, invoice.status).label}
+        </Badge>
+        {invoice.status === 'confirmed' && invoice.purchaseReturnsStatus !== 'full' && onCreateReturn && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            onClick={() => {
+              onCreateReturn(invoice);
+              onClose();
+            }}
+          >
+            <RotateCcw className="h-4 w-4" /> {t.purchaseInvoicesUi.returnFromInvoice}
+          </Button>
+        )}
+        <Button variant="outline" size="sm" className="ml-auto gap-1" onClick={handlePrint} disabled={loading}>
+          <Printer className="h-4 w-4" /> {t.purchaseInvoicesUi.poPrint}
+        </Button>
+      </div>
+      <div className="px-4 py-2 border-b shrink-0">
+        <AttachmentPanel
+          entityType="purchase_invoice"
+          entityId={invoice.id}
+          title={language === 'pt' ? 'Anexos' : 'Attachments'}
+        />
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto bg-muted/30">
+        {loading && lines.length === 0 ? (
+          <div className="flex items-center justify-center h-48 text-sm text-muted-foreground">
+            {t.common.loading}
+          </div>
+        ) : (
+          <div className="mx-auto my-4 bg-white text-black border p-6 text-[10px]" style={{ width: '210mm', minHeight: '297mm' }}>
             <div className="grid grid-cols-[32mm_1fr_62mm] gap-6 items-start">
               <div className="w-[28mm] h-[23mm] border border-zinc-400 flex items-center justify-center overflow-hidden text-2xl font-black text-red-900 tracking-tighter text-center">
                 {company.logo ? (
@@ -1190,7 +1196,13 @@ function InvoiceViewDialog({
                 </tr>
               </thead>
               <tbody>
-                {invoice.lines.map(l => (
+                {lines.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="py-6 text-center text-muted-foreground text-xs">
+                      {loading ? t.common.loading : '—'}
+                    </td>
+                  </tr>
+                ) : lines.map(l => (
                   <tr key={l.id} className="h-8 align-top text-[9.5px]">
                     <td className="font-mono py-1">{l.productCode || l.barcode || ''}</td>
                     <td className="py-1 font-semibold">{l.description}</td>
@@ -1237,7 +1249,7 @@ function InvoiceViewDialog({
                     <tbody>
                       <tr><td className="border border-black p-1 font-bold">VALOR</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewGross)}</td></tr>
                       <tr><td className="border border-black p-1 font-bold">DESCONTO</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewDiscount)}</td></tr>
-                      <tr><td className="border border-black p-1 font-bold">SUB TOTAL</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewGross)}</td></tr>
+                      <tr><td className="border border-black p-1 font-bold">SUBTOTAL</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewGross)}</td></tr>
                       <tr><td className="border border-black p-1 font-bold">IMPOSTO</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(invoice.ivaTotal)}</td></tr>
                       <tr><td className="border border-black p-2 font-black text-lg">TOTAL</td><td className="border border-black p-2 text-right font-mono font-black text-lg">{invoice.currency} {previewMoney(invoice.total)}</td></tr>
                     </tbody>
@@ -1249,9 +1261,9 @@ function InvoiceViewDialog({
               <div className="text-right font-bold mt-5">Pagina Nº 1 de 1</div>
             </div>
           </div>
-        </ScrollArea>
-      </DialogContent>
-    </Dialog>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1313,7 +1325,7 @@ export default function PurchaseInvoices() {
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>(
     () => getCachedList<PurchaseInvoice[]>(`purchaseInvoices:${listBranchId ?? 'all'}`) ?? [],
   );
-  const [mode, setMode] = useState<'list' | 'create'>('list');
+  const [mode, setMode] = useState<'list' | 'create' | 'view'>('list');
   const [searchTerm, setSearchTerm] = useState('');
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [productPickerOpen, setProductPickerOpen] = useState(false);
@@ -1321,6 +1333,7 @@ export default function PurchaseInvoices() {
   const [accountPickerTarget, setAccountPickerTarget] = useState<'journal' | null>(null);
   const [editingJournalIdx, setEditingJournalIdx] = useState<number | null>(null);
   const [viewInvoice, setViewInvoice] = useState<PurchaseInvoice | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('fatura');
   const [showCreateProduct, setShowCreateProduct] = useState(false);
   const [showCreateSupplier, setShowCreateSupplier] = useState(false);
@@ -1811,6 +1824,26 @@ export default function PurchaseInvoices() {
     if (!value) return '';
     return value.includes('T') ? value.split('T')[0] : value;
   };
+
+  const closeViewInvoice = useCallback(() => {
+    setViewInvoice(null);
+    setViewLoading(false);
+    setMode('list');
+  }, []);
+
+  /** List API omits line items — fetch the full invoice before showing the preview. */
+  const openViewInvoice = useCallback(async (inv: PurchaseInvoice) => {
+    setSelectedListInvoiceId(inv.id);
+    setViewInvoice(inv);
+    setViewLoading(true);
+    setMode('view');
+    try {
+      const full = (await getPurchaseInvoiceById(inv.id)) || inv;
+      setViewInvoice(full);
+    } finally {
+      setViewLoading(false);
+    }
+  }, []);
 
   const startEditInvoice = useCallback(async (inv: PurchaseInvoice) => {
     const full = (await getPurchaseInvoiceById(inv.id)) || inv;
@@ -2316,10 +2349,13 @@ export default function PurchaseInvoices() {
       setSelectedListInvoiceId(null);
       setSearchTerm('');
       setViewInvoice(null);
+      setViewLoading(false);
       setActiveTab('fatura');
       setListTab('faturas');
-      if (mode !== 'list') {
+      if (mode === 'create') {
         handleCloseCreate();
+      } else if (mode === 'view') {
+        setMode('list');
       }
     };
 
@@ -3047,10 +3083,13 @@ export default function PurchaseInvoices() {
       setSelectedListInvoiceId(invoice.id);
       if (!stillNoStock && !stillNoPayable) {
         setViewInvoice(invoice);
+        setViewLoading(false);
+        setMode('view');
       } else {
         setViewInvoice(null);
+        setViewLoading(false);
+        setMode('list');
       }
-      setMode('list');
       goToPurchaseListRoute();
     } catch (error: any) {
       console.error('[PurchaseInvoices] Failed to save purchase invoice:', error);
@@ -3068,6 +3107,16 @@ export default function PurchaseInvoices() {
 
   // ═══════════════ RENDER ═══════════════
 
+  if (mode === 'view') {
+    return (
+      <InvoiceViewPage
+        invoice={viewInvoice}
+        loading={viewLoading}
+        onClose={closeViewInvoice}
+        onCreateReturn={(inv) => openReturnFromInvoice(inv.id)}
+      />
+    );
+  }
 
   // ─── LIST MODE ───
   if (mode === 'list') {
@@ -3238,7 +3287,7 @@ export default function PurchaseInvoices() {
                           selectedListInvoiceId === inv.id && 'nexor-row-selected',
                         )}
                         onClick={() => setSelectedListInvoiceId(inv.id)}
-                        onDoubleClick={() => setViewInvoice(inv)}
+                        onDoubleClick={() => { void openViewInvoice(inv); }}
                       >
                         <TableCell className="font-mono text-[11px] font-medium py-1">{inv.invoiceNumber}</TableCell>
                         <TableCell className="text-[11px] py-1">{inv.supplierInvoiceNo || '—'}</TableCell>
@@ -3267,10 +3316,10 @@ export default function PurchaseInvoices() {
                         </TableCell>
                         <TableCell className="text-right py-1">
                           <div className="flex gap-0.5 justify-end">
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={e => { e.stopPropagation(); setViewInvoice(inv); }}>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={e => { e.stopPropagation(); void openViewInvoice(inv); }}>
                               <Eye className="h-3.5 w-3.5" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={e => { e.stopPropagation(); setViewInvoice(inv); }}>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={e => { e.stopPropagation(); void openViewInvoice(inv); }}>
                               <Printer className="h-3.5 w-3.5" />
                             </Button>
                             {inv.status === 'confirmed' && inv.purchaseReturnsStatus !== 'full' && (
@@ -3420,13 +3469,6 @@ export default function PurchaseInvoices() {
             />
           </TabsContent>
         </Tabs>
-
-        <InvoiceViewDialog
-          open={!!viewInvoice}
-          onClose={() => setViewInvoice(null)}
-          invoice={viewInvoice}
-          onCreateReturn={(inv) => openReturnFromInvoice(inv.id)}
-        />
 
         {/* ═══ PO CREATE DIALOG ═══ */}
         <Dialog open={poCreateOpen} onOpenChange={setPoCreateOpen}>
