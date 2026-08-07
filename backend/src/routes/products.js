@@ -1795,6 +1795,7 @@ module.exports = function(broadcastTable) {
             );
           } catch (_) { /* optional */ }
         }
+        invalidateInventoryGridResultCache();
         await broadcastTable('products');
         const afterRow = result.rows[0];
         auditErpSafe(req, {
@@ -1974,6 +1975,7 @@ module.exports = function(broadcastTable) {
         }
       }
 
+      invalidateInventoryGridResultCache();
       await broadcastTable('products');
       auditErpSafe(req, {
         table: 'products',

@@ -40,8 +40,9 @@ test.describe('Purchase invoice → stock E2E', () => {
 
     await expect(page).toHaveURL(/\/purchase-invoices(?!\/new)/, { timeout: 45_000 });
 
-    const stockAfter = await fetchProductStock(request, supplier.auth, product.productId);
-    expect(stockAfter).toBeGreaterThan(stockBefore);
+    await expect
+      .poll(async () => fetchProductStock(request, supplier.auth, product.productId), { timeout: 30_000 })
+      .toBeGreaterThan(stockBefore);
 
     const movements = await fetchStockMovements(request, supplier.auth, {
       productId: product.productId,

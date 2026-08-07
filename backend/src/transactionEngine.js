@@ -1651,6 +1651,11 @@ async function recordStockMovement(client, params) {
     );
   }
 
+  // POS / inventory-grid reuse a short in-memory result cache — bust it on every ledger write.
+  try {
+    require('./lib/inventoryGridServerCache').invalidateInventoryGridResultCache();
+  } catch (_) { /* ignore */ }
+
   return { id: movementId, product_id: resolvedProductId, movement_type: normalizedMovementType, quantity: qty };
 }
 

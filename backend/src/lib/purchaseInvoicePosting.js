@@ -155,11 +155,22 @@ async function reverseJournalEntry(client, journalEntryId, opts = {}) {
      SET description = CASE
        WHEN COALESCE(description, '') LIKE '%[REVERSED]%' THEN description
        ELSE trim(COALESCE(description, '') || ' [REVERSED]')
-     END,
-     updated_at = CURRENT_TIMESTAMP
+     END
      WHERE id = $1`,
     [id],
   );
+
+  // Best-effort touch of updated_at when the column exists (Postgres / newer SQLite).
+  try {
+    await client.query(
+      `UPDATE journal_entries SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+      [id],
+    );
+  } catch (err) {
+    if (!/no such column:\s*updated_at/i.test(String(err?.message || ''))) {
+      throw err;
+    }
+  }
 
   return reverseEntry;
 }

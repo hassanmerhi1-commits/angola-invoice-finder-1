@@ -312,7 +312,8 @@ function ensureAppTablesAndColumns() {
       posted_at TEXT,
       branch_id TEXT,
       created_by TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS journal_entry_lines (
@@ -322,6 +323,7 @@ function ensureAppTablesAndColumns() {
       description TEXT,
       debit_amount REAL DEFAULT 0,
       credit_amount REAL DEFAULT 0,
+      entry_date TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -571,12 +573,17 @@ function ensureAppTablesAndColumns() {
   tryAlterAdd('purchase_invoices', 'freight_other_costs REAL DEFAULT 0');
   tryAlterAdd('purchase_invoices', 'freight_source_account TEXT DEFAULT ""');
   tryAlterAdd('purchase_invoices', 'freight_source_name TEXT DEFAULT ""');
+  tryAlterAdd('purchase_invoices', "freight_payment_source TEXT DEFAULT 'caixa'");
+  tryAlterAdd('purchase_invoices', 'freight_caixa_id TEXT DEFAULT ""');
+  tryAlterAdd('purchase_invoices', 'freight_bank_account_id TEXT DEFAULT ""');
   tryAlterAdd('suppliers', 'balance REAL NOT NULL DEFAULT 0');
   // Legacy databases can have a minimal products table; ensure import/API columns exist.
   tryAlterAdd('products', 'barcode TEXT');
   tryAlterAdd('products', "category TEXT DEFAULT 'GERAL'");
   tryAlterAdd('products', 'price REAL NOT NULL DEFAULT 0');
   tryAlterAdd('products', 'price2 REAL NOT NULL DEFAULT 0');
+  tryAlterAdd('journal_entries', "updated_at TEXT NOT NULL DEFAULT (datetime('now'))");
+  tryAlterAdd('journal_entry_lines', 'entry_date TEXT');
   tryAlterAdd('products', 'price3 REAL NOT NULL DEFAULT 0');
   tryAlterAdd('products', 'price4 REAL NOT NULL DEFAULT 0');
   tryAlterAdd('products', 'cost REAL NOT NULL DEFAULT 0');
@@ -1612,6 +1619,13 @@ function bootstrapSchemaAndSeed() {
       change_price INTEGER NOT NULL DEFAULT 0,
       is_pending INTEGER NOT NULL DEFAULT 0,
       extra_note TEXT DEFAULT '',
+      freight_cost REAL NOT NULL DEFAULT 0,
+      freight_other_costs REAL NOT NULL DEFAULT 0,
+      freight_source_account TEXT DEFAULT '',
+      freight_source_name TEXT DEFAULT '',
+      freight_payment_source TEXT DEFAULT 'caixa',
+      freight_caixa_id TEXT DEFAULT '',
+      freight_bank_account_id TEXT DEFAULT '',
       lines_json TEXT NOT NULL DEFAULT '[]',
       journal_lines_json TEXT NOT NULL DEFAULT '[]',
       subtotal REAL NOT NULL DEFAULT 0,

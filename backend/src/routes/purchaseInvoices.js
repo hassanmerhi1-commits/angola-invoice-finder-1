@@ -426,6 +426,9 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
 
       await broadcastTable?.('purchase_invoices');
       if (txResult?.stockMovementIds?.length) {
+        try {
+          require('../lib/inventoryGridServerCache').invalidateInventoryGridResultCache();
+        } catch (_) { /* ignore */ }
         await broadcastTable?.('products');
       }
       if (txResult?.journalEntryId) {

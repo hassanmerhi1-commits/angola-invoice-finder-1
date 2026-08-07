@@ -48,7 +48,8 @@ module.exports = function(broadcastTable) {
 
   // Create client (idempotent by NIF — retry after network error must not duplicate)
   router.post('/', requirePermission('client_manage', 'invoice_create'), async (req, res) => {
-    const { name, nif, email, phone, address, city, country, creditLimit, currentBalance, defaultPriceLevel, priceAdjustmentPct, paymentTermsDays, accountParentCode } = req.body;
+    const { name, nif, email, phone, address, city, country, creditLimit, credit_limit, currentBalance, defaultPriceLevel, priceAdjustmentPct, paymentTermsDays, accountParentCode } = req.body;
+    const resolvedCreditLimit = creditLimit ?? credit_limit;
 
     if (!String(name || '').trim()) {
       return res.status(400).json({ error: 'Name is required' });
@@ -88,10 +89,19 @@ module.exports = function(broadcastTable) {
              RETURNING *`,
             [
               name.trim(), email || null, phone || null, address || null, city || null,
-              country || 'Angola', creditLimit ?? null, priceLevel, adjustment, termsDays, existing.id,
+              country || 'Angola', resolvedCreditLimit ?? null, priceLevel, adjustment, termsDays, existing.id,
             ],
           );
           existing = revived.rows[0] || existing;
+        } else if (resolvedCreditLimit != null && Number(resolvedCreditLimit) > 0) {
+          const patched = await conn.query(
+            `UPDATE clients
+             SET credit_limit = $1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2
+             RETURNING *`,
+            [Number(resolvedCreditLimit), existing.id],
+          );
+          existing = patched.rows[0] || existing;
         }
         await conn.query('COMMIT');
         await broadcastTable('clients');
@@ -105,7 +115,7 @@ module.exports = function(broadcastTable) {
           `INSERT INTO clients (name, nif, email, phone, address, city, country, credit_limit, current_balance, default_price_level, price_adjustment_pct, payment_terms_days)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            RETURNING *`,
-          [name.trim(), normalizedNif, email, phone, address, city, country || 'Angola', creditLimit || 0, currentBalance || 0, priceLevel, adjustment, termsDays]
+          [name.trim(), normalizedNif, email, phone, address, city, country || 'Angola', resolvedCreditLimit || 0, currentBalance || 0, priceLevel, adjustment, termsDays]
         );
         created = result.rows[0];
       } catch (insertErr) {

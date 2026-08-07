@@ -25,11 +25,30 @@ async function createClient(
       email: `e2e-${nif}@example.com`,
       phone: '900000000',
       isActive: true,
+      creditLimit: 5_000_000,
     },
   });
-  expect(res.ok()).toBeTruthy();
+  expect(res.ok(), await res.text()).toBeTruthy();
   const body = await res.json();
-  return { id: body.id, name: body.name || name, nif };
+  const creditLimit = Number(body.credit_limit ?? body.creditLimit ?? 0);
+  if (creditLimit <= 0) {
+    const patch = await request.put(`${E2E_BACKEND_URL}/api/clients/${encodeURIComponent(body.id)}`, {
+      headers: {
+        Authorization: `Bearer ${auth.token}`,
+        'Content-Type': 'application/json',
+      },
+      data: {
+        name: body.name || name,
+        nif: body.nif || nif,
+        email: body.email || `e2e-${nif}@example.com`,
+        phone: body.phone || '900000000',
+        creditLimit: 5_000_000,
+        isActive: true,
+      },
+    });
+    expect(patch.ok(), await patch.text()).toBeTruthy();
+  }
+  return { id: body.id, name: body.name || name, nif: body.nif || nif };
 }
 
 async function createSaleApi(
