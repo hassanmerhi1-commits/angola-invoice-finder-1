@@ -290,12 +290,19 @@ module.exports = function(broadcastTable) {
         supplierName: req.body.supplierName ?? req.body.supplier_name,
       });
       await client.query('COMMIT');
-      try {
-        require('../lib/inventoryGridServerCache').invalidateInventoryGridResultCache();
-      } catch (_) { /* ignore */ }
-      await broadcastTable('products');
-      await broadcastTable('chart_of_accounts');
+      // Respond first — broadcasts must not block Adjust In Save over Tailscale.
       res.status(201).json(result);
+      setImmediate(() => {
+        try {
+          require('../lib/inventoryGridServerCache').invalidateInventoryGridResultCache();
+        } catch (_) { /* ignore */ }
+        try {
+          broadcastTable('products');
+          // CoA listens to journal_entries; avoid a second full CoA pull on every Adjust In.
+          broadcastTable('journal_entries');
+        } catch (_) { /* ignore */ }
+      });
+      return;
     } catch (error) {
       await client.query('ROLLBACK');
       const msg = error.message || 'Failed to process stock adjustment';

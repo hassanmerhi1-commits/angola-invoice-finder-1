@@ -37,8 +37,9 @@ import { toast } from 'sonner';
 import { NEXOR_PILL_BTN, NEXOR_PILL_BTN_PRIMARY } from '@/lib/nexorToolbarStyles';
 import { NEXOR_STAT_CARD } from '@/lib/nexorToneStyles';
 import { formatDisplayDate } from '@/lib/formatDisplayDate';
+import { awaitPrefetchedLedger, takePrefetchedLedger } from '@/lib/ledgerPrefetch';
 
-const LEDGER_FETCH_LIMIT = 100;
+const LEDGER_FETCH_LIMIT = 50;
 /** Fast first paint on double-click. */
 const INITIAL_LEDGER_DAYS = 7;
 
@@ -189,6 +190,17 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     setIsLoading(true);
     setIsExpanding(false);
     try {
+      // Prefer in-flight / warm prefetch from CoA single-click.
+      const warm =
+        takePrefetchedLedger(account.id, startDate, endDate)
+        ?? await awaitPrefetchedLedger(account.id, startDate, endDate);
+      if (reqId !== reqIdRef.current) return;
+      if (warm) {
+        setEntries(warm as LedgerEntry[]);
+        setTruncated(warm.length >= LEDGER_FETCH_LIMIT);
+        setIsLoading(false);
+        return;
+      }
       const result = await loadLedgerRows(startDate || undefined, endDate || undefined);
       if (reqId !== reqIdRef.current) return;
       if (!result) return;

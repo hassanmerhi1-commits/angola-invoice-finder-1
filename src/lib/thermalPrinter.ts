@@ -23,13 +23,30 @@ export interface PrinterConfig {
   port?: number;
   serialPort?: string;
   baudRate?: number;
+  /**
+   * Per-machine horizontal nudge (mm) for the browser/Electron HTML receipt.
+   * Different PCs can have the same app settings but a different Windows printer
+   * driver/model for the same physical printer — some drivers bake in their own left
+   * margin or use a different DPI mapping for custom page sizes, which shifts the
+   * printed content sideways even though we send the identical page size / HTML.
+   * This lets a machine compensate without touching Windows driver settings.
+   */
+  horizontalOffsetMm?: number;
 }
 
 export const DEFAULT_PRINTER_CONFIG: PrinterConfig = {
   type: 'browser',
   paperWidth: 80,
   characterWidth: 48, // 80mm = 48 chars, 58mm = 32 chars
+  horizontalOffsetMm: 0,
 };
+
+/** Clamp so the receipt can never be pushed fully off the printable band. */
+function normalizeOffsetMm(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(10, Math.max(-2, Math.round(n)));
+}
 
 // ESC/POS Commands
 const ESC = '\x1B';
@@ -494,6 +511,7 @@ async function buildReceiptBrowserHtml(
   branch: Branch,
   paperWidth: 58 | 80 = 80,
   copyLabels: (string | undefined)[] = [undefined],
+  offsetMm = 0,
 ): Promise<string> {
   let qrCodeDataURL = '';
   try {
@@ -511,6 +529,10 @@ async function buildReceiptBrowserHtml(
   const printableMm = paperMm === 80 ? 66 : 44;
   const width = `${paperMm}mm`;
   const contentWidth = `${printableMm}mm`;
+  // Base 2mm keeps the first character off the physical edge; the per-machine offset
+  // (set in Printer Settings) nudges right (or slightly left) to compensate a driver
+  // that doesn't line up with this specific printer.
+  const leftPadMm = Math.max(0, 2 + normalizeOffsetMm(offsetMm));
   // Narrower 58mm paper needs smaller type to avoid clipping.
   const baseFont = paperMm === 80 ? 12 : 10;
   const largeFont = paperMm === 80 ? 14 : 11;
@@ -538,7 +560,7 @@ async function buildReceiptBrowserHtml(
       width: ${contentWidth};
       max-width: ${contentWidth};
       margin: 0;
-      padding-left: 2mm;
+      padding-left: ${leftPadMm}mm;
     }
     * {
       margin: 0;
@@ -710,8 +732,14 @@ export async function printViaBrowser(
   const labels = Array.isArray(copyLabelOrLabels)
     ? copyLabelOrLabels
     : [copyLabelOrLabels];
-  const html = await buildReceiptBrowserHtml(sale, branch, normalizePaperWidth(paperWidth), labels);
   const config = getPrinterConfig();
+  const html = await buildReceiptBrowserHtml(
+    sale,
+    branch,
+    normalizePaperWidth(paperWidth),
+    labels,
+    config.horizontalOffsetMm,
+  );
   const deviceName = options.deviceName ?? config.deviceName;
   const useSilent = !!(options.direct && deviceName?.trim());
   const widthMm = normalizePaperWidth(paperWidth);
@@ -745,11 +773,13 @@ export async function printReceiptsBatch(
   const list = (sales || []).filter((s) => s && String(s.status || '').toLowerCase() !== 'voided');
   if (list.length === 0) return { success: false, count: 0 };
 
-  const paperMm = normalizePaperWidth(options.paperWidth ?? getPrinterConfig().paperWidth);
+  const printerConfig = getPrinterConfig();
+  const paperMm = normalizePaperWidth(options.paperWidth ?? printerConfig.paperWidth);
   const company = getCompanySettings();
   const printableMm = paperMm === 80 ? 66 : 44;
   const width = `${paperMm}mm`;
   const contentWidth = `${printableMm}mm`;
+  const leftPadMm = Math.max(0, 2 + normalizeOffsetMm(printerConfig.horizontalOffsetMm));
   const baseFont = paperMm === 80 ? 12 : 10;
   const largeFont = paperMm === 80 ? 14 : 11;
   const totalFont = paperMm === 80 ? 15 : 12;
@@ -778,7 +808,7 @@ export async function printReceiptsBatch(
       width: ${contentWidth};
       max-width: ${contentWidth};
       margin: 0;
-      padding-left: 2mm;
+      padding-left: ${leftPadMm}mm;
     }
     * {
       margin: 0; padding: 0; box-sizing: border-box; color: #000;
@@ -1013,6 +1043,7 @@ export function getPrinterConfig(): PrinterConfig {
               : 32,
         deviceName: typeof parsed.deviceName === 'string' ? parsed.deviceName : undefined,
         posAutoPrint: parsed.posAutoPrint,
+        horizontalOffsetMm: normalizeOffsetMm(parsed.horizontalOffsetMm),
       };
     }
   } catch (error) {
@@ -1035,6 +1066,7 @@ export async function hydratePrinterConfigFromDisk(): Promise<PrinterConfig> {
         paperWidth: normalizePaperWidth((disk as any).paperWidth),
         deviceName: String((disk as any).deviceName),
         posAutoPrint: (disk as any).posAutoPrint !== false,
+        horizontalOffsetMm: normalizeOffsetMm((disk as any).horizontalOffsetMm),
       } as PrinterConfig;
       localStorage.setItem('kwanza_printer_config', JSON.stringify(merged));
       localStorage.setItem('kwanza_printer_configured', 'true');
@@ -1055,6 +1087,7 @@ export function savePrinterConfig(config: PrinterConfig): void {
     paperWidth,
     characterWidth: paperWidth === 80 ? 48 : 32,
     posAutoPrint: config.deviceName?.trim() ? (config.posAutoPrint ?? true) : config.posAutoPrint,
+    horizontalOffsetMm: normalizeOffsetMm(config.horizontalOffsetMm),
   };
   localStorage.setItem('kwanza_printer_config', JSON.stringify(normalized));
   if (normalized.deviceName?.trim()) {

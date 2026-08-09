@@ -109,7 +109,45 @@ export default function StockTransfer() {
   }, [scopeId, currentBranch?.id]);
 
   // Load products from the selected SOURCE branch
-  const { products: sourceProducts } = useProducts(fromBranchId || undefined, { light: true });
+  const { products: sourceProducts, refreshProducts: refreshSourceProducts } = useProducts(
+    fromBranchId || undefined,
+    { light: true },
+  );
+
+  // A recent Adjust In / Purchase can land just before this list's cache refreshes —
+  // force a live re-fetch whenever the transfer dialog opens so "Disponível" reflects
+  // the real current stock instead of whatever was cached before the write.
+  useEffect(() => {
+    if (dialogOpen && fromBranchId) {
+      void refreshSourceProducts({ force: true });
+    }
+  }, [dialogOpen, fromBranchId, refreshSourceProducts]);
+
+  const sourceStockByProductId = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of sourceProducts) map.set(p.id, Number(p.stock) || 0);
+    return map;
+  }, [sourceProducts]);
+
+  // Keep each line's available-stock cap live: a snapshot taken at "add" time would
+  // otherwise stay stuck at a stale (often lower) number even after a purchase/adjust
+  // brings the real stock up, capping the qty the user is allowed to type in.
+  useEffect(() => {
+    setTransferItems((items) => {
+      let changed = false;
+      const next = items.map((item) => {
+        const liveStock = sourceStockByProductId.get(item.productId);
+        if (liveStock == null || liveStock === item.availableStock) return item;
+        changed = true;
+        return {
+          ...item,
+          availableStock: liveStock,
+          quantity: Math.min(item.quantity, liveStock),
+        };
+      });
+      return changed ? next : items;
+    });
+  }, [sourceStockByProductId]);
 
   const pendingTransfers = transfers.filter(t => t.status === 'pending');
   const inTransitTransfers = transfers.filter(t => t.status === 'in_transit');

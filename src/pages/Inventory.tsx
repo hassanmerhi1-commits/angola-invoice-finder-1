@@ -243,12 +243,26 @@ export default function Inventory() {
         invalidateInventoryGridCache(detail.branchId, false);
       }
       if (detail?.lightweight) {
-        // Coalesce remote sale/purchase bursts — one grid refetch, not one per event.
+        // Adjust In / POS already patch rows optimistically for the branch that made the
+        // write. But HQ consolidated totals, other open branches, and writes from another
+        // page/client (new Purchase, another Tailscale client) are NOT covered by that patch,
+        // so without this the grid would silently go stale until the page is remounted
+        // (REGRESSION seen by users: "outside" grid disagreeing with a fresh double-click
+        // fetch). Debounce so a burst of events costs one background round-trip, not one per event.
+        const changedBranchId = detail?.branchId;
+        const affectsAllBranches = !changedBranchId || changedBranchId === 'all';
+        const affectsThisScope =
+          isHeadOffice
+          || affectsAllBranches
+          || changedBranchId === listBranchId
+          || detail?.toBranchId === listBranchId
+          || detail?.fromBranchId === listBranchId;
+        if (!affectsThisScope) return;
         if (lightweightRefreshTimer) clearTimeout(lightweightRefreshTimer);
         lightweightRefreshTimer = setTimeout(() => {
           lightweightRefreshTimer = null;
           void refreshInventoryGrid();
-        }, 400);
+        }, 1000);
         return;
       }
       void reloadInventoryList();

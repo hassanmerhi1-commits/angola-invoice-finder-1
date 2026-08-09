@@ -213,7 +213,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   router.get('/', async (req, res) => {
     try {
       const { branchId, status, dateFrom, dateTo } = req.query;
-      const { limit, offset } = parseListPagination(req, { defaultLimit: 300, maxLimit: 1000 });
+      const { limit, offset } = parseListPagination(req, { defaultLimit: 100, maxLimit: 500 });
       // List payload omits heavy JSON blobs so LAN clients do not time out / hang.
       let query = `SELECT id, invoice_number, supplier_account_code, supplier_name, supplier_id,
         supplier_nif, supplier_phone, supplier_balance, ref, supplier_invoice_no,

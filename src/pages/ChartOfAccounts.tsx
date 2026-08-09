@@ -1,10 +1,12 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, memo, startTransition } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation, type TranslationKeys } from '@/i18n';
 import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
 import { markCachedListStale } from '@/lib/listCache';
 import { Account, AccountType, AccountFormData, getDefaultNature } from '@/types/accounting';
 import { resolveAccountDisplayName, resolveAccountTypeLabel } from '@/lib/chartOfAccountsDisplay';
+import { buildChildrenByParentId, buildRolledBalanceById } from '@/lib/coaTreeBalances';
+import { prefetchAccountLedger } from '@/lib/ledgerPrefetch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -197,10 +199,24 @@ export default function ChartOfAccounts() {
     };
   }, []);
 
-  const openLedger = (account: Account) => {
+  const childrenByParentRef = useRef<Map<string, Account[]>>(new Map());
+
+  const openLedger = useCallback((account: Account) => {
+    // Warm fetch on first click of a double-click; open dialog immediately.
+    prefetchAccountLedger(account.id, { days: 7, limit: 50 });
     setLedgerAccount(account);
     setIsLedgerOpen(true);
-  };
+  }, []);
+
+  const handleSelectAccount = useCallback((account: Account) => {
+    startTransition(() => setSelectedAccountId(account.id));
+    // Leaf drill-down is the hot path — start ledger fetch before double-click.
+    const isLeaf =
+      !account.is_header
+      && String(account.code || '').length > 3
+      && !(childrenByParentRef.current.get(account.id)?.length);
+    if (isLeaf) prefetchAccountLedger(account.id, { days: 7, limit: 50 });
+  }, []);
 
   const [formData, setFormData] = useState({
     code: '',
@@ -231,7 +247,27 @@ export default function ChartOfAccounts() {
     });
   }, [accounts, activeTab, searchTerm, currentTabConfig, language, t]);
 
-  const rootAccounts = filteredAccounts.filter(a => !a.parent_id || !filteredAccounts.find(p => p.id === a.parent_id));
+  const childrenByParent = useMemo(
+    () => buildChildrenByParentId(filteredAccounts),
+    [filteredAccounts],
+  );
+  childrenByParentRef.current = childrenByParent;
+
+  const rolledBalanceById = useMemo(
+    () => buildRolledBalanceById(filteredAccounts),
+    [filteredAccounts],
+  );
+
+  const filteredById = useMemo(() => {
+    const m = new Map<string, Account>();
+    for (const a of filteredAccounts) m.set(a.id, a);
+    return m;
+  }, [filteredAccounts]);
+
+  const rootAccounts = useMemo(
+    () => filteredAccounts.filter((a) => !a.parent_id || !filteredById.has(String(a.parent_id))),
+    [filteredAccounts, filteredById],
+  );
 
   // Summary totals
   const totals = useMemo(() => {
@@ -246,13 +282,13 @@ export default function ChartOfAccounts() {
     }, { debit: 0, credit: 0, balance: 0 });
   }, [filteredAccounts]);
 
-  const handleToggle = (id: string) => {
+  const handleToggle = useCallback((id: string) => {
     setExpandedIds(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  };
+  }, []);
 
   const expandAll = () => setExpandedIds(new Set(accounts.filter(a => a.is_header).map(a => a.id)));
   const collapseAll = () => setExpandedIds(new Set());
@@ -663,13 +699,15 @@ export default function ChartOfAccounts() {
                   key={account.id}
                   account={account}
                   level={0}
-                  expandedIds={expandedIds}
+                  isExpanded={expandedIds.has(account.id)}
+                  isSelected={selectedAccountId === account.id}
                   onToggle={handleToggle}
-                  onSelect={setSelectedAccountId}
-                  onDoubleClick={openEditDialog}
+                  onSelect={handleSelectAccount}
                   onViewLedger={openLedger}
-                  selectedId={selectedAccountId}
-                  allAccounts={filteredAccounts}
+                  childrenByParent={childrenByParent}
+                  rolledBalanceById={rolledBalanceById}
+                  expandedIds={expandedIds}
+                  selectedAccountId={selectedAccountId}
                   language={language}
                   t={t}
                 />
@@ -880,61 +918,48 @@ export default function ChartOfAccounts() {
   );
 }
 
-// Tree row component
+// Tree row component — balances/children are precomputed; row is memoized so
+// selecting one leaf does not recompute the whole tree.
 interface AccountTreeRowProps {
   account: Account;
   level: number;
-  expandedIds: Set<string>;
+  isExpanded: boolean;
+  isSelected: boolean;
   onToggle: (id: string) => void;
-  onSelect: (id: string) => void;
-  onDoubleClick: (account: Account) => void;
+  onSelect: (account: Account) => void;
   onViewLedger: (account: Account) => void;
-  selectedId: string | null;
-  allAccounts: Account[];
+  childrenByParent: Map<string, Account[]>;
+  rolledBalanceById: Map<string, number>;
+  expandedIds: Set<string>;
+  selectedAccountId: string | null;
   language: 'en' | 'pt';
   t: TranslationKeys;
 }
 
-function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDoubleClick, onViewLedger, selectedId, allAccounts, language, t }: AccountTreeRowProps) {
+const AccountTreeRow = memo(function AccountTreeRow({
+  account,
+  level,
+  isExpanded,
+  isSelected,
+  onToggle,
+  onSelect,
+  onViewLedger,
+  childrenByParent,
+  rolledBalanceById,
+  expandedIds,
+  selectedAccountId,
+  language,
+  t,
+}: AccountTreeRowProps) {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const displayName = resolveAccountDisplayName(account, language, t);
-  const isExpanded = expandedIds.has(account.id);
-  const children = allAccounts.filter(a => a.parent_id === account.id);
+  const children = childrenByParent.get(account.id) || [];
   const hasChildren = children.length > 0;
-  const isSelected = selectedId === account.id;
-  
-  // Roll up children AND keep postings on the parent itself (payments often landed
-  // on 321 before supplier leaves existed — dropping own balance made them vanish).
-  // Also include PGC code-prefix descendants when parent_id links are incomplete.
-  // Dedupe by id so parent_id children + code-prefix kids are not double-counted.
-  const computeBalance = (acc: Account): number => {
-    const own = Number(acc.current_balance) || 0;
-    const byParent = allAccounts.filter((a) => a.parent_id === acc.id);
-    const prefixKids = allAccounts.filter(
-      (a) =>
-        a.id !== acc.id
-        && a.parent_id !== acc.id
-        && String(a.code || '').startsWith(String(acc.code || ''))
-        && String(a.code || '').length > String(acc.code || '').length,
-    );
-    const kids = [...byParent, ...prefixKids];
-    if (kids.length === 0) return own;
-    const seen = new Set<string>();
-    let sum = own;
-    for (const kid of kids) {
-      if (seen.has(kid.id)) continue;
-      seen.add(kid.id);
-      sum += computeBalance(kid);
-    }
-    return sum;
-  };
 
   const rawBalance = hasChildren || account.is_header || String(account.code || '').length <= 3
-    ? computeBalance(account)
+    ? (rolledBalanceById.get(account.id) ?? (Number(account.current_balance) || 0))
     : (Number(account.current_balance) || 0);
   const ownBalance = Number(account.current_balance) || 0;
-  // API stores debit−credit. Credit-nature accounts (suppliers/clients) flip for display
-  // so payables appear as a positive amount in the Credit column.
   const isCreditNature = account.account_nature === 'credit';
   const flipped = isCreditNature ? -rawBalance : rawBalance;
   const displayBalance = Math.abs(flipped) < 0.005 ? 0 : flipped;
@@ -959,8 +984,11 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
           isSelected && "nexor-row-selected",
           account.is_header && "bg-muted/40 font-semibold"
         )}
-        onClick={() => onSelect(account.id)}
-        onDoubleClick={() => onViewLedger(account)}
+        onClick={() => onSelect(account)}
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          onViewLedger(account);
+        }}
       >
         <td className="px-3 py-1.5">
           <div className="flex items-center gap-1" style={{ paddingLeft: `${level * 16}px` }}>
@@ -996,17 +1024,19 @@ function AccountTreeRow({ account, level, expandedIds, onToggle, onSelect, onDou
           key={child.id}
           account={child}
           level={level + 1}
-          expandedIds={expandedIds}
+          isExpanded={expandedIds.has(child.id)}
+          isSelected={selectedAccountId === child.id}
           onToggle={onToggle}
           onSelect={onSelect}
-          onDoubleClick={onDoubleClick}
           onViewLedger={onViewLedger}
-          selectedId={selectedId}
-          allAccounts={allAccounts}
+          childrenByParent={childrenByParent}
+          rolledBalanceById={rolledBalanceById}
+          expandedIds={expandedIds}
+          selectedAccountId={selectedAccountId}
           language={language}
           t={t}
         />
       ))}
     </>
   );
-}
+});

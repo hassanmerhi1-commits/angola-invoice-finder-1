@@ -1504,8 +1504,8 @@ export default function PurchaseInvoices() {
         setListLoadError(null);
         const includeId = String(opts?.includeInvoiceId || '').trim();
         let piInvoices = await getPurchaseInvoices(listBranchId, branches, {
-          // SEDE all-branch list: cap payload — full history was multi-second on Tailscale.
-          limit: listBranchId ? 300 : 120,
+          // SEDE all-branch list: keep payload small — list omits lines_json already.
+          limit: listBranchId ? 100 : 80,
         });
         if (includeId && !piInvoices.some((i) => i.id === includeId)) {
           const extra = await fetchPurchaseInvoiceFromServer(includeId);
@@ -1615,10 +1615,10 @@ export default function PurchaseInvoices() {
     setInvoices(cached);
     setListLoadError(null);
     if (isCachedListFresh(cacheKey) && cached.length > 0) {
-      scheduleLoadInvoiceList({ delayMs: 800 });
+      scheduleLoadInvoiceList({ delayMs: 2000 });
       return;
     }
-    scheduleLoadInvoiceList({ delayMs: cached.length > 0 ? 200 : 0 });
+    scheduleLoadInvoiceList({ delayMs: cached.length > 0 ? 100 : 0 });
   }, [listBranchId, scheduleLoadInvoiceList]);
 
   useEffect(() => {
@@ -1629,7 +1629,7 @@ export default function PurchaseInvoices() {
   }, [listTab, listBranchId, scheduleLoadInvoiceList]);
 
   useTableRefreshListener('purchase_invoices', () => {
-    scheduleLoadInvoiceList();
+    scheduleLoadInvoiceList({ delayMs: 1200 });
   });
 
   useEffect(() => () => {

@@ -1720,7 +1720,7 @@ export const api = {
       return apiFetch<{ items: any[]; limit: number; offset: number; hasMore: boolean } | any[]>(
         `/purchase-invoices${qs ? `?${qs}` : ''}`,
         undefined,
-        { timeoutMs: 45000 },
+        { timeoutMs: 20000 },
       );
     },
     get: (id: string) => apiFetch<any>(`/purchase-invoices/${encodeURIComponent(id)}`),
@@ -1950,79 +1950,38 @@ export const api = {
       const p = new URLSearchParams();
       if (startDate) p.append('start_date', startDate);
       if (endDate) p.append('end_date', endDate);
-      const limit = opts?.limit ?? 500;
-      p.append('limit', String(limit));
+      const limit = opts?.limit ?? 50;
+      p.append('limit', String(Math.min(Math.max(limit, 1), 100)));
       // COA drill-down is company-wide — never send branchId (supplier AP spans filials).
       const qs = p.toString();
       const apiResult = await apiFetch<any[]>(
         `/chart-of-accounts/${encodeURIComponent(id)}/ledger${qs ? `?${qs}` : ''}`,
         {},
-        { timeoutMs: 45000 },
+        { timeoutMs: 12000 },
       );
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
 
-      // Shop/LAN clients must not fall back to legacy WS db:query (:4546) — that port is
-      // disabled and only produces ETIMEDOUT against the city Tailscale IP.
+      // Shop/LAN clients must not fall back to legacy WS db:query (:4546).
+      // Local fallback is a single-account query (never recursive child expansion).
       const allowLocalSql =
         isElectronMode()
         && !isThinClientMode()
         && shouldTryIpcAfterApiFailure(apiResult);
 
       if (allowLocalSql) {
-        // Match server: parent_id walk + PGC code-prefix (separate CTEs — Postgres-safe shape).
+        const params: any[] = [id];
         let sql = `
-          WITH RECURSIVE by_parent AS (
-            SELECT id, code, name FROM chart_of_accounts WHERE CAST(id AS TEXT) = CAST($1 AS TEXT)
-            UNION
-            SELECT c.id, c.code, c.name
-            FROM chart_of_accounts c
-            INNER JOIN by_parent t ON CAST(c.parent_id AS TEXT) = CAST(t.id AS TEXT)
-          ),
-          by_code AS (
-            SELECT id, code, name
-            FROM chart_of_accounts
-            WHERE (is_active = 1 OR is_active IS NULL)
-              AND (
-                CAST(code AS TEXT) = (
-                  SELECT CAST(code AS TEXT) FROM chart_of_accounts
-                  WHERE CAST(id AS TEXT) = CAST($1 AS TEXT) OR CAST(code AS TEXT) = CAST($1 AS TEXT)
-                  LIMIT 1
-                )
-                OR (
-                  length(CAST(code AS TEXT)) > length((
-                    SELECT CAST(code AS TEXT) FROM chart_of_accounts
-                    WHERE CAST(id AS TEXT) = CAST($1 AS TEXT) OR CAST(code AS TEXT) = CAST($1 AS TEXT)
-                    LIMIT 1
-                  ))
-                  AND CAST(code AS TEXT) LIKE ((
-                    SELECT CAST(code AS TEXT) FROM chart_of_accounts
-                    WHERE CAST(id AS TEXT) = CAST($1 AS TEXT) OR CAST(code AS TEXT) = CAST($1 AS TEXT)
-                    LIMIT 1
-                  ) || '%')
-                )
-              )
-          ),
-          account_tree AS (
-            SELECT id, code, name FROM by_parent
-            UNION
-            SELECT id, code, name FROM by_code
-          )
-          SELECT DISTINCT jel.*, atree.code AS account_code, atree.name AS account_name,
-                 je.entry_number,
+          SELECT jel.id, jel.journal_entry_id, jel.account_id, jel.description,
+                 jel.debit_amount, jel.credit_amount, je.entry_number,
                  COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10)) AS entry_date,
-                 je.description as journal_description,
+                 je.description AS journal_description,
                  je.reference_type, je.reference_id, je.branch_id,
-                 b.name AS branch_name, je.is_posted, je.created_at as journal_created_at
+                 je.is_posted, je.created_at AS journal_created_at
           FROM journal_entry_lines jel
           INNER JOIN journal_entries je ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
-          INNER JOIN account_tree atree ON (
-            CAST(atree.id AS TEXT) = CAST(jel.account_id AS TEXT)
-            OR CAST(atree.code AS TEXT) = CAST(jel.account_id AS TEXT)
-          )
-          LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(je.branch_id AS TEXT)
-          WHERE (je.is_posted = 1 OR je.is_posted IS NULL)
+          WHERE CAST(jel.account_id AS TEXT) = CAST($1 AS TEXT)
+            AND (je.is_posted = 1 OR je.is_posted IS NULL OR je.is_posted = true)
         `;
-        const params: any[] = [id];
         if (startDate) {
           sql += ` AND COALESCE(NULLIF(TRIM(CAST(je.entry_date AS TEXT)), ''), substr(CAST(je.created_at AS TEXT), 1, 10)) >= $${params.length + 1}`;
           params.push(startDate);
@@ -3582,7 +3541,7 @@ export const api = {
           lastCost?: number;
           taxRate?: number;
         }[];
-      }>('/transactions/stock-adjustment', { method: 'POST', body: JSON.stringify(data) }, { timeoutMs: 90000 });
+      }>('/transactions/stock-adjustment', { method: 'POST', body: JSON.stringify(data) }, { timeoutMs: 45000 });
       if (result.error && hasSyncOutbox() && shouldQueueOnNetworkError(result.error)) {
         const queued = await queueAdjustmentLines();
         if (queued) return queued;

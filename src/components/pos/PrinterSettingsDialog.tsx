@@ -7,6 +7,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Switch } from '@/components/ui/switch';
@@ -130,13 +131,15 @@ export function PrinterSettingsDialog({
         toast.success(t.printerUi.testSent);
       } else {
         const width = config.paperWidth === 80 ? '80mm' : '58mm';
+        const offsetMm = Number(config.horizontalOffsetMm) || 0;
         const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 @page { size: ${width} auto; margin: 0; }
-body { font-family: 'Courier New', monospace; text-align: center; width: ${width}; padding: 5mm; margin: 0; }
+body { font-family: 'Courier New', monospace; text-align: center; width: ${width}; padding: 5mm 5mm 5mm ${Math.max(0, 5 + offsetMm)}mm; margin: 0; box-sizing: border-box; }
 </style></head><body>
 <h2>TESTE DE IMPRESSÃO</h2>
 <p>NEXOR ERP</p>
+<p style="font-size:11px;">Ajuste horizontal: ${offsetMm}mm</p>
 <hr>
 <p>Impressora configurada!</p>
 </body></html>`;
@@ -297,6 +300,61 @@ body { font-family: 'Courier New', monospace; text-align: center; width: ${width
                 <Label htmlFor="58mm" className="cursor-pointer">{t.printerUi.mini58}</Label>
               </div>
             </RadioGroup>
+          </div>
+
+          <Separator />
+
+          {/* Horizontal offset — compensates a machine-specific printer driver shift */}
+          <div className="space-y-2">
+            <Label>{t.printerUi.horizontalOffset}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t.printerUi.horizontalOffsetDesc}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                onClick={() =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    horizontalOffsetMm: Math.max(-2, (Number(prev.horizontalOffsetMm) || 0) - 1),
+                  }))
+                }
+              >
+                -
+              </Button>
+              <Input
+                type="number"
+                min={-2}
+                max={10}
+                step={1}
+                value={Number(config.horizontalOffsetMm) || 0}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    horizontalOffsetMm: Math.min(10, Math.max(-2, parseInt(e.target.value, 10) || 0)),
+                  })
+                }
+                className="w-20 text-center"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                onClick={() =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    horizontalOffsetMm: Math.min(10, (Number(prev.horizontalOffsetMm) || 0) + 1),
+                  }))
+                }
+              >
+                +
+              </Button>
+              <span className="text-xs text-muted-foreground">mm</span>
+            </div>
           </div>
 
           <Separator />

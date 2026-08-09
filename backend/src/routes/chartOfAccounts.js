@@ -526,10 +526,10 @@ module.exports = function(broadcastTable) {
     try {
       const { id } = req.params;
       let { start_date, end_date, limit: limitRaw } = req.query;
-      const parsedLimit = parseInt(String(limitRaw || '100'), 10);
+      const parsedLimit = parseInt(String(limitRaw || '50'), 10);
       const limit = Number.isFinite(parsedLimit)
-        ? Math.min(Math.max(parsedLimit, 1), 500)
-        : 100;
+        ? Math.min(Math.max(parsedLimit, 1), 100)
+        : 50;
 
       const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
       const key = String(id || '').trim();

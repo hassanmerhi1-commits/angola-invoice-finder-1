@@ -1658,6 +1658,14 @@ function bootstrapSchemaAndSeed() {
   } catch (err) {
     console.warn('[DB] purchase_invoices unique index:', err.message);
   }
+  try {
+    sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS idx_purchase_invoices_created_at
+        ON purchase_invoices(created_at DESC)
+    `);
+  } catch (err) {
+    console.warn('[DB] purchase_invoices created_at index:', err.message);
+  }
 
   seedDefaultChartOfAccounts();
 

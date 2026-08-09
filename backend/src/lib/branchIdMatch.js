@@ -31,16 +31,25 @@ function branchIdSqlNorm(columnExpr, db) {
   return `REPLACE(LOWER(TRIM(COALESCE(${columnExpr}, ''))), '-', '')`;
 }
 
+const branchFilterIdCache = new Map();
+
 async function resolveBranchFilterId(db, branchId) {
   const raw = String(branchId || '').trim();
   if (!raw) return null;
+
+  const cacheKey = `${db.engine || 'db'}:${raw}`;
+  if (branchFilterIdCache.has(cacheKey)) return branchFilterIdCache.get(cacheKey);
 
   const idSql =
     db.engine === 'postgres'
       ? 'SELECT id::text AS id FROM branches WHERE id::text = $1 LIMIT 1'
       : 'SELECT CAST(id AS TEXT) AS id FROM branches WHERE CAST(id AS TEXT) = $1 LIMIT 1';
   const byId = await db.query(idSql, [raw]);
-  if (byId.rows[0]?.id) return String(byId.rows[0].id);
+  if (byId.rows[0]?.id) {
+    const hit = String(byId.rows[0].id);
+    branchFilterIdCache.set(cacheKey, hit);
+    return hit;
+  }
 
   const rawKey = normalizeBranchIdKey(raw);
   if (rawKey.length >= 8) {
@@ -51,7 +60,11 @@ async function resolveBranchFilterId(db, branchId) {
         : `SELECT CAST(id AS TEXT) AS id FROM branches
            WHERE REPLACE(LOWER(CAST(id AS TEXT)), '-', '') = $1 LIMIT 1`;
     const byDashless = await db.query(dashlessSql, [rawKey]);
-    if (byDashless.rows[0]?.id) return String(byDashless.rows[0].id);
+    if (byDashless.rows[0]?.id) {
+      const hit = String(byDashless.rows[0].id);
+      branchFilterIdCache.set(cacheKey, hit);
+      return hit;
+    }
   }
 
   const byMeta = await db.query(
@@ -66,7 +79,11 @@ async function resolveBranchFilterId(db, branchId) {
          LIMIT 1`,
     [raw],
   );
-  if (byMeta.rows[0]?.id) return String(byMeta.rows[0].id);
+  if (byMeta.rows[0]?.id) {
+    const hit = String(byMeta.rows[0].id);
+    branchFilterIdCache.set(cacheKey, hit);
+    return hit;
+  }
 
   const nameKey = normalizeBranchNameKey(raw);
   if (nameKey.length >= 2) {
@@ -82,9 +99,14 @@ async function resolveBranchFilterId(db, branchId) {
            LIMIT 1`,
       [nameKey],
     );
-    if (byName.rows[0]?.id) return String(byName.rows[0].id);
+    if (byName.rows[0]?.id) {
+      const hit = String(byName.rows[0].id);
+      branchFilterIdCache.set(cacheKey, hit);
+      return hit;
+    }
   }
 
+  branchFilterIdCache.set(cacheKey, raw);
   return raw;
 }
 

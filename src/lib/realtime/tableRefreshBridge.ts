@@ -61,6 +61,12 @@ function dispatchTableRefresh(table: RefreshableTable, entityId?: string) {
   if (mapped) {
     if (mapped === 'company-settings-updated') {
       window.dispatchEvent(new Event('company-settings-updated'));
+    } else if (mapped === storage.PRODUCTS_CHANGED_EVENT) {
+      // Stock Adjust / sales / purchases: never force a full catalog download.
+      markCachedListsStaleByPrefix('products:');
+      window.dispatchEvent(new CustomEvent(mapped, {
+        detail: { entityId, lightweight: true },
+      }));
     } else {
       window.dispatchEvent(new CustomEvent(mapped, { detail: { entityId } }));
     }

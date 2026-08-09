@@ -371,10 +371,11 @@ export async function getPurchaseInvoices(
     : undefined;
 
   if (usePurchaseInvoiceApi()) {
-    await migrateLegacyPurchaseInvoicesToApi();
+    // Never block list paint on one-time legacy migration.
+    void migrateLegacyPurchaseInvoicesToApi();
     const res = await api.purchaseInvoices.list({
       ...(resolvedBranch ? { branchId: resolvedBranch } : {}),
-      limit: opts?.limit ?? 300,
+      limit: opts?.limit ?? 100,
       offset: opts?.offset ?? 0,
       ...(opts?.dateFrom ? { dateFrom: opts.dateFrom } : {}),
       ...(opts?.dateTo ? { dateTo: opts.dateTo } : {}),

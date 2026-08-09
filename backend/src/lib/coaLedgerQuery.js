@@ -5,7 +5,7 @@
 async function fetchAccountLedger(db, root, {
   start_date,
   end_date,
-  limit = 100,
+  limit = 50,
 }) {
   const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
   const postedClause = db.engine === 'postgres'
@@ -54,44 +54,19 @@ async function fetchAccountLedger(db, root, {
   }
 
   const accountId = String(root.id);
-  const hardLimit = Math.min(Math.max(Number(limit) || 100, 1), isHighVolumeParent ? 50 : 100);
+  const hardLimit = Math.min(Math.max(Number(limit) || 50, 1), isHighVolumeParent ? 50 : 100);
+  // Leaves should fail fast over Tailscale — never sit on an 8s statement_timeout.
+  const statementTimeoutMs = isHighVolumeParent ? 5000 : 3000;
 
   let rawRows = [];
   if (db.engine === 'postgres' && db.pool) {
     const client = await db.pool.connect();
     try {
-      await client.query(`SET LOCAL statement_timeout = '8000'`);
+      await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}'`);
+      // Prefer journal_entries.entry_date (always populated) + account_id index.
+      // jel.entry_date path is secondary — NULL line dates made the old fast path miss rows
+      // and fall through to a second timed-out scan.
       try {
-        const result = await client.query(
-          `SELECT
-             jel.id,
-             jel.journal_entry_id,
-             jel.account_id,
-             jel.description,
-             jel.debit_amount,
-             jel.credit_amount,
-             je.entry_number,
-             COALESCE(jel.entry_date, je.entry_date)::text AS entry_date,
-             je.description AS journal_description,
-             je.reference_type,
-             je.reference_id,
-             je.branch_id,
-             je.is_posted,
-             je.created_at AS journal_created_at
-           FROM journal_entry_lines jel
-           INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-           WHERE jel.account_id = $1::uuid
-             AND jel.entry_date >= $2::date
-             AND jel.entry_date <= $3::date
-             AND (je.is_posted IS DISTINCT FROM false)
-           ORDER BY jel.entry_date DESC, jel.id DESC
-           LIMIT $4`,
-          [accountId, startDate, endDate, hardLimit],
-        );
-        rawRows = result.rows || [];
-      } catch (e) {
-        console.warn('[COA ledger] fast path failed, fallback:', String(e.message || e).slice(0, 180));
-        await client.query(`SET LOCAL statement_timeout = '8000'`);
         const result = await client.query(
           `SELECT
              jel.id,
@@ -110,11 +85,41 @@ async function fetchAccountLedger(db, root, {
              je.created_at AS journal_created_at
            FROM journal_entry_lines jel
            INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-           WHERE jel.account_id = $1::uuid
+           WHERE jel.account_id::text = $1::text
              AND je.entry_date >= $2::date
              AND je.entry_date <= $3::date
              AND (je.is_posted IS DISTINCT FROM false)
            ORDER BY je.entry_date DESC, je.created_at DESC
+           LIMIT $4`,
+          [accountId, startDate, endDate, hardLimit],
+        );
+        rawRows = result.rows || [];
+      } catch (e) {
+        console.warn('[COA ledger] primary path failed, fallback:', String(e.message || e).slice(0, 180));
+        await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}'`);
+        const result = await client.query(
+          `SELECT
+             jel.id,
+             jel.journal_entry_id,
+             jel.account_id,
+             jel.description,
+             jel.debit_amount,
+             jel.credit_amount,
+             je.entry_number,
+             COALESCE(jel.entry_date, je.entry_date)::text AS entry_date,
+             je.description AS journal_description,
+             je.reference_type,
+             je.reference_id,
+             je.branch_id,
+             je.is_posted,
+             je.created_at AS journal_created_at
+           FROM journal_entry_lines jel
+           INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+           WHERE jel.account_id::text = $1::text
+             AND COALESCE(jel.entry_date, je.entry_date) >= $2::date
+             AND COALESCE(jel.entry_date, je.entry_date) <= $3::date
+             AND (je.is_posted IS DISTINCT FROM false)
+           ORDER BY COALESCE(jel.entry_date, je.entry_date) DESC, jel.id DESC
            LIMIT $4`,
           [accountId, startDate, endDate, hardLimit],
         );

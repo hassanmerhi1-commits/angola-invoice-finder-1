@@ -534,6 +534,8 @@ export const en = {
     paperWidth: "Paper width",
     default80: "80mm (default)",
     mini58: "58mm (mini)",
+    horizontalOffset: "Horizontal offset",
+    horizontalOffsetDesc: "If receipts print shifted to one side on THIS PC only (same settings as other computers), the Windows printer driver on this machine is likely applying its own margin. Nudge right (+) or left (-) in mm and press Test to compensate — this is saved per machine.",
     autoOpenDrawer: "Auto open drawer",
     autoOpenDrawerDesc: "Open cash drawer after each sale",
     windowsPrinter: "Windows printer",

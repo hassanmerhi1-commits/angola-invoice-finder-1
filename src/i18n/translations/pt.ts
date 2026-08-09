@@ -536,6 +536,8 @@ export const pt: TranslationKeys = {
     paperWidth: "Largura do Papel",
     default80: "80mm (padrão)",
     mini58: "58mm (mini)",
+    horizontalOffset: "Ajuste horizontal",
+    horizontalOffsetDesc: "Se o recibo sai deslocado para um dos lados APENAS neste PC (mesmas configurações que os outros), o driver de impressora do Windows nesta máquina provavelmente aplica a sua própria margem. Ajuste para a direita (+) ou esquerda (-) em mm e clique em Testar para compensar — isto é guardado por máquina.",
     autoOpenDrawer: "Abrir Gaveta Automático",
     autoOpenDrawerDesc: "Abrir gaveta de dinheiro após cada venda",
     windowsPrinter: "Impressora Windows",

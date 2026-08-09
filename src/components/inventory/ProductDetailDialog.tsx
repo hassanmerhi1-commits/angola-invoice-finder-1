@@ -51,6 +51,8 @@ import {
   legacySupplierNameFromSelectValue,
   supplierIdsMatch,
 } from '@/lib/productSupplierResolve';
+import { buildSellingPriceBySku, withSellingPriceFromMap } from '@/lib/productDedupe';
+import { readSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
 interface ProductDetailDialogProps {
   open: boolean;
@@ -137,7 +139,16 @@ export function ProductDetailDialog({
   const effectiveProduct = useMemo(() => {
     const base = loadedProduct ?? product;
     if (!base) return null;
-    return enrichProductSupplier(base, catalogProducts.length > 0 ? catalogProducts : [base]);
+    const enriched = enrichProductSupplier(base, catalogProducts.length > 0 ? catalogProducts : [base]);
+    // Match the Inventory grid's display price: same-SKU rows (other branches) + server
+    // selling-price hints. Without this, a branch row saved with price=0 shows 0 here while
+    // the grid (and other branches) show the blended price — looks like "different data".
+    const hints = readSellingPriceHintsSession();
+    const priceBySku = buildSellingPriceBySku(
+      catalogProducts.length > 0 ? catalogProducts : [enriched],
+      hints,
+    );
+    return withSellingPriceFromMap(enriched, priceBySku);
   }, [loadedProduct, product, catalogProducts]);
 
   const activeCategories = useMemo(() => categories.filter(c => c.isActive), [categories]);

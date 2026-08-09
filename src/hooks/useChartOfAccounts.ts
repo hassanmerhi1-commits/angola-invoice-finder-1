@@ -230,7 +230,7 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
   // After posts, balances recompute in background on the server. Stale-mark + delayed
   // refresh — never block Journals/Invoices with an immediate full CoA download.
   useTableRefreshListener(['journal_entries', 'payments'], () => {
-    scheduleCoaRefresh(1500);
+    scheduleCoaRefresh(2500);
   });
 
   // Auto-seed branch caixa accounts once after first load — only refetch if something was created.
