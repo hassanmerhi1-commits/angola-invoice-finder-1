@@ -26,6 +26,12 @@ These rules stop the Tailscale “same bug again” loop. Prefer changing produc
 - Do **not** call `chartOfAccounts.list()` to resolve one supplier leaf — use `POST /chart-of-accounts/ensure-supplier`.
 - Await `repostAccounting` only when the create/update response shows stock/payable/journal post failed; otherwise background + toast on failure.
 
+## Selling price tiers (price1..price4)
+
+- Price 1 is authoritative; **never** blend it with price2/3/4 or a sibling branch's price when it is genuinely non-zero (grid SQL, POS level picker, and `ProductDetailDialog` must agree on this).
+- When Price 1 is blank (`0`) — a product priced only via tiers — **every** surface must apply the *same* zero-fill fallback (own price2 → best sibling price for the SKU), or the grid and the detail dialog will show different numbers for the same product. `ProductDetailDialog`'s `effectiveProduct` must run this fallback even after the fresh `GET /products/:id` row loads, not only before it.
+- `getPriceForLevel` (POS/sales) must fall back to the next **populated** tier (not back to the same empty level) when the requested level is 0, so a tier-only-priced product never rings up at 0 Kz.
+
 ## Auth / deploy
 
 - City `.env` should still set a stable `JWT_SECRET` (compose passes it through) for belt-and-suspenders safety. As of the `nexor_data` volume + `NEXOR_INSTALL_DIR=/app/data` fix, an auto-generated `jwt.secret`/`master.key` now persists across `docker compose up -d --build` recreates too — previously they lived under the Windows-only default `C:\NEXOR ERP` inside the Linux container, which doesn't exist there and isn't mounted, so every redeploy silently minted a new secret and logged out every shop with "Invalid or expired token". If this ever recurs, check that the `nexor_data` volume exists (`docker volume ls`) and wasn't removed with `docker compose down -v`.

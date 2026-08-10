@@ -143,10 +143,16 @@ export function ProductDetailDialog({
     const base = loadedProduct ?? product;
     if (!base) return null;
     const enriched = enrichProductSupplier(base, catalogProducts.length > 0 ? catalogProducts : [base]);
-    // Fresh API row is the source of truth (cost + price1). Do not re-blend it with
-    // stale session selling-price hints. Only seed a missing (zero) price1 from the
-    // grid/hints before the API responds.
-    if (loadedProduct) return enriched;
+    // Fresh API row is the source of truth (cost + price1) — never re-blend a real,
+    // non-zero price1 with stale session selling-price hints. But when Price 1 is blank
+    // (0) for this row and the tier system relies on Price 2 / a sibling branch's price
+    // — exactly what the inventory grid falls back to server-side (sqlGridDisplayPriceExpr)
+    // — replicate that same zero-fill here. Otherwise the grid shows a filled-in price and
+    // the detail dialog shows a bare 0 / different number for the same product.
+    const ownPrice = Number(enriched.price) || 0;
+    if (ownPrice > 0) return enriched;
+    const ownTierFallback = Number(enriched.price2) || 0;
+    if (ownTierFallback > 0) return { ...enriched, price: ownTierFallback };
     const hints = readSellingPriceHintsSession();
     const priceBySku = buildSellingPriceBySku(
       catalogProducts.length > 0 ? catalogProducts : [enriched],

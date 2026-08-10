@@ -32,8 +32,8 @@ import {
   sortProductSearchResults,
   PRODUCT_LINE_SUGGESTION_LIMIT,
 } from '@/components/inventory/productLineSearch';
-import { format } from 'date-fns';
-import { pt } from 'date-fns/locale';
+import { format, type Locale } from 'date-fns';
+import { pt, enUS } from 'date-fns/locale';
 import { useToast } from '@/hooks/use-toast';
 import { api } from '@/lib/api/client';
 
@@ -428,6 +428,7 @@ export default function StockTransfer() {
   };
 
   const destinationBranches = branches.filter(b => b.id !== fromBranchId);
+  const dateLocale = language === 'pt' ? pt : enUS;
 
   const branchTransferActions = {
     scopeId,
@@ -524,6 +525,8 @@ export default function StockTransfer() {
                 onApprove={canTransfer ? handleApprove : undefined}
                 onCancel={canTransfer ? handleCancel : undefined}
                 branchTransferActions={branchTransferActions}
+                t={t}
+                dateLocale={dateLocale}
               />
             </CardContent>
           </Card>
@@ -541,6 +544,8 @@ export default function StockTransfer() {
                 getStatusBadge={getStatusBadge}
                 onReceive={canTransfer ? handleOpenReceiveDialog : undefined}
                 branchTransferActions={branchTransferActions}
+                t={t}
+                dateLocale={dateLocale}
               />
             </CardContent>
           </Card>
@@ -557,6 +562,8 @@ export default function StockTransfer() {
                 transfers={completedTransfers}
                 getStatusBadge={getStatusBadge}
                 branchTransferActions={branchTransferActions}
+                t={t}
+                dateLocale={dateLocale}
               />
             </CardContent>
           </Card>
@@ -598,7 +605,7 @@ export default function StockTransfer() {
           <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-4 py-3 sm:px-6">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>De (Origem):</Label>
+                <Label>{t.stockTransferUi.fromLabel}</Label>
                 <Select value={fromBranchId} onValueChange={handleFromBranchChange}>
                   <SelectTrigger>
                     <SelectValue placeholder={t.stockTransferUi.selectSourceBranch} />
@@ -613,7 +620,7 @@ export default function StockTransfer() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Para (Destino):</Label>
+                <Label>{t.stockTransferUi.toLabel}</Label>
                 <Select value={toBranchId} onValueChange={setToBranchId}>
                   <SelectTrigger>
                     <SelectValue placeholder={t.stockTransferUi.selectDestinationBranch} />
@@ -628,7 +635,7 @@ export default function StockTransfer() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Armazém origem</Label>
+                <Label>{t.stockTransferUi.sourceWarehouseLabel}</Label>
                 <Select
                   value={fromWarehouseId}
                   onValueChange={setFromWarehouseId}
@@ -647,7 +654,7 @@ export default function StockTransfer() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Armazém destino</Label>
+                <Label>{t.stockTransferUi.destinationWarehouseLabel}</Label>
                 <Select
                   value={toWarehouseId}
                   onValueChange={setToWarehouseId}
@@ -740,10 +747,10 @@ export default function StockTransfer() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Produto</TableHead>
-                      <TableHead>SKU</TableHead>
-                      <TableHead>Disponível</TableHead>
-                      <TableHead>Quantidade</TableHead>
+                      <TableHead>{t.stockTransferUi.colProduct}</TableHead>
+                      <TableHead>{t.stockTransferUi.colSku}</TableHead>
+                      <TableHead>{t.stockTransferUi.colAvailable}</TableHead>
+                      <TableHead>{t.stockTransferUi.colQuantity}</TableHead>
                       <TableHead></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -792,7 +799,7 @@ export default function StockTransfer() {
             )}
 
             <div className="space-y-2">
-              <Label>Observações:</Label>
+              <Label>{t.stockTransferUi.notesLabel}</Label>
               <Textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
@@ -842,10 +849,10 @@ export default function StockTransfer() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Produto</TableHead>
-                      <TableHead>SKU</TableHead>
-                      <TableHead>Enviado</TableHead>
-                      <TableHead>Recebido</TableHead>
+                      <TableHead>{t.stockTransferUi.colProduct}</TableHead>
+                      <TableHead>{t.stockTransferUi.colSku}</TableHead>
+                      <TableHead>{t.stockTransferUi.colSent}</TableHead>
+                      <TableHead>{t.stockTransferUi.colReceived}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -917,6 +924,8 @@ function TransferTable({
   onReceive,
   onCancel,
   branchTransferActions,
+  t,
+  dateLocale,
 }: {
   transfers: StockTransferType[];
   getStatusBadge: (status: StockTransferType['status']) => React.ReactNode;
@@ -929,11 +938,13 @@ function TransferTable({
     userBranchId?: string;
     branches?: { id: string; name?: string; code?: string; isMain?: boolean }[];
   };
+  t: ReturnType<typeof useTranslation>['t'];
+  dateLocale: Locale;
 }) {
   if (transfers.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
-        Nenhuma transferência encontrada
+        {t.stockTransferUi.noTransfersFound}
       </div>
     );
   }
@@ -942,13 +953,13 @@ function TransferTable({
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Número</TableHead>
-          <TableHead>Origem</TableHead>
-          <TableHead>Destino</TableHead>
-          <TableHead>Itens</TableHead>
-          <TableHead>Data</TableHead>
-          <TableHead>Estado</TableHead>
-          <TableHead>Ações</TableHead>
+          <TableHead>{t.stockTransferUi.colNumber}</TableHead>
+          <TableHead>{t.stockTransferUi.colOrigin}</TableHead>
+          <TableHead>{t.stockTransferUi.colDestination}</TableHead>
+          <TableHead>{t.stockTransferUi.colItems}</TableHead>
+          <TableHead>{t.stockTransferUi.colDate}</TableHead>
+          <TableHead>{t.stockTransferUi.colStatus}</TableHead>
+          <TableHead>{t.stockTransferUi.colActions}</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -957,9 +968,9 @@ function TransferTable({
             <TableCell className="font-medium">{transfer.transferNumber}</TableCell>
             <TableCell>{transfer.fromBranchName}</TableCell>
             <TableCell>{transfer.toBranchName}</TableCell>
-            <TableCell>{transfer.items.length} produtos</TableCell>
+            <TableCell>{transfer.items.length} {t.stockTransferUi.itemsCountSuffix}</TableCell>
             <TableCell>
-              {format(new Date(transfer.requestedAt), 'dd/MM/yyyy HH:mm', { locale: pt })}
+              {format(new Date(transfer.requestedAt), 'dd/MM/yyyy HH:mm', { locale: dateLocale })}
             </TableCell>
             <TableCell>{getStatusBadge(transfer.status)}</TableCell>
             <TableCell>
@@ -967,13 +978,13 @@ function TransferTable({
                 {canApproveStockTransfer(transfer, branchTransferActions) && onApprove && (
                   <Button size="sm" variant="outline" onClick={() => onApprove(transfer)}>
                     <Check className="w-4 h-4 mr-1" />
-                    Aprovar
+                    {t.stockTransferUi.approve}
                   </Button>
                 )}
                 {canReceiveStockTransfer(transfer, branchTransferActions) && onReceive && (
                   <Button size="sm" variant="outline" onClick={() => onReceive(transfer)}>
                     <Package className="w-4 h-4 mr-1" />
-                    Confirmar Recepção
+                    {t.stockTransferUi.confirmReceipt}
                   </Button>
                 )}
                 {transfer.status === 'pending' && onCancel && (

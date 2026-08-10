@@ -5213,6 +5213,33 @@ export const en = {
     receiveTransferTitle: "Receive transfer",
     receiveTransferDesc: "Confirm received quantities",
     confirmReceiving: "Confirm receiving",
+
+    // New-transfer form labels
+    fromLabel: "From (source branch)",
+    toLabel: "To (destination branch)",
+    sourceWarehouseLabel: "Source warehouse",
+    destinationWarehouseLabel: "Destination warehouse",
+    notesLabel: "Notes",
+
+    // Table column headers
+    colProduct: "Product",
+    colSku: "SKU",
+    colAvailable: "Available",
+    colQuantity: "Quantity",
+    colSent: "Sent",
+    colReceived: "Received",
+    colNumber: "Number",
+    colOrigin: "Origin",
+    colDestination: "Destination",
+    colItems: "Items",
+    colDate: "Date",
+    colStatus: "Status",
+    colActions: "Actions",
+
+    noTransfersFound: "No transfers found",
+    itemsCountSuffix: "products",
+    approve: "Approve",
+    confirmReceipt: "Confirm receipt",
   },
 
   suppliersUi: {

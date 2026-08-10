@@ -5215,6 +5215,33 @@ export const pt: TranslationKeys = {
     receiveTransferTitle: "Receber Transferência",
     receiveTransferDesc: "Confirme as quantidades recebidas",
     confirmReceiving: "Confirmar Recebimento",
+
+    // New-transfer form labels
+    fromLabel: "De (filial de origem)",
+    toLabel: "Para (filial de destino)",
+    sourceWarehouseLabel: "Armazém de origem",
+    destinationWarehouseLabel: "Armazém de destino",
+    notesLabel: "Observações",
+
+    // Table column headers
+    colProduct: "Produto",
+    colSku: "SKU",
+    colAvailable: "Disponível",
+    colQuantity: "Quantidade",
+    colSent: "Enviado",
+    colReceived: "Recebido",
+    colNumber: "Número",
+    colOrigin: "Origem",
+    colDestination: "Destino",
+    colItems: "Itens",
+    colDate: "Data",
+    colStatus: "Estado",
+    colActions: "Ações",
+
+    noTransfersFound: "Nenhuma transferência encontrada",
+    itemsCountSuffix: "produtos",
+    approve: "Aprovar",
+    confirmReceipt: "Confirmar Recepção",
   },
 
   suppliersUi: {

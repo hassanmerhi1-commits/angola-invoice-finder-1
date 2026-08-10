@@ -15,9 +15,10 @@ export function normalizePriceLevel(value: unknown): PriceLevel {
 }
 
 /**
- * Base ex-VAT price for the requested level. Falls back to price level 1 when the
- * requested level has no value (0/undefined) so a sale never gets a zero price by
- * accident.
+ * Base ex-VAT price for the requested level. Falls back to the next best populated
+ * tier when the requested level has no value (0/undefined) so a sale never gets a
+ * zero price by accident — e.g. a product priced only via Price 2/3/4 (Price 1 left
+ * blank on purpose) must still charge something when sold at level 1, not 0 Kz.
  */
 export function getPriceForLevel(product: Pick<Product, 'price' | 'price2' | 'price3' | 'price4'>, level: number): number {
   const lvl = normalizePriceLevel(level);
@@ -29,7 +30,11 @@ export function getPriceForLevel(product: Pick<Product, 'price' | 'price2' | 'pr
   };
   const chosen = Number(byLevel[lvl] ?? 0);
   if (chosen > 0) return chosen;
-  return Number(product.price ?? 0);
+  for (const fallbackLevel of PRICE_LEVELS) {
+    const value = Number(byLevel[fallbackLevel] ?? 0);
+    if (value > 0) return value;
+  }
+  return 0;
 }
 
 /** Apply a signed % adjustment to a price, rounded to 2 decimals. */
