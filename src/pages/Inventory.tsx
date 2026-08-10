@@ -1397,7 +1397,6 @@ export default function Inventory() {
         {canSwitchBranch && (
           <BranchSelector
             compact
-            includeAllBranches
             branchList={allBranches.length > 0 ? allBranches : branches}
             inventoryScopeId={inventoryScopeId}
             onInventoryScopeChange={setInventoryScope}

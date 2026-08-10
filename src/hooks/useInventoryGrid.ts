@@ -59,14 +59,16 @@ export function useInventoryGrid(opts: {
 
     const gen = ++generationRef.current;
 
-    // Stale-while-revalidate: show cached rows for this scope instantly. When switching
-    // to a cold scope, keep previous rows visible (avoid a blank 10s loading screen)
-    // until the new branch payload arrives.
+    // Stale-while-revalidate: paint only cache for *this* scope. Never keep the previous
+    // branch's rows on screen while Sede (consolidated) or another filial loads — that
+    // looked like "Sede Soyo sometimes shows only other branch products" or an empty
+    // list when a cold consolidated fetch failed and left the old filial painted.
     const warm = readWarmStartRows(opts.branchId, opts.consolidated);
     if (warm?.length) {
       setRows(warm);
       setLoading(false);
     } else {
+      setRows([]);
       setLoading(true);
     }
 
@@ -108,7 +110,7 @@ export function useInventoryGrid(opts: {
       } catch (err) {
         console.error('[useInventoryGrid] load failed:', err);
         if (gen === generationRef.current && !warm?.length) {
-          // Keep whatever was on screen from the previous scope if fetch fails.
+          setRows([]);
         }
       } finally {
         if (gen === generationRef.current) setLoading(false);
