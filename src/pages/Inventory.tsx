@@ -13,7 +13,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useProducts } from '@/hooks/useERP';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
-import { invalidateInventoryGridCache, readProductStock } from '@/lib/inventoryGrid';
+import { fetchInventoryGrid, invalidateInventoryGridCache, isInventoryGridCacheFresh, readProductStock } from '@/lib/inventoryGrid';
 import { useInventoryBranchScope } from '@/hooks/useInventoryBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { resolveBranchScopeDisplayLabel } from '@/lib/branchScopeDisplay';
@@ -153,6 +153,28 @@ export default function Inventory() {
     deleteProduct,
   } = useProducts(catalogListBranchId, { light: true, enabled: false });
 
+  // Warm every other switchable branch's grid in the background so hopping between
+  // branches (HQ workflow) hits an instant cache instead of a cold, several-second
+  // network round trip each time. Staggered + skips branches already warm.
+  useEffect(() => {
+    if (!canSwitchBranch) return;
+    const targets = (allBranches.length > 0 ? allBranches : branches).filter(
+      (b) => b.id && b.id !== listBranchId && !isInventoryGridCacheFresh(b.id, false, 90_000),
+    );
+    if (targets.length === 0) return;
+    let cancelled = false;
+    const timers = targets.map((b, i) =>
+      setTimeout(() => {
+        if (cancelled) return;
+        void fetchInventoryGrid({ branchId: b.id, consolidated: false }).catch(() => {});
+      }, 800 + i * 600),
+    );
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+    };
+  }, [canSwitchBranch, allBranches, branches, listBranchId]);
+
   const productsById = useMemo(
     () => new Map(inventoryRows.map((p) => [p.id, p])),
     [inventoryRows],
@@ -236,28 +258,34 @@ export default function Inventory() {
       if (detail?.skipGridRefresh) {
         return;
       }
-      invalidateInventoryGridCache(listBranchId, isHeadOffice);
+      // Always invalidate the caches for the branches the event actually names — a stock
+      // transfer/adjust for branch X should never leave branch X's cache stale.
       if (detail?.toBranchId) invalidateInventoryGridCache(detail.toBranchId, false);
       if (detail?.fromBranchId) invalidateInventoryGridCache(detail.fromBranchId, false);
       if (detail?.branchId && detail.branchId !== 'all') {
         invalidateInventoryGridCache(detail.branchId, false);
       }
+      // Whether this event has anything to do with the branch currently on screen. A sale
+      // at branch B was unconditionally nuking branch A's cache below even while nobody was
+      // looking at A — so switching back to A later always paid for a cold, slow refetch
+      // instead of an instant cache hit (the whole point of caching branch switches).
+      const changedBranchId = detail?.branchId;
+      const affectsAllBranches = !changedBranchId || changedBranchId === 'all';
+      const affectsThisScope =
+        isHeadOffice
+        || affectsAllBranches
+        || changedBranchId === listBranchId
+        || detail?.toBranchId === listBranchId
+        || detail?.fromBranchId === listBranchId;
+      if (!affectsThisScope) return;
+      invalidateInventoryGridCache(listBranchId, isHeadOffice);
       if (detail?.lightweight) {
         // Adjust In / POS already patch rows optimistically for the branch that made the
-        // write. But HQ consolidated totals, other open branches, and writes from another
-        // page/client (new Purchase, another Tailscale client) are NOT covered by that patch,
-        // so without this the grid would silently go stale until the page is remounted
-        // (REGRESSION seen by users: "outside" grid disagreeing with a fresh double-click
-        // fetch). Debounce so a burst of events costs one background round-trip, not one per event.
-        const changedBranchId = detail?.branchId;
-        const affectsAllBranches = !changedBranchId || changedBranchId === 'all';
-        const affectsThisScope =
-          isHeadOffice
-          || affectsAllBranches
-          || changedBranchId === listBranchId
-          || detail?.toBranchId === listBranchId
-          || detail?.fromBranchId === listBranchId;
-        if (!affectsThisScope) return;
+        // write. But HQ consolidated totals and writes from another page/client (new
+        // Purchase, another Tailscale client) are NOT covered by that patch, so without this
+        // the grid would silently go stale until the page is remounted (REGRESSION seen by
+        // users: "outside" grid disagreeing with a fresh double-click fetch). Debounce so a
+        // burst of events costs one background round-trip, not one per event.
         if (lightweightRefreshTimer) clearTimeout(lightweightRefreshTimer);
         lightweightRefreshTimer = setTimeout(() => {
           lightweightRefreshTimer = null;
