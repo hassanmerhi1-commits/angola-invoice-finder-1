@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Branch } from '@/types/erp';
 import {
   ALL_BRANCHES_SCOPE_ID,
-  isConsolidatedBranchScope,
   resolveBranchFromScope,
 } from '@/lib/branchAccess';
 import { useBranchScope } from '@/hooks/useBranchScope';
@@ -29,7 +28,8 @@ function resolveStoredInventoryScopeId(
   }
 
   const saved = String(localStorage.getItem(INVENTORY_SCOPE_STORAGE_KEY) || '').trim();
-  if (saved && saved !== ALL_BRANCHES_SCOPE_ID && branches.some((b) => String(b.id) === saved)) {
+  if (saved === ALL_BRANCHES_SCOPE_ID) return saved;
+  if (saved && branches.some((b) => String(b.id) === saved)) {
     return saved;
   }
 
@@ -37,8 +37,12 @@ function resolveStoredInventoryScopeId(
 }
 
 /**
- * Inventory branch scope — follows global top-nav branch.
- * Consolidated "all branches" is not offered in the UI.
+ * Inventory branch scope — follows the global top-nav branch, but with its own explicit
+ * "All branches (total stock)" choice: unlike other pages (expenses, payments, etc.),
+ * where picking the Sede/HQ branch is used as a stand-in for "consolidated", Inventory
+ * must be able to show the Sede/HQ branch's *own* stock like any other branch — it has
+ * its own physical warehouse and its own products. Only the literal "All branches"
+ * option (a distinct row in the picker) triggers the consolidated/company-wide grid.
  */
 export function useInventoryBranchScope() {
   const global = useBranchScope();
@@ -58,6 +62,15 @@ export function useInventoryBranchScope() {
     return resolveStoredInventoryScopeId(branches, canSwitchBranch, globalScopeId);
   });
 
+  // Only re-sync inventoryScopeId to the global top-nav branch when that global scope
+  // has actually changed (a deliberate top-nav switch) — not on every unrelated
+  // re-render (branches list refresh, etc). Otherwise an explicit local "All branches"
+  // pick made from the Inventory toolbar got silently reverted moments later by this
+  // effect re-running for an unrelated reason, which looked like "sometimes shows
+  // nothing / sometimes shows other branches" for whichever branch the top-nav still
+  // pointed at.
+  const lastSyncedGlobalScopeRef = useRef<string>(globalScopeId);
+
   useEffect(() => {
     if (!canSwitchBranch) {
       const locked =
@@ -73,7 +86,10 @@ export function useInventoryBranchScope() {
     }
 
     const g = String(globalScopeId || '').trim();
-    if (g && g !== ALL_BRANCHES_SCOPE_ID) {
+    const globalChanged = g !== lastSyncedGlobalScopeRef.current;
+    lastSyncedGlobalScopeRef.current = g;
+
+    if (g && g !== ALL_BRANCHES_SCOPE_ID && globalChanged) {
       setInventoryScopeIdState((prev) => {
         if (prev === g) return prev;
         localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, g);
@@ -83,30 +99,33 @@ export function useInventoryBranchScope() {
     }
 
     setInventoryScopeIdState((prev) => {
-      if (prev && prev !== ALL_BRANCHES_SCOPE_ID && branches.some((b) => b.id === prev)) return prev;
+      if (prev === ALL_BRANCHES_SCOPE_ID) return prev;
+      if (prev && branches.some((b) => b.id === prev)) return prev;
       const next = resolveStoredInventoryScopeId(branches, true, globalScopeId);
       localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, next);
       return next;
     });
   }, [branches, canSwitchBranch, globalScopeId, global.currentBranch?.id, global.apiBranchId, userBranch?.id]);
 
+  /**
+   * "All branches" is an Inventory-local choice — it is NOT pushed to the global
+   * top-nav scope (which never offers it), so other pages keep operating against a
+   * real, specific branch while Inventory shows the company-wide total.
+   */
   const setInventoryScope = useCallback((scopeId: string) => {
-    const next = scopeId === ALL_BRANCHES_SCOPE_ID
-      ? defaultPhysicalBranchId(allBranches.length > 0 ? allBranches : branches)
-      : scopeId;
-    setInventoryScopeIdState(next);
-    if (canSwitchBranch) {
-      localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, next);
-      setOperatingScope(next);
+    setInventoryScopeIdState(scopeId);
+    if (!canSwitchBranch) return;
+    localStorage.setItem(INVENTORY_SCOPE_STORAGE_KEY, scopeId);
+    if (scopeId !== ALL_BRANCHES_SCOPE_ID) {
+      setOperatingScope(scopeId);
     }
-  }, [canSwitchBranch, setOperatingScope, allBranches, branches]);
+  }, [canSwitchBranch, setOperatingScope]);
 
   const scopeBranches = allBranches.length > 0 ? allBranches : branches;
-  const isInventoryConsolidated = isConsolidatedBranchScope(
-    canSwitchBranch,
-    inventoryScopeId,
-    scopeBranches,
-  );
+  // Deliberately narrower than the global isConsolidatedBranchScope: picking the
+  // Sede/HQ branch here must show *that branch's own* inventory, not the company
+  // total — only the explicit "All branches" row does that for this page.
+  const isInventoryConsolidated = canSwitchBranch && inventoryScopeId === ALL_BRANCHES_SCOPE_ID;
 
   const inventoryBranch = useMemo(
     () => resolveBranchFromScope(scopeBranches, inventoryScopeId)

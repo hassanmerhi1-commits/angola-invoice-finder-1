@@ -91,18 +91,29 @@ function mapCaixaRow(row) {
 async function ensureTreasuryRegistersFromCoa() {
   try {
     // Prefer a branch named/coded SEDE as head office (fixes Sede Soyo treated like a shop).
+    // This used to re-run this SELECT (with no deterministic tiebreak) on every caixa/
+    // registers sync and every server restart, then unconditionally clear is_main from
+    // every other branch and force it onto whatever row won that query. When more than
+    // one branch matches the SEDE/MAIN pattern (e.g. two regional "Sede <City>" hubs),
+    // Postgres does not guarantee a stable winner for tied rows, so which branch held
+    // is_main could flip between runs — cascading into branch-switch permissions,
+    // consolidated/all-branch reads, and inventory-grid scope for whichever branch lost
+    // the flag (its own inventory would intermittently render as a blended all-branch
+    // view, or an empty one, instead of its own stock). Now: leave an existing is_main
+    // branch alone entirely — only assign one when none exists — and break ties
+    // deterministically (oldest branch first) so repeat runs are stable.
     if (db.engine === 'postgres') {
-      const sede = await db.query(
-        `SELECT id FROM branches
-         WHERE name ILIKE '%sede%' OR code ILIKE 'SEDE%' OR UPPER(code) = 'MAIN'
-         ORDER BY CASE WHEN name ILIKE '%sede%' THEN 0 ELSE 1 END
-         LIMIT 1`,
-      );
-      if (sede.rows[0]?.id) {
-        await db.query('UPDATE branches SET is_main = FALSE WHERE id::text IS DISTINCT FROM $1', [
-          String(sede.rows[0].id),
-        ]);
-        await db.query('UPDATE branches SET is_main = TRUE WHERE id = $1', [sede.rows[0].id]);
+      const hasMain = await db.query('SELECT 1 FROM branches WHERE is_main IS TRUE LIMIT 1');
+      if (!hasMain.rows[0]) {
+        const sede = await db.query(
+          `SELECT id FROM branches
+           WHERE name ILIKE '%sede%' OR code ILIKE 'SEDE%' OR UPPER(code) = 'MAIN'
+           ORDER BY CASE WHEN name ILIKE '%sede%' THEN 0 ELSE 1 END, created_at ASC, id ASC
+           LIMIT 1`,
+        );
+        if (sede.rows[0]?.id) {
+          await db.query('UPDATE branches SET is_main = TRUE WHERE id = $1', [sede.rows[0].id]);
+        }
       }
     }
 
