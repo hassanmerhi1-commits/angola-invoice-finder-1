@@ -1100,6 +1100,11 @@ export const api = {
       // Enqueue the sale into the offline outbox and return an immediate optimistic
       // receipt stub. Shared by the "known offline" short-circuit and the network-error fallback.
       const queueOfflineSale = async () => {
+        const soldAt =
+          String(body.createdAt || body.created_at || '').trim()
+          || new Date().toISOString();
+        body.createdAt = soldAt;
+        body.created_at = soldAt;
         const queued = await enqueueOfflineSale(body);
         if (!queued) return null;
         const stub = {
@@ -1132,8 +1137,8 @@ export const api = {
           pendingSync: true,
           client_request_id: body.clientRequestId,
           clientRequestId: body.clientRequestId,
-          created_at: new Date().toISOString(),
-          createdAt: new Date().toISOString(),
+          created_at: soldAt,
+          createdAt: soldAt,
         };
         savePendingSaleCache(stub);
         dispatchSalesChanged(String(body.branchId || ''));

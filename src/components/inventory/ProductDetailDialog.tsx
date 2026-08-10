@@ -61,6 +61,8 @@ interface ProductDetailDialogProps {
   /** Full catalog for resolving supplier from sibling branch rows (same SKU). */
   catalogProducts?: Product[];
   onSave: (product: Product) => void | Promise<void>;
+  /** Called when a fresh API product row is loaded — keep the inventory grid in sync. */
+  onProductLoaded?: (product: Product) => void;
   /** Pre-select supplier when creating from purchase invoice flow. */
   defaultSupplierName?: string;
   /** Inventory branch scope (overrides global top-nav branch when creating). */
@@ -125,6 +127,7 @@ export function ProductDetailDialog({
   product,
   catalogProducts = [],
   onSave,
+  onProductLoaded,
   defaultSupplierName = '',
   scopeBranchId = null,
 }: ProductDetailDialogProps) {
@@ -140,9 +143,10 @@ export function ProductDetailDialog({
     const base = loadedProduct ?? product;
     if (!base) return null;
     const enriched = enrichProductSupplier(base, catalogProducts.length > 0 ? catalogProducts : [base]);
-    // Match the Inventory grid's display price: same-SKU rows (other branches) + server
-    // selling-price hints. Without this, a branch row saved with price=0 shows 0 here while
-    // the grid (and other branches) show the blended price — looks like "different data".
+    // Fresh API row is the source of truth (cost + price1). Do not re-blend it with
+    // stale session selling-price hints. Only seed a missing (zero) price1 from the
+    // grid/hints before the API responds.
+    if (loadedProduct) return enriched;
     const hints = readSellingPriceHintsSession();
     const priceBySku = buildSellingPriceBySku(
       catalogProducts.length > 0 ? catalogProducts : [enriched],
@@ -199,7 +203,9 @@ export function ProductDetailDialog({
       try {
         const res = await api.products.get(product.id);
         if (!cancelled && !forceCloseRef.current && res.data) {
-          setLoadedProduct(mapApiProductRow(res.data as Record<string, unknown>));
+          const mapped = mapApiProductRow(res.data as Record<string, unknown>);
+          setLoadedProduct(mapped);
+          onProductLoaded?.(mapped);
         }
       } catch {
         if (!cancelled) setLoadedProduct(null);
@@ -208,7 +214,7 @@ export function ProductDetailDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, product?.id, refreshSuppliers]);
+  }, [open, product?.id, refreshSuppliers, onProductLoaded]);
 
   // Fetch latest USD→AOA exchange rate for dual-currency cost display
   const [usdRate, setUsdRate] = useState<number>(0);

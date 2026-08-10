@@ -1493,7 +1493,8 @@ async function resolveProductForWarehouse(client, productId, warehouseId) {
 async function recordStockMovement(client, params) {
   const {
     productId, warehouseId, movementType, quantity, unitCost,
-    referenceType, referenceId, referenceNumber, notes, createdBy
+    referenceType, referenceId, referenceNumber, notes, createdBy,
+    createdAt,
   } = params;
 
   requireParam(productId, 'productId');
@@ -1589,14 +1590,42 @@ async function recordStockMovement(client, params) {
   }
 
   const movementId = randomUUID();
-  await client.query(
-    `INSERT INTO stock_movements 
-     (id, product_id, warehouse_id, location_id, movement_type, quantity, unit_cost,
-      reference_type, reference_id, reference_number, notes, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-    [movementId, resolvedProductId, resolvedWarehouseId, locationId, normalizedMovementType, qty, unitCost || 0,
-     referenceType, referenceUuid, referenceNumber || '', notes || '', createdByUuid]
-  );
+  const movementCreatedAt = (() => {
+    if (createdAt == null || String(createdAt).trim() === '') return null;
+    const d = new Date(createdAt);
+    return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+  })();
+  if (movementCreatedAt) {
+    try {
+      await client.query(
+        `INSERT INTO stock_movements 
+         (id, product_id, warehouse_id, location_id, movement_type, quantity, unit_cost,
+          reference_type, reference_id, reference_number, notes, created_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [movementId, resolvedProductId, resolvedWarehouseId, locationId, normalizedMovementType, qty, unitCost || 0,
+         referenceType, referenceUuid, referenceNumber || '', notes || '', createdByUuid, movementCreatedAt]
+      );
+    } catch (e) {
+      if (!/created_at|42703/i.test(String(e.message || e))) throw e;
+      await client.query(
+        `INSERT INTO stock_movements 
+         (id, product_id, warehouse_id, location_id, movement_type, quantity, unit_cost,
+          reference_type, reference_id, reference_number, notes, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [movementId, resolvedProductId, resolvedWarehouseId, locationId, normalizedMovementType, qty, unitCost || 0,
+         referenceType, referenceUuid, referenceNumber || '', notes || '', createdByUuid]
+      );
+    }
+  } else {
+    await client.query(
+      `INSERT INTO stock_movements 
+       (id, product_id, warehouse_id, location_id, movement_type, quantity, unit_cost,
+        reference_type, reference_id, reference_number, notes, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [movementId, resolvedProductId, resolvedWarehouseId, locationId, normalizedMovementType, qty, unitCost || 0,
+       referenceType, referenceUuid, referenceNumber || '', notes || '', createdByUuid]
+    );
+  }
 
   // Sync products.stock from movement ledger (never stock = stock - qty on a row that may still be 0).
   const skuForReconcile = await client.query('SELECT sku FROM products WHERE id = $1', [resolvedProductId]);
@@ -2034,6 +2063,24 @@ function normalizeSalePaymentMethod(saleData) {
   return method;
 }
 
+/** Prefer client-provided sold-at (offline queue); never invent a future clock. */
+function resolveSaleCreatedAt(saleData) {
+  const raw = saleData?.createdAt ?? saleData?.created_at ?? null;
+  if (raw == null || String(raw).trim() === '') {
+    return new Date().toISOString();
+  }
+  const d = new Date(raw);
+  if (!Number.isFinite(d.getTime())) {
+    return new Date().toISOString();
+  }
+  const now = Date.now();
+  // Allow small clock skew; clamp far-future stamps to now.
+  if (d.getTime() > now + 5 * 60_000) {
+    return new Date().toISOString();
+  }
+  return d.toISOString();
+}
+
 async function processSale(client, saleData) {
   const paymentMethod = normalizeSalePaymentMethod(saleData);
   const {
@@ -2064,7 +2111,8 @@ async function processSale(client, saleData) {
     requireParam(clientId, 'clientId');
   }
 
-  const today = new Date().toISOString().split('T')[0];
+  const saleCreatedAt = resolveSaleCreatedAt(saleData);
+  const today = saleCreatedAt.slice(0, 10);
   let saleDueDate = dueDate ? String(dueDate).slice(0, 10) : today;
 
   // ── Step 0: Validate period ──
@@ -2170,7 +2218,7 @@ async function processSale(client, saleData) {
   const saleHeaderParams = [saleId, invoiceNumber, branchId, cashierId, cashierName,
     subtotal, taxAmount, discount || 0, totalAmount,
     paymentMethod, amountPaid, change, normalizedCustomerNif || null, customerName,
-    clientId, clientReqId, saleDueDate, invoiceType];
+    clientId, clientReqId, saleDueDate, invoiceType, saleCreatedAt];
 
   const insertSaleHeader = async (number) => {
     const params = [...saleHeaderParams];
@@ -2181,8 +2229,8 @@ async function processSale(client, saleData) {
       await client.query(
         `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
           subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
-          customer_nif, customer_name, client_id, status, fiscal_status, client_request_id, due_date, invoice_type)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'completed','issued',$16,$17,$18)`,
+          customer_nif, customer_name, client_id, status, fiscal_status, client_request_id, due_date, invoice_type, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'completed','issued',$16,$17,$18,$19)`,
         params,
       );
       await client.query(`RELEASE SAVEPOINT ${savepoint}`);
@@ -2211,19 +2259,42 @@ async function processSale(client, saleData) {
         await client.query(`RELEASE SAVEPOINT ${savepoint}`);
         throw insertErr;
       }
-      if (!/fiscal_status|invoice_type/i.test(insertErr.message || '')) {
+      if (!/fiscal_status|invoice_type|created_at/i.test(insertErr.message || '')) {
         await client.query(`RELEASE SAVEPOINT ${savepoint}`);
         throw insertErr;
       }
-      await client.query(
-        `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
-          subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
-          customer_nif, customer_name, client_id, status, client_request_id, due_date)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'completed',$16,$17)`,
-        params.slice(0, -1),
-      );
-      await client.query(`RELEASE SAVEPOINT ${savepoint}`);
-      return null;
+      // Older schemas: retry without fiscal/invoice_type and/or without explicit created_at.
+      try {
+        await client.query(
+          `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
+            subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
+            customer_nif, customer_name, client_id, status, client_request_id, due_date, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'completed',$16,$17,$18)`,
+          params.slice(0, 17).concat([saleCreatedAt]),
+        );
+        await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+        return null;
+      } catch (retryErr) {
+        if (!/created_at/i.test(String(retryErr.message || retryErr))) {
+          await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+          throw retryErr;
+        }
+        await client.query(
+          `INSERT INTO sales (id, invoice_number, branch_id, cashier_id, cashier_name,
+            subtotal, tax_amount, discount, total, payment_method, amount_paid, change,
+            customer_nif, customer_name, client_id, status, client_request_id, due_date)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'completed',$16,$17)`,
+          params.slice(0, 17),
+        );
+        await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+        // Best-effort: stamp sold-at after insert when the column exists but INSERT path omitted it.
+        try {
+          await client.query(`UPDATE sales SET created_at = $1 WHERE id = $2`, [saleCreatedAt, saleId]);
+        } catch {
+          /* ignore */
+        }
+        return null;
+      }
     }
   };
 
@@ -2293,6 +2364,7 @@ async function processSale(client, saleData) {
         movementType: 'OUT', quantity: item.quantity, unitCost,
         referenceType: 'sale', referenceId: saleId,
         referenceNumber: invoiceNumber, createdBy: cashierId,
+        createdAt: saleCreatedAt,
       });
     } else if (pid && skipSaleStock) {
       // Still need COGS for journal when goods already left on SO ship.
@@ -2371,6 +2443,7 @@ async function processSale(client, saleData) {
   await createJournalEntry(client, {
     description: saleJournalDesc, referenceType: 'sale', referenceId: saleId,
     branchId, createdBy: cashierId, lines: revenueLines,
+    entryDate: today,
   });
 
   if (totalCOGS > 0) {
@@ -2379,6 +2452,7 @@ async function processSale(client, saleData) {
         ? `CMV ${invoiceNumber} - ${saleCustomerLabel}`
         : `CMV ${invoiceNumber}`,
       referenceType: 'sale', referenceId: saleId,
+      entryDate: today,
       lines: [
         { accountCode: ACC.COGS, description: 'Custo Mercadorias Vendidas', debit: totalCOGS, credit: 0 },
         { accountCode: ACC.INVENTORY_STOCK, description: 'Saída Mercadorias', debit: 0, credit: totalCOGS },
@@ -2437,6 +2511,7 @@ async function processSale(client, saleData) {
     total: totalAmount,
     status: 'completed',
     payment_method: paymentMethod,
+    created_at: saleCreatedAt,
   };
 }
 

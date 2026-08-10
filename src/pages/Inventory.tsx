@@ -1799,6 +1799,15 @@ export default function Inventory() {
             ?? null
           }
           onSave={handleSaveProduct}
+          onProductLoaded={(fresh) => {
+            patchInventoryRow({
+              ...fresh,
+              branchId: fresh.branchId || dialogProduct?.branchId || listBranchId || '',
+            });
+            setSelectedProduct((prev) =>
+              prev && prev.id === fresh.id ? { ...prev, ...fresh } : prev,
+            );
+          }}
         />
       ) : null}
 

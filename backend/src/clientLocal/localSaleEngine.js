@@ -263,6 +263,10 @@ function saveLocalSale(db, saleData) {
         clientId: resolvedClientId || undefined,
         clientRequestId: clientReq,
         invoiceNumber,
+        // Preserve the real sale time so city ingest does not stamp sync-time as sold-at
+        // (offline queues can sit for hours/days before flush).
+        createdAt,
+        created_at: createdAt,
       },
     };
 

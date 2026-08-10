@@ -72,14 +72,28 @@ export function useInventoryGrid(opts: {
 
     void (async () => {
       try {
-        // Warm + fresh: skip network. Product creates / stock posts invalidate
-        // session cache (and fire PRODUCTS_CHANGED), so dirtiness is event-driven.
+        // Warm + "fresh" session: paint immediately, then soft-revalidate.
+        // Skipping the network entirely left Inventory showing stale cost/price
+        // after purchases (catalog warmer / other tabs can leave a fresh-but-wrong cache).
         if (isInventoryGridCacheFresh(opts.branchId, opts.consolidated, 120_000)) {
           const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
           if (cached?.length) {
             if (gen !== generationRef.current) return;
             setRows(cached);
             setLoading(false);
+            void (async () => {
+              try {
+                const soft = await fetchInventoryGrid({
+                  branchId: opts.branchId,
+                  consolidated: opts.consolidated,
+                  bypassCache: true,
+                });
+                if (gen !== generationRef.current) return;
+                setRows(soft);
+              } catch {
+                /* keep painted cache */
+              }
+            })();
             return;
           }
         }
