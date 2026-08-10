@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useTranslation } from '@/i18n';
-import { useProducts, useStockTransfers, useAuth } from '@/hooks/useERP';
+import { useStockTransfers, useAuth } from '@/hooks/useERP';
+import { useInventoryGrid } from '@/hooks/useInventoryGrid';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { canApproveStockTransfer, canReceiveStockTransfer } from '@/lib/branchAccess';
 import { Product, StockTransfer as StockTransferType } from '@/types/erp';
@@ -108,18 +109,26 @@ export default function StockTransfer() {
     if (currentBranch?.id) setFromBranchId(currentBranch.id);
   }, [scopeId, currentBranch?.id]);
 
-  // Load products from the selected SOURCE branch
-  const { products: sourceProducts, refreshProducts: refreshSourceProducts } = useProducts(
-    fromBranchId || undefined,
-    { light: true },
-  );
+  // Load products from the selected SOURCE branch — use the same ledger-accurate
+  // inventory-grid source as the Inventory page (not the "light" products list, whose
+  // stock is the raw products.stock column and can drift from the real SKU ledger,
+  // which made in-stock products silently vanish from the transfer picker or cap the
+  // qty below what Inventory shows).
+  const {
+    rows: sourceProducts,
+    refresh: refreshSourceProducts,
+  } = useInventoryGrid({
+    branchId: fromBranchId || undefined,
+    consolidated: false,
+    enabled: !!fromBranchId,
+  });
 
   // A recent Adjust In / Purchase can land just before this list's cache refreshes —
   // force a live re-fetch whenever the transfer dialog opens so "Disponível" reflects
   // the real current stock instead of whatever was cached before the write.
   useEffect(() => {
     if (dialogOpen && fromBranchId) {
-      void refreshSourceProducts({ force: true });
+      void refreshSourceProducts();
     }
   }, [dialogOpen, fromBranchId, refreshSourceProducts]);
 

@@ -352,7 +352,17 @@ async function apiFetch<T>(
       : await response.text().catch(() => '');
 
     if (!response.ok) {
-      return { error: normalizeApiErrorMessage(payload, response.status), status: response.status };
+      const errorMessage = normalizeApiErrorMessage(payload, response.status);
+      // The server's signing key can be regenerated behind our back (e.g. a redeploy that
+      // wiped an unpersisted jwt.secret) — once one request confirms the stored token is
+      // dead, stop attaching it so the very next call falls back to "not authenticated"
+      // (which every screen already knows how to prompt a clean re-login for) instead of
+      // repeating a confusing raw "Invalid or expired token" on every subsequent request.
+      if (response.status === 401 && /invalid|expired/i.test(errorMessage)) {
+        setAuthToken(null);
+        clearAuthSessionCache();
+      }
+      return { error: errorMessage, status: response.status };
     }
 
     return { data: payload as T, status: response.status };

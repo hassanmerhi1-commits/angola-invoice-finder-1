@@ -691,7 +691,7 @@ export default function POS() {
     } catch (error) {
       console.error('Failed to complete sale:', error);
       const detail = error instanceof Error ? error.message : String(error);
-      const friendly = /authentication required|não autenticad|unauthorized|401/i.test(detail)
+      const friendly = /authentication required|não autenticad|unauthorized|401|invalid.*(token|session)|expired.*(token|session)|token.*expired|sess(ã|a)o.*expir/i.test(detail)
         ? t.posUi.checkoutAuthRequired
         : /stock insuficiente|chk_products_stock_nonneg/i.test(detail)
           ? t.documentsUi.insufficientStockToCompleteSaleInvoice

@@ -28,7 +28,7 @@ These rules stop the Tailscale “same bug again” loop. Prefer changing produc
 
 ## Auth / deploy
 
-- City `.env` must set a stable `JWT_SECRET` (compose passes it through). Empty secret → new secret every recreate → “Invalid or expired token”.
+- City `.env` should still set a stable `JWT_SECRET` (compose passes it through) for belt-and-suspenders safety. As of the `nexor_data` volume + `NEXOR_INSTALL_DIR=/app/data` fix, an auto-generated `jwt.secret`/`master.key` now persists across `docker compose up -d --build` recreates too — previously they lived under the Windows-only default `C:\NEXOR ERP` inside the Linux container, which doesn't exist there and isn't mounted, so every redeploy silently minted a new secret and logged out every shop with "Invalid or expired token". If this ever recurs, check that the `nexor_data` volume exists (`docker volume ls`) and wasn't removed with `docker compose down -v`.
 - `docker-compose.yml` mounts `./backend/package.json` so `/api/health` `appVersion` matches `git pull`.
 - After pull: `docker compose up -d --force-recreate backend` then `npm run build:webapp`.
 

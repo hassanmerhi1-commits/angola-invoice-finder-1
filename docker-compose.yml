@@ -42,11 +42,17 @@ services:
       # Optional offsite copy — mount a host folder and uncomment:
       # BACKUP_OFFSITE_DIR: /app/backups-offsite
       # Shown in /api/health shellVersion. appVersion prefers mounted package.json.
-      NEXOR_APP_VERSION: ${NEXOR_APP_VERSION:-1.1.128}
-      # Persist across container recreates — set JWT_SECRET in .env or every redeploy
-      # invalidates all shop sessions ("Invalid or expired token").
+      NEXOR_APP_VERSION: ${NEXOR_APP_VERSION:-1.1.129}
+      # Persist across container recreates — set JWT_SECRET in .env for belt-and-suspenders
+      # safety. Even without it, NEXOR_INSTALL_DIR below points jwt.secret/master.key at the
+      # nexor_data volume so they survive `docker compose up -d --build` (the default
+      # 'C:\NEXOR ERP' install dir is a Windows desktop-app path that doesn't exist in this
+      # Linux container and was never persisted — every redeploy silently minted a new
+      # jwt.secret and invalidated every shop session with "Invalid or expired token").
       JWT_SECRET: ${JWT_SECRET:-}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
+      # Machine-local secrets (jwt.secret, master.key) and AGT certs live under here.
+      NEXOR_INSTALL_DIR: /app/data
       # Shop-client outbox (/api/sync/client-ingest). Without a shared key, allow
       # ingest on trusted LAN/Tailscale. For stricter setups, remove this and set
       # the same NEXOR_CLIENT_SYNC_API_KEY on server + each shop's sync.env.
@@ -64,9 +70,13 @@ services:
       # Writable import drop folder (scripts may copy erp.db here). Prefer docker cp to /tmp.
       - ./import:/import
       - nexor_backups:/app/backups
+      # Persists jwt.secret / master.key / AGT certs across container recreates.
+      - nexor_data:/app/data
 
 volumes:
   kwanza_pgdata:
     driver: local
   nexor_backups:
+    driver: local
+  nexor_data:
     driver: local
