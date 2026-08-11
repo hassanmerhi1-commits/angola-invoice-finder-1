@@ -7,7 +7,7 @@ import {
   type CanonicalSkuAggregates,
 } from '@/lib/productDedupe';
 
-const SESSION_KEY = 'nexor:selling-prices:v1';
+const SESSION_KEY = 'nexor:selling-prices:v2';
 let hintsCache: { at: number; data: Record<string, number> } | null = null;
 const HINTS_TTL_MS = 120_000;
 

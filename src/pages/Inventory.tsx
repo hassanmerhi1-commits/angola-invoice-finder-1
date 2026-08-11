@@ -136,6 +136,11 @@ export default function Inventory() {
   const catalogListBranchId = canSwitchBranch
     ? mainBranch?.id
     : (listBranchId ?? mainBranch?.id);
+  const filialBranchIds = useMemo(
+    () => (allBranches.length > 0 ? allBranches : branches).map((b) => b.id).filter(Boolean),
+    [allBranches, branches],
+  );
+
   const {
     rows: inventoryRows,
     loading: inventoryGridLoading,
@@ -144,6 +149,7 @@ export default function Inventory() {
   } = useInventoryGrid({
     branchId: listBranchId,
     consolidated: isHeadOffice,
+    filialBranchIds,
   });
 
   const {
@@ -158,7 +164,8 @@ export default function Inventory() {
   // network round trip each time. Staggered + skips branches already warm.
   useEffect(() => {
     if (!canSwitchBranch) return;
-    const targets = (allBranches.length > 0 ? allBranches : branches).filter(
+    const branchList = allBranches.length > 0 ? allBranches : branches;
+    const targets = branchList.filter(
       (b) => b.id && b.id !== listBranchId && !isInventoryGridCacheFresh(b.id, false, 90_000),
     );
     if (targets.length === 0) return;
@@ -174,6 +181,19 @@ export default function Inventory() {
       timers.forEach(clearTimeout);
     };
   }, [canSwitchBranch, allBranches, branches, listBranchId]);
+
+  // Warm consolidated HQ grid so Sede Soyo is not empty on first open after login.
+  useEffect(() => {
+    if (!canSwitchBranch || !isHeadOffice) return;
+    if (isInventoryGridCacheFresh(undefined, true, 90_000)) return;
+    const timer = setTimeout(() => {
+      void fetchInventoryGrid({
+        consolidated: true,
+        filialBranchIds,
+      }).catch(() => {});
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [canSwitchBranch, isHeadOffice, filialBranchIds]);
 
   const productsById = useMemo(
     () => new Map(inventoryRows.map((p) => [p.id, p])),
@@ -371,18 +391,9 @@ export default function Inventory() {
     [],
   );
 
-  const priceAggregateSource = useMemo(() => {
-    if (!isHeadOffice) return inventoryRows;
-    const rows = [...inventoryRows];
-    for (const branchRows of Object.values(allBranchProducts)) {
-      rows.push(...branchRows);
-    }
-    return rows;
-  }, [isHeadOffice, inventoryRows, allBranchProducts]);
-
   const sellingPriceBySku = useMemo(
-    () => buildSellingPriceBySku(priceAggregateSource, sellingPriceHints),
-    [priceAggregateSource, sellingPriceHints],
+    () => buildSellingPriceBySku(inventoryRows, sellingPriceHints),
+    [inventoryRows, sellingPriceHints],
   );
 
   const displayProducts = useMemo(

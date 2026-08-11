@@ -16,9 +16,9 @@ import {
 } from '@/lib/productDedupe';
 import { writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
-// v16: drops caches built while the grid still blended prices/costs across branch rows.
-const CACHE_PREFIX = 'nexor:inventory-grid:v16:';
-const LAN_GRID_PREFIX = 'nexor:lan-inventory-grid:v1:';
+// v18: drops grids cached before server fresh=1 bypass + pinned-row fixes.
+const CACHE_PREFIX = 'nexor:inventory-grid:v18:';
+const LAN_GRID_PREFIX = 'nexor:lan-inventory-grid:v3:';
 
 /** Normalize stock from API row (movement ledger or products.stock). */
 export function readProductStock(row: Record<string, unknown> | Product): number {
@@ -40,10 +40,96 @@ export function cacheKey(branchId: string | undefined, consolidated: boolean): s
   return consolidated ? 'hq' : String(branchId || '').trim() || 'none';
 }
 
+function fillIfBlank(own: unknown, fallback: unknown): number {
+  const value = Number(own) || 0;
+  return value > 0 ? value : Number(fallback) || 0;
+}
+
+/** Prefer catalog/HQ-looking rows when merging filial grids into one company view. */
+function filialMergeDisplayScore(row: Product): number {
+  let score = 0;
+  const sku = String(row.sku || '');
+  if (!/-dup-/i.test(sku)) score += 100_000;
+  score += Math.max(Number(row.price) || 0, 0);
+  if (String(row.barcode || '').trim()) score += 25;
+  if (String(row.name || '').trim()) score += 10;
+  return score;
+}
+
+/** Merge per-branch inventory grids into one consolidated HQ view (sum stock per SKU). */
+export function mergeFilialGridsIntoConsolidated(grids: Product[][]): Product[] {
+  const bySku = new Map<string, Product>();
+  for (const rows of grids) {
+    if (!rows?.length) continue;
+    for (const p of rows) {
+      const key = canonicalProductSku(p.sku).toLowerCase() || String(p.id || '');
+      if (!key) continue;
+      const prev = bySku.get(key);
+      if (!prev) {
+        bySku.set(key, { ...p });
+        continue;
+      }
+      const pick =
+        filialMergeDisplayScore(p) >= filialMergeDisplayScore(prev) ? p : prev;
+      const other = pick === p ? prev : p;
+      bySku.set(key, {
+        ...pick,
+        stock: readProductStock(prev) + readProductStock(p),
+        price: fillIfBlank(pick.price, other.price),
+        cost: fillIfBlank(pick.cost, other.cost),
+        firstCost: fillIfBlank(pick.firstCost, other.firstCost),
+        lastCost: fillIfBlank(pick.lastCost, other.lastCost),
+        avgCost: fillIfBlank(pick.avgCost, other.avgCost),
+        supplierName: pick.supplierName || other.supplierName || '',
+      });
+    }
+  }
+  return Array.from(bySku.values());
+}
+
+async function fetchFilialGridDirect(branchId: string): Promise<Product[]> {
+  const res = await api.products.inventoryGrid({
+    branchId,
+    consolidated: false,
+    omitSellingPrices: true,
+    fresh: true,
+  });
+  if (res.error) throw new Error(res.error);
+  const rawRows = Array.isArray(res.data?.rows)
+    ? res.data.rows
+    : Array.isArray(res.data)
+      ? res.data
+      : null;
+  if (!rawRows) throw new Error('Failed to load inventory grid');
+  return mapInventoryGridRows(rawRows);
+}
+
 /**
- * When the consolidated (Sede/HQ) inventory-grid request fails on Electron (timeout /
- * IPC size), rebuild a usable company view from warm filial caches so the screen is
- * not left empty while web (direct fetch) still works.
+ * When consolidated=1 fails (Electron IPC / timeout), fetch every filial grid in
+ * parallel and merge — complete catalog, not just whatever happened to be cached.
+ */
+export async function fetchConsolidatedViaAllFilials(
+  filialBranchIds: string[],
+): Promise<Product[]> {
+  const ids = [...new Set(filialBranchIds.map((id) => String(id).trim()).filter(Boolean))];
+  if (ids.length === 0) throw new Error('No branches to merge');
+  const settled = await Promise.allSettled(
+    ids.map((id) => fetchFilialGridDirect(id)),
+  );
+  const grids = settled
+    .filter((r): r is PromiseFulfilledResult<Product[]> => r.status === 'fulfilled')
+    .map((r) => r.value)
+    .filter((rows) => rows.length > 0);
+  if (grids.length === 0) {
+    const err = settled.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
+    throw err?.reason ?? new Error('All filial inventory fetches failed');
+  }
+  return mergeFilialGridsIntoConsolidated(grids);
+}
+
+/**
+ * Last-resort: warm session/LAN filial caches only (partial — may miss uncached branches).
+ * Never written to the HQ cache; used only to paint something while a retry runs.
  */
 export function mergeFilialInventoryCachesAsHqFallback(): Product[] | null {
   const bySku = new Map<string, Product>();
@@ -57,17 +143,17 @@ export function mergeFilialInventoryCachesAsHqFallback(): Product[] | null {
         bySku.set(key, { ...p });
         continue;
       }
-      // Stock is the company total, but money stays as the first branch reported it — picking
-      // the highest price/cost across branches invented a number no product row actually has.
-      const fill = (a: unknown, b: unknown) => (Number(a) > 0 ? Number(a) : Number(b) || 0);
+      const pick =
+        filialMergeDisplayScore(p) >= filialMergeDisplayScore(prev) ? p : prev;
+      const other = pick === p ? prev : p;
       bySku.set(key, {
-        ...prev,
-        stock: Math.max(readProductStock(prev), readProductStock(p)),
-        price: fill(prev.price, p.price),
-        cost: fill(prev.cost, p.cost),
-        firstCost: fill(prev.firstCost, p.firstCost),
-        lastCost: fill(prev.lastCost, p.lastCost),
-        avgCost: fill(prev.avgCost, p.avgCost),
+        ...pick,
+        stock: readProductStock(prev) + readProductStock(p),
+        price: fillIfBlank(pick.price, other.price),
+        cost: fillIfBlank(pick.cost, other.cost),
+        firstCost: fillIfBlank(pick.firstCost, other.firstCost),
+        lastCost: fillIfBlank(pick.lastCost, other.lastCost),
+        avgCost: fillIfBlank(pick.avgCost, other.avgCost),
       });
     }
   };
@@ -260,6 +346,8 @@ export async function fetchInventoryGrid(opts: {
   consolidated: boolean;
   /** When true, always hit the network (branch switch). */
   bypassCache?: boolean;
+  /** Used when consolidated=1 fails — fetch and merge every filial grid. */
+  filialBranchIds?: string[];
 }): Promise<Product[]> {
   const key = cacheKey(opts.branchId, opts.consolidated);
   if (!opts.bypassCache) {
@@ -283,54 +371,83 @@ export async function fetchInventoryGrid(opts: {
     /* continue to network */
   }
 
+  const sessionHints = readSellingPriceHintsSession();
+  const omitSellingPrices = Object.keys(sessionHints).length > 0;
+  let lastErr: unknown = null;
+  const attempts = opts.consolidated ? 3 : 1;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      if (attempt > 0) {
+        await new Promise((r) => setTimeout(r, 800 * attempt));
+      }
+      const res = await api.products.inventoryGrid({
+        branchId: opts.branchId,
+        consolidated: opts.consolidated,
+        omitSellingPrices,
+        fresh: !!opts.bypassCache,
+      });
+      if (res.error) {
+        throw new Error(res.error);
+      }
+      const rawRows = Array.isArray(res.data?.rows)
+        ? res.data.rows
+        : Array.isArray(res.data)
+          ? res.data
+          : null;
+      if (!rawRows) {
+        throw new Error('Failed to load inventory grid');
+      }
+      const hints = {
+        ...sessionHints,
+        ...((res.data?.sellingPrices ?? {}) as Record<string, number>),
+      };
+      if (Object.keys(hints).length > 0) {
+        writeSellingPriceHintsSession(hints);
+      }
+      const mapped = mapInventoryGridRows(rawRows);
+      const priceBySku = buildSellingPriceBySku(mapped, hints);
+      const priced = mapped.map((row) => withSellingPriceFromMap(row, priceBySku));
+      writeCache(key, priced);
+      saveLanInventoryGrid(key, priced);
+      // Keep product-list LAN key in sync so warmOfflineCatalog / useProducts share one catalog.
+      if (!opts.consolidated && opts.branchId) {
+        saveLanProducts(lanCatalogScopeKey(opts.branchId, false), priced);
+      }
+      return priced;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
   try {
-    const sessionHints = readSellingPriceHintsSession();
-    const omitSellingPrices = Object.keys(sessionHints).length > 0;
-    const res = await api.products.inventoryGrid({
-      branchId: opts.branchId,
-      consolidated: opts.consolidated,
-      omitSellingPrices,
-    });
-    if (res.error) {
-      throw new Error(res.error);
-    }
-    const rawRows = Array.isArray(res.data?.rows)
-      ? res.data.rows
-      : Array.isArray(res.data)
-        ? res.data
-        : null;
-    if (!rawRows) {
-      throw new Error('Failed to load inventory grid');
-    }
-    const hints = {
-      ...sessionHints,
-      ...((res.data?.sellingPrices ?? {}) as Record<string, number>),
-    };
-    if (Object.keys(hints).length > 0) {
-      writeSellingPriceHintsSession(hints);
-    }
-    const mapped = mapInventoryGridRows(rawRows);
-    const priceBySku = buildSellingPriceBySku(mapped, hints);
-    const priced = mapped.map((row) => withSellingPriceFromMap(row, priceBySku));
-    writeCache(key, priced);
-    saveLanInventoryGrid(key, priced);
-    // Keep product-list LAN key in sync so warmOfflineCatalog / useProducts share one catalog.
-    if (!opts.consolidated && opts.branchId) {
-      saveLanProducts(lanCatalogScopeKey(opts.branchId, false), priced);
-    }
-    return priced;
-  } catch (err) {
     const stale = readOfflineInventoryGridFallback(opts.branchId, opts.consolidated);
     if (stale?.length) {
       console.warn('[inventoryGrid] Server unreachable — using cached inventory rows');
       return stale;
     }
+    if (opts.consolidated && opts.filialBranchIds?.length) {
+      try {
+        const merged = await fetchConsolidatedViaAllFilials(opts.filialBranchIds);
+        if (merged.length > 0) {
+          console.warn(
+            '[inventoryGrid] Consolidated fetch failed — rebuilt HQ view from all filial grids',
+          );
+          writeCache(key, merged);
+          saveLanInventoryGrid(key, merged);
+          return merged;
+        }
+      } catch (mergeErr) {
+        console.warn('[inventoryGrid] Filial merge fallback failed:', mergeErr);
+      }
+    }
     if (opts.consolidated) {
-      const merged = mergeFilialInventoryCachesAsHqFallback();
-      if (merged?.length) {
-        console.warn('[inventoryGrid] Consolidated fetch failed — using merged filial caches');
-        writeCache(key, merged);
-        return merged;
+      const partial = mergeFilialInventoryCachesAsHqFallback();
+      if (partial?.length) {
+        // Partial — do NOT cache as HQ or the next visit keeps an incomplete list.
+        console.warn(
+          '[inventoryGrid] Consolidated fetch failed — showing partial cached filial rows only',
+        );
+        return partial;
       }
     }
     // Cold start / cleared session: still sell from local SQLite if master data was pulled.
@@ -343,7 +460,7 @@ export async function fetchInventoryGrid(opts: {
         return sqlite;
       }
     }
-    throw err;
+    throw lastErr;
   }
 }
 

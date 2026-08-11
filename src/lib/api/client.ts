@@ -858,11 +858,14 @@ export const api = {
       consolidated?: boolean;
       /** Skip bulky sellingPrices map when the client already has session hints. */
       omitSellingPrices?: boolean;
+      /** Skip server in-memory grid cache (stale price/IVA after edits). */
+      fresh?: boolean;
     }) => {
       const sp = new URLSearchParams();
       if (opts.branchId) sp.set('branchId', opts.branchId);
       if (opts.consolidated) sp.set('consolidated', '1');
       if (opts.omitSellingPrices) sp.set('omitSellingPrices', '1');
+      if (opts.fresh) sp.set('fresh', '1');
       const qs = sp.toString();
       // Consolidated HQ merges every warehouse — often slow + large over Tailscale/LAN.
       // Browser fetch tolerates it; Electron IPC used to time out / drop the payload.

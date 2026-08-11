@@ -1,7 +1,7 @@
 /** Short in-memory cache so rapid Sede↔filial switches reuse a warm grid. */
 const inventoryGridResultCache = new Map();
-const INVENTORY_GRID_RESULT_TTL_MS = 45_000;
-const INVENTORY_GRID_HQ_TTL_MS = 90_000;
+const INVENTORY_GRID_RESULT_TTL_MS = 30_000;
+const INVENTORY_GRID_HQ_TTL_MS = 30_000;
 
 function inventoryGridResultCacheKey(branchId, consolidated) {
   return consolidated ? 'hq' : `b:${String(branchId || '').trim()}`;

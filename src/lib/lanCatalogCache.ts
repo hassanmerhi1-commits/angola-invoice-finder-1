@@ -4,7 +4,7 @@ import { isThinClientMode } from '@/lib/api/config';
 const PRODUCTS_PREFIX = 'nexor:lan-products:v1:';
 const CLIENTS_KEY = 'nexor:lan-clients:v1';
 const SUPPLIERS_KEY = 'nexor:lan-suppliers:v1';
-const GRID_PREFIX = 'nexor:lan-inventory-grid:v1:';
+const GRID_PREFIX = 'nexor:lan-inventory-grid:v3:';
 
 type CacheEntry<T> = { at: number; data: T };
 
