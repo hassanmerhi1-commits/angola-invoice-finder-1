@@ -77,6 +77,7 @@ const MIGRATION_FILES = [
   '070_jel_entry_date.sql',
   '071_stock_movements_warehouse_product.sql',
   '072_purchase_invoices_created_at.sql',
+  '073_normalize_sku_price_vat.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */

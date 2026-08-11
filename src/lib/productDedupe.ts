@@ -35,6 +35,12 @@ export function buildCanonicalSkuAggregates(products: Product[]): Map<string, Ca
   return bySku;
 }
 
+/** Keep the row's own money value; the SKU aggregate only fills a blank (0) one. */
+function fillIfBlank(own: unknown, fallback: number): number {
+  const value = Number(own) || 0;
+  return value > 0 ? value : fallback;
+}
+
 export function applyCanonicalSkuAggregates(
   product: Product,
   agg: CanonicalSkuAggregates,
@@ -42,11 +48,14 @@ export function applyCanonicalSkuAggregates(
   return {
     ...product,
     stock: Math.max(readProductStock(product), agg.stock),
-    price: Math.max(Number(product.price) || 0, agg.price),
-    cost: Math.max(Number(product.cost) || 0, agg.cost),
-    firstCost: Math.max(Number(product.firstCost) || 0, agg.firstCost),
-    lastCost: Math.max(Number(product.lastCost) || 0, agg.lastCost),
-    avgCost: Math.max(Number(product.avgCost) || 0, agg.avgCost),
+    // Never raise a row's real price/cost to the highest one found for the SKU: the product
+    // dialog and POS read this row, so blending showed a number that belonged to a different
+    // branch's row ("price outside different from inside", "different per branch").
+    price: fillIfBlank(product.price, agg.price),
+    cost: fillIfBlank(product.cost, agg.cost),
+    firstCost: fillIfBlank(product.firstCost, agg.firstCost),
+    lastCost: fillIfBlank(product.lastCost, agg.lastCost),
+    avgCost: fillIfBlank(product.avgCost, agg.avgCost),
   };
 }
 
@@ -195,18 +204,20 @@ function mergeProductRows(
 ): Product {
   const pick = pickPreferredRow(a, b, branchId, catalogBranchIds);
   const other = pick === a ? b : a;
-  const mergeNum = (a?: number, b?: number) => Math.max(Number(a) || 0, Number(b) || 0);
   const scopedBranch = String(branchId || '').trim();
   return {
     ...pick,
     stock: scopedBranch
       ? readProductStock(pick)
       : Math.max(readProductStock(pick), readProductStock(other)),
-    price: mergeNum(pick.price, other.price),
-    cost: mergeNum(pick.cost, other.cost),
-    firstCost: mergeNum(pick.firstCost, other.firstCost),
-    lastCost: mergeNum(pick.lastCost, other.lastCost),
-    avgCost: mergeNum(pick.avgCost, other.avgCost),
+    // Money comes from the row we keep (`pick`) — that is the row every editor opens. The
+    // duplicate only fills a blank field.
+    price: fillIfBlank(pick.price, Number(other.price) || 0),
+    cost: fillIfBlank(pick.cost, Number(other.cost) || 0),
+    firstCost: fillIfBlank(pick.firstCost, Number(other.firstCost) || 0),
+    lastCost: fillIfBlank(pick.lastCost, Number(other.lastCost) || 0),
+    avgCost: fillIfBlank(pick.avgCost, Number(other.avgCost) || 0),
+    taxRate: pick.taxRate ?? other.taxRate,
   };
 }
 

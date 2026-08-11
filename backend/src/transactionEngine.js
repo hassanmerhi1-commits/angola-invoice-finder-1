@@ -653,7 +653,6 @@ async function processStockAdjustment(client, data) {
     // rate) onto an existing product from Adjust In / import defaults.
     if (normalizedDirection === 'IN' && line.taxRate != null && line.taxRate !== '') {
       const {
-        DEFAULT_VAT_RATE,
         normalizeTaxRate,
         taxCodeForRate,
         shouldPreserveExistingTaxRate,
@@ -696,14 +695,9 @@ async function processStockAdjustment(client, data) {
           } catch (_) {
             /* tax_code column may be missing on older DBs */
           }
-          if (Math.abs(rate - Number(DEFAULT_VAT_RATE)) > 0.0001) {
-            try {
-              await client.query(
-                `UPDATE products SET vat_override = $1 WHERE id = $2`,
-                [true, resolvedProductId],
-              );
-            } catch (_) { /* column may be missing */ }
-          }
+          // Only an explicit "keep this branch's IVA" tick in the product form may lock a row
+          // (vat_override). Locking here made every stock entry with a non-default rate opt the
+          // product out of future HQ IVA changes.
         }
       }
     }
@@ -1125,9 +1119,10 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
   try {
     await client.query(
       `INSERT INTO products (
-         id, name, sku, barcode, category, price, cost, first_cost, last_cost, avg_cost,
+         id, name, sku, barcode, category, price, price2, price3, price4,
+         cost, first_cost, last_cost, avg_cost,
          stock, unit, tax_rate, branch_id, is_active
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7, $7, 0, $8, $9, $10, true)`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $10, $10, 0, $11, $12, $13, true)`,
       [
         cloneId,
         src.name,
@@ -1135,6 +1130,11 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
         src.barcode || '',
         src.category || 'GERAL',
         parseFloat(src.price) || 0,
+        // Copy the whole tier ladder — a clone that only carried Price 1 showed a different
+        // price at the receiving branch for every product priced through Price 2/3/4.
+        parseFloat(src.price2) || 0,
+        parseFloat(src.price3) || 0,
+        parseFloat(src.price4) || 0,
         unitCost,
         src.unit || 'UN',
         require('./taxDefaults').normalizeTaxRate(src.tax_rate),
@@ -1461,7 +1461,8 @@ async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
 async function resolveProductForWarehouse(client, productId, warehouseId) {
   const resolvedId = await resolveStockProductId(client, productId, warehouseId);
   const meta = await client.query(
-    `SELECT id, branch_id, name, sku, barcode, category, price, cost, unit, tax_rate
+    `SELECT id, branch_id, name, sku, barcode, category, price, price2, price3, price4,
+            cost, unit, tax_rate
      FROM products WHERE id = $1`,
     [resolvedId]
   );
@@ -2980,7 +2981,9 @@ async function processTransferReceive(client, transferId, receivedQuantities, re
     if (receivedQty > 0) {
       // Resolve or create destination branch product by SKU
       const sourceProduct = await client.query(
-        'SELECT id, name, sku, barcode, category, price, cost, unit, tax_rate, branch_id FROM products WHERE id = $1',
+        `SELECT id, name, sku, barcode, category, price, price2, price3, price4,
+                cost, unit, tax_rate, branch_id
+         FROM products WHERE id = $1`,
         [item.product_id]
       );
       if (sourceProduct.rows.length === 0) throw new Error(`Produto de origem não encontrado: ${item.product_id}`);

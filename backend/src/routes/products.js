@@ -5,7 +5,6 @@ const db = require('../db');
 const {
   coalesceActiveNotZero,
   coalesceMainTruthy,
-  isPostgresEngine,
   sqlScalarMax,
   emptyBranchIdClause,
   catalogBranchScopeClause,
@@ -14,7 +13,6 @@ const {
 const productActive = (alias) => coalesceActiveNotZero(db, `${alias}.is_active`);
 const branchMainActive = (alias) => coalesceMainTruthy(db, `${alias}.is_main`);
 const {
-  DEFAULT_VAT_RATE,
   normalizeTaxRate,
   isTruthyFlag,
   shouldPreserveExistingTaxRate,
@@ -217,7 +215,7 @@ function dedupeProductsBySku(rows, branchId, mainBranchIds = []) {
       stock: scopedBranch
         ? Number(pick.stock) || 0
         : Math.max(Number(pick.stock) || 0, Number(other.stock) || 0),
-      price: Math.max(Number(pick.price) || 0, Number(other.price) || 0),
+      ...mergeDisplayFields(pick, other),
       supplier_id: pick.supplier_id || other.supplier_id || null,
       supplier_name: pick.supplier_name || other.supplier_name || null,
     });
@@ -239,7 +237,7 @@ function dedupeProductsBySku(rows, branchId, mainBranchIds = []) {
       stock: scopedBranch
         ? Number(pick.stock) || 0
         : Math.max(Number(pick.stock) || 0, Number(other.stock) || 0),
-      price: Math.max(Number(pick.price) || 0, Number(other.price) || 0),
+      ...mergeDisplayFields(pick, other),
       supplier_id: pick.supplier_id || other.supplier_id || null,
       supplier_name: pick.supplier_name || other.supplier_name || null,
     };
@@ -344,18 +342,29 @@ const INVENTORY_LIST_COLUMNS = `
             cost, first_cost, last_cost, avg_cost, stock, unit, tax_rate,
             branch_id, supplier_id, supplier_name, is_active, created_at, updated_at`;
 
-function preferNonDefaultTaxRate(a, b) {
-  const { DEFAULT_VAT_RATE } = require('../taxDefaults');
-  const left = Number(a);
-  const right = Number(b);
-  const def = Number(DEFAULT_VAT_RATE);
-  const leftOk = Number.isFinite(left);
-  const rightOk = Number.isFinite(right);
-  if (leftOk && Math.abs(left - def) > 0.0001) return left;
-  if (rightOk && Math.abs(right - def) > 0.0001) return right;
-  if (leftOk) return left;
-  if (rightOk) return right;
-  return def;
+/**
+ * Money/IVA shown for a merged SKU must belong to the row we actually display.
+ *
+ * The grid hands `pick.id` to the product detail dialog, which reads that row straight from
+ * the DB — so blending a MAX price/cost (or a sibling's non-default IVA) across duplicate
+ * rows made the grid show one row's numbers and the dialog another ("outside different from
+ * inside"), and made the same SKU differ per branch depending on which duplicates that
+ * branch's query happened to return. Only fill a genuinely empty (0 / NULL) field.
+ */
+function mergeDisplayFields(pick, other) {
+  const fillN = (a, b) => (Number(a) > 0.0001 ? Number(a) : Number(b) || 0);
+  const taxRate =
+    pick.tax_rate !== null && pick.tax_rate !== undefined && pick.tax_rate !== ''
+      ? pick.tax_rate
+      : other.tax_rate;
+  return {
+    price: fillN(pick.price, other.price),
+    cost: fillN(pick.cost, other.cost),
+    first_cost: fillN(pick.first_cost, other.first_cost),
+    last_cost: fillN(pick.last_cost, other.last_cost),
+    avg_cost: fillN(pick.avg_cost, other.avg_cost),
+    tax_rate: taxRate,
+  };
 }
 
 function mergeGridSkuRow(prev, row, warehouseBranchId, mainBranchIds = []) {
@@ -370,13 +379,7 @@ function mergeGridSkuRow(prev, row, warehouseBranchId, mainBranchIds = []) {
   return {
     ...pick,
     stock: scoped ? Number(pick.stock) || 0 : maxN(pick.stock, other.stock),
-    price: maxN(pick.price, other.price),
-    cost: maxN(pick.cost, other.cost),
-    first_cost: maxN(pick.first_cost, other.first_cost),
-    last_cost: maxN(pick.last_cost, other.last_cost),
-    avg_cost: maxN(pick.avg_cost, other.avg_cost),
-    // Prefer filial/non-default IVA so a catalog twin at 5% does not hide line 14%.
-    tax_rate: preferNonDefaultTaxRate(pick.tax_rate, other.tax_rate),
+    ...mergeDisplayFields(pick, other),
   };
 }
 
@@ -484,20 +487,15 @@ function sqlGridStockExpr(alias = 'p', warehouseBranchParam = '$1') {
           END`;
 }
 
-/** Row-level PVP for grid SQL — cross-SKU hints applied after query via enrichRowsWithSellingPrices. */
-function sqlGridRowPriceExpr(alias = 'p') {
-  // Price 1 is the authoritative base price (entered manually). Do NOT blend it with
-  // price2 — POS/sales select a tier by level, and returning MAX(price, price2) here
-  // made level 1 (and any empty tier that falls back to `price`) resolve to price2.
-  return `COALESCE(${alias}.price, 0)`;
-}
-
-/** Inventory-grid display price: keep real price1; only fill zeros from siblings / price2. */
+/**
+ * Inventory-grid display price: the row's own Price 1, nothing else.
+ *
+ * A blank (0) price is filled afterwards by enrichRowsWithSellingPrices, which every list, the
+ * grid and GET /products/:id share — so one single fallback decides the number instead of this
+ * SQL doing its own sibling MAX (which produced a price the detail dialog never agreed with).
+ */
 function sqlGridDisplayPriceExpr(alias = 'p') {
-  return `CASE
-    WHEN COALESCE(${alias}.price, 0) > 0.0001 THEN COALESCE(${alias}.price, 0)
-    ELSE ${sqlGridSellingPriceExpr(alias)}
-  END`;
+  return `COALESCE(${alias}.price, 0)`;
 }
 
 /** Latest purchase/transfer IN unit cost for this product at the active warehouse ($1). */
@@ -520,30 +518,6 @@ function sqlGridDisplayCostExpr(alias, field) {
     WHEN COALESCE(${alias}.${field}, 0) > 0.0001 THEN ${alias}.${field}
     ELSE COALESCE(${sqlLastInUnitCostExpr(alias)}, ${alias}.cost, 0)
   END`;
-}
-
-/** Best selling price for this SKU across catalog + filial rows (fixes Qtd > 0 filial-only rows). */
-function sqlGridSellingPriceExpr(alias = 'p') {
-  const rowPvp = sqlScalarMax(db, `COALESCE(${alias}.price, 0)`, `COALESCE(${alias}.price2, 0)`);
-  const pxWhere = `
-    WHERE ${productActive('px')}
-      AND TRIM(COALESCE(px.sku, '')) != ''
-      AND ${sqlMovementSkuKey('px')} = ${sqlMovementSkuKey(alias)}`;
-  const siblingMax = isPostgresEngine(db)
-    ? `(
-    SELECT MAX(sub_val)
-    FROM (
-      SELECT ${sqlScalarMax(db, 'COALESCE(px.price, 0)', 'COALESCE(px.price2, 0)')} AS sub_val
-      FROM products px
-      ${pxWhere}
-    ) sku_prices
-  )`
-    : `(
-    SELECT MAX(MAX(COALESCE(px.price, 0), COALESCE(px.price2, 0)))
-    FROM products px
-    ${pxWhere}
-  )`;
-  return sqlScalarMax(db, rowPvp, `COALESCE(${siblingMax}, 0)`);
 }
 
 /** Inventory grid filial: show every SKU with stock movements at this warehouse (transfer receive). */
@@ -691,17 +665,12 @@ function mergeConsolidatedSkuRow(bySku, row, mainBranchIds) {
       ? row
       : prev;
   const other = pick === row ? prev : row;
-  const maxN = (a, b) => Math.max(Number(a) || 0, Number(b) || 0);
   bySku.set(key, {
     ...pick,
     supplier_id: pick.supplier_id || other.supplier_id || null,
     supplier_name: pick.supplier_name || other.supplier_name || null,
     stock: (Number(prev.stock) || 0) + qty,
-    price: maxN(pick.price, other.price),
-    cost: maxN(pick.cost, other.cost),
-    first_cost: maxN(pick.first_cost, other.first_cost),
-    last_cost: maxN(pick.last_cost, other.last_cost),
-    avg_cost: maxN(pick.avg_cost, other.avg_cost),
+    ...mergeDisplayFields(pick, other),
   });
 }
 
@@ -803,15 +772,10 @@ async function listInventoryConsolidatedByBranches() {
         ? candidate
         : prev;
     const other = pick === candidate ? prev : candidate;
-    const maxN = (a, b) => Math.max(Number(a) || 0, Number(b) || 0);
     bySku.set(key, {
       ...pick,
       stock: Number(pick.stock) || 0,
-      price: maxN(pick.price, other.price),
-      cost: maxN(pick.cost, other.cost),
-      first_cost: maxN(pick.first_cost, other.first_cost),
-      last_cost: maxN(pick.last_cost, other.last_cost),
-      avg_cost: maxN(pick.avg_cost, other.avg_cost),
+      ...mergeDisplayFields(pick, other),
       supplier_id: pick.supplier_id || other.supplier_id || null,
       supplier_name: pick.supplier_name || other.supplier_name || null,
     });
@@ -1240,10 +1204,12 @@ async function listProductsForBranch(branchKey, lightList) {
             COALESCE(bp.sku, p.sku) AS sku,
             COALESCE(bp.barcode, p.barcode) AS barcode,
             COALESCE(bp.category, p.category) AS category,
-            ${sqlScalarMax(db, 'COALESCE(bp.price, 0)', 'COALESCE(p.price, 0)')} AS price,
-            ${sqlScalarMax(db, 'COALESCE(bp.price2, 0)', 'COALESCE(p.price2, 0)')} AS price2,
-            ${sqlScalarMax(db, 'COALESCE(bp.price3, 0)', 'COALESCE(p.price3, 0)')} AS price3,
-            ${sqlScalarMax(db, 'COALESCE(bp.price4, 0)', 'COALESCE(p.price4, 0)')} AS price4,
+            -- The branch row owns its price; the master only fills a blank (0) tier. Taking a
+            -- MAX here showed a price that belonged to neither row once the two diverged.
+            COALESCE(NULLIF(bp.price, 0), NULLIF(p.price, 0), 0) AS price,
+            COALESCE(NULLIF(bp.price2, 0), NULLIF(p.price2, 0), 0) AS price2,
+            COALESCE(NULLIF(bp.price3, 0), NULLIF(p.price3, 0), 0) AS price3,
+            COALESCE(NULLIF(bp.price4, 0), NULLIF(p.price4, 0), 0) AS price4,
             COALESCE(bp.cost, p.cost) AS cost,
             COALESCE(bp.first_cost, p.first_cost, bp.cost, p.cost) AS first_cost,
             COALESCE(bp.last_cost, p.last_cost, bp.cost, p.cost) AS last_cost,
@@ -1662,6 +1628,16 @@ module.exports = function(broadcastTable) {
       } catch (enrichErr) {
         console.warn('[PRODUCTS GET/:id] supplier enrichment skipped:', enrichErr.message);
       }
+      // The inventory grid fills a blank (0) Price 1 from the SKU-wide selling-price hint, so
+      // the detail dialog has to apply the *same* fill or the row opens showing a different
+      // number than the list it was opened from.
+      try {
+        if (!(Number(row.price) > 0.0001)) {
+          [row] = await enrichRowsWithSellingPrices([row]);
+        }
+      } catch (priceErr) {
+        console.warn('[PRODUCTS GET/:id] selling price fill skipped:', priceErr.message);
+      }
       res.json(row);
     } catch (error) {
       console.error('[PRODUCTS GET/:id ERROR]', error);
@@ -1810,19 +1786,10 @@ module.exports = function(broadcastTable) {
               [db.engine === 'postgres' ? flag : (flag ? 1 : 0), existing.id],
             );
           } catch (_) { /* optional */ }
-        } else if (
-          (nextTaxRate != null && Number(nextTaxRate) !== Number(DEFAULT_VAT_RATE) && storedBranchId)
-          || (beforeRow
-            && Number.isFinite(Number(beforeRow.tax_rate))
-            && Number(beforeRow.tax_rate) !== Number(DEFAULT_VAT_RATE))
-        ) {
-          try {
-            await db.query(
-              `UPDATE products SET vat_override = $1 WHERE id = $2`,
-              [db.engine === 'postgres' ? true : 1, existing.id],
-            );
-          } catch (_) { /* optional */ }
         }
+        // No implicit lock: only an explicit vatOverride from the product form may set it.
+        // Auto-locking every row that merely *has* a non-default rate opted it out of all
+        // future HQ IVA changes, which is why some branches were stuck on the old rate.
         invalidateInventoryGridResultCache();
         await broadcastTable('products');
         const afterRow = result.rows[0];
@@ -1890,24 +1857,18 @@ module.exports = function(broadcastTable) {
           ]);
         } catch (_) { /* tax_code optional */ }
         const vatCreateOverride = req.body?.vatOverride ?? req.body?.vat_override;
-        if (
+        const lockOnCreate =
           vatCreateOverride === true
           || vatCreateOverride === 'true'
           || vatCreateOverride === 1
-          || vatCreateOverride === '1'
-          || (Number(resolvedTaxRate) !== Number(DEFAULT_VAT_RATE) && storedBranchId)
-        ) {
-          // Lock non-default IVA on create so HQ catalog 5% cannot overwrite it later.
+          || vatCreateOverride === '1';
+        if (lockOnCreate) {
+          // Only an explicit tick locks the row. Locking merely because the rate is not the
+          // legacy 5% default opted the product out of every later HQ IVA change.
           try {
-            const lock =
-              vatCreateOverride === true
-              || vatCreateOverride === 'true'
-              || vatCreateOverride === 1
-              || vatCreateOverride === '1'
-              || Number(resolvedTaxRate) !== Number(DEFAULT_VAT_RATE);
             await db.query(
               `UPDATE products SET vat_override = $1 WHERE id = $2`,
-              [db.engine === 'postgres' ? !!lock : (lock ? 1 : 0), id],
+              [db.engine === 'postgres' ? true : 1, id],
             );
           } catch (_) { /* optional */ }
         }
@@ -1988,19 +1949,7 @@ module.exports = function(broadcastTable) {
                 conflict.id,
               ],
         );
-        if (
-          !writeConflictTax
-          && conflictRow
-          && Number.isFinite(Number(conflictRow.tax_rate))
-          && Number(conflictRow.tax_rate) !== Number(DEFAULT_VAT_RATE)
-        ) {
-          try {
-            await db.query(
-              `UPDATE products SET vat_override = $1 WHERE id = $2`,
-              [db.engine === 'postgres' ? true : 1, conflict.id],
-            );
-          } catch (_) { /* optional */ }
-        }
+        // Preserving the stored IVA on a SKU conflict must not lock the row (see above).
       }
 
       invalidateInventoryGridResultCache();
@@ -2160,17 +2109,22 @@ module.exports = function(broadcastTable) {
           && Math.abs(prevTax - nextTax) > 0.0001;
 
         // Only HQ / explicit propagate may push IVA to other same-SKU rows.
-        // Skip rows with a real filial vat_override. Do NOT no-op when cascading to 5% —
-        // intentional HQ 5% (forceVatChange) must reach unlocked branches.
+        // Do NOT no-op when cascading to 5% — intentional HQ 5% (forceVatChange) must reach
+        // unlocked branches. A deliberate IVA edit in the product form (forceVatChange) also
+        // reaches locked rows: vat_override gets set automatically by purchases and stock
+        // entries, so honouring it here left "IVA still 5%" branches nobody could ever fix.
         if (taxChanged && shouldCascadePrices) {
           const vatTrue = db.engine === 'postgres' ? 'true' : '1';
+          const unlockedOnly = forceVatChange
+            ? ''
+            : `AND COALESCE(vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) != ${vatTrue}`;
           await db.query(
             `UPDATE products
              SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP
              WHERE ${coalesceActiveNotZero(db, 'is_active')}
                AND ${sqlMovementSkuKey('products')} = LOWER($2)
                AND id <> $3
-               AND COALESCE(vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) != ${vatTrue}`,
+               ${unlockedOnly}`,
             [nextTax, canonicalSkuString(skuKey), id],
           );
           try {
@@ -2180,10 +2134,24 @@ module.exports = function(broadcastTable) {
                WHERE ${coalesceActiveNotZero(db, 'is_active')}
                  AND ${sqlMovementSkuKey('products')} = LOWER($2)
                  AND id <> $3
-                 AND COALESCE(vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) != ${vatTrue}`,
+                 ${unlockedOnly}`,
               [taxCodeForRate(nextTax), canonicalSkuString(skuKey), id],
             );
           } catch (_) { /* tax_code optional */ }
+          if (forceVatChange) {
+            // Those rows now carry the HQ rate, so they must follow HQ again — otherwise the
+            // stale lock silently blocks the *next* IVA change.
+            try {
+              await db.query(
+                `UPDATE products
+                 SET vat_override = $1, updated_at = CURRENT_TIMESTAMP
+                 WHERE ${coalesceActiveNotZero(db, 'is_active')}
+                   AND ${sqlMovementSkuKey('products')} = LOWER($2)
+                   AND id <> $3`,
+                [db.engine === 'postgres' ? false : 0, canonicalSkuString(skuKey), id],
+              );
+            } catch (_) { /* column may be missing until migrate */ }
+          }
         }
 
         if (taxChanged) {
@@ -2444,14 +2412,7 @@ module.exports = function(broadcastTable) {
                   ],
                 );
             if (upd.rowCount > 0) updated++;
-            if (importTaxRate != null && Number(importTaxRate) !== Number(DEFAULT_VAT_RATE)) {
-              try {
-                await db.query(
-                  `UPDATE products SET vat_override = $1 WHERE id = $2`,
-                  [db.engine === 'postgres' ? true : 1, existingId],
-                );
-              } catch (_) { /* column may be missing */ }
-            }
+            // An imported IVA column is not a per-branch lock — see PUT/POST above.
           } else {
             const { parseTaxRateOrNull, isAllowedVatRate } = require('../taxDefaults');
             const insertRaw = p.taxRate ?? p.iva ?? p.tax_rate;
@@ -2487,14 +2448,6 @@ module.exports = function(broadcastTable) {
             );
             if (ins.rowCount > 0) {
               inserted++;
-              if (Number(insertRate) !== Number(DEFAULT_VAT_RATE)) {
-                try {
-                  await db.query(
-                    `UPDATE products SET vat_override = $1 WHERE id = $2`,
-                    [db.engine === 'postgres' ? true : 1, id],
-                  );
-                } catch (_) { /* column may be missing */ }
-              }
             }
           }
         } catch (err) {

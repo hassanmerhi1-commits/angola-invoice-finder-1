@@ -26,11 +26,40 @@ These rules stop the Tailscale “same bug again” loop. Prefer changing produc
 - Do **not** call `chartOfAccounts.list()` to resolve one supplier leaf — use `POST /chart-of-accounts/ensure-supplier`.
 - Await `repostAccounting` only when the create/update response shows stock/payable/journal post failed; otherwise background + toast on failure.
 
-## Selling price tiers (price1..price4)
+## Selling price / IVA — one number per product (no display blending)
 
-- Price 1 is authoritative; **never** blend it with price2/3/4 or a sibling branch's price when it is genuinely non-zero (grid SQL, POS level picker, and `ProductDetailDialog` must agree on this).
-- When Price 1 is blank (`0`) — a product priced only via tiers — **every** surface must apply the *same* zero-fill fallback (own price2 → best sibling price for the SKU), or the grid and the detail dialog will show different numbers for the same product. `ProductDetailDialog`'s `effectiveProduct` must run this fallback even after the fresh `GET /products/:id` row loads, not only before it.
-- `getPriceForLevel` (POS/sales) must fall back to the next **populated** tier (not back to the same empty level) when the requested level is 0, so a tier-only-priced product never rings up at 0 Kz.
+The recurring "price outside is different from inside", "price differs per branch" and "IVA went
+back to 5%" reports all came from the same shape of bug, so the rule is absolute:
+
+- **A list row must show exactly what `GET /products/:id` returns for that row's id.** Whenever
+  duplicate rows for one SKU are collapsed (`mergeGridSkuRow`, `mergeConsolidatedSkuRow`,
+  `dedupeProductsBySku`, the consolidated grid merge, client `mergeProductRows` /
+  `applyCanonicalSkuAggregates`, the Electron HQ fallback merge), money and IVA come from the row
+  that is kept — use `mergeDisplayFields` / fill-if-blank. **Never** `MAX(price)`, `MAX(cost)` or
+  "prefer the non-default tax_rate" across rows: that shows a number no product row actually has,
+  and it changes with whichever duplicates a given branch query returned.
+- Only **one** fallback fills a blank (`0`) Price 1: `enrichRowsWithSellingPrices`. It runs on the
+  grid, the branch lists **and** `GET /products/:id`, so all three agree. Grid SQL must not invent
+  its own sibling-MAX fallback, and `ProductDetailDialog` must not re-guess a price once the API
+  row has loaded.
+- `getPriceForLevel` (POS/sales) must fall back to the next **populated** tier (not back to the same
+  empty level) when the requested level is 0, so a tier-only-priced product never rings up at 0 Kz.
+- Price/IVA are company-wide: HQ saves cascade to every same-SKU row. A branch only keeps its own
+  value through an explicit `price_override` / `vat_override`, set **only** by a deliberate save in
+  the product form. Purchases, stock entries, imports and upserts must never set those flags — that
+  silently opted rows out of every later HQ change, which is what left branches stuck on 5%.
+  A deliberate HQ IVA edit (`forceVatChange`) overrides existing `vat_override` locks and clears
+  them, so HQ always has the last word.
+- A purchase line may **fill** a legacy-default 5% IVA on the product master, never overwrite a rate
+  someone chose (`shouldPreserveExistingTaxRate` with no acknowledgement flags).
+- `filialStockRepair`'s backfill selects rows missing *price OR cost OR last_cost* — every field it
+  assigns must guard itself (`WHEN COALESCE(field,0) > 0 THEN field ELSE …`). It used to overwrite a
+  real branch price with the highest sibling price whenever only the cost was missing.
+- Cloning a product into another branch (transfer receive / stock IN) must copy `price2..price4`
+  and `tax_rate`, not just Price 1.
+- Migration `073_normalize_sku_price_vat.sql` converged the historical divergence onto the HQ/master
+  row. Bump `CACHE_PREFIX` in `inventoryGrid.ts` whenever pricing display rules change, or clients
+  keep painting caches built under the old rules.
 
 ## Inventory branch scope (Sede = company totals)
 

@@ -131,7 +131,10 @@ async function ensureFilialProductsForWarehouse(warehouseId, clientOrDb = null) 
     }
   }
 
-  // Backfill missing selling price / cost on filial rows that have stock or movements.
+  // Backfill *missing* selling price / cost on filial rows that have stock or movements.
+  // The row filter below also matches rows that only miss a cost, so the price assignment must
+  // guard itself: it used to overwrite a perfectly good branch price with the highest price
+  // found on any sibling row every time this repair ran.
   let pricesFilled = 0;
   try {
     const skuExpr = sqlMovementSkuKey('p');
@@ -143,14 +146,17 @@ async function ensureFilialProductsForWarehouse(warehouseId, clientOrDb = null) 
         : `MAX(COALESCE(p2.price, 0), COALESCE(p2.price2, 0))`;
     const filled = await q.query(
       `UPDATE products p SET
-         price = COALESCE((
-           SELECT MAX(${peerBestPrice})
-           FROM products p2
-           WHERE ${coalesceActiveNotZero(db, 'p2.is_active')}
-             AND ${peerExpr} = ${skuExpr}
-             AND p2.id != p.id
-             AND (${peerBestPrice}) > 0
-         ), p.price),
+         price = CASE
+           WHEN COALESCE(p.price, 0) > 0 THEN p.price
+           ELSE COALESCE((
+             SELECT MAX(${peerBestPrice})
+             FROM products p2
+             WHERE ${coalesceActiveNotZero(db, 'p2.is_active')}
+               AND ${peerExpr} = ${skuExpr}
+               AND p2.id != p.id
+               AND (${peerBestPrice}) > 0
+           ), p.price)
+         END,
          last_cost = COALESCE(NULLIF(p.last_cost, 0), (
            SELECT sm.unit_cost FROM stock_movements sm
            WHERE sm.product_id = p.id AND sm.warehouse_id = $1 AND sm.movement_type = 'IN'

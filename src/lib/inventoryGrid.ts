@@ -16,7 +16,8 @@ import {
 } from '@/lib/productDedupe';
 import { writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
-const CACHE_PREFIX = 'nexor:inventory-grid:v15:';
+// v16: drops caches built while the grid still blended prices/costs across branch rows.
+const CACHE_PREFIX = 'nexor:inventory-grid:v16:';
 const LAN_GRID_PREFIX = 'nexor:lan-inventory-grid:v1:';
 
 /** Normalize stock from API row (movement ledger or products.stock). */
@@ -56,14 +57,17 @@ export function mergeFilialInventoryCachesAsHqFallback(): Product[] | null {
         bySku.set(key, { ...p });
         continue;
       }
+      // Stock is the company total, but money stays as the first branch reported it — picking
+      // the highest price/cost across branches invented a number no product row actually has.
+      const fill = (a: unknown, b: unknown) => (Number(a) > 0 ? Number(a) : Number(b) || 0);
       bySku.set(key, {
         ...prev,
         stock: Math.max(readProductStock(prev), readProductStock(p)),
-        price: Math.max(Number(prev.price) || 0, Number(p.price) || 0),
-        cost: Math.max(Number(prev.cost) || 0, Number(p.cost) || 0),
-        firstCost: Math.max(Number(prev.firstCost) || 0, Number(p.firstCost) || 0),
-        lastCost: Math.max(Number(prev.lastCost) || 0, Number(p.lastCost) || 0),
-        avgCost: Math.max(Number(prev.avgCost) || 0, Number(p.avgCost) || 0),
+        price: fill(prev.price, p.price),
+        cost: fill(prev.cost, p.cost),
+        firstCost: fill(prev.firstCost, p.firstCost),
+        lastCost: fill(prev.lastCost, p.lastCost),
+        avgCost: fill(prev.avgCost, p.avgCost),
       });
     }
   };

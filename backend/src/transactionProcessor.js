@@ -330,11 +330,13 @@ async function processTransactionBody(client, body) {
                 [explicitSelling, targetProductId],
               );
               if (skuKey) {
+                // Branches that keep their own PVP (price_override) must not be dragged along.
                 await client.query(
                   `UPDATE products
                    SET price = $1, updated_at = CURRENT_TIMESTAMP
                    WHERE ${coalesceActiveNotZero(db, 'is_active')}
-                     AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)`,
+                     AND LOWER(TRIM(COALESCE(sku, ''))) = LOWER($2)
+                     AND COALESCE(price_override, ${db.engine === 'postgres' ? 'false' : '0'}) = ${db.engine === 'postgres' ? 'false' : '0'}`,
                   [explicitSelling, skuKey],
                 );
               }

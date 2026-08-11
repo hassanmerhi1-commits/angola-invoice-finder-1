@@ -406,13 +406,12 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
         if (unitCost > 0) {
           await applyWeightedAverageCostAfterIn(client, resolvedId, qty, unitCost);
         }
-        // Sync product master IVA from the purchase line when upgrading default 5% → 0/7/14.
-        // Purchase line IVA used to never touch products.tax_rate, so Inventory kept showing 5%.
+        // Fill the product master IVA from the purchase line when the product is still on the
+        // legacy 5% default (0/7/14 typed on the invoice), never the other way round.
         const lineIva = Number(line.ivaRate ?? line.taxRate ?? line.iva_rate);
         if (resolvedId && Number.isFinite(lineIva) && lineIva >= 0) {
           try {
             const {
-              DEFAULT_VAT_RATE,
               taxCodeForRate,
               shouldPreserveExistingTaxRate,
               isAllowedVatRate,
@@ -423,12 +422,10 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
                 [resolvedId],
               );
               const cur = curRes.rows?.[0];
-              if (
-                cur
-                && !shouldPreserveExistingTaxRate(cur, lineIva, {
-                  clientSetsOverride: true,
-                })
-              ) {
+              // No acknowledgement flags here: a purchase line may FILL a missing / legacy 5%
+              // default, but it must never overwrite an IVA someone deliberately set on the
+              // product (that is what made rates change by themselves after a purchase).
+              if (cur && !shouldPreserveExistingTaxRate(cur, lineIva)) {
                 await client.query(
                   `UPDATE products SET tax_rate = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
                   [lineIva, resolvedId],
@@ -439,14 +436,10 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
                     [taxCodeForRate(lineIva), resolvedId],
                   );
                 } catch (_) { /* tax_code optional */ }
-                if (Math.abs(lineIva - Number(DEFAULT_VAT_RATE)) > 0.0001) {
-                  try {
-                    await client.query(
-                      `UPDATE products SET vat_override = $1 WHERE id = $2`,
-                      [true, resolvedId],
-                    );
-                  } catch (_) { /* vat_override optional */ }
-                }
+                // Do NOT set vat_override here. A purchase line is not the user saying "this
+                // branch keeps its own IVA forever" — auto-locking every non-default rate made
+                // later HQ IVA changes silently skip the row, so branches stayed on the old
+                // rate with no way to fix them from the product form.
               }
             }
           } catch (taxErr) {
