@@ -14,7 +14,7 @@ import {
   canonicalProductSku,
   withSellingPriceFromMap,
 } from '@/lib/productDedupe';
-import { writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
+import { readSellingPriceHintsSession, writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
 // v19: HQ grid never read from session/LAN cache — always live server data.
 const CACHE_PREFIX = 'nexor:inventory-grid:v19:';
