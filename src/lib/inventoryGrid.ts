@@ -419,49 +419,47 @@ export async function fetchInventoryGrid(opts: {
     }
   }
 
-  try {
-    const stale = readOfflineInventoryGridFallback(opts.branchId, opts.consolidated);
-    if (stale?.length) {
-      console.warn('[inventoryGrid] Server unreachable — using cached inventory rows');
-      return stale;
-    }
-    if (opts.consolidated && opts.filialBranchIds?.length) {
-      try {
-        const merged = await fetchConsolidatedViaAllFilials(opts.filialBranchIds);
-        if (merged.length > 0) {
-          console.warn(
-            '[inventoryGrid] Consolidated fetch failed — rebuilt HQ view from all filial grids',
-          );
-          writeCache(key, merged);
-          saveLanInventoryGrid(key, merged);
-          return merged;
-        }
-      } catch (mergeErr) {
-        console.warn('[inventoryGrid] Filial merge fallback failed:', mergeErr);
-      }
-    }
-    if (opts.consolidated) {
-      const partial = mergeFilialInventoryCachesAsHqFallback();
-      if (partial?.length) {
-        // Partial — do NOT cache as HQ or the next visit keeps an incomplete list.
-        console.warn(
-          '[inventoryGrid] Consolidated fetch failed — showing partial cached filial rows only',
-        );
-        return partial;
-      }
-    }
-    // Cold start / cleared session: still sell from local SQLite if master data was pulled.
-    if (!opts.consolidated) {
-      const sqlite = await readSqliteProductsAsGrid(opts.branchId);
-      if (sqlite?.length) {
-        console.warn('[inventoryGrid] Server unreachable — using SQLite products_cache');
-        writeCache(key, sqlite);
-        saveLanInventoryGrid(key, sqlite);
-        return sqlite;
-      }
-    }
-    throw lastErr;
+  const stale = readOfflineInventoryGridFallback(opts.branchId, opts.consolidated);
+  if (stale?.length) {
+    console.warn('[inventoryGrid] Server unreachable — using cached inventory rows');
+    return stale;
   }
+  if (opts.consolidated && opts.filialBranchIds?.length) {
+    try {
+      const merged = await fetchConsolidatedViaAllFilials(opts.filialBranchIds);
+      if (merged.length > 0) {
+        console.warn(
+          '[inventoryGrid] Consolidated fetch failed — rebuilt HQ view from all filial grids',
+        );
+        writeCache(key, merged);
+        saveLanInventoryGrid(key, merged);
+        return merged;
+      }
+    } catch (mergeErr) {
+      console.warn('[inventoryGrid] Filial merge fallback failed:', mergeErr);
+    }
+  }
+  if (opts.consolidated) {
+    const partial = mergeFilialInventoryCachesAsHqFallback();
+    if (partial?.length) {
+      // Partial — do NOT cache as HQ or the next visit keeps an incomplete list.
+      console.warn(
+        '[inventoryGrid] Consolidated fetch failed — showing partial cached filial rows only',
+      );
+      return partial;
+    }
+  }
+  // Cold start / cleared session: still sell from local SQLite if master data was pulled.
+  if (!opts.consolidated) {
+    const sqlite = await readSqliteProductsAsGrid(opts.branchId);
+    if (sqlite?.length) {
+      console.warn('[inventoryGrid] Server unreachable — using SQLite products_cache');
+      writeCache(key, sqlite);
+      saveLanInventoryGrid(key, sqlite);
+      return sqlite;
+    }
+  }
+  throw lastErr;
 }
 
 export function readInventoryGridCache(
