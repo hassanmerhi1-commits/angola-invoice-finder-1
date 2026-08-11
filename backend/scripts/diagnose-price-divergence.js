@@ -123,6 +123,11 @@ async function main() {
         );
       }
     }
+    if (!fix) {
+      console.log('');
+      console.log('Read-only SKU check done. Add --fix to converge all SKUs company-wide.');
+      process.exit(0);
+    }
   }
 
   const summary = await db.query(`

@@ -626,8 +626,16 @@ async function processStockAdjustment(client, data) {
     const unitCost = Math.max(0, parseFloat(line.unitCost ?? line.cost ?? 0) || 0);
     requireParam(line.productId, 'productId');
 
+    // Resolve/clone to this warehouse BEFORE posting — Adjust In must never leave stock on
+    // another filial's product_id (that made SOYO 01 entries appear under SOYO 03).
+    const localProductId = await ensureLocalProductForWarehouseStock(
+      client,
+      await resolveProductForWarehouse(client, line.productId, resolvedWarehouseId),
+      resolvedWarehouseId,
+    );
+
     const movement = await recordStockMovement(client, {
-      productId: line.productId,
+      productId: localProductId,
       warehouseId: resolvedWarehouseId,
       movementType: normalizedDirection,
       quantity: qty,
@@ -640,7 +648,7 @@ async function processStockAdjustment(client, data) {
     });
 
     movementIds.push(movement.id);
-    const resolvedProductId = movement.product_id || line.productId;
+    const resolvedProductId = movement.product_id || localProductId;
     if (resolvedProductId) touchedProductIds.add(String(resolvedProductId));
     totalValue += qty * unitCost;
 
@@ -1438,24 +1446,126 @@ async function reconcileSkuStockAtWarehouse(client, sku, warehouseId) {
     return;
   }
 
-  // Filial: branch-owned rows + any product id that has movements at this warehouse (catalog IN at filial).
+  // Filial: ONLY update this warehouse's own product rows.
+  // Never write this warehouse's ledger onto another filial's product (that made SOYO 03
+  // show SOYO 01 Adjust In qty when the movement used a foreign product_id).
   await client.query(
     `UPDATE products
      SET stock = $1, updated_at = CURRENT_TIMESTAMP
      WHERE ${coalesceActiveNotZero(db, 'is_active')}
        AND ${rowSkuMatch}
-       AND (
-         branch_id = $3
-         OR id IN (
-           SELECT DISTINCT sm.product_id
-           FROM stock_movements sm
-           INNER JOIN products pm ON pm.id = sm.product_id
-           WHERE sm.warehouse_id = $3
-             AND ${pmSkuMatch}
-         )
-       )`,
+       AND branch_id = $3`,
     [total, skuKey, wh],
   );
+}
+
+/**
+ * Guarantee stock at a filial warehouse is posted on a product row owned by that filial.
+ * Remaps any movements that used a catalog/other-branch product_id for this SKU@warehouse.
+ */
+async function ensureLocalProductForWarehouseStock(client, productId, warehouseId) {
+  const { branchKeysEqual } = require('./lib/branchIdMatch');
+  const wh = String(warehouseId || '').trim();
+  const pid = String(productId || '').trim();
+  if (!wh || !pid) return pid;
+
+  const mainBranchIds = await loadMainBranchIds(client);
+  if (isCatalogBranchScope(wh, mainBranchIds)) return pid;
+
+  const meta = await client.query(
+    `SELECT id, branch_id, name, sku, barcode, category, price, price2, price3, price4,
+            cost, unit, tax_rate, is_active
+     FROM products WHERE id = $1`,
+    [pid],
+  );
+  if (meta.rows.length === 0) return pid;
+  const src = meta.rows[0];
+  const sku = src.sku != null ? String(src.sku).trim() : '';
+
+  let localId = pid;
+  if (!src.branch_id || !branchKeysEqual(src.branch_id, wh)) {
+    localId = await resolveOrCloneProductForBranch(client, src, wh, { reuseExistingBySku: true });
+  }
+
+  // Always pull foreign/catalog movements for this SKU@warehouse onto the local row —
+  // even when the caller already passed the local product id (Adjust In after clone).
+  if (sku) {
+    const remapped = await client.query(
+      `UPDATE stock_movements sm
+       SET product_id = $1
+       FROM products pm
+       WHERE sm.product_id = pm.id
+         AND sm.warehouse_id = $2
+         AND ${sqlMovementSkuKey('pm')} = LOWER(TRIM($3))
+         AND sm.product_id IS DISTINCT FROM $1
+         AND (
+           ${emptyBranchIdClause(db, 'pm.branch_id')}
+           OR pm.branch_id IS DISTINCT FROM $2
+         )
+       RETURNING sm.id`,
+      [localId, wh, sku],
+    );
+    if ((remapped.rowCount || 0) > 0) {
+      console.log(
+        `[TX ENGINE] Remapped ${remapped.rowCount} movement(s) for ${sku} @ ${wh} → local product ${localId}`,
+      );
+    }
+  }
+
+  return localId;
+}
+
+/**
+ * Repair one filial warehouse: clone missing local products and remap foreign product_ids
+ * on stock_movements so Adjust In / transfers show under the correct branch.
+ */
+async function repairFilialWarehouseStockOwnership(client, warehouseId) {
+  const wh = String(
+    (await resolveWarehouseId(client, warehouseId)) || warehouseId || '',
+  ).trim();
+  if (!wh) throw new Error('warehouseId inválido');
+
+  const mainBranchIds = await loadMainBranchIds(client);
+  if (isCatalogBranchScope(wh, mainBranchIds)) {
+    return { warehouseId: wh, skus: 0, remapped: 0, cloned: 0 };
+  }
+
+  const foreign = await client.query(
+    `SELECT DISTINCT ${sqlMovementSkuKey('pm')} AS sku_key,
+            (ARRAY_AGG(pm.id ORDER BY pm.updated_at DESC NULLS LAST))[1] AS sample_product_id
+     FROM stock_movements sm
+     INNER JOIN products pm ON pm.id = sm.product_id
+     WHERE sm.warehouse_id = $1
+       AND TRIM(COALESCE(pm.sku, '')) != ''
+       AND (
+         ${emptyBranchIdClause(db, 'pm.branch_id')}
+         OR pm.branch_id IS DISTINCT FROM $1
+       )`,
+    [wh],
+  );
+
+  let remapped = 0;
+  let cloned = 0;
+  for (const row of foreign.rows || []) {
+    const sampleId = String(row.sample_product_id || '');
+    if (!sampleId) continue;
+    const before = await client.query(
+      `SELECT id, branch_id FROM products WHERE id = $1`,
+      [sampleId],
+    );
+    const beforeBranch = before.rows[0]?.branch_id;
+    const localId = await ensureLocalProductForWarehouseStock(client, sampleId, wh);
+    if (String(localId) !== String(sampleId) || !beforeBranch || String(beforeBranch) !== wh) {
+      cloned += 1;
+    }
+    const sku = String(row.sku_key || '').trim();
+    if (sku) {
+      await reconcileSkuStockAtWarehouse(client, sku, wh);
+      remapped += 1;
+    }
+  }
+
+  return { warehouseId: wh, skus: foreign.rows?.length || 0, remapped, cloned };
 }
 
 async function resolveProductForWarehouse(client, productId, warehouseId) {
@@ -1517,7 +1627,11 @@ async function recordStockMovement(client, params) {
     throw new Error(`Tipo de movimento inválido: ${movementType}`);
   }
 
-  const resolvedProductId = await resolveProductForWarehouse(client, productId, resolvedWarehouseId);
+  const resolvedProductId = await ensureLocalProductForWarehouseStock(
+    client,
+    await resolveProductForWarehouse(client, productId, resolvedWarehouseId),
+    resolvedWarehouseId,
+  );
   const referenceUuid = normalizeUuid(referenceId);
   const createdByUuid = normalizeUuid(createdBy);
 
@@ -3283,6 +3397,8 @@ module.exports = {
   getAvailableStockForSale,
   reconcileSkuStockAtWarehouse,
   resolveOrCloneProductForBranch,
+  ensureLocalProductForWarehouseStock,
+  repairFilialWarehouseStockOwnership,
   resolveStockEntryDirection,
   normalizeStandaloneMovementType,
   getStock,
