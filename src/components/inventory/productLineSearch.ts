@@ -162,23 +162,32 @@ export const filterProductsForSearch = (
 export const newLineRowId = () => `row_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
 /** Limit search/picker to the branch selected in the dialog header.
- *  Shared catalog rows (no branch) stay visible — qty may be 0 until purchase/transfer. */
+ *  Shared catalog rows (no branch) stay visible — qty may be 0 until purchase/transfer.
+ *  Inventory grid rewrites shared company SKUs to the active branch_id so they pass this filter. */
 export function filterProductsForBranch(products: Product[], branchId: string): Product[] {
   if (!branchId) return products;
   return products.filter((p) => !p.branchId || p.branchId === branchId || p.branchId === 'all');
 }
 
-/** Resolve the product row for a branch + SKU (same code, different branch ids). */
+/** Resolve the product row for a branch + SKU (same code, different branch ids).
+ *  Prefer the selected branch; otherwise any company row so Adjust In can pick
+ *  shared SKUs that exist only on Sede / another filial (server clones on post). */
 export function findProductForBranchSku(
   products: Product[],
   sku: string,
   branchId: string,
 ): Product | undefined {
   const skuNorm = normalizeSearchText(sku);
-  if (!skuNorm || !branchId) return undefined;
-  return products.find(
-    (p) => normalizeSearchText(p.sku) === skuNorm && (p.branchId || '') === branchId,
-  );
+  if (!skuNorm) return undefined;
+  if (branchId) {
+    const local = products.find(
+      (p) => normalizeSearchText(p.sku) === skuNorm && (p.branchId || '') === branchId,
+    );
+    if (local) return local;
+  }
+  const matches = products.filter((p) => normalizeSearchText(p.sku) === skuNorm);
+  if (matches.length === 0) return undefined;
+  return dedupeProductsBySku(matches, branchId || '')[0];
 }
 
 /** Stock quantity for a SKU at the target branch (0 if no local row exists yet). */

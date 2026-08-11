@@ -13,8 +13,6 @@ import { saveLanInventoryGrid } from '@/lib/lanCatalogCache';
 import { canonicalProductSku } from '@/lib/productDedupe';
 
 function readWarmStartRows(branchId: string | undefined, consolidated: boolean): Product[] | null {
-  // HQ/Sede is always loaded live — never paint a stale/partial cached grid.
-  if (consolidated) return null;
   return readOfflineInventoryGridFallback(branchId, consolidated);
 }
 
@@ -34,23 +32,23 @@ export function useInventoryGrid(opts: {
 
   const loadLive = useCallback(
     async (gen: number) => {
+      const filialBranchIds = filialKey ? filialKey.split(',').filter(Boolean) : [];
       const fresh = await fetchInventoryGrid({
         branchId: opts.branchId,
         consolidated: opts.consolidated,
         bypassCache: true,
-        filialBranchIds: opts.filialBranchIds,
-        noFallback: opts.consolidated,
+        filialBranchIds,
+        // Always allow stale/filial-merge fallback so Sede never sits on a blank spinner.
+        noFallback: false,
       });
       if (gen !== generationRef.current) return;
       setRows(fresh);
       setError(null);
-      if (!opts.consolidated) {
-        const key = cacheKey(opts.branchId, false);
-        writeCache(key, fresh);
-        saveLanInventoryGrid(key, fresh);
-      }
+      const key = cacheKey(opts.branchId, opts.consolidated);
+      writeCache(key, fresh);
+      saveLanInventoryGrid(key, fresh);
     },
-    [opts.branchId, opts.consolidated, opts.filialBranchIds],
+    [opts.branchId, opts.consolidated, filialKey],
   );
 
   const refresh = useCallback(async () => {
@@ -65,7 +63,7 @@ export function useInventoryGrid(opts: {
       console.error('[useInventoryGrid] refresh failed:', err);
       if (gen === generationRef.current) {
         setError(err instanceof Error ? err.message : String(err));
-        if (opts.consolidated) setRows([]);
+        // Keep whatever rows we already have — do not blank Sede on failure.
       }
     } finally {
       if (gen === generationRef.current) setLoading(false);
@@ -83,39 +81,18 @@ export function useInventoryGrid(opts: {
     const gen = ++generationRef.current;
     setError(null);
 
-    // Sede/HQ: one live fetch, no cache, no background revalidate that reverts prices.
-    if (opts.consolidated) {
-      setRows([]);
-      setLoading(true);
-      void loadLive(gen)
-        .catch((err) => {
-          console.error('[useInventoryGrid] HQ load failed:', err);
-          if (gen === generationRef.current) {
-            setRows([]);
-            setError(err instanceof Error ? err.message : String(err));
-          }
-        })
-        .finally(() => {
-          if (gen === generationRef.current) setLoading(false);
-        });
-      return () => {
-        generationRef.current++;
-      };
-    }
-
-    // Filial: warm cache then refresh once.
-    const warm = readWarmStartRows(opts.branchId, false);
+    const warm = readWarmStartRows(opts.branchId, opts.consolidated);
     if (warm?.length) {
       setRows(warm);
       setLoading(false);
     } else {
-      setRows([]);
+      // Keep previous rows visible on branch/HQ switch while live data loads.
       setLoading(true);
     }
 
     void (async () => {
       try {
-        if (isInventoryGridCacheFresh(opts.branchId, false, 120_000)) {
+        if (!opts.consolidated && isInventoryGridCacheFresh(opts.branchId, false, 120_000)) {
           const cached = readInventoryGridCache(opts.branchId, false);
           if (cached?.length) {
             if (gen !== generationRef.current) return;
@@ -126,9 +103,12 @@ export function useInventoryGrid(opts: {
         await loadLive(gen);
       } catch (err) {
         console.error('[useInventoryGrid] load failed:', err);
-        if (gen === generationRef.current && !warm?.length) {
-          setRows([]);
+        if (gen === generationRef.current) {
           setError(err instanceof Error ? err.message : String(err));
+          if (!warm?.length) {
+            // Only clear when we had nothing to show.
+            setRows((prev) => (prev.length > 0 ? prev : []));
+          }
         }
       } finally {
         if (gen === generationRef.current) setLoading(false);
@@ -136,9 +116,10 @@ export function useInventoryGrid(opts: {
     })();
 
     return () => {
+      // Invalidate in-flight work for this scope only. Next effect run owns loading.
       generationRef.current++;
     };
-  }, [enabled, scopeKey, filialKey, opts.branchId, opts.consolidated, opts.filialBranchIds, loadLive]);
+  }, [enabled, scopeKey, filialKey, opts.branchId, opts.consolidated, loadLive]);
 
   const invalidate = useCallback(() => {
     invalidateInventoryGridSessionCache(opts.branchId, opts.consolidated);
@@ -161,10 +142,8 @@ export function useInventoryGrid(opts: {
           idx >= 0
             ? prev.map((p, i) => (i === idx ? { ...p, ...product } : p))
             : [product, ...prev];
-        if (!opts.consolidated) {
-          writeCache(key, next);
-          saveLanInventoryGrid(key, next);
-        }
+        writeCache(key, next);
+        saveLanInventoryGrid(key, next);
         return next;
       });
     },

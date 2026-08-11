@@ -1,0 +1,45 @@
+---
+description: Client vs server deploy topology — never assume Docker is on this machine
+alwaysApply: true
+---
+
+# Deploy topology (NEXOR ERP)
+
+## This Cursor workspace = CLIENT / release source
+
+- Path: `C:\Users\user\source\repos\angola-invoice-finder-1`
+- Use for: code, commits, tags, `git push`, Electron/client builds
+- **Do NOT** run `docker compose`, start Docker Desktop, or assume Postgres/backend on localhost here
+- Local `Documents\GitHub\angola-invoice-finder` on this PC is **not** the live server
+
+## Live server = OTHER physical machine
+
+- Runs Docker (`nexor-backend`), Postgres, and serves the API clients talk to
+- Server checkout (on that machine): typically `C:\Users\user\Documents\GitHub\angola-invoice-finder`
+- Health on the **server**: `http://127.0.0.1:3000/api/health`
+- Clients (Electron / browsers / this PC) connect to that server over the network (often Tailscale)
+
+## Release + apply workflow
+
+1. **Here (client):** implement → commit → tag → `git push origin main` + tag (e.g. `v1.1.x`)
+2. **On the server machine:** pull/reset to `origin/main`, rebuild backend, rebuild webapp, run DB repair scripts if needed
+3. Never pretend step 2 succeeded if Docker is only available on the server
+
+### Server apply (run on server, not this client)
+
+```powershell
+cd "C:\Users\user\Documents\GitHub\angola-invoice-finder"
+git fetch origin
+git reset --hard origin/main
+docker compose up -d --build backend
+npm run build:webapp
+Invoke-RestMethod http://127.0.0.1:3000/api/health
+# when a repair script shipped:
+# docker exec -it nexor-backend node scripts/<repair-script>.js
+```
+
+## Agent behavior
+
+- After “release and apply”: push from this machine, then give/run **server** apply steps — do not invent local Docker success
+- Do not re-ask “where is the server?” — use this rule
+- If remote shell/SSH to the server is not configured in the session, say clearly that apply must be run on the server PC (or ask once for SSH host to add here)

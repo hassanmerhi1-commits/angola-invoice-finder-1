@@ -558,7 +558,7 @@ function sqlGridDisplayCostExpr(alias, field) {
   END`;
 }
 
-/** Inventory grid filial: show every SKU with stock movements at this warehouse (transfer receive). */
+/** Inventory grid filial: every company SKU (local stock when present, else 0). */
 async function listProductsForBranchInventoryGrid(branchKey) {
   const mainBranchIds = await loadMainBranchIds();
   const rowPrice = sqlGridDisplayPriceExpr('p');
@@ -573,7 +573,6 @@ async function listProductsForBranchInventoryGrid(branchKey) {
       ? mainBranchIds.map((_, i) => `$${i + 2}`).join(', ')
       : "''";
   const params = [branchKey, ...mainBranchIds];
-  const catalogBranchClause = catalogBranchScopeClause(db, 'p', mainIn);
   const catalogPickClause = catalogBranchScopeClause(db, 'p2', mainIn);
 
   const query = `
@@ -667,18 +666,30 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             p.supplier_id,
             p.supplier_name
           FROM products p
-          LEFT JOIN stock_by_sku sbs
-            ON ${sqlMovementSkuKey('p')} = sbs.sku_key
           WHERE ${productActive('p')}
             AND TRIM(COALESCE(p.sku, '')) != ''
-            AND (
-              ${emptyBranchIdClause(db, 'p.branch_id')}
-              OR ${catalogBranchClause}
-            )
             ${sqlHideCatalogWhenFilialHasSameSku()}
             AND NOT EXISTS (
               SELECT 1 FROM movement_skus ms
               WHERE ms.sku_key = ${sqlMovementSkuKey('p')}
+            )
+            AND p.id = (
+              SELECT p2.id
+              FROM products p2
+              WHERE ${productActive('p2')}
+                AND TRIM(COALESCE(p2.sku, '')) != ''
+                AND ${sqlMovementSkuKey('p2')} = ${sqlMovementSkuKey('p')}
+              ORDER BY
+                CASE WHEN COALESCE(p2.sku, '') LIKE '%-DUP-%' THEN 1 ELSE 0 END,
+                CASE
+                  WHEN p2.branch_id = $1 THEN 0
+                  WHEN ${emptyBranchIdClause(db, 'p2.branch_id')} THEN 1
+                  WHEN ${catalogBranchScopeClause(db, 'p2', mainIn)} THEN 1
+                  ELSE 2
+                END,
+                p2.updated_at DESC NULLS LAST,
+                p2.created_at DESC NULLS LAST
+              LIMIT 1
             )
           ORDER BY name`;
   const result = await db.query(query, params);
