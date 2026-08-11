@@ -696,16 +696,18 @@ function consolidatedDisplayScore(row, mainBranchIds = []) {
   let score = 0;
   const rowBranch = String(row.branch_id || '').trim();
   const catalogKey = normalizeCatalogBranchKey(row.branch_id, mainBranchIds);
-  if (catalogKey === 'catalog' || !rowBranch) score += 1_000_000;
-  else if (isCatalogBranchScope(rowBranch, mainBranchIds)) score += 900_000;
+  // Tie-breakers only — the most recently edited row must win so the grid id matches
+  // where the user actually saved (otherwise HQ/catalog stale 5% beats filial 14%).
+  if (catalogKey === 'catalog' || !rowBranch) score += 1_000;
+  else if (isCatalogBranchScope(rowBranch, mainBranchIds)) score += 900;
   const sku = String(row.sku || '');
-  if (!/-dup-/i.test(sku)) score += 100_000;
-  score += taxRatePickScore(row.tax_rate) * 50_000;
-  score += Math.max(Number(row.price) || 0, 0);
-  if (String(row.barcode || '').trim()) score += 25;
+  if (!/-dup-/i.test(sku)) score += 100;
+  score += taxRatePickScore(row.tax_rate) * 50;
+  score += Math.min(Math.max(Number(row.price) || 0, 0), 500);
+  if (String(row.barcode || '').trim()) score += 10;
   const updatedMs = row.updated_at ? new Date(row.updated_at).getTime() : 0;
   if (Number.isFinite(updatedMs) && updatedMs > 0) {
-    score += Math.min(Math.floor(updatedMs / 1_000_000_000), 999);
+    score += Math.floor(updatedMs / 100_000);
   }
   return score;
 }

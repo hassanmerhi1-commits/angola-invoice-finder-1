@@ -4,6 +4,7 @@
  *
  *   node scripts/diagnose-price-divergence.js              # report only (read-only)
  *   node scripts/diagnose-price-divergence.js --sku ABC123 # every row of one product
+ *   node scripts/diagnose-price-divergence.js --skus 102000608,106000036,155000852
  *   node scripts/diagnose-price-divergence.js --fix        # converge every SKU, clear opt-outs
  *
  * A product is stored as one row per branch. They are supposed to share the HQ price and IVA
@@ -49,6 +50,15 @@ async function main() {
   const fix = args.includes('--fix');
   const skuArgIndex = args.indexOf('--sku');
   const skuArg = skuArgIndex >= 0 ? args[skuArgIndex + 1] : null;
+  const skusArgIndex = args.indexOf('--skus');
+  const skuList = skusArgIndex >= 0
+    ? String(args[skusArgIndex + 1] || '')
+        .split(/[,\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : skuArg
+      ? [skuArg]
+      : [];
 
   const migration = await db.query(
     `SELECT id FROM schema_migrations WHERE id LIKE '073%'`,
@@ -63,25 +73,56 @@ async function main() {
     /* app_meta may not exist */
   }
 
-  if (skuArg) {
-    const rows = await db.query(
-      `SELECT p.id, p.sku, p.name,
-              COALESCE(b.name, '(catalog / no branch)') AS branch,
-              b.is_main,
-              p.price, p.price2, p.price3, p.price4, p.tax_rate,
-              COALESCE(p.price_override, FALSE) AS price_override,
-              COALESCE(p.vat_override, FALSE) AS vat_override,
-              p.updated_at
-       FROM products p
-       LEFT JOIN branches b ON b.id::text = p.branch_id::text
-       WHERE ${ACTIVE} AND ${SKU_KEY} = LOWER(TRIM($1))
-       ORDER BY b.is_main DESC NULLS FIRST, p.updated_at DESC`,
-      [skuArg],
-    );
-    console.log('');
-    console.log(`=== every row for SKU "${skuArg}" ===`);
-    if (rows.rows.length === 0) console.log('(no active product row with that SKU)');
-    console.table(rows.rows);
+  if (skuList.length > 0) {
+    for (const sku of skuList) {
+      const rows = await db.query(
+        `SELECT p.id, p.sku, p.name,
+                COALESCE(b.name, '(catalog / no branch)') AS branch,
+                b.is_main,
+                p.price, p.price2, p.price3, p.price4, p.tax_rate,
+                COALESCE(p.price_override, FALSE) AS price_override,
+                COALESCE(p.vat_override, FALSE) AS vat_override,
+                p.is_active,
+                p.updated_at
+         FROM products p
+         LEFT JOIN branches b ON b.id::text = p.branch_id::text
+         WHERE ${SKU_KEY} = LOWER(TRIM($1))
+         ORDER BY p.updated_at DESC NULLS LAST, b.is_main DESC NULLS FIRST`,
+        [sku],
+      );
+      console.log('');
+      console.log(`=== SKU "${sku}" — ${rows.rows.length} row(s) ===`);
+      if (rows.rows.length === 0) {
+        console.log('(no product row — will NOT appear in inventory)');
+        continue;
+      }
+      console.table(rows.rows);
+      const active = rows.rows.filter((r) => r.is_active !== false && r.is_active !== 0);
+      if (active.length === 0) {
+        console.log('WARNING: every row is inactive — hidden from inventory grid.');
+      }
+      const prices = [...new Set(active.map((r) => Number(r.price).toFixed(2)))];
+      const vats = [...new Set(active.map((r) => Number(r.tax_rate).toFixed(2)))];
+      if (prices.length > 1 || vats.length > 1) {
+        console.log('CONFLICT: branches disagree — price variants:', prices.join(', '), '| IVA:', vats.join(', '));
+        console.log('Fix: docker exec -it nexor-backend node scripts/diagnose-price-divergence.js --fix');
+      }
+      const newest = active.sort(
+        (a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime(),
+      )[0];
+      if (newest) {
+        console.log(
+          'Grid should show (newest active row):',
+          newest.branch,
+          '| price',
+          newest.price,
+          '| IVA',
+          newest.tax_rate,
+          '| id',
+          newest.id,
+        );
+      }
+    }
   }
 
   const summary = await db.query(`
