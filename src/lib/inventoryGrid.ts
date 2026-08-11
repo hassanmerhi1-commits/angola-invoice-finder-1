@@ -11,11 +11,13 @@ import {
 import { parseTaxRateOrNull } from '@/lib/taxUtils';
 import {
   buildSellingPriceBySku,
+  canonicalProductSku,
   withSellingPriceFromMap,
 } from '@/lib/productDedupe';
 import { writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
 const CACHE_PREFIX = 'nexor:inventory-grid:v15:';
+const LAN_GRID_PREFIX = 'nexor:lan-inventory-grid:v1:';
 
 /** Normalize stock from API row (movement ledger or products.stock). */
 export function readProductStock(row: Record<string, unknown> | Product): number {
@@ -35,6 +37,68 @@ type CacheEntry = { at: number; rows: Product[] };
 
 export function cacheKey(branchId: string | undefined, consolidated: boolean): string {
   return consolidated ? 'hq' : String(branchId || '').trim() || 'none';
+}
+
+/**
+ * When the consolidated (Sede/HQ) inventory-grid request fails on Electron (timeout /
+ * IPC size), rebuild a usable company view from warm filial caches so the screen is
+ * not left empty while web (direct fetch) still works.
+ */
+export function mergeFilialInventoryCachesAsHqFallback(): Product[] | null {
+  const bySku = new Map<string, Product>();
+  const ingest = (rows: Product[] | null | undefined) => {
+    if (!rows?.length) return;
+    for (const p of rows) {
+      const key = canonicalProductSku(p.sku).toLowerCase() || String(p.id || '');
+      if (!key) continue;
+      const prev = bySku.get(key);
+      if (!prev) {
+        bySku.set(key, { ...p });
+        continue;
+      }
+      bySku.set(key, {
+        ...prev,
+        stock: Math.max(readProductStock(prev), readProductStock(p)),
+        price: Math.max(Number(prev.price) || 0, Number(p.price) || 0),
+        cost: Math.max(Number(prev.cost) || 0, Number(p.cost) || 0),
+        firstCost: Math.max(Number(prev.firstCost) || 0, Number(p.firstCost) || 0),
+        lastCost: Math.max(Number(prev.lastCost) || 0, Number(p.lastCost) || 0),
+        avgCost: Math.max(Number(prev.avgCost) || 0, Number(p.avgCost) || 0),
+      });
+    }
+  };
+
+  try {
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (!k?.startsWith(CACHE_PREFIX)) continue;
+      const scope = k.slice(CACHE_PREFIX.length);
+      if (!scope || scope === 'hq' || scope === 'none') continue;
+      try {
+        const parsed = JSON.parse(sessionStorage.getItem(k) || '') as CacheEntry;
+        ingest(parsed?.rows);
+      } catch {
+        /* skip */
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k?.startsWith(LAN_GRID_PREFIX)) continue;
+      const scope = k.slice(LAN_GRID_PREFIX.length);
+      if (!scope || scope === 'hq' || scope === 'all' || scope === 'none') continue;
+      ingest(readLanInventoryGrid(scope));
+    }
+  } catch {
+    /* ignore */
+  }
+
+  if (bySku.size === 0) return null;
+  return Array.from(bySku.values());
 }
 
 function readCacheEntry(key: string): CacheEntry | null {
@@ -256,6 +320,14 @@ export async function fetchInventoryGrid(opts: {
     if (stale?.length) {
       console.warn('[inventoryGrid] Server unreachable — using cached inventory rows');
       return stale;
+    }
+    if (opts.consolidated) {
+      const merged = mergeFilialInventoryCachesAsHqFallback();
+      if (merged?.length) {
+        console.warn('[inventoryGrid] Consolidated fetch failed — using merged filial caches');
+        writeCache(key, merged);
+        return merged;
+      }
     }
     // Cold start / cleared session: still sell from local SQLite if master data was pulled.
     if (!opts.consolidated) {

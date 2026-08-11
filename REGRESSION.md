@@ -36,6 +36,8 @@ These rules stop the Tailscale “same bug again” loop. Prefer changing produc
 
 - In Inventory there is **no** separate "All branches" picker row. Picking **Sede / HQ** (`isConsolidatedBranchScope`: `is_main`, code `MAIN`/`SEDE*`, or name containing "sede") **is** the company-wide consolidated stock view. Do not add a second All-branches option alongside Sede.
 - `useInventoryGrid` must never leave the previous branch's rows painted when switching to a cold Sede/consolidated (or other) scope — that looked like "Sede shows only other branch products" or empty after a failed fetch. Paint only this scope's warm cache, else clear and load.
+- Electron LAN clients: `network:httpJson` must **not** return both parsed `json` and the full raw `text` for large OK responses (inventory-grid HQ). Doubling multi‑MB payloads over IPC made the app show empty Sede while the browser (direct fetch) still loaded. Keep raw text only when JSON parse fails.
+- Consolidated inventory-grid needs a long client timeout (≥120s). On failure, fall back to merging warm filial grid caches so Sede is not blank after visiting another branch.
 - `ensureTreasuryRegistersFromCoa` (caixa.js) must not unconditionally overwrite `branches.is_main` on every sync/startup based on a non-deterministic `name ILIKE '%sede%'` tiebreak when multiple branches match — only assign `is_main` when no branch already has it, and break ties deterministically (oldest branch first). Flapping `is_main` cascades into branch-switch permissions and which branch counts as Sede.
 
 ## Auth / deploy

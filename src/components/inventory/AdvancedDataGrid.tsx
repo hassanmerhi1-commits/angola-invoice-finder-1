@@ -133,7 +133,9 @@ export function AdvancedDataGrid({
 
   const getCellRawValue = (product: Product, key: string): { str: string; num: number } => {
     if (key === 'priceWithIVA') {
-      const v = product.price * (1 + (product.taxRate || 0) / 100);
+      // Round to 2dp — raw float (e.g. 16666.67 * 1.05 = 17500.0035) must not leak into
+      // filters/sort or display as 17 500,004 while the detail dialog shows 17 500,00.
+      const v = Number((product.price * (1 + (product.taxRate || 0) / 100)).toFixed(2));
       return { str: String(v), num: v };
     }
     if (key === 'profitMargin') {
@@ -224,8 +226,8 @@ export function AdvancedDataGrid({
 
   const formatValue = (product: Product, key: string) => {
     if (key === 'priceWithIVA') {
-      const val = product.price * (1 + (product.taxRate || 0) / 100);
-      return (val || 0).toLocaleString('pt-AO', { minimumFractionDigits: 2 });
+      const val = Number((product.price * (1 + (product.taxRate || 0) / 100)).toFixed(2));
+      return (val || 0).toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
     if (key === 'profitMargin') {
       const margin = calculateProfitMargin(product);
@@ -255,7 +257,7 @@ export function AdvancedDataGrid({
     }
     const val = product[key as keyof Product];
     if (key === 'price' || key === 'firstCost' || key === 'lastCost' || key === 'avgCost') {
-      return (val as number || 0).toLocaleString('pt-AO', { minimumFractionDigits: 2 });
+      return (Number(val) || 0).toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
     if (key === 'taxRate') return `${val}%`;
     return String(val ?? '');

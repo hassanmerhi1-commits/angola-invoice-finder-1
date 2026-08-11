@@ -94,11 +94,19 @@ function httpJsonRequestOnce(targetUrl, opts = {}) {
             } catch {
               json = null;
             }
+            // Never ship both parsed json AND the full raw string over IPC — inventory-grid
+            // (especially consolidated HQ) can be multi‑MB; doubling it OOM/fails invoke on
+            // client PCs while browser fetch (web) still works. Keep raw text only when
+            // JSON parse failed (error bodies) or response was empty.
+            const text =
+              json != null
+                ? undefined
+                : (raw && raw.length > 4000 ? `${raw.slice(0, 4000)}…` : raw);
             resolve({
               ok: res.statusCode >= 200 && res.statusCode < 300,
               status: res.statusCode || 0,
               json,
-              text: raw,
+              text: text || '',
             });
           });
         },

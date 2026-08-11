@@ -61,7 +61,9 @@ export function PosProductSearchList({
             <tbody className="divide-y divide-border/60">
               {searchResults.map((product) => {
                 const highlighted = product.id === highlightedProductId;
-                const priceIncVat = product.price * (1 + (product.taxRate || 0) / 100);
+                const priceIncVat = Number(
+                  (product.price * (1 + (product.taxRate || 0) / 100)).toFixed(2),
+                );
                 return (
                   <tr
                     key={product.id}

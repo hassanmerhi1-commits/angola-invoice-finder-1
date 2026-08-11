@@ -864,8 +864,12 @@ export const api = {
       if (opts.consolidated) sp.set('consolidated', '1');
       if (opts.omitSellingPrices) sp.set('omitSellingPrices', '1');
       const qs = sp.toString();
+      // Consolidated HQ merges every warehouse — often slow + large over Tailscale/LAN.
+      // Browser fetch tolerates it; Electron IPC used to time out / drop the payload.
       return apiFetch<{ rows: any[]; count: number; sellingPrices?: Record<string, number> }>(
         `/products/inventory-grid${qs ? `?${qs}` : ''}`,
+        {},
+        { timeoutMs: opts.consolidated ? 120_000 : 60_000 },
       );
     },
     sellingPrices: () =>
