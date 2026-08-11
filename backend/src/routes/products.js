@@ -383,19 +383,40 @@ function mergeDisplayFields(pick, other) {
 }
 
 function mergeGridSkuRow(prev, row, warehouseBranchId, mainBranchIds = []) {
-  const pick =
-    rowDisplayScore(row, warehouseBranchId, mainBranchIds)
-    >= rowDisplayScore(prev, warehouseBranchId, mainBranchIds)
-      ? row
-      : prev;
-  const other = pick === row ? prev : row;
   const scoped = String(warehouseBranchId || '').trim();
+  // When listing a filial warehouse, the local branch row always wins over catalog/other.
+  let pick = row;
+  let other = prev;
+  if (scoped) {
+    const prevLocal = String(prev.branch_id || '') === scoped;
+    const rowLocal = String(row.branch_id || '') === scoped;
+    if (prevLocal && !rowLocal) {
+      pick = prev;
+      other = row;
+    } else if (rowLocal && !prevLocal) {
+      pick = row;
+      other = prev;
+    } else if (
+      rowDisplayScore(row, warehouseBranchId, mainBranchIds)
+      < rowDisplayScore(prev, warehouseBranchId, mainBranchIds)
+    ) {
+      pick = prev;
+      other = row;
+    }
+  } else if (
+    rowDisplayScore(row, warehouseBranchId, mainBranchIds)
+    < rowDisplayScore(prev, warehouseBranchId, mainBranchIds)
+  ) {
+    pick = prev;
+    other = row;
+  }
   const maxN = (a, b) => Math.max(Number(a) || 0, Number(b) || 0);
-  // One physical row per grid line — never blend price/IVA from a sibling row onto pick.id
-  // or the list disagrees with GET /products/:id (the detail dialog).
+  // One physical row per grid line — never blend price/IVA from a sibling onto pick.id.
+  // Filial stock is warehouse ledger only (already on the row) — do not take the other row's qty.
   return {
     ...pick,
     stock: scoped ? Number(pick.stock) || 0 : maxN(pick.stock, other.stock),
+    branch_id: scoped ? scoped : pick.branch_id,
     supplier_id: pick.supplier_id || other.supplier_id || null,
     supplier_name: pick.supplier_name || other.supplier_name || null,
   };
@@ -462,8 +483,12 @@ function sqlHideCatalogWhenFilialHasSameSku() {
             )`;
 }
 
-/** Pick one display row per SKU: filial row first, then newest catalog/movement-linked row.
- *  Avoid per-candidate COUNT(*) on stock_movements — that made branch switches ~10s+. */
+/**
+ * Pick one display row per SKU for a filial warehouse view.
+ * ONLY the local branch row or a catalog/HQ row — never another filial's product.
+ * (Older logic allowed any product_id that appeared in stock_movements at this warehouse,
+ * so SOYO 01 could show SOYO 03's product id with qty rewritten as if it belonged here.)
+ */
 function sqlPickProductIdForSkuAtWarehouse(catalogPickClause) {
   const p2Key = sqlMovementSkuKey('p2');
   return `
@@ -471,21 +496,16 @@ function sqlPickProductIdForSkuAtWarehouse(catalogPickClause) {
               SELECT p2.id
               FROM products p2
               WHERE ${p2Key} = ms.sku_key
+                AND ${productActive('p2')}
                 AND (
                   p2.branch_id = $1
                   OR ${catalogPickClause}
-                  OR EXISTS (
-                    SELECT 1
-                    FROM stock_movements sm
-                    WHERE sm.product_id = p2.id
-                      AND sm.warehouse_id = $1
-                  )
                 )
               ORDER BY
                 CASE WHEN COALESCE(p2.sku, '') LIKE '%-DUP-%' THEN 1 ELSE 0 END,
                 CASE WHEN p2.branch_id = $1 THEN 0 ELSE 1 END,
-                p2.updated_at DESC,
-                p2.created_at DESC
+                p2.updated_at DESC NULLS LAST,
+                p2.created_at DESC NULLS LAST
               LIMIT 1
             )`;
 }
@@ -577,18 +597,16 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             ${rowFirstCost} AS first_cost,
             ${rowLastCost} AS last_cost,
             ${rowAvgCost} AS avg_cost,
-            COALESCE(ms.ledger_stock, sbs.ledger_stock, 0) AS stock,
+            COALESCE(ms.ledger_stock, 0) AS stock,
             p.unit,
             p.tax_rate,
             p.vat_override,
-            CASE WHEN p.branch_id = $1 THEN p.branch_id ELSE $1 END AS branch_id,
+            $1 AS branch_id,
             p.supplier_id,
             p.supplier_name
           FROM products p
           INNER JOIN movement_skus ms
             ON ${sqlMovementSkuKey('p')} = ms.sku_key
-          LEFT JOIN stock_by_sku sbs
-            ON ms.sku_key = sbs.sku_key
           WHERE ${sqlPickProductIdForSkuAtWarehouse(catalogPickClause)}
 
           UNION ALL
@@ -607,7 +625,7 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             ${rowFirstCost} AS first_cost,
             ${rowLastCost} AS last_cost,
             ${rowAvgCost} AS avg_cost,
-            ${sqlGridStockExpr('p')} AS stock,
+            COALESCE(sbs.ledger_stock, 0) AS stock,
             p.unit,
             p.tax_rate,
             p.vat_override,
@@ -656,9 +674,6 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             AND (
               ${emptyBranchIdClause(db, 'p.branch_id')}
               OR ${catalogBranchClause}
-              OR ${db.engine === 'postgres'
-                ? 'p.branch_id IS DISTINCT FROM $1'
-                : 'CAST(p.branch_id AS TEXT) != CAST($1 AS TEXT)'}
             )
             ${sqlHideCatalogWhenFilialHasSameSku()}
             AND NOT EXISTS (
@@ -667,6 +682,7 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             )
           ORDER BY name`;
   const result = await db.query(query, params);
+  // Prefer the local-branch product row over any orphan/foreign metadata row for the same SKU.
   return dedupeRowsBySkuFast(result.rows, branchKey, mainBranchIds);
 }
 

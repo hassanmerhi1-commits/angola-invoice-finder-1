@@ -206,6 +206,12 @@ export function ProductDetailDialog({
         const res = await api.products.get(product.id);
         if (!cancelled && !forceCloseRef.current && res.data) {
           const mapped = mapApiProductRow(res.data as Record<string, unknown>);
+          // Stay on the warehouse the user is browsing — do not jump to the row's home branch
+          // (e.g. opening a catalog/sibling id while Inventory filter is SOYO 01).
+          if (scopeBranchId) {
+            mapped.branchId = scopeBranchId;
+            if (product.stock != null) mapped.stock = Number(product.stock) || 0;
+          }
           setLoadedProduct(mapped);
           onProductLoaded?.(mapped);
         }
@@ -216,7 +222,7 @@ export function ProductDetailDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, product?.id, refreshSuppliers, onProductLoaded]);
+  }, [open, product?.id, product?.stock, scopeBranchId, refreshSuppliers, onProductLoaded]);
 
   // Fetch latest USD→AOA exchange rate for dual-currency cost display
   const [usdRate, setUsdRate] = useState<number>(0);
@@ -309,8 +315,10 @@ export function ProductDetailDialog({
         cost: src.cost,
         avgCost: src.avgCost || src.cost,
         lastCost: src.lastCost || src.cost,
+        // When opened from a filial inventory view, keep the warehouse qty + branch from the
+        // grid row (scopeBranchId). GET /products/:id can return another branch's master row.
         stock: src.stock,
-        branchId: src.branchId,
+        branchId: scopeBranchId || src.branchId,
         isActive: src.isActive,
         barcode: src.barcode || '',
         barcodes: src.barcode
@@ -326,7 +334,7 @@ export function ProductDetailDialog({
           : [{ barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }],
       };
     },
-    [activeCategories, supplierSelectOptions],
+    [activeCategories, supplierSelectOptions, scopeBranchId],
   );
 
   useEffect(() => {
