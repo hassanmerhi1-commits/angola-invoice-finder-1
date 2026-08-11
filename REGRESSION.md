@@ -44,9 +44,16 @@ back to 5%" reports all came from the same shape of bug, so the rule is absolute
   row has loaded.
 - `getPriceForLevel` (POS/sales) must fall back to the next **populated** tier (not back to the same
   empty level) when the requested level is 0, so a tier-only-priced product never rings up at 0 Kz.
-- Price/IVA are company-wide: HQ saves cascade to every same-SKU row. A branch only keeps its own
-  value through an explicit `price_override` / `vat_override`, set **only** by a deliberate save in
-  the product form. Purchases, stock entries, imports and upserts must never set those flags — that
+- Price/IVA are company-wide: HQ saves cascade to every same-SKU row. **Who saves decides, not which
+  row was opened** — `req.branchScope.canUseConsolidated` (HQ/Sede user) means cascade, even when the
+  row belongs to a filial. Keying off the row's `branch_id` alone meant an HQ user editing a price
+  while browsing a branch in Inventory silently forked that branch's price (`price_override` set, no
+  cascade) and left every other branch on the old number. An HQ save also overrides and clears any
+  existing opt-out flag, so a stale one cannot keep a branch drifting.
+  A branch keeps its own value only when a **filial user** saves it (`price_override` /
+  `vat_override`), set **only** by a deliberate save in the product form.
+- `scripts/diagnose-price-divergence.js` reports (and with `--fix` repairs) SKUs whose branch rows
+  disagree; it is the first thing to run when "prices differ per branch" comes back. Purchases, stock entries, imports and upserts must never set those flags — that
   silently opted rows out of every later HQ change, which is what left branches stuck on 5%.
   A deliberate HQ IVA edit (`forceVatChange`) overrides existing `vat_override` locks and clears
   them, so HQ always has the last word.

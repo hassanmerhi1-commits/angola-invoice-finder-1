@@ -1085,20 +1085,26 @@ async function persistSellingPricesFromHints(priceBySku) {
  * Propagate price tiers from HQ/Sede to every active SKU sibling that has not opted into a local override.
  * Uses canonical SKU (strips -DUP-…) so filial repair rows stay in sync.
  */
-async function cascadeSkuPricesFromHq(skuRaw, price, price2, price3, price4) {
+async function cascadeSkuPricesFromHq(skuRaw, price, price2, price3, price4, opts = {}) {
   const canon = canonicalSkuString(skuRaw).toLowerCase();
   if (!canon) return 0;
   const skuTier = (v) => (Number(v) > 0 ? Number(v) : null);
+  // includeOverridden: an HQ save reaches even branches that once kept their own price, and
+  // releases them, so one stale flag cannot keep a branch on a different price forever.
+  const overrideClause = opts.includeOverridden ? '' : `AND ${priceOverrideIsFalseSql()}`;
+  const clearOptOut = opts.includeOverridden
+    ? `, price_override = ${db.engine === 'postgres' ? 'false' : '0'}`
+    : '';
   const result = await db.query(
     `UPDATE products
      SET price = $1,
          price2 = COALESCE($2, price2),
          price3 = COALESCE($3, price3),
-         price4 = COALESCE($4, price4),
+         price4 = COALESCE($4, price4)${clearOptOut},
          updated_at = CURRENT_TIMESTAMP
      WHERE ${coalesceActiveNotZero(db, 'is_active')}
        AND ${sqlMovementSkuKey('products')} = $5
-       AND ${priceOverrideIsFalseSql()}`,
+       ${overrideClause}`,
     [Number(price), skuTier(price2), skuTier(price3), skuTier(price4), canon],
   );
   return result.rowCount || 0;
@@ -2097,7 +2103,15 @@ module.exports = function(broadcastTable) {
       const mainBranchIds = await loadMainBranchIds();
       const propagatePrices = req.body?.propagatePrices === true || req.body?.propagatePrices === 'true';
       const productIsHq = isCatalogBranchScope(updated?.branch_id, mainBranchIds);
-      const shouldCascadePrices = propagatePrices || productIsHq;
+      // Who is saving matters more than which row they happened to open. An HQ/Sede user browsing
+      // a filial in Inventory edits that filial's row, and keying off the row alone treated it as
+      // "this branch wants its own price": it silently set price_override, skipped the cascade and
+      // left every other branch on the old number. HQ always sets the company price.
+      const callerIsHq = req.branchScope?.canUseConsolidated === true;
+      const shouldCascadePrices = propagatePrices || productIsHq || callerIsHq;
+      // An HQ save is the final word: it also overwrites rows that previously opted out, and
+      // clears that opt-out, so a stale flag can never make a branch drift again.
+      const overrideBranchOptOuts = propagatePrices || callerIsHq || productIsHq;
 
       if (skuKey) {
         const prevTax = Number(existing.tax_rate);
@@ -2115,7 +2129,7 @@ module.exports = function(broadcastTable) {
         // entries, so honouring it here left "IVA still 5%" branches nobody could ever fix.
         if (taxChanged && shouldCascadePrices) {
           const vatTrue = db.engine === 'postgres' ? 'true' : '1';
-          const unlockedOnly = forceVatChange
+          const unlockedOnly = forceVatChange || overrideBranchOptOuts
             ? ''
             : `AND COALESCE(vat_override, ${db.engine === 'postgres' ? 'false' : '0'}) != ${vatTrue}`;
           await db.query(
@@ -2138,7 +2152,7 @@ module.exports = function(broadcastTable) {
               [taxCodeForRate(nextTax), canonicalSkuString(skuKey), id],
             );
           } catch (_) { /* tax_code optional */ }
-          if (forceVatChange) {
+          if (forceVatChange || overrideBranchOptOuts) {
             // Those rows now carry the HQ rate, so they must follow HQ again — otherwise the
             // stale lock silently blocks the *next* IVA change.
             try {
@@ -2185,10 +2199,12 @@ module.exports = function(broadcastTable) {
           } catch (_) { /* column may be missing until migrate */ }
         }
         if (price != null && price !== '') {
-          // HQ/Sede: cascade to all non-override rows (canonical SKU, incl. -DUP- siblings).
-          // Filial: keep local price and mark override so future HQ changes skip this row.
+          // HQ/Sede: cascade to every row of this canonical SKU (incl. -DUP- siblings).
+          // Filial user: keep the local price and mark the override so HQ cascades skip this row.
           if (shouldCascadePrices) {
-            await cascadeSkuPricesFromHq(skuKey, price, price2, price3, price4);
+            await cascadeSkuPricesFromHq(skuKey, price, price2, price3, price4, {
+              includeOverridden: overrideBranchOptOuts,
+            });
           } else {
             const prevPrice = Number(existing.price) || 0;
             const nextPrice = Number(price) || 0;
