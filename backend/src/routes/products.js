@@ -217,7 +217,6 @@ function dedupeProductsBySku(rows, branchId, mainBranchIds = []) {
       stock: scopedBranch
         ? Number(pick.stock) || 0
         : Math.max(Number(pick.stock) || 0, Number(other.stock) || 0),
-      ...mergeDisplayFields(pick, other),
       supplier_id: pick.supplier_id || other.supplier_id || null,
       supplier_name: pick.supplier_name || other.supplier_name || null,
     });
@@ -239,7 +238,6 @@ function dedupeProductsBySku(rows, branchId, mainBranchIds = []) {
       stock: scopedBranch
         ? Number(pick.stock) || 0
         : Math.max(Number(pick.stock) || 0, Number(other.stock) || 0),
-      ...mergeDisplayFields(pick, other),
       supplier_id: pick.supplier_id || other.supplier_id || null,
       supplier_name: pick.supplier_name || other.supplier_name || null,
     };
@@ -393,10 +391,13 @@ function mergeGridSkuRow(prev, row, warehouseBranchId, mainBranchIds = []) {
   const other = pick === row ? prev : row;
   const scoped = String(warehouseBranchId || '').trim();
   const maxN = (a, b) => Math.max(Number(a) || 0, Number(b) || 0);
+  // One physical row per grid line — never blend price/IVA from a sibling row onto pick.id
+  // or the list disagrees with GET /products/:id (the detail dialog).
   return {
     ...pick,
     stock: scoped ? Number(pick.stock) || 0 : maxN(pick.stock, other.stock),
-    ...mergeDisplayFields(pick, other),
+    supplier_id: pick.supplier_id || other.supplier_id || null,
+    supplier_name: pick.supplier_name || other.supplier_name || null,
   };
 }
 
@@ -687,7 +688,6 @@ function mergeConsolidatedSkuRow(bySku, row, mainBranchIds) {
     supplier_id: pick.supplier_id || other.supplier_id || null,
     supplier_name: pick.supplier_name || other.supplier_name || null,
     stock: (Number(prev.stock) || 0) + qty,
-    ...mergeDisplayFields(pick, other),
   });
 }
 
@@ -703,6 +703,10 @@ function consolidatedDisplayScore(row, mainBranchIds = []) {
   score += taxRatePickScore(row.tax_rate) * 50_000;
   score += Math.max(Number(row.price) || 0, 0);
   if (String(row.barcode || '').trim()) score += 25;
+  const updatedMs = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+  if (Number.isFinite(updatedMs) && updatedMs > 0) {
+    score += Math.min(Math.floor(updatedMs / 1_000_000_000), 999);
+  }
   return score;
 }
 
@@ -759,7 +763,8 @@ async function listInventoryConsolidatedByBranches() {
         p.vat_override,
         p.branch_id,
         p.supplier_id,
-        p.supplier_name
+        p.supplier_name,
+        p.updated_at
       FROM products p
       WHERE ${productActive('p')}
         AND TRIM(COALESCE(p.sku, '')) != ''
@@ -792,8 +797,7 @@ async function listInventoryConsolidatedByBranches() {
     const other = pick === candidate ? prev : candidate;
     bySku.set(key, {
       ...pick,
-      stock: Number(pick.stock) || 0,
-      ...mergeDisplayFields(pick, other),
+      stock: stockBySku.has(key) ? stockBySku.get(key) : 0,
       supplier_id: pick.supplier_id || other.supplier_id || null,
       supplier_name: pick.supplier_name || other.supplier_name || null,
     });
@@ -1159,7 +1163,7 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
     return applySoftReservesToRows(rows, holds);
   };
 
-  if (!repair && !skipCache) {
+  if (!repair && !skipCache && !consolidated) {
     const cached = readInventoryGridResultCache(branchId, consolidated);
     if (cached) {
       const priced = enrichRowsWithSellingPrices(cached, priceBySkuPreloaded);
@@ -1202,9 +1206,9 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
   if (supplierBySku) {
     rows = enrichRowsWithPurchaseSuppliers(rows, supplierBySku);
   }
-  if (!repair) {
+  if (!repair && !consolidated) {
     writeInventoryGridResultCache(branchId, consolidated, rows);
-  } else {
+  } else if (repair) {
     invalidateInventoryGridResultCache();
   }
   const priced = enrichRowsWithSellingPrices(rows, priceBySkuPreloaded);

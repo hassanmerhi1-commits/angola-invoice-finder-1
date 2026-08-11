@@ -12,33 +12,16 @@ import {
 import { saveLanInventoryGrid } from '@/lib/lanCatalogCache';
 import { canonicalProductSku } from '@/lib/productDedupe';
 
-/** Best available cached rows (session / LAN grid / LAN products) for an instant warm start. */
 function readWarmStartRows(branchId: string | undefined, consolidated: boolean): Product[] | null {
+  // HQ/Sede is always loaded live — never paint a stale/partial cached grid.
+  if (consolidated) return null;
   return readOfflineInventoryGridFallback(branchId, consolidated);
-}
-
-/** Rows confirmed by GET /products/:id or a successful save — must win over stale grid refetches. */
-function applyPinnedPatches(rows: Product[], pins: Map<string, Product>): Product[] {
-  if (pins.size === 0) return rows;
-  return rows.map((p) => {
-    const skuKey = canonicalProductSku(p.sku).toLowerCase();
-    const pin = pins.get(p.id) || (skuKey ? pins.get(skuKey) : undefined);
-    return pin ? { ...p, ...pin } : p;
-  });
-}
-
-function pinProductRow(pins: Map<string, Product>, product: Product): void {
-  pins.set(product.id, product);
-  const skuKey = canonicalProductSku(product.sku).toLowerCase();
-  if (skuKey) pins.set(skuKey, product);
 }
 
 export function useInventoryGrid(opts: {
   branchId?: string;
   consolidated: boolean;
-  /** When false, skips fetch (e.g. optional HQ price reference). */
   enabled?: boolean;
-  /** Branch ids for rebuilding HQ view when consolidated=1 fails. */
   filialBranchIds?: string[];
 }) {
   const enabled = opts.enabled !== false;
@@ -46,54 +29,84 @@ export function useInventoryGrid(opts: {
   const scopeKey = opts.consolidated ? 'hq' : String(opts.branchId || '').trim() || 'none';
   const [rows, setRows] = useState<Product[]>([]);
   const [loading, setLoading] = useState(() => enabled);
+  const [error, setError] = useState<string | null>(null);
   const generationRef = useRef(0);
-  const pinnedRowsRef = useRef(new Map<string, Product>());
 
-  const commitRows = useCallback(
-    (next: Product[], gen: number) => {
-      if (gen !== generationRef.current) return;
-      const merged = applyPinnedPatches(next, pinnedRowsRef.current);
-      setRows(merged);
-      writeCache(cacheKey(opts.branchId, opts.consolidated), merged);
-      saveLanInventoryGrid(cacheKey(opts.branchId, opts.consolidated), merged);
-    },
-    [opts.branchId, opts.consolidated],
-  );
-
-  const refresh = useCallback(async () => {
-    if (!enabled) return;
-    pinnedRowsRef.current.clear();
-    invalidateInventoryGridSessionCache(opts.branchId, opts.consolidated);
-    const gen = ++generationRef.current;
-    setLoading(true);
-    try {
+  const loadLive = useCallback(
+    async (gen: number) => {
       const fresh = await fetchInventoryGrid({
         branchId: opts.branchId,
         consolidated: opts.consolidated,
         bypassCache: true,
         filialBranchIds: opts.filialBranchIds,
+        noFallback: opts.consolidated,
       });
-      commitRows(fresh, gen);
+      if (gen !== generationRef.current) return;
+      setRows(fresh);
+      setError(null);
+      if (!opts.consolidated) {
+        const key = cacheKey(opts.branchId, false);
+        writeCache(key, fresh);
+        saveLanInventoryGrid(key, fresh);
+      }
+    },
+    [opts.branchId, opts.consolidated, opts.filialBranchIds],
+  );
+
+  const refresh = useCallback(async () => {
+    if (!enabled) return;
+    invalidateInventoryGridSessionCache(opts.branchId, opts.consolidated);
+    const gen = ++generationRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      await loadLive(gen);
     } catch (err) {
       console.error('[useInventoryGrid] refresh failed:', err);
+      if (gen === generationRef.current) {
+        setError(err instanceof Error ? err.message : String(err));
+        if (opts.consolidated) setRows([]);
+      }
     } finally {
       if (gen === generationRef.current) setLoading(false);
     }
-  }, [enabled, opts.branchId, opts.consolidated, opts.filialBranchIds, commitRows]);
+  }, [enabled, opts.branchId, opts.consolidated, loadLive]);
 
   useEffect(() => {
     if (!enabled) {
       setRows([]);
       setLoading(false);
+      setError(null);
       return;
     }
 
     const gen = ++generationRef.current;
-    pinnedRowsRef.current.clear();
+    setError(null);
 
-    const warm = readWarmStartRows(opts.branchId, opts.consolidated);
+    // Sede/HQ: one live fetch, no cache, no background revalidate that reverts prices.
+    if (opts.consolidated) {
+      setRows([]);
+      setLoading(true);
+      void loadLive(gen)
+        .catch((err) => {
+          console.error('[useInventoryGrid] HQ load failed:', err);
+          if (gen === generationRef.current) {
+            setRows([]);
+            setError(err instanceof Error ? err.message : String(err));
+          }
+        })
+        .finally(() => {
+          if (gen === generationRef.current) setLoading(false);
+        });
+      return () => {
+        generationRef.current++;
+      };
+    }
+
+    // Filial: warm cache then refresh once.
+    const warm = readWarmStartRows(opts.branchId, false);
     if (warm?.length) {
-      setRows(applyPinnedPatches(warm, pinnedRowsRef.current));
+      setRows(warm);
       setLoading(false);
     } else {
       setRows([]);
@@ -102,54 +115,20 @@ export function useInventoryGrid(opts: {
 
     void (async () => {
       try {
-        if (isInventoryGridCacheFresh(opts.branchId, opts.consolidated, 120_000)) {
-          const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
+        if (isInventoryGridCacheFresh(opts.branchId, false, 120_000)) {
+          const cached = readInventoryGridCache(opts.branchId, false);
           if (cached?.length) {
             if (gen !== generationRef.current) return;
-            commitRows(cached, gen);
+            setRows(cached);
             setLoading(false);
-            void (async () => {
-              try {
-                const prevCount = cached.length;
-                const soft = await fetchInventoryGrid({
-                  branchId: opts.branchId,
-                  consolidated: opts.consolidated,
-                  bypassCache: true,
-                  filialBranchIds: opts.filialBranchIds,
-                });
-                if (gen !== generationRef.current) return;
-                if (
-                  opts.consolidated
-                  && prevCount > 80
-                  && soft.length < prevCount * 0.85
-                ) {
-                  console.warn(
-                    '[useInventoryGrid] ignoring suspicious HQ shrink',
-                    prevCount,
-                    '->',
-                    soft.length,
-                  );
-                  return;
-                }
-                commitRows(soft, gen);
-              } catch {
-                /* keep painted cache */
-              }
-            })();
-            return;
           }
         }
-        const fresh = await fetchInventoryGrid({
-          branchId: opts.branchId,
-          consolidated: opts.consolidated,
-          bypassCache: true,
-          filialBranchIds: opts.filialBranchIds,
-        });
-        commitRows(fresh, gen);
+        await loadLive(gen);
       } catch (err) {
         console.error('[useInventoryGrid] load failed:', err);
         if (gen === generationRef.current && !warm?.length) {
           setRows([]);
+          setError(err instanceof Error ? err.message : String(err));
         }
       } finally {
         if (gen === generationRef.current) setLoading(false);
@@ -159,7 +138,7 @@ export function useInventoryGrid(opts: {
     return () => {
       generationRef.current++;
     };
-  }, [enabled, scopeKey, filialKey, opts.branchId, opts.consolidated, opts.filialBranchIds, commitRows]);
+  }, [enabled, scopeKey, filialKey, opts.branchId, opts.consolidated, opts.filialBranchIds, loadLive]);
 
   const invalidate = useCallback(() => {
     invalidateInventoryGridSessionCache(opts.branchId, opts.consolidated);
@@ -168,9 +147,7 @@ export function useInventoryGrid(opts: {
   const patchRow = useCallback(
     (product: Product) => {
       if (!enabled) return;
-      // Cancel any in-flight soft refresh that would overwrite this confirmed row.
       generationRef.current++;
-      pinProductRow(pinnedRowsRef.current, product);
       const key = cacheKey(opts.branchId, opts.consolidated);
       setRows((prev) => {
         const skuKey = canonicalProductSku(product.sku).toLowerCase();
@@ -184,13 +161,15 @@ export function useInventoryGrid(opts: {
           idx >= 0
             ? prev.map((p, i) => (i === idx ? { ...p, ...product } : p))
             : [product, ...prev];
-        writeCache(key, next);
-        saveLanInventoryGrid(key, next);
+        if (!opts.consolidated) {
+          writeCache(key, next);
+          saveLanInventoryGrid(key, next);
+        }
         return next;
       });
     },
     [enabled, opts.branchId, opts.consolidated],
   );
 
-  return { rows, loading, refresh, invalidate, patchRow };
+  return { rows, loading, error, refresh, invalidate, patchRow };
 }

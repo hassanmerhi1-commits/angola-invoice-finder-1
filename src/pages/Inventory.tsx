@@ -144,6 +144,7 @@ export default function Inventory() {
   const {
     rows: inventoryRows,
     loading: inventoryGridLoading,
+    error: inventoryGridError,
     refresh: refreshInventoryGrid,
     patchRow: patchInventoryRow,
   } = useInventoryGrid({
@@ -181,19 +182,6 @@ export default function Inventory() {
       timers.forEach(clearTimeout);
     };
   }, [canSwitchBranch, allBranches, branches, listBranchId]);
-
-  // Warm consolidated HQ grid so Sede Soyo is not empty on first open after login.
-  useEffect(() => {
-    if (!canSwitchBranch || !isHeadOffice) return;
-    if (isInventoryGridCacheFresh(undefined, true, 90_000)) return;
-    const timer = setTimeout(() => {
-      void fetchInventoryGrid({
-        consolidated: true,
-        filialBranchIds,
-      }).catch(() => {});
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [canSwitchBranch, isHeadOffice, filialBranchIds]);
 
   const productsById = useMemo(
     () => new Map(inventoryRows.map((p) => [p.id, p])),
@@ -396,10 +384,11 @@ export default function Inventory() {
     [inventoryRows, sellingPriceHints],
   );
 
-  const displayProducts = useMemo(
-    () => inventoryRows.map((p) => withSellingPriceFromMap(p, sellingPriceBySku)),
-    [inventoryRows, sellingPriceBySku],
-  );
+  const displayProducts = useMemo(() => {
+    // HQ rows come straight from the server — no client-side price hint blending.
+    if (isHeadOffice) return inventoryRows;
+    return inventoryRows.map((p) => withSellingPriceFromMap(p, sellingPriceBySku));
+  }, [isHeadOffice, inventoryRows, sellingPriceBySku]);
 
   const reservedQtyByProductId = useMemo(() => {
     const map: Record<string, number> = {};
@@ -1618,7 +1607,14 @@ export default function Inventory() {
         </div>
 
         <TabsContent value="lista" forceMount className="flex-1 min-h-0 m-0 p-2 data-[state=inactive]:hidden overflow-auto">
-          {gridProducts.length === 0 && inventoryGridLoading ? (
+          {inventoryGridError && isHeadOffice ? (
+            <div className="text-center py-8 space-y-3">
+              <p className="text-destructive">{inventoryGridError}</p>
+              <Button variant="outline" size="sm" onClick={() => void refreshInventoryGrid()}>
+                {t.common.refresh}
+              </Button>
+            </div>
+          ) : gridProducts.length === 0 && inventoryGridLoading ? (
             <p className="text-center py-16 text-muted-foreground">{t.common.loading}</p>
           ) : (
             <div className="relative h-full min-h-0">

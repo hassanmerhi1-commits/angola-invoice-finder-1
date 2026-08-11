@@ -16,9 +16,9 @@ import {
 } from '@/lib/productDedupe';
 import { writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
-// v18: drops grids cached before server fresh=1 bypass + pinned-row fixes.
-const CACHE_PREFIX = 'nexor:inventory-grid:v18:';
-const LAN_GRID_PREFIX = 'nexor:lan-inventory-grid:v3:';
+// v19: HQ grid never read from session/LAN cache — always live server data.
+const CACHE_PREFIX = 'nexor:inventory-grid:v19:';
+const LAN_GRID_PREFIX = 'nexor:lan-inventory-grid:v4:';
 
 /** Normalize stock from API row (movement ledger or products.stock). */
 export function readProductStock(row: Record<string, unknown> | Product): number {
@@ -348,9 +348,12 @@ export async function fetchInventoryGrid(opts: {
   bypassCache?: boolean;
   /** Used when consolidated=1 fails — fetch and merge every filial grid. */
   filialBranchIds?: string[];
+  /** HQ only: never fall back to partial local caches (shows error instead). */
+  noFallback?: boolean;
 }): Promise<Product[]> {
   const key = cacheKey(opts.branchId, opts.consolidated);
-  if (!opts.bypassCache) {
+  const forceLive = opts.consolidated || opts.bypassCache;
+  if (!forceLive) {
     const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
     if (cached?.length) return cached;
   }
@@ -384,7 +387,7 @@ export async function fetchInventoryGrid(opts: {
         branchId: opts.branchId,
         consolidated: opts.consolidated,
         omitSellingPrices,
-        fresh: !!opts.bypassCache,
+        fresh: forceLive,
       });
       if (res.error) {
         throw new Error(res.error);
@@ -401,17 +404,18 @@ export async function fetchInventoryGrid(opts: {
         ...sessionHints,
         ...((res.data?.sellingPrices ?? {}) as Record<string, number>),
       };
-      if (Object.keys(hints).length > 0) {
+      if (!opts.consolidated && Object.keys(hints).length > 0) {
         writeSellingPriceHintsSession(hints);
       }
       const mapped = mapInventoryGridRows(rawRows);
       const priceBySku = buildSellingPriceBySku(mapped, hints);
       const priced = mapped.map((row) => withSellingPriceFromMap(row, priceBySku));
-      writeCache(key, priced);
-      saveLanInventoryGrid(key, priced);
-      // Keep product-list LAN key in sync so warmOfflineCatalog / useProducts share one catalog.
-      if (!opts.consolidated && opts.branchId) {
-        saveLanProducts(lanCatalogScopeKey(opts.branchId, false), priced);
+      if (!opts.consolidated) {
+        writeCache(key, priced);
+        saveLanInventoryGrid(key, priced);
+        if (opts.branchId) {
+          saveLanProducts(lanCatalogScopeKey(opts.branchId, false), priced);
+        }
       }
       return priced;
     } catch (err) {
@@ -420,11 +424,11 @@ export async function fetchInventoryGrid(opts: {
   }
 
   const stale = readOfflineInventoryGridFallback(opts.branchId, opts.consolidated);
-  if (stale?.length) {
+  if (!opts.noFallback && stale?.length) {
     console.warn('[inventoryGrid] Server unreachable — using cached inventory rows');
     return stale;
   }
-  if (opts.consolidated && opts.filialBranchIds?.length) {
+  if (!opts.noFallback && opts.consolidated && opts.filialBranchIds?.length) {
     try {
       const merged = await fetchConsolidatedViaAllFilials(opts.filialBranchIds);
       if (merged.length > 0) {
@@ -439,7 +443,7 @@ export async function fetchInventoryGrid(opts: {
       console.warn('[inventoryGrid] Filial merge fallback failed:', mergeErr);
     }
   }
-  if (opts.consolidated) {
+  if (!opts.noFallback && opts.consolidated) {
     const partial = mergeFilialInventoryCachesAsHqFallback();
     if (partial?.length) {
       // Partial — do NOT cache as HQ or the next visit keeps an incomplete list.
