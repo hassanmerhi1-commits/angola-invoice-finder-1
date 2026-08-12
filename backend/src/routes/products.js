@@ -1400,6 +1400,65 @@ module.exports = function(broadcastTable) {
   const router = express.Router();
   router.use(attachUserBranchScope);
 
+  /**
+   * One SKU → qty at every warehouse. Used by Inventory "Qtd detalhada" so the UI
+   * does not fan out N× full inventory-grid requests over Tailscale.
+   */
+  router.get('/stock-by-sku', async (req, res) => {
+    try {
+      const sku = String(req.query.sku || '').trim();
+      if (!sku) {
+        return res.status(400).json({ error: 'sku is required' });
+      }
+      const skuKey = sqlMovementSkuKey('pm');
+      const [branchesResult, stockResult] = await Promise.all([
+        db.query(
+          `SELECT id::text AS id, name, code, is_main
+           FROM branches
+           ORDER BY
+             CASE WHEN ${coalesceMainTruthy(db, 'is_main')} THEN 0 ELSE 1 END,
+             name`,
+        ),
+        db.query(
+          `SELECT
+             sm.warehouse_id::text AS warehouse_id,
+             COALESCE(SUM(
+               CASE
+                 WHEN sm.movement_type = 'IN' THEN sm.quantity
+                 WHEN sm.movement_type = 'OUT' THEN -sm.quantity
+                 ELSE 0
+               END
+             ), 0) AS ledger_stock
+           FROM stock_movements sm
+           INNER JOIN products pm ON pm.id = sm.product_id
+           WHERE ${skuKey} = LOWER(TRIM($1))
+           GROUP BY sm.warehouse_id`,
+          [sku],
+        ),
+      ]);
+      const stockByWarehouse = new Map();
+      for (const row of stockResult.rows || []) {
+        const wh = String(row.warehouse_id || '').trim();
+        if (!wh) continue;
+        stockByWarehouse.set(wh, Math.max(0, Number(row.ledger_stock) || 0));
+      }
+      const rows = (branchesResult.rows || []).map((b) => {
+        const id = String(b.id || '').trim();
+        return {
+          branchId: id,
+          branchName: b.name || b.code || id,
+          branchCode: b.code || '',
+          isMain: Boolean(b.is_main),
+          stock: stockByWarehouse.get(id) || 0,
+        };
+      });
+      res.json({ sku, rows });
+    } catch (error) {
+      console.error('[PRODUCTS stock-by-sku]', error);
+      res.status(500).json({ error: 'Failed to load stock by SKU' });
+    }
+  });
+
   /** HQ inventory grid: one HTTP round-trip, summed stock per SKU (fast/light). */
   router.get('/inventory-consolidated', async (req, res) => {
     try {

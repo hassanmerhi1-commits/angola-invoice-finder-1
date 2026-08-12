@@ -312,9 +312,12 @@ export default function Inventory() {
 
   const stockMovementsScopeRef = useRef<string>('');
   const stockMovementsLoadedAtRef = useRef(0);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
 
   const loadStockMovements = useCallback(async (force = false) => {
-    const scopeKey = isHeadOffice ? 'hq' : String(currentBranch?.id || '');
+    const sku = String(selectedProduct?.sku || '').trim();
+    const scopeKey = `${isHeadOffice ? 'hq' : String(currentBranch?.id || '')}|${sku || 'none'}`;
     if (
       !force
       && stockMovementsScopeRef.current === scopeKey
@@ -323,11 +326,18 @@ export default function Inventory() {
     ) {
       return;
     }
-    // Try API first (live DB), fall back to localStorage
+    // Product tabs: fetch only this SKU's movements (not the last 500 of everything).
+    if (!sku) {
+      setStockMovements([]);
+      stockMovementsScopeRef.current = scopeKey;
+      stockMovementsLoadedAtRef.current = Date.now();
+      return;
+    }
     try {
       const result = await api.transactions.stockMovements({
         warehouseId: isHeadOffice ? undefined : currentBranch?.id,
-        limit: 500,
+        sku,
+        limit: 200,
       });
       if (result.data && Array.isArray(result.data)) {
         const mapped: StockMovement[] = result.data.map((m: any) => ({
@@ -361,10 +371,13 @@ export default function Inventory() {
       // API unreachable — fall through to local
     }
     const data = await localGetStockMovements(isHeadOffice ? undefined : currentBranch?.id);
-    setStockMovements(data);
+    const skuKey = sku.toLowerCase();
+    setStockMovements(
+      data.filter((m) => String(m.sku || '').trim().toLowerCase() === skuKey),
+    );
     stockMovementsScopeRef.current = scopeKey;
     stockMovementsLoadedAtRef.current = Date.now();
-  }, [currentBranch?.id, isHeadOffice]);
+  }, [currentBranch?.id, isHeadOffice, selectedProduct?.sku]);
 
   const MOVEMENT_TABS = useMemo(
     () =>
@@ -399,7 +412,6 @@ export default function Inventory() {
     return map;
   }, [displayProducts]);
 
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [adjustmentBranchId, setAdjustmentBranchId] = useState('');
   const flatCatalog = useMemo(() => {
     const rows = [...inventoryRows];
@@ -543,6 +555,7 @@ export default function Inventory() {
     mapApiRowToProduct,
   ]);
 
+  // Qtd detalhada loads one SKU via /products/stock-by-sku — do not fan out N× inventory-grid.
   useEffect(() => {
     if (!showDetailedQtyTab && activeTab === 'qtd-detalhada') {
       setActiveTab('lista');
@@ -556,18 +569,10 @@ export default function Inventory() {
     stockMovementsScopeRef.current = '';
     stockMovementsLoadedAtRef.current = 0;
   }, [inventoryScopeId]);
-
-  // Only fan out N× inventory-grid when the detailed-qty tab is open (not on every Inventory visit).
-  useEffect(() => {
-    if (showDetailedQtyTab && activeTab === 'qtd-detalhada') {
-      void loadPerBranchBreakdown();
-    }
-  }, [showDetailedQtyTab, activeTab, loadPerBranchBreakdown, listBranchId, isHeadOffice]);
   const [stockListFilter, setStockListFilter] = useState<StockListFilter>('all');
   const [listSearch, setListSearch] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
   const listSearchRef = useRef<HTMLInputElement>(null);
-  const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
 
   const attemptDeleteProduct = useCallback(
     async (product: Product) => {
@@ -594,8 +599,12 @@ export default function Inventory() {
 
   useEffect(() => {
     if (!MOVEMENT_TABS.has(activeTab)) return;
+    if (!selectedProduct?.sku) {
+      setStockMovements([]);
+      return;
+    }
     void loadStockMovements();
-  }, [activeTab, loadStockMovements, MOVEMENT_TABS]);
+  }, [activeTab, loadStockMovements, MOVEMENT_TABS, selectedProduct?.sku]);
 
   const gridProducts = useMemo(() => {
     let rows = displayProducts;

@@ -362,74 +362,14 @@ export function InventoryPurchasePricePanel({
   useEffect(() => {
     if (!product) {
       setInvoiceRows([]);
+      setLoadingInvoices(false);
       return;
     }
-    let cancelled = false;
-    const productIds = collectProductIdsForSku(product, allBranchProducts, scopedBranchIds);
-    const skuKey = (product.sku || '').trim().toLowerCase();
-
-    (async () => {
-      setLoadingInvoices(true);
-      try {
-        const branchIds = scopedBranchIds?.length ? [...scopedBranchIds] : [];
-        const allInvoices: any[] = [];
-        const seenInvoiceIds = new Set<string>();
-
-        const addInvoices = (list: any[]) => {
-          for (const inv of list) {
-            if (!inv?.id || seenInvoiceIds.has(inv.id)) continue;
-            seenInvoiceIds.add(inv.id);
-            allInvoices.push(inv);
-          }
-        };
-
-        if (branchIds.length > 0) {
-          for (const branchId of branchIds) {
-            const result = await api.purchaseInvoices.list({ branchId, status: 'confirmed' });
-            addInvoices(unwrapListPayload(result.data).items);
-          }
-        } else {
-          const result = await api.purchaseInvoices.list({ status: 'confirmed' });
-          addInvoices(unwrapListPayload(result.data).items);
-        }
-
-        const rows: PurchasePriceRow[] = [];
-        for (const inv of allInvoices) {
-          if (String(inv.status || '').toLowerCase() === 'cancelled') continue;
-          const lines = Array.isArray(inv.lines) ? inv.lines : [];
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const lineSku = String(line.sku || line.productSku || line.product_sku || '').trim().toLowerCase();
-            const linePid = line.productId || line.product_id;
-            if (!productIds.has(linePid) && !(skuKey && lineSku === skuKey)) continue;
-            const qty = Number(line.totalQty ?? line.total_qty ?? line.quantity ?? 0);
-            const unitCost = Number(line.unitPrice ?? line.unit_price ?? line.cost ?? 0);
-            if (qty <= 0) continue;
-            rows.push({
-              id: `pi-${inv.id}-${i}`,
-              date: inv.date || inv.createdAt || inv.created_at || '',
-              document: inv.invoiceNumber || inv.invoice_number || '—',
-              supplier: inv.supplierName || inv.supplier_name || '—',
-              branch: inv.warehouseName || inv.warehouse_name || inv.branchName || inv.branch_name || '—',
-              quantity: qty,
-              unitCost,
-              sourceLabel: t.inventoryPageUi.panel.purchaseInvoiceSource,
-            });
-          }
-        }
-
-        if (!cancelled) setInvoiceRows(rows);
-      } catch {
-        if (!cancelled) setInvoiceRows([]);
-      } finally {
-        if (!cancelled) setLoadingInvoices(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [product, allBranchProducts, scopedBranchIds, t]);
+    // Purchase price history comes from stock IN movements already loaded for this SKU.
+    // Do not fan out N× purchase-invoice list calls (that made the tab hang on Tailscale).
+    setInvoiceRows([]);
+    setLoadingInvoices(false);
+  }, [product?.id]);
 
   const rows = useMemo(() => {
     const seen = new Set<string>();

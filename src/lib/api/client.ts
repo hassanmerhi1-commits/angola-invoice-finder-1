@@ -875,6 +875,15 @@ export const api = {
         { timeoutMs: opts.consolidated ? 120_000 : 60_000 },
       );
     },
+    /** Qty of one SKU at every warehouse (Inventory Qtd detalhada). */
+    stockBySku: (sku: string) =>
+      apiFetch<{ sku: string; rows: Array<{
+        branchId: string;
+        branchName: string;
+        branchCode?: string;
+        isMain?: boolean;
+        stock: number;
+      }> }>(`/products/stock-by-sku?sku=${encodeURIComponent(sku)}`),
     sellingPrices: () =>
       apiFetch<Record<string, number>>('/products/selling-prices'),
     bulkTierPricing: (pcts: { price2Pct?: number | null; price3Pct?: number | null; price4Pct?: number | null }) =>
@@ -3364,6 +3373,7 @@ export const api = {
     },
     stockMovements: (params?: {
       productId?: string;
+      sku?: string;
       warehouseId?: string;
       referenceType?: string;
       limit?: number;
@@ -3373,6 +3383,7 @@ export const api = {
     }) => {
       const sp = new URLSearchParams();
       if (params?.productId) sp.append('productId', params.productId);
+      if (params?.sku) sp.append('sku', params.sku);
       if (params?.warehouseId) sp.append('warehouseId', params.warehouseId);
       if (params?.referenceType) sp.append('referenceType', params.referenceType);
       if (params?.limit) sp.append('limit', params.limit.toString());
@@ -3393,7 +3404,13 @@ export const api = {
             WHERE 1=1`;
           const sqlParams: any[] = [];
           let idx = 1;
-          if (params?.productId) { sql += ` AND sm.product_id = $${idx++}`; sqlParams.push(params.productId); }
+          if (params?.sku) {
+            sql += ` AND LOWER(TRIM(COALESCE(p.sku, ''))) = LOWER(TRIM($${idx++}))`;
+            sqlParams.push(params.sku);
+          } else if (params?.productId) {
+            sql += ` AND sm.product_id = $${idx++}`;
+            sqlParams.push(params.productId);
+          }
           if (params?.warehouseId) { sql += ` AND sm.warehouse_id = $${idx++}`; sqlParams.push(params.warehouseId); }
           if (params?.referenceType) { sql += ` AND sm.reference_type = $${idx++}`; sqlParams.push(params.referenceType); }
           if (params?.dateFrom) {
@@ -3404,19 +3421,9 @@ export const api = {
             sql += ` AND date(sm.created_at) <= date($${idx++})`;
             sqlParams.push(params.dateTo);
           }
-          if (params?.adjustmentsOnly) {
-            sql += ` AND COALESCE(sm.reference_type, '') != 'adjustment_void'
-              AND COALESCE(sm.notes, '') NOT LIKE '%[ANULADO]%'
-              AND (
-                UPPER(COALESCE(sm.reference_number, '')) LIKE 'AJ-%'
-                OR LOWER(COALESCE(sm.reference_type, '')) IN (
-                  'adjustment', 'correction', 'damage', 'initial', 'loss', 'expired',
-                  'internal_use', 'sample', 'donation'
-                )
-              )`;
-          }
-          sql += ` ORDER BY sm.created_at DESC LIMIT $${idx}`;
-          sqlParams.push(params?.limit || 500);
+          const lim = Math.min(Math.max(Number(params?.limit) || 500, 1), 5000);
+          sql += ` ORDER BY sm.created_at DESC LIMIT $${idx++}`;
+          sqlParams.push(lim);
           return ipcQuery<any>(sql, sqlParams);
         });
       }

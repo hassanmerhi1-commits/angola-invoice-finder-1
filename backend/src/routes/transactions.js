@@ -193,11 +193,12 @@ module.exports = function(broadcastTable) {
   // ==================== STOCK MOVEMENTS ====================
   router.get('/stock-movements', async (req, res) => {
     try {
-      const { productId, referenceType, limit, dateFrom, dateTo, adjustmentsOnly } = req.query;
+      const { productId, sku, referenceType, limit, dateFrom, dateTo, adjustmentsOnly } = req.query;
       const warehouseId = resolveWarehouseId(req, req.query.warehouseId);
       if (warehouseId === undefined) {
         return res.json([]);
       }
+      const { sqlMovementSkuKey } = require('../lib/productSkuResolve');
       let query = `SELECT sm.*, p.name AS product_name, p.sku,
         b.name AS branch_name, b.code AS branch_code,
         u.name AS created_by_name, u.email AS created_by_email
@@ -208,7 +209,14 @@ module.exports = function(broadcastTable) {
         WHERE 1=1`;
       const params = [];
       let idx = 1;
-      if (productId) { query += ` AND sm.product_id = $${idx++}`; params.push(productId); }
+      const skuTrim = String(sku || '').trim();
+      if (skuTrim) {
+        query += ` AND ${sqlMovementSkuKey('p')} = LOWER(TRIM($${idx++}))`;
+        params.push(skuTrim);
+      } else if (productId) {
+        query += ` AND sm.product_id = $${idx++}`;
+        params.push(productId);
+      }
       if (warehouseId) { query += ` AND sm.warehouse_id = $${idx++}`; params.push(warehouseId); }
       if (referenceType) { query += ` AND sm.reference_type = $${idx++}`; params.push(referenceType); }
 

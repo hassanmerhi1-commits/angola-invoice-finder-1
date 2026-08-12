@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Product, Branch } from '@/types/erp';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -12,66 +12,127 @@ import {
 } from '@/components/ui/table';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { useTranslation } from '@/i18n';
+import { api } from '@/lib/api/client';
 
 interface BranchStockDetailProps {
   selectedProduct: Product | null;
-  allBranchProducts: Record<string, Product[]>;
+  /** Kept for call-site compatibility; qty now loads via stock-by-sku. */
+  allBranchProducts?: Record<string, Product[]>;
   branchList: Branch[];
 }
 
-function findProductInBranch(rows: Product[], selected: Product): Product | undefined {
-  const skuKey = (selected.sku || '').trim().toLowerCase();
-  if (!skuKey && !selected.id) return undefined;
-  const byId = rows.find((p) => p.id === selected.id);
-  if (byId) return byId;
-  if (!skuKey) return undefined;
-  const skuMatches = rows.filter(
-    (p) => (p.sku || '').trim().toLowerCase() === skuKey,
-  );
-  if (skuMatches.length === 0) return undefined;
-  return skuMatches.reduce((best, p) =>
-    (Number(p.stock) || 0) >= (Number(best.stock) || 0) ? p : best,
-  );
-}
+type BranchStockRow = {
+  branchId: string;
+  branchName: string;
+  isMain: boolean;
+  stock: number;
+};
 
 export function BranchStockDetail({
   selectedProduct,
-  allBranchProducts,
   branchList,
 }: BranchStockDetailProps) {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const ui = t.inventoryPageUi.branchStockDetail;
+  const [rows, setRows] = useState<BranchStockRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const branchRows = useMemo(() => {
-    if (!selectedProduct || branchList.length === 0) return [];
+  const sku = String(selectedProduct?.sku || '').trim();
+  const branchIdsKey = useMemo(
+    () => branchList.map((b) => b.id).join(','),
+    [branchList],
+  );
 
-    const rows = branchList.map((branch) => {
-      const catalog = allBranchProducts[branch.id] || [];
-      const matching = findProductInBranch(catalog, selectedProduct);
-      return {
-        branchId: branch.id,
-        branchName: formatBranchDisplayName(branch),
-        isMain: Boolean(branch.isMain),
-        stock: Number(matching?.stock ?? 0),
-      };
-    });
+  useEffect(() => {
+    if (!selectedProduct || !sku) {
+      setRows([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
 
-    rows.sort((a, b) => {
-      if (a.isMain && !b.isMain) return -1;
-      if (!a.isMain && b.isMain) return 1;
-      return a.branchName.localeCompare(b.branchName, uiLocale);
-    });
-    return rows;
-  }, [selectedProduct, allBranchProducts, branchList, uiLocale]);
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
 
-  const totalStock = branchRows.reduce((sum, b) => sum + b.stock, 0);
+    void (async () => {
+      try {
+        const result = await api.products.stockBySku(sku);
+        if (cancelled) return;
+        if (result.error) throw new Error(result.error);
+        const apiRows = Array.isArray(result.data?.rows) ? result.data.rows : [];
+        const byId = new Map(apiRows.map((r) => [String(r.branchId), r]));
+
+        // Prefer live branch list order/names from the client; fill qty from API.
+        const merged: BranchStockRow[] = (branchList.length > 0 ? branchList : []).map((branch) => {
+          const hit = byId.get(String(branch.id));
+          return {
+            branchId: branch.id,
+            branchName: formatBranchDisplayName(branch),
+            isMain: Boolean(branch.isMain),
+            stock: Number(hit?.stock ?? 0),
+          };
+        });
+
+        if (merged.length === 0) {
+          for (const r of apiRows) {
+            merged.push({
+              branchId: String(r.branchId),
+              branchName: String(r.branchName || r.branchCode || r.branchId),
+              isMain: Boolean(r.isMain),
+              stock: Number(r.stock) || 0,
+            });
+          }
+        }
+
+        merged.sort((a, b) => {
+          if (a.isMain && !b.isMain) return -1;
+          if (!a.isMain && b.isMain) return 1;
+          return a.branchName.localeCompare(b.branchName, uiLocale);
+        });
+        setRows(merged);
+      } catch (e) {
+        if (cancelled) return;
+        setRows([]);
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProduct?.id, sku, branchIdsKey, uiLocale, branchList]);
+
+  const totalStock = useMemo(
+    () => rows.reduce((sum, b) => sum + b.stock, 0),
+    [rows],
+  );
   const unit = selectedProduct?.unit || 'UN';
 
   if (!selectedProduct) {
     return (
       <Card>
         <CardContent className="py-12 text-center text-muted-foreground">{ui.selectProduct}</CardContent>
+      </Card>
+    );
+  }
+
+  if (loading && rows.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center text-muted-foreground">{t.common.loading}</CardContent>
+      </Card>
+    );
+  }
+
+  if (error && rows.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center text-destructive">{error}</CardContent>
       </Card>
     );
   }
@@ -86,14 +147,14 @@ export function BranchStockDetail({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {branchRows.length === 0 ? (
+          {rows.length === 0 ? (
             <TableRow className="hover:bg-transparent">
               <TableCell colSpan={2} className="text-center py-8 text-muted-foreground">
                 {ui.noBranches}
               </TableCell>
             </TableRow>
           ) : (
-            branchRows.map((row) => (
+            rows.map((row) => (
               <TableRow key={row.branchId}>
                 <TableCell className="font-medium">{row.branchName}</TableCell>
                 <TableCell className="text-right font-mono tabular-nums">{row.stock}</TableCell>
@@ -101,7 +162,7 @@ export function BranchStockDetail({
             ))
           )}
         </TableBody>
-        {branchRows.length > 0 && (
+        {rows.length > 0 && (
           <TableFooter>
             <TableRow className="hover:bg-transparent">
               <TableCell className="font-semibold">{ui.footerTotal}</TableCell>
