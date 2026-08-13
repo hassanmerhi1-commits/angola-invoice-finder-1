@@ -1548,6 +1548,158 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  /**
+   * Mass-edit Price 1 and/or average cost for selected SKUs.
+   * HQ callers cascade selling price to every same-SKU branch (and clear price_override).
+   * Filial callers keep a local price + price_override. Cost is always company-wide by SKU
+   * (same as PUT /products/:id). Does not touch stock or create movements.
+   */
+  router.post('/bulk-price-cost', requirePermission('price_edit'), async (req, res) => {
+    try {
+      const raw = Array.isArray(req.body?.items) ? req.body.items : [];
+      if (raw.length === 0) {
+        return res.status(400).json({ error: 'Provide at least one item' });
+      }
+      if (raw.length > 5000) {
+        return res.status(400).json({ error: 'Maximum 5000 items per request' });
+      }
+
+      const byKey = new Map();
+      for (const item of raw) {
+        const id = String(item?.id || '').trim();
+        const sku = canonicalSkuString(item?.sku);
+        const hasPrice = item?.price != null && item.price !== '';
+        const hasCost = item?.cost != null && item.cost !== '';
+        if (!hasPrice && !hasCost) continue;
+        const price = hasPrice ? Number(item.price) : null;
+        const cost = hasCost ? Number(item.cost) : null;
+        if (hasPrice && (!Number.isFinite(price) || price < 0)) {
+          return res.status(400).json({ error: 'Price must be a number ≥ 0' });
+        }
+        if (hasCost && (!Number.isFinite(cost) || cost < 0)) {
+          return res.status(400).json({ error: 'Cost must be a number ≥ 0' });
+        }
+        const key = (sku || id).toLowerCase();
+        if (!key) continue;
+        byKey.set(key, {
+          id,
+          sku,
+          price: hasPrice ? Math.round(price * 100) / 100 : null,
+          cost: hasCost ? Math.round(cost * 100) / 100 : null,
+        });
+      }
+
+      const items = Array.from(byKey.values());
+      if (items.length === 0) {
+        return res.status(400).json({ error: 'No valid price or cost changes' });
+      }
+
+      const callerIsHq = req.branchScope?.canUseConsolidated === true;
+      let priceRows = 0;
+      let costRows = 0;
+
+      const priceItems = items.filter((it) => it.price != null);
+      const costItems = items.filter((it) => it.cost != null && it.sku);
+
+      if (db.engine === 'postgres') {
+        if (priceItems.length > 0) {
+          if (callerIsHq) {
+            const withSku = priceItems.filter((it) => canonicalSkuString(it.sku));
+            if (withSku.length > 0) {
+              const result = await db.query(
+                `UPDATE products p
+                 SET price = v.price,
+                     price_override = false,
+                     updated_at = CURRENT_TIMESTAMP
+                 FROM unnest($1::text[], $2::numeric[]) AS v(sku_key, price)
+                 WHERE ${sqlMovementSkuKey('p')} = v.sku_key
+                   AND ${coalesceActiveNotZero(db, 'p.is_active')}`,
+                [
+                  withSku.map((it) => canonicalSkuString(it.sku).toLowerCase()),
+                  withSku.map((it) => it.price),
+                ],
+              );
+              priceRows += result.rowCount || 0;
+            }
+          } else {
+            const withId = priceItems.filter((it) => it.id);
+            if (withId.length > 0) {
+              const result = await db.query(
+                `UPDATE products p
+                 SET price = v.price,
+                     price_override = true,
+                     updated_at = CURRENT_TIMESTAMP
+                 FROM unnest($1::text[], $2::numeric[]) AS v(id, price)
+                 WHERE p.id::text = v.id`,
+                [withId.map((it) => it.id), withId.map((it) => it.price)],
+              );
+              priceRows += result.rowCount || 0;
+            }
+          }
+        }
+        if (costItems.length > 0) {
+          const result = await db.query(
+            `UPDATE products p
+             SET cost = v.cost,
+                 last_cost = v.cost,
+                 avg_cost = v.cost,
+                 updated_at = CURRENT_TIMESTAMP
+             FROM unnest($1::text[], $2::numeric[]) AS v(sku_key, cost)
+             WHERE ${sqlMovementSkuKey('p')} = v.sku_key
+               AND ${coalesceActiveNotZero(db, 'p.is_active')}`,
+            [
+              costItems.map((it) => canonicalSkuString(it.sku).toLowerCase()),
+              costItems.map((it) => it.cost),
+            ],
+          );
+          costRows += result.rowCount || 0;
+        }
+      } else {
+        for (const it of priceItems) {
+          if (callerIsHq) {
+            priceRows += await cascadeSkuPricesFromHq(it.sku || it.id, it.price, null, null, null, {
+              includeOverridden: true,
+            });
+          } else if (it.id) {
+            const result = await db.query(
+              `UPDATE products
+               SET price = $1, price_override = 1, updated_at = CURRENT_TIMESTAMP
+               WHERE id = $2`,
+              [it.price, it.id],
+            );
+            priceRows += result.rowCount || 0;
+          }
+        }
+        for (const it of costItems) {
+          const result = await db.query(
+            `UPDATE products
+             SET cost = $1, last_cost = $1, avg_cost = $1, updated_at = CURRENT_TIMESTAMP
+             WHERE ${coalesceActiveNotZero(db, 'is_active')}
+               AND ${sqlMovementSkuKey('products')} = LOWER($2)`,
+            [it.cost, canonicalSkuString(it.sku)],
+          );
+          costRows += result.rowCount || 0;
+        }
+      }
+
+      invalidateSellingHintsCache();
+      await broadcastTable('products');
+      auditErpSafe(req, {
+        table: 'products',
+        action: 'update',
+        description: `Actualização em massa de preços/custos: ${items.length} SKU(s)`,
+        metadata: { items: items.length, priceRows, costRows, cascadePrices: callerIsHq },
+      });
+      console.log(
+        `[PRODUCTS bulk-price-cost] skus=${items.length} priceRows=${priceRows} costRows=${costRows} hq=${callerIsHq}`,
+      );
+      res.json({ success: true, updated: items.length, priceRows, costRows });
+    } catch (error) {
+      console.error('[PRODUCTS bulk-price-cost]', error);
+      res.status(500).json({ error: error.message || 'Bulk price/cost update failed' });
+    }
+  });
+
   /** Best PVP per SKU (catalog + all filials + purchase PVP1) — for POS and single-branch inventory. */
   router.get('/selling-prices', async (req, res) => {
     try {

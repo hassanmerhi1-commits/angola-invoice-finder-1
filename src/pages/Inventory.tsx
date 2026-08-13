@@ -42,10 +42,12 @@ import {
   Search,
   Percent,
   ClipboardList,
+  Table2,
 } from 'lucide-react';
 import { AdvancedDataGrid } from '@/components/inventory/AdvancedDataGrid';
 import { ShelfLabelPrintDialog } from '@/components/inventory/ShelfLabelPrintDialog';
 import { BulkTierPricingDialog } from '@/components/inventory/BulkTierPricingDialog';
+import { BulkPriceCostDialog } from '@/components/inventory/BulkPriceCostDialog';
 import { ProductDetailDialog } from '@/components/inventory/ProductDetailDialog';
 import { BranchStockDetail } from '@/components/inventory/BranchStockDetail';
 import {
@@ -483,6 +485,7 @@ export default function Inventory() {
   const [stockExitDialogOpen, setStockExitDialogOpen] = useState(false);
   const [labelPrintDialogOpen, setLabelPrintDialogOpen] = useState(false);
   const [bulkTierDialogOpen, setBulkTierDialogOpen] = useState(false);
+  const [bulkPriceCostOpen, setBulkPriceCostOpen] = useState(false);
   const [adjustmentHistoryOpen, setAdjustmentHistoryOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('lista');
 
@@ -1511,6 +1514,16 @@ export default function Inventory() {
           variant="outline"
           size="sm"
           className={NEXOR_TOOLBAR_BTN_SM}
+          onClick={() => setBulkPriceCostOpen(true)}
+          title={t.inventoryPageUi.massPrice.title}
+        >
+          <Table2 className="w-3 h-3" />
+          {t.inventoryPageUi.massPrice.button}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className={NEXOR_TOOLBAR_BTN_SM}
           onClick={() => setBulkTierDialogOpen(true)}
           title={t.inventoryPageUi.tierPricing.title}
         >
@@ -2009,6 +2022,18 @@ export default function Inventory() {
       <BulkTierPricingDialog
         open={bulkTierDialogOpen}
         onOpenChange={setBulkTierDialogOpen}
+        onApplied={() => {
+          window.dispatchEvent(new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: {} }));
+          void reloadInventoryList();
+          if (canSwitchBranch) void loadPerBranchBreakdown();
+        }}
+      />
+
+      <BulkPriceCostDialog
+        open={bulkPriceCostOpen}
+        onOpenChange={setBulkPriceCostOpen}
+        products={displayProducts}
+        isHeadOffice={isHeadOffice}
         onApplied={() => {
           window.dispatchEvent(new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: {} }));
           void reloadInventoryList();

@@ -92,13 +92,19 @@ export function DailySalesDetailReport({
     return saleDate >= startDate && saleDate <= endDate;
   });
 
-  // Create product lookups
-  const productCostMap = new Map<string, number>();
-  const productCategoryMap = new Map<string, string>();
-  products.forEach(p => {
-    productCostMap.set(p.id, p.avgCost || p.cost || 0);
-    productCategoryMap.set(p.id, p.category || 'GERAL');
-  });
+  // Create product lookups (id first, SKU fallback for remapped filial rows)
+  const { productCostMap, productCostBySku, productCategoryMap } = useMemo(() => {
+    const costById = new Map<string, number>();
+    const costBySku = new Map<string, number>();
+    const categoryById = new Map<string, string>();
+    products.forEach((p) => {
+      const unitCost = Number(p.avgCost || p.cost || 0);
+      costById.set(p.id, unitCost);
+      if (p.sku) costBySku.set(p.sku, unitCost);
+      categoryById.set(p.id, p.category || 'GERAL');
+    });
+    return { productCostMap: costById, productCostBySku: costBySku, productCategoryMap: categoryById };
+  }, [products]);
 
   // Get unique IVA rates from sales
   const uniqueIvaRates = useMemo(() => {
@@ -121,15 +127,23 @@ export function DailySalesDetailReport({
     return Array.from(cats).sort();
   }, [daySales, productCategoryMap]);
 
-  // Process all sale items with cost and profit calculations
+  // Process all sale items with cost and profit calculations.
+  // Line `subtotal` is already ex-VAT (same as POS / salesPivot). Do not divide by (1+IVA).
   const processedItems: SaleItemDetail[] = useMemo(() => {
     const items: SaleItemDetail[] = [];
     daySales.forEach(sale => {
       sale.items.forEach(item => {
-        const cost = productCostMap.get(item.productId) || 0;
-        const totalCost = cost * item.quantity;
-        const subtotalWithoutIVA = item.subtotal / (1 + item.taxRate / 100);
-        const ivaAmount = item.subtotal - subtotalWithoutIVA;
+        const unitCost =
+          productCostMap.get(item.productId) ??
+          (item.sku ? productCostBySku.get(item.sku) : undefined) ??
+          0;
+        const totalCost = unitCost * item.quantity;
+        const subtotalWithoutIVA = Number(item.subtotal) || 0;
+        const storedTax = Number(item.taxAmount);
+        const ivaAmount =
+          Number.isFinite(storedTax) && storedTax > 0
+            ? storedTax
+            : subtotalWithoutIVA * ((Number(item.taxRate) || 0) / 100);
         const profit = subtotalWithoutIVA - totalCost;
         const profitMargin = subtotalWithoutIVA > 0 ? (profit / subtotalWithoutIVA) * 100 : 0;
         const category = productCategoryMap.get(item.productId) || 'GERAL';
@@ -146,7 +160,7 @@ export function DailySalesDetailReport({
       });
     });
     return items;
-  }, [daySales, productCostMap, productCategoryMap]);
+  }, [daySales, productCostMap, productCostBySku, productCategoryMap]);
 
   // Apply filters to processed items
   const filteredItems = useMemo(() => {
@@ -191,7 +205,7 @@ export function DailySalesDetailReport({
         existing.cost += item.cost;
         existing.subtotalWithoutIVA += item.subtotalWithoutIVA;
         existing.ivaAmount += item.ivaAmount;
-        existing.subtotalWithIVA += item.subtotal;
+        existing.subtotalWithIVA += item.subtotalWithoutIVA + item.ivaAmount;
         existing.profit += item.profit;
       } else {
         aggregated.set(item.productId, {
@@ -202,7 +216,7 @@ export function DailySalesDetailReport({
           cost: item.cost,
           subtotalWithoutIVA: item.subtotalWithoutIVA,
           ivaAmount: item.ivaAmount,
-          subtotalWithIVA: item.subtotal,
+          subtotalWithIVA: item.subtotalWithoutIVA + item.ivaAmount,
           profit: item.profit,
           taxRate: item.taxRate,
           category: item.category || 'GERAL',
@@ -680,9 +694,10 @@ export function DailySalesDetailReport({
               </TableHeader>
               <TableBody>
                 {daySales.map(sale => {
-                  const saleSubtotal = sale.items.reduce((sum, item) => 
-                    sum + (item.subtotal / (1 + item.taxRate / 100)), 0);
-                  const saleIVA = sale.total - saleSubtotal;
+                  const saleSubtotal = Number(sale.subtotal) || sale.items.reduce(
+                    (sum, item) => sum + (Number(item.subtotal) || 0), 0);
+                  const saleIVA = Number(sale.taxAmount) || sale.items.reduce(
+                    (sum, item) => sum + (Number(item.taxAmount) || 0), 0);
                   
                   return (
                     <TableRow key={sale.id}>

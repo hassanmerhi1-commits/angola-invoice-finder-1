@@ -891,6 +891,12 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(pcts),
       }),
+    bulkPriceCost: (items: Array<{ id: string; sku: string; price?: number; cost?: number }>) =>
+      apiFetch<{ success: boolean; updated: number; priceRows?: number; costRows?: number }>(
+        '/products/bulk-price-cost',
+        { method: 'POST', body: JSON.stringify({ items }) },
+        { timeoutMs: 120_000 },
+      ),
     repairFilialStock: (branchId: string) =>
       apiFetch<{ success: boolean; rows: any[]; count: number; repair?: unknown; dbPath?: string }>(
         `/products/repair-filial-stock?branchId=${encodeURIComponent(branchId)}`,
