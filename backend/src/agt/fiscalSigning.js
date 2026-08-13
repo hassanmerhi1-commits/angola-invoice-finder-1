@@ -265,6 +265,7 @@ async function getSigningStatus() {
     mode: material?.privateKeyPem ? 'rsa' : 'hash-only',
     activeKeyId: material?.keyId || null,
     activeKeyAlias: material?.keyAlias || null,
+    publicKeyPem: material?.publicKeyPem || null,
     certificates: keysRes.rows.map((row) => ({
       id: row.id,
       alias: row.key_alias,

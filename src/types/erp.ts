@@ -90,6 +90,8 @@ export interface Sale {
   /** AGT fiscal document type: FT, FR, or FS */
   invoiceType?: 'FT' | 'FR' | 'FS';
   saftHash?: string; // For AGT compliance
+  /** ATCUD from AGT / SAF-T. Use '0' until a real code is issued. */
+  atcud?: string;
   agtStatus?: 'pending' | 'validated' | 'rejected' | 'submitted' | 'approved';
   agtCode?: string;
   agtValidatedAt?: string;

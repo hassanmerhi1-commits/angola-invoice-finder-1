@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ShieldCheck, Upload, Trash2, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, Upload, Trash2, CheckCircle2, AlertTriangle, Copy } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,6 +37,7 @@ export function SigningSettingsCard() {
   const [certificateNumber, setCertificateNumber] = useState('');
   const [pfxBase64, setPfxBase64] = useState('');
   const [fileName, setFileName] = useState('');
+  const [publicKeyPem, setPublicKeyPem] = useState('');
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -46,6 +47,7 @@ export function SigningSettingsCard() {
         setMode(res.data.mode);
         setActiveAlias(res.data.activeKeyAlias);
         setCertificates(res.data.certificates || []);
+        setPublicKeyPem(res.data.publicKeyPem || '');
       }
     } catch (err) {
       console.warn('[SigningSettings] status failed:', err);
@@ -158,6 +160,35 @@ export function SigningSettingsCard() {
               <AlertTriangle className="h-3 w-3" />
               {ui.modeHashOnly}
             </Badge>
+          )}
+        </div>
+
+        <div className="rounded-lg border p-4 space-y-2">
+          <p className="text-sm font-medium">{ui.publicKeyTitle}</p>
+          <p className="text-xs text-muted-foreground">{ui.publicKeyHint}</p>
+          {publicKeyPem ? (
+            <>
+              <textarea
+                readOnly
+                value={publicKeyPem}
+                className="w-full h-28 text-xs font-mono rounded-md border bg-muted/40 p-2"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(publicKeyPem);
+                  toast({ title: ui.publicKeyCopied });
+                }}
+              >
+                <Copy className="h-4 w-4" />
+                {ui.copyPublicKey}
+              </Button>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">{ui.publicKeyMissing}</p>
           )}
         </div>
 

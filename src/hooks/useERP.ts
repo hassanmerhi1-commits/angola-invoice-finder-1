@@ -744,6 +744,7 @@ export function mapSaleRow(s: any): Sale {
       invoiceNumber: s.invoiceNumber || s.invoice_number,
     }),
     saftHash: s.saftHash || s.agt_hash || s.saft_hash || '',
+    atcud: s.atcud || undefined,
     agtStatus: s.agtStatus || s.agt_status || undefined,
     agtCode: s.agtCode || s.agt_code || undefined,
     agtValidatedAt: s.agtValidatedAt || s.agt_validated_at || undefined,
@@ -949,6 +950,7 @@ export function useSales(
         invoiceNumber: apiResult.data.invoice_number || apiResult.data.invoiceNumber,
       }),
       saftHash: apiResult.data.saft_hash || apiResult.data.saftHash || undefined,
+      atcud: apiResult.data.atcud || undefined,
       agtCode: apiResult.data.agt_code || apiResult.data.agtCode || undefined,
       createdAt: apiResult.data.created_at || new Date().toISOString(),
     };

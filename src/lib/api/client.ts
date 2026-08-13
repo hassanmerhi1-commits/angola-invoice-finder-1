@@ -3029,11 +3029,13 @@ export const api = {
       environment: string;
       apiUrl: string;
       statusUrl: string;
+      apiUsername?: string;
       companyNif: string;
       softwareCertificateNumber: string;
       simulate: boolean;
       autoTransmit: boolean;
       hasApiKey: boolean;
+      hasUsername?: boolean;
     }>('/agt/config'),
     saveConfig: (data: Record<string, unknown>) =>
       apiFetch<any>('/agt/config', { method: 'PUT', body: JSON.stringify(data) }),
@@ -3109,6 +3111,7 @@ export const api = {
       mode: 'rsa' | 'hash-only';
       activeKeyId: string | null;
       activeKeyAlias: string | null;
+      publicKeyPem?: string | null;
       certificates: Array<{
         id: string;
         alias: string;

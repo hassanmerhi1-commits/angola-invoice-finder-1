@@ -7,7 +7,6 @@ import { useState, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 import { Sale } from '@/types/erp';
 import { AGTTransmissionResult, AGTStatusResult, AGTConfig } from '@/types/electron';
-import { getInvoiceHash } from '@/lib/agtQRCode';
 import { useTranslation } from '@/i18n';
 
 interface AGTValidationState {
@@ -155,7 +154,7 @@ export function useAGTValidation() {
         total: sale.total,
         paymentMethod: sale.paymentMethod,
         items: sale.items,
-        atcud: `${sale.invoiceNumber.replace(/[^0-9]/g, '')}-${getInvoiceHash(sale)}`
+        atcud: sale.atcud || '0',
       };
 
       // Step 3: Transmit to AGT

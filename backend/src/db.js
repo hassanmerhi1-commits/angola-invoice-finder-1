@@ -913,8 +913,18 @@ function ensureAgtConfigSchemaSqlite() {
   } catch (_) {}
   tryAlterAdd('agt_transmissions', 'entity_type TEXT');
   tryAlterAdd('agt_transmissions', 'entity_id TEXT');
+  tryAlterAdd('agt_transmissions', 'request_id TEXT');
+  tryAlterAdd('agt_config', 'api_username TEXT');
+  tryAlterAdd('agt_config', 'iva_exemption_code TEXT');
+  tryAlterAdd('agt_config', 'eac_code TEXT');
+  tryAlterAdd('sales', 'atcud TEXT');
+  tryAlterAdd('sales', 'agt_request_id TEXT');
   tryAlterAdd('credit_notes', 'agt_validated_at TEXT');
+  tryAlterAdd('credit_notes', 'atcud TEXT');
+  tryAlterAdd('credit_notes', 'agt_request_id TEXT');
   tryAlterAdd('debit_notes', 'agt_validated_at TEXT');
+  tryAlterAdd('debit_notes', 'atcud TEXT');
+  tryAlterAdd('debit_notes', 'agt_request_id TEXT');
 }
 
 function ensureSigningSchemaSqlite() {

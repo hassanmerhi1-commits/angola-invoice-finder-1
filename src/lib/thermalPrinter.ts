@@ -9,6 +9,7 @@ import { buildAGTQRCodeString, saleToAGTQRData, getInvoiceHash } from './agtQRCo
 import { getCompanySettings, softwareValidationLine } from './companySettings';
 import { taxBreakdownFromItems, IVA_EXEMPTION_REASON } from './taxUtils';
 import { receiptDocTypeLabel } from './fiscalInvoiceType';
+import { withFiscalHash } from './saleFiscalHash';
 
 // Printer configuration
 export interface PrinterConfig {
@@ -729,12 +730,13 @@ export async function printViaBrowser(
   copyLabelOrLabels?: string | (string | undefined)[],
   options: { direct?: boolean; deviceName?: string; allowDialogFallback?: boolean } = {},
 ): Promise<void> {
+  const fiscalSale = await withFiscalHash(sale);
   const labels = Array.isArray(copyLabelOrLabels)
     ? copyLabelOrLabels
     : [copyLabelOrLabels];
   const config = getPrinterConfig();
   const html = await buildReceiptBrowserHtml(
-    sale,
+    fiscalSale,
     branch,
     normalizePaperWidth(paperWidth),
     labels,
@@ -787,14 +789,15 @@ export async function printReceiptsBatch(
 
   const bodies: string[] = [];
   for (const sale of list) {
+    const fiscalSale = await withFiscalHash(sale);
     let qrCodeDataURL = '';
     try {
       const { generateAGTQRCodeDataURL } = await import('./agtQRCode');
-      qrCodeDataURL = await generateAGTQRCodeDataURL(sale, branch, { size: 100, margin: 1 });
+      qrCodeDataURL = await generateAGTQRCodeDataURL(fiscalSale, branch, { size: 100, margin: 1 });
     } catch (error) {
-      console.warn('[thermal] QR skipped for batch print:', sale.invoiceNumber, error);
+      console.warn('[thermal] QR skipped for batch print:', fiscalSale.invoiceNumber, error);
     }
-    bodies.push(buildReceiptCopyBody(sale, branch, paperMm, company, qrCodeDataURL, undefined));
+    bodies.push(buildReceiptCopyBody(fiscalSale, branch, paperMm, company, qrCodeDataURL, undefined));
   }
 
   const html = `<!DOCTYPE html>
@@ -915,6 +918,7 @@ export async function printReceipt(
   config: PrinterConfig = DEFAULT_PRINTER_CONFIG,
   openDrawerOrOptions: boolean | PrintReceiptOptions = false,
 ): Promise<{ success: boolean; method: string }> {
+  const fiscalSale = await withFiscalHash(sale);
   const options = normalizePrintReceiptOptions(openDrawerOrOptions);
   const copies = Math.max(1, options.copies ?? 1);
   const copyLabels = options.copyLabels ?? [];
@@ -926,7 +930,7 @@ export async function printReceipt(
       for (let copyIndex = 0; copyIndex < copies; copyIndex++) {
         const copyLabel = copyLabels[copyIndex];
         const openDrawer = options.openDrawer === true && copyIndex === 0;
-        let data = generateESCPOSReceipt(sale, branch, config, copyLabel);
+        let data = generateESCPOSReceipt(fiscalSale, branch, config, copyLabel);
 
         if (openDrawer) {
           const encoder = new TextEncoder();
@@ -952,7 +956,7 @@ export async function printReceipt(
   }
 
   try {
-    await printViaBrowser(sale, branch, config.paperWidth, labels, {
+    await printViaBrowser(fiscalSale, branch, config.paperWidth, labels, {
       direct: options.direct ?? false,
       deviceName: config.deviceName,
       allowDialogFallback: options.allowDialogFallback,

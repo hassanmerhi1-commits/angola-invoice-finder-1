@@ -139,12 +139,28 @@ module.exports = function(broadcastTable) {
             + `paid=${req.body?.amountPaid ?? req.body?.amount_paid ?? '?'}`,
           );
           await commitSaleCreation(client, sale, req.body);
-          // Fiscal signing reads PKCS#12 from disk — defer so POS checkout is not blocked.
-          setImmediate(() => {
-            signSaleInvoice(sale.id)
-              .then(() => broadcastTable('sales'))
-              .catch((e) => console.warn('[AGT SIGN]', e.message));
-          });
+          // Sign after commit so PKCS#12 I/O cannot abort the sale. Wait briefly
+          // so POS/print can put the real 4-char hash on the receipt; on timeout
+          // keep signing in the background and let the client poll GET /sales/:id.
+          let saftHash = sale.saft_hash || sale.saftHash || null;
+          if (!sale.duplicate) {
+            const signPromise = signSaleInvoice(sale.id)
+              .then((result) => {
+                saftHash = result?.shortHash || saftHash;
+                return result;
+              })
+              .catch((e) => {
+                console.warn('[AGT SIGN]', e.message);
+                return null;
+              });
+            const timedOut = await Promise.race([
+              signPromise.then(() => false),
+              new Promise((resolve) => setTimeout(() => resolve(true), 2500)),
+            ]);
+            if (timedOut) {
+              signPromise.then(() => broadcastTable('sales')).catch(() => {});
+            }
+          }
           setImmediate(() => {
             const { enqueueWebhookEvent } = require('../lib/webhooks');
             enqueueWebhookEvent('sale.created', {
@@ -165,7 +181,9 @@ module.exports = function(broadcastTable) {
           return res.status(201).json({
             ...sale,
             items: req.body.items,
-            saft_hash: null,
+            saft_hash: saftHash,
+            saftHash,
+            atcud: sale.atcud || '0',
             duplicate: !!sale.duplicate,
           });
         } catch (error) {

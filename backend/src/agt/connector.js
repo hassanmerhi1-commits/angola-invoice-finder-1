@@ -1,23 +1,56 @@
 /**
- * AGT API connector — real HTTP when configured, otherwise deterministic stub.
- * Production never invents CUCE codes unless AGT_SIMULATE=true is set explicitly.
+ * AGT Facturação Electrónica connector.
+ * Homologation: https://sifphml.minfin.gov.ao/sigt/fe/v1
+ * Production:   https://sifp.minfin.gov.ao/sigt/fe/v1
+ * Auth: Basic (username + password). Simulate remains the default until credentials exist.
  */
 const crypto = require('crypto');
 
-const SANDBOX_DEFAULT_URL = 'https://sandbox.agt.gov.ao/api/v1/documents';
-const PRODUCTION_DEFAULT_URL = 'https://api.agt.gov.ao/api/v1/documents';
+const HML_BASE = 'https://sifphml.minfin.gov.ao/sigt/fe/v1';
+const PROD_BASE = 'https://sifp.minfin.gov.ao/sigt/fe/v1';
+const LEGACY_PLACEHOLDER = 'sandbox.agt.gov.ao';
+
+function environmentBase(config) {
+  return config?.environment === 'production' ? PROD_BASE : HML_BASE;
+}
+
+function isPlaceholderUrl(url) {
+  const u = String(url || '');
+  return !u || u.includes(LEGACY_PLACEHOLDER) || u.includes('api.agt.gov.ao');
+}
 
 function resolveApiUrl(config) {
-  if (config?.apiUrl) return config.apiUrl.trim();
-  if (process.env.AGT_API_URL) return process.env.AGT_API_URL.trim();
-  return config?.environment === 'production' ? PRODUCTION_DEFAULT_URL : SANDBOX_DEFAULT_URL;
+  const explicit = (config?.apiUrl || process.env.AGT_API_URL || '').trim();
+  if (explicit && !isPlaceholderUrl(explicit)) return explicit.replace(/\/$/, '');
+  return `${environmentBase(config)}/registarFactura`;
 }
 
 function resolveStatusUrl(config) {
-  if (config?.statusUrl) return config.statusUrl.trim();
-  if (process.env.AGT_STATUS_URL) return process.env.AGT_STATUS_URL.trim();
-  const base = resolveApiUrl(config).replace(/\/documents\/?$/, '');
-  return `${base}/status`;
+  const explicit = (config?.statusUrl || process.env.AGT_STATUS_URL || '').trim();
+  if (explicit && !isPlaceholderUrl(explicit)) return explicit.replace(/\/$/, '');
+  return `${environmentBase(config)}/obterEstado`;
+}
+
+function resolveUsername(config) {
+  return String(config?.apiUsername || config?.username || process.env.AGT_API_USERNAME || '').trim();
+}
+
+function resolvePassword(config) {
+  return String(config?.apiKey || process.env.AGT_API_KEY || '').trim();
+}
+
+function hasLiveCredentials(config) {
+  return Boolean(resolveUsername(config) && resolvePassword(config));
+}
+
+function authorizationHeader(config) {
+  const username = resolveUsername(config);
+  const password = resolvePassword(config);
+  if (username && password) {
+    return `Basic ${Buffer.from(`${username}:${password}`, 'utf8').toString('base64')}`;
+  }
+  if (password) return `Bearer ${password}`;
+  return null;
 }
 
 function isProductionLike() {
@@ -25,8 +58,6 @@ function isProductionLike() {
 }
 
 function shouldSimulate(config) {
-  // Production: only invent CUCE when AGT_SIMULATE=true is set explicitly.
-  // DB "simulate" flag must never override this (operators may leave it on from sandbox).
   if (isProductionLike()) {
     return process.env.AGT_SIMULATE === 'true';
   }
@@ -34,19 +65,19 @@ function shouldSimulate(config) {
   if (process.env.AGT_SIMULATE === 'false') return false;
   if (config?.simulate === true) return true;
   if (config?.simulate === false) return false;
-  if (!resolveApiUrl(config)) return true;
-  return config?.simulate !== false;
+  return true;
 }
 
-async function httpPost(url, body, apiKey) {
+async function httpJson(method, url, body, config) {
+  const auth = authorizationHeader(config);
   const res = await fetch(url, {
-    method: 'POST',
+    method,
     headers: {
-      'Content-Type': 'application/json',
       Accept: 'application/json',
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(auth ? { Authorization: auth } : {}),
     },
-    body: JSON.stringify(body),
+    body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
   let parsed = {};
@@ -56,7 +87,10 @@ async function httpPost(url, body, apiKey) {
     parsed = { raw: text };
   }
   if (!res.ok) {
-    const err = new Error(parsed.message || parsed.error || `AGT HTTP ${res.status}`);
+    const firstError = Array.isArray(parsed.errorList) && parsed.errorList[0]
+      ? `${parsed.errorList[0].idError || ''} ${parsed.errorList[0].descriptionError || parsed.errorList[0].description || ''}`.trim()
+      : '';
+    const err = new Error(firstError || parsed.message || parsed.error || `AGT HTTP ${res.status}`);
     err.status = res.status;
     err.body = parsed;
     throw err;
@@ -64,52 +98,58 @@ async function httpPost(url, body, apiKey) {
   return parsed;
 }
 
-async function httpGet(url, apiKey) {
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    },
-  });
-  const text = await res.text();
-  let parsed = {};
-  try {
-    parsed = text ? JSON.parse(text) : {};
-  } catch {
-    parsed = { raw: text };
-  }
-  if (!res.ok) {
-    const err = new Error(parsed.message || parsed.error || `AGT HTTP ${res.status}`);
-    err.status = res.status;
-    err.body = parsed;
-    throw err;
-  }
-  return parsed;
+function firstErrorList(body) {
+  const list = body?.errorList || body?.requestErrorList || [];
+  if (!Array.isArray(list) || list.length === 0) return '';
+  return list
+    .map((row) => `${row.idError || row.code || ''} ${row.descriptionError || row.description || ''}`.trim())
+    .filter(Boolean)
+    .join('; ');
 }
 
 function normalizeResponse(body) {
-  const agtCode = body.agtCode || body.cuce || body.code || body.validationCode || '';
-  const agtStatus = String(body.status || body.agtStatus || 'validated').toLowerCase();
+  const errors = firstErrorList(body);
+  const requestId = body.requestID || body.requestId || '';
+  const agtCode = body.agtCode || body.cuce || body.code || body.validationCode || body.atcud || '';
+  const atcud = body.atcud || body.ATCUD || '';
+  let agtStatus = String(body.status || body.agtStatus || '').toLowerCase();
+  if (!agtStatus) {
+    agtStatus = agtCode ? 'validated' : (requestId ? 'submitted' : 'pending');
+  }
+  if (agtStatus === 'success' || agtStatus === 'valid' || agtStatus === 'valido') {
+    agtStatus = 'validated';
+  }
+  if (errors && !agtCode && !requestId) {
+    const err = new Error(errors);
+    err.status = 400;
+    err.body = body;
+    throw err;
+  }
   return {
-    agtCode,
-    agtStatus: agtStatus === 'success' ? 'validated' : agtStatus,
+    agtCode: agtCode || requestId || '',
+    atcud: atcud || '',
+    requestId: requestId || '',
+    agtStatus,
     responsePayload: body,
-    validatedAt: body.validatedAt || body.validated_at || new Date().toISOString(),
+    validatedAt: body.validatedAt || body.validated_at || (agtStatus === 'validated' ? new Date().toISOString() : null),
   };
 }
 
 function simulatedTransmit(payload) {
-  const prefix = payload.documentType || 'FT';
+  const doc = payload?.documents?.[0] || payload;
+  const prefix = doc.documentType || payload.documentType || 'FT';
+  const number = doc.documentNo || payload.documentNumber || '';
   const agtCode = `CUCE-${prefix}-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
   return {
     agtCode,
+    atcud: '0',
+    requestId: '',
     agtStatus: 'validated',
     responsePayload: {
       status: 'validated',
       agtCode,
       simulated: true,
-      documentNumber: payload.documentNumber,
+      documentNumber: number,
     },
     validatedAt: new Date().toISOString(),
   };
@@ -119,15 +159,13 @@ async function transmitDocument(payload, config) {
   if (shouldSimulate(config)) {
     return simulatedTransmit(payload);
   }
-
-  const url = resolveApiUrl(config);
-  const apiKey = config?.apiKey || process.env.AGT_API_KEY;
-  if (!apiKey) {
-    const err = new Error('AGT API key is not configured');
+  if (!hasLiveCredentials(config)) {
+    const err = new Error('Credenciais AGT (utilizador e senha SIFP) não configuradas');
     err.code = 'AGT_NOT_CONFIGURED';
     throw err;
   }
-  const body = await httpPost(url, payload, apiKey);
+  const url = resolveApiUrl(config);
+  const body = await httpJson('POST', url, payload, config);
   return normalizeResponse(body);
 }
 
@@ -135,6 +173,8 @@ async function transmitVoid(payload, config) {
   if (shouldSimulate(config)) {
     return {
       agtCode: null,
+      atcud: '',
+      requestId: '',
       agtStatus: 'voided',
       responsePayload: {
         status: 'voided',
@@ -145,19 +185,17 @@ async function transmitVoid(payload, config) {
       validatedAt: new Date().toISOString(),
     };
   }
-
-  const url = resolveApiUrl(config).replace(/\/documents\/?$/, '/void');
-  const apiKey = config?.apiKey || process.env.AGT_API_KEY;
-  if (!apiKey) {
-    const err = new Error('AGT API key is not configured');
+  if (!hasLiveCredentials(config)) {
+    const err = new Error('Credenciais AGT (utilizador e senha SIFP) não configuradas');
     err.code = 'AGT_NOT_CONFIGURED';
     throw err;
   }
-  const body = await httpPost(url, payload, apiKey);
+  const url = resolveApiUrl(config).replace(/registarFactura\/?$/, 'anularFactura');
+  const body = await httpJson('POST', url, payload, config);
   return normalizeResponse({ ...body, status: body.status || 'voided' });
 }
 
-async function checkDocumentStatus(documentNumber, config) {
+async function checkDocumentStatus(documentNumber, config, options = {}) {
   if (shouldSimulate(config)) {
     return {
       documentNumber,
@@ -165,9 +203,15 @@ async function checkDocumentStatus(documentNumber, config) {
       simulated: true,
     };
   }
-  const base = resolveStatusUrl(config);
-  const url = `${base}/${encodeURIComponent(documentNumber)}`;
-  const body = await httpGet(url, config?.apiKey || process.env.AGT_API_KEY);
+  const url = resolveStatusUrl(config);
+  const requestId = options.requestId || documentNumber;
+  const payload = {
+    schemaVersion: '1.2',
+    taxRegistrationNumber: String(config?.companyNif || '').trim(),
+    requestID: requestId,
+  };
+  if (documentNumber) payload.documentNo = documentNumber;
+  const body = await httpJson('POST', url, payload, config);
   return normalizeResponse(body);
 }
 
@@ -179,9 +223,16 @@ async function transmitInvoice(payload) {
 }
 
 module.exports = {
+  HML_BASE,
+  PROD_BASE,
   transmitDocument,
   transmitInvoice,
   transmitVoid,
   checkDocumentStatus,
   shouldSimulate,
+  hasLiveCredentials,
+  resolveApiUrl,
+  resolveStatusUrl,
+  authorizationHeader,
+  isPlaceholderUrl,
 };

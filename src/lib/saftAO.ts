@@ -376,7 +376,7 @@ function buildInvoices(
     
     invoices.push({
       InvoiceNo: sale.invoiceNumber,
-      ATCUD: `KWERP-${sale.invoiceNumber.split('/').pop() || '1'}`,
+      ATCUD: sale.atcud || '0',
       DocumentStatus: {
         InvoiceStatus: sale.status === 'voided' ? 'A' : 'N',
         InvoiceStatusDate: formatSAFTDateTime(sale.createdAt),

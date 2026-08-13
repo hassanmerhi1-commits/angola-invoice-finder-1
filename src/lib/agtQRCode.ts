@@ -51,32 +51,24 @@ function getCompanyInfo() {
 }
 
 /**
- * Generate a simple hash from invoice data
- * In production, this should use proper cryptographic signing as per AGT requirements
+ * First 4 characters of the document's digital signature (SAF-T / AGT QR field K).
+ * Never invent a hash — missing signature prints as "----".
  */
-function generateInvoiceHash(sale: Sale): string {
-  const dataString = `${sale.invoiceNumber}|${sale.createdAt}|${sale.total}|${sale.taxAmount}`;
-  
-  // Simple hash for demo - in production use proper SHA-256 signature
-  let hash = 0;
-  for (let i = 0; i < dataString.length; i++) {
-    const char = dataString.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
+export function getInvoiceHash(sale: Sale): string {
+  const stored = String(sale.saftHash || '').trim();
+  if (stored && stored !== '0') {
+    return stored.slice(0, 4).toUpperCase();
   }
-  
-  // Return first 4 characters of hex hash
-  const hexHash = Math.abs(hash).toString(16).toUpperCase().padStart(8, '0');
-  return hexHash.substring(0, 4);
+  return '----';
 }
 
 /**
- * Generate ATCUD (Código Único de Documento)
- * Format: SerieValidação-NúmeroSequencial
+ * ATCUD for print/QR. Real codes come from AGT; until then SAF-T uses "0".
+ * Do not synthesize KWERP-... placeholders that look like live validation.
  */
-function generateATCUD(sale: Sale, seriesCode: string = 'KWERP'): string {
-  const sequentialNumber = sale.invoiceNumber.split('/').pop() || '1';
-  return `${seriesCode}-${sequentialNumber}`;
+export function getSaleAtcud(sale: Sale): string {
+  const stored = String(sale.atcud || '').trim();
+  return stored || '0';
 }
 
 /**
@@ -90,7 +82,7 @@ export function buildAGTQRCodeString(data: AGTQRCodeData): string {
     `B:${data.nomeEmissor}`,                   // B - Nome Emissor
     `C:${data.nifCliente || '999999990'}`,     // C - NIF Cliente (999999990 = Consumidor Final)
     `D:${data.tipoDocumento}`,                 // D - Tipo Documento
-    `E:${data.atcud || 'N/A'}`,                // E - ATCUD
+    `E:${data.atcud || '0'}`,                   // E - ATCUD
     `F:${data.dataEmissao}`,                   // F - Data Emissão
     `G:${data.numeroDocumento}`,               // G - Número Documento
     `H:${data.totalSemIVA.toFixed(2)}`,        // H - Total sem IVA
@@ -130,8 +122,8 @@ export function saleToAGTQRData(sale: Sale, branch?: Branch): AGTQRCodeData {
     totalSemIVA: sale.subtotal,
     totalIVA: sale.taxAmount,
     totalComIVA: sale.total,
-    hash: sale.saftHash || generateInvoiceHash(sale),
-    atcud: generateATCUD(sale),
+    hash: getInvoiceHash(sale),
+    atcud: getSaleAtcud(sale),
     cuce: sale.agtCode,
     certificadoSoftware: companyInfo.softwareCertificado,
   };
@@ -220,14 +212,6 @@ export async function generateAGTQRCodeCanvas(
     console.error('Error generating QR code to canvas:', error);
     throw error;
   }
-}
-
-/**
- * Get the hash value displayed on the invoice
- * This is the first 4 characters of the digital signature
- */
-export function getInvoiceHash(sale: Sale): string {
-  return sale.saftHash || generateInvoiceHash(sale);
 }
 
 /**

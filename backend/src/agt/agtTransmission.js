@@ -5,7 +5,9 @@ const crypto = require('crypto');
 const db = require('../db');
 const { getAgtConfigWithSecrets } = require('./agtConfig');
 const { signFiscalEntity } = require('./fiscalSigning');
-const { transmitDocument, checkDocumentStatus } = require('./connector');
+const { transmitDocument, checkDocumentStatus, shouldSimulate } = require('./connector');
+const { buildRegistarFacturaPayload } = require('./fePayload');
+const { loadActiveSigningMaterial } = require('./certificateStore');
 
 const ENTITY_MAP = {
   sale: {
@@ -113,6 +115,24 @@ function buildPayload(config, meta, doc, items, signature) {
   };
 }
 
+async function buildLivePayload(config, meta, doc, items, entityKind) {
+  const material = await loadActiveSigningMaterial();
+  if (!material?.privateKeyPem) {
+    throw new Error('Carregue o certificado PKCS#12 em Definições → Assinatura digital antes de enviar à AGT');
+  }
+  if (!String(config.companyNif || '').trim()) {
+    throw new Error('NIF da empresa em falta nas definições AGT');
+  }
+  return buildRegistarFacturaPayload({
+    config,
+    entityKind,
+    doc,
+    items,
+    meta,
+    privateKeyPem: material.privateKeyPem,
+  });
+}
+
 async function updateEntityAgtStatus(meta, entityId, result) {
   await db.query(
     `UPDATE ${meta.table}
@@ -120,6 +140,18 @@ async function updateEntityAgtStatus(meta, entityId, result) {
      WHERE id = $4`,
     [result.agtStatus, result.agtCode, result.validatedAt, entityId],
   );
+  if (result.atcud || result.requestId) {
+    try {
+      await db.query(
+        `UPDATE ${meta.table}
+         SET atcud = COALESCE($1, atcud), agt_request_id = COALESCE($2, agt_request_id)
+         WHERE id = $3`,
+        [result.atcud || null, result.requestId || null, entityId],
+      );
+    } catch (e) {
+      console.warn('[AGT] atcud/request_id column missing:', e.message);
+    }
+  }
 }
 
 async function loadFiscalDocumentRow(meta, entityId, options = {}) {
@@ -170,7 +202,9 @@ async function transmitFiscalEntity(entityKind, entityId, options = {}) {
   if (entityKind === 'credit_note') items = await loadItemsForCreditNote(resolvedEntityId);
   if (entityKind === 'debit_note') items = await loadItemsForDebitNote(resolvedEntityId);
 
-  const payload = buildPayload(config, meta, doc, items, signature);
+  const payload = shouldSimulate(config)
+    ? buildPayload(config, meta, doc, items, signature)
+    : await buildLivePayload(config, meta, doc, items, entityKind);
   const transmissionId = crypto.randomUUID();
   const invoiceId = entityKind === 'sale' ? resolvedEntityId : doc.original_invoice_id || null;
 
@@ -205,6 +239,12 @@ async function transmitFiscalEntity(entityKind, entityId, options = {}) {
         transmissionId,
       ],
     );
+    try {
+      await db.query(
+        `UPDATE agt_transmissions SET request_id = COALESCE($1, request_id) WHERE id = $2`,
+        [result.requestId || null, transmissionId],
+      );
+    } catch (_) { /* column may not exist yet */ }
     await updateEntityAgtStatus(meta, resolvedEntityId, result);
     return { transmissionId, entityId: resolvedEntityId, ...result };
   } catch (err) {
@@ -258,9 +298,11 @@ async function getEntityAgtStatus(entityKind, entityId, options = {}) {
 
   const config = await getAgtConfigWithSecrets();
   let remote = null;
-  if (config.apiUrl && !config.simulate && row.document_number) {
+  if (!config.simulate && row.document_number) {
     try {
-      remote = await checkDocumentStatus(row.document_number, config);
+      remote = await checkDocumentStatus(row.document_number, config, {
+        requestId: doc.agt_request_id || undefined,
+      });
     } catch (e) {
       remote = { error: e.message };
     }

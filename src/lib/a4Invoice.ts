@@ -7,6 +7,7 @@ import { Sale, Branch } from '@/types/erp';
 import { getCompanySettings, CompanySettings } from './companySettings';
 import { buildAGTQRCodeString, saleToAGTQRData, getInvoiceHash } from './agtQRCode';
 import { normalizeTaxRate } from './taxUtils';
+import { withFiscalHash } from './saleFiscalHash';
 
 export interface A4InvoiceOptions {
   showBankDetails?: boolean;
@@ -428,8 +429,10 @@ export async function generateA4InvoiceHTML(
         ${sale.items.map(item => {
           const itemTaxRate = normalizeTaxRate((item as any).taxRate);
           const basePrice = item.unitPrice;
-          const baseTributavel = item.subtotal / (1 + itemTaxRate / 100);
-          const taxAmount = item.subtotal - baseTributavel;
+          const baseTributavel = Number(item.subtotal) || 0;
+          const taxAmount =
+            Number(item.taxAmount) || (baseTributavel * itemTaxRate) / 100;
+          const lineWithIva = baseTributavel + taxAmount;
           return `
           <tr>
             <td>
@@ -441,7 +444,7 @@ export async function generateA4InvoiceHTML(
             <td>${formatMoney(baseTributavel)} Kz</td>
             <td>${itemTaxRate}%</td>
             <td>${formatMoney(taxAmount)} Kz</td>
-            <td><strong>${formatMoney(item.subtotal)} Kz</strong></td>
+            <td><strong>${formatMoney(lineWithIva)} Kz</strong></td>
           </tr>
         `;}).join('')}
       </tbody>
@@ -463,9 +466,9 @@ export async function generateA4InvoiceHTML(
           const taxMap = new Map<number, { base: number; iva: number; total: number }>();
           sale.items.forEach(item => {
             const rate = normalizeTaxRate((item as any).taxRate);
-            const total = item.subtotal;
-            const base = total / (1 + rate / 100);
-            const iva = total - base;
+            const base = Number(item.subtotal) || 0;
+            const iva = Number(item.taxAmount) || (base * rate) / 100;
+            const total = base + iva;
             const existing = taxMap.get(rate) || { base: 0, iva: 0, total: 0 };
             existing.base += base;
             existing.iva += iva;
@@ -599,11 +602,12 @@ export async function printA4Invoice(
   branch: Branch,
   options: A4InvoiceOptions = {}
 ): Promise<void> {
+  const fiscalSale = await withFiscalHash(sale);
   // Pre-generate QR code as data URL before opening print window
   const { generateAGTQRCodeDataURL } = await import('./agtQRCode');
-  const qrCodeDataURL = await generateAGTQRCodeDataURL(sale, branch, { size: 100, margin: 1 });
+  const qrCodeDataURL = await generateAGTQRCodeDataURL(fiscalSale, branch, { size: 100, margin: 1 });
   
-  const html = await generateA4InvoiceHTML(sale, branch, { ...options, qrCodeDataURL });
+  const html = await generateA4InvoiceHTML(fiscalSale, branch, { ...options, qrCodeDataURL });
   
   const { printHtml } = await import('./printHtml');
   await printHtml(html);

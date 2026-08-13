@@ -24,6 +24,7 @@ export function AgtSettingsCard() {
   const [apiUrl, setApiUrl] = useState('');
   const [statusUrl, setStatusUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [apiUsername, setApiUsername] = useState('');
   const [companyNif, setCompanyNif] = useState(company.nif || '');
   const [softwareCert, setSoftwareCert] = useState(company.agtCertificateNumber || '');
   const [simulate, setSimulate] = useState(true);
@@ -40,6 +41,7 @@ export function AgtSettingsCard() {
         setStatusUrl(res.data.statusUrl || '');
         setCompanyNif(res.data.companyNif || company.nif || '');
         setSoftwareCert(res.data.softwareCertificateNumber || company.agtCertificateNumber || '');
+        setApiUsername(res.data.apiUsername || '');
         setSimulate(res.data.simulate !== false);
         setAutoTransmit(res.data.autoTransmit !== false);
         setHasApiKey(!!res.data.hasApiKey);
@@ -63,6 +65,7 @@ export function AgtSettingsCard() {
         apiUrl,
         statusUrl,
         apiKey: apiKey || undefined,
+        apiUsername,
         companyNif,
         softwareCertificateNumber: softwareCert,
         simulate,
@@ -129,6 +132,15 @@ export function AgtSettingsCard() {
               <div className="space-y-1 md:col-span-2">
                 <Label>{ui.statusUrlLabel}</Label>
                 <Input value={statusUrl} onChange={(e) => setStatusUrl(e.target.value)} placeholder={ui.statusUrlPlaceholder} />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <Label>{ui.apiUsernameLabel}</Label>
+                <Input
+                  value={apiUsername}
+                  onChange={(e) => setApiUsername(e.target.value)}
+                  placeholder={ui.apiUsernamePlaceholder}
+                  autoComplete="username"
+                />
               </div>
               <div className="space-y-1 md:col-span-2">
                 <Label>{ui.apiKeyLabel}</Label>

@@ -38,6 +38,7 @@ const { resolveBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlA
 const { resolveEntityAccountCode } = require('./lib/entityCoaAccounts');
 const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
 const { runInSavepoint, runOptionalInSavepoint } = require('./lib/pgSavepoint');
+const { taxCodeForRate } = require('./taxDefaults');
 
 // ==================== PGC (novo com IVA) POSTING ACCOUNT CODES ====================
 // Angola Plano Geral de Contabilidade with no-dot numbering (main 11 → first sub 111).
@@ -2322,6 +2323,8 @@ async function processSale(client, saleData) {
         invoice_type: row.invoice_type,
         total: parseFloat(row.total),
         status: row.status,
+        saft_hash: row.saft_hash || null,
+        atcud: row.atcud || '0',
         duplicate: true,
       };
     }
@@ -2366,6 +2369,8 @@ async function processSale(client, saleData) {
             invoice_type: row.invoice_type,
             total: parseFloat(row.total),
             status: row.status,
+            saft_hash: row.saft_hash || null,
+            atcud: row.atcud || '0',
             duplicate: true,
           };
         }
@@ -2430,6 +2435,8 @@ async function processSale(client, saleData) {
           invoice_type: row.invoice_type,
           total: parseFloat(row.total),
           status: row.status,
+          saft_hash: row.saft_hash || null,
+          atcud: row.atcud || '0',
           duplicate: true,
         };
       }
@@ -2588,13 +2595,39 @@ async function processSale(client, saleData) {
     );
   }
 
-  // Tax summary (non-critical)
+  // Tax summary — one row per IVA rate on the sale (not a hardcoded 14%).
   await runOptionalInSavepoint(client, 'tax_summary', async () => {
-    await client.query(
-      `INSERT INTO tax_summaries (id, document_type, document_id, tax_code, tax_rate, total_base, total_tax, direction, period_year, period_month)
-       VALUES ($1,'sale',$2,'IVA14',14.00,$3,$4,'output',$5,$6)`,
-      [randomUUID(), saleId, parseFloat(subtotal), parseFloat(taxAmount), new Date().getFullYear(), new Date().getMonth() + 1],
-    );
+    const byRate = new Map();
+    for (const item of items) {
+      const rate = Number(item.taxRate) || 0;
+      const base = Number(item.subtotal) || 0;
+      const tax =
+        item.taxAmount != null && item.taxAmount !== ''
+          ? Number(item.taxAmount)
+          : (base * rate) / 100;
+      const prev = byRate.get(rate) || { base: 0, tax: 0 };
+      prev.base += Number.isFinite(base) ? base : 0;
+      prev.tax += Number.isFinite(tax) ? tax : 0;
+      byRate.set(rate, prev);
+    }
+    const year = new Date(today).getFullYear();
+    const month = new Date(today).getMonth() + 1;
+    for (const [rate, sums] of byRate) {
+      await client.query(
+        `INSERT INTO tax_summaries (id, document_type, document_id, tax_code, tax_rate, total_base, total_tax, direction, period_year, period_month)
+         VALUES ($1,'sale',$2,$3,$4,$5,$6,'output',$7,$8)`,
+        [
+          randomUUID(),
+          saleId,
+          taxCodeForRate(rate),
+          Number(rate),
+          sums.base,
+          sums.tax,
+          year,
+          month,
+        ],
+      );
+    }
   }, (e) => {
     console.warn('[TX] Tax summary skipped:', e.message);
   });
