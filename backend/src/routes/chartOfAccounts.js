@@ -48,11 +48,18 @@ module.exports = function(broadcastTable) {
   }
 
   // Fast by default (stored current_balance). Pass ?liveBalances=1 for journal-join parity.
-  // Parent 321/311 remap + balance recompute always run in the background — never block list GET.
+  // Background recompute is throttled and does not broadcast — a broadcast here made the
+  // client refetch, which started another recompute, which flashed balances to 0.
+  let lastListRecomputeAt = 0;
+  const LIST_RECOMPUTE_COOLDOWN_MS = 60_000;
+
   router.get('/', async (req, res) => {
     const wantLive = /^(1|true|yes)$/i.test(String(req.query.liveBalances || ''));
     try {
       setImmediate(() => {
+        const now = Date.now();
+        if (now - lastListRecomputeAt < LIST_RECOMPUTE_COOLDOWN_MS) return;
+        lastListRecomputeAt = now;
         const run = async () => {
           try {
             const { countParentEntityLines, repairParentEntityCoaPostings } = require('../lib/repairParentEntityCoa');
@@ -67,7 +74,6 @@ module.exports = function(broadcastTable) {
           try {
             const { fastRecomputeCoaCurrentBalances } = require('../accounting');
             await fastRecomputeCoaCurrentBalances(db);
-            try { broadcastTable('chart_of_accounts'); } catch (_) {}
           } catch (e) {
             console.warn('[CHART OF ACCOUNTS] background recompute failed:', e.message);
           }

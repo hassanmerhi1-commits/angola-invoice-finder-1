@@ -134,10 +134,21 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
 
   const applyAccounts = useCallback((remoteAccounts: Account[]) => {
     const sorted = sortAccountsByCode(remoteAccounts);
-    setAccounts(sorted);
-    setCachedList('chartOfAccounts', sorted);
-    hasRowsRef.current = sorted.length > 0;
-    saveLocalAccounts(sorted);
+    const incomingHasBal = sorted.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
+    setAccounts((prev) => {
+      const prevHasBal = prev.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
+      // A mid-recompute snapshot is all zeros — keep the last good numbers on screen.
+      if (prevHasBal && !incomingHasBal && sorted.length > 0) {
+        return prev;
+      }
+      setCachedList('chartOfAccounts', sorted);
+      hasRowsRef.current = sorted.length > 0;
+      saveLocalAccounts(sorted);
+      return sorted;
+    });
+    if (incomingHasBal || sorted.length > 0) {
+      hasRowsRef.current = true;
+    }
   }, []);
 
   const fetchAccounts = useCallback(async (opts?: { force?: boolean; liveBalances?: boolean }) => {

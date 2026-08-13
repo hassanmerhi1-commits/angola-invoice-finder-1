@@ -603,50 +603,44 @@ async function fastRecomputeCoaCurrentBalances(client) {
   await normalizeJournalAccountIds(client);
 
   try {
-    // Reset then apply nets — accounts with no lines keep opening only.
+    // One statement: never zero the whole chart first. A reset+apply window made
+    // GET /chart-of-accounts return opening (often 0) while recompute was running,
+    // so the UI numbers flashed off and on.
     await client.query(`
-      UPDATE chart_of_accounts
-      SET current_balance = COALESCE(opening_balance, 0),
-          updated_at = CURRENT_TIMESTAMP
-    `);
-    await client.query(`
-      UPDATE chart_of_accounts coa
-      SET current_balance = COALESCE(coa.opening_balance, 0) + j.net,
-          updated_at = CURRENT_TIMESTAMP
-      FROM (
-        SELECT jel.account_id AS id,
+      WITH id_net AS (
+        SELECT CAST(jel.account_id AS TEXT) AS id,
                SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
         FROM journal_entry_lines jel
         INNER JOIN journal_entries je
           ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
         WHERE ${postedClause}
-        GROUP BY jel.account_id
-      ) j
-      WHERE CAST(coa.id AS TEXT) = CAST(j.id AS TEXT)
+        GROUP BY CAST(jel.account_id AS TEXT)
+      ),
+      code_net AS (
+        SELECT CAST(coa_c.id AS TEXT) AS id,
+               SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
+        FROM journal_entry_lines jel
+        INNER JOIN journal_entries je
+          ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
+        INNER JOIN chart_of_accounts coa_c
+          ON CAST(coa_c.code AS TEXT) = CAST(jel.account_id AS TEXT)
+        WHERE ${postedClause}
+          AND CAST(coa_c.id AS TEXT) <> CAST(jel.account_id AS TEXT)
+        GROUP BY CAST(coa_c.id AS TEXT)
+      ),
+      nets AS (
+        SELECT CAST(coa2.id AS TEXT) AS id,
+               COALESCE(i.net, 0) + COALESCE(c.net, 0) AS net
+        FROM chart_of_accounts coa2
+        LEFT JOIN id_net i ON i.id = CAST(coa2.id AS TEXT)
+        LEFT JOIN code_net c ON c.id = CAST(coa2.id AS TEXT)
+      )
+      UPDATE chart_of_accounts coa
+      SET current_balance = COALESCE(coa.opening_balance, 0) + COALESCE(n.net, 0),
+          updated_at = CURRENT_TIMESTAMP
+      FROM nets n
+      WHERE CAST(coa.id AS TEXT) = n.id
     `);
-    // Remap any remaining code-keyed lines that could not be normalized to UUID.
-    try {
-      await client.query(`
-        UPDATE chart_of_accounts coa
-        SET current_balance = COALESCE(coa.current_balance, 0) + j.net,
-            updated_at = CURRENT_TIMESTAMP
-        FROM (
-          SELECT coa_c.id AS id,
-                 SUM(COALESCE(jel.debit_amount, 0) - COALESCE(jel.credit_amount, 0)) AS net
-          FROM journal_entry_lines jel
-          INNER JOIN journal_entries je
-            ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
-          INNER JOIN chart_of_accounts coa_c
-            ON CAST(coa_c.code AS TEXT) = CAST(jel.account_id AS TEXT)
-          WHERE ${postedClause}
-            AND CAST(coa_c.id AS TEXT) <> CAST(jel.account_id AS TEXT)
-          GROUP BY coa_c.id
-        ) j
-        WHERE CAST(coa.id AS TEXT) = CAST(j.id AS TEXT)
-      `);
-    } catch (e2) {
-      console.warn('[ACCOUNTING] code-keyed COA balance pass skipped:', e2.message);
-    }
     return { ok: true };
   } catch (e) {
     // SQLite / older shapes: fall back to full recompute.

@@ -40,6 +40,7 @@ Invoke-RestMethod http://127.0.0.1:3000/api/health
 
 ## Agent behavior
 
-- After “release and apply”: push from this machine, then give/run **server** apply steps — do not invent local Docker success
+- **Never commit, tag, or `git push` (no release) unless the user explicitly asks** in that message. Finish the code fix, then ask before releasing.
+- After the user asks to “release and apply”: push from this machine, then give **server** apply steps — do not invent local Docker success
 - Do not re-ask “where is the server?” — use this rule
 - If remote shell/SSH to the server is not configured in the session, say clearly that apply must be run on the server PC (or ask once for SSH host to add here)

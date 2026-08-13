@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect, useRef, useCallback, memo, startTransitio
 import { useNavigate } from 'react-router-dom';
 import { useTranslation, type TranslationKeys } from '@/i18n';
 import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
-import { markCachedListStale } from '@/lib/listCache';
 import { Account, AccountType, AccountFormData, getDefaultNature } from '@/types/accounting';
 import { resolveAccountDisplayName, resolveAccountTypeLabel } from '@/lib/chartOfAccountsDisplay';
 import { buildChildrenByParentId, buildRolledBalanceById } from '@/lib/coaTreeBalances';
@@ -109,38 +108,6 @@ export default function ChartOfAccounts() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { accounts, isLoading, refetch, createAccount, updateAccount, deleteAccount } = useChartOfAccounts();
-
-  // Bust cache, force server remapping of parent 321→leaves, then reload balances.
-  useEffect(() => {
-    let cancelled = false;
-    try {
-      localStorage.removeItem('kwanzaerp_chart_of_accounts');
-      localStorage.removeItem('kwanzaerp_chart_of_accounts_v2');
-      localStorage.removeItem('kwanzaerp_chart_of_accounts_v3');
-    } catch { /* ignore */ }
-    markCachedListStale('chartOfAccounts');
-
-    const run = async () => {
-      try {
-        await api.chartOfAccounts.recomputeBalances();
-      } catch (e) {
-        console.warn('[CoA] recompute/repair on open failed:', e);
-      }
-      if (cancelled) return;
-      await refetch({ force: true, liveBalances: true });
-    };
-    void run();
-
-    const t1 = window.setTimeout(() => {
-      if (cancelled) return;
-      markCachedListStale('chartOfAccounts');
-      void refetch({ force: true, liveBalances: true });
-    }, 4000);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t1);
-    };
-  }, [refetch]);
 
   const [activeTab, setActiveTab] = useState('todos');
   const [searchTerm, setSearchTerm] = useState('');
@@ -682,7 +649,7 @@ export default function ChartOfAccounts() {
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
           </div>
         ) : (
-          <table className={cn('w-full text-xs', isLoading && accounts.length > 0 && 'opacity-60')}>
+          <table className="w-full text-xs">
             <thead className="bg-muted/60 border-b sticky top-0 z-10">
               <tr>
                 <th className="px-3 py-2 text-left font-semibold w-32">{t.chartOfAccountsUi.colAccountNo}</th>
