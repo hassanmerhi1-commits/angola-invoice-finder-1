@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Product } from '@/types/erp';
 import {
   Dialog,
@@ -10,12 +11,30 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Checkbox } from '@/components/ui/checkbox';
 import { NumericInput } from '@/components/ui/numeric-input';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { Plus, Trash2, X } from 'lucide-react';
+import {
+  DEFAULT_LINE_ROWS,
+  PRODUCT_LINE_SUGGESTION_LIMIT,
+  ROWS_NEAR_END_BUFFER,
+  ensureRowsForIndex,
+  filterProductsForSearch,
+  newLineRowId,
+  normalizeSearchText,
+  sortProductSearchResults,
+} from '@/components/inventory/productLineSearch';
 
 interface BulkPriceCostDialogProps {
   open: boolean;
@@ -25,11 +44,12 @@ interface BulkPriceCostDialogProps {
   onApplied?: (updated: number) => void;
 }
 
-type EditRow = {
-  id: string;
+type PriceLine = {
+  rowId: string;
+  productId: string | null;
   sku: string;
   name: string;
-  category: string;
+  search: string;
   origPrice: number;
   origCost: number;
   price: number;
@@ -40,9 +60,19 @@ const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 const sameMoney = (a: number, b: number) => Math.abs(round2(a) - round2(b)) < 0.005;
 const unitCost = (p: Product) => round2(p.avgCost || p.lastCost || p.cost || 0);
 
-const ROW_HEIGHT = 64;
-const OVERSCAN = 8;
-const GRID_COLS = 'grid-cols-[8rem_minmax(12rem,1.4fr)_13rem_13rem_6.5rem]';
+const createEmptyLine = (): PriceLine => ({
+  rowId: newLineRowId(),
+  productId: null,
+  sku: '',
+  name: '',
+  search: '',
+  origPrice: 0,
+  origCost: 0,
+  price: 0,
+  cost: 0,
+});
+
+const createInitialLines = () => Array.from({ length: DEFAULT_LINE_ROWS }, () => createEmptyLine());
 
 export function BulkPriceCostDialog({
   open,
@@ -53,88 +83,279 @@ export function BulkPriceCostDialog({
 }: BulkPriceCostDialogProps) {
   const { t, language } = useTranslation();
   const ui = t.inventoryPageUi.massPrice;
+  const se = t.stockEntryUi;
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const fmt = (n: number) =>
     n.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const [rows, setRows] = useState<EditRow[]>([]);
-  const [search, setSearch] = useState('');
-  const [changedOnly, setChangedOnly] = useState(false);
+
+  const [lines, setLines] = useState<PriceLine[]>(createInitialLines);
   const [saving, setSaving] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(560);
+  const [pickerRowId, setPickerRowId] = useState<string | null>(null);
+  const [pickerHighlightIndex, setPickerHighlightIndex] = useState(0);
+  const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
+
+  const dialogContentRef = useRef<HTMLDivElement | null>(null);
+  const productInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const priceRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const costRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
+
+  const catalog = useMemo(
+    () => products.filter((p) => p.isActive !== false),
+    [products],
+  );
 
   useEffect(() => {
     if (!open) return;
-    setSearch('');
-    setChangedOnly(false);
+    const initial = createInitialLines();
+    setLines(initial);
     setSaving(false);
-    setScrollTop(0);
-    setRows(
-      products.map((p) => {
-        const price = round2(p.price);
-        const cost = unitCost(p);
-        return {
-          id: p.id,
-          sku: p.sku || '',
-          name: p.name || '',
-          category: p.category || '',
-          origPrice: price,
-          origCost: cost,
-          price,
-          cost,
-        };
-      }),
-    );
-    // Snapshot catalog when the dialog opens — do not reset mid-edit if the grid refreshes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!open || !el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => setViewportHeight(el.clientHeight || 560));
-    ro.observe(el);
-    setViewportHeight(el.clientHeight || 560);
-    return () => ro.disconnect();
+    setPickerRowId(null);
+    setPickerHighlightIndex(0);
+    setPickerAnchorRect(null);
+    const firstId = initial[0].rowId;
+    const timer = window.setTimeout(() => {
+      productInputRefs.current[firstId]?.focus();
+    }, 50);
+    return () => clearTimeout(timer);
   }, [open]);
 
   const isDirty = useCallback(
-    (row: EditRow) => !sameMoney(row.price, row.origPrice) || !sameMoney(row.cost, row.origCost),
+    (line: PriceLine) =>
+      Boolean(line.productId)
+      && (!sameMoney(line.price, line.origPrice) || !sameMoney(line.cost, line.origCost)),
     [],
   );
 
-  const dirtyRows = useMemo(() => rows.filter(isDirty), [rows, isDirty]);
+  const dirtyLines = useMemo(() => lines.filter(isDirty), [lines, isDirty]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows.filter((row) => {
-      if (changedOnly && !isDirty(row)) return false;
-      if (!q) return true;
-      return (
-        row.sku.toLowerCase().includes(q)
-        || row.name.toLowerCase().includes(q)
-        || row.category.toLowerCase().includes(q)
+  const usedElsewhere = useCallback(
+    (rowId: string) => {
+      const ids = new Set<string>();
+      const skus = new Set<string>();
+      for (const line of lines) {
+        if (line.rowId === rowId || !line.productId) continue;
+        ids.add(line.productId);
+        if (line.sku) skus.add(normalizeSearchText(line.sku));
+      }
+      return { ids, skus };
+    },
+    [lines],
+  );
+
+  const getSuggestionsForRow = useCallback(
+    (rowId: string, search: string) => {
+      if (!search.trim()) return [];
+      const { ids, skus } = usedElsewhere(rowId);
+      return filterProductsForSearch(catalog, search, ids, '')
+        .filter((p) => !skus.has(normalizeSearchText(p.sku)))
+        .sort((a, b) => sortProductSearchResults(a, b, search, ''))
+        .slice(0, PRODUCT_LINE_SUGGESTION_LIMIT);
+    },
+    [catalog, usedElsewhere],
+  );
+
+  const activePickerLine = useMemo(
+    () => (pickerRowId ? lines.find((l) => l.rowId === pickerRowId) : undefined),
+    [pickerRowId, lines],
+  );
+
+  const activePickerSuggestions = useMemo(() => {
+    if (!activePickerLine || activePickerLine.productId) return [];
+    return getSuggestionsForRow(activePickerLine.rowId, activePickerLine.search);
+  }, [activePickerLine, getSuggestionsForRow]);
+
+  const showPickerDropdown = Boolean(
+    pickerRowId
+    && activePickerLine
+    && !activePickerLine.productId
+    && activePickerLine.search.trim().length > 0,
+  );
+
+  const syncPickerAnchor = useCallback((rowId: string | null) => {
+    if (!rowId) {
+      setPickerAnchorRect(null);
+      return;
+    }
+    const el = productInputRefs.current[rowId];
+    setPickerAnchorRect(el ? el.getBoundingClientRect() : null);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!showPickerDropdown || !pickerRowId) {
+      setPickerAnchorRect(null);
+      return;
+    }
+    syncPickerAnchor(pickerRowId);
+  }, [showPickerDropdown, pickerRowId, activePickerLine?.search, syncPickerAnchor]);
+
+  useEffect(() => {
+    if (!showPickerDropdown || !pickerRowId) return;
+    const onReposition = () => syncPickerAnchor(pickerRowId);
+    window.addEventListener('scroll', onReposition, true);
+    window.addEventListener('resize', onReposition);
+    return () => {
+      window.removeEventListener('scroll', onReposition, true);
+      window.removeEventListener('resize', onReposition);
+    };
+  }, [showPickerDropdown, pickerRowId, syncPickerAnchor]);
+
+  const focusPriceLine = useCallback((rowId: string) => {
+    requestAnimationFrame(() => {
+      const el = priceRefs.current[rowId];
+      el?.focus();
+      el?.select();
+    });
+  }, []);
+
+  const focusCostLine = useCallback((rowId: string) => {
+    requestAnimationFrame(() => {
+      const el = costRefs.current[rowId];
+      el?.focus();
+      el?.select();
+    });
+  }, []);
+
+  const focusProductRow = useCallback((rowIndex: number) => {
+    setLines((prev) => {
+      const nextLines = ensureRowsForIndex(prev, rowIndex, createEmptyLine);
+      const row = nextLines[rowIndex];
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!row) return;
+          if (row.productId) focusPriceLine(row.rowId);
+          else productInputRefs.current[row.rowId]?.focus();
+        });
+      });
+      if (nextLines.length === prev.length) return prev;
+      return nextLines;
+    });
+  }, [focusPriceLine]);
+
+  const selectProductOnRow = useCallback(
+    (rowId: string, product: Product) => {
+      const skuKey = normalizeSearchText(product.sku);
+      const already = linesRef.current.some(
+        (l) => l.rowId !== rowId && (
+          l.productId === product.id
+          || (skuKey && normalizeSearchText(l.sku) === skuKey)
+        ),
       );
-    });
-  }, [rows, search, changedOnly, isDirty]);
+      if (already) {
+        toast.info(ui.alreadyOnList);
+        return;
+      }
+      const origPrice = round2(product.price);
+      const origCost = unitCost(product);
+      setLines((prev) => {
+        const mapped = prev.map((l) =>
+          l.rowId === rowId
+            ? {
+                ...l,
+                productId: product.id,
+                sku: product.sku || '',
+                name: product.name || '',
+                search: '',
+                origPrice,
+                origCost,
+                price: origPrice,
+                cost: origCost,
+              }
+            : l,
+        );
+        const rowIndex = mapped.findIndex((l) => l.rowId === rowId);
+        return ensureRowsForIndex(mapped, rowIndex + 1, createEmptyLine);
+      });
+      setPickerRowId(null);
+      setPickerHighlightIndex(0);
+      setPickerAnchorRect(null);
+      focusPriceLine(rowId);
+    },
+    [focusPriceLine, ui.alreadyOnList],
+  );
 
-  const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-  const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
-  const end = Math.min(filtered.length, start + visibleCount);
-  const visible = filtered.slice(start, end);
+  const updateLineSearch = (rowId: string, search: string) => {
+    setLines((prev) => prev.map((l) => (l.rowId === rowId ? { ...l, search } : l)));
+    setPickerRowId(rowId);
+    setPickerHighlightIndex(0);
+  };
 
-  const patchRow = (id: string, field: 'price' | 'cost', value: number) => {
+  const clearProductOnRow = (rowId: string) => {
+    setLines((prev) =>
+      prev.map((l) => (l.rowId === rowId ? { ...createEmptyLine(), rowId } : l)),
+    );
+    setPickerRowId(rowId);
+    requestAnimationFrame(() => productInputRefs.current[rowId]?.focus());
+  };
+
+  const patchLine = (rowId: string, field: 'price' | 'cost', value: number) => {
     const nextVal = round2(Math.max(0, value));
-    setRows((prev) => {
-      const idx = prev.findIndex((row) => row.id === id);
-      if (idx < 0) return prev;
-      const current = prev[idx];
-      if (current[field] === nextVal) return prev;
-      const next = prev.slice();
-      next[idx] = { ...current, [field]: nextVal };
-      return next;
-    });
+    setLines((prev) =>
+      prev.map((l) => (l.rowId === rowId ? { ...l, [field]: nextVal } : l)),
+    );
+  };
+
+  const handleProductKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    rowIndex: number,
+    line: PriceLine,
+  ) => {
+    const suggestions =
+      pickerRowId === line.rowId ? getSuggestionsForRow(line.rowId, line.search) : [];
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (rowIndex > 0) focusProductRow(rowIndex - 1);
+      } else {
+        focusProductRow(rowIndex + 1);
+      }
+      return;
+    }
+    if (e.key === 'ArrowDown' && suggestions.length > 0) {
+      e.preventDefault();
+      setPickerHighlightIndex((i) => Math.min(i + 1, suggestions.length - 1));
+      return;
+    }
+    if (e.key === 'ArrowUp' && suggestions.length > 0) {
+      e.preventDefault();
+      setPickerHighlightIndex((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (suggestions.length > 0) {
+        const pick = suggestions[pickerHighlightIndex] ?? suggestions[0];
+        if (pick) selectProductOnRow(line.rowId, pick);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      setPickerRowId(null);
+    }
+  };
+
+  const handlePriceKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, line: PriceLine) => {
+    if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
+      e.preventDefault();
+      focusCostLine(line.rowId);
+    }
+  };
+
+  const handleCostKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, rowIndex: number) => {
+    if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
+      e.preventDefault();
+      focusProductRow(rowIndex + 1);
+    } else if (e.key === 'Tab' && e.shiftKey) {
+      e.preventDefault();
+      const row = linesRef.current[rowIndex];
+      if (row) focusPriceLine(row.rowId);
+    }
+  };
+
+  const addRows = () => {
+    setLines((prev) => [...prev, ...Array.from({ length: 4 }, () => createEmptyLine())]);
   };
 
   const handleOpenChange = (next: boolean) => {
@@ -146,22 +367,22 @@ export function BulkPriceCostDialog({
       onOpenChange(false);
       return;
     }
-    if (dirtyRows.length > 0 && !confirm(ui.discard)) return;
+    if (dirtyLines.length > 0 && !confirm(ui.discard)) return;
     onOpenChange(false);
   };
 
   const handleSave = async () => {
     if (saving) return;
-    if (dirtyRows.length === 0) {
+    if (dirtyLines.length === 0) {
       toast.info(ui.noChanges);
       return;
     }
-    if (!confirm(ui.confirm.replace('{count}', String(dirtyRows.length)))) return;
+    if (!confirm(ui.confirm.replace('{count}', String(dirtyLines.length)))) return;
     setSaving(true);
     try {
-      const items = dirtyRows.map((row) => {
+      const items = dirtyLines.map((row) => {
         const payload: { id: string; sku: string; price?: number; cost?: number } = {
-          id: row.id,
+          id: row.productId as string,
           sku: row.sku,
         };
         if (!sameMoney(row.price, row.origPrice)) payload.price = row.price;
@@ -185,116 +406,162 @@ export function BulkPriceCostDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="flex h-[96vh] max-h-[96vh] w-[98vw] max-w-[98vw] flex-col gap-3 overflow-hidden p-4">
+      <DialogContent
+        ref={dialogContentRef}
+        className="flex h-[96vh] max-h-[96vh] w-[98vw] max-w-[98vw] flex-col gap-3 overflow-hidden p-4"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>{ui.title}</DialogTitle>
           <DialogDescription>{ui.description}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <Input
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              if (scrollRef.current) scrollRef.current.scrollTop = 0;
-              setScrollTop(0);
-            }}
-            placeholder={ui.search}
-            className="h-9 max-w-md text-sm"
-          />
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={changedOnly}
-              onCheckedChange={(v) => {
-                setChangedOnly(v === true);
-                if (scrollRef.current) scrollRef.current.scrollTop = 0;
-                setScrollTop(0);
-              }}
-            />
-            {ui.changedOnly}
-          </label>
-          <span className="text-sm text-muted-foreground">
-            {ui.changedCount.replace('{count}', String(dirtyRows.length))}
-            {' · '}
-            {filtered.length}/{rows.length}
-          </span>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] text-muted-foreground">{ui.keyboardHint}</p>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-muted-foreground">
+              {ui.changedCount.replace('{count}', String(dirtyLines.length))}
+            </span>
+            <Button type="button" variant="outline" size="sm" className="h-8" onClick={addRows}>
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              {se.addLine}
+            </Button>
+          </div>
         </div>
 
-        <div
-          ref={scrollRef}
-          className="min-h-0 flex-1 overflow-auto rounded-md border"
-          onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-        >
-          <div className={cn('sticky top-0 z-10 grid gap-2 border-b bg-muted/90 px-3 py-2 text-xs font-medium backdrop-blur-sm', GRID_COLS)}>
-            <span>{ui.sku}</span>
-            <span>{ui.name}</span>
-            <span className="text-right">{ui.priceOldNew}</span>
-            <span className="text-right">{ui.costOldNew}</span>
-            <span className="text-right">{ui.margin}</span>
-          </div>
-          <div style={{ height: filtered.length * ROW_HEIGHT, position: 'relative' }}>
-            {visible.map((row, i) => {
-              const dirtyPrice = !sameMoney(row.price, row.origPrice);
-              const dirtyCost = !sameMoney(row.cost, row.origCost);
-              const oldMargin = row.origPrice > 0 ? ((row.origPrice - row.origCost) / row.origPrice) * 100 : 0;
-              const newMargin = row.price > 0 ? ((row.price - row.cost) / row.price) * 100 : 0;
-              return (
-                <div
-                  key={row.id}
-                  className={cn(
-                    'absolute left-0 right-0 grid items-stretch gap-2 border-b px-3 py-1',
-                    GRID_COLS,
-                    isDirty(row) ? 'bg-amber-50/70 dark:bg-amber-950/25' : 'bg-background',
-                  )}
-                  style={{ top: (start + i) * ROW_HEIGHT, height: ROW_HEIGHT }}
-                >
-                  <div className="flex min-w-0 flex-col justify-center">
-                    <span className="truncate font-mono text-xs" title={row.sku}>{row.sku}</span>
-                    <span className="truncate text-[11px] text-muted-foreground" title={row.category}>{row.category}</span>
-                  </div>
-                  <div className="flex min-w-0 items-center">
-                    <span className="truncate text-sm" title={row.name}>{row.name}</span>
-                  </div>
-                  <div className="flex min-w-0 flex-col justify-center gap-0.5">
-                    <div className="flex items-center justify-end gap-2 text-[11px] text-muted-foreground">
-                      <span>{ui.old}</span>
-                      <span className="tabular-nums">{fmt(row.origPrice)}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="shrink-0 text-[11px] text-muted-foreground">{ui.newLabel}</span>
+        <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-background [&_th]:h-8 [&_th]:px-2 [&_th]:text-xs [&_td]:px-2 [&_td]:py-1">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm">
+              <TableRow>
+                <TableHead className="min-w-[240px]">{ui.colProduct}</TableHead>
+                <TableHead className="w-[110px] text-right">{ui.priceOld}</TableHead>
+                <TableHead className="w-[120px] text-right">{ui.priceNew}</TableHead>
+                <TableHead className="w-[110px] text-right">{ui.costOld}</TableHead>
+                <TableHead className="w-[120px] text-right">{ui.costNew}</TableHead>
+                <TableHead className="w-[80px] text-right">{ui.margin}</TableHead>
+                <TableHead className="w-[40px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {lines.map((line, rowIndex) => {
+                const dirtyPrice = Boolean(line.productId) && !sameMoney(line.price, line.origPrice);
+                const dirtyCost = Boolean(line.productId) && !sameMoney(line.cost, line.origCost);
+                const newMargin = line.price > 0 ? ((line.price - line.cost) / line.price) * 100 : 0;
+                return (
+                  <TableRow
+                    key={line.rowId}
+                    className={cn(isDirty(line) && 'bg-amber-50/70 dark:bg-amber-950/20')}
+                  >
+                    <TableCell className="align-middle min-w-[240px]">
+                      {line.productId ? (
+                        <p className="text-xs leading-tight whitespace-normal break-words">
+                          <span className="font-mono font-semibold">{line.sku}</span>
+                          <span className="mx-0.5">—</span>
+                          {line.name}
+                        </p>
+                      ) : (
+                        <Input
+                          ref={(el) => {
+                            productInputRefs.current[line.rowId] = el;
+                          }}
+                          value={line.search}
+                          onChange={(e) => updateLineSearch(line.rowId, e.target.value)}
+                          onFocus={() => {
+                            setPickerRowId(line.rowId);
+                            if (rowIndex >= lines.length - ROWS_NEAR_END_BUFFER - 1) {
+                              setLines((prev) => ensureRowsForIndex(prev, rowIndex, createEmptyLine));
+                            }
+                          }}
+                          onKeyDown={(e) => handleProductKeyDown(e, rowIndex, line)}
+                          placeholder={se.searchShortPlaceholder}
+                          className="h-8 text-xs px-2 py-0 bg-background w-full min-w-0"
+                          autoComplete="off"
+                        />
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-xs text-muted-foreground align-middle">
+                      {line.productId ? fmt(line.origPrice) : '—'}
+                    </TableCell>
+                    <TableCell className="align-middle">
                       <NumericInput
+                        ref={(el) => {
+                          priceRefs.current[line.rowId] = el;
+                        }}
                         min={0}
-                        value={row.price}
-                        onValueChange={(v) => patchRow(row.id, 'price', v)}
-                        className={cn('h-7 flex-1 px-1.5 text-right text-sm tabular-nums', dirtyPrice && 'border-amber-500 bg-amber-50 dark:bg-amber-950/40')}
+                        value={line.price}
+                        onValueChange={(v) => patchLine(line.rowId, 'price', v)}
+                        onKeyDown={(e) => handlePriceKeyDown(e, line)}
+                        disabled={!line.productId}
+                        tabIndex={line.productId ? 0 : -1}
+                        className={cn(
+                          'h-8 text-right text-sm tabular-nums',
+                          dirtyPrice && 'border-amber-500 bg-amber-50 dark:bg-amber-950/40',
+                        )}
                       />
-                    </div>
-                  </div>
-                  <div className="flex min-w-0 flex-col justify-center gap-0.5">
-                    <div className="flex items-center justify-end gap-2 text-[11px] text-muted-foreground">
-                      <span>{ui.old}</span>
-                      <span className="tabular-nums">{fmt(row.origCost)}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="shrink-0 text-[11px] text-muted-foreground">{ui.newLabel}</span>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-xs text-muted-foreground align-middle">
+                      {line.productId ? fmt(line.origCost) : '—'}
+                    </TableCell>
+                    <TableCell className="align-middle">
                       <NumericInput
+                        ref={(el) => {
+                          costRefs.current[line.rowId] = el;
+                        }}
                         min={0}
-                        value={row.cost}
-                        onValueChange={(v) => patchRow(row.id, 'cost', v)}
-                        className={cn('h-7 flex-1 px-1.5 text-right text-sm tabular-nums', dirtyCost && 'border-amber-500 bg-amber-50 dark:bg-amber-950/40')}
+                        value={line.cost}
+                        onValueChange={(v) => patchLine(line.rowId, 'cost', v)}
+                        onKeyDown={(e) => handleCostKeyDown(e, rowIndex)}
+                        disabled={!line.productId}
+                        tabIndex={line.productId ? 0 : -1}
+                        className={cn(
+                          'h-8 text-right text-sm tabular-nums',
+                          dirtyCost && 'border-amber-500 bg-amber-50 dark:bg-amber-950/40',
+                        )}
                       />
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end justify-center text-xs tabular-nums">
-                    <span className="text-[11px] text-muted-foreground">{oldMargin.toFixed(1)}%</span>
-                    <span className={cn('font-medium', newMargin < 0 ? 'text-red-600' : dirtyPrice || dirtyCost ? 'text-foreground' : 'text-muted-foreground')}>
-                      {newMargin.toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                    </TableCell>
+                    <TableCell
+                      className={cn(
+                        'text-right tabular-nums text-xs align-middle',
+                        line.productId && newMargin < 0 ? 'text-red-600 font-medium' : 'text-muted-foreground',
+                      )}
+                    >
+                      {line.productId ? `${newMargin.toFixed(1)}%` : '—'}
+                    </TableCell>
+                    <TableCell className="align-middle">
+                      {line.productId ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => clearProductOnRow(line.rowId)}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground"
+                          onClick={() =>
+                            setLines((prev) =>
+                              prev.length <= DEFAULT_LINE_ROWS
+                                ? prev
+                                : prev.filter((l) => l.rowId !== line.rowId),
+                            )
+                          }
+                          disabled={lines.length <= DEFAULT_LINE_ROWS}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
         </div>
 
         <p className="text-xs text-muted-foreground">{isHeadOffice ? ui.hintHq : ui.hintFilial}</p>
@@ -303,10 +570,60 @@ export function BulkPriceCostDialog({
           <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={saving}>
             {t.common.cancel}
           </Button>
-          <Button onClick={handleSave} disabled={saving || dirtyRows.length === 0}>
+          <Button onClick={handleSave} disabled={saving || dirtyLines.length === 0}>
             {saving ? ui.saving : ui.save}
           </Button>
         </DialogFooter>
+
+        {showPickerDropdown
+          && pickerRowId
+          && dialogContentRef.current
+          && pickerAnchorRect
+          && createPortal(
+            <div
+              role="listbox"
+              className="fixed z-[200] rounded-md border bg-popover text-popover-foreground shadow-md max-h-52 overflow-auto pointer-events-auto"
+              style={{
+                top: pickerAnchorRect.bottom + 2,
+                left: pickerAnchorRect.left,
+                width: Math.max(320, pickerAnchorRect.width),
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              {activePickerSuggestions.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground px-2 py-1.5">
+                  {se.noSearchResults}
+                </p>
+              ) : (
+                activePickerSuggestions.map((p, idx) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="option"
+                    aria-selected={idx === pickerHighlightIndex}
+                    className={cn(
+                      'w-full cursor-pointer text-left px-2 py-1.5 text-[11px] leading-tight border-b last:border-b-0 hover:bg-muted',
+                      idx === pickerHighlightIndex && 'bg-accent',
+                    )}
+                    onMouseEnter={() => setPickerHighlightIndex(idx)}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      selectProductOnRow(pickerRowId, p);
+                    }}
+                  >
+                    <span className="font-mono">{p.sku}</span>
+                    <span className="mx-0.5">—</span>
+                    {p.name}
+                    <span className="text-muted-foreground ml-1 tabular-nums">
+                      ({fmt(p.price)} / {fmt(unitCost(p))})
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>,
+            dialogContentRef.current,
+          )}
       </DialogContent>
     </Dialog>
   );
