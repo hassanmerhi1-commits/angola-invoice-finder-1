@@ -592,10 +592,7 @@ export default function ChartOfAccounts() {
         </Button>
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccount}
           onClick={() => {
-            const entityName = selectedAccount
-              ? resolveAccountDisplayName(selectedAccount, language, t)
-              : undefined;
-            navigate('/payments', { state: { openPayment: true, entityName } });
+            navigate('/expenses', { state: { openExpenseCreate: true } });
           }}>
           <Banknote className="w-3 h-3" /> {t.chartOfAccountsUi.payment}
         </Button>

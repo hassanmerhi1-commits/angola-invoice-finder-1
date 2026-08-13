@@ -241,7 +241,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { label: t.topNav.accounting.receivables, icon: ArrowDownCircle, path: '/receivables' },
         { label: t.topNav.accounting.payables, icon: ArrowUpCircle, path: '/payables' },
         { label: 'separator' },
-        { label: t.topNav.accounting.payment, icon: DollarSign, path: '/payments', state: { openPayment: true } },
+        { label: t.topNav.accounting.payment, icon: DollarSign, path: '/expenses', state: { openExpenseCreate: true } },
         { label: t.topNav.accounting.chequePayment, icon: FileText, path: '/payments', state: { openPayment: true, paymentMethod: 'cheque' } },
         { label: 'separator' },
         { label: t.topNav.accounting.multiCredit, icon: Plus, path: '/journals', state: { openJournalCreate: true, journalPreset: 'credit' } },
@@ -447,7 +447,13 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           navigate('/payments', { state: { openReceipt: true } });
           return;
         case 'payment':
-          navigate('/payments', { state: { openPayment: true } });
+          // Global "Payment" = operating expense (Despesa). Supplier AP stays on /payments.
+          if (path === '/payments' || path.startsWith('/payments/')) {
+            navigate('/payments', { state: { openPayment: true } });
+          } else {
+            window.dispatchEvent(new CustomEvent('nexor:expenses-new'));
+            navigate('/expenses', { state: { openExpenseCreate: true } });
+          }
           return;
         case 'newSale':
           if (path === '/pos' || path.startsWith('/pos/')) {

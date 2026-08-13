@@ -111,7 +111,7 @@ export default function Dashboard() {
     { label: t.documents.proforma, icon: ClipboardList, path: '/proforma' },
     { label: d.documentFlow.salesInvoice, icon: FileText, path: '/invoices' },
     { label: t.documents.receipt, icon: Receipt, path: '/payments', state: { openReceipt: true } },
-    { label: t.documents.payment, icon: DollarSign, path: '/payments', state: { openPayment: true } },
+    { label: t.documents.payment, icon: DollarSign, path: '/expenses', state: { openExpenseCreate: true } },
     { label: d.documentFlow.statement, icon: FileCheck, path: '/extracto' },
   ], [t, d]);
 
