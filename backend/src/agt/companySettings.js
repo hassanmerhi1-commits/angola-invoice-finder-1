@@ -50,14 +50,46 @@ async function getCompanySettings() {
   return { ...DEFAULTS, ...parseJson(row?.settings_json) };
 }
 
+const PLACEHOLDER_VALUES = {
+  nif: new Set(['5000000000']),
+  name: new Set(['NEXOR ERP', 'Kwanza ERP', 'Empresa Demo']),
+  address: new Set(['Rua Comandante Gika, 123', 'Rua Principal, 123']),
+  phone: new Set(['+244 923 456 789']),
+  email: new Set(['info@nexorerp.co.ao']),
+  website: new Set(['www.nexorerp.co.ao']),
+  agtCertificateNumber: new Set(['SW/AGT/2025/0001']),
+};
+
+function keepRealValueIfPlaceholder(field, incoming, existing) {
+  const next = incoming == null ? '' : String(incoming).trim();
+  const prev = existing == null ? '' : String(existing).trim();
+  const placeholders = PLACEHOLDER_VALUES[field];
+  if (!placeholders) return incoming;
+  if (placeholders.has(next) && prev && !placeholders.has(prev)) {
+    return existing;
+  }
+  return incoming;
+}
+
 async function saveCompanySettings(payload) {
-  const merged = { ...(await getCompanySettings()), ...(payload || {}) };
+  const existing = await getCompanySettings();
+  const incoming = payload || {};
+  const protectedFields = ['nif', 'name', 'tradeName', 'address', 'phone', 'email', 'website', 'agtCertificateNumber'];
+  const sanitized = { ...incoming };
+  for (const field of protectedFields) {
+    if (field === 'tradeName') {
+      sanitized[field] = keepRealValueIfPlaceholder('name', incoming[field], existing[field]);
+    } else {
+      sanitized[field] = keepRealValueIfPlaceholder(field, incoming[field], existing[field]);
+    }
+  }
+  const merged = { ...existing, ...sanitized };
   merged.posDefaultPriceLevel = normalizePriceLevel(merged.posDefaultPriceLevel);
   merged.updatedAt = new Date().toISOString();
 
   const json = JSON.stringify(merged);
-  const existing = await getCompanySettingsRow();
-  if (existing) {
+  const existingRow = await getCompanySettingsRow();
+  if (existingRow) {
     await db.query(
       'UPDATE company_settings SET settings_json = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [json, SETTINGS_ID],

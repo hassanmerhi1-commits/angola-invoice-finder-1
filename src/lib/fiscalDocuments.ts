@@ -11,6 +11,7 @@ import {
   Branch
 } from '@/types/erp';
 import { getAllSales, getProducts, getClients, getBranches } from './storage';
+import { getCompanySettings } from './companySettings';
 
 const STORAGE_KEYS = {
   creditNotes: 'kwanzaerp_credit_notes',
@@ -155,19 +156,21 @@ export function generateTransportDocNumber(branchCode: string): string {
 // ==================== COMPANY INFO ====================
 
 export function getCompanyInfo(): CompanyInfo {
-  return getItem<CompanyInfo>(STORAGE_KEYS.companyInfo, {
-    name: 'NEXOR ERP',
-    nif: '5000000000',
-    address: 'Rua Principal, 123',
-    city: 'Luanda',
-    province: 'Luanda',
-    postalCode: '0000',
-    country: 'AO',
-    phone: '+244 923 456 789',
-    email: 'info@nexorerp.co.ao',
-    activityCode: '47111',
-    fiscalYear: new Date().getFullYear().toString(),
-  });
+  const company = getCompanySettings();
+  const extra = getItem<Partial<CompanyInfo>>(STORAGE_KEYS.companyInfo, {});
+  return {
+    name: company.name || extra.name || '',
+    nif: company.nif || extra.nif || '',
+    address: company.address || extra.address || '',
+    city: company.city || extra.city || '',
+    province: company.province || extra.province || '',
+    postalCode: company.postalCode || extra.postalCode || '',
+    country: company.country || extra.country || 'AO',
+    phone: company.phone || extra.phone || '',
+    email: company.email || extra.email || '',
+    activityCode: extra.activityCode || '',
+    fiscalYear: extra.fiscalYear || new Date().getFullYear().toString(),
+  };
 }
 
 export function saveCompanyInfo(info: CompanyInfo): void {

@@ -2,7 +2,6 @@
 const express = require('express');
 const { generateSaft } = require('../saft/saftGenerator');
 const { saftToXml, buildSaftFilename } = require('../saft/saftXmlSerializer');
-const { saveCompanySettings } = require('../agt/companySettings');
 
 module.exports = function saftXmlRouter() {
   const router = express.Router();
@@ -37,9 +36,6 @@ module.exports = function saftXmlRouter() {
 
   router.post('/download', async (req, res) => {
     try {
-      if (req.body?.company) {
-        await saveCompanySettings(req.body.company);
-      }
       const { saft, company, period } = await generateSaft(parseOptions(req));
       const xml = saftToXml(saft);
       const filename = buildSaftFilename(company, period, 'xml');

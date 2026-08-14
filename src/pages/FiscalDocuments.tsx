@@ -465,7 +465,6 @@ export default function FiscalDocuments() {
 
   const handleSaveCompanyInfo = () => {
     saveCompanyInfo(editCompanyInfo);
-    api.companySettings.save(editCompanyInfo).catch(() => {});
     toast({
       title: t.fiscalDocumentsUi.companyInfoUpdatedTitle,
       description: t.fiscalDocumentsUi.companyInfoSavedSuccess,

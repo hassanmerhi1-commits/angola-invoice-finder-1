@@ -15,7 +15,7 @@ import * as fiscalStorage from '@/lib/fiscalDocuments';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
 import { CREDIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
-import { getCompanySettings } from '@/lib/companySettings';
+import { getCompanySettings, hydrateCompanySettingsFromServer, saveCompanySettingsToServer } from '@/lib/companySettings';
 import { exportSAFTToXML } from '@/lib/saftAO';
 
 async function resolveBranchName(branchId: string, cachedName?: string) {
@@ -319,9 +319,26 @@ export function useTransportDocuments(branchId?: string) {
 export function useCompanyInfo() {
   const [companyInfo, setCompanyInfo] = useState<CompanyInfo>(fiscalStorage.getCompanyInfo());
 
+  useEffect(() => {
+    void hydrateCompanySettingsFromServer().then(() => {
+      setCompanyInfo(fiscalStorage.getCompanyInfo());
+    });
+  }, []);
+
   const saveCompanyInfo = useCallback((info: CompanyInfo) => {
     fiscalStorage.saveCompanyInfo(info);
     setCompanyInfo(info);
+    void saveCompanySettingsToServer({
+      name: info.name,
+      nif: info.nif,
+      address: info.address,
+      city: info.city,
+      province: info.province,
+      postalCode: info.postalCode,
+      country: info.country,
+      phone: info.phone,
+      email: info.email,
+    }).catch(() => {});
   }, []);
 
   return { companyInfo, saveCompanyInfo };
@@ -346,16 +363,14 @@ export function useSAFTExport() {
     exportedBy: string,
     branchId?: string,
   ): Promise<SAFTExport> => {
-    const company = fiscalStorage.getCompanyInfo();
+    const company = getCompanySettings();
     const fileName = `SAFT_AO_${periodStart.replace(/-/g, '')}_${periodEnd.replace(/-/g, '')}.xml`;
-
-    await api.companySettings.save({ ...getCompanySettings(), ...company }).catch(() => {});
 
     const response = await api.saft.generate({
       startDate: periodStart,
       endDate: periodEnd,
       branchId,
-      company: { ...getCompanySettings(), ...company },
+      company,
     });
 
     if (response.error) {

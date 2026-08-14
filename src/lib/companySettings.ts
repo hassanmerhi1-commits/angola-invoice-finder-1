@@ -56,32 +56,36 @@ export interface CompanySettings {
 const STORAGE_KEY = 'kwanza_company_settings';
 
 const DEFAULT_SETTINGS: CompanySettings = {
-  name: 'NEXOR ERP',
-  tradeName: 'NEXOR ERP',
-  nif: '5000000000',
-  address: 'Rua Comandante Gika, 123',
-  city: 'Luanda',
-  province: 'Luanda',
+  name: '',
+  tradeName: '',
+  nif: '',
+  address: '',
+  city: '',
+  province: '',
   country: 'Angola',
-  phone: '+244 923 456 789',
-  email: 'info@nexorerp.co.ao',
-  website: 'www.nexorerp.co.ao',
-  agtCertificateNumber: 'SW/AGT/2025/0001',
-  softwareVersion: '1.0.0',
+  phone: '',
+  email: '',
+  website: '',
+  agtCertificateNumber: '',
+  softwareVersion: '',
   invoicePrefix: 'FT',
-  footerText: 'Obrigado pela preferência!',
-  invoiceNotes: 'Pagamento a pronto. Não aceitamos devoluções após 7 dias.',
+  footerText: '',
+  invoiceNotes: '',
   primaryColor: '#2563eb',
   posDefaultPriceLevel: 1,
 };
 
-function needsBrandMigration(settings: Partial<CompanySettings>): boolean {
-  const brandFields = [settings.name, settings.tradeName, settings.email, settings.website]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+/** Old product placeholders — never treat a real name that merely contains "Kwanza". */
+const LEGACY_PLACEHOLDER_NAMES = new Set([
+  'kwanza erp',
+  'empresa demo',
+  'empresa demo lda',
+]);
 
-  return brandFields.includes('kwanza') || brandFields.includes('empresa demo');
+function needsBrandMigration(settings: Partial<CompanySettings>): boolean {
+  const name = String(settings.name || '').trim().toLowerCase();
+  const trade = String(settings.tradeName || '').trim().toLowerCase();
+  return LEGACY_PLACEHOLDER_NAMES.has(name) || LEGACY_PLACEHOLDER_NAMES.has(trade);
 }
 
 export function getCompanySettings(): CompanySettings {
@@ -92,10 +96,12 @@ export function getCompanySettings(): CompanySettings {
       const migrated = needsBrandMigration(parsed)
         ? {
             ...parsed,
-            name: 'NEXOR ERP',
-            tradeName: 'NEXOR ERP',
-            email: parsed.email && !parsed.email.includes('empresa.') ? parsed.email : DEFAULT_SETTINGS.email,
-            website: parsed.website && !parsed.website.includes('empresa.') ? parsed.website : DEFAULT_SETTINGS.website,
+            name: parsed.name && !LEGACY_PLACEHOLDER_NAMES.has(String(parsed.name).trim().toLowerCase())
+              ? parsed.name
+              : '',
+            tradeName: parsed.tradeName && !LEGACY_PLACEHOLDER_NAMES.has(String(parsed.tradeName).trim().toLowerCase())
+              ? parsed.tradeName
+              : '',
           }
         : parsed;
 

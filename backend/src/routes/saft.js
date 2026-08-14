@@ -6,7 +6,6 @@ const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 const { generateSaft, generateSaftPreview } = require('../saft/saftGenerator');
 const { saftToXml, buildSaftFilename } = require('../saft/saftXmlSerializer');
 const { validateSaftXml, resolveXsdPath } = require('../saft/saftXsdValidate');
-const { saveCompanySettings } = require('../agt/companySettings');
 
 module.exports = function saftRouter() {
   const router = express.Router();
@@ -56,9 +55,6 @@ module.exports = function saftRouter() {
 
   router.post('/generate', requireAuth, requirePermission('saft_export'), async (req, res) => {
     try {
-      if (req.body?.company) {
-        await saveCompanySettings(req.body.company);
-      }
       const { saft, period } = await generateSaft(parseOptions(req));
       await auditSaftExport(req, period, 'json');
       res.json(saft);
@@ -106,9 +102,6 @@ module.exports = function saftRouter() {
 
   router.post('/export', requireAuth, requirePermission('saft_export'), async (req, res) => {
     try {
-      if (req.body?.company) {
-        await saveCompanySettings(req.body.company);
-      }
       const format = (req.query.format || req.body?.format || 'json').toLowerCase();
       const generated = await generateSaft(parseOptions(req));
       await auditSaftExport(req, generated.period, format);
@@ -131,9 +124,6 @@ module.exports = function saftRouter() {
 
   router.post('/validate', requireAuth, requirePermission('saft_export'), async (req, res) => {
     try {
-      if (req.body?.company) {
-        await saveCompanySettings(req.body.company);
-      }
       const generated = await generateSaft(parseOptions(req));
       const xml = saftToXml(generated.saft);
       const validation = await validateSaftXml(xml);
