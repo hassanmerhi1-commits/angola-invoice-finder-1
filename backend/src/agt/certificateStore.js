@@ -164,6 +164,58 @@ async function activateCertificate(keyId) {
   return { success: true };
 }
 
+async function replaceCertificateMaterial(keyId, { pfxBuffer, passphrase, certificateNumber, alias }) {
+  const res = await db.query('SELECT id, key_alias FROM signing_keys WHERE id = $1', [keyId]);
+  if (!res.rows.length) throw new Error('Certificado não encontrado');
+
+  const parsed = parsePkcs12(pfxBuffer, passphrase);
+  testPrivateKey(parsed.privateKeyPem);
+
+  const pfxPath = path.join(signingDir(), `${keyId}.pfx`);
+  fs.writeFileSync(pfxPath, pfxBuffer);
+  const privateKeyHash = crypto.createHash('sha256').update(pfxBuffer).digest('hex');
+  const encryptedPassphrase = encryptSecret(passphrase || '');
+  const nextAlias = String(alias || res.rows[0].key_alias || '').trim();
+
+  await db.query(
+    `UPDATE signing_keys SET
+       key_alias = COALESCE($2, key_alias),
+       key_type = $3,
+       public_key_pem = $4,
+       private_key_hash = $5,
+       certificate_number = COALESCE($6, certificate_number),
+       subject_cn = $7,
+       valid_from = $8,
+       valid_until = $9,
+       encrypted_passphrase = $10,
+       pfx_storage_path = $11,
+       revoked_at = NULL
+     WHERE id = $1`,
+    [
+      keyId,
+      nextAlias || null,
+      parsed.keyType,
+      parsed.publicKeyPem,
+      privateKeyHash,
+      certificateNumber || null,
+      parsed.subjectCn,
+      parsed.validFrom.toISOString(),
+      parsed.validUntil.toISOString(),
+      encryptedPassphrase,
+      pfxPath,
+    ],
+  );
+  clearSigningMaterialCache();
+  return {
+    id: keyId,
+    alias: nextAlias,
+    keyType: parsed.keyType,
+    subjectCn: parsed.subjectCn,
+    validFrom: parsed.validFrom.toISOString(),
+    validUntil: parsed.validUntil.toISOString(),
+  };
+}
+
 async function deleteCertificate(keyId, options = {}) {
   const { force = false } = options;
   const res = await db.query(
@@ -175,6 +227,9 @@ async function deleteCertificate(keyId, options = {}) {
     throw new Error('Não pode remover o certificado activo');
   }
   const pfxPath = res.rows[0].pfx_storage_path;
+  // Invoices may still reference this key — detach, never cascade-delete fiscal history.
+  await db.query('UPDATE invoice_signatures SET signing_key_id = NULL WHERE signing_key_id = $1', [keyId]).catch(() => {});
+  await db.query('UPDATE fiscal_signatures SET signing_key_id = NULL WHERE signing_key_id = $1', [keyId]).catch(() => {});
   await db.query('DELETE FROM signing_keys WHERE id = $1', [keyId]);
   if (pfxPath && fs.existsSync(pfxPath)) {
     try { fs.unlinkSync(pfxPath); } catch (_) {}
@@ -249,6 +304,7 @@ module.exports = {
   importCertificate,
   findCertificateByAlias,
   activateCertificate,
+  replaceCertificateMaterial,
   deleteCertificate,
   loadActiveSigningMaterial,
   parsePkcs12,

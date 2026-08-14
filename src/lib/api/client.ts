@@ -1994,7 +1994,7 @@ export const api = {
       const apiResult = await apiFetch<any[]>(
         `/chart-of-accounts/${encodeURIComponent(id)}/ledger${qs ? `?${qs}` : ''}`,
         {},
-        { timeoutMs: 12000 },
+        { timeoutMs: 8000 },
       );
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
 
@@ -2542,21 +2542,22 @@ export const api = {
       if (params?.endDate) sp.append('endDate', params.endDate);
       if (params?.limit) sp.append('limit', params.limit.toString());
       const qs = sp.toString();
-      const apiResult = await apiFetch<any[]>(`/audit${qs ? `?${qs}` : ''}`);
+      const apiResult = await apiFetch<any[]>(`/audit${qs ? `?${qs}` : ''}`, {}, { timeoutMs: 8000 });
       if (apiResult.data !== undefined && !apiResult.error) return apiResult;
       if (isElectronMode()) {
-        let sql = 'SELECT * FROM audit_log WHERE 1=1';
+        let sql = 'SELECT id, table_name, record_id, action, user_id, user_name, branch_id, description, created_at FROM audit_log WHERE 1=1';
         const sqlParams: any[] = [];
         let idx = 1;
         if (params?.tableName) { sql += ` AND table_name = $${idx++}`; sqlParams.push(params.tableName); }
         if (params?.action) { sql += ` AND action = $${idx++}`; sqlParams.push(params.action); }
         if (params?.userId) { sql += ` AND user_id = $${idx++}`; sqlParams.push(params.userId); }
         sql += ` ORDER BY created_at DESC LIMIT $${idx++}`;
-        sqlParams.push(params?.limit || 200);
+        sqlParams.push(params?.limit || 100);
         return ipcQuery<any>(sql, sqlParams);
       }
       return apiResult;
     },
+    get: (id: string) => apiFetch<any>(`/audit/${encodeURIComponent(id)}`),
     recordHistory: (tableName: string, recordId: string) => {
       if (isElectronMode()) {
         return ipcQuery<any>(

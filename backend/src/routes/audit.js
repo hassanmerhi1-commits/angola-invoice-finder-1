@@ -5,6 +5,14 @@ const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 
+const AUDIT_LIST_COLS = `id, table_name, record_id, action, user_id, user_name, branch_id, description, created_at`;
+
+function parseAuditLimit(raw, fallback = 100, max = 200) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(n, 1), max);
+}
+
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
@@ -22,12 +30,27 @@ module.exports = function(broadcastTable) {
       if (endDate) { params.push(endDate); conditions.push(`created_at <= $${params.length}`); }
 
       const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-      const limitClause = `LIMIT ${parseInt(limit, 10) || 500}`;
+      params.push(parseAuditLimit(limit));
+      const limitSql = `LIMIT $${params.length}`;
+      const sql = `SELECT ${AUDIT_LIST_COLS} FROM audit_log ${where} ORDER BY created_at DESC ${limitSql}`;
 
-      const result = await db.query(
-        `SELECT * FROM audit_log ${where} ORDER BY created_at DESC ${limitClause}`,
-        params,
-      );
+      let result;
+      if (db.engine === 'postgres' && db.pool) {
+        const client = await db.pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query(`SET LOCAL statement_timeout = '2500'`);
+          result = await client.query(sql, params);
+          await client.query('COMMIT');
+        } catch (err) {
+          try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+          throw err;
+        } finally {
+          client.release();
+        }
+      } else {
+        result = await db.query(sql, params);
+      }
       res.json(result.rows);
     } catch (error) {
       console.error('[AUDIT ERROR]', error);
@@ -90,6 +113,22 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       console.error('[AUDIT ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch audit stats' });
+    }
+  });
+
+  router.get('/:id', requireAuth, requirePermission('reports_audit'), async (req, res) => {
+    try {
+      const result = await db.query(
+        'SELECT * FROM audit_log WHERE id::text = $1::text LIMIT 1',
+        [req.params.id],
+      );
+      if (!result.rows[0]) {
+        return res.status(404).json({ error: 'Audit entry not found' });
+      }
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error('[AUDIT ERROR]', error);
+      res.status(500).json({ error: 'Failed to fetch audit entry' });
     }
   });
 

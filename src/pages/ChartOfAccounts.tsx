@@ -180,7 +180,6 @@ export default function ChartOfAccounts() {
     // Leaf drill-down is the hot path — start ledger fetch before double-click.
     const isLeaf =
       !account.is_header
-      && String(account.code || '').length > 3
       && !(childrenByParentRef.current.get(account.id)?.length);
     if (isLeaf) prefetchAccountLedger(account.id, { days: 7, limit: 50 });
   }, []);

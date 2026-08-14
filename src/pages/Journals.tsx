@@ -372,7 +372,7 @@ function JournalsAuditPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.audit.list({ limit: 200 });
+      const res = await api.audit.list({ limit: 80 });
       const raw = Array.isArray(res.data) ? res.data : [];
       setRows(raw.map((row) => mapAuditLogRow(row as Record<string, unknown>)));
     } catch {

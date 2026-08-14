@@ -306,8 +306,8 @@ async function mirrorJournalPostedEvent(payload, idempotencyKey) {
 
     await db.query(
       `INSERT INTO journal_entry_lines
-       (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+       (id, journal_entry_id, account_id, description, debit_amount, credit_amount, entry_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         lineId,
         entry.id,
@@ -315,6 +315,7 @@ async function mirrorJournalPostedEvent(payload, idempotencyKey) {
         line.description || entry.description || '',
         debit,
         credit,
+        entry.entry_date || null,
       ]
     );
     await db.query(

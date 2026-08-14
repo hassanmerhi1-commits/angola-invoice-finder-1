@@ -8,7 +8,7 @@ const {
   importCertificate,
   findCertificateByAlias,
   activateCertificate,
-  deleteCertificate,
+  replaceCertificateMaterial,
   generateDemoPkcs12,
 } = require('../agt/certificateStore');
 const { getSigningStatus } = require('../agt/fiscalSigning');
@@ -39,13 +39,26 @@ async function ensureDemoCertificate() {
       await activateCertificate(existing.id);
       return { ...mapCertificateRow(existing), reused: true };
     }
-    await deleteCertificate(existing.id, { force: true });
   }
 
   const pfxBuffer = generateDemoPkcs12({
     commonName: `NEXOR Demo NIF ${DEMO_NIF}`,
     passphrase: DEMO_CERT_PASSPHRASE,
   });
+
+  if (existing) {
+    // Row exists (often already used on invoices) but the .pfx is missing —
+    // typical after a Docker path change. Replace material in place; never DELETE.
+    const replaced = await replaceCertificateMaterial(existing.id, {
+      pfxBuffer,
+      passphrase: DEMO_CERT_PASSPHRASE,
+      certificateNumber: DEMO_VALIDATION_NUMBER,
+      alias: DEMO_CERT_ALIAS,
+    });
+    await activateCertificate(existing.id);
+    return { ...replaced, reused: false };
+  }
+
   const imported = await importCertificate({
     alias: DEMO_CERT_ALIAS,
     pfxBase64: pfxBuffer.toString('base64'),

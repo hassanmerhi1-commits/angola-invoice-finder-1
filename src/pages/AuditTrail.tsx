@@ -33,7 +33,7 @@ function mapBackendAuditRow(row: Record<string, unknown>): AuditEntry {
 }
 
 async function loadAuditEntries(): Promise<AuditEntry[]> {
-  const res = await api.audit.list({ limit: 500 });
+  const res = await api.audit.list({ limit: 150 });
   if (res.error) {
     throw new Error(res.error);
   }
@@ -348,7 +348,18 @@ export default function AuditTrail() {
                   const config = ACTION_CONFIG[entry.action] || { icon: FileText, labelKey: '', color: 'text-muted-foreground' };
                   const Icon = config.icon;
                   return (
-                    <TableRow key={entry.id} className="cursor-pointer hover:bg-accent/50" onClick={() => setSelectedEntry(entry)}>
+                    <TableRow
+                      key={entry.id}
+                      className="cursor-pointer hover:bg-accent/50"
+                      onClick={() => {
+                        setSelectedEntry(entry);
+                        void api.audit.get(entry.id).then((res) => {
+                          if (res.data && !res.error) {
+                            setSelectedEntry(mapBackendAuditRow(res.data as Record<string, unknown>));
+                          }
+                        });
+                      }}
+                    >
                       <TableCell className="text-xs font-mono text-muted-foreground">
                         {new Date(entry.createdAt).toLocaleTimeString(uiLocale, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </TableCell>

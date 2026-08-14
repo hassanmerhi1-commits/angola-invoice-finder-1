@@ -1,7 +1,17 @@
 /**
  * Fast CoA account ledger — single account, date-bounded, index-friendly.
  * Never expands children (321/311/45 headers timed out for minutes doing that).
+ *
+ * Busy leaves (caixa, 613, 3452, client 311x) used to hang because
+ * `account_id::text = $1::text` cannot use idx_jel_account_entry_date.
  */
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function looksLikeUuid(value) {
+  return UUID_RE.test(String(value || '').trim());
+}
+
 async function fetchAccountLedger(db, root, {
   start_date,
   end_date,
@@ -23,7 +33,7 @@ async function fetchAccountLedger(db, root, {
     root.is_header === true || root.is_header === 1 || root.is_header === '1';
   const isHighVolumeParent =
     isHeader
-    || /^(43|45|31|32|311|321)$/.test(codeStr);
+    || /^(11|43|45|31|32|61|62|63|311|321|3452)/.test(codeStr);
 
   let startDate = start_date ? String(start_date).slice(0, 10) : '';
   let endDate = end_date ? String(end_date).slice(0, 10) : '';
@@ -55,20 +65,12 @@ async function fetchAccountLedger(db, root, {
 
   const accountId = String(root.id);
   const hardLimit = Math.min(Math.max(Number(limit) || 50, 1), isHighVolumeParent ? 50 : 100);
-  // Leaves should fail fast over Tailscale — never sit on an 8s statement_timeout.
-  const statementTimeoutMs = isHighVolumeParent ? 5000 : 3000;
+  const statementTimeoutMs = isHighVolumeParent ? 4000 : 2500;
+  const pgAccountPred = looksLikeUuid(accountId)
+    ? 'jel.account_id = $1::uuid'
+    : 'jel.account_id::text = $1::text';
 
-  let rawRows = [];
-  if (db.engine === 'postgres' && db.pool) {
-    const client = await db.pool.connect();
-    try {
-      await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}'`);
-      // Prefer journal_entries.entry_date (always populated) + account_id index.
-      // jel.entry_date path is secondary — NULL line dates made the old fast path miss rows
-      // and fall through to a second timed-out scan.
-      try {
-        const result = await client.query(
-          `SELECT
+  const selectCols = `
              jel.id,
              jel.journal_entry_id,
              jel.account_id,
@@ -82,10 +84,45 @@ async function fetchAccountLedger(db, root, {
              je.reference_id,
              je.branch_id,
              je.is_posted,
-             je.created_at AS journal_created_at
+             je.created_at AS journal_created_at`;
+
+  let rawRows = [];
+  if (db.engine === 'postgres' && db.pool) {
+    const client = await db.pool.connect();
+    try {
+      const runInTimeout = async (sql, params) => {
+        await client.query('BEGIN');
+        try {
+          await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}'`);
+          const result = await client.query(sql, params);
+          await client.query('COMMIT');
+          return result.rows || [];
+        } catch (err) {
+          try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+          throw err;
+        }
+      };
+
+      try {
+        rawRows = await runInTimeout(
+          `SELECT ${selectCols}
            FROM journal_entry_lines jel
            INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-           WHERE jel.account_id::text = $1::text
+           WHERE ${pgAccountPred}
+             AND jel.entry_date >= $2::date
+             AND jel.entry_date <= $3::date
+             AND (je.is_posted IS DISTINCT FROM false)
+           ORDER BY jel.entry_date DESC, je.created_at DESC
+           LIMIT $4`,
+          [accountId, startDate, endDate, hardLimit],
+        );
+      } catch (e) {
+        console.warn('[COA ledger] line-date path failed, header-date fallback:', String(e.message || e).slice(0, 180));
+        rawRows = await runInTimeout(
+          `SELECT ${selectCols}
+           FROM journal_entry_lines jel
+           INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+           WHERE ${pgAccountPred}
              AND je.entry_date >= $2::date
              AND je.entry_date <= $3::date
              AND (je.is_posted IS DISTINCT FROM false)
@@ -93,37 +130,6 @@ async function fetchAccountLedger(db, root, {
            LIMIT $4`,
           [accountId, startDate, endDate, hardLimit],
         );
-        rawRows = result.rows || [];
-      } catch (e) {
-        console.warn('[COA ledger] primary path failed, fallback:', String(e.message || e).slice(0, 180));
-        await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}'`);
-        const result = await client.query(
-          `SELECT
-             jel.id,
-             jel.journal_entry_id,
-             jel.account_id,
-             jel.description,
-             jel.debit_amount,
-             jel.credit_amount,
-             je.entry_number,
-             COALESCE(jel.entry_date, je.entry_date)::text AS entry_date,
-             je.description AS journal_description,
-             je.reference_type,
-             je.reference_id,
-             je.branch_id,
-             je.is_posted,
-             je.created_at AS journal_created_at
-           FROM journal_entry_lines jel
-           INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-           WHERE jel.account_id::text = $1::text
-             AND COALESCE(jel.entry_date, je.entry_date) >= $2::date
-             AND COALESCE(jel.entry_date, je.entry_date) <= $3::date
-             AND (je.is_posted IS DISTINCT FROM false)
-           ORDER BY COALESCE(jel.entry_date, je.entry_date) DESC, jel.id DESC
-           LIMIT $4`,
-          [accountId, startDate, endDate, hardLimit],
-        );
-        rawRows = result.rows || [];
       }
     } finally {
       client.release();
