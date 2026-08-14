@@ -33,24 +33,7 @@ module.exports = function(broadcastTable) {
       params.push(parseAuditLimit(limit));
       const limitSql = `LIMIT $${params.length}`;
       const sql = `SELECT ${AUDIT_LIST_COLS} FROM audit_log ${where} ORDER BY created_at DESC ${limitSql}`;
-
-      let result;
-      if (db.engine === 'postgres' && db.pool) {
-        const client = await db.pool.connect();
-        try {
-          await client.query('BEGIN');
-          await client.query(`SET LOCAL statement_timeout = '2500'`);
-          result = await client.query(sql, params);
-          await client.query('COMMIT');
-        } catch (err) {
-          try { await client.query('ROLLBACK'); } catch { /* ignore */ }
-          throw err;
-        } finally {
-          client.release();
-        }
-      } else {
-        result = await db.query(sql, params);
-      }
+      const result = await db.query(sql, params);
       res.json(result.rows);
     } catch (error) {
       console.error('[AUDIT ERROR]', error);

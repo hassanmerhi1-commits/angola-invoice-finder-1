@@ -1,11 +1,7 @@
 /**
  * Fast CoA account ledger — single account, date-bounded, index-friendly.
- * Never expands children (321/311/45 headers timed out for minutes doing that).
- *
- * Busy leaves (caixa, 613, 3452, client 311x) used to hang because
- * `account_id::text = $1::text` cannot use idx_jel_account_entry_date.
+ * Never expands children. Never holds a pool connection in an extra BEGIN.
  */
-
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function looksLikeUuid(value) {
@@ -65,75 +61,44 @@ async function fetchAccountLedger(db, root, {
 
   const accountId = String(root.id);
   const hardLimit = Math.min(Math.max(Number(limit) || 50, 1), isHighVolumeParent ? 50 : 100);
-  const statementTimeoutMs = isHighVolumeParent ? 4000 : 2500;
   const pgAccountPred = looksLikeUuid(accountId)
-    ? 'jel.account_id = $1::uuid'
-    : 'jel.account_id::text = $1::text';
-
-  const selectCols = `
-             jel.id,
-             jel.journal_entry_id,
-             jel.account_id,
-             jel.description,
-             jel.debit_amount,
-             jel.credit_amount,
-             je.entry_number,
-             je.entry_date::text AS entry_date,
-             je.description AS journal_description,
-             je.reference_type,
-             je.reference_id,
-             je.branch_id,
-             je.is_posted,
-             je.created_at AS journal_created_at`;
+    ? 'account_id = $1::uuid'
+    : 'account_id::text = $1::text';
 
   let rawRows = [];
-  if (db.engine === 'postgres' && db.pool) {
-    const client = await db.pool.connect();
-    try {
-      const runInTimeout = async (sql, params) => {
-        await client.query('BEGIN');
-        try {
-          await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}'`);
-          const result = await client.query(sql, params);
-          await client.query('COMMIT');
-          return result.rows || [];
-        } catch (err) {
-          try { await client.query('ROLLBACK'); } catch { /* ignore */ }
-          throw err;
-        }
-      };
-
-      try {
-        rawRows = await runInTimeout(
-          `SELECT ${selectCols}
-           FROM journal_entry_lines jel
-           INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-           WHERE ${pgAccountPred}
-             AND jel.entry_date >= $2::date
-             AND jel.entry_date <= $3::date
-             AND (je.is_posted IS DISTINCT FROM false)
-           ORDER BY jel.entry_date DESC, je.created_at DESC
-           LIMIT $4`,
-          [accountId, startDate, endDate, hardLimit],
-        );
-      } catch (e) {
-        console.warn('[COA ledger] line-date path failed, header-date fallback:', String(e.message || e).slice(0, 180));
-        rawRows = await runInTimeout(
-          `SELECT ${selectCols}
-           FROM journal_entry_lines jel
-           INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
-           WHERE ${pgAccountPred}
-             AND je.entry_date >= $2::date
-             AND je.entry_date <= $3::date
-             AND (je.is_posted IS DISTINCT FROM false)
-           ORDER BY je.entry_date DESC, je.created_at DESC
-           LIMIT $4`,
-          [accountId, startDate, endDate, hardLimit],
-        );
-      }
-    } finally {
-      client.release();
-    }
+  if (db.engine === 'postgres') {
+    // Limit on the line index FIRST, then join headers — never sort the full cash history.
+    const result = await db.query(
+      `SELECT
+         jel.id,
+         jel.journal_entry_id,
+         jel.account_id,
+         jel.description,
+         jel.debit_amount,
+         jel.credit_amount,
+         je.entry_number,
+         COALESCE(jel.entry_date, je.entry_date)::text AS entry_date,
+         je.description AS journal_description,
+         je.reference_type,
+         je.reference_id,
+         je.branch_id,
+         je.is_posted,
+         je.created_at AS journal_created_at
+       FROM (
+         SELECT id, journal_entry_id, account_id, description, debit_amount, credit_amount, entry_date
+         FROM journal_entry_lines
+         WHERE ${pgAccountPred}
+           AND entry_date >= $2::date
+           AND entry_date <= $3::date
+         ORDER BY entry_date DESC NULLS LAST, id DESC
+         LIMIT $4
+       ) jel
+       INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
+       WHERE ${postedClause}
+       ORDER BY jel.entry_date DESC NULLS LAST, je.created_at DESC`,
+      [accountId, startDate, endDate, hardLimit],
+    );
+    rawRows = result.rows || [];
   } else {
     const result = await db.query(
       `SELECT

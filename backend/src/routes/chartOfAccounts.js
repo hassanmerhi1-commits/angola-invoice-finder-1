@@ -48,39 +48,11 @@ module.exports = function(broadcastTable) {
   }
 
   // Fast by default (stored current_balance). Pass ?liveBalances=1 for journal-join parity.
-  // Background recompute is throttled and does not broadcast — a broadcast here made the
-  // client refetch, which started another recompute, which flashed balances to 0.
-  let lastListRecomputeAt = 0;
-  const LIST_RECOMPUTE_COOLDOWN_MS = 60_000;
+  // Do not recompute balances on list GET — that full journal scan stalled invoices/journals.
 
   router.get('/', async (req, res) => {
     const wantLive = /^(1|true|yes)$/i.test(String(req.query.liveBalances || ''));
     try {
-      setImmediate(() => {
-        const now = Date.now();
-        if (now - lastListRecomputeAt < LIST_RECOMPUTE_COOLDOWN_MS) return;
-        lastListRecomputeAt = now;
-        const run = async () => {
-          try {
-            const { countParentEntityLines, repairParentEntityCoaPostings } = require('../lib/repairParentEntityCoa');
-            const pending = await countParentEntityLines(db);
-            if (pending > 0) {
-              console.log(`[CHART OF ACCOUNTS] Background-repairing ${pending} parent 321/311 line(s)…`);
-              await repairParentEntityCoaPostings(db, { dryRun: false });
-            }
-          } catch (e) {
-            console.warn('[CHART OF ACCOUNTS] entity leaf repair failed:', e.message);
-          }
-          try {
-            const { fastRecomputeCoaCurrentBalances } = require('../accounting');
-            await fastRecomputeCoaCurrentBalances(db);
-          } catch (e) {
-            console.warn('[CHART OF ACCOUNTS] background recompute failed:', e.message);
-          }
-        };
-        void run();
-      });
-
       const balanceExpr = wantLive
         ? `COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0)`
         : `COALESCE(coa.current_balance, coa.opening_balance, 0)`;

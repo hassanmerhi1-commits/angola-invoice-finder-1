@@ -177,11 +177,6 @@ export default function ChartOfAccounts() {
 
   const handleSelectAccount = useCallback((account: Account) => {
     startTransition(() => setSelectedAccountId(account.id));
-    // Leaf drill-down is the hot path — start ledger fetch before double-click.
-    const isLeaf =
-      !account.is_header
-      && !(childrenByParentRef.current.get(account.id)?.length);
-    if (isLeaf) prefetchAccountLedger(account.id, { days: 7, limit: 50 });
   }, []);
 
   const [formData, setFormData] = useState({

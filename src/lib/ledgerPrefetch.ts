@@ -48,7 +48,7 @@ export function prefetchAccountLedger(
 
   const promise = (async (): Promise<CacheEntry> => {
     try {
-      let res = await api.chartOfAccounts.getLedger(id, from, to, undefined, { limit });
+      const res = await api.chartOfAccounts.getLedger(id, from, to, undefined, { limit });
       if (res.error) {
         const entry: CacheEntry = { at: Date.now(), from, to, rows: [], error: String(res.error) };
         cache.set(key, entry);
