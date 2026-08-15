@@ -12,6 +12,8 @@ async function fetchAccountLedger(db, root, {
   start_date,
   end_date,
   limit = 50,
+  before_date,
+  before_id,
 }) {
   const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
   const postedClause = db.engine === 'postgres'
@@ -60,10 +62,25 @@ async function fetchAccountLedger(db, root, {
   }
 
   const accountId = String(root.id);
-  const hardLimit = Math.min(Math.max(Number(limit) || 50, 1), isHighVolumeParent ? 50 : 100);
+  const hardLimit = Math.min(Math.max(Number(limit) || 50, 1), 50);
+  const beforeDate = before_date ? String(before_date).slice(0, 10) : '';
+  const beforeId = before_id ? String(before_id).trim() : '';
   const pgAccountPred = looksLikeUuid(accountId)
     ? 'account_id = $1::uuid'
     : 'account_id::text = $1::text';
+
+  const params = [accountId, startDate, endDate, hardLimit];
+  let cursorSql = '';
+  if (beforeDate) {
+    params.push(beforeDate);
+    const dateIdx = params.length;
+    if (beforeId) {
+      params.push(beforeId);
+      cursorSql = ` AND (entry_date < $${dateIdx}::date OR (entry_date = $${dateIdx}::date AND id::text < $${params.length}::text))`;
+    } else {
+      cursorSql = ` AND entry_date < $${dateIdx}::date`;
+    }
+  }
 
   let rawRows = [];
   if (db.engine === 'postgres') {
@@ -90,13 +107,14 @@ async function fetchAccountLedger(db, root, {
          WHERE ${pgAccountPred}
            AND entry_date >= $2::date
            AND entry_date <= $3::date
+           ${cursorSql}
          ORDER BY entry_date DESC NULLS LAST, id DESC
          LIMIT $4
        ) jel
        INNER JOIN journal_entries je ON je.id = jel.journal_entry_id
        WHERE ${postedClause}
        ORDER BY jel.entry_date DESC NULLS LAST, je.created_at DESC`,
-      [accountId, startDate, endDate, hardLimit],
+      params,
     );
     rawRows = result.rows || [];
   } else {
@@ -157,7 +175,7 @@ async function fetchAccountLedger(db, root, {
     account_name: root.name,
   }));
 
-  if (rows.length === 0 && !isHeader) {
+  if (rows.length === 0 && !isHeader && !beforeDate) {
     const opening = Number(root.opening_balance) || 0;
     const stored = Number(root.current_balance) || 0;
     if (opening !== 0 || stored !== 0) {

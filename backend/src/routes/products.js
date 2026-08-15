@@ -15,6 +15,7 @@ const branchMainActive = (alias) => coalesceMainTruthy(db, `${alias}.is_main`);
 const {
   normalizeTaxRate,
   isTruthyFlag,
+  isAllowedVatRate,
   shouldPreserveExistingTaxRate,
   taxCodeForRate,
 } = require('../taxDefaults');
@@ -1697,6 +1698,124 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       console.error('[PRODUCTS bulk-price-cost]', error);
       res.status(500).json({ error: error.message || 'Bulk price/cost update failed' });
+    }
+  });
+
+  /**
+   * Mass-edit IVA (tax_rate) for selected SKUs.
+   * HQ callers cascade to every same-SKU branch and clear vat_override.
+   * Filial callers keep a local rate + vat_override.
+   */
+  router.post('/bulk-iva', requirePermission('price_edit'), async (req, res) => {
+    try {
+      const raw = Array.isArray(req.body?.items) ? req.body.items : [];
+      if (raw.length === 0) {
+        return res.status(400).json({ error: 'Provide at least one item' });
+      }
+      if (raw.length > 5000) {
+        return res.status(400).json({ error: 'Maximum 5000 items per request' });
+      }
+
+      const byKey = new Map();
+      for (const item of raw) {
+        const id = String(item?.id || '').trim();
+        const sku = canonicalSkuString(item?.sku);
+        const rate = Number(item?.taxRate ?? item?.tax_rate ?? item?.iva);
+        if (!isAllowedVatRate(rate)) {
+          return res.status(400).json({ error: 'IVA must be 0, 5, 7 or 14' });
+        }
+        const key = (sku || id).toLowerCase();
+        if (!key) continue;
+        byKey.set(key, { id, sku, taxRate: Math.round(rate) });
+      }
+
+      const items = Array.from(byKey.values());
+      if (items.length === 0) {
+        return res.status(400).json({ error: 'No valid IVA changes' });
+      }
+
+      const callerIsHq = req.branchScope?.canUseConsolidated === true;
+      let taxRows = 0;
+      const vatFalse = db.engine === 'postgres' ? 'false' : '0';
+      const vatTrue = db.engine === 'postgres' ? 'true' : '1';
+
+      if (db.engine === 'postgres') {
+        if (callerIsHq) {
+          const withSku = items.filter((it) => canonicalSkuString(it.sku));
+          if (withSku.length > 0) {
+            const result = await db.query(
+              `UPDATE products p
+               SET tax_rate = v.tax_rate,
+                   tax_code = v.tax_code,
+                   vat_override = ${vatFalse},
+                   updated_at = CURRENT_TIMESTAMP
+               FROM unnest($1::text[], $2::numeric[], $3::text[]) AS v(sku_key, tax_rate, tax_code)
+               WHERE ${sqlMovementSkuKey('p')} = v.sku_key
+                 AND ${coalesceActiveNotZero(db, 'p.is_active')}`,
+              [
+                withSku.map((it) => canonicalSkuString(it.sku).toLowerCase()),
+                withSku.map((it) => it.taxRate),
+                withSku.map((it) => taxCodeForRate(it.taxRate)),
+              ],
+            );
+            taxRows += result.rowCount || 0;
+          }
+        } else {
+          const withId = items.filter((it) => it.id);
+          if (withId.length > 0) {
+            const result = await db.query(
+              `UPDATE products p
+               SET tax_rate = v.tax_rate,
+                   tax_code = v.tax_code,
+                   vat_override = ${vatTrue},
+                   updated_at = CURRENT_TIMESTAMP
+               FROM unnest($1::text[], $2::numeric[], $3::text[]) AS v(id, tax_rate, tax_code)
+               WHERE p.id::text = v.id`,
+              [
+                withId.map((it) => it.id),
+                withId.map((it) => it.taxRate),
+                withId.map((it) => taxCodeForRate(it.taxRate)),
+              ],
+            );
+            taxRows += result.rowCount || 0;
+          }
+        }
+      } else {
+        for (const it of items) {
+          if (callerIsHq && it.sku) {
+            const result = await db.query(
+              `UPDATE products
+               SET tax_rate = $1, tax_code = $2, vat_override = ${vatFalse}, updated_at = CURRENT_TIMESTAMP
+               WHERE ${coalesceActiveNotZero(db, 'is_active')}
+                 AND ${sqlMovementSkuKey('products')} = LOWER($3)`,
+              [it.taxRate, taxCodeForRate(it.taxRate), canonicalSkuString(it.sku)],
+            );
+            taxRows += result.rowCount || 0;
+          } else if (it.id) {
+            const result = await db.query(
+              `UPDATE products
+               SET tax_rate = $1, tax_code = $2, vat_override = ${vatTrue}, updated_at = CURRENT_TIMESTAMP
+               WHERE id = $3`,
+              [it.taxRate, taxCodeForRate(it.taxRate), it.id],
+            );
+            taxRows += result.rowCount || 0;
+          }
+        }
+      }
+
+      invalidateSellingHintsCache();
+      await broadcastTable('products');
+      auditErpSafe(req, {
+        table: 'products',
+        action: 'update',
+        description: `Actualização em massa de IVA: ${items.length} SKU(s)`,
+        metadata: { items: items.length, taxRows, cascadeIva: callerIsHq },
+      });
+      console.log(`[PRODUCTS bulk-iva] skus=${items.length} taxRows=${taxRows} hq=${callerIsHq}`);
+      res.json({ success: true, updated: items.length, taxRows });
+    } catch (error) {
+      console.error('[PRODUCTS bulk-iva]', error);
+      res.status(500).json({ error: error.message || 'Bulk IVA update failed' });
     }
   });
 

@@ -148,6 +148,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     from: string | undefined,
     to: string | undefined,
     limit = LEDGER_FETCH_LIMIT,
+    cursor?: { beforeDate?: string; beforeId?: string },
   ): Promise<{ rows: LedgerEntry[]; error?: string } | null> => {
     if (!account) return null;
     let res = await api.chartOfAccounts.getLedger(
@@ -155,7 +156,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
       from || undefined,
       to || undefined,
       undefined,
-      { limit },
+      { limit, beforeDate: cursor?.beforeDate, beforeId: cursor?.beforeId },
     );
     if (res.error && account.code) {
       const raw = String(res.error || '');
@@ -165,7 +166,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
           from || undefined,
           to || undefined,
           undefined,
-          { limit },
+          { limit, beforeDate: cursor?.beforeDate, beforeId: cursor?.beforeId },
         );
       }
     }
@@ -241,6 +242,36 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     setStartDate(from);
     setEndDate(to);
   }, []);
+
+  const loadOlder = useCallback(async () => {
+    if (!account || isLoading || isExpanding) return;
+    const oldest = entries[entries.length - 1];
+    const beforeDate = String(oldest?.entry_date || '').slice(0, 10);
+    const beforeId = String(oldest?.id || '').trim();
+    if (!beforeDate || !beforeId || beforeId.startsWith('opening-')) {
+      setTruncated(false);
+      return;
+    }
+    const reqId = ++reqIdRef.current;
+    setIsExpanding(true);
+    try {
+      const result = await loadLedgerRows(startDate || undefined, endDate || undefined, LEDGER_FETCH_LIMIT, {
+        beforeDate,
+        beforeId,
+      });
+      if (reqId !== reqIdRef.current) return;
+      if (!result || result.error) {
+        if (result?.error) applyLedgerError(result.error);
+        return;
+      }
+      const seen = new Set(entries.map((e) => String(e.id)));
+      const extra = result.rows.filter((row) => !seen.has(String(row.id)));
+      setEntries((prev) => [...prev, ...extra]);
+      setTruncated(result.rows.length >= LEDGER_FETCH_LIMIT);
+    } finally {
+      if (reqId === reqIdRef.current) setIsExpanding(false);
+    }
+  }, [account, isLoading, isExpanding, entries, startDate, endDate, loadLedgerRows, applyLedgerError]);
 
   const filtered = useMemo(() => entries.filter((e) => {
     if (typeFilter !== 'all' && e.reference_type !== typeFilter) return false;
@@ -567,8 +598,17 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
         </div>
 
         {truncated && (
-          <div className="shrink-0 rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
-            {t.ledgerUi.showingLatest.replace('{limit}', String(LEDGER_FETCH_LIMIT))}
+          <div className="shrink-0 rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-xs text-amber-950 flex items-center justify-between gap-3">
+            <span>{t.ledgerUi.showingLatest.replace('{limit}', String(entries.length))}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 shrink-0 text-xs"
+              disabled={isExpanding}
+              onClick={() => { void loadOlder(); }}
+            >
+              {isExpanding ? t.ledgerUi.expandingRangeHint : t.ledgerUi.loadOlder}
+            </Button>
           </div>
         )}
         {isExpanding && (

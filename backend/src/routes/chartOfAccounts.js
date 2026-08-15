@@ -503,10 +503,10 @@ module.exports = function(broadcastTable) {
   router.get('/:id/ledger', async (req, res) => {
     try {
       const { id } = req.params;
-      let { start_date, end_date, limit: limitRaw } = req.query;
+      let { start_date, end_date, limit: limitRaw, before_date, before_id } = req.query;
       const parsedLimit = parseInt(String(limitRaw || '50'), 10);
       const limit = Number.isFinite(parsedLimit)
-        ? Math.min(Math.max(parsedLimit, 1), 100)
+        ? Math.min(Math.max(parsedLimit, 1), 50)
         : 50;
 
       const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
@@ -546,6 +546,8 @@ module.exports = function(broadcastTable) {
         start_date,
         end_date,
         limit,
+        before_date,
+        before_id,
       });
 
       res.set('X-Ledger-Limit', String(result.hardLimit));

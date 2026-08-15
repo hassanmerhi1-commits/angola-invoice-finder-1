@@ -897,6 +897,12 @@ export const api = {
         { method: 'POST', body: JSON.stringify({ items }) },
         { timeoutMs: 120_000 },
       ),
+    bulkIva: (items: Array<{ id: string; sku: string; taxRate: number }>) =>
+      apiFetch<{ success: boolean; updated: number; taxRows?: number }>(
+        '/products/bulk-iva',
+        { method: 'POST', body: JSON.stringify({ items }) },
+        { timeoutMs: 120_000 },
+      ),
     repairFilialStock: (branchId: string) =>
       apiFetch<{ success: boolean; rows: any[]; count: number; repair?: unknown; dbPath?: string }>(
         `/products/repair-filial-stock?branchId=${encodeURIComponent(branchId)}`,
@@ -1982,13 +1988,15 @@ export const api = {
       startDate?: string,
       endDate?: string,
       _branchId?: string,
-      opts?: { limit?: number },
+      opts?: { limit?: number; beforeDate?: string; beforeId?: string },
     ) => {
       const p = new URLSearchParams();
       if (startDate) p.append('start_date', startDate);
       if (endDate) p.append('end_date', endDate);
+      if (opts?.beforeDate) p.append('before_date', opts.beforeDate.slice(0, 10));
+      if (opts?.beforeId) p.append('before_id', opts.beforeId);
       const limit = opts?.limit ?? 50;
-      p.append('limit', String(Math.min(Math.max(limit, 1), 100)));
+      p.append('limit', String(Math.min(Math.max(limit, 1), 50)));
       // COA drill-down is company-wide — never send branchId (supplier AP spans filials).
       const qs = p.toString();
       const apiResult = await apiFetch<any[]>(
