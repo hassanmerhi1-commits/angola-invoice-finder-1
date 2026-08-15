@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Plus, Trash2, Search, Save, Printer, X, Send, Link2 } from 'lucide-react';
+import { Plus, Trash2, Search, Save, Printer, X, Send, Link2, UserRound, MapPin, Phone, CalendarDays } from 'lucide-react';
 import { printDocument } from '@/lib/documentPDF';
 import { cn } from '@/lib/utils';
 import { DocumentType, DocumentLine, ERPDocument, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
@@ -103,10 +103,36 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   // On-account (a prazo) sale invoice: needs a registered client with a positive
   // credit limit; posts amountPaid=0 and the backend creates the AR open item.
   const isCreditInvoice = documentType === 'fatura_venda' && paymentMethod === 'credit';
+  const isSalesInvoice = documentType === 'fatura_venda';
+  const requireSavedCustomer = isSalesInvoice && !contentLocked;
   const selectedEntityClient = useMemo(
     () => (config.entityType === 'customer' ? (clients.find((c) => c.id === entityId) ?? null) : null),
     [config.entityType, clients, entityId],
   );
+
+  const fillCustomerContact = (client: Client) => {
+    setEntityId(String(client.id));
+    setEntityName(client.name);
+    setEntityNif(client.nif || '');
+    setEntityAddress(client.address || '');
+    setEntityPhone(client.phone || '');
+    setPriceLevel(normalizePriceLevel(client.defaultPriceLevel ?? 1));
+  };
+
+  const applySavedCustomer = (client: Client) => {
+    fillCustomerContact(client);
+    const creditLimit = Number(client.creditLimit) || 0;
+    if (creditLimit > 0 && documentType === 'fatura_venda') {
+      setPaymentMethod('credit');
+      setAmountPaid(0);
+    }
+    const days = Math.trunc(Number(client.paymentTermsDays ?? 0));
+    if (days > 0 && documentType !== 'proforma') {
+      const due = new Date();
+      due.setDate(due.getDate() + days);
+      setDueDate(due.toISOString().split('T')[0]);
+    }
+  };
 
   // Reset form when opening
   useEffect(() => {
@@ -115,19 +141,23 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       setAgtStatus(editDocument?.agtStatus);
       setAgtCode(editDocument?.agtCode);
       if (source) {
-        setEntityId(source.entityId || '');
-        setEntityName(source.entityName);
-        setEntityNif(source.entityNif || '');
-        setEntityAddress(source.entityAddress || '');
-        setEntityPhone(source.entityPhone || '');
+        const sourceClient = clients.find((c) => c.id === source.entityId) as Client | undefined;
         setDueDate(source.dueDate || source.validUntil?.split('T')[0] || '');
         setValidUntil(source.validUntil || '');
         setNotes(source.notes || '');
         setPaymentMethod(source.paymentMethod || 'cash');
         setAmountPaid(source.amountPaid || 0);
         setLines(source.lines.map(l => ({ ...l })));
-        const sourceClient = clients.find((c) => c.id === source.entityId) as Client | undefined;
-        setPriceLevel(normalizePriceLevel(sourceClient?.defaultPriceLevel ?? 1));
+        if (documentType === 'fatura_venda' && sourceClient) {
+          fillCustomerContact(sourceClient);
+        } else {
+          setEntityId(source.entityId || '');
+          setEntityName(source.entityName);
+          setEntityNif(source.entityNif || '');
+          setEntityAddress(source.entityAddress || '');
+          setEntityPhone(source.entityPhone || '');
+          setPriceLevel(normalizePriceLevel(sourceClient?.defaultPriceLevel ?? 1));
+        }
       } else {
         setPriceLevel(1);
         setEntityId('');
@@ -160,6 +190,11 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     return () => { cancelled = true; };
   }, [open, editDocument?.id, editDocument?.documentNumber, documentType]);
 
+  useEffect(() => {
+    if (!open || !requireSavedCustomer || !selectedEntityClient) return;
+    fillCustomerContact(selectedEntityClient);
+  }, [open, requireSavedCustomer, selectedEntityClient]);
+
   const entityDirectory = config.entityType === 'customer' ? clients : suppliers;
 
   const filteredEntities = useMemo(() => {
@@ -186,30 +221,17 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const showPricingControls = config.entityType === 'customer' && !contentLocked;
 
   const selectEntity = (entity: Client | Supplier) => {
+    setEntityPickerOpen(false);
+    setSelectedOpenItemIds(new Set());
+    if (config.entityType === 'customer') {
+      applySavedCustomer(entity as Client);
+      return;
+    }
     setEntityId(String(entity.id));
     setEntityName(entity.name);
     setEntityNif(entity.nif || '');
     setEntityAddress(entity.address || '');
     setEntityPhone(entity.phone || '');
-    setEntityPickerOpen(false);
-    setSelectedOpenItemIds(new Set());
-    if (config.entityType === 'customer') {
-      const client = entity as Client;
-      setPriceLevel(normalizePriceLevel(client.defaultPriceLevel ?? 1));
-      const creditLimit = Number(client.creditLimit) || 0;
-      if (creditLimit > 0 && documentType === 'fatura_venda') {
-        setPaymentMethod('credit');
-        setAmountPaid(0);
-      }
-      // Default the due date from the client's payment terms (days to pay). The
-      // user can still override the date manually. Proformas use "valid until".
-      const days = Math.trunc(Number(client.paymentTermsDays ?? 0));
-      if (days > 0 && documentType !== 'proforma') {
-        const due = new Date();
-        due.setDate(due.getDate() + days);
-        setDueDate(due.toISOString().split('T')[0]);
-      }
-    }
   };
 
   // Reprice product-linked lines when the price level or client adjustment changes.
@@ -442,6 +464,10 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   };
 
   const handlePrint = () => {
+    if (requireSavedCustomer && !entityId) {
+      toast.error(t.documentFormUi.customerRequired);
+      return;
+    }
     const doc = buildDocumentForPrint();
     if (!doc) {
       toast.error(t.documentFormUi.printNeedsLines);
@@ -458,8 +484,12 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     if (savingRef.current) return;
     savingRef.current = true;
     try {
-    if (!entityName && config.entityType === 'customer') {
+    if (!entityName && config.entityType === 'customer' && !requireSavedCustomer) {
       setEntityName(finalConsumerName);
+    }
+    if (requireSavedCustomer && !entityId) {
+      toast.error(t.documentFormUi.customerRequired);
+      return;
     }
     if (isPaymentDocument) {
       if (!entityId) {
@@ -546,8 +576,8 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         // For confirmed fatura_venda, route through the backend transaction engine
         // so stock is decremented and journal entries (including branch Caixa) are created
         if (documentType === 'fatura_venda' && status === 'confirmed') {
-          if (isNamedCustomer && !entityId) {
-            toast.error(t.documentFormUi.selectClientFromList);
+          if (!entityId) {
+            toast.error(t.documentFormUi.customerRequired);
             return;
           }
           if (isCreditInvoice) {
@@ -886,64 +916,85 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto p-0 [&>button[data-dialog-close]]:hidden">
-        <div className="flex items-center gap-2 border-b bg-muted/50 px-4 py-2">
-          <DialogTitle className={cn("min-w-0 flex-1 text-sm font-bold", config.color)}>
+      <DialogContent className={cn(
+        'p-0 [&>button[data-dialog-close]]:hidden',
+        isSalesInvoice
+          ? 'flex h-[96vh] max-h-[96vh] w-[98vw] max-w-[98vw] flex-col gap-0 overflow-hidden sm:rounded-xl'
+          : 'max-h-[90vh] max-w-5xl overflow-y-auto',
+      )}>
+        <div className={cn(
+          'flex items-center gap-3 border-b',
+          isSalesInvoice ? 'bg-background px-6 py-3' : 'bg-muted/50 px-4 py-2',
+        )}>
+          <DialogTitle className={cn(
+            'min-w-0 flex-1 font-bold',
+            isSalesInvoice ? 'text-xl tracking-tight' : 'text-sm',
+            config.color,
+          )}>
             {editDocument
               ? `${t.documentFormUi.editPrefix} ${typeUi.short} — ${editDocument.documentNumber}`
               : `${t.documentFormUi.newPrefix} ${typeUi.full}`}
             {prefillFrom && (
-              <span className="text-muted-foreground font-normal ml-2">
+              <span className="text-muted-foreground font-normal ml-2 text-sm">
                 {t.documentFormUi.fromDocument.replace('{number}', prefillFrom.documentNumber)}
               </span>
             )}
           </DialogTitle>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-2">
             <Button
               size="sm"
               variant="outline"
-              className="h-7 text-xs gap-1"
+              className={cn('gap-1', isSalesInvoice ? 'h-10 px-4 text-sm' : 'h-7 text-xs')}
               onClick={handlePrint}
               disabled={lines.length === 0}
             >
-              <Printer className="w-3 h-3" /> {t.documentFormUi.print}
+              <Printer className={isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3'} /> {t.documentFormUi.print}
             </Button>
             {canTransmitAgt && (
               <Button
                 size="sm"
                 variant="default"
-                className="h-7 text-xs gap-1"
+                className={cn('gap-1', isSalesInvoice ? 'h-10 px-4 text-sm' : 'h-7 text-xs')}
                 onClick={handleTransmitAgt}
                 disabled={agtTransmitting || agtValidated}
               >
-                <Send className="w-3 h-3" />
+                <Send className={isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3'} />
                 {agtValidated ? t.agtUi.agtValidatedLabel : t.documentFormUi.sendToAgt}
               </Button>
             )}
             {!fiscalLocked && !isPaymentDocument && (
-              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleSave('draft')}>
-                <Save className="w-3 h-3" /> {t.documentFormUi.saveDraft}
+              <Button
+                size="sm"
+                variant="outline"
+                className={cn('gap-1', isSalesInvoice ? 'h-10 px-4 text-sm' : 'h-7 text-xs')}
+                onClick={() => handleSave('draft')}
+              >
+                <Save className={isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3'} /> {t.documentFormUi.saveDraft}
               </Button>
             )}
             {!formReadOnly && (
-              <Button size="sm" className="h-7 text-xs gap-1" onClick={() => handleSave('confirmed')}>
-                <Save className="w-3 h-3" /> {dueDateOnlyEdit ? t.documentFormUi.saveDueDate : t.documentFormUi.confirmSave}
+              <Button
+                size="sm"
+                className={cn('gap-1', isSalesInvoice ? 'h-10 px-5 text-sm' : 'h-7 text-xs')}
+                onClick={() => handleSave('confirmed')}
+              >
+                <Save className={isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3'} /> {dueDateOnlyEdit ? t.documentFormUi.saveDueDate : t.documentFormUi.confirmSave}
               </Button>
             )}
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="h-8 w-8 shrink-0"
+              className={cn('shrink-0', isSalesInvoice ? 'h-10 w-10' : 'h-8 w-8')}
               onClick={() => onOpenChange(false)}
               aria-label={t.common.close}
             >
-              <X className="h-4 w-4" />
+              <X className={isSalesInvoice ? 'h-5 w-5' : 'h-4 w-4'} />
             </Button>
           </div>
         </div>
 
-        <div className="p-4 space-y-4">
+        <div className={cn(isSalesInvoice ? 'min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4' : 'space-y-4 p-4')}>
           {fiscalLocked && (
             <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
               {dueDateOnlyEdit
@@ -975,8 +1026,169 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               </Button>
             </div>
           )}
-          <div className={contentLocked ? 'pointer-events-none opacity-80 space-y-4' : 'space-y-4'}>
-          {/* Entity info row */}
+          <div className={cn(
+            contentLocked && 'pointer-events-none opacity-80',
+            isSalesInvoice ? 'shrink-0 space-y-4' : 'space-y-4',
+          )}>
+          {isSalesInvoice && (
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(300px,0.7fr)]">
+              <div className="rounded-xl border bg-card p-3 shadow-sm">
+                <div className="mb-2 flex items-center gap-2">
+                  <UserRound className="h-4 w-4 text-muted-foreground" />
+                  <Label className="text-sm font-semibold">{t.documentFormUi.customer}</Label>
+                  {selectedEntityClient && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200">
+                      <Link2 className="h-3 w-3" />
+                      {t.documentFormUi.clientLinked.replace('{name}', selectedEntityClient.name)}
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={entityName}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setEntityName(next);
+                      if (
+                        entityId
+                        && selectedEntityClient
+                        && next.trim().toLowerCase() !== selectedEntityClient.name.trim().toLowerCase()
+                      ) {
+                        setEntityId('');
+                        setEntityNif('');
+                        setEntityAddress('');
+                        setEntityPhone('');
+                      }
+                      setEntityPickerOpen(true);
+                    }}
+                    onFocus={() => setEntityPickerOpen(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => setEntityPickerOpen(false), 150);
+                    }}
+                    placeholder={t.documentFormUi.customerSearchPlaceholder}
+                    className="h-10 pl-9 text-sm"
+                    autoComplete="off"
+                  />
+                  {entityPickerOpen && (
+                    <div className="absolute z-50 top-full left-0 right-0 mt-1 overflow-y-auto rounded-lg border bg-popover shadow-lg max-h-56">
+                      {filteredEntities.length === 0 ? (
+                        <p className="px-4 py-3 text-sm text-muted-foreground">
+                          {t.documentFormUi.noSavedCustomers}
+                        </p>
+                      ) : (
+                        filteredEntities.map((entity) => (
+                          <button
+                            key={entity.id}
+                            type="button"
+                            className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm hover:bg-accent/60"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => selectEntity(entity)}
+                          >
+                            <span className="truncate font-medium">{entity.name}</span>
+                            <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                              {entity.nif || '—'}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+                {selectedEntityClient ? (
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm lg:grid-cols-4">
+                    <p className="text-muted-foreground">
+                      {t.documentFormUi.nif}{' '}
+                      <span className="font-mono text-foreground">{entityNif || '—'}</span>
+                    </p>
+                    <p className="flex items-center gap-1.5 text-muted-foreground">
+                      <Phone className="h-3.5 w-3.5 shrink-0" />
+                      <span>{entityPhone || '—'}</span>
+                    </p>
+                    <p className="flex items-center gap-1.5 text-muted-foreground col-span-2">
+                      <MapPin className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{entityAddress || '—'}</span>
+                    </p>
+                    <p className="text-muted-foreground">
+                      {t.documentFormUi.customerBalance}:{' '}
+                      <span className="font-mono text-foreground">{fmt(creditClientBalance)} Kz</span>
+                    </p>
+                    <p className="text-muted-foreground col-span-2">
+                      {t.clientsUi.colCreditLimit}:{' '}
+                      <span className="font-mono text-foreground">{fmt(creditClientLimit)} Kz</span>
+                    </p>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">{t.documentFormUi.customerRequiredHint}</p>
+                )}
+              </div>
+
+              <div className="rounded-xl border bg-card p-3 shadow-sm space-y-2">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                  <Label className="text-sm font-semibold">{t.documentFormUi.invoiceDetails}</Label>
+                  {previewInvoiceType && (
+                    <Badge variant={previewInvoiceType === 'FT' && isCreditInvoice ? 'default' : 'outline'} className="ml-auto">
+                      {fiscalInvoiceTypeLabel(previewInvoiceType, t.posUi)}
+                    </Badge>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">{t.documentFormUi.dueDate}</Label>
+                    <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="h-9 text-sm" disabled={formReadOnly} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">{t.documentFormUi.paymentMethod}</Label>
+                    <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cash">{t.paymentsUi.methods.cash}</SelectItem>
+                        <SelectItem value="card">{t.paymentsUi.methods.card}</SelectItem>
+                        <SelectItem value="transfer">{t.paymentsUi.methods.transfer}</SelectItem>
+                        <SelectItem value="credit">{t.pos.credit}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {showPricingControls && (
+                    <div className="space-y-1 col-span-2">
+                      <Label className="text-xs">{t.documentFormUi.priceLevelLabel}</Label>
+                      <Select value={String(priceLevel)} onValueChange={(v) => setPriceLevel(Number(v))}>
+                        <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {[1, 2, 3, 4].map((n) => (
+                            <SelectItem key={n} value={String(n)}>
+                              {t.documentFormUi.priceLevelOption.replace('{n}', String(n))}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+                {adjustmentPct !== 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {t.documentFormUi.clientAdjustmentNote.replace('{pct}', `${adjustmentPct > 0 ? '+' : ''}${adjustmentPct}`)}
+                  </p>
+                )}
+                {isCreditInvoice && (
+                  <p className={cn('text-xs', (creditMissingClient || creditNoLimit || creditOverLimit) ? 'text-destructive' : 'text-muted-foreground')}>
+                    {creditMissingClient
+                      ? t.checkoutUi.creditRequiresClient
+                      : creditNoLimit
+                        ? t.checkoutUi.creditNoLimit
+                        : creditOverLimit
+                          ? t.checkoutUi.creditOverLimit
+                            .replace('{balance}', creditClientBalance.toLocaleString(locale))
+                            .replace('{limit}', creditClientLimit.toLocaleString(locale))
+                          : t.checkoutUi.creditHint}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {!isSalesInvoice && (
           <div className="grid grid-cols-4 gap-3">
             <div className="space-y-1">
               <Label className="text-xs">{config.entityType === 'customer' ? t.documentFormUi.customer : t.documentFormUi.supplier}</Label>
@@ -1003,22 +1215,28 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                   className="h-8 text-xs"
                   autoComplete="off"
                 />
-                {entityPickerOpen && filteredEntities.length > 0 && (
+                {entityPickerOpen && (
                   <div className="absolute z-50 top-full left-0 right-0 mt-0.5 border rounded-md bg-popover shadow-md max-h-40 overflow-y-auto">
-                    {filteredEntities.map((entity) => (
-                      <button
-                        key={entity.id}
-                        type="button"
-                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent/50 flex justify-between gap-2"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => selectEntity(entity)}
-                      >
-                        <span className="truncate font-medium">{entity.name}</span>
-                        <span className="text-muted-foreground shrink-0 tabular-nums">
-                          {entity.nif || '—'}
-                        </span>
-                      </button>
-                    ))}
+                    {filteredEntities.length === 0 ? (
+                      <p className="px-3 py-2 text-[11px] text-muted-foreground">
+                        {t.documentFormUi.noSavedCustomers}
+                      </p>
+                    ) : (
+                      filteredEntities.map((entity) => (
+                        <button
+                          key={entity.id}
+                          type="button"
+                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent/50 flex justify-between gap-2"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectEntity(entity)}
+                        >
+                          <span className="truncate font-medium">{entity.name}</span>
+                          <span className="text-muted-foreground shrink-0 tabular-nums">
+                            {entity.nif || '—'}
+                          </span>
+                        </button>
+                      ))
+                    )}
                   </div>
                 )}
               </div>
@@ -1042,8 +1260,9 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               <Input value={entityPhone} onChange={e => setEntityPhone(e.target.value)} className="h-8 text-xs" />
             </div>
           </div>
+          )}
 
-          {showPricingControls && (
+          {showPricingControls && !isSalesInvoice && (
             <div className="flex items-end gap-3 flex-wrap">
               <div className="space-y-1">
                 <Label className="text-xs">{t.documentFormUi.priceLevelLabel}</Label>
@@ -1069,7 +1288,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           )}
 
           {/* Pending receipts / open items for selected customer or supplier */}
-          {(documentType === 'fatura_venda' || isPaymentDocument) && entityId && (
+          {(documentType === 'fatura_venda' && !isSalesInvoice || isPaymentDocument) && entityId && (
             <div className="border rounded-md">
               <div className="flex items-center justify-between gap-2 px-3 py-2 border-b bg-muted/40">
                 <div className="text-xs font-semibold">
@@ -1137,6 +1356,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           </div>
 
           {/* Dates & payment row */}
+          {!isSalesInvoice && (
           <div className="grid grid-cols-4 gap-3">
             {documentType === 'proforma' && (
               <div className="space-y-1">
@@ -1151,9 +1371,13 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               </div>
             )}
           </div>
+          )}
 
-          <div className={contentLocked ? 'pointer-events-none opacity-80 space-y-4' : 'space-y-4'}>
-            {documentType === 'fatura_venda' && (
+          <div className={cn(
+            contentLocked && 'pointer-events-none opacity-80',
+            isSalesInvoice ? 'space-y-4' : 'space-y-4',
+          )}>
+            {documentType === 'fatura_venda' && !isSalesInvoice && (
               <div className="grid grid-cols-4 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">{t.documentFormUi.paymentMethod}</Label>
@@ -1217,26 +1441,44 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           {!isPaymentDocument && (
           <>
           {/* Product search + add */}
-          <div className="flex gap-2 items-end">
+          <div className={cn('flex items-end gap-2', isSalesInvoice && 'shrink-0')}>
             <div className="flex-1 space-y-1">
-              <Label className="text-xs">{t.documentFormUi.addProduct}</Label>
+              <Label className={isSalesInvoice ? 'text-sm font-medium' : 'text-xs'}>{t.documentFormUi.addProduct}</Label>
               <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+                <Search className={cn(
+                  'absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground',
+                  isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3',
+                )} />
                 <Input value={productSearch} onChange={e => setProductSearch(e.target.value)}
-                  placeholder={t.documentFormUi.productSearchPlaceholder} className="h-8 text-xs pl-7" />
+                  placeholder={t.documentFormUi.productSearchPlaceholder}
+                  className={isSalesInvoice ? 'h-11 pl-9 text-sm' : 'h-8 text-xs pl-7'} />
               </div>
             </div>
-            <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => addLine()}>
-              <Plus className="w-3 h-3" /> {t.documentFormUi.manualLine}
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn('gap-1', isSalesInvoice ? 'h-11 px-4 text-sm' : 'h-8 text-xs')}
+              onClick={() => addLine()}
+            >
+              <Plus className={isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3'} /> {t.documentFormUi.manualLine}
             </Button>
           </div>
 
           {/* Product search results */}
           {productSearch && filteredProducts.length > 0 && (
-            <div className="border rounded max-h-32 overflow-y-auto">
+            <div className={cn(
+              'overflow-y-auto rounded-lg border bg-popover shadow-sm',
+              isSalesInvoice ? 'max-h-44' : 'max-h-32',
+            )}>
               {filteredProducts.map(p => (
-                <button key={p.id} className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent/50 flex justify-between"
-                  onClick={() => addLine(p.id)}>
+                <button
+                  key={p.id}
+                  className={cn(
+                    'flex w-full justify-between text-left hover:bg-accent/50',
+                    isSalesInvoice ? 'px-4 py-2.5 text-sm' : 'px-3 py-1.5 text-xs',
+                  )}
+                  onClick={() => addLine(p.id)}
+                >
                   <span><span className="font-mono text-muted-foreground">{p.sku}</span> {p.name}</span>
                   <span className="font-mono">{p.price.toLocaleString(locale)} Kz</span>
                 </button>
@@ -1245,75 +1487,92 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           )}
 
           {/* Lines tabs */}
-          <Tabs value={activeLineTab} onValueChange={setActiveLineTab}>
-            <TabsList className="h-7 p-0 bg-muted/30 rounded-none border-b w-full justify-start">
-              <TabsTrigger value="linhas" className="text-xs h-7 rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
+          <Tabs value={activeLineTab} onValueChange={setActiveLineTab} className={isSalesInvoice ? 'space-y-3' : undefined}>
+            <TabsList className={cn(
+              'w-full justify-start rounded-none border-b bg-muted/30 p-0',
+              isSalesInvoice ? 'h-10' : 'h-7',
+            )}>
+              <TabsTrigger value="linhas" className={cn(
+                'rounded-none border-b-2 border-transparent data-[state=active]:border-primary',
+                isSalesInvoice ? 'h-10 px-4 text-sm' : 'h-7 text-xs',
+              )}>
                 {t.documentFormUi.linesCount.replace('{count}', String(lines.length))}
               </TabsTrigger>
-              <TabsTrigger value="notas" className="text-xs h-7 rounded-none border-b-2 border-transparent data-[state=active]:border-primary">
+              <TabsTrigger value="notas" className={cn(
+                'rounded-none border-b-2 border-transparent data-[state=active]:border-primary',
+                isSalesInvoice ? 'h-10 px-4 text-sm' : 'h-7 text-xs',
+              )}>
                 {t.documentFormUi.notesTab}
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="linhas" className="mt-0">
-              <div className="border rounded overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-muted/60 border-b">
+            <TabsContent value="linhas" className={isSalesInvoice ? 'mt-0' : 'mt-0'}>
+              <div className={cn(
+                'overflow-auto border',
+                isSalesInvoice ? 'min-h-[280px] rounded-xl' : 'rounded',
+              )}>
+                <table className={cn('w-full', isSalesInvoice ? 'text-sm' : 'text-xs')}>
+                  <thead className="sticky top-0 z-10 border-b bg-muted/80 backdrop-blur">
                     <tr>
-                      <th className="px-2 py-1.5 text-left w-8">{t.documentFormUi.colHash}</th>
-                      <th className="px-2 py-1.5 text-left w-20">{t.documentFormUi.colCode}</th>
-                      <th className="px-2 py-1.5 text-left">{t.documentFormUi.colDescription}</th>
-                      <th className="px-2 py-1.5 text-right w-16">{t.documentFormUi.colQty}</th>
-                      <th className="px-2 py-1.5 text-right w-24">{t.documentFormUi.colPriceExVat}</th>
-                      <th className="px-2 py-1.5 text-right w-16">{t.documentFormUi.colDiscPct}</th>
-                      <th className="px-2 py-1.5 text-right w-20">{t.documentFormUi.colTaxableBase}</th>
-                      <th className="px-2 py-1.5 text-right w-14">{t.documentFormUi.colVatPct}</th>
-                      <th className="px-2 py-1.5 text-right w-24">{t.documentFormUi.colVatAmount}</th>
-                      <th className="px-2 py-1.5 text-right w-28">{t.documentFormUi.colTotalIncVat}</th>
-                      <th className="px-2 py-1.5 w-8"></th>
+                      <th className={cn('text-left', isSalesInvoice ? 'px-3 py-3 w-10' : 'px-2 py-1.5 w-8')}>{t.documentFormUi.colHash}</th>
+                      <th className={cn('text-left', isSalesInvoice ? 'px-3 py-3 w-24' : 'px-2 py-1.5 w-20')}>{t.documentFormUi.colCode}</th>
+                      <th className={cn('text-left', isSalesInvoice ? 'px-3 py-3' : 'px-2 py-1.5')}>{t.documentFormUi.colDescription}</th>
+                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-20' : 'px-2 py-1.5 w-16')}>{t.documentFormUi.colQty}</th>
+                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-28' : 'px-2 py-1.5 w-24')}>{t.documentFormUi.colPriceExVat}</th>
+                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-20' : 'px-2 py-1.5 w-16')}>{t.documentFormUi.colDiscPct}</th>
+                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-28' : 'px-2 py-1.5 w-20')}>{t.documentFormUi.colTaxableBase}</th>
+                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-16' : 'px-2 py-1.5 w-14')}>{t.documentFormUi.colVatPct}</th>
+                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-28' : 'px-2 py-1.5 w-24')}>{t.documentFormUi.colVatAmount}</th>
+                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-32' : 'px-2 py-1.5 w-28')}>{t.documentFormUi.colTotalIncVat}</th>
+                      <th className={cn(isSalesInvoice ? 'px-3 py-3 w-10' : 'px-2 py-1.5 w-8')}></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50">
                     {lines.map((line, idx) => (
                       <tr key={line.id} className="hover:bg-accent/30">
-                        <td className="px-2 py-1 text-muted-foreground">{idx + 1}</td>
-                        <td className="px-2 py-1">
-                          <Input value={line.productSku || ''} readOnly className="h-6 text-xs border-0 bg-transparent p-0" />
+                        <td className={cn('text-muted-foreground', isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1')}>{idx + 1}</td>
+                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
+                          <Input value={line.productSku || ''} readOnly className={cn('border-0 bg-transparent p-0', isSalesInvoice ? 'h-8 text-sm' : 'h-6 text-xs')} />
                         </td>
-                        <td className="px-2 py-1">
+                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
                           <Input value={line.description} onChange={e => updateLine(idx, 'description', e.target.value)}
-                            className="h-6 text-xs border-0 bg-transparent p-0 focus:bg-background focus:border" />
+                            className={cn('border-0 bg-transparent p-0 focus:border focus:bg-background', isSalesInvoice ? 'h-8 text-sm' : 'h-6 text-xs')} />
                         </td>
-                        <td className="px-2 py-1">
+                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
                           <NumericInput integer min={0} value={line.quantity} onValueChange={v => updateLine(idx, 'quantity', v)}
-                            className="h-6 text-xs text-right border-0 bg-transparent p-0 focus:bg-background focus:border w-full" />
+                            className={cn('w-full border-0 bg-transparent p-0 text-right focus:border focus:bg-background', isSalesInvoice ? 'h-8 text-sm' : 'h-6 text-xs')} />
                         </td>
-                        <td className="px-2 py-1">
+                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
                           <NumericInput min={0} value={line.unitPrice} onValueChange={v => updateLine(idx, 'unitPrice', v)}
-                            className="h-6 text-xs text-right border-0 bg-transparent p-0 focus:bg-background focus:border w-full" />
+                            className={cn('w-full border-0 bg-transparent p-0 text-right focus:border focus:bg-background', isSalesInvoice ? 'h-8 text-sm' : 'h-6 text-xs')} />
                         </td>
-                        <td className="px-2 py-1">
+                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
                           <NumericInput min={0} value={line.discount} onValueChange={v => updateLine(idx, 'discount', v)}
-                            className="h-6 text-xs text-right border-0 bg-transparent p-0 focus:bg-background focus:border w-full" />
+                            className={cn(
+                              'w-full text-right',
+                              isSalesInvoice
+                                ? 'h-8 rounded-md border bg-background px-2 text-sm'
+                                : 'h-6 border-0 bg-transparent p-0 text-xs focus:border focus:bg-background',
+                            )} />
                         </td>
-                        <td className="px-2 py-1 text-right font-mono text-muted-foreground">
+                        <td className={cn('text-right font-mono text-muted-foreground', isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1')}>
                           {fmt((line.quantity * line.unitPrice) * (1 - (line.discount || 0) / 100))}
                         </td>
-                        <td className="px-2 py-1">
+                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
                           <NumericInput min={0} max={100} value={line.taxRate} onValueChange={v => updateLine(idx, 'taxRate', v)}
-                            className="h-6 text-xs text-right border-0 bg-transparent p-0 focus:bg-background focus:border w-full" />
+                            className={cn('w-full border-0 bg-transparent p-0 text-right focus:border focus:bg-background', isSalesInvoice ? 'h-8 text-sm' : 'h-6 text-xs')} />
                         </td>
-                        <td className="px-2 py-1 text-right font-mono">{fmt(line.taxAmount)}</td>
-                        <td className="px-2 py-1 text-right font-mono font-medium">{fmt(line.lineTotal)}</td>
-                        <td className="px-2 py-1">
-                          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => removeLine(idx)}>
-                            <Trash2 className="w-3 h-3 text-destructive" />
+                        <td className={cn('text-right font-mono', isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1')}>{fmt(line.taxAmount)}</td>
+                        <td className={cn('text-right font-mono font-medium', isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1')}>{fmt(line.lineTotal)}</td>
+                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
+                          <Button variant="ghost" size="icon" className={isSalesInvoice ? 'h-8 w-8' : 'h-5 w-5'} onClick={() => removeLine(idx)}>
+                            <Trash2 className={cn('text-destructive', isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3')} />
                           </Button>
                         </td>
                       </tr>
                     ))}
                     {lines.length === 0 && (
-                      <tr><td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">{t.documentFormUi.lineEmpty}</td></tr>
+                      <tr><td colSpan={11} className={cn('text-center text-muted-foreground', isSalesInvoice ? 'px-6 py-16 text-sm' : 'px-4 py-8')}>{t.documentFormUi.lineEmpty}</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1321,31 +1580,32 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             </TabsContent>
 
             <TabsContent value="notas" className="mt-2">
-              <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder={t.documentFormUi.notesPlaceholder} rows={3} className="text-xs" />
+              <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder={t.documentFormUi.notesPlaceholder} rows={isSalesInvoice ? 6 : 3} className={isSalesInvoice ? 'text-sm' : 'text-xs'} />
             </TabsContent>
           </Tabs>
 
+          <div className={cn(isSalesInvoice && 'grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]')}>
           {/* IVA Summary Table (AGT Requirement) */}
           {ivaSummary.length > 0 && (
-            <div className="border rounded overflow-hidden">
-              <table className="w-full text-xs">
+            <div className={cn('overflow-hidden border', isSalesInvoice ? 'rounded-xl' : 'rounded')}>
+              <table className={cn('w-full', isSalesInvoice ? 'text-sm' : 'text-xs')}>
                 <thead className="bg-muted/60">
                   <tr>
-                    <th className="px-3 py-1.5 text-left font-medium">{t.documentFormUi.taxSummaryTitle}</th>
-                    <th className="px-3 py-1.5 text-right font-medium">{t.documentFormUi.taxableBase}</th>
-                    <th className="px-3 py-1.5 text-right font-medium">{t.documentFormUi.vatRate}</th>
-                    <th className="px-3 py-1.5 text-right font-medium">{t.documentFormUi.vatAmount}</th>
-                    <th className="px-3 py-1.5 text-right font-medium">{t.documentFormUi.total}</th>
+                    <th className={cn('text-left font-medium', isSalesInvoice ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.taxSummaryTitle}</th>
+                    <th className={cn('text-right font-medium', isSalesInvoice ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.taxableBase}</th>
+                    <th className={cn('text-right font-medium', isSalesInvoice ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.vatRate}</th>
+                    <th className={cn('text-right font-medium', isSalesInvoice ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.vatAmount}</th>
+                    <th className={cn('text-right font-medium', isSalesInvoice ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.total}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {ivaSummary.map(([rate, vals]) => (
                     <tr key={rate} className="border-t">
-                      <td className="px-3 py-1">{rate === 0 ? t.documentFormUi.exempt : t.documentFormUi.vatAtRate.replace('{rate}', String(rate))}</td>
-                      <td className="px-3 py-1 text-right font-mono">{fmt(vals.base, { minimumFractionDigits: 2 })} Kz</td>
-                      <td className="px-3 py-1 text-right">{rate}%</td>
-                      <td className="px-3 py-1 text-right font-mono">{fmt(vals.iva, { minimumFractionDigits: 2 })} Kz</td>
-                      <td className="px-3 py-1 text-right font-mono font-medium">{fmt(vals.total, { minimumFractionDigits: 2 })} Kz</td>
+                      <td className={isSalesInvoice ? 'px-4 py-2' : 'px-3 py-1'}>{rate === 0 ? t.documentFormUi.exempt : t.documentFormUi.vatAtRate.replace('{rate}', String(rate))}</td>
+                      <td className={cn('text-right font-mono', isSalesInvoice ? 'px-4 py-2' : 'px-3 py-1')}>{fmt(vals.base, { minimumFractionDigits: 2 })} Kz</td>
+                      <td className={cn('text-right', isSalesInvoice ? 'px-4 py-2' : 'px-3 py-1')}>{rate}%</td>
+                      <td className={cn('text-right font-mono', isSalesInvoice ? 'px-4 py-2' : 'px-3 py-1')}>{fmt(vals.iva, { minimumFractionDigits: 2 })} Kz</td>
+                      <td className={cn('text-right font-mono font-medium', isSalesInvoice ? 'px-4 py-2' : 'px-3 py-1')}>{fmt(vals.total, { minimumFractionDigits: 2 })} Kz</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1354,29 +1614,33 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           )}
 
           {/* Totals panel */}
-          <div className="flex justify-end">
-            <div className="w-72 space-y-1 text-xs border rounded p-3 bg-muted/30">
+          <div className={cn(!isSalesInvoice && 'flex justify-end')}>
+            <div className={cn(
+              isSalesInvoice
+                ? 'w-full space-y-2 rounded-xl border bg-card p-4 text-sm shadow-sm'
+                : 'w-72 space-y-1 rounded border bg-muted/30 p-3 text-xs',
+            )}>
               <div className="flex justify-between"><span>{t.documentFormUi.subtotalExVat}</span><span className="font-mono">{fmt(totals.subtotal)} Kz</span></div>
               <div className="flex justify-between text-muted-foreground"><span>{t.documentFormUi.discount}</span><span className="font-mono">-{fmt(totals.totalDiscount)} Kz</span></div>
               <div className="flex justify-between text-muted-foreground"><span>{t.documentFormUi.totalVat}</span><span className="font-mono">{fmt(totals.totalTax)} Kz</span></div>
-              <div className="border-t pt-1 flex justify-between font-bold text-sm">
+              <div className={cn('flex justify-between border-t font-bold', isSalesInvoice ? 'pt-3 text-lg' : 'pt-1 text-sm')}>
                 <span>{t.documentFormUi.totalIncVat}</span><span className="font-mono">{fmt(totals.total)} Kz</span>
               </div>
               {(config.requiresPayment || isCreditInvoice) && (
                 <>
                   <div className="flex justify-between text-green-600"><span>{t.documentFormUi.paid}</span><span className="font-mono">{fmt(isCreditInvoice ? 0 : amountPaid)} Kz</span></div>
-                  <div className="flex justify-between text-destructive font-medium"><span>{t.documentFormUi.outstanding}</span><span className="font-mono">{fmt(totals.total - (isCreditInvoice ? 0 : amountPaid))} Kz</span></div>
+                  <div className="flex justify-between font-medium text-destructive"><span>{t.documentFormUi.outstanding}</span><span className="font-mono">{fmt(totals.total - (isCreditInvoice ? 0 : amountPaid))} Kz</span></div>
                 </>
               )}
-              {previewInvoiceType && (
-                <div className="border-t pt-2 mt-2 space-y-1">
+              {previewInvoiceType && !isSalesInvoice && (
+                <div className="mt-2 space-y-1 border-t pt-2">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">{t.checkoutUi.documentType}</span>
                     <Badge variant={previewInvoiceType === 'FT' && isCreditInvoice ? 'default' : 'outline'}>
                       {fiscalInvoiceTypeLabel(previewInvoiceType, t.posUi)}
                     </Badge>
                   </div>
-                  <p className="text-[10px] text-muted-foreground leading-snug">
+                  <p className="text-[10px] leading-snug text-muted-foreground">
                     {previewInvoiceType === 'FS'
                       ? t.documentFormUi.fsPreviewWarning.replace('{max}', fsMaxAmount().toLocaleString(locale))
                       : previewInvoiceType === 'FT' && isCreditInvoice
@@ -1386,6 +1650,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                 </div>
               )}
             </div>
+          </div>
           </div>
           </>
           )}
