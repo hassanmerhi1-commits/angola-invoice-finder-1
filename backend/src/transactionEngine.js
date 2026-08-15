@@ -39,6 +39,7 @@ const { resolveEntityAccountCode } = require('./lib/entityCoaAccounts');
 const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
 const { runInSavepoint, runOptionalInSavepoint } = require('./lib/pgSavepoint');
 const { taxCodeForRate } = require('./taxDefaults');
+const { resolveSaleJournalAmounts } = require('./lib/saleJournalAmounts');
 
 // ==================== PGC (novo com IVA) POSTING ACCOUNT CODES ====================
 // Angola Plano Geral de Contabilidade with no-dot numbering (main 11 → first sub 111).
@@ -2222,6 +2223,9 @@ async function processSale(client, saleData) {
   requireParam(cashierId, 'cashierId');
   if (!items || items.length === 0) throw new Error('Venda deve ter pelo menos um item');
   const totalAmount = requirePositive(total, 'total');
+  const saleAmounts = resolveSaleJournalAmounts({
+    subtotal, taxAmount, discount, total: totalAmount,
+  });
   const isCreditSale = paymentMethod === 'credit';
   if (isCreditSale) {
     requireParam(clientId, 'clientId');
@@ -2334,7 +2338,7 @@ async function processSale(client, saleData) {
   let invoiceNumber = await allocateUniqueSaleInvoiceNumber(client, seqKey, seqPrefix, seqScope);
   const saleId = randomUUID();
   const saleHeaderParams = [saleId, invoiceNumber, branchId, cashierId, cashierName,
-    subtotal, taxAmount, discount || 0, totalAmount,
+    saleAmounts.netSales, saleAmounts.tax, saleAmounts.discount, totalAmount,
     paymentMethod, amountPaid, change, normalizedCustomerNif || null, customerName,
     clientId, clientReqId, saleDueDate, invoiceType, saleCreatedAt];
 
@@ -2550,11 +2554,11 @@ async function processSale(client, saleData) {
   }
 
   const revenueLines = [
-    { accountCode: debitAccountCode, description: `Venda ${invoiceNumber}`, debit: parseFloat(total), credit: 0 },
-    { accountCode: ACC.SALES, description: `Receita ${invoiceNumber}`, debit: 0, credit: parseFloat(subtotal) },
+    { accountCode: debitAccountCode, description: `Venda ${invoiceNumber}`, debit: saleAmounts.total, credit: 0 },
+    { accountCode: ACC.SALES, description: `Receita ${invoiceNumber}`, debit: 0, credit: saleAmounts.netSales },
   ];
-  if (parseFloat(taxAmount) > 0) {
-    revenueLines.push({ accountCode: ACC.IVA_LIQUIDATED, description: `IVA ${invoiceNumber}`, debit: 0, credit: parseFloat(taxAmount) });
+  if (saleAmounts.tax > 0) {
+    revenueLines.push({ accountCode: ACC.IVA_LIQUIDATED, description: `IVA ${invoiceNumber}`, debit: 0, credit: saleAmounts.tax });
   }
 
   const saleCustomerLabel = String(customerName || creditCustomer?.name || '').trim();

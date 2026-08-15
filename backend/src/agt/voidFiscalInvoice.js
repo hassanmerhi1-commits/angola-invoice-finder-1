@@ -9,6 +9,7 @@ const { getAgtConfigWithSecrets } = require('./agtConfig');
 const { transmitVoid } = require('./connector');
 const { resolveBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('../lib/resolveBranchCaixaGlAccount');
 const { isCashPaymentMethod } = require('../lib/caixaCashRefund');
+const { resolveSaleJournalAmounts } = require('../lib/saleJournalAmounts');
 
 function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -99,9 +100,15 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
       }
     }
 
-    const subtotal = roundMoney(sale.subtotal);
-    const taxAmount = roundMoney(sale.tax_amount);
-    const total = roundMoney(sale.total);
+    const saleAmounts = resolveSaleJournalAmounts({
+      subtotal: sale.subtotal,
+      taxAmount: sale.tax_amount,
+      discount: sale.discount,
+      total: sale.total,
+    });
+    const subtotal = saleAmounts.netSales;
+    const taxAmount = saleAmounts.tax;
+    const total = saleAmounts.total;
     const paymentMethod = sale.payment_method || 'cash';
 
     let cashAccountCode = '431';

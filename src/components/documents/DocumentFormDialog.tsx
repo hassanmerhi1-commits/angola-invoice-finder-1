@@ -630,7 +630,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             cashierId: user?.id || '',
             cashierName: user?.name || '',
             items: saleItems,
-            subtotal: totals.subtotal,
+            subtotal: Math.round(saleItems.reduce((s, i) => s + Number(i.subtotal || 0), 0) * 100) / 100,
             taxAmount: totals.totalTax,
             discount: totals.totalDiscount,
             total: totals.total,
