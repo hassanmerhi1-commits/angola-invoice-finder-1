@@ -2198,6 +2198,34 @@ function resolveSaleCreatedAt(saleData) {
   return d.toISOString();
 }
 
+async function applySaleCaixaIn(client, caixaId, amount) {
+  const id = String(caixaId || '').trim();
+  if (!id || !Number.isFinite(Number(amount)) || Number(amount) < 0.001) return;
+  const delta = Number(amount);
+  try {
+    await client.query(
+      `UPDATE caixas
+       SET current_balance = COALESCE(current_balance, 0) + $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
+      [delta, id],
+    );
+  } catch (err) {
+    console.warn('[SALE CAIXA] register balance:', err.message);
+  }
+  try {
+    await client.query(
+      `UPDATE caixa_sessions
+       SET total_in = COALESCE(total_in, 0) + $1,
+           sales_total = COALESCE(sales_total, 0) + $1
+       WHERE CAST(caixa_id AS TEXT) = CAST($2 AS TEXT) AND status = 'open'`,
+      [delta, id],
+    );
+  } catch (err) {
+    console.warn('[SALE CAIXA] open session:', err.message);
+  }
+}
+
 async function processSale(client, saleData) {
   const paymentMethod = normalizeSalePaymentMethod(saleData);
   const {
@@ -2210,6 +2238,7 @@ async function processSale(client, saleData) {
     parentProformaNumber, parentProformaId,
   } = saleData;
   const clientId = String(saleData.clientId || saleData.client_id || '').trim() || null;
+  const caixaId = String(saleData.caixaId || saleData.caixa_id || '').trim() || null;
   const clientReqId = clientRequestId || idempotencyKey || null;
   const salesOrderId = String(
     saleData.salesOrderId
@@ -2587,6 +2616,10 @@ async function processSale(client, saleData) {
         { accountCode: ACC.INVENTORY_STOCK, description: 'Saída Mercadorias', debit: 0, credit: totalCOGS },
       ],
     });
+  }
+
+  if (paymentMethod === 'cash' && caixaId) {
+    await applySaleCaixaIn(client, caixaId, totalAmount);
   }
 
   // ── Step 5: Open item (credit / on-account sales only) ──
