@@ -211,6 +211,8 @@ export default function Inventory() {
     stock: readProductStock(p),
     onHandStock: Number(p.onHandStock ?? p.on_hand_stock ?? p.stock) || 0,
     reservedStock: Number(p.reservedStock ?? p.reserved_stock ?? 0) || 0,
+    lockedStock: Number(p.lockedStock ?? p.locked_stock ?? 0) || 0,
+    quotedStock: Number(p.quotedStock ?? p.quoted_stock ?? 0) || 0,
     unit: p.unit || 'UN',
     taxRate: parseTaxRateOrNull(p.tax_rate ?? p.taxRate) ?? 0,
     vatOverride: !!(p.vat_override ?? p.vatOverride),
@@ -1802,6 +1804,12 @@ export default function Inventory() {
                     <div>
                       <strong>{t.inventoryGridUi.reservedQty}:</strong>{' '}
                       {selectedProduct.reservedStock}
+                      {(Number(selectedProduct.quotedStock) || 0) > 0 && (
+                        <span className="text-muted-foreground">
+                          {' '}
+                          ({t.inventoryGridUi.quotedQtyHint.replace('{qty}', String(selectedProduct.quotedStock))})
+                        </span>
+                      )}
                       {(Number(selectedProduct.onHandStock) || 0) > 0 && (
                         <span className="text-muted-foreground">
                           {' '}({language === 'pt' ? 'físico' : 'on hand'}: {selectedProduct.onHandStock})

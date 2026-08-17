@@ -24,6 +24,7 @@ interface ColumnDef {
   minWidth: number;
   type?: string;
   computed?: boolean;
+  title?: string;
 }
 
 interface AdvancedDataGridProps {
@@ -83,7 +84,7 @@ export function AdvancedDataGrid({
     { key: 'name', label: t.inventoryGridUi.name, minWidth: 180 },
     { key: 'price', label: t.inventoryGridUi.priceNoTax, minWidth: 100, type: 'number' },
     { key: 'priceWithIVA', label: t.inventoryGridUi.priceWithTax, minWidth: 100, type: 'number', computed: true },
-    { key: 'reservedQty', label: t.inventoryGridUi.reservedQty, minWidth: 100, type: 'number', computed: true },
+    { key: 'reservedQty', label: t.inventoryGridUi.reservedQty, minWidth: 100, type: 'number', computed: true, title: t.inventoryGridUi.reservedQtyHint },
     { key: 'stock', label: isHeadOffice ? t.inventoryGridUi.totalQty : t.inventoryGridUi.branchQty, minWidth: 80, type: 'number' },
     { key: 'firstCost', label: t.inventoryGridUi.firstCost, minWidth: 100, type: 'number' },
     { key: 'lastCost', label: t.inventoryGridUi.lastCost, minWidth: 100, type: 'number' },
@@ -328,6 +329,7 @@ export function AdvancedDataGrid({
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
+                          title={col.title || col.label}
                           className={cn(
                             "w-full px-2 py-1 text-xs font-bold text-foreground/80 text-left leading-tight flex items-center justify-between hover:bg-accent",
                             hasFilter && "bg-muted text-foreground font-semibold"

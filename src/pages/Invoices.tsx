@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 import { salesOrderToErpDocumentPrefill, type SalesOrder } from '@/lib/salesOrderToDocument';
 import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
-import type { CreditNote } from '@/types/erp';
+import type { CreditNote, TransportDocument } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList, markCachedListsStaleByPrefix } from '@/lib/listCache';
 import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
@@ -37,6 +37,7 @@ import {
   getSaleInvoiceAsDocument,
   getPurchaseInvoicesAsDocuments,
   mapCreditNoteToDocument,
+  mapTransportDocumentToErpDocument,
 } from '@/lib/documentStorage';
 import type { BranchRef } from '@/lib/purchaseInvoiceStorage';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
@@ -52,6 +53,10 @@ import {
 } from '@/lib/invoicesWorkspace';
 import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
 import { DocumentFormDialog } from '@/components/documents/DocumentFormDialog';
+import { ProFormaCreateDialog } from '@/components/proforma/ProFormaCreateDialog';
+import { TransportDocumentPrintDialog } from '@/components/fiscal/TransportDocumentPrintDialog';
+import { getProFormas } from '@/lib/proforma';
+import { proformaToErpDocumentPrefill } from '@/lib/proformaToDocument';
 import { isFiscallyImmutable } from '@/lib/fiscalImmutability';
 import { DocumentFlowViewer } from '@/components/documents/DocumentFlowViewer';
 import { setContextMenuResolver } from '@/lib/contextMenuRegistry';
@@ -155,6 +160,7 @@ export default function Invoices() {
   }), [t]);
   const { user } = useAuth();
   const [formOpen, setFormOpen] = useState(false);
+  const [proformaCreateOpen, setProformaCreateOpen] = useState(false);
   const { clients } = useClients(!formOpen);
   const { hasPermission } = usePermissions(user?.id);
   const canSendAgt = hasPermission('agt_send');
@@ -182,6 +188,9 @@ export default function Invoices() {
   const [editDoc, setEditDoc] = useState<ERPDocument | null>(null);
   const [prefillDoc, setPrefillDoc] = useState<ERPDocument | null>(null);
   const pendingSalesOrderIdRef = useRef<string | null>(null);
+  const transportByIdRef = useRef<Map<string, TransportDocument>>(new Map());
+  const [printTransportDoc, setPrintTransportDoc] = useState<TransportDocument | null>(null);
+  const [printIncludePrices, setPrintIncludePrices] = useState(false);
 
   const refresh = useCallback(() => {
     markCachedListsStaleByPrefix('invoicesDocs:');
@@ -246,16 +255,49 @@ export default function Invoices() {
           return;
         }
 
+        if (type === 'guia_remessa') {
+          const gtRes = await api.fiscalDocuments.listTransportDocuments(listBranchId);
+          const rows = (gtRes.data || []) as TransportDocument[];
+          transportByIdRef.current = new Map(rows.map((row) => [row.id, row]));
+          const mapped = rows.map((row) =>
+            mapTransportDocumentToErpDocument(row, row.branchName || branchNames[row.branchId] || '', t.pos.finalConsumer),
+          );
+          if (!cancelled) {
+            setDocuments(mapped);
+            setCachedList(cacheKey, mapped);
+          }
+          return;
+        }
+
         // Tab-scoped: don't wait on purchases when viewing sales (and vice versa).
         const loadSales = !type || type === 'fatura_venda';
         const loadPurchase = !type || type === 'fatura_compra';
         const loadFiscalCreditNotes = !type || type === 'nota_credito';
+        const loadFiscalTransport = !type || type === 'guia_remessa';
+        const loadProformas = !type || type === 'proforma';
+        const proformaDocsPromise = loadProformas
+          ? getProFormas(isHeadOffice ? undefined : listBranchId).then((rows) =>
+              rows.map(proformaToErpDocumentPrefill),
+            )
+          : Promise.resolve([] as ERPDocument[]);
+        const mergeStoredWithProformas = (stored: ERPDocument[], pfDocs: ERPDocument[]) => {
+          const seen = new Set(stored.map((d) => d.id));
+          const out = [...stored];
+          for (const d of pfDocs) {
+            if (!seen.has(d.id)) {
+              seen.add(d.id);
+              out.push(d);
+            }
+          }
+          return out;
+        };
 
         const mergeAndPaint = (
           salesDocs: ERPDocument[],
           purchaseDocs: ERPDocument[],
           fiscalCreditDocs: ERPDocument[],
           storedDocs: ERPDocument[],
+          fiscalTransportDocs: ERPDocument[] = [],
         ) => {
           const salesByNumber = new Map(
             salesDocs.filter((d) => d.documentNumber).map((d) => [d.documentNumber, d]),
@@ -266,15 +308,15 @@ export default function Invoices() {
             if (doc.documentType === 'fatura_venda' && doc.documentNumber && salesByNumber.has(doc.documentNumber)) {
               continue;
             }
-            // Local erp_documents copies are stale; fiscal API is canonical for credit notes.
-            if (doc.documentType === 'nota_credito') continue;
+            // Local erp_documents copies are stale; fiscal API is canonical for credit notes and GTs.
+            if (doc.documentType === 'nota_credito' || doc.documentType === 'guia_remessa') continue;
             // Tab-scoped local docs: skip purchase rows when not loading purchases, etc.
             if (type === 'fatura_venda' && doc.documentType === 'fatura_compra') continue;
             if (type === 'fatura_compra' && doc.documentType === 'fatura_venda') continue;
             merged.push(doc);
             if (doc.documentNumber) seenNumbers.add(doc.documentNumber);
           }
-          for (const doc of [...salesDocs, ...purchaseDocs, ...fiscalCreditDocs]) {
+          for (const doc of [...salesDocs, ...purchaseDocs, ...fiscalCreditDocs, ...fiscalTransportDocs]) {
             if (!doc.documentNumber || seenNumbers.has(doc.documentNumber)) continue;
             seenNumbers.add(doc.documentNumber);
             merged.push(doc);
@@ -289,27 +331,35 @@ export default function Invoices() {
 
         // "All" tab: paint sales first so the grid is usable; purchases/CN fill in after.
         if (!type) {
-          const [storedDocs, salesDocs] = await Promise.all([
+          const [storedDocs, salesDocs, pfDocs] = await Promise.all([
             // Skip Electron erp_documents dump — API lists are canonical and the IPC scan was
             // blocking every Invoices open over Tailscale.
             getDocuments(type, branchFilter, { skipLocalDb: true }),
             getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog, listOpts),
+            proformaDocsPromise,
           ]);
-          mergeAndPaint(salesDocs, [], [], storedDocs);
+          const storedWithPf = mergeStoredWithProformas(storedDocs, pfDocs);
+          mergeAndPaint(salesDocs, [], [], storedWithPf);
           if (!cancelled) setListLoading(false);
 
-          const [purchaseDocs, cnRes] = await Promise.all([
+          const [purchaseDocs, cnRes, gtRes] = await Promise.all([
             getPurchaseInvoicesAsDocuments(listBranchId, branchNames, branchCatalog, isHeadOffice, listOpts),
             api.fiscalDocuments.listCreditNotes(listBranchId, listOpts),
+            api.fiscalDocuments.listTransportDocuments(listBranchId),
           ]);
           const fiscalCreditDocs = (cnRes.data || []).map((cn: CreditNote) =>
             mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
           );
-          mergeAndPaint(salesDocs, purchaseDocs, fiscalCreditDocs, storedDocs);
+          const gtRows = (gtRes.data || []) as TransportDocument[];
+          transportByIdRef.current = new Map(gtRows.map((row) => [row.id, row]));
+          const fiscalTransportDocs = gtRows.map((row) =>
+            mapTransportDocumentToErpDocument(row, row.branchName || branchNames[row.branchId] || '', t.pos.finalConsumer),
+          );
+          mergeAndPaint(salesDocs, purchaseDocs, fiscalCreditDocs, storedWithPf, fiscalTransportDocs);
           return;
         }
 
-        const [storedDocs, salesDocs, purchaseDocs, cnRes] = await Promise.all([
+        const [storedDocs, salesDocs, purchaseDocs, cnRes, pfDocs, gtRes] = await Promise.all([
           getDocuments(type, branchFilter, { skipLocalDb: true }),
           loadSales
             ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog, listOpts)
@@ -320,12 +370,23 @@ export default function Invoices() {
           loadFiscalCreditNotes
             ? api.fiscalDocuments.listCreditNotes(listBranchId, listOpts)
             : Promise.resolve({ data: [] as CreditNote[] }),
+          proformaDocsPromise,
+          loadFiscalTransport
+            ? api.fiscalDocuments.listTransportDocuments(listBranchId)
+            : Promise.resolve({ data: [] as TransportDocument[] }),
         ]);
 
         const fiscalCreditDocs = (cnRes.data || []).map((cn: CreditNote) =>
           mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
         );
-        mergeAndPaint(salesDocs, purchaseDocs, fiscalCreditDocs, storedDocs);
+        const gtRows = (gtRes.data || []) as TransportDocument[];
+        if (gtRows.length) {
+          transportByIdRef.current = new Map(gtRows.map((row) => [row.id, row]));
+        }
+        const fiscalTransportDocs = gtRows.map((row) =>
+          mapTransportDocumentToErpDocument(row, row.branchName || branchNames[row.branchId] || '', t.pos.finalConsumer),
+        );
+        mergeAndPaint(salesDocs, purchaseDocs, fiscalCreditDocs, mergeStoredWithProformas(storedDocs, pfDocs), fiscalTransportDocs);
       } catch (err) {
         console.error('[Invoices] load failed:', err);
         // Keep showing the last cached list instead of blanking the tab on a transient failure.
@@ -394,6 +455,38 @@ export default function Invoices() {
     navigate('/fiscal-documents', { state: { openDebitNoteCreate: true } });
   }, [navigate, canCreateDebitNote, t]);
 
+  const openFiscalTransportCreate = useCallback((saleId?: string) => {
+    toast.info(t.invoicesUi.deliveryNoteUseFiscalDocs);
+    navigate('/fiscal-documents', {
+      state: saleId
+        ? { openTransportForSaleId: saleId }
+        : { openTransportCreate: true },
+    });
+  }, [navigate, t]);
+
+  const printErpDocument = useCallback(async (doc: ERPDocument) => {
+    if (doc.documentType === 'guia_remessa') {
+      const td = transportByIdRef.current.get(doc.id);
+      if (td) {
+        setPrintIncludePrices(false);
+        setPrintTransportDoc(td);
+        return;
+      }
+    }
+    let toPrint = doc;
+    if (
+      toPrint.documentType === 'fatura_venda'
+      && (!toPrint.lines || toPrint.lines.length === 0)
+      && toPrint.id
+      && !toPrint.id.startsWith('doc_')
+    ) {
+      const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
+      const full = await getSaleInvoiceAsDocument(toPrint.id, branchNames);
+      if (full) toPrint = full;
+    }
+    await printDocument(toPrint, { source: 'invoices' });
+  }, [branches]);
+
   const openNewDocumentForTab = useCallback(
     (tab?: InvoicesWorkspaceTab) => {
       const resolved = tab ?? getInvoicesWorkspaceTab();
@@ -405,12 +498,24 @@ export default function Invoices() {
         openFiscalDebitNoteCreate();
         return;
       }
+      if (resolved === 'guia_remessa') {
+        openFiscalTransportCreate();
+        return;
+      }
       if (resolved === 'recibo') {
         navigate('/payments', { state: { openReceipt: true } });
         return;
       }
       if (resolved === 'pagamento') {
         navigate('/payments', { state: { openPayment: true } });
+        return;
+      }
+      if (resolved === 'proforma') {
+        setProformaCreateOpen(true);
+        return;
+      }
+      if (resolved === 'sales_order') {
+        navigate('/sales-orders');
         return;
       }
       const type = documentTypeForNewFromTab(resolved);
@@ -423,7 +528,7 @@ export default function Invoices() {
       setPrefillDoc(null);
       setFormOpen(true);
     },
-    [navigate, location.pathname, openFiscalCreditNoteCreate, openFiscalDebitNoteCreate],
+    [navigate, location.pathname, openFiscalCreditNoteCreate, openFiscalDebitNoteCreate, openFiscalTransportCreate],
   );
 
   // TopNav toolbar "Novo" — match active document tab (read tab at click time)
@@ -485,6 +590,16 @@ export default function Invoices() {
       });
       return;
     }
+    if (doc.documentType === 'guia_remessa') {
+      const td = transportByIdRef.current.get(doc.id);
+      if (td) {
+        setPrintIncludePrices(false);
+        setPrintTransportDoc(td);
+        return;
+      }
+      navigate('/fiscal-documents', { state: { openTransportCreate: true } });
+      return;
+    }
     let resolved = doc.documentType === 'fatura_venda'
       ? resolveCanonicalSaleDocument(doc, documents)
       : doc;
@@ -540,20 +655,7 @@ export default function Invoices() {
         toast.info(t.topNav.file.printSelectDocument);
         return;
       }
-      void (async () => {
-        let doc = selected;
-        if (
-          doc.documentType === 'fatura_venda'
-          && (!doc.lines || doc.lines.length === 0)
-          && doc.id
-          && !doc.id.startsWith('doc_')
-        ) {
-          const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
-          const full = await getSaleInvoiceAsDocument(doc.id, branchNames);
-          if (full) doc = full;
-        }
-        await printDocument(doc, { source: 'invoices' });
-      })().catch((err: unknown) => {
+      void printErpDocument(selected).catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
         toast.error(message || t.invoiceViewUi.printError);
       });
@@ -589,7 +691,7 @@ export default function Invoices() {
         window.removeEventListener(event, handler);
       }
     };
-  }, [documents, selectedDocId, filteredDocs, t, branches]);
+  }, [documents, selectedDocId, filteredDocs, t, branches, printErpDocument]);
 
   useEffect(() => {
     setContextMenuResolver((target) => {
@@ -610,20 +712,7 @@ export default function Invoices() {
           id: 'doc-print',
           label: t.interaction.printDocument,
           onSelect: () => {
-            void (async () => {
-              let toPrint = doc;
-              if (
-                toPrint.documentType === 'fatura_venda'
-                && (!toPrint.lines || toPrint.lines.length === 0)
-                && toPrint.id
-                && !toPrint.id.startsWith('doc_')
-              ) {
-                const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
-                const full = await getSaleInvoiceAsDocument(toPrint.id, branchNames);
-                if (full) toPrint = full;
-              }
-              await printDocument(toPrint, { source: 'invoices' });
-            })().catch((err: unknown) => {
+            void printErpDocument(doc).catch((err: unknown) => {
               const message = err instanceof Error ? err.message : String(err);
               toast.error(message || t.invoiceViewUi.printError);
             });
@@ -664,7 +753,7 @@ export default function Invoices() {
       return items;
     });
     return () => setContextMenuResolver(null);
-  }, [documents, openEditDocument, t, transmitAgt, refresh, canSendAgt, canVoidInvoice, branches]);
+  }, [documents, openEditDocument, t, transmitAgt, refresh, canSendAgt, canVoidInvoice, branches, printErpDocument]);
 
   const handleConvert = async (doc: ERPDocument, targetType: DocumentType) => {
     if (targetType === 'nota_credito') {
@@ -686,6 +775,12 @@ export default function Invoices() {
       if (doc.documentType === 'fatura_venda') {
         navigate('/fiscal-documents', { state: { openDebitNoteForSaleId: doc.id } });
         toast.info(t.invoicesUi.debitNoteUseFiscalDocs);
+        return;
+      }
+    }
+    if (targetType === 'guia_remessa') {
+      if (doc.documentType === 'fatura_venda') {
+        openFiscalTransportCreate(doc.id);
         return;
       }
     }
@@ -747,6 +842,12 @@ export default function Invoices() {
                   openFiscalCreditNoteCreate();
                 } else if (key === 'nota_debito') {
                   openFiscalDebitNoteCreate();
+                } else if (key === 'guia_remessa') {
+                  openFiscalTransportCreate();
+                } else if (key === 'proforma') {
+                  setProformaCreateOpen(true);
+                } else if (key === 'sales_order') {
+                  navigate('/sales-orders');
                 } else {
                   openNewDocument(key);
                 }
@@ -790,7 +891,7 @@ export default function Invoices() {
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedDoc}
           onClick={() => {
             if (!selectedDoc) return;
-            void printDocument(selectedDoc, { source: 'invoices' })
+            void printErpDocument(selectedDoc)
               .catch((err: unknown) => {
                 const message = err instanceof Error ? err.message : String(err);
                 toast.error(message || t.invoiceViewUi.printError);
@@ -799,7 +900,14 @@ export default function Invoices() {
           <Printer className="w-3 h-3" /> {t.invoicesUi.print}
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedDoc}
-          onClick={() => selectedDoc && downloadDocumentHTML(selectedDoc)}>
+          onClick={() => {
+            if (!selectedDoc) return;
+            if (selectedDoc.documentType === 'guia_remessa') {
+              void printErpDocument(selectedDoc);
+              return;
+            }
+            downloadDocumentHTML(selectedDoc);
+          }}>
           <Download className="w-3 h-3" /> {t.invoicesUi.pdf}
         </Button>
         <Button variant="outline" size="icon" className="h-7 w-7" onClick={refresh}>
@@ -913,6 +1021,19 @@ export default function Invoices() {
                 size="sm"
                 className="h-7 shrink-0 text-xs"
                 onClick={() => navigate('/fiscal-documents', { state: { openDebitNoteCreate: true } })}
+              >
+                {t.invoicesUi.openFiscalDocuments}
+              </Button>
+            </div>
+          )}
+          {activeTab === 'guia_remessa' && (
+            <div className="flex items-center justify-between gap-3 border-b bg-cyan-50/80 px-3 py-2 text-xs text-cyan-950">
+              <span>{t.invoicesUi.deliveryNoteUseFiscalDocs}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 shrink-0 text-xs"
+                onClick={() => openFiscalTransportCreate()}
               >
                 {t.invoicesUi.openFiscalDocuments}
               </Button>
@@ -1171,6 +1292,20 @@ export default function Invoices() {
           }}
         />
       )}
+
+      <ProFormaCreateDialog
+        open={proformaCreateOpen}
+        onOpenChange={setProformaCreateOpen}
+        onCreated={() => refresh()}
+      />
+
+      <TransportDocumentPrintDialog
+        open={!!printTransportDoc}
+        doc={printTransportDoc}
+        includePrices={printIncludePrices}
+        onIncludePricesChange={setPrintIncludePrices}
+        onOpenChange={(open) => { if (!open) setPrintTransportDoc(null); }}
+      />
     </div>
   );
 }

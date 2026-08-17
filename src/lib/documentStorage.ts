@@ -19,7 +19,7 @@ import {
   type BranchRef,
   type PurchaseInvoice,
 } from '@/lib/purchaseInvoiceStorage';
-import type { CreditNote } from '@/types/erp';
+import type { CreditNote, TransportDocument } from '@/types/erp';
 import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutability';
 
 const STORAGE_KEY = 'kwanzaerp_documents';
@@ -213,6 +213,73 @@ export function mapCreditNoteToDocument(
     createdBy: cn.issuedBy || '',
     createdAt: cn.createdAt,
     updatedAt: cn.createdAt,
+  };
+}
+
+/** Fiscal transport guides (`transport_documents`) — canonical source for guia_remessa. */
+export function mapTransportDocumentToErpDocument(
+  doc: TransportDocument,
+  branchName = '',
+  finalConsumerLabel = 'Consumidor Final',
+): ERPDocument {
+  const issuedAt = doc.issuedAt || doc.createdAt || new Date().toISOString();
+  const issueDate = String(issuedAt).includes('T')
+    ? String(issuedAt).split('T')[0]
+    : String(issuedAt).slice(0, 10);
+  const lines = (doc.items || []).map((item, idx) => {
+    const quantity = Number(item.quantity) || 0;
+    const unitPrice = Number(item.unitPrice) || 0;
+    const lineTotal = Number(item.lineTotal) || unitPrice * quantity;
+    return {
+      id: `gt_${doc.id}_${idx}`,
+      productId: item.productId || '',
+      productSku: item.sku,
+      description: item.productName,
+      quantity,
+      unitPrice,
+      discount: 0,
+      discountAmount: 0,
+      taxRate: Number(item.taxRate) || 0,
+      taxAmount: 0,
+      lineTotal,
+    };
+  });
+  const total = lines.reduce((sum, line) => sum + line.lineTotal, 0);
+  const status: ERPDocument['status'] =
+    doc.status === 'cancelled' ? 'cancelled' : 'confirmed';
+  return {
+    id: doc.id,
+    documentType: 'guia_remessa',
+    documentNumber: doc.documentNumber,
+    branchId: doc.branchId || '',
+    branchName: branchName || doc.branchName || '',
+    entityType: 'customer',
+    entityName: doc.destinationName || finalConsumerLabel,
+    entityNif: doc.destinationNif,
+    entityAddress: [doc.destinationAddress, doc.destinationCity].filter(Boolean).join(', '),
+    lines,
+    subtotal: total,
+    totalDiscount: 0,
+    totalTax: 0,
+    total,
+    currency: 'AOA',
+    amountPaid: 0,
+    amountDue: 0,
+    parentDocumentId: doc.relatedInvoiceId,
+    parentDocumentNumber: doc.relatedInvoiceNumber,
+    parentDocumentType: doc.relatedInvoiceId ? 'fatura_venda' : undefined,
+    status,
+    issueDate,
+    issueTime: new Date(issuedAt).toLocaleTimeString('pt-AO', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }),
+    fiscalLocked: true,
+    notes: doc.notes,
+    createdBy: doc.issuedBy || '',
+    createdAt: doc.createdAt || issuedAt,
+    updatedAt: doc.createdAt || issuedAt,
   };
 }
 
@@ -543,6 +610,11 @@ export async function convertDocument(
     return null;
   }
 
+  // Delivery notes are fiscal GTs — never copy the invoice or mark it converted.
+  if (targetType === 'guia_remessa') {
+    return null;
+  }
+
   const newDoc = await createDocument(
     targetType,
     source.branchId,
@@ -604,6 +676,7 @@ export function calculateLineTotals(line: Partial<DocumentLine>): DocumentLine {
     taxAmount: Math.round(taxAmount * 100) / 100,
     lineTotal: Math.round(lineTotal * 100) / 100,
     accountCode: line.accountCode,
+    branchId: line.branchId,
   };
 }
 

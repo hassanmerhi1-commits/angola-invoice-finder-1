@@ -51,6 +51,7 @@ const ALSO_REFRESH_PRODUCTS = new Set<RefreshableTable>([
   'supplier_returns',
   'credit_notes',
   'purchase_invoices',
+  'proformas',
 ]);
 
 const pendingTables = new Set<RefreshableTable>();

@@ -103,6 +103,8 @@ function mapProduct(p: any): Product {
     avgCost: Number(p.avgCost ?? p.avg_cost ?? p.cost) || 0,
     stock: Number(p.stock) || 0,
     reservedStock: Number(p.reservedStock ?? p.reserved_stock ?? 0) || 0,
+    lockedStock: Number(p.lockedStock ?? p.locked_stock ?? 0) || 0,
+    quotedStock: Number(p.quotedStock ?? p.quoted_stock ?? 0) || 0,
     onHandStock: Number(p.onHandStock ?? p.on_hand_stock ?? p.stock) || 0,
     minStock: p.minStock ?? p.min_stock,
     maxStock: p.maxStock ?? p.max_stock,

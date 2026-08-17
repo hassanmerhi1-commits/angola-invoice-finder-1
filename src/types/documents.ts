@@ -35,6 +35,8 @@ export interface DocumentLine {
   taxAmount: number;       // calculated
   lineTotal: number;       // calculated
   accountCode?: string;    // linked account
+  /** Stock / warehouse branch for this line (defaults to the invoice branch). */
+  branchId?: string;
 }
 
 export interface ERPDocument {
@@ -266,7 +268,8 @@ export const DOCUMENT_TYPE_CONFIG: Record<DocumentType, {
     entityType: 'customer',
     canConvertTo: [],
     requiresPayment: false,
-    affectsStock: true,
+    // Stock already left on the sales invoice. Fiscal GT is a movement document only.
+    affectsStock: false,
   },
 };
 

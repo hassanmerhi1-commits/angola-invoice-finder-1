@@ -1,13 +1,39 @@
 /**
  * Soft holds from reserved / partially shipped sales orders (reserved_qty > 0).
  * Stock ledger still uses branch id as warehouse_id.
+ *
+ * Proforma quotes are display-only (3 days after issue) and never reduce available stock.
  */
+
+const { isPostgresEngine } = require('./sqlDialect');
+
+const PROFORMA_QUOTE_DAYS = 3;
+
+function emptyHolds() {
+  return { byProductId: new Map(), bySku: new Map() };
+}
+
+function addHoldRow(holds, productId, sku, qty) {
+  const n = Math.max(0, Number(qty) || 0);
+  if (!n) return;
+  const pid = String(productId || '').trim();
+  const skuKey = String(sku || '').trim().toLowerCase();
+  if (pid) holds.byProductId.set(pid, (holds.byProductId.get(pid) || 0) + n);
+  if (skuKey) holds.bySku.set(skuKey, (holds.bySku.get(skuKey) || 0) + n);
+}
+
+function createdWithinDaysSql(days) {
+  const n = Math.max(1, Number(days) || PROFORMA_QUOTE_DAYS);
+  if (isPostgresEngine()) {
+    return `p.created_at >= NOW() - INTERVAL '${n} days'`;
+  }
+  return `datetime(p.created_at) >= datetime('now', '-${n} days')`;
+}
 
 async function loadReservedHoldsForBranch(db, branchId) {
   const branch = String(branchId || '').trim();
-  const byProductId = new Map();
-  const bySku = new Map();
-  if (!branch) return { byProductId, bySku };
+  const holds = emptyHolds();
+  if (!branch) return holds;
 
   try {
     const r = await db.query(
@@ -24,17 +50,46 @@ async function loadReservedHoldsForBranch(db, branchId) {
       [branch],
     );
     for (const row of r.rows || []) {
-      const qty = Math.max(0, Number(row.qty) || 0);
-      if (!qty) continue;
-      const pid = String(row.product_id || '').trim();
-      const sku = String(row.sku || '').trim().toLowerCase();
-      if (pid) byProductId.set(pid, (byProductId.get(pid) || 0) + qty);
-      if (sku) bySku.set(sku, (bySku.get(sku) || 0) + qty);
+      addHoldRow(holds, row.product_id, row.sku, row.qty);
     }
   } catch (_) {
     // sales_orders missing on old DBs
   }
-  return { byProductId, bySku };
+  return holds;
+}
+
+/**
+ * Informational proforma quantities for the last 3 days.
+ * Excludes converted / rejected / expired. Does not lock stock.
+ */
+async function loadProformaQuotesForBranch(db, branchId) {
+  const branch = String(branchId || '').trim();
+  const quotes = emptyHolds();
+  if (!branch) return quotes;
+
+  try {
+    const r = await db.query(
+      `SELECT
+         CAST(i.product_id AS TEXT) AS product_id,
+         LOWER(TRIM(COALESCE(i.sku, ''))) AS sku,
+         COALESCE(SUM(i.quantity), 0) AS qty
+       FROM proforma_items i
+       INNER JOIN proformas p ON p.id = i.proforma_id
+       WHERE CAST(p.branch_id AS TEXT) = CAST($1 AS TEXT)
+         AND LOWER(TRIM(COALESCE(p.status, ''))) NOT IN ('converted', 'rejected', 'expired')
+         AND TRIM(COALESCE(p.converted_to_invoice_id, '')) = ''
+         AND ${createdWithinDaysSql(PROFORMA_QUOTE_DAYS)}
+         AND COALESCE(i.quantity, 0) > 0
+       GROUP BY CAST(i.product_id AS TEXT), LOWER(TRIM(COALESCE(i.sku, '')))`,
+      [branch],
+    );
+    for (const row of r.rows || []) {
+      addHoldRow(quotes, row.product_id, row.sku, row.qty);
+    }
+  } catch (_) {
+    // proformas missing on old DBs
+  }
+  return quotes;
 }
 
 function reservedQtyForProduct(holds, productId, sku) {
@@ -47,25 +102,42 @@ function reservedQtyForProduct(holds, productId, sku) {
   return qty;
 }
 
-/** Mutate/map product-like rows: stock becomes available (onHand - reserved). */
-function applySoftReservesToRows(rows, holds) {
-  if (!Array.isArray(rows) || !holds) return rows || [];
+/** Mutate/map product-like rows: stock becomes available (onHand - sales-order reserved). */
+function applySoftReservesToRows(rows, holds, quotes) {
+  if (!Array.isArray(rows)) return rows || [];
   return rows.map((r) => {
     const onHand = Math.max(0, Number(r.stock) || 0);
-    const reserved = reservedQtyForProduct(holds, r.id || r.product_id, r.sku);
+    const locked = reservedQtyForProduct(holds, r.id || r.product_id, r.sku);
+    const quoted = reservedQtyForProduct(quotes, r.id || r.product_id, r.sku);
     return {
       ...r,
       on_hand_stock: onHand,
       onHandStock: onHand,
-      reserved_stock: reserved,
-      reservedStock: reserved,
-      stock: Math.max(0, onHand - reserved),
+      locked_stock: locked,
+      lockedStock: locked,
+      quoted_stock: quoted,
+      quotedStock: quoted,
+      reserved_stock: locked + quoted,
+      reservedStock: locked + quoted,
+      stock: Math.max(0, onHand - locked),
     };
   });
 }
 
+/** Apply sales-order locks + 3-day proforma quotes for one branch. */
+async function applyBranchReserves(db, rows, branchId) {
+  const [holds, quotes] = await Promise.all([
+    loadReservedHoldsForBranch(db, branchId),
+    loadProformaQuotesForBranch(db, branchId),
+  ]);
+  return applySoftReservesToRows(rows, holds, quotes);
+}
+
 module.exports = {
+  PROFORMA_QUOTE_DAYS,
   loadReservedHoldsForBranch,
+  loadProformaQuotesForBranch,
   reservedQtyForProduct,
   applySoftReservesToRows,
+  applyBranchReserves,
 };

@@ -2280,11 +2280,14 @@ async function processSale(client, saleData) {
   const cashierUuid = normalizeUuid(cashierId);
   for (const item of items) {
     let pid = isUuid(item.productId) ? item.productId : null;
+    const itemWarehouse = String(
+      item.warehouseId || item.warehouse_id || item.branchId || item.branch_id || '',
+    ).trim() || branchId;
 
     if (!pid && (item.productId || item.sku)) {
       try {
         pid = await runInSavepoint(client, 'resolve_product', () =>
-          resolveStockProductId(client, item.productId || item.sku, branchId),
+          resolveStockProductId(client, item.productId || item.sku, itemWarehouse),
         );
       } catch {
         pid = null;
@@ -2293,7 +2296,7 @@ async function processSale(client, saleData) {
 
     let resolvedPid = pid;
     if (pid && !skipSaleStock) {
-      const stockInfo = await getAvailableStockForSale(client, pid, branchId, cashierUuid);
+      const stockInfo = await getAvailableStockForSale(client, pid, itemWarehouse, cashierUuid);
       resolvedPid = stockInfo.productId;
       if (stockInfo.available + 0.0001 < Number(item.quantity)) {
         throw new Error(
@@ -2303,14 +2306,14 @@ async function processSale(client, saleData) {
     } else if (pid && skipSaleStock) {
       try {
         resolvedPid = await runInSavepoint(client, 'resolve_product_shipped', () =>
-          resolveStockProductId(client, pid, branchId),
+          resolveStockProductId(client, pid, itemWarehouse),
         );
       } catch {
         resolvedPid = pid;
       }
     }
 
-    resolvedItems.push({ ...item, resolvedPid });
+    resolvedItems.push({ ...item, resolvedPid, itemWarehouse });
   }
 
   if (clientReqId) {
@@ -2486,7 +2489,7 @@ async function processSale(client, saleData) {
       }
 
       await recordStockMovement(client, {
-        productId: pid, warehouseId: branchId,
+        productId: pid, warehouseId: item.itemWarehouse || branchId,
         movementType: 'OUT', quantity: item.quantity, unitCost,
         referenceType: 'sale', referenceId: saleId,
         referenceNumber: invoiceNumber, createdBy: cashierId,

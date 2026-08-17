@@ -43,8 +43,15 @@ export interface Product {
   stock: number;
   /** On-hand before soft sales-order holds (when API provides it). */
   onHandStock?: number;
-  /** Qty held by reserved sales orders at this branch. */
+  /**
+   * Display reserved qty: sales-order holds + 3-day proforma quotes.
+   * Available stock (`stock`) only subtracts the sales-order hold.
+   */
   reservedStock?: number;
+  /** Hard hold from reserved sales orders (reduces available stock). */
+  lockedStock?: number;
+  /** Proforma qty in the 3-day window — display only, does not lock stock. */
+  quotedStock?: number;
   minStock?: number;    // Minimum stock level (reorder point)
   maxStock?: number;    // Maximum stock level
   unit: string;
@@ -443,6 +450,10 @@ export interface TransportDocumentItem {
   quantity: number;
   unit: string;
   weight?: number;
+  /** Optional commercial values — printed only when the user includes prices. */
+  unitPrice?: number;
+  taxRate?: number;
+  lineTotal?: number;
 }
 
 // Company/Taxpayer Info for SAF-T

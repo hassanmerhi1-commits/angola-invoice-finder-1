@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Plus, Trash2, Search, Save, Printer, X, Send, Link2, UserRound, MapPin, Phone, CalendarDays } from 'lucide-react';
+import { Plus, Trash2, Search, Save, Printer, X, Send, Link2, UserRound, UserPlus, MapPin, Phone, CalendarDays, Building2 } from 'lucide-react';
 import { printDocument } from '@/lib/documentPDF';
 import { cn } from '@/lib/utils';
 import { DocumentType, DocumentLine, ERPDocument, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
@@ -23,6 +23,9 @@ import type { Client, Supplier, OpenItem } from '@/types/erp';
 import { effectiveUnitPrice, clientPricing, normalizePriceLevel } from '@/lib/pricing';
 import { signedOpenItemBalance, isOpenItemDebit } from '@/lib/openItems';
 import { useBranchContext } from '@/contexts/BranchContext';
+import { useBranchScope } from '@/hooks/useBranchScope';
+import { formatBranchDisplayName } from '@/lib/branchDisplay';
+import { ClientFormDialog } from '@/components/clients/ClientFormDialog';
 import { api } from '@/lib/api/client';
 import { isAgtValidated } from '@/lib/agtStatus';
 import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
@@ -63,12 +66,20 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const { user } = useAuth();
   const { hasPermission } = usePermissions(user?.id);
   const { currentBranch } = useBranchContext();
-  const { products } = useProducts(currentBranch?.id, { light: true });
+  const { branches: scopeBranches, allBranches, canPickBranch } = useBranchScope();
+  const branchOptions = canPickBranch && allBranches.length > 0 ? allBranches : scopeBranches;
+  const [invoiceBranchId, setInvoiceBranchId] = useState('');
+  const invoiceBranch = useMemo(
+    () => branchOptions.find((b) => b.id === invoiceBranchId) || currentBranch,
+    [branchOptions, invoiceBranchId, currentBranch],
+  );
+  const { products } = useProducts(invoiceBranch?.id || currentBranch?.id, { light: true });
   const { clients } = useClients();
   const { suppliers } = useSuppliers();
   const config = DOCUMENT_TYPE_CONFIG[documentType];
   const isPaymentDocument = documentType === 'recibo' || documentType === 'pagamento';
-  const typeUi = (t.documentFormUi.types as Record<DocumentType, { full: string; short: string }>)[documentType];
+  const typeUi = (t.documentFormUi.types as Record<DocumentType, { full: string; short: string }>)[documentType]
+    || { full: config.label, short: config.shortLabel };
   const fiscalLocked = Boolean(editDocument && isFiscallyImmutable(editDocument));
   const dueDateOnlyEdit = Boolean(editDocument && allowsDueDateOnlyEdit(editDocument));
   const formReadOnly = fiscalLocked && !dueDateOnlyEdit;
@@ -97,6 +108,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const { transmit: transmitAgt, transmitting: agtTransmitting } = useAgtTransmit();
   const [agtStatus, setAgtStatus] = useState<string | undefined>();
   const [agtCode, setAgtCode] = useState<string | undefined>();
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
 
   const agtValidated = isAgtValidated(agtStatus);
 
@@ -104,6 +116,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   // credit limit; posts amountPaid=0 and the backend creates the AR open item.
   const isCreditInvoice = documentType === 'fatura_venda' && paymentMethod === 'credit';
   const isSalesInvoice = documentType === 'fatura_venda';
+  const isSalesWorkspace = isSalesInvoice;
   const requireSavedCustomer = isSalesInvoice && !contentLocked;
   const selectedEntityClient = useMemo(
     () => (config.entityType === 'customer' ? (clients.find((c) => c.id === entityId) ?? null) : null),
@@ -132,6 +145,19 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       due.setDate(due.getDate() + days);
       setDueDate(due.toISOString().split('T')[0]);
     }
+  };
+
+  const handleInvoiceBranchChange = (nextId: string) => {
+    setInvoiceBranchId((prev) => {
+      setLines((rows) =>
+        rows.map((line) => {
+          if (!line.productId) return line;
+          if (!line.branchId || line.branchId === prev) return { ...line, branchId: nextId };
+          return line;
+        }),
+      );
+      return nextId;
+    });
   };
 
   // Reset form when opening
@@ -166,13 +192,14 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         setEntityAddress('');
         setEntityPhone('');
         setDueDate(documentType === 'fatura_venda' ? defaultSalesDueDate() : '');
-        setValidUntil('');
+        setValidUntil(documentType === 'proforma' ? defaultSalesDueDate() : '');
         setNotes('');
         setPaymentMethod('cash');
         setAmountPaid(0);
         setLines([]);
         setSelectedOpenItemIds(new Set());
       }
+      setInvoiceBranchId(source?.branchId || currentBranch?.id || '');
       setEntityPickerOpen(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -389,6 +416,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       unitPrice,
       discount: 0,
       taxRate: product?.taxRate ?? DEFAULT_VAT_RATE,
+      branchId: invoiceBranchId || currentBranch?.id,
     });
     setLines(prev => [...prev, newLine]);
     setProductSearch('');
@@ -415,7 +443,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     const time = now.toTimeString().slice(0, 8);
     const base = editDocument ?? prefillFrom;
     const prefix = DOCUMENT_TYPE_CONFIG[documentType].prefix;
-    const draftNumber = `${prefix}-${currentBranch?.code || 'SEDE'}-${today.replace(/-/g, '')}-DRAFT`;
+    const draftNumber = `${prefix}-${invoiceBranch?.code || currentBranch?.code || 'SEDE'}-${today.replace(/-/g, '')}-DRAFT`;
 
     let issueDate = base?.issueDate ?? today;
     if (isBeforeToday(issueDate) && !hasPermission('backdate_post')) {
@@ -427,8 +455,8 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       id: base?.id ?? `print-draft-${Date.now()}`,
       documentType,
       documentNumber: base?.documentNumber ?? draftNumber,
-      branchId: base?.branchId ?? currentBranch?.id ?? '',
-      branchName: base?.branchName ?? currentBranch?.name ?? '',
+      branchId: invoiceBranch?.id || currentBranch?.id || '',
+      branchName: invoiceBranch?.name || currentBranch?.name || '',
       entityType: config.entityType,
       entityId: base?.entityId,
       entityName: entityName || finalConsumerName,
@@ -621,10 +649,12 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             taxRate: l.taxRate,
             taxAmount: l.taxAmount,
             subtotal: l.lineTotal - l.taxAmount,
+            warehouseId: l.branchId || invoiceBranchId,
+            branchId: l.branchId || invoiceBranchId,
           }));
 
-          const branchId = currentBranch?.id || '';
-          const branchCode = currentBranch?.code || 'SEDE';
+          const branchId = invoiceBranch?.id || currentBranch?.id || '';
+          const branchCode = invoiceBranch?.code || currentBranch?.code || 'SEDE';
 
           // Generate invoice number from backend (required for on-account / FT)
           let invoiceNumber = '';
@@ -713,7 +743,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             documentType,
             branchId,
             branchCode,
-            currentBranch?.name || '',
+            invoiceBranch?.name || currentBranch?.name || '',
             user?.id || '',
             user?.name || '',
             {
@@ -841,9 +871,9 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           // All other document types (proforma, draft, etc.) — save locally
           const doc = await createDocument(
             documentType,
-            currentBranch?.id || '',
-            currentBranch?.code || 'SEDE',
-            currentBranch?.name || '',
+            isSalesWorkspace ? (invoiceBranch?.id || currentBranch?.id || '') : (currentBranch?.id || ''),
+            isSalesWorkspace ? (invoiceBranch?.code || currentBranch?.code || 'SEDE') : (currentBranch?.code || 'SEDE'),
+            isSalesWorkspace ? (invoiceBranch?.name || currentBranch?.name || '') : (currentBranch?.name || ''),
             user?.id || '',
             user?.name || '',
             {
@@ -914,21 +944,84 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     });
   };
 
+  const renderInvoiceBranchSelect = (opts?: { compact?: boolean; className?: string }) => {
+    const compact = opts?.compact === true;
+    const triggerClass = cn(
+      compact ? 'h-8 min-w-[140px] text-xs' : 'h-9 min-w-[180px] text-sm',
+      opts?.className,
+    );
+    if (!canPickBranch || branchOptions.length <= 1) {
+      return (
+        <div className={cn('flex items-center gap-2 truncate rounded-md border bg-muted/40 px-2', triggerClass)}>
+          <Building2 className={compact ? 'h-3.5 w-3.5 shrink-0' : 'h-4 w-4 shrink-0'} />
+          <span className="truncate">{formatBranchDisplayName(invoiceBranch)}</span>
+        </div>
+      );
+    }
+    return (
+      <Select value={invoiceBranchId || invoiceBranch?.id || ''} onValueChange={handleInvoiceBranchChange} disabled={contentLocked}>
+        <SelectTrigger className={triggerClass}>
+          <div className="flex min-w-0 items-center gap-2">
+            <Building2 className={compact ? 'h-3.5 w-3.5 shrink-0' : 'h-4 w-4 shrink-0'} />
+            <SelectValue placeholder={t.branchUi.selectBranch} />
+          </div>
+        </SelectTrigger>
+        <SelectContent className="z-[80]">
+          {branchOptions.map((branch) => (
+            <SelectItem key={branch.id} value={branch.id}>
+              {formatBranchDisplayName(branch)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  };
+
+  const renderLineBranchSelect = (line: DocumentLine, idx: number) => {
+    if (!line.productId) {
+      return <span className="text-muted-foreground">—</span>;
+    }
+    const value = line.branchId || invoiceBranchId || invoiceBranch?.id || '';
+    const selected = branchOptions.find((b) => b.id === value) || invoiceBranch;
+    if (!canPickBranch || branchOptions.length <= 1) {
+      return (
+        <span className="block max-w-[160px] truncate text-xs">
+          {formatBranchDisplayName(selected)}
+        </span>
+      );
+    }
+    return (
+      <Select value={value} onValueChange={(id) => updateLine(idx, 'branchId', id)} disabled={contentLocked}>
+        <SelectTrigger className="h-8 w-[160px] text-xs">
+          <SelectValue placeholder={t.branchUi.selectBranch} />
+        </SelectTrigger>
+        <SelectContent className="z-[80]">
+          {branchOptions.map((branch) => (
+            <SelectItem key={branch.id} value={branch.id}>
+              {formatBranchDisplayName(branch)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  };
+
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={cn(
         'p-0 [&>button[data-dialog-close]]:hidden',
-        isSalesInvoice
+        isSalesWorkspace
           ? 'flex h-[96vh] max-h-[96vh] w-[98vw] max-w-[98vw] flex-col gap-0 overflow-hidden sm:rounded-xl'
           : 'max-h-[90vh] max-w-5xl overflow-y-auto',
       )}>
         <div className={cn(
           'flex items-center gap-3 border-b',
-          isSalesInvoice ? 'bg-background px-6 py-3' : 'bg-muted/50 px-4 py-2',
+          isSalesWorkspace ? 'bg-background px-6 py-3' : 'bg-muted/50 px-4 py-2',
         )}>
           <DialogTitle className={cn(
-            'min-w-0 flex-1 font-bold',
-            isSalesInvoice ? 'text-xl tracking-tight' : 'text-sm',
+            'min-w-0 font-bold',
+            isSalesWorkspace ? 'text-xl tracking-tight' : 'min-w-0 flex-1 text-sm',
             config.color,
           )}>
             {editDocument
@@ -940,25 +1033,33 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               </span>
             )}
           </DialogTitle>
+          {isSalesWorkspace && (
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Label className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+                {t.documentFormUi.invoiceBranch}
+              </Label>
+              {renderInvoiceBranchSelect({ className: 'max-w-[240px]' })}
+            </div>
+          )}
           <div className="flex shrink-0 items-center gap-2">
             <Button
               size="sm"
               variant="outline"
-              className={cn('gap-1', isSalesInvoice ? 'h-10 px-4 text-sm' : 'h-7 text-xs')}
+              className={cn('gap-1', isSalesWorkspace ? 'h-10 px-4 text-sm' : 'h-7 text-xs')}
               onClick={handlePrint}
               disabled={lines.length === 0}
             >
-              <Printer className={isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3'} /> {t.documentFormUi.print}
+              <Printer className={isSalesWorkspace ? 'w-4 h-4' : 'w-3 h-3'} /> {t.documentFormUi.print}
             </Button>
             {canTransmitAgt && (
               <Button
                 size="sm"
                 variant="default"
-                className={cn('gap-1', isSalesInvoice ? 'h-10 px-4 text-sm' : 'h-7 text-xs')}
+                className={cn('gap-1', isSalesWorkspace ? 'h-10 px-4 text-sm' : 'h-7 text-xs')}
                 onClick={handleTransmitAgt}
                 disabled={agtTransmitting || agtValidated}
               >
-                <Send className={isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3'} />
+                <Send className={isSalesWorkspace ? 'w-4 h-4' : 'w-3 h-3'} />
                 {agtValidated ? t.agtUi.agtValidatedLabel : t.documentFormUi.sendToAgt}
               </Button>
             )}
@@ -966,35 +1067,35 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               <Button
                 size="sm"
                 variant="outline"
-                className={cn('gap-1', isSalesInvoice ? 'h-10 px-4 text-sm' : 'h-7 text-xs')}
+                className={cn('gap-1', isSalesWorkspace ? 'h-10 px-4 text-sm' : 'h-7 text-xs')}
                 onClick={() => handleSave('draft')}
               >
-                <Save className={isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3'} /> {t.documentFormUi.saveDraft}
+                <Save className={isSalesWorkspace ? 'w-4 h-4' : 'w-3 h-3'} /> {t.documentFormUi.saveDraft}
               </Button>
             )}
             {!formReadOnly && (
               <Button
                 size="sm"
-                className={cn('gap-1', isSalesInvoice ? 'h-10 px-5 text-sm' : 'h-7 text-xs')}
+                className={cn('gap-1', isSalesWorkspace ? 'h-10 px-5 text-sm' : 'h-7 text-xs')}
                 onClick={() => handleSave('confirmed')}
               >
-                <Save className={isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3'} /> {dueDateOnlyEdit ? t.documentFormUi.saveDueDate : t.documentFormUi.confirmSave}
+                <Save className={isSalesWorkspace ? 'w-4 h-4' : 'w-3 h-3'} /> {dueDateOnlyEdit ? t.documentFormUi.saveDueDate : t.documentFormUi.confirmSave}
               </Button>
             )}
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className={cn('shrink-0', isSalesInvoice ? 'h-10 w-10' : 'h-8 w-8')}
+              className={cn('shrink-0', isSalesWorkspace ? 'h-10 w-10' : 'h-8 w-8')}
               onClick={() => onOpenChange(false)}
               aria-label={t.common.close}
             >
-              <X className={isSalesInvoice ? 'h-5 w-5' : 'h-4 w-4'} />
+              <X className={isSalesWorkspace ? 'h-5 w-5' : 'h-4 w-4'} />
             </Button>
           </div>
         </div>
 
-        <div className={cn(isSalesInvoice ? 'min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4' : 'space-y-4 p-4')}>
+        <div className={cn(isSalesWorkspace ? 'min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4' : 'space-y-4 p-4')}>
           {fiscalLocked && (
             <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
               {dueDateOnlyEdit
@@ -1028,9 +1129,9 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           )}
           <div className={cn(
             contentLocked && 'pointer-events-none opacity-80',
-            isSalesInvoice ? 'shrink-0 space-y-4' : 'space-y-4',
+            isSalesWorkspace ? 'shrink-0 space-y-4' : 'space-y-4',
           )}>
-          {isSalesInvoice && (
+          {isSalesWorkspace && (
             <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(300px,0.7fr)]">
               <div className="rounded-xl border bg-card p-3 shadow-sm">
                 <div className="mb-2 flex items-center gap-2">
@@ -1043,57 +1144,87 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                     </span>
                   )}
                 </div>
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={entityName}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      setEntityName(next);
-                      if (
-                        entityId
-                        && selectedEntityClient
-                        && next.trim().toLowerCase() !== selectedEntityClient.name.trim().toLowerCase()
-                      ) {
-                        setEntityId('');
-                        setEntityNif('');
-                        setEntityAddress('');
-                        setEntityPhone('');
-                      }
-                      setEntityPickerOpen(true);
-                    }}
-                    onFocus={() => setEntityPickerOpen(true)}
-                    onBlur={() => {
-                      window.setTimeout(() => setEntityPickerOpen(false), 150);
-                    }}
-                    placeholder={t.documentFormUi.customerSearchPlaceholder}
-                    className="h-10 pl-9 text-sm"
-                    autoComplete="off"
-                  />
-                  {entityPickerOpen && (
-                    <div className="absolute z-50 top-full left-0 right-0 mt-1 overflow-y-auto rounded-lg border bg-popover shadow-lg max-h-56">
-                      {filteredEntities.length === 0 ? (
-                        <p className="px-4 py-3 text-sm text-muted-foreground">
-                          {t.documentFormUi.noSavedCustomers}
-                        </p>
-                      ) : (
-                        filteredEntities.map((entity) => (
-                          <button
-                            key={entity.id}
-                            type="button"
-                            className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm hover:bg-accent/60"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => selectEntity(entity)}
-                          >
-                            <span className="truncate font-medium">{entity.name}</span>
-                            <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                              {entity.nif || '—'}
-                            </span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  )}
+                <div className="flex items-center gap-2">
+                  <div className="relative min-w-0 flex-1">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={entityName}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setEntityName(next);
+                        if (
+                          entityId
+                          && selectedEntityClient
+                          && next.trim().toLowerCase() !== selectedEntityClient.name.trim().toLowerCase()
+                        ) {
+                          setEntityId('');
+                          setEntityNif('');
+                          setEntityAddress('');
+                          setEntityPhone('');
+                        }
+                        setEntityPickerOpen(true);
+                      }}
+                      onFocus={() => setEntityPickerOpen(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setEntityPickerOpen(false), 150);
+                      }}
+                      placeholder={t.documentFormUi.customerSearchPlaceholder}
+                      className="h-10 pl-9 text-sm"
+                      autoComplete="off"
+                    />
+                    {entityPickerOpen && (
+                      <div className="absolute z-50 top-full left-0 right-0 mt-1 overflow-y-auto rounded-lg border bg-popover shadow-lg max-h-56">
+                        {filteredEntities.length === 0 ? (
+                          <div className="px-3 py-3 space-y-2">
+                            <p className="text-sm text-muted-foreground">
+                              {t.documentFormUi.noSavedCustomers}
+                            </p>
+                            {!contentLocked && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 w-full gap-1.5 text-sm"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => {
+                                  setEntityPickerOpen(false);
+                                  setNewCustomerOpen(true);
+                                }}
+                              >
+                                <UserPlus className="h-4 w-4" />
+                                {t.clientsUi.newClient}
+                              </Button>
+                            )}
+                          </div>
+                        ) : (
+                          filteredEntities.map((entity) => (
+                            <button
+                              key={entity.id}
+                              type="button"
+                              className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm hover:bg-accent/60"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => selectEntity(entity)}
+                            >
+                              <span className="truncate font-medium">{entity.name}</span>
+                              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                                {entity.nif || '—'}
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 shrink-0 gap-1.5 px-3 text-sm"
+                    onClick={() => setNewCustomerOpen(true)}
+                    disabled={contentLocked}
+                  >
+                    <UserPlus className="h-4 w-4" />
+                    {t.clientsUi.newClient}
+                  </Button>
                 </div>
                 {selectedEntityClient ? (
                   <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm lg:grid-cols-4">
@@ -1134,6 +1265,10 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                   )}
                 </div>
                 <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1 col-span-2">
+                    <Label className="text-xs">{t.documentFormUi.invoiceBranch}</Label>
+                    {renderInvoiceBranchSelect()}
+                  </div>
                   <div className="space-y-1">
                     <Label className="text-xs">{t.documentFormUi.dueDate}</Label>
                     <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="h-9 text-sm" disabled={formReadOnly} />
@@ -1188,7 +1323,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             </div>
           )}
 
-          {!isSalesInvoice && (
+          {!isSalesWorkspace && (
           <div className="grid grid-cols-4 gap-3">
             <div className="space-y-1">
               <Label className="text-xs">{config.entityType === 'customer' ? t.documentFormUi.customer : t.documentFormUi.supplier}</Label>
@@ -1262,7 +1397,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           </div>
           )}
 
-          {showPricingControls && !isSalesInvoice && (
+          {showPricingControls && !isSalesWorkspace && (
             <div className="flex items-end gap-3 flex-wrap">
               <div className="space-y-1">
                 <Label className="text-xs">{t.documentFormUi.priceLevelLabel}</Label>
@@ -1288,7 +1423,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           )}
 
           {/* Pending receipts / open items for selected customer or supplier */}
-          {(documentType === 'fatura_venda' && !isSalesInvoice || isPaymentDocument) && entityId && (
+          {(documentType === 'fatura_venda' && !isSalesWorkspace || isPaymentDocument) && entityId && (
             <div className="border rounded-md">
               <div className="flex items-center justify-between gap-2 px-3 py-2 border-b bg-muted/40">
                 <div className="text-xs font-semibold">
@@ -1356,7 +1491,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           </div>
 
           {/* Dates & payment row */}
-          {!isSalesInvoice && (
+          {!isSalesWorkspace && (
           <div className="grid grid-cols-4 gap-3">
             {documentType === 'proforma' && (
               <div className="space-y-1">
@@ -1375,9 +1510,9 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
           <div className={cn(
             contentLocked && 'pointer-events-none opacity-80',
-            isSalesInvoice ? 'space-y-4' : 'space-y-4',
+            isSalesWorkspace ? 'space-y-4' : 'space-y-4',
           )}>
-            {documentType === 'fatura_venda' && !isSalesInvoice && (
+            {documentType === 'fatura_venda' && !isSalesWorkspace && (
               <div className="grid grid-cols-4 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">{t.documentFormUi.paymentMethod}</Label>
@@ -1441,26 +1576,26 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           {!isPaymentDocument && (
           <>
           {/* Product search + add */}
-          <div className={cn('flex items-end gap-2', isSalesInvoice && 'shrink-0')}>
+          <div className={cn('flex items-end gap-2', isSalesWorkspace && 'shrink-0')}>
             <div className="flex-1 space-y-1">
-              <Label className={isSalesInvoice ? 'text-sm font-medium' : 'text-xs'}>{t.documentFormUi.addProduct}</Label>
+              <Label className={isSalesWorkspace ? 'text-sm font-medium' : 'text-xs'}>{t.documentFormUi.addProduct}</Label>
               <div className="relative">
                 <Search className={cn(
                   'absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground',
-                  isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3',
+                  isSalesWorkspace ? 'w-4 h-4' : 'w-3 h-3',
                 )} />
                 <Input value={productSearch} onChange={e => setProductSearch(e.target.value)}
                   placeholder={t.documentFormUi.productSearchPlaceholder}
-                  className={isSalesInvoice ? 'h-11 pl-9 text-sm' : 'h-8 text-xs pl-7'} />
+                  className={isSalesWorkspace ? 'h-11 pl-9 text-sm' : 'h-8 text-xs pl-7'} />
               </div>
             </div>
             <Button
               size="sm"
               variant="outline"
-              className={cn('gap-1', isSalesInvoice ? 'h-11 px-4 text-sm' : 'h-8 text-xs')}
+              className={cn('gap-1', isSalesWorkspace ? 'h-11 px-4 text-sm' : 'h-8 text-xs')}
               onClick={() => addLine()}
             >
-              <Plus className={isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3'} /> {t.documentFormUi.manualLine}
+              <Plus className={isSalesWorkspace ? 'w-4 h-4' : 'w-3 h-3'} /> {t.documentFormUi.manualLine}
             </Button>
           </div>
 
@@ -1468,14 +1603,14 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           {productSearch && filteredProducts.length > 0 && (
             <div className={cn(
               'overflow-y-auto rounded-lg border bg-popover shadow-sm',
-              isSalesInvoice ? 'max-h-44' : 'max-h-32',
+              isSalesWorkspace ? 'max-h-44' : 'max-h-32',
             )}>
               {filteredProducts.map(p => (
                 <button
                   key={p.id}
                   className={cn(
                     'flex w-full justify-between text-left hover:bg-accent/50',
-                    isSalesInvoice ? 'px-4 py-2.5 text-sm' : 'px-3 py-1.5 text-xs',
+                    isSalesWorkspace ? 'px-4 py-2.5 text-sm' : 'px-3 py-1.5 text-xs',
                   )}
                   onClick={() => addLine(p.id)}
                 >
@@ -1487,92 +1622,100 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           )}
 
           {/* Lines tabs */}
-          <Tabs value={activeLineTab} onValueChange={setActiveLineTab} className={isSalesInvoice ? 'space-y-3' : undefined}>
+          <Tabs value={activeLineTab} onValueChange={setActiveLineTab} className={isSalesWorkspace ? 'space-y-3' : undefined}>
             <TabsList className={cn(
               'w-full justify-start rounded-none border-b bg-muted/30 p-0',
-              isSalesInvoice ? 'h-10' : 'h-7',
+              isSalesWorkspace ? 'h-10' : 'h-7',
             )}>
               <TabsTrigger value="linhas" className={cn(
                 'rounded-none border-b-2 border-transparent data-[state=active]:border-primary',
-                isSalesInvoice ? 'h-10 px-4 text-sm' : 'h-7 text-xs',
+                isSalesWorkspace ? 'h-10 px-4 text-sm' : 'h-7 text-xs',
               )}>
                 {t.documentFormUi.linesCount.replace('{count}', String(lines.length))}
               </TabsTrigger>
               <TabsTrigger value="notas" className={cn(
                 'rounded-none border-b-2 border-transparent data-[state=active]:border-primary',
-                isSalesInvoice ? 'h-10 px-4 text-sm' : 'h-7 text-xs',
+                isSalesWorkspace ? 'h-10 px-4 text-sm' : 'h-7 text-xs',
               )}>
                 {t.documentFormUi.notesTab}
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="linhas" className={isSalesInvoice ? 'mt-0' : 'mt-0'}>
+            <TabsContent value="linhas" className={isSalesWorkspace ? 'mt-0' : 'mt-0'}>
               <div className={cn(
                 'overflow-auto border',
-                isSalesInvoice ? 'min-h-[280px] rounded-xl' : 'rounded',
+                isSalesWorkspace ? 'min-h-[280px] rounded-xl' : 'rounded',
               )}>
-                <table className={cn('w-full', isSalesInvoice ? 'text-sm' : 'text-xs')}>
+                <table className={cn('w-full', isSalesWorkspace ? 'text-sm' : 'text-xs')}>
                   <thead className="sticky top-0 z-10 border-b bg-muted/80 backdrop-blur">
                     <tr>
-                      <th className={cn('text-left', isSalesInvoice ? 'px-3 py-3 w-10' : 'px-2 py-1.5 w-8')}>{t.documentFormUi.colHash}</th>
-                      <th className={cn('text-left', isSalesInvoice ? 'px-3 py-3 w-24' : 'px-2 py-1.5 w-20')}>{t.documentFormUi.colCode}</th>
-                      <th className={cn('text-left', isSalesInvoice ? 'px-3 py-3' : 'px-2 py-1.5')}>{t.documentFormUi.colDescription}</th>
-                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-20' : 'px-2 py-1.5 w-16')}>{t.documentFormUi.colQty}</th>
-                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-28' : 'px-2 py-1.5 w-24')}>{t.documentFormUi.colPriceExVat}</th>
-                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-20' : 'px-2 py-1.5 w-16')}>{t.documentFormUi.colDiscPct}</th>
-                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-28' : 'px-2 py-1.5 w-20')}>{t.documentFormUi.colTaxableBase}</th>
-                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-16' : 'px-2 py-1.5 w-14')}>{t.documentFormUi.colVatPct}</th>
-                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-28' : 'px-2 py-1.5 w-24')}>{t.documentFormUi.colVatAmount}</th>
-                      <th className={cn('text-right', isSalesInvoice ? 'px-3 py-3 w-32' : 'px-2 py-1.5 w-28')}>{t.documentFormUi.colTotalIncVat}</th>
-                      <th className={cn(isSalesInvoice ? 'px-3 py-3 w-10' : 'px-2 py-1.5 w-8')}></th>
+                      <th className={cn('text-left', isSalesWorkspace ? 'px-3 py-3 w-10' : 'px-2 py-1.5 w-8')}>{t.documentFormUi.colHash}</th>
+                      <th className={cn('text-left', isSalesWorkspace ? 'px-3 py-3 w-24' : 'px-2 py-1.5 w-20')}>{t.documentFormUi.colCode}</th>
+                      <th className={cn('text-left', isSalesWorkspace ? 'px-3 py-3' : 'px-2 py-1.5')}>{t.documentFormUi.colDescription}</th>
+                      {isSalesWorkspace && (
+                        <th className="px-3 py-3 text-left w-[180px]">{t.documentFormUi.colBranch}</th>
+                      )}
+                      <th className={cn('text-right', isSalesWorkspace ? 'px-3 py-3 w-20' : 'px-2 py-1.5 w-16')}>{t.documentFormUi.colQty}</th>
+                      <th className={cn('text-right', isSalesWorkspace ? 'px-3 py-3 w-28' : 'px-2 py-1.5 w-24')}>{t.documentFormUi.colPriceExVat}</th>
+                      <th className={cn('text-right', isSalesWorkspace ? 'px-3 py-3 w-20' : 'px-2 py-1.5 w-16')}>{t.documentFormUi.colDiscPct}</th>
+                      <th className={cn('text-right', isSalesWorkspace ? 'px-3 py-3 w-28' : 'px-2 py-1.5 w-20')}>{t.documentFormUi.colTaxableBase}</th>
+                      <th className={cn('text-right', isSalesWorkspace ? 'px-3 py-3 w-16' : 'px-2 py-1.5 w-14')}>{t.documentFormUi.colVatPct}</th>
+                      <th className={cn('text-right', isSalesWorkspace ? 'px-3 py-3 w-28' : 'px-2 py-1.5 w-24')}>{t.documentFormUi.colVatAmount}</th>
+                      <th className={cn('text-right', isSalesWorkspace ? 'px-3 py-3 w-32' : 'px-2 py-1.5 w-28')}>{t.documentFormUi.colTotalIncVat}</th>
+                      <th className={cn(isSalesWorkspace ? 'px-3 py-3 w-10' : 'px-2 py-1.5 w-8')}></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50">
                     {lines.map((line, idx) => (
                       <tr key={line.id} className="hover:bg-accent/30">
-                        <td className={cn('text-muted-foreground', isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1')}>{idx + 1}</td>
-                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
-                          <Input value={line.productSku || ''} readOnly className={cn('border-0 bg-transparent p-0', isSalesInvoice ? 'h-8 text-sm' : 'h-6 text-xs')} />
+                        <td className={cn('text-muted-foreground', isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1')}>{idx + 1}</td>
+                        <td className={isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1'}>
+                          <Input value={line.productSku || ''} readOnly className={cn('border-0 bg-transparent p-0', isSalesWorkspace ? 'h-8 text-sm' : 'h-6 text-xs')} />
                         </td>
-                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
+                        <td className={isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1'}>
                           <Input value={line.description} onChange={e => updateLine(idx, 'description', e.target.value)}
-                            className={cn('border-0 bg-transparent p-0 focus:border focus:bg-background', isSalesInvoice ? 'h-8 text-sm' : 'h-6 text-xs')} />
+                            className={cn('border-0 bg-transparent p-0 focus:border focus:bg-background', isSalesWorkspace ? 'h-8 text-sm' : 'h-6 text-xs')} />
                         </td>
-                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
+                        {isSalesWorkspace && (
+                          <td className="px-3 py-2">
+                            {renderLineBranchSelect(line, idx)}
+                          </td>
+                        )}
+                        <td className={isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1'}>
                           <NumericInput integer min={0} value={line.quantity} onValueChange={v => updateLine(idx, 'quantity', v)}
-                            className={cn('w-full border-0 bg-transparent p-0 text-right focus:border focus:bg-background', isSalesInvoice ? 'h-8 text-sm' : 'h-6 text-xs')} />
+                            className={cn('w-full border-0 bg-transparent p-0 text-right focus:border focus:bg-background', isSalesWorkspace ? 'h-8 text-sm' : 'h-6 text-xs')} />
                         </td>
-                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
+                        <td className={isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1'}>
                           <NumericInput min={0} value={line.unitPrice} onValueChange={v => updateLine(idx, 'unitPrice', v)}
-                            className={cn('w-full border-0 bg-transparent p-0 text-right focus:border focus:bg-background', isSalesInvoice ? 'h-8 text-sm' : 'h-6 text-xs')} />
+                            className={cn('w-full border-0 bg-transparent p-0 text-right focus:border focus:bg-background', isSalesWorkspace ? 'h-8 text-sm' : 'h-6 text-xs')} />
                         </td>
-                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
+                        <td className={isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1'}>
                           <NumericInput min={0} value={line.discount} onValueChange={v => updateLine(idx, 'discount', v)}
                             className={cn(
                               'w-full text-right',
-                              isSalesInvoice
+                              isSalesWorkspace
                                 ? 'h-8 rounded-md border bg-background px-2 text-sm'
                                 : 'h-6 border-0 bg-transparent p-0 text-xs focus:border focus:bg-background',
                             )} />
                         </td>
-                        <td className={cn('text-right font-mono text-muted-foreground', isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1')}>
+                        <td className={cn('text-right font-mono text-muted-foreground', isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1')}>
                           {fmt((line.quantity * line.unitPrice) * (1 - (line.discount || 0) / 100))}
                         </td>
-                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
+                        <td className={isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1'}>
                           <NumericInput min={0} max={100} value={line.taxRate} onValueChange={v => updateLine(idx, 'taxRate', v)}
-                            className={cn('w-full border-0 bg-transparent p-0 text-right focus:border focus:bg-background', isSalesInvoice ? 'h-8 text-sm' : 'h-6 text-xs')} />
+                            className={cn('w-full border-0 bg-transparent p-0 text-right focus:border focus:bg-background', isSalesWorkspace ? 'h-8 text-sm' : 'h-6 text-xs')} />
                         </td>
-                        <td className={cn('text-right font-mono', isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1')}>{fmt(line.taxAmount)}</td>
-                        <td className={cn('text-right font-mono font-medium', isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1')}>{fmt(line.lineTotal)}</td>
-                        <td className={isSalesInvoice ? 'px-3 py-2' : 'px-2 py-1'}>
-                          <Button variant="ghost" size="icon" className={isSalesInvoice ? 'h-8 w-8' : 'h-5 w-5'} onClick={() => removeLine(idx)}>
-                            <Trash2 className={cn('text-destructive', isSalesInvoice ? 'w-4 h-4' : 'w-3 h-3')} />
+                        <td className={cn('text-right font-mono', isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1')}>{fmt(line.taxAmount)}</td>
+                        <td className={cn('text-right font-mono font-medium', isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1')}>{fmt(line.lineTotal)}</td>
+                        <td className={isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1'}>
+                          <Button variant="ghost" size="icon" className={isSalesWorkspace ? 'h-8 w-8' : 'h-5 w-5'} onClick={() => removeLine(idx)}>
+                            <Trash2 className={cn('text-destructive', isSalesWorkspace ? 'w-4 h-4' : 'w-3 h-3')} />
                           </Button>
                         </td>
                       </tr>
                     ))}
                     {lines.length === 0 && (
-                      <tr><td colSpan={11} className={cn('text-center text-muted-foreground', isSalesInvoice ? 'px-6 py-16 text-sm' : 'px-4 py-8')}>{t.documentFormUi.lineEmpty}</td></tr>
+                      <tr><td colSpan={isSalesWorkspace ? 12 : 11} className={cn('text-center text-muted-foreground', isSalesWorkspace ? 'px-6 py-16 text-sm' : 'px-4 py-8')}>{t.documentFormUi.lineEmpty}</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1580,32 +1723,32 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             </TabsContent>
 
             <TabsContent value="notas" className="mt-2">
-              <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder={t.documentFormUi.notesPlaceholder} rows={isSalesInvoice ? 6 : 3} className={isSalesInvoice ? 'text-sm' : 'text-xs'} />
+              <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder={t.documentFormUi.notesPlaceholder} rows={isSalesWorkspace ? 6 : 3} className={isSalesWorkspace ? 'text-sm' : 'text-xs'} />
             </TabsContent>
           </Tabs>
 
-          <div className={cn(isSalesInvoice && 'grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]')}>
+          <div className={cn(isSalesWorkspace && 'grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]')}>
           {/* IVA Summary Table (AGT Requirement) */}
           {ivaSummary.length > 0 && (
-            <div className={cn('overflow-hidden border', isSalesInvoice ? 'rounded-xl' : 'rounded')}>
-              <table className={cn('w-full', isSalesInvoice ? 'text-sm' : 'text-xs')}>
+            <div className={cn('overflow-hidden border', isSalesWorkspace ? 'rounded-xl' : 'rounded')}>
+              <table className={cn('w-full', isSalesWorkspace ? 'text-sm' : 'text-xs')}>
                 <thead className="bg-muted/60">
                   <tr>
-                    <th className={cn('text-left font-medium', isSalesInvoice ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.taxSummaryTitle}</th>
-                    <th className={cn('text-right font-medium', isSalesInvoice ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.taxableBase}</th>
-                    <th className={cn('text-right font-medium', isSalesInvoice ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.vatRate}</th>
-                    <th className={cn('text-right font-medium', isSalesInvoice ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.vatAmount}</th>
-                    <th className={cn('text-right font-medium', isSalesInvoice ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.total}</th>
+                    <th className={cn('text-left font-medium', isSalesWorkspace ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.taxSummaryTitle}</th>
+                    <th className={cn('text-right font-medium', isSalesWorkspace ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.taxableBase}</th>
+                    <th className={cn('text-right font-medium', isSalesWorkspace ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.vatRate}</th>
+                    <th className={cn('text-right font-medium', isSalesWorkspace ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.vatAmount}</th>
+                    <th className={cn('text-right font-medium', isSalesWorkspace ? 'px-4 py-2.5' : 'px-3 py-1.5')}>{t.documentFormUi.total}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {ivaSummary.map(([rate, vals]) => (
                     <tr key={rate} className="border-t">
-                      <td className={isSalesInvoice ? 'px-4 py-2' : 'px-3 py-1'}>{rate === 0 ? t.documentFormUi.exempt : t.documentFormUi.vatAtRate.replace('{rate}', String(rate))}</td>
-                      <td className={cn('text-right font-mono', isSalesInvoice ? 'px-4 py-2' : 'px-3 py-1')}>{fmt(vals.base, { minimumFractionDigits: 2 })} Kz</td>
-                      <td className={cn('text-right', isSalesInvoice ? 'px-4 py-2' : 'px-3 py-1')}>{rate}%</td>
-                      <td className={cn('text-right font-mono', isSalesInvoice ? 'px-4 py-2' : 'px-3 py-1')}>{fmt(vals.iva, { minimumFractionDigits: 2 })} Kz</td>
-                      <td className={cn('text-right font-mono font-medium', isSalesInvoice ? 'px-4 py-2' : 'px-3 py-1')}>{fmt(vals.total, { minimumFractionDigits: 2 })} Kz</td>
+                      <td className={isSalesWorkspace ? 'px-4 py-2' : 'px-3 py-1'}>{rate === 0 ? t.documentFormUi.exempt : t.documentFormUi.vatAtRate.replace('{rate}', String(rate))}</td>
+                      <td className={cn('text-right font-mono', isSalesWorkspace ? 'px-4 py-2' : 'px-3 py-1')}>{fmt(vals.base, { minimumFractionDigits: 2 })} Kz</td>
+                      <td className={cn('text-right', isSalesWorkspace ? 'px-4 py-2' : 'px-3 py-1')}>{rate}%</td>
+                      <td className={cn('text-right font-mono', isSalesWorkspace ? 'px-4 py-2' : 'px-3 py-1')}>{fmt(vals.iva, { minimumFractionDigits: 2 })} Kz</td>
+                      <td className={cn('text-right font-mono font-medium', isSalesWorkspace ? 'px-4 py-2' : 'px-3 py-1')}>{fmt(vals.total, { minimumFractionDigits: 2 })} Kz</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1614,16 +1757,16 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           )}
 
           {/* Totals panel */}
-          <div className={cn(!isSalesInvoice && 'flex justify-end')}>
+          <div className={cn(!isSalesWorkspace && 'flex justify-end')}>
             <div className={cn(
-              isSalesInvoice
+              isSalesWorkspace
                 ? 'w-full space-y-2 rounded-xl border bg-card p-4 text-sm shadow-sm'
                 : 'w-72 space-y-1 rounded border bg-muted/30 p-3 text-xs',
             )}>
               <div className="flex justify-between"><span>{t.documentFormUi.subtotalExVat}</span><span className="font-mono">{fmt(totals.subtotal)} Kz</span></div>
               <div className="flex justify-between text-muted-foreground"><span>{t.documentFormUi.discount}</span><span className="font-mono">-{fmt(totals.totalDiscount)} Kz</span></div>
               <div className="flex justify-between text-muted-foreground"><span>{t.documentFormUi.totalVat}</span><span className="font-mono">{fmt(totals.totalTax)} Kz</span></div>
-              <div className={cn('flex justify-between border-t font-bold', isSalesInvoice ? 'pt-3 text-lg' : 'pt-1 text-sm')}>
+              <div className={cn('flex justify-between border-t font-bold', isSalesWorkspace ? 'pt-3 text-lg' : 'pt-1 text-sm')}>
                 <span>{t.documentFormUi.totalIncVat}</span><span className="font-mono">{fmt(totals.total)} Kz</span>
               </div>
               {(config.requiresPayment || isCreditInvoice) && (
@@ -1632,7 +1775,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                   <div className="flex justify-between font-medium text-destructive"><span>{t.documentFormUi.outstanding}</span><span className="font-mono">{fmt(totals.total - (isCreditInvoice ? 0 : amountPaid))} Kz</span></div>
                 </>
               )}
-              {previewInvoiceType && !isSalesInvoice && (
+              {previewInvoiceType && !isSalesWorkspace && (
                 <div className="mt-2 space-y-1 border-t pt-2">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">{t.checkoutUi.documentType}</span>
@@ -1665,5 +1808,16 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         </div>
       </DialogContent>
     </Dialog>
+    {isSalesWorkspace && (
+      <ClientFormDialog
+        open={newCustomerOpen}
+        onOpenChange={setNewCustomerOpen}
+        onSaved={(client) => {
+          applySavedCustomer(client);
+          setNewCustomerOpen(false);
+        }}
+      />
+    )}
+    </>
   );
 }

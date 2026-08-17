@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useSales, useAuth, useProducts, usePurchaseOrders } from '@/hooks/useERP';
+import { useSales, useAuth, useProducts, usePurchaseOrders, useClients } from '@/hooks/useERP';
 import { 
   useCreditNotes, 
   useDebitNotes, 
@@ -11,9 +11,11 @@ import {
 } from '@/hooks/useFiscalDocuments';
 import { useSupplierReturns } from '@/hooks/useSupplierReturns';
 import { SupplierReturnItem } from '@/lib/supplierReturns';
-import { Sale, CreditNote, CreditNoteItem, DebitNote, DebitNoteItem, TransportDocumentItem, Product, PurchaseOrder } from '@/types/erp';
+import { Sale, CreditNote, CreditNoteItem, DebitNote, DebitNoteItem, TransportDocument, PurchaseOrder } from '@/types/erp';
 import { CreditNoteCreateDialog } from '@/components/fiscal/CreditNoteCreateDialog';
 import { DebitNoteCreateDialog } from '@/components/fiscal/DebitNoteCreateDialog';
+import { TransportDocumentCreateDialog, type TransportCreatePayload } from '@/components/fiscal/TransportDocumentCreateDialog';
+import { TransportDocumentPrintDialog } from '@/components/fiscal/TransportDocumentPrintDialog';
 import { api } from '@/lib/api/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -41,6 +43,7 @@ import {
   CheckCircle,
   XCircle,
   Send,
+  Printer,
 } from 'lucide-react';
 import { useAgtTransmit } from '@/hooks/useAgtTransmit';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -63,6 +66,7 @@ export default function FiscalDocuments() {
   const canExportSaft = hasPermission('saft_export');
   const { currentBranch, apiBranchId, branches } = useBranchScope();
   const { sales } = useSales(apiBranchId);
+  const { clients } = useClients();
   const { products } = useProducts(apiBranchId, { light: true });
   const { orders } = usePurchaseOrders(apiBranchId);
   const { creditNotes, createCreditNote, refreshCreditNotes } = useCreditNotes(apiBranchId);
@@ -90,20 +94,11 @@ export default function FiscalDocuments() {
   const [debitNoteSubmitting, setDebitNoteSubmitting] = useState(false);
   const [viewCreditNote, setViewCreditNote] = useState<CreditNote | null>(null);
   const [viewDebitNote, setViewDebitNote] = useState<DebitNote | null>(null);
-
-  const [transportType, setTransportType] = useState<'delivery' | 'transfer' | 'return' | 'consignment'>('delivery');
-  const [originAddress, setOriginAddress] = useState(currentBranch?.address || '');
-  const [originCity, setOriginCity] = useState('Luanda');
-  const [destAddress, setDestAddress] = useState('');
-  const [destCity, setDestCity] = useState('');
-  const [destNif, setDestNif] = useState('');
-  const [destName, setDestName] = useState('');
-  const [loadingDate, setLoadingDate] = useState(new Date().toISOString().split('T')[0]);
-  const [loadingTime, setLoadingTime] = useState('08:00');
-  const [vehiclePlate, setVehiclePlate] = useState('');
-  const [transporterName, setTransporterName] = useState('');
-  const [transportItems, setTransportItems] = useState<TransportDocumentItem[]>([]);
-  const [transportNotes, setTransportNotes] = useState('');
+  const [fiscalTab, setFiscalTab] = useState('credit');
+  const [initialTransportSaleId, setInitialTransportSaleId] = useState<string | null>(null);
+  const [transportSubmitting, setTransportSubmitting] = useState(false);
+  const [printTransportDoc, setPrintTransportDoc] = useState<TransportDocument | null>(null);
+  const [printIncludePrices, setPrintIncludePrices] = useState(false);
 
   // Supplier Return form states
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
@@ -161,14 +156,24 @@ export default function FiscalDocuments() {
       openCreditNoteCreate?: boolean;
       openDebitNoteCreate?: boolean;
       openDebitNoteForSaleId?: string;
+      openTransportCreate?: boolean;
+      openTransportForSaleId?: string;
     } | null;
     if (st?.openSaft) {
       setSaftDialog(true);
       navigate(location.pathname, { replace: true, state: {} });
       return;
     }
+    if (st?.openTransportCreate || st?.openTransportForSaleId) {
+      navigate(location.pathname, { replace: true, state: {} });
+      setFiscalTab('transport');
+      setInitialTransportSaleId(st.openTransportForSaleId || null);
+      setTransportDocDialog(true);
+      return;
+    }
     if (st?.openDebitNoteCreate) {
       navigate(location.pathname, { replace: true, state: {} });
+      setFiscalTab('debit');
       openDebitNoteCreateDialog();
       return;
     }
@@ -178,6 +183,7 @@ export default function FiscalDocuments() {
         notifyDebitNoteDenied();
         return;
       }
+      setFiscalTab('debit');
       setInitialDebitSaleId(st.openDebitNoteForSaleId);
       setDebitNoteDialog(true);
       return;
@@ -188,6 +194,7 @@ export default function FiscalDocuments() {
         notifyCreditNoteDenied();
         return;
       }
+      setFiscalTab('credit');
       openCreditNoteCreateDialog();
       return;
     }
@@ -199,6 +206,7 @@ export default function FiscalDocuments() {
       }
       const sale = sales.find((s) => s.id === st.openCreditNoteForSaleId);
       if (sale) {
+        setFiscalTab('credit');
         setInitialCreditSaleId(sale.id);
         setCreditNoteDialog(true);
       }
@@ -392,55 +400,50 @@ export default function FiscalDocuments() {
     }
   };
 
-  const handleAddProductToTransport = (product: Product) => {
-    if (transportItems.find(i => i.productId === product.id)) return;
-    setTransportItems([...transportItems, {
-      productId: product.id,
-      productName: product.name,
-      sku: product.sku,
-      quantity: 1,
-      unit: product.unit,
-    }]);
-  };
-
-  const handleCreateTransportDoc = async () => {
-    if (!currentBranch || !user || transportItems.length === 0) return;
-
+  const handleCreateTransportDoc = async (payload: TransportCreatePayload) => {
+    if (!currentBranch || !user) return;
+    setTransportSubmitting(true);
     try {
-      await createTransportDocument(
+      const doc = await createTransportDocument(
         currentBranch.id,
         currentBranch.code,
-        transportType,
-        originAddress,
-        originCity,
-        destAddress,
-        destCity,
-        loadingDate,
-        loadingTime,
-        transportItems,
+        payload.type,
+        payload.originAddress,
+        payload.originCity,
+        payload.destinationAddress,
+        payload.destinationCity,
+        payload.loadingDate,
+        payload.loadingTime,
+        payload.items,
         user.id,
         {
-          destinationNif: destNif,
-          destinationName: destName,
-          vehiclePlate,
-          transporterName,
-          notes: transportNotes,
+          destinationNif: payload.destinationNif,
+          destinationName: payload.destinationName,
+          vehiclePlate: payload.vehiclePlate,
+          transporterName: payload.transporterName,
+          transporterNif: payload.transporterNif,
+          notes: payload.notes,
+          relatedInvoiceId: payload.relatedInvoiceId,
+          relatedInvoiceNumber: payload.relatedInvoiceNumber,
         },
       );
-
       toast({
         title: t.fiscalDocumentsUi.transportDocCreatedTitle,
         description: t.fiscalDocumentsUi.documentIssuedSuccess,
       });
-
       setTransportDocDialog(false);
-      resetTransportForm();
+      setInitialTransportSaleId(null);
+      setPrintIncludePrices(payload.includePrices);
+      setPrintTransportDoc(doc);
     } catch (err) {
       toast({
         variant: 'destructive',
         title: t.common.error,
         description: err instanceof Error ? err.message : t.fiscalDocumentsUi.documentIssuedSuccess,
       });
+      throw err;
+    } finally {
+      setTransportSubmitting(false);
     }
   };
 
@@ -472,21 +475,10 @@ export default function FiscalDocuments() {
     setCompanyDialog(false);
   };
 
-  const resetTransportForm = () => {
-    setTransportType('delivery');
-    setOriginAddress(currentBranch?.address || '');
-    setOriginCity('Luanda');
-    setDestAddress('');
-    setDestCity('');
-    setDestNif('');
-    setDestName('');
-    setLoadingDate(new Date().toISOString().split('T')[0]);
-    setLoadingTime('08:00');
-    setVehiclePlate('');
-    setTransporterName('');
-    setTransportItems([]);
-    setTransportNotes('');
-  };
+  const openTransportCreateDialog = useCallback(() => {
+    setInitialTransportSaleId(null);
+    setTransportDocDialog(true);
+  }, []);
 
   // Supplier Return handlers
   const handleSelectPOForReturn = (po: PurchaseOrder) => {
@@ -680,7 +672,7 @@ export default function FiscalDocuments() {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="credit" className="space-y-4">
+      <Tabs value={fiscalTab} onValueChange={setFiscalTab} className="space-y-4">
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="credit">
             <FileMinus className="w-4 h-4 mr-2" />
@@ -1032,7 +1024,7 @@ export default function FiscalDocuments() {
                 <CardTitle>{fd.transportTitle}</CardTitle>
                 <CardDescription>{fd.transportDesc}</CardDescription>
               </div>
-              <Button variant="modern" size="lg" onClick={() => setTransportDocDialog(true)}>
+              <Button variant="modern" size="lg" onClick={openTransportCreateDialog}>
                 <Plus />
                 {fd.newTransportShort}
               </Button>
@@ -1050,8 +1042,8 @@ export default function FiscalDocuments() {
                       <TableHead>{fd.colDocNumber}</TableHead>
                       <TableHead>{fd.colType}</TableHead>
                       <TableHead>{fd.colLoadingDate}</TableHead>
-                      <TableHead>{fd.colOrigin}</TableHead>
                       <TableHead>{fd.colDestination}</TableHead>
+                      <TableHead>{fd.relatedInvoice}</TableHead>
                       <TableHead>{fd.colItems}</TableHead>
                       <TableHead>{fd.colStatus}</TableHead>
                       <TableHead>{fd.colActions}</TableHead>
@@ -1069,10 +1061,13 @@ export default function FiscalDocuments() {
                              t.fiscalDocumentsUi.transportTypeConsignment}
                           </Badge>
                         </TableCell>
-                        <TableCell>{doc.loadingDate} {doc.loadingTime}</TableCell>
-                        <TableCell>{doc.originCity}</TableCell>
-                        <TableCell>{doc.destinationCity}</TableCell>
-                        <TableCell>{doc.items.length} produtos</TableCell>
+                        <TableCell>{String(doc.loadingDate || '').slice(0, 10)} {String(doc.loadingTime || '').slice(0, 5)}</TableCell>
+                        <TableCell>
+                          <div className="font-medium">{doc.destinationName || doc.destinationCity}</div>
+                          <div className="text-xs text-muted-foreground">{doc.originCity} → {doc.destinationCity}</div>
+                        </TableCell>
+                        <TableCell>{doc.relatedInvoiceNumber || '—'}</TableCell>
+                        <TableCell>{fd.transportItemsCount.replace('{count}', String(doc.items?.length || 0))}</TableCell>
                         <TableCell>
                           <Badge variant={
                             doc.status === 'delivered' ? 'default' : 
@@ -1086,7 +1081,19 @@ export default function FiscalDocuments() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {doc.status === 'issued' && (
+                          <div className="flex flex-wrap gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setPrintIncludePrices(false);
+                                setPrintTransportDoc(doc);
+                              }}
+                            >
+                              <Printer className="h-4 w-4" />
+                              {t.common.print}
+                            </Button>
+                            {doc.status === 'issued' && (
                             <Button 
                               variant="ghost" 
                               size="sm"
@@ -1094,8 +1101,8 @@ export default function FiscalDocuments() {
                             >
                               {t.fiscalDocumentsUi.start}
                             </Button>
-                          )}
-                          {doc.status === 'in_transit' && (
+                            )}
+                            {doc.status === 'in_transit' && (
                             <Button 
                               variant="ghost" 
                               size="sm"
@@ -1103,7 +1110,8 @@ export default function FiscalDocuments() {
                             >
                               {t.fiscalDocumentsUi.deliver}
                             </Button>
-                          )}
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1372,186 +1380,31 @@ export default function FiscalDocuments() {
         </DialogContent>
       </Dialog>
 
-      {/* Transport Document Dialog */}
-      <Dialog open={transportDocDialog} onOpenChange={setTransportDocDialog}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{fd.newTransportTitle}</DialogTitle>
-            <DialogDescription>{fd.newTransportSubtitle}</DialogDescription>
-          </DialogHeader>
+      <TransportDocumentCreateDialog
+        open={transportDocDialog}
+        onOpenChange={(open) => {
+          setTransportDocDialog(open);
+          if (!open) setInitialTransportSaleId(null);
+        }}
+        sales={sales}
+        products={products}
+        clients={clients}
+        branch={currentBranch}
+        originAddressDefault={currentBranch?.address || companyInfo.address || ''}
+        originCityDefault={companyInfo.city || ''}
+        branchId={apiBranchId}
+        initialSaleId={initialTransportSaleId}
+        submitting={transportSubmitting}
+        onSubmit={handleCreateTransportDoc}
+      />
 
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>{fd.transportTypeLabel}</Label>
-                <Select value={transportType} onValueChange={(v: any) => setTransportType(v)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="delivery">{fd.transportTypeDeliveryFull}</SelectItem>
-                    <SelectItem value="transfer">{fd.transportTypeTransferFull}</SelectItem>
-                    <SelectItem value="return">{fd.transportTypeReturnFull}</SelectItem>
-                    <SelectItem value="consignment">{t.fiscalDocumentsUi.transportTypeConsignment}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>{fd.vehiclePlateLabel}</Label>
-                <Input 
-                  value={vehiclePlate}
-                  onChange={(e) => setVehiclePlate(e.target.value)}
-                  placeholder={fd.vehiclePlatePlaceholder}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-4">
-                <h4 className="font-medium">{fd.originTitle}</h4>
-                <div className="space-y-2">
-                  <Label>{fd.addressLabel}</Label>
-                  <Input value={originAddress} onChange={(e) => setOriginAddress(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>{fd.cityLabel}</Label>
-                  <Input value={originCity} onChange={(e) => setOriginCity(e.target.value)} />
-                </div>
-              </div>
-              <div className="space-y-4">
-                <h4 className="font-medium">{fd.destinationTitle}</h4>
-                <div className="space-y-2">
-                  <Label>{fd.addressLabel}</Label>
-                  <Input value={destAddress} onChange={(e) => setDestAddress(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>{fd.cityLabel}</Label>
-                  <Input value={destCity} onChange={(e) => setDestCity(e.target.value)} />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-2">
-                    <Label>{fd.destNifLabel}</Label>
-                    <Input value={destNif} onChange={(e) => setDestNif(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{fd.nameLabel}</Label>
-                    <Input value={destName} onChange={(e) => setDestName(e.target.value)} />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>{fd.loadingDateLabel}</Label>
-                <Input 
-                  type="date"
-                  value={loadingDate}
-                  onChange={(e) => setLoadingDate(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>{fd.loadingTimeLabel}</Label>
-                <Input 
-                  type="time"
-                  value={loadingTime}
-                  onChange={(e) => setLoadingTime(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>{fd.transporterLabel}</Label>
-              <Input 
-                value={transporterName}
-                onChange={(e) => setTransporterName(e.target.value)}
-                placeholder={fd.transporterPlaceholder}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>{fd.productsToTransport}</Label>
-              <div className="grid grid-cols-3 gap-2 max-h-32 overflow-y-auto border rounded p-2">
-                {products.map(product => (
-                  <Button
-                    key={product.id}
-                    variant={transportItems.find(i => i.productId === product.id) ? 'secondary' : 'outline'}
-                    size="sm"
-                    onClick={() => handleAddProductToTransport(product)}
-                  >
-                    {product.name}
-                  </Button>
-                ))}
-              </div>
-              {transportItems.length > 0 && (
-                <div className="border rounded-lg mt-2">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{fd.colProduct}</TableHead>
-                        <TableHead>{fd.colSku}</TableHead>
-                        <TableHead className="text-right">{fd.colQuantity}</TableHead>
-                        <TableHead></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {transportItems.map((item, idx) => (
-                        <TableRow key={idx}>
-                          <TableCell>{item.productName}</TableCell>
-                          <TableCell>{item.sku}</TableCell>
-                          <TableCell className="text-right">
-                            <Input
-                              type="number"
-                              min="1"
-                              value={item.quantity}
-                              onChange={(e) => {
-                                const updated = [...transportItems];
-                                updated[idx].quantity = parseInt(e.target.value) || 1;
-                                setTransportItems(updated);
-                              }}
-                              className="w-20 text-right"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setTransportItems(transportItems.filter((_, i) => i !== idx))}
-                            >
-                              ✕
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label>{fd.notesLabel}</Label>
-              <Textarea 
-                value={transportNotes}
-                onChange={(e) => setTransportNotes(e.target.value)}
-                placeholder={fd.additionalNotesPlaceholder}
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setTransportDocDialog(false); resetTransportForm(); }}>
-              {t.common.cancel}
-            </Button>
-            <Button 
-              onClick={handleCreateTransportDoc}
-              disabled={transportItems.length === 0 || !destAddress}
-            >
-              {fd.issueTransport}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TransportDocumentPrintDialog
+        open={!!printTransportDoc}
+        doc={printTransportDoc}
+        includePrices={printIncludePrices}
+        onIncludePricesChange={setPrintIncludePrices}
+        onOpenChange={(open) => { if (!open) setPrintTransportDoc(null); }}
+      />
 
       {/* SAF-T Export Dialog */}
       <Dialog open={saftDialog} onOpenChange={setSaftDialog}>
