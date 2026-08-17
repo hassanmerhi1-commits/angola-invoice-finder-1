@@ -3,9 +3,18 @@ const express = require('express');
 const db = require('../db');
 const { auditErpSafe } = require('../lib/erpAudit');
 const { requirePermission } = require('../middleware/requirePermission');
+const { isPostgresEngine } = require('../lib/sqlDialect');
 const {
   ensureClientSubAccount,
 } = require('../lib/entityCoaAccounts');
+
+/** Active clients first — PG `is_active` is boolean; SQLite is integer. */
+function clientsActiveFirstOrderSql() {
+  if (isPostgresEngine(db)) {
+    return 'CASE WHEN COALESCE(is_active, TRUE) THEN 0 ELSE 1 END';
+  }
+  return 'CASE WHEN COALESCE(is_active, 1) != 0 THEN 0 ELSE 1 END';
+}
 
 function normalizeNif(nif) {
   return String(nif || '').replace(/\s/g, '').trim();
@@ -70,7 +79,7 @@ module.exports = function(broadcastTable) {
       const existingRes = await conn.query(
         `SELECT * FROM clients
          WHERE REPLACE(COALESCE(nif, ''), ' ', '') = $1
-         ORDER BY CASE WHEN COALESCE(is_active, 1) THEN 0 ELSE 1 END,
+         ORDER BY ${clientsActiveFirstOrderSql()},
                   created_at ASC, id ASC
          LIMIT 1`,
         [normalizedNif],
@@ -158,7 +167,7 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       try { await conn.query('ROLLBACK'); } catch (_) {}
       console.error('[CLIENTS ERROR]', error);
-      res.status(500).json({ error: 'Failed to create client' });
+      res.status(500).json({ error: error.message || 'Failed to create client' });
     } finally {
       conn.release();
     }

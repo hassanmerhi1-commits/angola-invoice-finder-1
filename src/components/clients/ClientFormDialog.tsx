@@ -55,6 +55,8 @@ type ClientFormDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   client?: Client | null;
+  initialName?: string;
+  initialCreditLimit?: number;
   onSaved?: (client: Client) => void;
 };
 
@@ -62,6 +64,8 @@ export function ClientFormDialog({
   open,
   onOpenChange,
   client = null,
+  initialName,
+  initialCreditLimit,
   onSaved,
 }: ClientFormDialogProps) {
   const { t, language } = useTranslation();
@@ -161,11 +165,18 @@ export function ClientFormDialog({
         accountParentCode: DEFAULT_CLIENT_PARENT_CODE,
       });
     } else {
-      setFormData(EMPTY_FORM);
+      setFormData({
+        ...EMPTY_FORM,
+        name: initialName?.trim() || '',
+        creditLimit:
+          initialCreditLimit != null && initialCreditLimit > 0
+            ? String(Math.round(initialCreditLimit))
+            : '0',
+      });
     }
     setIsAddingSub(false);
     setNewSubName('');
-  }, [open, client]);
+  }, [open, client, initialName, initialCreditLimit]);
 
   const canSave = formData.name.trim().length > 0 && validateNIF(normalizeClientNif(formData.nif));
 

@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Plus, Trash2, Search, Save, Printer, X, Send, Link2, UserRound, UserPlus, MapPin, Phone, CalendarDays, Building2 } from 'lucide-react';
+import { Plus, Trash2, Search, Save, Printer, X, Send, Link2, UserRound, UserPlus, Pencil, MapPin, Phone, CalendarDays, Building2 } from 'lucide-react';
 import { printDocument } from '@/lib/documentPDF';
 import { cn } from '@/lib/utils';
 import { DocumentType, DocumentLine, ERPDocument, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
@@ -48,7 +48,15 @@ import {
 function defaultSalesDueDate(daysAhead = 15): string {
   const d = new Date();
   d.setDate(d.getDate() + daysAhead);
-  return d.toISOString().split('T')[0];
+  return localISODate(d);
+}
+
+function dueDateForSalePayment(method: string, paymentTermsDays?: number): string {
+  if (method === 'credit') {
+    const days = Math.trunc(Number(paymentTermsDays) || 0);
+    return defaultSalesDueDate(days > 0 ? days : 15);
+  }
+  return localISODate();
 }
 
 interface DocumentFormDialogProps {
@@ -74,7 +82,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     [branchOptions, invoiceBranchId, currentBranch],
   );
   const { products } = useProducts(invoiceBranch?.id || currentBranch?.id, { light: true });
-  const { clients } = useClients();
+  const { clients, saveClient } = useClients();
   const { suppliers } = useSuppliers();
   const config = DOCUMENT_TYPE_CONFIG[documentType];
   const isPaymentDocument = documentType === 'recibo' || documentType === 'pagamento';
@@ -108,7 +116,10 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const { transmit: transmitAgt, transmitting: agtTransmitting } = useAgtTransmit();
   const [agtStatus, setAgtStatus] = useState<string | undefined>();
   const [agtCode, setAgtCode] = useState<string | undefined>();
-  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const [customerFormOpen, setCustomerFormOpen] = useState(false);
+  const [customerFormClient, setCustomerFormClient] = useState<Client | null>(null);
+  const [draftCreditLimit, setDraftCreditLimit] = useState(0);
+  const [savingCreditLimit, setSavingCreditLimit] = useState(false);
 
   const agtValidated = isAgtValidated(agtStatus);
 
@@ -134,30 +145,20 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
   const applySavedCustomer = (client: Client) => {
     fillCustomerContact(client);
+    if (documentType !== 'fatura_venda') return;
     const creditLimit = Number(client.creditLimit) || 0;
-    if (creditLimit > 0 && documentType === 'fatura_venda') {
+    if (creditLimit > 0) {
       setPaymentMethod('credit');
       setAmountPaid(0);
+      setDueDate(dueDateForSalePayment('credit', client.paymentTermsDays));
+      return;
     }
-    const days = Math.trunc(Number(client.paymentTermsDays ?? 0));
-    if (days > 0 && documentType !== 'proforma') {
-      const due = new Date();
-      due.setDate(due.getDate() + days);
-      setDueDate(due.toISOString().split('T')[0]);
-    }
+    setDueDate(dueDateForSalePayment(paymentMethod, client.paymentTermsDays));
   };
 
   const handleInvoiceBranchChange = (nextId: string) => {
-    setInvoiceBranchId((prev) => {
-      setLines((rows) =>
-        rows.map((line) => {
-          if (!line.productId) return line;
-          if (!line.branchId || line.branchId === prev) return { ...line, branchId: nextId };
-          return line;
-        }),
-      );
-      return nextId;
-    });
+    setInvoiceBranchId(nextId);
+    setLines((rows) => rows.map((line) => ({ ...line, branchId: nextId })));
   };
 
   // Reset form when opening
@@ -168,12 +169,19 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       setAgtCode(editDocument?.agtCode);
       if (source) {
         const sourceClient = clients.find((c) => c.id === source.entityId) as Client | undefined;
-        setDueDate(source.dueDate || source.validUntil?.split('T')[0] || '');
+        const sourceMethod = source.paymentMethod || 'cash';
+        setPaymentMethod(sourceMethod);
+        setDueDate(
+          documentType === 'fatura_venda' && sourceMethod !== 'credit' && !editDocument
+            ? localISODate()
+            : (source.dueDate || source.validUntil?.split('T')[0] || ''),
+        );
         setValidUntil(source.validUntil || '');
         setNotes(source.notes || '');
-        setPaymentMethod(source.paymentMethod || 'cash');
         setAmountPaid(source.amountPaid || 0);
-        setLines(source.lines.map(l => ({ ...l })));
+        const nextBranchId = source.branchId || currentBranch?.id || '';
+        setInvoiceBranchId(nextBranchId);
+        setLines(source.lines.map((l) => ({ ...l, branchId: nextBranchId })));
         if (documentType === 'fatura_venda' && sourceClient) {
           fillCustomerContact(sourceClient);
         } else {
@@ -191,7 +199,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         setEntityNif('');
         setEntityAddress('');
         setEntityPhone('');
-        setDueDate(documentType === 'fatura_venda' ? defaultSalesDueDate() : '');
+        setDueDate(documentType === 'fatura_venda' ? localISODate() : '');
         setValidUntil(documentType === 'proforma' ? defaultSalesDueDate() : '');
         setNotes('');
         setPaymentMethod('cash');
@@ -367,14 +375,63 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     && !!selectedEntityClient
     && creditClientLimit > 0
     && creditClientBalance + totals.total > creditClientLimit + 0.01;
-  const creditInvoiceBlocked = creditMissingClient || creditNoLimit || creditOverLimit;
+
+  useEffect(() => {
+    if (!creditNoLimit) return;
+    setDraftCreditLimit(Math.max(Math.ceil(totals.total || 0), 1));
+  }, [creditNoLimit, selectedEntityClient?.id, totals.total]);
+
+  const applyInvoiceCreditLimit = async () => {
+    if (!selectedEntityClient) return;
+    const limit = Number(draftCreditLimit);
+    if (!(limit > 0)) {
+      toast.error(t.documentFormUi.creditLimitInvalid);
+      return;
+    }
+    setSavingCreditLimit(true);
+    try {
+      await saveClient({ ...selectedEntityClient, creditLimit: limit });
+      toast.success(t.documentFormUi.creditLimitSaved);
+    } catch (e) {
+      toast.error(e instanceof Error && e.message ? e.message : t.documentFormUi.saveError);
+    } finally {
+      setSavingCreditLimit(false);
+    }
+  };
+
+  const openNewCustomerForm = () => {
+    setCustomerFormClient(null);
+    setEntityPickerOpen(false);
+    setCustomerFormOpen(true);
+  };
+
+  const openEditCustomerForm = () => {
+    if (!selectedEntityClient) return;
+    setCustomerFormClient(selectedEntityClient);
+    setCustomerFormOpen(true);
+  };
+
+  const handlePaymentMethodChange = (next: string) => {
+    setPaymentMethod(next);
+    if (documentType !== 'fatura_venda' || formReadOnly) return;
+    setDueDate(dueDateForSalePayment(next, selectedEntityClient?.paymentTermsDays));
+    if (next === 'credit') setAmountPaid(0);
+  };
+
+  useEffect(() => {
+    if (!open || documentType !== 'fatura_venda' || formReadOnly) return;
+    if (paymentMethod === 'credit') return;
+    const today = localISODate();
+    setDueDate((prev) => (prev === today ? prev : today));
+  }, [open, documentType, formReadOnly, paymentMethod]);
+
   const creditLooksLikeCash =
     documentType === 'fatura_venda'
     && paymentMethod !== 'credit'
     && !!entityId
     && !!selectedEntityClient
     && !!dueDate
-    && dueDate > new Date().toISOString().slice(0, 10);
+    && dueDate > localISODate();
   const previewInvoiceType = useMemo(() => {
     if (documentType !== 'fatura_venda') return null;
     return resolveSaleInvoiceType({
@@ -944,16 +1001,12 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     });
   };
 
-  const renderInvoiceBranchSelect = (opts?: { compact?: boolean; className?: string }) => {
-    const compact = opts?.compact === true;
-    const triggerClass = cn(
-      compact ? 'h-8 min-w-[140px] text-xs' : 'h-9 min-w-[180px] text-sm',
-      opts?.className,
-    );
+  const renderInvoiceBranchSelect = () => {
+    const triggerClass = 'h-9 min-w-[180px] text-sm';
     if (!canPickBranch || branchOptions.length <= 1) {
       return (
         <div className={cn('flex items-center gap-2 truncate rounded-md border bg-muted/40 px-2', triggerClass)}>
-          <Building2 className={compact ? 'h-3.5 w-3.5 shrink-0' : 'h-4 w-4 shrink-0'} />
+          <Building2 className="h-4 w-4 shrink-0" />
           <span className="truncate">{formatBranchDisplayName(invoiceBranch)}</span>
         </div>
       );
@@ -962,7 +1015,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       <Select value={invoiceBranchId || invoiceBranch?.id || ''} onValueChange={handleInvoiceBranchChange} disabled={contentLocked}>
         <SelectTrigger className={triggerClass}>
           <div className="flex min-w-0 items-center gap-2">
-            <Building2 className={compact ? 'h-3.5 w-3.5 shrink-0' : 'h-4 w-4 shrink-0'} />
+            <Building2 className="h-4 w-4 shrink-0" />
             <SelectValue placeholder={t.branchUi.selectBranch} />
           </div>
         </SelectTrigger>
@@ -977,34 +1030,11 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     );
   };
 
-  const renderLineBranchSelect = (line: DocumentLine, idx: number) => {
-    if (!line.productId) {
-      return <span className="text-muted-foreground">—</span>;
-    }
-    const value = line.branchId || invoiceBranchId || invoiceBranch?.id || '';
-    const selected = branchOptions.find((b) => b.id === value) || invoiceBranch;
-    if (!canPickBranch || branchOptions.length <= 1) {
-      return (
-        <span className="block max-w-[160px] truncate text-xs">
-          {formatBranchDisplayName(selected)}
-        </span>
-      );
-    }
-    return (
-      <Select value={value} onValueChange={(id) => updateLine(idx, 'branchId', id)} disabled={contentLocked}>
-        <SelectTrigger className="h-8 w-[160px] text-xs">
-          <SelectValue placeholder={t.branchUi.selectBranch} />
-        </SelectTrigger>
-        <SelectContent className="z-[80]">
-          {branchOptions.map((branch) => (
-            <SelectItem key={branch.id} value={branch.id}>
-              {formatBranchDisplayName(branch)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    );
-  };
+  const renderLineBranchLabel = () => (
+    <span className="block max-w-[160px] truncate text-xs text-muted-foreground">
+      {formatBranchDisplayName(invoiceBranch)}
+    </span>
+  );
 
   return (
     <>
@@ -1020,8 +1050,8 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           isSalesWorkspace ? 'bg-background px-6 py-3' : 'bg-muted/50 px-4 py-2',
         )}>
           <DialogTitle className={cn(
-            'min-w-0 font-bold',
-            isSalesWorkspace ? 'text-xl tracking-tight' : 'min-w-0 flex-1 text-sm',
+            'min-w-0 flex-1 font-bold',
+            isSalesWorkspace ? 'text-xl tracking-tight' : 'text-sm',
             config.color,
           )}>
             {editDocument
@@ -1033,14 +1063,6 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               </span>
             )}
           </DialogTitle>
-          {isSalesWorkspace && (
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <Label className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
-                {t.documentFormUi.invoiceBranch}
-              </Label>
-              {renderInvoiceBranchSelect({ className: 'max-w-[240px]' })}
-            </div>
-          )}
           <div className="flex shrink-0 items-center gap-2">
             <Button
               size="sm"
@@ -1186,10 +1208,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                                 size="sm"
                                 className="h-8 w-full gap-1.5 text-sm"
                                 onMouseDown={(e) => e.preventDefault()}
-                                onClick={() => {
-                                  setEntityPickerOpen(false);
-                                  setNewCustomerOpen(true);
-                                }}
+                                onClick={openNewCustomerForm}
                               >
                                 <UserPlus className="h-4 w-4" />
                                 {t.clientsUi.newClient}
@@ -1219,12 +1238,23 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                     type="button"
                     variant="outline"
                     className="h-10 shrink-0 gap-1.5 px-3 text-sm"
-                    onClick={() => setNewCustomerOpen(true)}
+                    onClick={openNewCustomerForm}
                     disabled={contentLocked}
                   >
                     <UserPlus className="h-4 w-4" />
                     {t.clientsUi.newClient}
                   </Button>
+                  {selectedEntityClient && !contentLocked && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 shrink-0 gap-1.5 px-3 text-sm"
+                      onClick={openEditCustomerForm}
+                    >
+                      <Pencil className="h-4 w-4" />
+                      {t.clientsUi.editTitle}
+                    </Button>
+                  )}
                 </div>
                 {selectedEntityClient ? (
                   <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm lg:grid-cols-4">
@@ -1271,11 +1301,17 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">{t.documentFormUi.dueDate}</Label>
-                    <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="h-9 text-sm" disabled={formReadOnly} />
+                    <Input
+                      type="date"
+                      value={dueDate}
+                      onChange={e => setDueDate(e.target.value)}
+                      className="h-9 text-sm"
+                      disabled={formReadOnly || paymentMethod !== 'credit'}
+                    />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">{t.documentFormUi.paymentMethod}</Label>
-                    <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                    <Select value={paymentMethod} onValueChange={handlePaymentMethodChange}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="cash">{t.paymentsUi.methods.cash}</SelectItem>
@@ -1307,17 +1343,41 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                   </p>
                 )}
                 {isCreditInvoice && (
-                  <p className={cn('text-xs', (creditMissingClient || creditNoLimit || creditOverLimit) ? 'text-destructive' : 'text-muted-foreground')}>
-                    {creditMissingClient
-                      ? t.checkoutUi.creditRequiresClient
-                      : creditNoLimit
-                        ? t.checkoutUi.creditNoLimit
-                        : creditOverLimit
-                          ? t.checkoutUi.creditOverLimit
-                            .replace('{balance}', creditClientBalance.toLocaleString(locale))
-                            .replace('{limit}', creditClientLimit.toLocaleString(locale))
-                          : t.checkoutUi.creditHint}
-                  </p>
+                  <div className="space-y-2">
+                    <p className={cn('text-xs', (creditMissingClient || creditNoLimit || creditOverLimit) ? 'text-destructive' : 'text-muted-foreground')}>
+                      {creditMissingClient
+                        ? t.checkoutUi.creditRequiresClient
+                        : creditNoLimit
+                          ? t.checkoutUi.creditNoLimit
+                          : creditOverLimit
+                            ? t.checkoutUi.creditOverLimit
+                              .replace('{balance}', creditClientBalance.toLocaleString(locale))
+                              .replace('{limit}', creditClientLimit.toLocaleString(locale))
+                            : t.checkoutUi.creditHint}
+                    </p>
+                    {creditNoLimit && selectedEntityClient && !contentLocked && (
+                      <div className="flex flex-wrap items-end gap-2">
+                        <div className="min-w-[160px] flex-1 space-y-1">
+                          <Label className="text-xs">{t.documentFormUi.setCreditLimitLabel}</Label>
+                          <NumericInput
+                            value={draftCreditLimit}
+                            onValueChange={setDraftCreditLimit}
+                            min={0}
+                            className="h-9 text-sm"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-9"
+                          disabled={savingCreditLimit || draftCreditLimit <= 0}
+                          onClick={() => void applyInvoiceCreditLimit()}
+                        >
+                          {t.documentFormUi.setCreditLimitAction}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -1516,7 +1576,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               <div className="grid grid-cols-4 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">{t.documentFormUi.paymentMethod}</Label>
-                  <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                  <Select value={paymentMethod} onValueChange={handlePaymentMethodChange}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="cash">{t.paymentsUi.methods.cash}</SelectItem>
@@ -1531,7 +1591,31 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                     {creditMissingClient ? (
                       <p className="text-xs text-destructive">{t.checkoutUi.creditRequiresClient}</p>
                     ) : creditNoLimit ? (
-                      <p className="text-xs text-destructive">{t.checkoutUi.creditNoLimit}</p>
+                      <div className="flex flex-wrap items-end gap-2 w-full">
+                        <p className="text-xs text-destructive w-full">{t.checkoutUi.creditNoLimit}</p>
+                        {selectedEntityClient && !contentLocked && (
+                          <>
+                            <div className="min-w-[140px] flex-1 space-y-1">
+                              <Label className="text-xs">{t.documentFormUi.setCreditLimitLabel}</Label>
+                              <NumericInput
+                                value={draftCreditLimit}
+                                onValueChange={setDraftCreditLimit}
+                                min={0}
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-8"
+                              disabled={savingCreditLimit || draftCreditLimit <= 0}
+                              onClick={() => void applyInvoiceCreditLimit()}
+                            >
+                              {t.documentFormUi.setCreditLimitAction}
+                            </Button>
+                          </>
+                        )}
+                      </div>
                     ) : creditOverLimit ? (
                       <p className="text-xs text-destructive">
                         {t.checkoutUi.creditOverLimit
@@ -1678,7 +1762,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                         </td>
                         {isSalesWorkspace && (
                           <td className="px-3 py-2">
-                            {renderLineBranchSelect(line, idx)}
+                            {renderLineBranchLabel()}
                           </td>
                         )}
                         <td className={isSalesWorkspace ? 'px-3 py-2' : 'px-2 py-1'}>
@@ -1810,11 +1894,15 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     </Dialog>
     {isSalesWorkspace && (
       <ClientFormDialog
-        open={newCustomerOpen}
-        onOpenChange={setNewCustomerOpen}
+        open={customerFormOpen}
+        onOpenChange={setCustomerFormOpen}
+        client={customerFormClient}
+        initialName={entityName}
+        initialCreditLimit={totals.total}
         onSaved={(client) => {
           applySavedCustomer(client);
-          setNewCustomerOpen(false);
+          setCustomerFormOpen(false);
+          setCustomerFormClient(null);
         }}
       />
     )}
