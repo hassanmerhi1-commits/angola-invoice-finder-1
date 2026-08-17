@@ -16,7 +16,7 @@ import { Plus, Trash2, Search, Save, Printer, X, Send, Link2, UserRound, UserPlu
 import { printDocument } from '@/lib/documentPDF';
 import { cn } from '@/lib/utils';
 import { DocumentType, DocumentLine, ERPDocument, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
-import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocument, removeLocalDocumentsByNumber } from '@/lib/documentStorage';
+import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocument, removeLocalDocumentsByNumber, getSaleInvoiceAsDocument } from '@/lib/documentStorage';
 import { linkProformaAfterInvoiceConfirm } from '@/lib/linkProformaConversion';
 import { useProducts, useAuth, useClients, useSuppliers } from '@/hooks/useERP';
 import type { Client, Supplier, OpenItem } from '@/types/erp';
@@ -657,6 +657,22 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       });
   };
 
+  const printConfirmedSaleInvoice = async (doc: ERPDocument) => {
+    try {
+      let toPrint = doc;
+      if (doc.id && !String(doc.id).startsWith('doc_')) {
+        const full = await getSaleInvoiceAsDocument(doc.id, {
+          [doc.branchId]: doc.branchName || '',
+        });
+        if (full?.lines?.length) toPrint = full;
+      }
+      await printDocument(toPrint, { source: 'document_form' });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(message || t.documentFormUi.printError);
+    }
+  };
+
   const handleSave = async (status: 'draft' | 'confirmed') => {
     if (savingRef.current) return;
     savingRef.current = true;
@@ -947,6 +963,9 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                 .replace('{short}', typeUi.short)
                 .replace('{number}', doc.documentNumber),
             );
+          }
+          if (status === 'confirmed') {
+            await printConfirmedSaleInvoice(doc);
           }
         } else if (isPaymentDocument && status === 'confirmed') {
           const paymentType = documentType === 'recibo' ? 'receipt' : 'payment';
