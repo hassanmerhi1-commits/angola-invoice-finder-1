@@ -1532,17 +1532,22 @@ async function repairFilialWarehouseStockOwnership(client, warehouseId) {
     return { warehouseId: wh, skus: 0, remapped: 0, cloned: 0 };
   }
 
+  const skuKeyExpr = sqlMovementSkuKey('pm');
   const foreign = await client.query(
-    `SELECT DISTINCT ${sqlMovementSkuKey('pm')} AS sku_key,
-            (ARRAY_AGG(pm.id ORDER BY pm.updated_at DESC NULLS LAST))[1] AS sample_product_id
-     FROM stock_movements sm
-     INNER JOIN products pm ON pm.id = sm.product_id
-     WHERE sm.warehouse_id = $1
-       AND TRIM(COALESCE(pm.sku, '')) != ''
-       AND (
-         ${emptyBranchIdClause(db, 'pm.branch_id')}
-         OR pm.branch_id IS DISTINCT FROM $1
-       )`,
+    `SELECT sku_key,
+            (ARRAY_AGG(product_id ORDER BY updated_at DESC NULLS LAST))[1] AS sample_product_id
+     FROM (
+       SELECT ${skuKeyExpr} AS sku_key, pm.id AS product_id, pm.updated_at
+       FROM stock_movements sm
+       INNER JOIN products pm ON pm.id = sm.product_id
+       WHERE sm.warehouse_id = $1
+         AND TRIM(COALESCE(pm.sku, '')) != ''
+         AND (
+           ${emptyBranchIdClause(db, 'pm.branch_id')}
+           OR pm.branch_id IS DISTINCT FROM $1
+         )
+     ) foreign_sku
+     GROUP BY sku_key`,
     [wh],
   );
 
