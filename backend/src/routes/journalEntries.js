@@ -16,7 +16,7 @@ const {
 
 const ENTRY_HEADER_SELECT = `
   SELECT je.*,
-    u.name AS created_by_name,
+    COALESCE(NULLIF(je.created_by_name, ''), u.name) AS created_by_name,
     b.name AS branch_name
   FROM journal_entries je
   LEFT JOIN users u ON je.created_by = u.id

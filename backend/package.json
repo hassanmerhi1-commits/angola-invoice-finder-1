@@ -1,6 +1,6 @@
 {
   "name": "nexor-erp-backend",
-  "version": "1.1.161",
+  "version": "1.1.162",
   "description": "NEXOR ERP Backend Server - SQLite + Express",
   "main": "src/server.js",
   "scripts": {

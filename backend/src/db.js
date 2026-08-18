@@ -318,6 +318,7 @@ function ensureAppTablesAndColumns() {
       posted_at TEXT,
       branch_id TEXT,
       created_by TEXT,
+      created_by_name TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -589,6 +590,7 @@ function ensureAppTablesAndColumns() {
   tryAlterAdd('products', 'price REAL NOT NULL DEFAULT 0');
   tryAlterAdd('products', 'price2 REAL NOT NULL DEFAULT 0');
   tryAlterAdd('journal_entries', "updated_at TEXT NOT NULL DEFAULT (datetime('now'))");
+  tryAlterAdd('journal_entries', "created_by_name TEXT DEFAULT ''");
   tryAlterAdd('journal_entry_lines', 'entry_date TEXT');
   tryAlterAdd('products', 'price3 REAL NOT NULL DEFAULT 0');
   tryAlterAdd('products', 'price4 REAL NOT NULL DEFAULT 0');

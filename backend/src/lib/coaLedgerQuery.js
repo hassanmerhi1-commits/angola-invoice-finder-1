@@ -99,6 +99,8 @@ async function fetchAccountLedger(db, root, {
          je.reference_type,
          je.reference_id,
          je.branch_id,
+         je.created_by,
+         je.created_by_name,
          je.is_posted,
          je.created_at AS journal_created_at
        FROM (
@@ -132,6 +134,8 @@ async function fetchAccountLedger(db, root, {
          je.reference_type,
          je.reference_id,
          je.branch_id,
+         je.created_by,
+         je.created_by_name,
          je.is_posted,
          je.created_at AS journal_created_at
        FROM journal_entry_lines jel
@@ -171,9 +175,50 @@ async function fetchAccountLedger(db, root, {
   let rows = rawRows.map((row) => ({
     ...row,
     branch_name: branchNameById.get(String(row.branch_id || '').trim()) || null,
+    created_by: row.created_by || '',
+    created_by_name: row.created_by_name || '',
     account_code: root.code,
     account_name: root.name,
   }));
+
+  const missingSaleUserIds = [...new Set(
+    rows
+      .filter((row) => row.reference_type === 'sale' && !String(row.created_by_name || '').trim())
+      .map((row) => String(row.reference_id || '').trim())
+      .filter(Boolean),
+  )];
+  if (missingSaleUserIds.length > 0) {
+    try {
+      const salesResult = db.engine === 'postgres'
+        ? await db.query(
+          `SELECT id::text AS id, created_by::text AS created_by, COALESCE(created_by_name, '') AS created_by_name
+           FROM sales
+           WHERE id::text = ANY($1::text[])`,
+          [missingSaleUserIds],
+        )
+        : await db.query(
+          `SELECT CAST(id AS TEXT) AS id, CAST(created_by AS TEXT) AS created_by, COALESCE(created_by_name, '') AS created_by_name
+           FROM sales
+           WHERE CAST(id AS TEXT) IN (${missingSaleUserIds.map((_, i) => `$${i + 1}`).join(',')})`,
+          missingSaleUserIds,
+        );
+      const saleById = new Map(
+        (salesResult.rows || []).map((row) => [String(row.id || '').trim(), row]),
+      );
+      rows = rows.map((row) => {
+        if (row.reference_type !== 'sale' || String(row.created_by_name || '').trim()) return row;
+        const sale = saleById.get(String(row.reference_id || '').trim());
+        if (!sale) return row;
+        return {
+          ...row,
+          created_by: row.created_by || sale.created_by || '',
+          created_by_name: sale.created_by_name || row.created_by_name || '',
+        };
+      });
+    } catch {
+      /* ignore */
+    }
+  }
 
   if (rows.length === 0 && !isHeader && !beforeDate) {
     const opening = Number(root.opening_balance) || 0;
@@ -194,6 +239,8 @@ async function fetchAccountLedger(db, root, {
         journal_description: 'Opening balance',
         reference_type: 'opening',
         reference_id: null,
+        created_by: '',
+        created_by_name: '',
         is_posted: true,
         journal_created_at: null,
       }];

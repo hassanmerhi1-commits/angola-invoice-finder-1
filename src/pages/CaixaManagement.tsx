@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
-import { useAuth } from '@/hooks/useERP';
+import { useAuth, mapSaleRow } from '@/hooks/useERP';
+import { useUsers } from '@/hooks/useUsers';
+import { api } from '@/lib/api/client';
+import type { Sale } from '@/types/erp';
 import { 
   getCaixas,
   createCaixa, 
@@ -86,7 +89,8 @@ import {
   TrendingDown,
   Edit,
   Eye,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Users
 } from 'lucide-react';
 
 interface CaixaFormData {
@@ -119,17 +123,32 @@ const initialTransactionData: TransactionFormData = {
   payee: '',
 };
 
+const CAIXA_ALL_USERS = '__all__';
+
+function normalizePerson(value?: string): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function personLabel(value?: string, fallback = ''): string {
+  const name = String(value || '').trim();
+  return name || fallback;
+}
+
 export default function CaixaManagement() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
   const { currentBranch, apiBranchId, treasuryAllBranches, userBranch } = useBranchScope();
   const { user } = useAuth();
+  const { users } = useUsers();
   const { toast } = useToast();
 
   const [caixas, setCaixas] = useState<Caixa[]>([]);
   const [sessions, setSessions] = useState<CaixaSession[]>([]);
   const [transactions, setTransactions] = useState<CashTransaction[]>([]);
+  const [branchSales, setBranchSales] = useState<Sale[]>([]);
+  const [movementUserFilter, setMovementUserFilter] = useState(CAIXA_ALL_USERS);
+  const [boardCaixaId, setBoardCaixaId] = useState('');
   
   // Dialog states
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -160,19 +179,138 @@ export default function CaixaManagement() {
     setCaixas(await getCaixas(branchId, branchName, { allBranches: treasuryAllBranches }));
     setSessions(await getCaixaSessions());
     setTransactions(await getCashTransactions());
+    try {
+      const res = await api.sales.list(treasuryAllBranches ? undefined : branchId, {
+        light: true,
+        limit: 500,
+      });
+      const rows = Array.isArray(res.data) ? res.data.map((row) => mapSaleRow(row)) : [];
+      setBranchSales(rows);
+    } catch {
+      setBranchSales([]);
+    }
   };
 
   useEffect(() => {
     void loadData();
   }, [apiBranchId, treasuryAllBranches, currentBranch?.id]);
 
+  useEffect(() => {
+    if (!caixas.length) return;
+    if (!boardCaixaId || !caixas.some((c) => c.id === boardCaixaId)) {
+      setBoardCaixaId(caixas[0].id);
+    }
+  }, [caixas, boardCaixaId]);
+
+  const movementsCaixa = useMemo(
+    () => selectedCaixa
+      || caixas.find((c) => c.id === boardCaixaId)
+      || caixas[0]
+      || null,
+    [selectedCaixa, caixas, boardCaixaId],
+  );
+
   // Get transactions for selected caixa
   const caixaTransactions = useMemo(() => {
-    if (!selectedCaixa) return [];
+    if (!movementsCaixa) return [];
     return transactions
-      .filter(t => t.caixaId === selectedCaixa.id)
+      .filter(t => t.caixaId === movementsCaixa.id)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [selectedCaixa, transactions]);
+  }, [movementsCaixa, transactions]);
+
+  const caixaSessions = useMemo(() => {
+    if (!movementsCaixa) return [];
+    return sessions
+      .filter((s) => s.caixaId === movementsCaixa.id)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [movementsCaixa, sessions]);
+
+  const caixaMovements = useMemo(() => {
+    if (!movementsCaixa) return [];
+    const fallback = t.caixaUi.systemUser;
+    const fromTx = caixaTransactions.map((tx) => ({
+      id: tx.id,
+      createdAt: tx.createdAt,
+      type: tx.type,
+      typeLabel: tx.type,
+      direction: tx.direction as 'in' | 'out',
+      description: tx.description,
+      amount: tx.amount,
+      balanceAfter: tx.balanceAfter,
+      userName: personLabel(tx.createdBy, fallback),
+    }));
+    const fromSales = branchSales
+      .filter((sale) => {
+        if (String(sale.status || '').toLowerCase() === 'voided') return false;
+        if (String(sale.paymentMethod || '').toLowerCase() !== 'cash') return false;
+        if (movementsCaixa.branchId && sale.branchId && sale.branchId !== movementsCaixa.branchId) {
+          return false;
+        }
+        return true;
+      })
+      .map((sale) => ({
+        id: `sale-${sale.id}`,
+        createdAt: sale.createdAt,
+        type: 'sale',
+        typeLabel: t.caixaUi.typeSale,
+        direction: 'in' as const,
+        description: sale.customerName
+          ? `${sale.invoiceNumber} — ${sale.customerName}`
+          : sale.invoiceNumber,
+        amount: Number(sale.total) || 0,
+        balanceAfter: undefined as number | undefined,
+        userName: personLabel(sale.cashierName || sale.cashierId, fallback),
+      }));
+    return [...fromTx, ...fromSales].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  }, [movementsCaixa, caixaTransactions, branchSales, t.caixaUi.systemUser, t.caixaUi.typeSale]);
+
+  const movementUserOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of caixaMovements) {
+      const label = personLabel(row.userName);
+      const key = normalizePerson(label);
+      if (!key) continue;
+      map.set(key, label);
+    }
+    for (const session of caixaSessions) {
+      const label = personLabel(session.openedBy, t.caixaUi.systemUser);
+      const key = normalizePerson(label);
+      if (!key) continue;
+      map.set(key, label);
+    }
+    for (const u of users) {
+      if (u.isActive === false) continue;
+      const label = personLabel(u.name);
+      const key = normalizePerson(label);
+      if (!key) continue;
+      map.set(key, label);
+    }
+    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1], uiLocale));
+  }, [caixaMovements, caixaSessions, users, t.caixaUi.systemUser, uiLocale]);
+
+  const filteredCaixaMovements = useMemo(() => {
+    if (movementUserFilter === CAIXA_ALL_USERS) return caixaMovements;
+    return caixaMovements.filter((row) => normalizePerson(row.userName) === movementUserFilter);
+  }, [caixaMovements, movementUserFilter]);
+
+  const filteredCaixaSessions = useMemo(() => {
+    if (movementUserFilter === CAIXA_ALL_USERS) return caixaSessions;
+    return caixaSessions.filter(
+      (session) => normalizePerson(session.openedBy) === movementUserFilter,
+    );
+  }, [caixaSessions, movementUserFilter]);
+
+  const filteredMovementTotals = useMemo(() => {
+    let inn = 0;
+    let out = 0;
+    for (const row of filteredCaixaMovements) {
+      if (row.direction === 'in') inn += row.amount;
+      else out += row.amount;
+    }
+    return { inn, out };
+  }, [filteredCaixaMovements]);
 
   // Get today's session for a caixa
   const getTodaySession = (caixaId: string): CaixaSession | undefined => {
@@ -370,6 +508,7 @@ export default function CaixaManagement() {
   // View caixa details
   const handleViewCaixa = (caixa: Caixa) => {
     setSelectedCaixa(caixa);
+    setMovementUserFilter(CAIXA_ALL_USERS);
     setIsViewDialogOpen(true);
   };
 
@@ -424,7 +563,23 @@ export default function CaixaManagement() {
             {t.caixaUi.subtitle.replace('{branch}', currentBranch?.name || t.caixaUi.allBranches)}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="space-y-1">
+            <Label className="text-xs">{t.caixaUi.filterUser}</Label>
+            <Select value={movementUserFilter} onValueChange={setMovementUserFilter}>
+              <SelectTrigger className="h-10 w-[220px]">
+                <SelectValue placeholder={t.caixaUi.filterAllUsers} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={CAIXA_ALL_USERS}>{t.caixaUi.filterAllUsers}</SelectItem>
+                {movementUserOptions.map(([value, label]) => (
+                  <SelectItem key={value || label} value={value || label}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <Button variant="outline" onClick={() => setIsTransferDialogOpen(true)} className="gap-2">
             <ArrowRightLeft className="w-4 h-4" />
             {t.caixaUi.transfer}
@@ -495,6 +650,98 @@ export default function CaixaManagement() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader className="space-y-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                {t.caixaUi.tabMovements}
+              </CardTitle>
+              <CardDescription>{t.caixaUi.movementsHint}</CardDescription>
+            </div>
+            {caixas.length > 1 && (
+              <div className="space-y-1 min-w-[180px]">
+                <Label className="text-xs">{t.caixaUi.title}</Label>
+                <Select value={boardCaixaId || caixas[0]?.id} onValueChange={setBoardCaixaId}>
+                  <SelectTrigger className="h-9 w-[220px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {caixas.map((caixa) => (
+                      <SelectItem key={caixa.id} value={caixa.id}>
+                        {caixa.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border bg-muted/40 p-3">
+              <p className="text-xs text-muted-foreground">{t.caixaUi.colIn}</p>
+              <p className="text-lg font-bold text-primary">
+                +{filteredMovementTotals.inn.toLocaleString(uiLocale)} Kz
+              </p>
+            </div>
+            <div className="rounded-lg border bg-muted/40 p-3">
+              <p className="text-xs text-muted-foreground">{t.caixaUi.colOut}</p>
+              <p className="text-lg font-bold text-destructive">
+                -{filteredMovementTotals.out.toLocaleString(uiLocale)} Kz
+              </p>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t.caixaUi.colDate}</TableHead>
+                <TableHead>{t.caixaUi.colType}</TableHead>
+                <TableHead>{t.caixaUi.colDescription}</TableHead>
+                <TableHead>{t.caixaUi.colUser}</TableHead>
+                <TableHead className="text-right">{t.caixaUi.colAmount}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredCaixaMovements.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                    {movementUserFilter === CAIXA_ALL_USERS
+                      ? t.caixaUi.noMovements
+                      : t.caixaUi.noMovementsForUser}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredCaixaMovements.slice(0, 200).map((tx) => (
+                  <TableRow key={tx.id}>
+                    <TableCell className="text-sm">
+                      {tx.createdAt ? format(new Date(tx.createdAt), 'dd/MM HH:mm', { locale: dfLocale }) : '—'}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={tx.direction === 'in' ? 'default' : 'secondary'} className="gap-1">
+                        {tx.direction === 'in' ? (
+                          <ArrowDownRight className="w-3 h-3" />
+                        ) : (
+                          <ArrowUpRight className="w-3 h-3" />
+                        )}
+                        {tx.typeLabel}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="max-w-[280px] truncate">{tx.description}</TableCell>
+                    <TableCell className="text-sm">{tx.userName}</TableCell>
+                    <TableCell className={`text-right font-medium ${tx.direction === 'in' ? 'text-primary' : 'text-destructive'}`}>
+                      {tx.direction === 'in' ? '+' : '-'}{tx.amount.toLocaleString(uiLocale)}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
       {/* Caixas Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -956,7 +1203,7 @@ export default function CaixaManagement() {
 
       {/* View Caixa Details Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Wallet className="w-5 h-5" />
@@ -968,6 +1215,25 @@ export default function CaixaManagement() {
             <DialogDescription>{selectedCaixa?.branchName}</DialogDescription>
           </DialogHeader>
 
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1 min-w-[200px]">
+              <Label className="text-xs">{t.caixaUi.filterUser}</Label>
+              <Select value={movementUserFilter} onValueChange={setMovementUserFilter}>
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder={t.caixaUi.filterAllUsers} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={CAIXA_ALL_USERS}>{t.caixaUi.filterAllUsers}</SelectItem>
+                  {movementUserOptions.map(([value, label]) => (
+                    <SelectItem key={value || label} value={value || label}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <Tabs defaultValue="transactions">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="transactions">{t.caixaUi.tabMovements}</TabsTrigger>
@@ -975,11 +1241,25 @@ export default function CaixaManagement() {
             </TabsList>
 
             <TabsContent value="transactions" className="space-y-4">
-              <div className="p-4 bg-muted rounded-lg">
-                <p className="text-sm text-muted-foreground">{t.caixaUi.currentBalance}</p>
-                <p className="text-3xl font-bold">
-                  {selectedCaixa?.currentBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
-                </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="p-4 bg-muted rounded-lg">
+                  <p className="text-sm text-muted-foreground">{t.caixaUi.currentBalance}</p>
+                  <p className="text-2xl font-bold">
+                    {selectedCaixa?.currentBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
+                  </p>
+                </div>
+                <div className="p-4 bg-muted rounded-lg">
+                  <p className="text-sm text-muted-foreground">{t.caixaUi.colIn}</p>
+                  <p className="text-2xl font-bold text-primary">
+                    +{filteredMovementTotals.inn.toLocaleString(uiLocale)} Kz
+                  </p>
+                </div>
+                <div className="p-4 bg-muted rounded-lg">
+                  <p className="text-sm text-muted-foreground">{t.caixaUi.colOut}</p>
+                  <p className="text-2xl font-bold text-destructive">
+                    -{filteredMovementTotals.out.toLocaleString(uiLocale)} Kz
+                  </p>
+                </div>
               </div>
 
               <Table>
@@ -988,22 +1268,25 @@ export default function CaixaManagement() {
                     <TableHead>{t.caixaUi.colDate}</TableHead>
                     <TableHead>{t.caixaUi.colType}</TableHead>
                     <TableHead>{t.caixaUi.colDescription}</TableHead>
+                    <TableHead>{t.caixaUi.colUser}</TableHead>
                     <TableHead className="text-right">{t.caixaUi.colAmount}</TableHead>
                     <TableHead className="text-right">{t.caixaUi.colBalance}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {caixaTransactions.length === 0 ? (
+                  {filteredCaixaMovements.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                        {t.caixaUi.noMovements}
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                        {movementUserFilter === CAIXA_ALL_USERS
+                          ? t.caixaUi.noMovements
+                          : t.caixaUi.noMovementsForUser}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    caixaTransactions.slice(0, 20).map(tx => (
+                    filteredCaixaMovements.slice(0, 200).map((tx) => (
                       <TableRow key={tx.id}>
                         <TableCell className="text-sm">
-                          {format(new Date(tx.createdAt), 'dd/MM HH:mm', { locale: dfLocale })}
+                          {tx.createdAt ? format(new Date(tx.createdAt), 'dd/MM HH:mm', { locale: dfLocale }) : '—'}
                         </TableCell>
                         <TableCell>
                           <Badge variant={tx.direction === 'in' ? 'default' : 'secondary'} className="gap-1">
@@ -1012,15 +1295,16 @@ export default function CaixaManagement() {
                             ) : (
                               <ArrowUpRight className="w-3 h-3" />
                             )}
-                            {tx.type}
+                            {tx.typeLabel}
                           </Badge>
                         </TableCell>
-                        <TableCell className="max-w-[200px] truncate">{tx.description}</TableCell>
+                        <TableCell className="max-w-[220px] truncate">{tx.description}</TableCell>
+                        <TableCell className="text-sm">{tx.userName}</TableCell>
                         <TableCell className={`text-right font-medium ${tx.direction === 'in' ? 'text-primary' : 'text-destructive'}`}>
                           {tx.direction === 'in' ? '+' : '-'}{tx.amount.toLocaleString(uiLocale)}
                         </TableCell>
                         <TableCell className="text-right">
-                          {tx.balanceAfter.toLocaleString(uiLocale)}
+                          {tx.balanceAfter != null ? tx.balanceAfter.toLocaleString(uiLocale) : '—'}
                         </TableCell>
                       </TableRow>
                     ))
@@ -1034,6 +1318,7 @@ export default function CaixaManagement() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t.caixaUi.colDate}</TableHead>
+                    <TableHead>{t.caixaUi.colUser}</TableHead>
                     <TableHead>{t.caixaUi.colOpening}</TableHead>
                     <TableHead>{t.caixaUi.colClosing}</TableHead>
                     <TableHead>{t.caixaUi.colIn}</TableHead>
@@ -1042,20 +1327,17 @@ export default function CaixaManagement() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sessions.filter(s => s.caixaId === selectedCaixa?.id).length === 0 ? (
+                  {filteredCaixaSessions.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                         {t.caixaUi.noSessions}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    sessions
-                      .filter(s => s.caixaId === selectedCaixa?.id)
-                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                      .slice(0, 10)
-                      .map(session => (
+                    filteredCaixaSessions.slice(0, 50).map((session) => (
                         <TableRow key={session.id}>
                           <TableCell>{format(new Date(session.date), 'dd/MM/yyyy', { locale: dfLocale })}</TableCell>
+                          <TableCell className="text-sm">{personLabel(session.openedBy, t.caixaUi.systemUser)}</TableCell>
                           <TableCell>{session.openingBalance.toLocaleString(uiLocale)} Kz</TableCell>
                           <TableCell>
                             {session.closingBalance !== undefined 

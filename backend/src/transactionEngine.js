@@ -2600,7 +2600,7 @@ async function processSale(client, saleData) {
 
   await createJournalEntry(client, {
     description: saleJournalDesc, referenceType: 'sale', referenceId: saleId,
-    branchId, createdBy: cashierId, lines: revenueLines,
+    branchId, createdBy: cashierId, createdByName: cashierName, lines: revenueLines,
     entryDate: today,
   });
 
@@ -2610,6 +2610,8 @@ async function processSale(client, saleData) {
         ? `CMV ${invoiceNumber} - ${saleCustomerLabel}`
         : `CMV ${invoiceNumber}`,
       referenceType: 'sale', referenceId: saleId,
+      createdBy: cashierId,
+      createdByName: cashierName,
       entryDate: today,
       lines: [
         { accountCode: ACC.COGS, description: 'Custo Mercadorias Vendidas', debit: totalCOGS, credit: 0 },

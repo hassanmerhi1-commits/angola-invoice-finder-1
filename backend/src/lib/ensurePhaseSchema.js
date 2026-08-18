@@ -1138,6 +1138,17 @@ async function ensureJournalReferenceIdText(db) {
   }
 }
 
+async function ensureJournalCreatedByName(db) {
+  if (db.engine !== 'postgres') return;
+  try {
+    await db.query(
+      "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS created_by_name TEXT DEFAULT ''",
+    );
+  } catch (err) {
+    console.warn('[SCHEMA] journal_entries.created_by_name:', err.message);
+  }
+}
+
 /** Soft-deactivate duplicate active NIFs (keep oldest) and add unique index. */
 async function ensureClientsUniqueNif(db) {
   if (db.engine === 'postgres') {
@@ -1270,6 +1281,7 @@ async function ensurePhaseSchema(db) {
       console.warn('[SCHEMA] bank_accounts COA sync:', e.message);
     }
     await ensureJournalReferenceIdText(db);
+    await ensureJournalCreatedByName(db);
     await ensureUserPermissionsColumn(db);
     await ensureMustChangePasswordColumn(db);
     await ensureLoginAttemptsTable(db);

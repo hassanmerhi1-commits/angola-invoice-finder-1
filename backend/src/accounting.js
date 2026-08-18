@@ -273,7 +273,7 @@ async function assertPeriodOpenForJournal(client, entryDate) {
 async function createJournalEntry(client, params) {
   const {
     description, referenceType, referenceId, branchId,
-    createdBy, lines, entryDate
+    createdBy, createdByName, lines, entryDate
   } = params;
 
   if (!lines || lines.length === 0) {
@@ -313,12 +313,12 @@ async function createJournalEntry(client, params) {
   await client.query(
     `INSERT INTO journal_entries 
      (id, entry_number, entry_date, description, reference_type, reference_id, 
-      total_debit, total_credit, is_posted, posted_at, branch_id, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, CURRENT_TIMESTAMP, $9, $10)`,
+      total_debit, total_credit, is_posted, posted_at, branch_id, created_by, created_by_name)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, CURRENT_TIMESTAMP, $9, $10, $11)`,
     [entryId, entryNumber, entryDate || new Date().toISOString().split('T')[0],
       description, referenceType, storedReferenceId,
       // created_by is UUID in Postgres — never pass display names like "HUSSEIN MERHI"
-      totalDebit, totalCredit, normalizeOptionalId(branchId), normalizeUuid(createdBy)]
+      totalDebit, totalCredit, normalizeOptionalId(branchId), normalizeUuid(createdBy), String(createdByName || '').trim()]
   );
 
   for (const line of lines) {

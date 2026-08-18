@@ -30,6 +30,7 @@ import { api } from '@/lib/api/client';
 import { Account } from '@/types/accounting';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
+import { useUsers } from '@/hooks/useUsers';
 import { resolveAccountDisplayName, resolveAccountTypeLabel } from '@/lib/chartOfAccountsDisplay';
 import { exportReportExcel } from '@/lib/reportExport';
 import { printReport, saveReportPdf } from '@/lib/reportExport';
@@ -80,6 +81,8 @@ interface LedgerEntry {
   reference_id: string;
   branch_id?: string | null;
   branch_name?: string | null;
+  created_by?: string | null;
+  created_by_name?: string | null;
   is_posted: boolean;
 }
 
@@ -91,6 +94,7 @@ interface Props {
 
 export default function AccountLedgerDialog({ account, open, onOpenChange }: Props) {
   const { t, language } = useTranslation();
+  const { users } = useUsers();
   const navigate = useNavigate();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
@@ -98,6 +102,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
   const [isExpanding, setIsExpanding] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [userFilter, setUserFilter] = useState('all');
   const [startDate, setStartDate] = useState(() => lastDaysBounds(INITIAL_LEDGER_DAYS).from);
   const [endDate, setEndDate] = useState(() => lastDaysBounds(INITIAL_LEDGER_DAYS).to);
   const [truncated, setTruncated] = useState(false);
@@ -118,6 +123,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     setEndDate(bounds.to);
     setSearchTerm('');
     setTypeFilter('all');
+    setUserFilter('all');
     setEntries([]);
     setIsExpanding(false);
     autoExpandRef.current = false;
@@ -143,6 +149,21 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     adjustment: t.ledgerUi.refManual,
     manual: t.ledgerUi.refManual,
   }), [t]);
+
+  const userLabel = useCallback((createdBy?: string | null, createdByName?: string | null) => {
+    const savedName = String(createdByName || '').trim();
+    if (savedName) return savedName;
+    const raw = String(createdBy || '').trim();
+    if (!raw) return t.ledgerUi.systemUser;
+    const byId = users.find((u) => u.id === raw);
+    if (byId?.name) return byId.name;
+    const lower = raw.toLowerCase();
+    const byUsername = users.find((u) => (u.username || '').toLowerCase() === lower);
+    if (byUsername?.name) return byUsername.name;
+    const byEmail = users.find((u) => u.email.toLowerCase() === lower);
+    if (byEmail?.name) return byEmail.name;
+    return raw;
+  }, [t.ledgerUi.systemUser, users]);
 
   const loadLedgerRows = useCallback(async (
     from: string | undefined,
@@ -275,6 +296,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
 
   const filtered = useMemo(() => entries.filter((e) => {
     if (typeFilter !== 'all' && e.reference_type !== typeFilter) return false;
+      if (userFilter !== 'all' && userLabel(e.created_by, e.created_by_name) !== userFilter) return false;
     if (!searchTerm) return true;
     const s = searchTerm.toLowerCase();
     const debit = String(Number(e.debit_amount) || 0);
@@ -282,11 +304,12 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     return (e.description || '').toLowerCase().includes(s)
       || (e.journal_description || '').toLowerCase().includes(s)
       || (e.entry_number || '').toLowerCase().includes(s)
+        || userLabel(e.created_by, e.created_by_name).toLowerCase().includes(s)
       || (e.reference_type || '').toLowerCase().includes(s)
       || (refTypeLabels[e.reference_type] || '').toLowerCase().includes(s)
       || debit.includes(s)
       || credit.includes(s);
-  }), [entries, searchTerm, typeFilter, refTypeLabels]);
+  }), [entries, searchTerm, typeFilter, userFilter, refTypeLabels, userLabel]);
 
   const isDebitNature = account?.account_nature === 'debit';
   const openingBalance = Number(account?.opening_balance) || 0;
@@ -325,6 +348,12 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     return Array.from(types).sort();
   }, [entries]);
 
+  const availableUsers = useMemo(() => {
+    const labels = new Set<string>();
+    entries.forEach((e) => labels.add(userLabel(e.created_by, e.created_by_name)));
+    return Array.from(labels).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  }, [entries, userLabel]);
+
   const showBranchColumn = useMemo(
     () => entries.some((e) => String(e.branch_name || '').trim()),
     [entries],
@@ -355,11 +384,12 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
       [t.ledgerUi.journalNo]: entry.entry_number,
       [t.ledgerUi.description]: entry.description || entry.journal_description,
       [t.ledgerUi.type]: refTypeLabels[entry.reference_type] || entry.reference_type || '',
+      [t.ledgerUi.user]: userLabel(entry.created_by, entry.created_by_name),
       [t.ledgerUi.debit]: debit > 0 ? debit : '',
       [t.ledgerUi.credit]: credit > 0 ? credit : '',
       [t.ledgerUi.balance]: bal,
     };
-  }), [filtered, balanceMap, refTypeLabels, t, locale]);
+  }), [filtered, balanceMap, refTypeLabels, t, locale, userLabel]);
 
   const exportFilename = account
     ? `Extrato_${account.code}_${new Date().toISOString().slice(0, 10)}`
@@ -572,6 +602,19 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
             className="h-9 text-sm w-40 rounded-lg border-slate-200/80 bg-white"
             title={t.ledgerUi.endDate}
           />
+          <Select value={userFilter} onValueChange={setUserFilter}>
+            <SelectTrigger className="h-9 text-sm w-44 rounded-lg border-slate-200/80 bg-white">
+              <SelectValue placeholder={t.ledgerUi.filterByUser} />
+            </SelectTrigger>
+            <SelectContent className="rounded-xl">
+              <SelectItem value="all">{t.ledgerUi.allUsers}</SelectItem>
+              {availableUsers.map((user) => (
+                <SelectItem key={user} value={user}>
+                  {user}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
             variant="outline"
             size="sm"
@@ -668,6 +711,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
                     <th className="px-3 py-2.5 text-left font-semibold w-28">{t.ledgerUi.branch}</th>
                   )}
                   <th className="px-3 py-2.5 text-left font-semibold">{t.ledgerUi.description}</th>
+                  <th className="px-3 py-2.5 text-left font-semibold w-36">{t.ledgerUi.user}</th>
                   <th className="px-3 py-2.5 text-center font-semibold w-28">{t.ledgerUi.type}</th>
                   <th className="px-3 py-2.5 text-right font-semibold w-32">{t.ledgerUi.debit}</th>
                   <th className="px-3 py-2.5 text-right font-semibold w-32">{t.ledgerUi.credit}</th>
@@ -697,6 +741,9 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
                         ) : null}
                         {entry.description || entry.journal_description}
                       </td>
+                      <td className="px-3 py-2 text-sm text-muted-foreground">
+                        {userLabel(entry.created_by, entry.created_by_name)}
+                      </td>
                       <td className="px-3 py-2 text-center">
                         {entry.reference_type && (
                           <Badge variant="outline" className="text-[10px]">
@@ -719,7 +766,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
               </tbody>
               <tfoot className="bg-slate-50/95 border-t-2 border-slate-200/80 font-bold sticky bottom-0">
                 <tr>
-                  <td className="px-3 py-2.5" colSpan={showBranchColumn ? 5 : 4}>{t.ledgerUi.totalMovements.replace('{count}', String(filtered.length))}</td>
+                  <td className="px-3 py-2.5" colSpan={showBranchColumn ? 6 : 5}>{t.ledgerUi.totalMovements.replace('{count}', String(filtered.length))}</td>
                   <td className="px-3 py-2.5 text-right font-mono text-green-600">{totalDebit.toLocaleString(locale)} Kz</td>
                   <td className="px-3 py-2.5 text-right font-mono text-red-600">{totalCredit.toLocaleString(locale)} Kz</td>
                   <td className={cn('px-3 py-2.5 text-right font-mono', finalBalance >= 0 ? 'text-foreground' : 'text-destructive')}>
