@@ -240,8 +240,77 @@ async function ensureFilialProductsFromAllMovements() {
   return { reactivated, merged, reconciled };
 }
 
+const ownershipHealAt = new Map();
+const OWNERSHIP_HEAL_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+let allFilialHealStarted = false;
+
+/**
+ * Clone a local product row and remap movements when this warehouse has stock on
+ * another branch's product_id. Prevents POS/transfer from hiding in-stock SKUs.
+ */
+async function healFilialStockOwnership(warehouseId) {
+  if (db.engine !== 'postgres') return { skipped: true };
+  const wh = String(warehouseId || '').trim();
+  if (!wh) return { skipped: true };
+
+  const now = Date.now();
+  const last = ownershipHealAt.get(wh) || 0;
+  if (now - last < OWNERSHIP_HEAL_COOLDOWN_MS) {
+    return { skipped: true, cooldown: true };
+  }
+  ownershipHealAt.set(wh, now);
+
+  try {
+    const { repairFilialWarehouseStockOwnership } = require('../transactionEngine');
+    const result = await repairFilialWarehouseStockOwnership(db, wh);
+    if ((result.cloned || 0) > 0 || (result.remapped || 0) > 0) {
+      try {
+        require('./inventoryGridServerCache').invalidateInventoryGridResultCache();
+      } catch {
+        /* ignore */
+      }
+      console.log(
+        `[filialStockRepair] ownership heal @ ${wh}: skus=${result.skus} remapped=${result.remapped} cloned=${result.cloned}`,
+      );
+    }
+    return result;
+  } catch (err) {
+    ownershipHealAt.delete(wh);
+    console.warn(`[filialStockRepair] ownership heal @ ${wh}:`, err.message);
+    return { error: err.message };
+  }
+}
+
+function scheduleFilialStockOwnershipHeal(warehouseId) {
+  void healFilialStockOwnership(warehouseId);
+}
+
+function healAllFilialStockOwnershipInBackground() {
+  if (allFilialHealStarted || db.engine !== 'postgres') return;
+  allFilialHealStarted = true;
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const { loadMainBranchIds, isCatalogBranchScope } = require('./productSkuResolve');
+        const mainBranchIds = await loadMainBranchIds();
+        const branches = await db.query('SELECT id::text AS id FROM branches');
+        for (const row of branches.rows || []) {
+          const id = String(row.id || '').trim();
+          if (!id || isCatalogBranchScope(id, mainBranchIds)) continue;
+          await healFilialStockOwnership(id);
+        }
+      } catch (err) {
+        console.warn('[filialStockRepair] background all-filial heal:', err.message);
+      }
+    })();
+  }, 15_000);
+}
+
 module.exports = {
   ensureFilialProductsForWarehouse,
   ensureFilialProductsFromAllMovements,
   reactivateFilialProductsWithMovements,
+  healFilialStockOwnership,
+  scheduleFilialStockOwnershipHeal,
+  healAllFilialStockOwnershipInBackground,
 };

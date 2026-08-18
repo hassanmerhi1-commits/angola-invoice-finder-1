@@ -57,12 +57,21 @@ export const getProductSearchTier = (product: Product, rawTerm: string): Product
   const termCompact = normalizeSearchText(term);
   const skuCompact = normalizeSearchText(product.sku);
   const name = String(product.name || '').toLowerCase();
+  const barcode = String(product.barcode || '').toLowerCase();
+  const termDigits = digitProductCodeForMatch(term);
+  const skuDigits = digitProductCodeForMatch(product.sku);
+  const barcodeDigits = digitProductCodeForMatch(product.barcode);
 
   if (skuCompact === termCompact) return 'exact';
+  if (barcode && barcode === term) return 'exact';
+  if (termDigits && skuDigits && skuDigits === termDigits) return 'exact';
+  if (termDigits && barcodeDigits && barcodeDigits === termDigits) return 'exact';
   if (skuCompact.startsWith(termCompact)) return 'skuPrefix';
+  if (termDigits.length >= 4 && skuDigits.startsWith(termDigits)) return 'skuPrefix';
   if (name.includes(term)) return 'name';
-  const barcode = String(product.barcode || '').toLowerCase();
   if (barcode && barcode.includes(term)) return 'name';
+  if (termDigits.length >= 6 && barcodeDigits.includes(termDigits)) return 'name';
+  if (termDigits.length >= 6 && skuDigits.includes(termDigits)) return 'name';
 
   return null;
 };
@@ -103,6 +112,19 @@ export const sortProductSearchResults = (
   return aSku.localeCompare(bSku);
 };
 
+/** Keep the user's clicked row if it still matches; otherwise pick the closest code. */
+export function pickBestProductSearchHit(
+  products: Product[],
+  term: string,
+  current?: Product | null,
+  branchId = '',
+): Product | null {
+  if (current && products.some((p) => p.id === current.id)) return current;
+  if (products.length === 0) return null;
+  const ranked = [...products].sort((a, b) => sortProductSearchResults(a, b, term, branchId));
+  return ranked[0] || null;
+}
+
 export const scoreProductForBranch = (product: Product, branchId: string) => {
   let score = 0;
   if (branchId && product.branchId === branchId) score += 4;
@@ -142,9 +164,14 @@ export const filterProductsForSearch = (
   if (candidates.length === 0) return [];
 
   if (searchLooksLikeNumericCode(term)) {
-    const exactSku = candidates.filter(
-      (c) => c.tier === 'exact' && normalizeSearchText(c.product.sku) === termCompact,
-    );
+    const termDigits = digitProductCodeForMatch(term);
+    const exactSku = candidates.filter((c) => {
+      if (c.tier !== 'exact') return false;
+      if (normalizeSearchText(c.product.sku) === termCompact) return true;
+      if (termDigits && digitProductCodeForMatch(c.product.sku) === termDigits) return true;
+      if (termDigits && digitProductCodeForMatch(c.product.barcode) === termDigits) return true;
+      return false;
+    });
     if (exactSku.length > 0) {
       return dedupeProductsBySku(
         exactSku.map((c) => c.product),

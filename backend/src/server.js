@@ -361,6 +361,12 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
     upgradeLegacyPasswordHashesOnStartup().catch((e) => console.warn('[AUTH]', e.message));
     const { migrateInventoryVatTo5 } = require('./migrateInventoryVat5');
     migrateInventoryVatTo5(db).catch((e) => console.warn('[DB] Inventory VAT 5% patch:', e.message));
+    try {
+      const { healAllFilialStockOwnershipInBackground } = require('./lib/filialStockRepair');
+      healAllFilialStockOwnershipInBackground();
+    } catch (e) {
+      console.warn('[filialStockRepair] startup heal:', e.message);
+    }
     startReplicatorWorker(4000);
     startAgtWorker(5000);
     const { startAutoBackupWorker } = require('./jobs/autoBackup');

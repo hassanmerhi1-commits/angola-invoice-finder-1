@@ -32,7 +32,10 @@ const {
   sqlMovementSkuKey,
   sqlCanonicalSkuText,
 } = require('../lib/productSkuResolve');
-const { ensureFilialProductsForWarehouse } = require('../lib/filialStockRepair');
+const {
+  ensureFilialProductsForWarehouse,
+  scheduleFilialStockOwnershipHeal,
+} = require('../lib/filialStockRepair');
 const { auditErpSafe } = require('../lib/erpAudit');
 const {
   readInventoryGridResultCache,
@@ -53,6 +56,7 @@ async function ensureFilialForInventoryGrid(branchKey) {
   filialGridReconcileAt.set(key, now);
   try {
     await ensureFilialProductsForWarehouse(key);
+    scheduleFilialStockOwnershipHeal(key);
   } catch (err) {
     filialGridReconcileAt.delete(key);
     console.warn('[PRODUCTS inventory-grid] filial stock reconcile:', err.message);
@@ -486,9 +490,10 @@ function sqlHideCatalogWhenFilialHasSameSku() {
 
 /**
  * Pick one display row per SKU for a filial warehouse view.
- * ONLY the local branch row or a catalog/HQ row — never another filial's product.
- * (Older logic allowed any product_id that appeared in stock_movements at this warehouse,
- * so SOYO 01 could show SOYO 03's product id with qty rewritten as if it belonged here.)
+ * Prefer the local branch row, then catalog/HQ. If stock exists here only on another
+ * filial's product_id (common after transfer/adjust), still pick that row so POS and
+ * transfers can find the SKU — qty always comes from this warehouse's ledger, not the
+ * foreign row's products.stock.
  */
 function sqlPickProductIdForSkuAtWarehouse(catalogPickClause) {
   const p2Key = sqlMovementSkuKey('p2');
@@ -497,14 +502,21 @@ function sqlPickProductIdForSkuAtWarehouse(catalogPickClause) {
               SELECT p2.id
               FROM products p2
               WHERE ${p2Key} = ms.sku_key
-                AND ${productActive('p2')}
                 AND (
-                  p2.branch_id = $1
-                  OR ${catalogPickClause}
+                  ${productActive('p2')}
+                  OR EXISTS (
+                    SELECT 1 FROM stock_movements smx
+                    WHERE smx.product_id = p2.id AND smx.warehouse_id = $1
+                  )
                 )
               ORDER BY
                 CASE WHEN COALESCE(p2.sku, '') LIKE '%-DUP-%' THEN 1 ELSE 0 END,
                 CASE WHEN p2.branch_id = $1 THEN 0 ELSE 1 END,
+                CASE WHEN ${catalogPickClause} THEN 1 ELSE 2 END,
+                CASE WHEN EXISTS (
+                  SELECT 1 FROM stock_movements smx
+                  WHERE smx.product_id = p2.id AND smx.warehouse_id = $1
+                ) THEN 0 ELSE 1 END,
                 p2.updated_at DESC NULLS LAST,
                 p2.created_at DESC NULLS LAST
               LIMIT 1
@@ -1220,6 +1232,8 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
     if (!branchKey) return [];
     if (repair) {
       await ensureFilialForInventoryGrid(branchKey);
+    } else {
+      scheduleFilialStockOwnershipHeal(branchKey);
     }
     try {
       // Grid UNIONs already cover filial + catalog SKUs; skip a second full fast list.

@@ -46,6 +46,7 @@ import {
   BadgePercent,
 } from 'lucide-react';
 import { AdvancedDataGrid } from '@/components/inventory/AdvancedDataGrid';
+import { digitProductCodeForMatch, pickBestProductSearchHit, sortProductSearchResults } from '@/components/inventory/productLineSearch';
 import { ShelfLabelPrintDialog } from '@/components/inventory/ShelfLabelPrintDialog';
 import { BulkTierPricingDialog } from '@/components/inventory/BulkTierPricingDialog';
 import { BulkPriceCostDialog } from '@/components/inventory/BulkPriceCostDialog';
@@ -478,6 +479,7 @@ export default function Inventory() {
     return enrichedSelectedProduct;
   }, [enrichedSelectedProduct]);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [lockedDialogProduct, setLockedDialogProduct] = useState<Product | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [countSheetDialogOpen, setCountSheetDialogOpen] = useState(false);
   const [reconciliationDialogOpen, setReconciliationDialogOpen] = useState(false);
@@ -625,33 +627,50 @@ export default function Inventory() {
     const q = listSearch.trim().toLowerCase();
     if (!q) return rows;
 
-    return rows.filter((p) => {
+    const matched = rows.filter((p) => {
       const sku = (p.sku || '').toLowerCase();
       const name = (p.name || '').toLowerCase();
       const barcode = (p.barcode || '').toLowerCase();
       const category = (p.category || '').toLowerCase();
       const supplier = (p.supplierName || '').toLowerCase();
+      const qDigits = digitProductCodeForMatch(q);
+      const skuDigits = digitProductCodeForMatch(p.sku);
+      const barcodeDigits = digitProductCodeForMatch(p.barcode);
       return (
         sku.includes(q)
         || name.includes(q)
         || barcode.includes(q)
         || category.includes(q)
         || supplier.includes(q)
+        || (qDigits.length >= 6 && (
+          skuDigits === qDigits
+          || barcodeDigits === qDigits
+          || skuDigits.includes(qDigits)
+          || barcodeDigits.includes(qDigits)
+        ))
       );
     });
-  }, [displayProducts, stockListFilter, listSearch]);
+    return [...matched].sort((a, b) =>
+      sortProductSearchResults(a, b, listSearch, listBranchId || currentBranch?.id || ''),
+    );
+  }, [displayProducts, stockListFilter, listSearch, listBranchId, currentBranch?.id]);
 
-  // While searching, follow the top matching product so every tab (Detailed Qty,
-  // Statement, Chart, …) shows its info live as the query narrows — without the user
-  // having to click the row first. We always track the first hit (rather than sticking
-  // to a stale prior selection that happens to still match), so partial searches update
-  // the detail tabs immediately instead of only when the full code/name is typed.
+  // Keep the row the user clicked. Only jump to another hit when the current product
+  // no longer matches the search (or there is no selection yet).
   useEffect(() => {
-    if (!listSearch.trim()) return;
-    const top = gridProducts[0];
-    if (!top) return;
-    setSelectedProduct((prev) => (prev && prev.id === top.id ? prev : top));
-  }, [listSearch, gridProducts]);
+    const term = listSearch.trim();
+    if (!term) return;
+    setSelectedProduct((prev) => {
+      const next = pickBestProductSearchHit(
+        gridProducts,
+        term,
+        prev,
+        listBranchId || currentBranch?.id || '',
+      );
+      if (!next) return prev;
+      return prev && prev.id === next.id ? prev : next;
+    });
+  }, [listSearch, gridProducts, listBranchId, currentBranch?.id]);
 
   const navigateProduct = useCallback((direction: -1 | 1) => {
     if (!gridProducts.length) return;
@@ -664,11 +683,13 @@ export default function Inventory() {
 
   const handleOpenDialog = (product?: Product) => {
     setSelectedProduct(product || null);
+    setLockedDialogProduct(product || null);
     setDialogOpen(true);
   };
 
   const handleDoubleClickProduct = (product: Product) => {
     setSelectedProduct(product);
+    setLockedDialogProduct(product);
     setDialogOpen(true);
   };
 
@@ -1866,9 +1887,12 @@ export default function Inventory() {
         <ProductDetailDialog
           open
           onOpenChange={(next) => {
-            if (!next) setDialogOpen(false);
+            if (!next) {
+              setDialogOpen(false);
+              setLockedDialogProduct(null);
+            }
           }}
-          product={dialogProduct}
+          product={lockedDialogProduct || dialogProduct}
           catalogProducts={flatCatalog}
           scopeBranchId={
             productCreateScopeBranchId

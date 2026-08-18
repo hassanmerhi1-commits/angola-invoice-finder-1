@@ -26,6 +26,7 @@ import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { ClientFormDialog } from '@/components/clients/ClientFormDialog';
+import { digitProductCodeForMatch } from '@/components/inventory/productLineSearch';
 import { getCaixas } from '@/lib/accountingStorage';
 import type { Caixa } from '@/types/accounting';
 import { api } from '@/lib/api/client';
@@ -420,11 +421,19 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const filteredProducts = useMemo(() => {
     if (!productSearch) return products.slice(0, 20);
     const q = productSearch.toLowerCase();
-    return products.filter(p =>
-      p.name.toLowerCase().includes(q) ||
-      p.sku.toLowerCase().includes(q) ||
-      (p.barcode && p.barcode.includes(q))
-    ).slice(0, 20);
+    const qDigits = digitProductCodeForMatch(productSearch);
+    return products.filter((p) => {
+      if (p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || (p.barcode && p.barcode.includes(q))) {
+        return true;
+      }
+      if (qDigits.length < 6) return false;
+      const skuDigits = digitProductCodeForMatch(p.sku);
+      const barcodeDigits = digitProductCodeForMatch(p.barcode);
+      return skuDigits === qDigits
+        || barcodeDigits === qDigits
+        || skuDigits.includes(qDigits)
+        || barcodeDigits.includes(qDigits);
+    }).slice(0, 20);
   }, [products, productSearch]);
 
   // Totals
