@@ -11,7 +11,7 @@ import { pt } from 'date-fns/locale';
 import { exportReportExcel } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
-import { useBranchScope } from '@/hooks/useBranchScope';
+import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 
 interface AgingEntry {
   clientId: string;
@@ -35,7 +35,8 @@ interface AgingEntry {
 export default function AccountsReceivableReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId } = useBranchScope();
+  const { apiBranchId, dateTo, shared } = useSharedReportFilters();
+  const asOf = shared ? dateTo : format(new Date(), 'yyyy-MM-dd');
   const [expandedClient, setExpandedClient] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [repairing, setRepairing] = useState(false);
@@ -88,7 +89,7 @@ export default function AccountsReceivableReport() {
   };
 
   const agingReport = useMemo((): AgingEntry[] => {
-    const today = new Date();
+    const asOfDate = parseISO(asOf);
     const byClient: Record<string, AgingEntry> = {};
 
     for (const row of lines) {
@@ -96,6 +97,9 @@ export default function AccountsReceivableReport() {
       if (!clientId) continue;
       const amount = Number(row.remaining_amount || 0);
       if (amount <= 0.001) continue;
+
+      const docDate = String(row.document_date || '').slice(0, 10) || asOf;
+      if (docDate > asOf) continue;
 
       if (!byClient[clientId]) {
         byClient[clientId] = {
@@ -112,10 +116,9 @@ export default function AccountsReceivableReport() {
       }
 
       const entry = byClient[clientId];
-      const docDate = String(row.document_date || '').slice(0, 10) || format(today, 'yyyy-MM-dd');
       const dueRaw = row.due_date || row.dueDate || docDate;
       const dueDate = String(dueRaw).slice(0, 10);
-      const daysOverdue = Math.max(0, differenceInDays(today, parseISO(dueDate)));
+      const daysOverdue = Math.max(0, differenceInDays(asOfDate, parseISO(dueDate)));
 
       if (daysOverdue <= 30) entry.current += amount;
       else if (daysOverdue <= 60) entry.days30 += amount;
@@ -135,7 +138,7 @@ export default function AccountsReceivableReport() {
     return Object.values(byClient)
       .filter((e) => e.total > 0.001)
       .sort((a, b) => b.total - a.total);
-  }, [lines]);
+  }, [lines, asOf]);
 
   const summaryStats = useMemo(
     () =>
@@ -251,7 +254,9 @@ export default function AccountsReceivableReport() {
                 <Clock className="w-5 h-5" />
                 {t.reportsUi.receivablesTitle}
               </CardTitle>
-              <CardDescription>{t.reportsUi.receivablesApiDesc}</CardDescription>
+              <CardDescription>
+                {t.reportsUi.receivablesApiDesc} {t.reportsCenterUi.agingAsOfHint} {t.reportsCenterUi.asOfDate.replace('{date}', asOf)}
+              </CardDescription>
             </div>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={handleRepair} disabled={repairing}>

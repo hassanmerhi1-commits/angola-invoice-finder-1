@@ -26,7 +26,8 @@ import { Printer, FileSpreadsheet, FileDown, RefreshCw, Loader2 } from 'lucide-r
 import { useTranslation, type TranslationKeys } from '@/i18n';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { useTrialBalance } from '@/hooks/useChartOfAccounts';
-import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
+import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
+import { useReportExportMeta } from '@/hooks/useReportExportMeta';
 import type { TrialBalanceRow } from '@/types/accounting';
 import { buildReportHtml, escapeHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 
@@ -96,17 +97,21 @@ function rowHasActivity(row: TrialBalanceRow): boolean {
 export default function TrialBalanceReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter();
+  const filters = useSharedReportFilters();
+  const {
+    dateFrom: startDate,
+    dateTo: endDate,
+    setDateFrom: setStartDate,
+    setDateTo: setEndDate,
+    branchFilter,
+    apiBranchId,
+    shared,
+  } = filters;
+  const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = branchFilter;
+  const { preview } = useReportExportMeta();
 
-  const [startDate, setStartDate] = useState(() => {
-    const date = new Date();
-    date.setDate(1);
-    return date.toISOString().split('T')[0];
-  });
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [accountType, setAccountType] = useState('all');
-
-  const branchId = selectedBranch === 'all' ? undefined : selectedBranch;
+  const branchId = apiBranchId;
   const { data, isLoading, error, refetch } = useTrialBalance(startDate, endDate, branchId);
 
   const typeLabels = useMemo(
@@ -179,9 +184,10 @@ export default function TrialBalanceReport() {
       )
       .join('');
     return buildReportHtml({
-      title: t.trialBalanceUi.title,
-      subtitle: `${t.reportsUi.dateFrom}: ${startDate} — ${t.reportsUi.dateTo}: ${endDate}`,
-      landscape: true,
+      ...preview(t.trialBalanceUi.title, {
+        subtitle: `${t.reportsUi.dateFrom}: ${startDate} — ${t.reportsUi.dateTo}: ${endDate}`,
+        landscape: true,
+      }),
       bodyHtml: `<table>
         <thead>
           <tr>
@@ -238,9 +244,10 @@ export default function TrialBalanceReport() {
   const handleExportExcel = async () => {
     try {
       await exportReportExcel(excelData, `balancete_${startDate}_${endDate}`, {
-        title: t.trialBalanceUi.title,
-        subtitle: `${t.reportsUi.dateFrom}: ${startDate} — ${t.reportsUi.dateTo}: ${endDate}`,
-        landscape: true,
+        ...preview(t.trialBalanceUi.title, {
+          subtitle: `${t.reportsUi.dateFrom}: ${startDate} — ${t.reportsUi.dateTo}: ${endDate}`,
+          landscape: true,
+        }),
       });
     } catch (e) {
       console.error('[TrialBalanceReport] excel export failed:', e);
@@ -255,6 +262,8 @@ export default function TrialBalanceReport() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-4 items-end">
+              {!shared && (
+                <>
               <div className="space-y-1">
               <Label className="text-xs">{t.reportsUi.dateFrom}</Label>
               <Input
@@ -289,6 +298,8 @@ export default function TrialBalanceReport() {
                 </SelectContent>
               </Select>
             </div>
+              </>
+            )}
             <div className="space-y-1">
               <Label className="text-xs">{t.trialBalanceUi.accountType}</Label>
               <Select value={accountType} onValueChange={setAccountType}>

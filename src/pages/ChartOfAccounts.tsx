@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo, startTransition } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation, type TranslationKeys } from '@/i18n';
 import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
 import { Account, AccountType, AccountFormData, getDefaultNature } from '@/types/accounting';
@@ -105,6 +105,7 @@ const buildSuggestedRootCode = (rootCodes: string[]) => {
 
 export default function ChartOfAccounts() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { accounts, isLoading, refetch, createAccount, updateAccount, deleteAccount } = useChartOfAccounts();
@@ -174,6 +175,18 @@ export default function ChartOfAccounts() {
     setLedgerAccount(account);
     setIsLedgerOpen(true);
   }, []);
+
+  useEffect(() => {
+    const code = String((location.state as { openLedgerCode?: string } | null)?.openLedgerCode || '').trim();
+    if (!code || accounts.length === 0) return;
+    const match =
+      accounts.find((a) => a.code === code)
+      || accounts.find((a) => a.code.startsWith(code) && !a.is_header)
+      || accounts.find((a) => a.code.startsWith(code));
+    if (!match) return;
+    openLedger(match);
+    navigate('.', { replace: true, state: {} });
+  }, [accounts, location.state, navigate, openLedger]);
 
   const handleSelectAccount = useCallback((account: Account) => {
     startTransition(() => setSelectedAccountId(account.id));

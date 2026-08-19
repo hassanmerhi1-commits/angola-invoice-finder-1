@@ -9,6 +9,7 @@ import { Download, Receipt, ArrowDownCircle, ArrowUpCircle, Scale, Loader2, Exte
 import { exportReportExcel, printReport, saveReportPdf, buildDataTableHtml } from '@/lib/reportExport';
 import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
+import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 
 type IvaLine = {
   direction: string;
@@ -32,11 +33,20 @@ const EMPTY: IvaReport = { lines: [], outputTax: 0, inputTax: 0, ivaPayable: 0 }
 export default function VatSummaryReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const filters = useSharedReportFilters();
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [report, setReport] = useState<IvaReport>(EMPTY);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!filters.shared) return;
+    const y = Number(filters.dateTo.slice(0, 4));
+    const m = Number(filters.dateTo.slice(5, 7));
+    if (y) setYear(y);
+    if (m) setMonth(m);
+  }, [filters.shared, filters.dateTo]);
 
   const years = useMemo(() => Array.from({ length: 6 }, (_, i) => now.getFullYear() - i), [now]);
   const months = useMemo(

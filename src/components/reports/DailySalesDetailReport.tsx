@@ -1,5 +1,6 @@
 import { useState, useRef, useMemo } from 'react';
 import { useBranchScope } from '@/hooks/useBranchScope';
+import { REPORT_SALES_LIMIT } from '@/contexts/ReportsPeriodContext';
 import { useSales, useProducts, useCategories } from '@/hooks/useERP';
 import { Sale, SaleItem, Product } from '@/types/erp';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -66,7 +67,12 @@ export function DailySalesDetailReport({
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId, currentBranch } = useBranchScope();
   const effectiveBranchId = branchId ?? apiBranchId;
-  const { sales } = useSales(effectiveBranchId, { light: false });
+  const { sales } = useSales(effectiveBranchId, {
+    light: false,
+    dateFrom: startDate,
+    dateTo: endDate,
+    limit: REPORT_SALES_LIMIT,
+  });
   const { products } = useProducts(effectiveBranchId, { light: true });
   const { categories } = useCategories();
   const printRef = useRef<HTMLDivElement>(null);

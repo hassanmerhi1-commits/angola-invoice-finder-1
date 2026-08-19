@@ -17,7 +17,7 @@ module.exports = function(broadcastTable) {
   // READ
   router.get('/', async (req, res) => {
     try {
-      const { entityType, entityId, branchId } = req.query;
+      const { entityType, entityId, branchId, dateFrom, dateTo } = req.query;
       let query = `
         SELECT p.*,
           COALESCE(
@@ -37,6 +37,18 @@ module.exports = function(broadcastTable) {
       if (entityType) { query += ` AND p.entity_type = $${idx++}`; params.push(entityType); }
       if (entityId) { query += ` AND p.entity_id = $${idx++}`; params.push(entityId); }
       if (branchId) { query += ` AND p.branch_id = $${idx++}`; params.push(branchId); }
+      const from = String(dateFrom || '').trim().slice(0, 10);
+      const to = String(dateTo || '').trim().slice(0, 10);
+      if (from) {
+        query += ` AND p.created_at >= $${idx++}`;
+        params.push(`${from}T00:00:00`);
+      }
+      if (to) {
+        query += db.engine === 'postgres'
+          ? ` AND p.created_at < ($${idx++}::date + INTERVAL '1 day')`
+          : ` AND date(p.created_at) <= date($${idx++})`;
+        params.push(to);
+      }
       query += ' ORDER BY p.created_at DESC';
       // Default cap keeps years of history from being shipped on every list load.
       const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 1000, 1), 10000);

@@ -5,7 +5,7 @@ import { Label } from '@/components/ui/label';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useProducts } from '@/hooks/useERP';
 import { ShoppingCart, Loader2, Truck, Package, Tags, Calendar } from 'lucide-react';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { api } from '@/lib/api/client';
 import { unwrapListPayload } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
@@ -25,9 +25,7 @@ export default function PurchasesAnalysisReport({
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
   const { products } = useProducts(apiBranchId, { light: true });
-
-  const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
+  const { dateFrom, dateTo, setDateFrom, setDateTo, shared } = useSharedReportFilters();
   const [purchases, setPurchases] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [internalViewTab, setInternalViewTab] = useState('summary');
@@ -121,6 +119,7 @@ export default function PurchasesAnalysisReport({
           <CardDescription>{t.purchasesReportUi.description}</CardDescription>
         </CardHeader>
         <CardContent>
+          {!shared && (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <Label>{t.reportsUi.dateFrom}</Label>
@@ -131,6 +130,7 @@ export default function PurchasesAnalysisReport({
               <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
           </div>
+          )}
         </CardContent>
       </Card>
 
@@ -168,7 +168,7 @@ export default function PurchasesAnalysisReport({
             </Card>
           </div>
 
-          {!onViewChange && <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />}
+          <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />
 
           <div>
             {viewTab === 'summary' && (

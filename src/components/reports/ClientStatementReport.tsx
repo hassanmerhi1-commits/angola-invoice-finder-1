@@ -7,10 +7,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useClients, useSales } from '@/hooks/useERP';
+import { useClients } from '@/hooks/useERP';
+import { useReportSales } from '@/hooks/useReportSales';
+import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { useReportCreditNotes } from '@/hooks/useReportCreditNotes';
 import { Download, Printer, FileText, Search, TrendingUp, TrendingDown, FileDown } from 'lucide-react';
-import { format, parseISO, startOfMonth, endOfMonth } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
 import { buildReportHtml, escapeHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
@@ -46,11 +48,10 @@ export default function ClientStatementReport() {
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
   const { clients } = useClients();
-  const { sales } = useSales(apiBranchId, { light: false });
+  const { sales } = useReportSales();
+  const { dateFrom, dateTo, setDateFrom, setDateTo, shared } = useSharedReportFilters();
 
   const [selectedClient, setSelectedClient] = useState<string>('');
-  const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [searchTerm, setSearchTerm] = useState('');
   const [receipts, setReceipts] = useState<any[]>([]);
 
@@ -363,6 +364,8 @@ export default function ClientStatementReport() {
                 </Select>
               </div>
             </div>
+            {!shared && (
+              <>
             <div>
               <Label>{t.reportsUi.dateFrom}</Label>
               <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
@@ -371,6 +374,8 @@ export default function ClientStatementReport() {
               <Label>{t.reportsUi.dateTo}</Label>
               <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>

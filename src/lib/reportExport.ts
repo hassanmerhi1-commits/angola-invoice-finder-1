@@ -21,6 +21,7 @@ const BASE_STYLES = `
   .rpt-head h1 { font-size: 15pt; margin: 0; }
   .rpt-head h2 { font-size: 11pt; margin: 4px 0; font-weight: normal; }
   .rpt-head p { font-size: 9pt; color: #444; margin: 0; }
+  .rpt-meta { font-size: 8pt; color: #555; margin-top: 6px; }
   table { width: 100%; border-collapse: collapse; }
   th, td { border: 1px solid #ccc; padding: 3px 5px; }
   th { background: #f0f0f0; font-size: 8pt; }
@@ -41,9 +42,21 @@ export type BuildReportHtmlOptions = {
   title: string;
   subtitle?: string;
   companyName?: string;
+  periodLabel?: string;
+  branchLabel?: string;
+  generatedAt?: string;
   landscape?: boolean;
   bodyHtml: string;
 };
+
+function identityMetaHtml(opts: BuildReportHtmlOptions): string {
+  const bits: string[] = [];
+  if (opts.periodLabel) bits.push(escapeHtml(opts.periodLabel));
+  if (opts.branchLabel) bits.push(escapeHtml(opts.branchLabel));
+  if (opts.generatedAt) bits.push(escapeHtml(opts.generatedAt));
+  if (!bits.length) return '';
+  return `<p class="rpt-meta">${bits.join(' · ')}</p>`;
+}
 
 export function buildReportHtml(opts: BuildReportHtmlOptions): string {
   const page = opts.landscape ? 'A4 landscape' : 'A4 portrait';
@@ -57,6 +70,7 @@ export function buildReportHtml(opts: BuildReportHtmlOptions): string {
         ${opts.companyName ? `<h1>${escapeHtml(opts.companyName)}</h1>` : ''}
         <h2>${escapeHtml(opts.title)}</h2>
         ${opts.subtitle ? `<p>${escapeHtml(opts.subtitle)}</p>` : ''}
+        ${identityMetaHtml(opts)}
       </div>
       ${opts.bodyHtml}
     </body></html>`;
@@ -64,7 +78,15 @@ export function buildReportHtml(opts: BuildReportHtmlOptions): string {
 
 export function buildDataTableHtml(
   data: Record<string, unknown>[],
-  opts: { title: string; subtitle?: string; companyName?: string; landscape?: boolean },
+  opts: {
+    title: string;
+    subtitle?: string;
+    companyName?: string;
+    periodLabel?: string;
+    branchLabel?: string;
+    generatedAt?: string;
+    landscape?: boolean;
+  },
 ): string {
   if (data.length === 0) {
     return buildReportHtml({ ...opts, bodyHtml: '<p class="muted">—</p>' });
@@ -106,6 +128,9 @@ export function buildLineItemsTableHtml(
     title: string;
     subtitle?: string;
     companyName?: string;
+    periodLabel?: string;
+    branchLabel?: string;
+    generatedAt?: string;
     colCode?: string;
     colDescription: string;
     colValue: string;
@@ -132,6 +157,9 @@ export function buildLineItemsTableHtml(
     title: opts.title,
     subtitle: opts.subtitle,
     companyName: opts.companyName,
+    periodLabel: opts.periodLabel,
+    branchLabel: opts.branchLabel,
+    generatedAt: opts.generatedAt,
     bodyHtml: `<table>
       <thead><tr>
         <th>${escapeHtml(opts.colCode || '')}</th>
@@ -177,7 +205,15 @@ type ElectronPrintApi = {
 export async function exportReportExcel(
   data: Record<string, unknown>[],
   filename: string,
-  preview: { title: string; subtitle?: string; companyName?: string; landscape?: boolean },
+  preview: {
+    title: string;
+    subtitle?: string;
+    companyName?: string;
+    periodLabel?: string;
+    branchLabel?: string;
+    generatedAt?: string;
+    landscape?: boolean;
+  },
 ): Promise<void> {
   if (data.length === 0) return;
   const html = buildDataTableHtml(data, preview);
@@ -190,7 +226,15 @@ export async function exportReportExcel(
 export async function exportReportExcelMulti(
   sheets: Array<{ name: string; data: Record<string, unknown>[] }>,
   filename: string,
-  preview: { title: string; subtitle?: string; companyName?: string; landscape?: boolean },
+  preview: {
+    title: string;
+    subtitle?: string;
+    companyName?: string;
+    periodLabel?: string;
+    branchLabel?: string;
+    generatedAt?: string;
+    landscape?: boolean;
+  },
 ): Promise<void> {
   if (!sheets.length) return;
   const first = sheets.find((s) => s.data.length > 0) || sheets[0];

@@ -59,15 +59,19 @@ module.exports = function(broadcastTable) {
       const { parseListPagination, parseTruthyQuery } = require('../lib/listPagination');
       const { branchId, dateFrom, dateTo } = req.query;
       const light = parseTruthyQuery(req.query.light);
-      const { limit, offset } = parseListPagination(req, { defaultLimit: 200, maxLimit: 2000 });
+      const from = String(dateFrom || '').trim().slice(0, 10);
+      const to = String(dateTo || '').trim().slice(0, 10);
+      const dated = !!(from && to);
+      const { limit, offset } = parseListPagination(req, {
+        defaultLimit: 200,
+        maxLimit: dated ? 10000 : 2000,
+      });
       let query = 'SELECT * FROM sales WHERE 1=1';
       const params = [];
       if (branchId) {
         params.push(branchId);
         query += ` AND branch_id = $${params.length}`;
       }
-      const from = String(dateFrom || '').trim().slice(0, 10);
-      const to = String(dateTo || '').trim().slice(0, 10);
       if (from) {
         params.push(`${from}T00:00:00`);
         query += ` AND created_at >= $${params.length}`;

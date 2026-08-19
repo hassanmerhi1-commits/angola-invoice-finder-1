@@ -11,6 +11,7 @@ import { pt } from 'date-fns/locale';
 import { exportReportExcel } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
+import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 
 interface PayableEntry {
   supplierId: string;
@@ -46,6 +47,8 @@ function getPaymentTermDays(terms: string): number {
 export default function AccountsPayableReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const { apiBranchId, dateTo, shared } = useSharedReportFilters();
+  const asOf = shared ? dateTo : format(new Date(), 'yyyy-MM-dd');
   const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [repairing, setRepairing] = useState(false);
@@ -53,14 +56,14 @@ export default function AccountsPayableReport() {
 
   const loadPayables = async () => {
     setLoading(true);
-    const res = await api.payments.payablesAging();
+    const res = await api.payments.payablesAging(apiBranchId || undefined);
     setPayableLines(Array.isArray(res.data) ? res.data : []);
     setLoading(false);
   };
 
   useEffect(() => {
     void loadPayables();
-  }, []);
+  }, [apiBranchId]);
 
   const handleRepairPayables = async () => {
     if (isDemoMode()) {
@@ -100,7 +103,7 @@ export default function AccountsPayableReport() {
   };
 
   const payableReport = useMemo((): PayableEntry[] => {
-    const today = new Date();
+    const asOfDate = parseISO(asOf);
     const bySupplier: Record<string, PayableEntry> = {};
 
     for (const row of payableLines) {
@@ -109,6 +112,9 @@ export default function AccountsPayableReport() {
 
       const amount = Number(row.remaining_amount || 0);
       if (amount <= 0.001) continue;
+
+      const docDate = String(row.document_date || '').slice(0, 10) || asOf;
+      if (docDate > asOf) continue;
 
       if (!bySupplier[supplierId]) {
         bySupplier[supplierId] = {
@@ -126,7 +132,6 @@ export default function AccountsPayableReport() {
       }
 
       const entry = bySupplier[supplierId];
-      const docDate = String(row.document_date || '').slice(0, 10) || format(today, 'yyyy-MM-dd');
       const dueRaw = row.due_date || row.dueDate;
       const dueDate = dueRaw
         ? String(dueRaw).slice(0, 10)
@@ -134,7 +139,7 @@ export default function AccountsPayableReport() {
             new Date(docDate).getTime() + getPaymentTermDays(entry.paymentTerms) * 86400000,
             'yyyy-MM-dd',
           );
-      const daysUntilDue = differenceInDays(parseISO(dueDate), today);
+      const daysUntilDue = differenceInDays(parseISO(dueDate), asOfDate);
 
       if (daysUntilDue >= 0) entry.current += amount;
       else if (daysUntilDue >= -30) entry.days30 += amount;
@@ -155,7 +160,7 @@ export default function AccountsPayableReport() {
     return Object.values(bySupplier)
       .filter((e) => e.total > 0.001)
       .sort((a, b) => b.total - a.total);
-  }, [payableLines]);
+  }, [payableLines, asOf]);
 
   const summaryStats = useMemo(() => {
     return payableReport.reduce(
@@ -275,7 +280,9 @@ export default function AccountsPayableReport() {
                 <FileText className="w-5 h-5" />
                 {t.reportsUi.payablesTitle}
               </CardTitle>
-              <CardDescription>{t.reportsUi.payablesDesc}</CardDescription>
+              <CardDescription>
+                {t.reportsUi.payablesDesc} {t.reportsCenterUi.agingAsOfHint} {t.reportsCenterUi.asOfDate.replace('{date}', asOf)}
+              </CardDescription>
             </div>
             <Button variant="outline" onClick={handleExport}>
               <Download className="w-4 h-4 mr-2" />

@@ -30,7 +30,7 @@ export default function InventoryReports({
 
   return (
     <div className="space-y-4">
-      {!onViewChange && <ReportPicker options={options} value={tab} onChange={setTab} />}
+      <ReportPicker options={options} value={tab} onChange={setTab} />
       <div>
         {tab === 'valuation' && <StockValuationReport />}
         {tab === 'category' && <StockByCategoryReport />}

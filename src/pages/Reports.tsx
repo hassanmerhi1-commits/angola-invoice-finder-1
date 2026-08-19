@@ -1,22 +1,23 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { useTranslation } from '@/i18n';
-import { useBranchScope } from '@/hooks/useBranchScope';
 import { api } from '@/lib/api/client';
 import { exportReportExcel, exportReportExcelMulti } from '@/lib/reportExport';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { format } from 'date-fns';
 import {
   BarChart3, Users, Truck, TrendingUp, Calendar,
-  FileText, Download, DollarSign, Check, ChevronDown,
-  Package, PieChart, ArrowUpRight, ShoppingCart, Loader2, Archive,
+  FileText, Download, DollarSign,
+  Package, PieChart, ArrowUpRight, ShoppingCart, Loader2, Archive, Lock,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { ReportsPeriodProvider, useReportsPeriod } from '@/contexts/ReportsPeriodContext';
+import { ReportsPeriodBar } from '@/components/reports/ReportsPeriodBar';
+import { ReportsCatalogSearch, type ReportCatalogItem } from '@/components/reports/ReportsCatalogSearch';
+import { useReportExportMeta } from '@/hooks/useReportExportMeta';
+import { buildIncomeStatement } from '@/lib/reports/incomeStatement';
 
 const SalesAnalysisReport = lazy(() => import('@/components/reports/SalesAnalysisReport'));
 const ProfitabilityReport = lazy(() => import('@/components/reports/ProfitabilityReport'));
@@ -26,6 +27,7 @@ const StatisticsReports = lazy(() => import('@/components/reports/StatisticsRepo
 const MonthlyReport = lazy(() => import('@/components/reports/MonthlyReport'));
 const FinancialReports = lazy(() => import('@/components/reports/FinancialReports'));
 const StatementsReports = lazy(() => import('@/components/reports/StatementsReports'));
+const DailyReports = lazy(() => import('@/pages/DailyReports'));
 
 function ReportTabFallback() {
   return (
@@ -54,6 +56,7 @@ const FAMILY_TABS = new Set([
   'monthly',
   'financial',
   'statements',
+  'daily',
 ]);
 
 // Maps legacy / deep-link tab ids and overview category ids to the new
@@ -80,6 +83,8 @@ const TAB_TARGETS: Record<string, FamilyTarget> = {
   receivables: { family: 'statements', sub: 'receivables' },
   payables: { family: 'statements', sub: 'payables' },
   'transaction-history': { family: 'statements', sub: 'transactions' },
+  daily: { family: 'daily' },
+  'daily-close': { family: 'daily' },
   // Overview category ids
   clients: { family: 'statements', sub: 'client-statement' },
   suppliers: { family: 'statements', sub: 'supplier-statement' },
@@ -94,6 +99,14 @@ function resolveReportsTab(value: string | undefined): FamilyTarget | null {
 }
 
 export default function Reports() {
+  return (
+    <ReportsPeriodProvider>
+      <ReportsInner />
+    </ReportsPeriodProvider>
+  );
+}
+
+function ReportsInner() {
   const location = useLocation();
   const [activeTab, setActiveTab] = useState('overview');
   const [views, setViews] = useState<Record<string, string>>({
@@ -107,7 +120,8 @@ export default function Reports() {
   });
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId } = useBranchScope();
+  const { apiBranchId, dateFrom, dateTo, periodLabel, branchLabel } = useReportsPeriod();
+  const { preview } = useReportExportMeta();
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [monthEndExporting, setMonthEndExporting] = useState(false);
 
@@ -164,7 +178,7 @@ export default function Reports() {
           },
         ],
         `Resumo_${format(new Date(), 'yyyyMMdd')}`,
-        { title: t.reportsCenterUi.title },
+        preview(t.reportsCenterUi.title),
       );
     } catch (e) {
       console.error('[Reports] overview export failed:', e);
@@ -173,59 +187,74 @@ export default function Reports() {
 
   const handleMonthEndPack = async () => {
     setMonthEndExporting(true);
-    const now = new Date();
-    const dateFrom = format(startOfMonth(now), 'yyyy-MM-dd');
-    const dateTo = format(endOfMonth(now), 'yyyy-MM-dd');
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
+    const packFrom = dateFrom;
+    const packTo = dateTo;
+    const year = Number(packTo.slice(0, 4)) || new Date().getFullYear();
+    const month = Number(packTo.slice(5, 7)) || new Date().getMonth() + 1;
+    const prevAsOf = (() => {
+      const d = new Date(`${packTo}T12:00:00`);
+      d.setFullYear(d.getFullYear() - 1);
+      return format(d, 'yyyy-MM-dd');
+    })();
 
     const overviewSheet = [
-      {
-        Metric: t.reportsCenterUi.quickStats.salesMonth,
-        Value: salesMonth,
-      },
-      {
-        Metric: t.reportsCenterUi.quickStats.receivable,
-        Value: receivable,
-      },
-      {
-        Metric: t.reportsCenterUi.quickStats.payable,
-        Value: payable,
-      },
-      {
-        Metric: t.reportsCenterUi.quickStats.avgMargin,
-        Value: `${avgMargin.toFixed(1)}%`,
-      },
-      {
-        Metric: 'Note',
-        Value: t.reportsCenterUi.monthEndPackDesc,
-      },
-      {
-        Metric: 'Period',
-        Value: `${dateFrom} — ${dateTo}`,
-      },
+      { Metric: t.reportsCenterUi.quickStats.salesMonth, Value: salesMonth },
+      { Metric: t.reportsCenterUi.quickStats.receivable, Value: receivable },
+      { Metric: t.reportsCenterUi.quickStats.payable, Value: payable },
+      { Metric: t.reportsCenterUi.quickStats.avgMargin, Value: `${avgMargin.toFixed(1)}%` },
+      { Metric: t.reportsUi.dateFrom, Value: packFrom },
+      { Metric: t.reportsUi.dateTo, Value: packTo },
+      { Metric: t.salesAnalysisUi.branch, Value: branchLabel },
+      { Metric: 'Note', Value: t.reportsCenterUi.monthEndPackDesc },
     ];
 
     let trialSheet: Record<string, unknown>[] = [{ Note: 'Trial balance unavailable' }];
+    let incomeSheet: Record<string, unknown>[] = [{ Note: 'Income statement unavailable' }];
+    let balanceSheet: Record<string, unknown>[] = [{ Note: 'Balance sheet unavailable' }];
     let vatSheet: Record<string, unknown>[] = [{ Note: 'VAT report unavailable' }];
+    let arSheet: Record<string, unknown>[] = [{ Note: 'Receivables unavailable' }];
+    let apSheet: Record<string, unknown>[] = [{ Note: 'Payables unavailable' }];
 
     try {
-      const tb = await api.chartOfAccounts.getTrialBalance(dateFrom, dateTo, apiBranchId);
+      const tb = await api.chartOfAccounts.getTrialBalance(packFrom, packTo, apiBranchId);
       if (tb.data?.length) {
-        trialSheet = tb.data
+        const rows = tb.data.filter((row: { is_header?: boolean }) => !row.is_header);
+        trialSheet = rows.map((row: Record<string, unknown>) => ({
+          Code: row.code,
+          Name: row.name,
+          Type: row.account_type,
+          Opening: Number(row.opening_balance) || 0,
+          Debits: Number(row.total_debits) || 0,
+          Credits: Number(row.total_credits) || 0,
+          Closing: Number(row.closing_balance) || 0,
+        }));
+        const built = buildIncomeStatement(rows, t.incomeStatementUi);
+        incomeSheet = built.lineItems.map((li) => ({
+          Code: li.code,
+          Description: li.description,
+          Value: li.value,
+        }));
+      }
+    } catch (e) {
+      console.warn('[Reports] month-end trial balance skipped:', e);
+    }
+
+    try {
+      const bs = await api.chartOfAccounts.getBalanceSheet(packTo, prevAsOf);
+      const rows = Array.isArray(bs.data?.rows) ? bs.data.rows : [];
+      if (rows.length) {
+        balanceSheet = rows
           .filter((row: { is_header?: boolean }) => !row.is_header)
           .map((row: Record<string, unknown>) => ({
             Code: row.code,
             Name: row.name,
             Type: row.account_type,
-            Opening: Number(row.opening_balance) || 0,
-            Debits: Number(row.total_debits) || 0,
-            Credits: Number(row.total_credits) || 0,
-            Closing: Number(row.closing_balance) || 0,
+            Current: Number(row.current_balance) || 0,
+            Previous: Number(row.previous_balance) || 0,
           }));
       }
     } catch (e) {
-      console.warn('[Reports] month-end trial balance skipped:', e);
+      console.warn('[Reports] month-end balance sheet skipped:', e);
     }
 
     try {
@@ -258,17 +287,46 @@ export default function Reports() {
     }
 
     try {
+      const ar = await api.payments.receivablesAging(apiBranchId);
+      arSheet = (Array.isArray(ar.data) ? ar.data : []).map((row: Record<string, unknown>) => ({
+        Client: row.client_name || row.entity_name,
+        NIF: row.client_nif,
+        Remaining: Number(row.remaining_amount) || 0,
+        Due: row.due_date || row.dueDate,
+        Document: row.document_number,
+      }));
+      if (!arSheet.length) arSheet = [{ Note: 'No open receivables' }];
+    } catch (e) {
+      console.warn('[Reports] month-end AR skipped:', e);
+    }
+
+    try {
+      const ap = await api.payments.payablesAging(apiBranchId);
+      apSheet = (Array.isArray(ap.data) ? ap.data : []).map((row: Record<string, unknown>) => ({
+        Supplier: row.supplier_name || row.entity_name,
+        NIF: row.supplier_nif,
+        Remaining: Number(row.remaining_amount) || 0,
+        Due: row.due_date || row.dueDate,
+        Document: row.document_number,
+      }));
+      if (!apSheet.length) apSheet = [{ Note: 'No open payables' }];
+    } catch (e) {
+      console.warn('[Reports] month-end AP skipped:', e);
+    }
+
+    try {
       await exportReportExcelMulti(
         [
           { name: 'Overview', data: overviewSheet },
+          { name: 'Income Statement', data: incomeSheet },
+          { name: 'Balance Sheet', data: balanceSheet },
           { name: 'Trial Balance', data: trialSheet },
           { name: 'VAT', data: vatSheet },
+          { name: 'Receivables', data: arSheet },
+          { name: 'Payables', data: apSheet },
         ],
-        `MonthEnd_${format(now, 'yyyyMM')}`,
-        {
-          title: t.reportsCenterUi.monthEndPack,
-          subtitle: `${dateFrom} — ${dateTo}`,
-        },
+        `MonthEnd_${packFrom}_${packTo}`,
+        preview(t.reportsCenterUi.monthEndPack, { subtitle: periodLabel }),
       );
     } catch (e) {
       console.error('[Reports] month-end pack failed:', e);
@@ -317,6 +375,14 @@ export default function Reports() {
       icon: DollarSign,
       color: 'text-emerald-500',
       bgColor: 'bg-emerald-500/10',
+    },
+    {
+      id: 'daily',
+      title: t.reportsCenterUi.tabDailyClose,
+      description: t.dailyReportsUi.subtitle,
+      icon: Lock,
+      color: 'text-slate-600',
+      bgColor: 'bg-slate-500/10',
     },
   ];
 
@@ -417,7 +483,24 @@ export default function Reports() {
         { value: 'transactions', label: t.reportsCenterUi.tabHistory },
       ],
     },
+    { value: 'daily', label: t.reportsCenterUi.tabDailyClose, icon: Lock },
   ];
+
+  const catalogItems: ReportCatalogItem[] = useMemo(() => {
+    const items: ReportCatalogItem[] = [];
+    for (const fam of families) {
+      if (fam.options) {
+        for (const opt of fam.options) {
+          items.push({ family: fam.value, sub: opt.value, label: opt.label, group: fam.label });
+        }
+      } else {
+        items.push({ family: fam.value, label: fam.label, group: fam.label });
+      }
+    }
+    return items;
+    // families is rebuilt each render from t — catalog stays in sync.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t]);
 
   const tabBtnClass = (active: boolean) =>
     `inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-none border-b-2 transition-colors ${
@@ -428,16 +511,21 @@ export default function Reports() {
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-auto">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 p-6 pb-4">
+      <div className="flex flex-col gap-4 p-6 pb-4">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <BarChart3 className="w-6 h-6" />
             {t.reportsCenterUi.title}
           </h1>
           <p className="text-muted-foreground">
-            {t.reportsCenterUi.subtitle}
+            {t.reportsCenterUi.catalogHint}
           </p>
         </div>
+        <ReportsPeriodBar />
+        <ReportsCatalogSearch
+          items={catalogItems}
+          onSelect={(item) => goToTarget({ family: item.family, sub: item.sub })}
+        />
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col px-6">
@@ -445,51 +533,16 @@ export default function Reports() {
           {families.map((fam) => {
             const Icon = fam.icon;
             const active = activeTab === fam.value;
-            if (!fam.options) {
-              return (
-                <button
-                  key={fam.value}
-                  type="button"
-                  onClick={() => setActiveTab(fam.value)}
-                  className={tabBtnClass(active)}
-                >
-                  <Icon className="w-4 h-4" />
-                  {fam.label}
-                </button>
-              );
-            }
             return (
-              <DropdownMenu key={fam.value}>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab(fam.value)}
-                    className={tabBtnClass(active)}
-                  >
-                    <Icon className="w-4 h-4" />
-                    {fam.label}
-                    <ChevronDown className="w-4 h-4 opacity-60" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-56">
-                  {fam.options.map((opt) => {
-                    const selected = active && views[fam.value] === opt.value;
-                    return (
-                      <DropdownMenuItem
-                        key={opt.value}
-                        onSelect={() => {
-                          setActiveTab(fam.value);
-                          setView(fam.value, opt.value);
-                        }}
-                        className="flex items-center justify-between"
-                      >
-                        {opt.label}
-                        {selected && <Check className="w-4 h-4 text-primary" />}
-                      </DropdownMenuItem>
-                    );
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <button
+                key={fam.value}
+                type="button"
+                onClick={() => setActiveTab(fam.value)}
+                className={tabBtnClass(active)}
+              >
+                <Icon className="w-4 h-4" />
+                {fam.label}
+              </button>
             );
           })}
         </div>
@@ -621,6 +674,12 @@ export default function Reports() {
           <TabsContent value="statements" className="mt-0">
             <Suspense fallback={<ReportTabFallback />}>
               <StatementsReports view={views.statements} onViewChange={(v) => setView('statements', v)} />
+            </Suspense>
+          </TabsContent>
+
+          <TabsContent value="daily" className="mt-0">
+            <Suspense fallback={<ReportTabFallback />}>
+              <DailyReports embedded />
             </Suspense>
           </TabsContent>
         </div>

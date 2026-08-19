@@ -1,14 +1,7 @@
 import { useState, useMemo } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useBranchScope } from '@/hooks/useBranchScope';
-import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useReportCreditNotes } from '@/hooks/useReportCreditNotes';
-import { useSales } from '@/hooks/useERP';
 import { PieChart, TrendingUp, TrendingDown, Package, Tags, Users, Truck } from 'lucide-react';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
          PieChart as RechartsPie, Pie, Cell, Legend } from 'recharts';
 import { useTranslation } from '@/i18n';
@@ -17,6 +10,10 @@ import { mergeNetReportSales } from '@/lib/reports/netSales';
 import { useSalesPivotContext } from '@/components/reports/useSalesPivotContext';
 import PivotReportView from '@/components/reports/PivotReportView';
 import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
+import { ReportToolbar } from '@/components/reports/ReportToolbar';
+import { ReportTruncationBanner } from '@/components/reports/ReportTruncationBanner';
+import { useReportSales } from '@/hooks/useReportSales';
+import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
@@ -29,13 +26,11 @@ export default function ProfitabilityReport({
 } = {}) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId } = useBranchScope();
-  const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = useSyncedBranchFilter();
-  const { sales } = useSales(apiBranchId, { light: false });
-  const pivotCtx = useSalesPivotContext(apiBranchId);
-
-  const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
+  const filters = useSharedReportFilters();
+  const { dateFrom, dateTo, setDateFrom, setDateTo, branchFilter } = filters;
+  const { selectedBranch } = branchFilter;
+  const { sales, truncated } = useReportSales();
+  const pivotCtx = useSalesPivotContext(filters.apiBranchId);
   const [internalViewTab, setInternalViewTab] = useState('summary');
   const viewTab = view ?? internalViewTab;
   const setViewTab = onViewChange ?? setInternalViewTab;
@@ -89,44 +84,21 @@ export default function ProfitabilityReport({
 
   return (
     <div className="space-y-6">
-      {/* Filters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+      <ReportTruncationBanner truncated={truncated} />
+      <ReportToolbar
+        title={
+          <>
             <PieChart className="w-5 h-5" />
             {t.profitUi.title}
-          </CardTitle>
-          <CardDescription>{t.profitUi.description}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <Label>{t.reportsUi.dateFrom}</Label>
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-            </div>
-            <div>
-              <Label>{t.reportsUi.dateTo}</Label>
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-            </div>
-            <div>
-              <Label>{t.salesAnalysisUi.branch}</Label>
-              <Select value={selectedBranch} onValueChange={setSelectedBranch} disabled={!canPickBranch}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t.common.all} />
-                </SelectTrigger>
-                <SelectContent>
-                  {canPickBranch && <SelectItem value="all">{t.salesAnalysisUi.allBranches}</SelectItem>}
-                  {(canPickBranch ? branches : currentBranch ? [currentBranch] : []).map((branch) => (
-                    <SelectItem key={branch.id} value={branch.id}>
-                      {branch.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          </>
+        }
+        description={t.profitUi.description}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onDateFromChange={setDateFrom}
+        onDateToChange={setDateTo}
+        branchFilter={branchFilter}
+      />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -172,7 +144,7 @@ export default function ProfitabilityReport({
       </div>
 
       {/* Sub-report selector */}
-      {!onViewChange && <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />}
+      <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />
 
       <div className="space-y-4">
         {viewTab === 'summary' && (

@@ -30,7 +30,7 @@ export default function StatementsReports({
 
   return (
     <div className="space-y-4">
-      {!onViewChange && <ReportPicker options={options} value={tab} onChange={setTab} />}
+      <ReportPicker options={options} value={tab} onChange={setTab} />
       <div>
         {tab === 'client-statement' && <ClientStatementReport />}
         {tab === 'receivables' && <AccountsReceivableReport />}

@@ -2,7 +2,7 @@
  * Balan�o Patrimonial (Balance Sheet) � live balances from chart of accounts + journals.
  */
 
-import { useMemo, useState } from 'react';
+import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -66,7 +66,11 @@ function appendAccounts(
 export default function BalanceSheetReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const [reportDate, setReportDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const filters = useSharedReportFilters();
+  const { dateTo, setDateTo, shared } = filters;
+  const [localDate, setLocalDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const reportDate = shared ? dateTo : localDate;
+  const setReportDate = shared ? setDateTo : setLocalDate;
   const previousAsOf = useMemo(() => previousYearDate(reportDate), [reportDate]);
   const { rows, isLoading, error, refetch } = useBalanceSheet(reportDate, previousAsOf);
 
@@ -278,6 +282,7 @@ export default function BalanceSheetReport() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-4 items-end">
+            {!shared && (
             <div className="space-y-1">
               <Label className="text-xs">{t.balanceSheetUi.referenceDate}</Label>
               <Input
@@ -287,6 +292,7 @@ export default function BalanceSheetReport() {
                 className="h-8 w-40"
               />
             </div>
+            )}
             <div className="flex gap-2 ml-auto">
               <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isLoading}>
                 {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}

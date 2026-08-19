@@ -2,11 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useBranchScope } from '@/hooks/useBranchScope';
-import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
 import { useReportCreditNotes } from '@/hooks/useReportCreditNotes';
-import { useSales, useProducts } from '@/hooks/useERP';
-import { useCompanyLogo } from '@/hooks/useCompanyLogo';
+import { useProducts } from '@/hooks/useERP';
 import { Calendar, Download, Printer, FileDown } from 'lucide-react';
 import { format, startOfYear, endOfYear } from 'date-fns';
 import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
@@ -16,6 +13,10 @@ import { useTranslation } from '@/i18n';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { mergeNetReportSales } from '@/lib/reports/netSales';
 import { ReportToolbar } from '@/components/reports/ReportToolbar';
+import { ReportTruncationBanner } from '@/components/reports/ReportTruncationBanner';
+import { useReportSales } from '@/hooks/useReportSales';
+import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
+import { useReportExportMeta } from '@/hooks/useReportExportMeta';
 
 function escapeHtml(value: string): string {
   return String(value ?? '')
@@ -37,16 +38,16 @@ interface MonthRow {
 export default function MonthlyReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId } = useBranchScope();
-  const branchFilter = useSyncedBranchFilter();
+  const filters = useSharedReportFilters({
+    dateFrom: format(startOfYear(new Date()), 'yyyy-MM-dd'),
+    dateTo: format(endOfYear(new Date()), 'yyyy-MM-dd'),
+  });
+  const { dateFrom, dateTo, setDateFrom, setDateTo, comparePrevious, setComparePrevious, branchFilter, apiBranchId } = filters;
   const { selectedBranch } = branchFilter;
-  const { sales } = useSales(apiBranchId, { light: false });
+  const { sales, truncated } = useReportSales();
   const { products } = useProducts(apiBranchId, { light: true });
-  const { companyName } = useCompanyLogo();
+  const { companyName, preview } = useReportExportMeta();
 
-  const [dateFrom, setDateFrom] = useState(format(startOfYear(new Date()), 'yyyy-MM-dd'));
-  const [dateTo, setDateTo] = useState(format(endOfYear(new Date()), 'yyyy-MM-dd'));
-  const [comparePrevious, setComparePrevious] = useState(false);
   const [purchases, setPurchases] = useState<any[]>([]);
 
   const reportBranchId = selectedBranch === 'all' ? undefined : selectedBranch;
@@ -148,7 +149,7 @@ export default function MonthlyReport() {
     }));
     try {
       await exportReportExcel(data, `Mensal_${dateFrom}_${dateTo}`, {
-        title: t.monthlyUi.title,
+        ...preview(t.monthlyUi.title),
         subtitle: `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`,
         landscape: true,
       });
@@ -237,6 +238,7 @@ export default function MonthlyReport() {
 
   return (
     <div className="space-y-6">
+      <ReportTruncationBanner truncated={truncated} />
       <ReportToolbar
         title={
           <>

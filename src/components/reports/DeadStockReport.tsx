@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, Download, Package } from 'lucide-react';
+import { REPORT_SALES_LIMIT } from '@/contexts/ReportsPeriodContext';
 import { format, parseISO, subDays } from 'date-fns';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useProducts, useSales } from '@/hooks/useERP';
@@ -19,10 +20,16 @@ export default function DeadStockReport() {
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
   const { products } = useProducts(apiBranchId, { light: true });
-  const { sales } = useSales(apiBranchId, { light: false });
-
   const cutoff = useMemo(() => subDays(new Date(), DEAD_DAYS), []);
   const cutoffKey = format(cutoff, 'yyyy-MM-dd');
+  const lookbackFrom = format(subDays(new Date(), 365), 'yyyy-MM-dd');
+  const lookbackTo = format(new Date(), 'yyyy-MM-dd');
+  const { sales } = useSales(apiBranchId, {
+    light: false,
+    dateFrom: lookbackFrom,
+    dateTo: lookbackTo,
+    limit: REPORT_SALES_LIMIT,
+  });
 
   const lastSaleByProduct = useMemo(() => {
     const map = new Map<string, string>();

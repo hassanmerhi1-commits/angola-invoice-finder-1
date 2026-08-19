@@ -3,9 +3,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useBranchScope } from '@/hooks/useBranchScope';
+import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
+import { useReportExportMeta } from '@/hooks/useReportExportMeta';
+import { treasuryMovement, type TbRow } from '@/lib/reports/incomeStatement';
 import { Download, ArrowUpCircle, ArrowDownCircle, Wallet, Loader2, Printer, FileDown } from 'lucide-react';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, parseISO } from 'date-fns';
+import { format, eachDayOfInterval, parseISO } from 'date-fns';
 import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
 import { buildDataTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
@@ -38,11 +40,12 @@ function isDisbursement(p: PaymentRow) {
 export default function CashFlowReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId } = useBranchScope();
+  const filters = useSharedReportFilters();
+  const { dateFrom, dateTo, setDateFrom, setDateTo, apiBranchId, shared } = filters;
+  const { preview } = useReportExportMeta();
 
-  const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [dateTo, setDateTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [payments, setPayments] = useState<PaymentRow[]>([]);
+  const [glRows, setGlRows] = useState<TbRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -53,10 +56,18 @@ export default function CashFlowReport() {
         const res = await api.payments.list({
           branchId: apiBranchId || undefined,
           limit: 10000,
+          dateFrom,
+          dateTo,
         });
         if (!cancelled) setPayments(Array.isArray(res.data) ? res.data : []);
       } catch {
         if (!cancelled) setPayments([]);
+      }
+      try {
+        const tb = await api.chartOfAccounts.getTrialBalance(dateFrom, dateTo, apiBranchId || undefined);
+        if (!cancelled) setGlRows(Array.isArray(tb.data) ? tb.data : []);
+      } catch {
+        if (!cancelled) setGlRows([]);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -64,7 +75,7 @@ export default function CashFlowReport() {
     return () => {
       cancelled = true;
     };
-  }, [apiBranchId]);
+  }, [apiBranchId, dateFrom, dateTo]);
 
   const localDate = (raw?: string) => (raw ? String(raw).slice(0, 10) : '');
   const inRange = (raw?: string) => {
@@ -95,6 +106,7 @@ export default function CashFlowReport() {
   );
 
   const netFlow = inflowByMethod.total - outflowTotal;
+  const glTreasury = useMemo(() => treasuryMovement(glRows), [glRows]);
 
   const daily = useMemo(() => {
     let days: Date[] = [];
@@ -127,10 +139,9 @@ export default function CashFlowReport() {
     [daily, t],
   );
 
-  const previewMeta = {
-    title: t.cashFlowUi.title,
+  const previewMeta = preview(t.cashFlowUi.title, {
     subtitle: `${t.reportsUi.dateFrom}: ${dateFrom} — ${t.reportsUi.dateTo}: ${dateTo}`,
-  };
+  });
 
   const handleExport = async () => {
     try {
@@ -190,6 +201,7 @@ export default function CashFlowReport() {
           </div>
         </CardHeader>
         <CardContent>
+          {!shared && (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <Label>{t.reportsUi.dateFrom}</Label>
@@ -200,6 +212,7 @@ export default function CashFlowReport() {
               <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
           </div>
+          )}
         </CardContent>
       </Card>
 
@@ -238,6 +251,21 @@ export default function CashFlowReport() {
                 <p className={`text-2xl font-bold ${netFlow >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                   {formatCurrency(netFlow)}
                 </p>
+              </CardContent>
+            </Card>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-sm text-muted-foreground">{t.reportsCenterUi.glCash}</p>
+                <p className="text-xl font-bold">{formatCurrency(glTreasury.cash)}</p>
+                <p className="text-xs text-muted-foreground mt-1">{t.reportsCenterUi.glTreasuryHint}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-sm text-muted-foreground">{t.reportsCenterUi.glBanks}</p>
+                <p className="text-xl font-bold">{formatCurrency(glTreasury.banks)}</p>
               </CardContent>
             </Card>
           </div>

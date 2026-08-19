@@ -23,7 +23,7 @@ import { DateRange } from 'react-day-picker';
 import { useTranslation } from '@/i18n';
 import { enUS } from 'date-fns/locale';
 
-export default function DailyReports() {
+export default function DailyReports({ embedded = false }: { embedded?: boolean } = {}) {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
@@ -162,7 +162,8 @@ export default function DailyReports() {
   const totalCard = filteredReports.reduce((sum, r) => sum + r.cardTotal, 0);
 
   return (
-    <div className="space-y-6 p-6">
+    <div className={embedded ? 'space-y-6' : 'space-y-6 p-6'}>
+      {!embedded && (
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold">{t.dailyReportsUi.title}</h1>
@@ -175,6 +176,15 @@ export default function DailyReports() {
           </Button>
         </div>
       </div>
+      )}
+      {embedded && (
+        <div className="flex justify-end">
+          <Button variant="outline" onClick={refreshReports}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            {t.common.refresh}
+          </Button>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

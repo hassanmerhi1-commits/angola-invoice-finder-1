@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
+import { REPORT_SALES_LIMIT } from '@/contexts/ReportsPeriodContext';
 import { useSales, useProducts } from '@/hooks/useERP';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { Download, Printer, FileDown, Package } from 'lucide-react';
@@ -64,7 +65,6 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
     selectedBranch: branchState,
     setSelectedBranch,
   } = useSyncedBranchFilter();
-  const { sales } = useSales(apiBranchId, { light: false });
   const { products } = useProducts(apiBranchId, { light: true });
   const { companyName } = useCompanyLogo();
 
@@ -75,6 +75,12 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
   const dateFrom = embedded ? props.dateFrom ?? dateFromState : dateFromState;
   const dateTo = embedded ? props.dateTo ?? dateToState : dateToState;
   const selectedBranch = embedded ? props.selectedBranch ?? branchState : branchState;
+  const { sales } = useSales(apiBranchId, {
+    light: false,
+    dateFrom,
+    dateTo,
+    limit: REPORT_SALES_LIMIT,
+  });
 
   const productInfo = useMemo(() => {
     const m = new Map<string, { category: string; stock: number; cost: number; sku: string; name: string }>();

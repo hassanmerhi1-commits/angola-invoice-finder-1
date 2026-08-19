@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
+import { useReportsPeriodOptional } from '@/contexts/ReportsPeriodContext';
 import { useTranslation } from '@/i18n';
 
 type BranchFilterState = ReturnType<typeof useSyncedBranchFilter>;
@@ -70,7 +71,10 @@ export function ReportToolbar({
   extraFilters,
 }: ReportToolbarProps) {
   const { t } = useTranslation();
-  const showCompare = typeof comparePrevious === 'boolean' && typeof onComparePreviousChange === 'function';
+  const shared = !!useReportsPeriodOptional();
+  const showCompare = !shared && typeof comparePrevious === 'boolean' && typeof onComparePreviousChange === 'function';
+  const showPeriodFilters = !shared;
+  const hasExtra = !!extraFilters || showPeriodFilters || showCompare;
 
   return (
     <Card>
@@ -83,32 +87,38 @@ export function ReportToolbar({
           {children ? <div className="flex flex-wrap gap-2">{children}</div> : null}
         </div>
       </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
-          <div>
-            <Label>{t.reportsUi.dateFrom}</Label>
-            <Input type="date" value={dateFrom} onChange={(e) => onDateFromChange(e.target.value)} />
+      {hasExtra ? (
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+            {showPeriodFilters ? (
+              <>
+                <div>
+                  <Label>{t.reportsUi.dateFrom}</Label>
+                  <Input type="date" value={dateFrom} onChange={(e) => onDateFromChange(e.target.value)} />
+                </div>
+                <div>
+                  <Label>{t.reportsUi.dateTo}</Label>
+                  <Input type="date" value={dateTo} onChange={(e) => onDateToChange(e.target.value)} />
+                </div>
+                {showBranch ? (branchFilter ? <BranchSelect filter={branchFilter} /> : <InternalBranchSelect />) : null}
+              </>
+            ) : null}
+            {extraFilters}
+            {showCompare ? (
+              <div className="flex items-center gap-2 pb-2">
+                <Checkbox
+                  id="report-compare-previous"
+                  checked={comparePrevious}
+                  onCheckedChange={(v) => onComparePreviousChange(v === true)}
+                />
+                <Label htmlFor="report-compare-previous" className="cursor-pointer font-normal">
+                  {compareLabel || t.reportsCenterUi.comparePrevious}
+                </Label>
+              </div>
+            ) : null}
           </div>
-          <div>
-            <Label>{t.reportsUi.dateTo}</Label>
-            <Input type="date" value={dateTo} onChange={(e) => onDateToChange(e.target.value)} />
-          </div>
-          {showBranch ? (branchFilter ? <BranchSelect filter={branchFilter} /> : <InternalBranchSelect />) : null}
-          {extraFilters}
-          {showCompare ? (
-            <div className="flex items-center gap-2 pb-2">
-              <Checkbox
-                id="report-compare-previous"
-                checked={comparePrevious}
-                onCheckedChange={(v) => onComparePreviousChange(v === true)}
-              />
-              <Label htmlFor="report-compare-previous" className="cursor-pointer font-normal">
-                {compareLabel || t.reportsCenterUi.comparePrevious}
-              </Label>
-            </div>
-          ) : null}
-        </div>
-      </CardContent>
+        </CardContent>
+      ) : null}
     </Card>
   );
 }

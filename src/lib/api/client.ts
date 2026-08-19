@@ -2127,12 +2127,14 @@ export const api = {
 
   // Payments & Open Items
   payments: {
-    list: (params?: { entityType?: string; entityId?: string; branchId?: string; limit?: number }) => {
+    list: (params?: { entityType?: string; entityId?: string; branchId?: string; limit?: number; dateFrom?: string; dateTo?: string }) => {
       const sp = new URLSearchParams();
       if (params?.entityType) sp.append('entityType', params.entityType);
       if (params?.entityId) sp.append('entityId', params.entityId);
       if (params?.branchId) sp.append('branchId', params.branchId);
       if (params?.limit != null) sp.append('limit', String(params.limit));
+      if (params?.dateFrom) sp.append('dateFrom', params.dateFrom);
+      if (params?.dateTo) sp.append('dateTo', params.dateTo);
       const query = sp.toString();
       return apiFetch<any[]>(`/payments${query ? `?${query}` : ''}`).then((res) => {
         if (res.data !== undefined || !isDemoMode()) return res;
