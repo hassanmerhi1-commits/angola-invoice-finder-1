@@ -2098,6 +2098,40 @@ export default function PurchaseInvoices() {
     });
   }, [form.warehouseId, form.warehouseName, currentBranch]);
 
+  const applyWarehouseToLines = useCallback((warehouseId: string, warehouseName: string) => {
+    setLines((prev) => {
+      if (prev.length === 0) return prev;
+      let changed = false;
+      const next = prev.map((line) => {
+        const product = products.find((p) => p.id === line.productId);
+        const nextStock = product?.stock;
+        if (
+          String(line.warehouseId || '') === String(warehouseId)
+          && (line.warehouseName || '') === warehouseName
+          && (nextStock === undefined || nextStock === line.currentStock)
+        ) {
+          return line;
+        }
+        changed = true;
+        return {
+          ...line,
+          warehouseId,
+          warehouseName,
+          ...(nextStock !== undefined ? { currentStock: nextStock } : {}),
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [products]);
+
+  useEffect(() => {
+    if (mode !== 'create') return;
+    const warehouseId = String(form.warehouseId || '').trim();
+    const warehouseName = String(form.warehouseName || '').trim();
+    if (!warehouseId) return;
+    applyWarehouseToLines(warehouseId, warehouseName);
+  }, [mode, form.warehouseId, form.warehouseName, products, applyWarehouseToLines]);
+
   const applyLinesFromPurchaseOrder = useCallback(
     (order: PurchaseOrder) => {
       const wid = (form.warehouseId || currentBranch?.id || '').trim();
@@ -3876,11 +3910,14 @@ export default function PurchaseInvoices() {
               onChange={(e) => {
                 const v = e.target.value;
                 const br = branches.find((b) => String(b.id) === v);
+                const warehouseId = br?.id ?? v;
+                const warehouseName = br?.name ?? '';
                 setForm((p) => ({
                   ...p,
-                  warehouseId: br?.id ?? v,
-                  warehouseName: br?.name ?? '',
+                  warehouseId,
+                  warehouseName,
                 }));
+                applyWarehouseToLines(warehouseId, warehouseName);
               }}
             >
               {branches
