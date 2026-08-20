@@ -1,4 +1,4 @@
-import { generateId } from '@/lib/utils';
+import { cn, generateId } from '@/lib/utils';
 import { enrichProductSupplier } from '@/lib/productSupplierResolve';
 import {
   buildSellingPriceBySku,
@@ -17,7 +17,7 @@ import { fetchInventoryGrid, invalidateInventoryGridCache, isInventoryGridCacheF
 import { useInventoryBranchScope } from '@/hooks/useInventoryBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { resolveBranchScopeDisplayLabel } from '@/lib/branchScopeDisplay';
-import { looksLikeHeadOfficeBranch, normalizeIsMain } from '@/lib/branchAccess';
+import { normalizeIsMain } from '@/lib/branchAccess';
 import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { parseTaxRateOrNull } from '@/lib/taxUtils';
@@ -26,19 +26,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
-  FileText, 
-  Filter, 
-  BarChart3, 
-  Eye, 
-  FileSpreadsheet,
+  Filter,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Download,
-  ArrowRightLeft,
-  Building2,
   Search,
   Percent,
   ClipboardList,
@@ -718,14 +712,13 @@ export default function Inventory() {
       setStockEntryDialogOpen(true);
     };
     const onMinQty = () => {
+      setActiveTab('lista');
       setStockListFilter('qtyGt0');
       toast.info(t.inventoryPageUi.qtyGt0);
     };
     const onFilter = () => {
-      setStockListFilter((prev) => {
-        const next: StockListFilter = prev === 'all' ? 'qtyGt0' : prev === 'qtyGt0' ? 'qtyLt0' : 'all';
-        return next;
-      });
+      setActiveTab('lista');
+      setShowSearchResults(false);
     };
     const onExcel = () => {
       exportProductsToExcel(gridProducts);
@@ -1412,24 +1405,6 @@ export default function Inventory() {
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Stock mode notices */}
-      {isHeadOffice && (
-        <Alert className="mx-3 mt-3 rounded-xl bg-accent border-primary/20">
-          <Building2 className="h-4 w-4 text-primary" />
-          <AlertDescription className="text-foreground">
-            <strong>{t.inventoryPageUi.headOfficeTitle}</strong> {t.inventoryPageUi.headOfficeDesc}
-          </AlertDescription>
-        </Alert>
-      )}
-      {!isHeadOffice && canSwitchBranch && looksLikeHeadOfficeBranch(inventoryBranch) && (
-        <Alert className="mx-3 mt-3 rounded-xl bg-muted/60 border-border">
-          <Building2 className="h-4 w-4 text-muted-foreground" />
-          <AlertDescription className="text-foreground">
-            <strong>{t.inventoryPageUi.sedeStockOnlyTitle}</strong>{' '}
-            {t.inventoryPageUi.sedeStockOnlyDesc}
-          </AlertDescription>
-        </Alert>
-      )}
       {/* Toolbar */}
       <div className="relative z-30 flex items-center gap-1.5 px-3 py-2 bg-card/50 border-b backdrop-blur-sm">
         {canSwitchBranch && (
@@ -1508,11 +1483,26 @@ export default function Inventory() {
           )}
         </div>
         <div className="w-px h-5 bg-border mx-1 shrink-0" />
-        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => {
-          setStockListFilter((prev) => prev === 'all' ? 'qtyGt0' : prev === 'qtyGt0' ? 'qtyLt0' : 'all');
-        }}>
+        <Button
+          variant="outline"
+          size="sm"
+          className={cn(
+            NEXOR_TOOLBAR_BTN_SM,
+            stockListFilter !== 'all' && 'bg-primary/15 font-semibold',
+          )}
+          onClick={() => {
+            setActiveTab('lista');
+            setShowSearchResults(false);
+          }}
+        >
           <Filter className="w-3 h-3" />
           {t.common.filters}
+          {stockListFilter === 'qtyGt0'
+            ? `: ${t.inventoryPageUi.qtyGt0}`
+            : stockListFilter === 'qtyLt0'
+              ? `: ${t.inventoryPageUi.qtyLt0}`
+              : null}
+              <ChevronDown className="w-3 h-3 opacity-70" />
         </Button>
         <Button
           variant="outline"
@@ -1588,7 +1578,8 @@ export default function Inventory() {
 
       {/* Sub-tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
-        <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0">
+        <div className="flex items-stretch border-b bg-muted/30">
+          <TabsList className="min-w-0 flex-1 justify-start rounded-none bg-transparent h-auto p-0 overflow-x-auto">
           <TabsTrigger value="lista" className={NEXOR_TAB_TRIGGER}>
             {t.inventoryPageUi.tabs.list}
           </TabsTrigger>
@@ -1634,37 +1625,44 @@ export default function Inventory() {
             {t.inventoryPageUi.tabs.audit}
           </TabsTrigger>
         </TabsList>
-
-        {/* Action buttons row */}
-        <div className="flex items-center gap-1 px-2 py-1 bg-muted/30 border-b">
-          <div className="flex-1" />
-          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setActiveTab('info-produto')}>
-            <FileText className="w-3 h-3" />
-            {t.inventoryPageUi.note}
-          </Button>
-          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setStockListFilter('all')}>
-            {t.common.all}
-          </Button>
-          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setStockListFilter('qtyGt0')}>
-            {t.inventoryPageUi.qtyGt0}
-          </Button>
-          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setStockListFilter('qtyLt0')}>
-            {t.inventoryPageUi.qtyLt0}
-          </Button>
-          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setActiveTab('preco-compra')}>
-            {t.inventoryPageUi.costLt}
-          </Button>
-          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => setActiveTab('grafico')}>
-            <BarChart3 className="w-3 h-3" />
-            {t.inventoryPageUi.chart}
-          </Button>
-          <Button variant="outline" size="sm" className={NEXOR_ACTION_BTN} onClick={() => selectedProduct && handleOpenDialog(selectedProduct)} disabled={!selectedProduct}>
-            <Eye className="w-3 h-3" />
-            {t.inventoryPageUi.view}
-          </Button>
+          <div className="flex items-center gap-1 px-2 shrink-0 border-l">
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(NEXOR_ACTION_BTN, stockListFilter === 'all' && 'bg-primary/15 font-semibold')}
+              onClick={() => {
+                setActiveTab('lista');
+                setStockListFilter('all');
+              }}
+            >
+              {t.common.all}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(NEXOR_ACTION_BTN, stockListFilter === 'qtyGt0' && 'bg-primary/15 font-semibold')}
+              onClick={() => {
+                setActiveTab('lista');
+                setStockListFilter('qtyGt0');
+              }}
+            >
+              {t.inventoryPageUi.qtyGt0}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(NEXOR_ACTION_BTN, stockListFilter === 'qtyLt0' && 'bg-primary/15 font-semibold')}
+              onClick={() => {
+                setActiveTab('lista');
+                setStockListFilter('qtyLt0');
+              }}
+            >
+              {t.inventoryPageUi.qtyLt0}
+            </Button>
+          </div>
         </div>
 
-        <TabsContent value="lista" forceMount className="flex-1 min-h-0 m-0 p-2 data-[state=inactive]:hidden overflow-auto">
+        <TabsContent value="lista" forceMount className="flex-1 min-h-0 m-0 p-0 data-[state=inactive]:hidden overflow-auto">
           {inventoryGridError && isHeadOffice ? (
             <div className="text-center py-8 space-y-3">
               <p className="text-destructive">{inventoryGridError}</p>
@@ -1880,7 +1878,7 @@ export default function Inventory() {
           <span className="text-destructive">{t.inventoryPageUi.status.qtyLt0}</span>
           <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 px-2 rounded">{t.inventoryPageUi.status.minQty}</span>
         </div>
-        <span>{t.inventoryPageUi.status.productsCount.replace('{count}', String(displayProducts.length))}</span>
+        <span>{t.inventoryPageUi.status.productsCount.replace('{count}', String(gridProducts.length))}</span>
       </div>
 
       {dialogOpen ? (

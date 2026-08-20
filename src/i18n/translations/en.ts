@@ -1122,8 +1122,10 @@ export const en = {
 
     exportedToExcel: "Products exported to Excel",
     note: "Note",
+    filterByStock: "Stock quantity",
+    filterColumnHint: "Click a column header in the list for code, category, supplier or price.",
     qtyGt0: "Qty > 0",
-    qtyLt0: "Qty < 0",
+    qtyLt0: "Qty ≤ 0",
     costLt: "< Cost",
     chart: "Chart",
     view: "View",

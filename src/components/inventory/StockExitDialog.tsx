@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
+import { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -8,7 +8,6 @@ import { NumericInput } from '@/components/ui/numeric-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
@@ -127,6 +126,25 @@ interface StockExitDialogProps {
 }
 
 const todayIsoDate = () => format(new Date(), 'yyyy-MM-dd');
+
+function CompactField({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={cn('flex min-w-0 flex-col gap-0.5', className)}>
+      <span className="text-[10px] font-medium leading-none text-muted-foreground truncate" title={label}>
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
 
 const createEmptyLine = (): ExitLineRow => ({
   rowId: newLineRowId(),
@@ -250,7 +268,13 @@ export function StockExitDialog({
       const row = nextLines[rowIndex];
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          if (row) productInputRefs.current[row.rowId]?.focus();
+          if (!row) return;
+          if (row.productId) {
+            qtyRefs.current[row.rowId]?.focus();
+            qtyRefs.current[row.rowId]?.select();
+            return;
+          }
+          productInputRefs.current[row.rowId]?.focus();
         });
       });
       if (nextLines.length === prev.lines.length) return prev;
@@ -563,9 +587,14 @@ export function StockExitDialog({
       e.preventDefault();
       if (e.shiftKey) {
         if (rowIndex > 0) focusProductRow(rowIndex - 1);
-      } else {
-        focusProductRow(rowIndex + 1);
+        return;
       }
+      if (suggestions.length > 0) {
+        const pick = suggestions[pickerHighlightIndex] ?? suggestions[0];
+        if (pick) selectProductOnRow(line.rowId, pick);
+        return;
+      }
+      focusProductRow(rowIndex + 1);
       return;
     }
 
@@ -596,13 +625,13 @@ export function StockExitDialog({
     e: React.KeyboardEvent<HTMLInputElement>,
     rowIndex: number,
   ) => {
-    if (e.key === 'Tab' && !e.shiftKey) {
-      e.preventDefault();
-      focusProductRow(rowIndex + 1);
-    } else if (e.key === 'Tab' && e.shiftKey && rowIndex > 0) {
-      e.preventDefault();
-      focusProductRow(rowIndex - 1);
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    if (e.shiftKey) {
+      if (rowIndex > 0) focusProductRow(rowIndex - 1);
+      return;
     }
+    focusProductRow(rowIndex + 1);
   };
 
   const totals = useMemo(
@@ -691,38 +720,40 @@ export function StockExitDialog({
           '[&>button]:hidden',
         )}
       >
-        <div className="shrink-0 border-b bg-gradient-to-r from-rose-50/80 via-background to-background px-4 py-3 sm:px-6">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-destructive text-white shadow-sm">
-                <PackageMinus className="h-5 w-5" />
+        <div className="shrink-0 border-b bg-gradient-to-r from-rose-50/80 via-background to-background px-2 py-1 sm:px-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-destructive text-white">
+                <PackageMinus className="h-3.5 w-3.5" />
               </div>
-              <div className="min-w-0">
-                <DialogTitle className="text-lg font-semibold leading-tight">
-                  {t.stockExitUi.title}
-                </DialogTitle>
-                <p className="text-sm text-muted-foreground truncate">
-                  {t.stockExitUi.description.replace('{branch}', branchLabel)}
-                </p>
-              </div>
-              <Badge variant="outline" className="hidden sm:flex font-mono text-xs gap-1 shrink-0">
+              <DialogTitle
+                className="text-sm font-semibold leading-none truncate"
+                title={t.stockExitUi.description.replace('{branch}', branchLabel)}
+              >
+                {t.stockExitUi.title}
+              </DialogTitle>
+              <Badge variant="outline" className="hidden sm:flex font-mono text-[10px] gap-1 shrink-0 h-5 px-1.5">
                 <Hash className="h-3 w-3" />
                 {exitNumber}
               </Badge>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs px-2" onClick={addRows}>
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                {t.stockExitUi.addLine}
+              </Button>
               <Popover open={notesOpen} onOpenChange={setNotesOpen}>
                 <PopoverTrigger asChild>
                   <Button
                     type="button"
                     variant={hasNotes ? 'secondary' : 'outline'}
                     size="sm"
-                    className="gap-1.5"
+                    className="h-7 text-xs gap-1 px-2"
                   >
-                    <StickyNote className="h-4 w-4" />
+                    <StickyNote className="h-3.5 w-3.5" />
                     {t.stockExitUi.notesButton}
                     {hasNotes && (
-                      <span className="h-2 w-2 rounded-full bg-destructive" aria-hidden />
+                      <span className="h-1.5 w-1.5 rounded-full bg-destructive" aria-hidden />
                     )}
                   </Button>
                 </PopoverTrigger>
@@ -744,7 +775,7 @@ export function StockExitDialog({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9"
+                className="h-7 w-7"
                 onClick={() => handleDialogOpenChange(false)}
                 aria-label={t.common.cancel}
               >
@@ -755,28 +786,27 @@ export function StockExitDialog({
         </div>
 
         {!effectiveWarehouseId && (
-          <Alert variant="destructive" className="mx-4 sm:mx-6 mt-2 shrink-0 py-2">
-            <AlertCircle className="h-4 w-4" />
+          <Alert variant="destructive" className="mx-2 mt-1 shrink-0 py-1 text-xs">
+            <AlertCircle className="h-3.5 w-3.5" />
             <AlertDescription>{t.stockExitUi.branchRequiredDesc}</AlertDescription>
           </Alert>
         )}
 
         {form.reason === 'loss' && (
-          <Alert variant="destructive" className="mx-4 sm:mx-6 mt-2 shrink-0 py-2">
-            <AlertTriangle className="h-4 w-4" />
+          <Alert variant="destructive" className="mx-2 mt-1 shrink-0 py-1 text-xs">
+            <AlertTriangle className="h-3.5 w-3.5" />
             <AlertDescription>{t.stockExitUi.lossWarning}</AlertDescription>
           </Alert>
         )}
 
-        <div className="shrink-0 border-b bg-muted/20 px-4 py-2 sm:px-6 space-y-2">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockExitUi.exitReason}</Label>
+        <div className="shrink-0 border-b bg-muted/20 px-2 py-1.5 sm:px-3 space-y-1.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-2 gap-y-1.5">
+            <CompactField label={t.stockExitUi.exitReason} className="col-span-2 sm:col-span-1">
               <Select
                 value={form.reason}
                 onValueChange={(v) => setForm((p) => ({ ...p, reason: v as StockExitReasonCode }))}
               >
-                <SelectTrigger className="bg-background h-9">
+                <SelectTrigger className="bg-background h-7 w-full text-xs" title={t.stockExitUi.exitReason}>
                   <SelectValue placeholder={t.stockExitUi.selectReason} />
                 </SelectTrigger>
                 <SelectContent className="z-[200]">
@@ -787,34 +817,33 @@ export function StockExitDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockExitUi.exitDate}</Label>
+            </CompactField>
+            <CompactField label={t.stockExitUi.exitDate}>
               <Input
                 type="date"
                 value={form.exitDate}
                 onChange={(e) => setForm((p) => ({ ...p, exitDate: e.target.value }))}
-                className="bg-background h-9"
+                className="bg-background h-7 w-full text-xs"
+                title={t.stockExitUi.exitDate}
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockExitUi.reference}</Label>
+            </CompactField>
+            <CompactField label={t.stockExitUi.reference}>
               <Input
                 value={form.reference}
                 onChange={(e) => setForm((p) => ({ ...p, reference: e.target.value }))}
-                placeholder={exitNumber}
-                className="bg-background h-9 font-mono text-sm"
+                placeholder={t.stockExitUi.referencePlaceholder}
+                className="bg-background h-7 w-full font-mono text-xs"
+                title={t.stockExitUi.reference}
               />
-            </div>
+            </CompactField>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockExitUi.branch}</Label>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-2 gap-y-1.5">
+            <CompactField label={t.stockExitUi.branch}>
               <Select
                 value={form.exitBranchId}
                 onValueChange={handleExitBranchChange}
               >
-                <SelectTrigger className="bg-background h-9">
+                <SelectTrigger className="bg-background h-7 w-full text-xs" title={t.stockExitUi.branch}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="z-[200]">
@@ -825,9 +854,8 @@ export function StockExitDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockExitUi.currency}</Label>
+            </CompactField>
+            <CompactField label={t.stockExitUi.currency}>
               <Select
                 value={form.currency}
                 onValueChange={(v) => {
@@ -835,7 +863,7 @@ export function StockExitDialog({
                   void loadExchangeRate(v);
                 }}
               >
-                <SelectTrigger className="bg-background h-9">
+                <SelectTrigger className="bg-background h-7 w-full text-xs" title={t.stockExitUi.currency}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="z-[200]">
@@ -846,32 +874,21 @@ export function StockExitDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockExitUi.exchangeRate}</Label>
+            </CompactField>
+            <CompactField label={t.stockExitUi.exchangeRate}>
               <NumericInput
                 min={0}
                 value={form.currencyRate}
                 onValueChange={(v) => setForm((p) => ({ ...p, currencyRate: v }))}
-                className="h-9 bg-background font-mono text-sm"
+                className="h-7 w-full bg-background font-mono text-xs"
                 disabled={form.currency === 'KZ'}
+                title={t.stockExitUi.exchangeRate}
               />
-            </div>
+            </CompactField>
           </div>
         </div>
 
-        <div className="flex flex-1 flex-col min-h-0 overflow-hidden px-4 sm:px-6 py-2">
-          <div className="shrink-0 flex items-center justify-between mb-2 gap-2">
-            <div>
-              <h3 className="text-sm font-semibold">{t.stockExitUi.linesTitle}</h3>
-              <p className="text-[11px] text-muted-foreground">{t.stockExitUi.pickerKeyboardHint}</p>
-            </div>
-            <Button type="button" variant="outline" size="sm" className="h-8 shrink-0" onClick={addRows}>
-              <Plus className="h-3.5 w-3.5 mr-1" />
-              {t.stockExitUi.addLine}
-            </Button>
-          </div>
-
+        <div className="flex flex-1 flex-col min-h-0 overflow-hidden px-1 py-1 sm:px-2">
           <div className="flex-1 min-h-0 overflow-auto border rounded-md bg-background [&_th]:h-7 [&_th]:px-1.5 [&_th]:text-[11px] [&_td]:px-1.5 [&_td]:py-0.5">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm">
@@ -991,18 +1008,16 @@ export function StockExitDialog({
           </div>
         </div>
 
-        <div className="shrink-0 border-t bg-muted/30 px-4 sm:px-6 py-3 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
-          <div className="flex flex-wrap gap-4 text-sm">
+        <div className="shrink-0 border-t bg-muted/30 px-2 sm:px-3 py-1.5 flex items-center gap-2 justify-between">
+          <div className="flex flex-wrap gap-3 text-xs">
             <div>
               <span className="text-muted-foreground">{t.stockExitUi.summaryItems}: </span>
               <span className="font-semibold tabular-nums">{totals.items}</span>
             </div>
-            <Separator orientation="vertical" className="hidden sm:block h-5" />
             <div>
               <span className="text-muted-foreground">{t.stockExitUi.summaryUnits}: </span>
               <span className="font-semibold tabular-nums">{totals.units}</span>
             </div>
-            <Separator orientation="vertical" className="hidden sm:block h-5" />
             <div>
               <span className="text-muted-foreground">{t.stockExitUi.summaryLossValue}: </span>
               <span className="font-bold text-destructive tabular-nums">
@@ -1010,24 +1025,25 @@ export function StockExitDialog({
               </span>
             </div>
           </div>
-          <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={() => handleDialogOpenChange(false)} disabled={submitting}>
+          <div className="flex gap-1.5 justify-end shrink-0">
+            <Button variant="outline" size="sm" className="h-7" onClick={() => handleDialogOpenChange(false)} disabled={submitting}>
               {t.common.cancel}
             </Button>
             <Button
               variant="outline"
-              className="text-foreground border-foreground hover:bg-muted min-w-[160px]"
+              size="sm"
+              className="h-7 text-foreground border-foreground hover:bg-muted"
               onClick={() => void handleApply()}
               disabled={fulfilledItems.length === 0 || !effectiveWarehouseId || submitting}
             >
               {submitting ? (
                 <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                   {t.stockExitUi.applying}
                 </>
               ) : (
                 <>
-                  <Save className="h-4 w-4 mr-2" />
+                  <Save className="h-3.5 w-3.5 mr-1" />
                   {t.stockExitUi.confirm.replace('{count}', String(fulfilledItems.length))}
                 </>
               )}

@@ -301,20 +301,15 @@ export function AdvancedDataGrid({
 
   return (
     <div className="flex flex-col h-full border-[1.5px] border-[hsl(var(--table-grid-border))] rounded-lg bg-card overflow-hidden">
-      {/* Info Bar */}
-      <div className="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b text-xs">
-        <span className="text-muted-foreground">
-          {t.inventoryGridUi.productsCount
-            .replace('{filtered}', String(filteredProducts.length))
-            .replace('{total}', String(products.length))}
-        </span>
-        {hasActiveFilters && (
+      {/* Info Bar — only when a column filter is on (count lives in the page footer) */}
+      {hasActiveFilters && (
+        <div className="flex items-center justify-end px-2 py-0.5 bg-muted/50 border-b">
           <Button variant="outline" size="sm" className="h-6 text-xs text-foreground" onClick={clearAllFilters}>
             <X className="w-3 h-3 mr-1" />
             {t.inventoryGridUi.clearFilters}
           </Button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Scrollable grid — virtualized rows (only visible slice in DOM) */}
       <div ref={scrollRef} className="flex-1 overflow-auto" onScroll={onGridScroll}>
@@ -326,9 +321,10 @@ export function AdvancedDataGrid({
                 const isSorted = sortColumn === col.key;
                 return (
                   <th key={col.key} style={{ minWidth: col.minWidth }} className="p-0">
-                    <DropdownMenu>
+                    <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
                         <button
+                          type="button"
                           title={col.title || col.label}
                           className={cn(
                             "w-full px-2 py-1 text-xs font-bold text-foreground/80 text-left leading-tight flex items-center justify-between hover:bg-accent",
@@ -342,7 +338,13 @@ export function AdvancedDataGrid({
                           </div>
                         </button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="start" className="w-48 bg-popover border border-border shadow-lg z-50">
+                      <DropdownMenuContent
+                        align="start"
+                        side="bottom"
+                        collisionPadding={12}
+                        onCloseAutoFocus={(e) => e.preventDefault()}
+                        className="w-48 bg-popover border border-border shadow-lg z-[100]"
+                      >
                         <DropdownMenuItem onClick={() => handleSort(col.key)}>
                           {isSorted && sortDirection === 'asc'
                             ? t.inventoryGridUi.sortDesc

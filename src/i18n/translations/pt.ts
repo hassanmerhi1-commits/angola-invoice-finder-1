@@ -1124,8 +1124,10 @@ export const pt: TranslationKeys = {
 
     exportedToExcel: "Produtos exportados para Excel",
     note: "Nota",
+    filterByStock: "Quantidade em stock",
+    filterColumnHint: "Clique no cabeçalho de uma coluna na lista para filtrar por código, categoria, fornecedor ou preço.",
     qtyGt0: "Qtd > 0",
-    qtyLt0: "Qtd < 0",
+    qtyLt0: "Qtd ≤ 0",
     costLt: "< Custo",
     chart: "Gráfico",
     view: "Visualização",

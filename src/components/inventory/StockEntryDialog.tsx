@@ -1,15 +1,13 @@
-import { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
+import { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { format } from 'date-fns';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NumericInput } from '@/components/ui/numeric-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
@@ -154,6 +152,25 @@ const REASON_ICONS: Record<StockEntryReason, typeof PackagePlus> = {
 
 const todayIsoDate = () => format(new Date(), 'yyyy-MM-dd');
 
+function CompactField({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={cn('flex min-w-0 flex-col gap-0.5', className)}>
+      <span className="text-[10px] font-medium leading-none text-muted-foreground truncate" title={label}>
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
 const createEmptyLine = (): EntryLineRow => ({
   rowId: newLineRowId(),
   productId: null,
@@ -208,6 +225,8 @@ export function StockEntryDialog({
   const dialogContentRef = useRef<HTMLDivElement | null>(null);
   const productInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const qtyRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const costRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const vatTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const linesRef = useRef(form.lines);
   linesRef.current = form.lines;
   const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
@@ -397,7 +416,13 @@ export function StockEntryDialog({
       const row = nextLines[rowIndex];
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          if (row) productInputRefs.current[row.rowId]?.focus();
+          if (!row) return;
+          if (row.productId) {
+            qtyRefs.current[row.rowId]?.focus();
+            qtyRefs.current[row.rowId]?.select();
+            return;
+          }
+          productInputRefs.current[row.rowId]?.focus();
         });
       });
       if (nextLines.length === prev.lines.length) return prev;
@@ -410,6 +435,20 @@ export function StockEntryDialog({
       const el = qtyRefs.current[rowId];
       el?.focus();
       el?.select();
+    });
+  }, []);
+
+  const focusCostLine = useCallback((rowId: string) => {
+    requestAnimationFrame(() => {
+      const el = costRefs.current[rowId];
+      el?.focus();
+      el?.select();
+    });
+  }, []);
+
+  const focusVatLine = useCallback((rowId: string) => {
+    requestAnimationFrame(() => {
+      vatTriggerRefs.current[rowId]?.focus();
     });
   }, []);
 
@@ -922,9 +961,14 @@ export function StockEntryDialog({
       e.preventDefault();
       if (e.shiftKey) {
         if (rowIndex > 0) focusProductRow(rowIndex - 1);
-      } else {
-        focusProductRow(rowIndex + 1);
+        return;
       }
+      if (suggestions.length > 0) {
+        const pick = suggestions[pickerHighlightIndex] ?? suggestions[0];
+        if (pick) selectProductOnRow(line.rowId, pick);
+        return;
+      }
+      focusProductRow(rowIndex + 1);
       return;
     }
 
@@ -951,14 +995,34 @@ export function StockEntryDialog({
     }
   };
 
-  const handleQtyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, rowIndex: number) => {
-    if (e.key === 'Tab' && !e.shiftKey) {
-      e.preventDefault();
-      focusProductRow(rowIndex + 1);
-    } else if (e.key === 'Tab' && e.shiftKey && rowIndex > 0) {
-      e.preventDefault();
-      focusProductRow(rowIndex - 1);
+  const handleQtyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, rowIndex: number, rowId: string) => {
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    if (e.shiftKey) {
+      if (rowIndex > 0) focusProductRow(rowIndex - 1);
+      return;
     }
+    focusCostLine(rowId);
+  };
+
+  const handleCostKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, rowIndex: number, rowId: string) => {
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    if (e.shiftKey) {
+      focusQtyLine(rowId);
+      return;
+    }
+    focusVatLine(rowId);
+  };
+
+  const handleVatKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, rowIndex: number, rowId: string) => {
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    if (e.shiftKey) {
+      focusCostLine(rowId);
+      return;
+    }
+    focusProductRow(rowIndex + 1);
   };
 
   const itemsValue = useMemo(
@@ -1105,38 +1169,50 @@ export function StockEntryDialog({
           '[&>button]:hidden',
         )}
       >
-        <div className="shrink-0 border-b bg-gradient-to-r from-emerald-50/80 via-background to-background px-4 py-3 sm:px-6">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">
-                <PackagePlus className="h-5 w-5" />
+        <div className="shrink-0 border-b bg-gradient-to-r from-emerald-50/80 via-background to-background px-2 py-1 sm:px-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white">
+                <PackagePlus className="h-3.5 w-3.5" />
               </div>
-              <div className="min-w-0">
-                <DialogTitle className="text-lg font-semibold leading-tight">
-                  {t.stockEntryUi.title}
-                </DialogTitle>
-                <p className="text-sm text-muted-foreground truncate">
-                  {t.stockEntryUi.description.replace('{branch}', branchLabel)}
-                </p>
-              </div>
-              <Badge variant="outline" className="hidden sm:flex font-mono text-xs gap-1 shrink-0">
+              <DialogTitle
+                className="text-sm font-semibold leading-none truncate"
+                title={t.stockEntryUi.description.replace('{branch}', branchLabel)}
+              >
+                {t.stockEntryUi.title}
+              </DialogTitle>
+              <Badge variant="outline" className="hidden sm:flex font-mono text-[10px] gap-1 shrink-0 h-5 px-1.5">
                 <Hash className="h-3 w-3" />
                 {entryNumber}
               </Badge>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs px-2" onClick={openImportDialog}>
+                <FileSpreadsheet className="h-3.5 w-3.5 mr-1" />
+                {t.stockEntryUi.importExcel}
+              </Button>
+              {onAddProduct ? (
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs px-2" onClick={onAddProduct}>
+                  <Package className="h-3.5 w-3.5 mr-1" />
+                  {t.stockEntryUi.newProduct}
+                </Button>
+              ) : null}
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs px-2" onClick={addRows}>
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                {t.stockEntryUi.addLine}
+              </Button>
               <Popover open={notesOpen} onOpenChange={setNotesOpen}>
                 <PopoverTrigger asChild>
                   <Button
                     type="button"
                     variant={hasNotes ? 'secondary' : 'outline'}
                     size="sm"
-                    className="gap-1.5"
+                    className="h-7 text-xs gap-1 px-2"
                   >
-                    <StickyNote className="h-4 w-4" />
+                    <StickyNote className="h-3.5 w-3.5" />
                     {t.stockEntryUi.notesButton}
                     {hasNotes && (
-                      <span className="h-2 w-2 rounded-full bg-emerald-600" aria-hidden />
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" aria-hidden />
                     )}
                   </Button>
                 </PopoverTrigger>
@@ -1155,7 +1231,7 @@ export function StockEntryDialog({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9"
+                className="h-7 w-7"
                 onClick={() => handleDialogOpenChange(false)}
                 aria-label={t.common.cancel}
               >
@@ -1166,23 +1242,22 @@ export function StockEntryDialog({
         </div>
 
         {!effectiveWarehouseId && (
-          <Alert variant="destructive" className="mx-4 sm:mx-6 mt-2 shrink-0 py-2">
-            <AlertCircle className="h-4 w-4" />
+          <Alert variant="destructive" className="mx-2 mt-1 shrink-0 py-1 text-xs">
+            <AlertCircle className="h-3.5 w-3.5" />
             <AlertDescription>{t.stockEntryUi.branchRequiredDesc}</AlertDescription>
           </Alert>
         )}
 
-        <div className="shrink-0 border-b bg-muted/20 px-4 py-2 sm:px-6 space-y-2">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockEntryUi.entryReason}</Label>
+        <div className="shrink-0 border-b bg-muted/20 px-2 py-1.5 sm:px-3 space-y-1.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-2 gap-y-1.5">
+            <CompactField label={t.stockEntryUi.entryReason}>
               <Select
                 value={form.entryReason}
                 onValueChange={(value: StockEntryReason) =>
                   setForm((p) => ({ ...p, entryReason: value }))
                 }
               >
-                <SelectTrigger className="bg-background h-9">
+                <SelectTrigger className="bg-background h-7 w-full text-xs" title={t.stockEntryUi.entryReason}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="z-[200]">
@@ -1193,42 +1268,39 @@ export function StockEntryDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockEntryUi.entryDate}</Label>
+            </CompactField>
+            <CompactField label={t.stockEntryUi.entryDate}>
               <Input
                 type="date"
                 value={form.entryDate}
                 onChange={(e) => setForm((p) => ({ ...p, entryDate: e.target.value }))}
-                className="bg-background h-9"
+                className="bg-background h-7 w-full text-xs"
+                title={t.stockEntryUi.entryDate}
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockEntryUi.receiptNumber}</Label>
+            </CompactField>
+            <CompactField label={t.stockEntryUi.receiptNumber} className="col-span-2 sm:col-span-1">
               <Input
                 value={form.reference}
                 onChange={(e) => setForm((p) => ({ ...p, reference: e.target.value }))}
                 placeholder={t.stockEntryUi.receiptNumberPlaceholder}
-                className="bg-background h-9 font-mono text-sm"
+                className="bg-background h-7 w-full font-mono text-xs"
+                title={t.stockEntryUi.receiptNumber}
               />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockEntryUi.branch}</Label>
+            </CompactField>
+            <CompactField label={t.stockEntryUi.branch}>
               {branchLocked ? (
                 <Input
                   readOnly
                   value={branchLabel}
-                  className="bg-muted/50 h-9 text-sm"
+                  className="bg-muted/50 h-7 w-full text-xs"
+                  title={t.stockEntryUi.branch}
                 />
               ) : (
                 <Select
                   value={form.entryBranchId}
                   onValueChange={handleEntryBranchChange}
                 >
-                  <SelectTrigger className="bg-background h-9">
+                  <SelectTrigger className="bg-background h-7 w-full text-xs" title={t.stockEntryUi.branch}>
                     <SelectValue placeholder={t.stockEntryUi.selectBranchPlaceholder} />
                   </SelectTrigger>
                   <SelectContent className="z-[200]">
@@ -1240,9 +1312,8 @@ export function StockEntryDialog({
                   </SelectContent>
                 </Select>
               )}
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockEntryUi.currency}</Label>
+            </CompactField>
+            <CompactField label={t.stockEntryUi.currency}>
               <Select
                 value={form.currency}
                 onValueChange={(v) => {
@@ -1250,7 +1321,7 @@ export function StockEntryDialog({
                   void loadExchangeRate(v);
                 }}
               >
-                <SelectTrigger className="bg-background h-9">
+                <SelectTrigger className="bg-background h-7 w-full text-xs" title={t.stockEntryUi.currency}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="z-[200]">
@@ -1261,60 +1332,58 @@ export function StockEntryDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockEntryUi.exchangeRate}</Label>
+            </CompactField>
+            <CompactField label={t.stockEntryUi.exchangeRate}>
               <NumericInput
                 min={0}
                 value={form.currencyRate}
                 onValueChange={(v) => setForm((p) => ({ ...p, currencyRate: v }))}
-                className="h-9 bg-background font-mono text-sm"
+                className="h-7 w-full bg-background font-mono text-xs"
                 disabled={form.currency === 'KZ'}
+                title={t.stockEntryUi.exchangeRate}
               />
-            </div>
+            </CompactField>
           </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockEntryUi.freightLabel}</Label>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-2 gap-y-1.5">
+            <CompactField label={t.stockEntryUi.freightLabel}>
               <NumericInput
                 min={0}
                 value={form.freightCost}
                 onValueChange={(v) => setForm((p) => ({ ...p, freightCost: v }))}
-                className="h-9 bg-background"
+                className="h-7 w-full bg-background text-xs"
+                title={t.stockEntryUi.freightLabel}
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockEntryUi.otherCostsLabel}</Label>
+            </CompactField>
+            <CompactField label={t.stockEntryUi.otherCostsLabel}>
               <NumericInput
                 min={0}
                 value={form.otherCosts}
                 onValueChange={(v) => setForm((p) => ({ ...p, otherCosts: v }))}
-                className="h-9 bg-background"
+                className="h-7 w-full bg-background text-xs"
+                title={t.stockEntryUi.otherCostsLabel}
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">{t.stockEntryUi.otherCostsDescLabel}</Label>
+            </CompactField>
+            <CompactField label={t.stockEntryUi.otherCostsDescLabel} className="col-span-2">
               <Input
                 value={form.otherCostsDescription}
                 onChange={(e) =>
                   setForm((p) => ({ ...p, otherCostsDescription: e.target.value }))
                 }
                 placeholder={t.stockEntryUi.otherCostsDescPlaceholder}
-                className="h-9 bg-background text-sm"
+                className="h-7 w-full bg-background text-xs"
+                title={t.stockEntryUi.otherCostsDescLabel}
               />
-            </div>
+            </CompactField>
             {totalLandingCosts > 0 && (
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label className="text-sm font-medium">{t.stockEntryUi.freightPaymentSource}</Label>
-                <div className="flex flex-wrap gap-2">
+              <>
+                <CompactField label={t.stockEntryUi.freightPaymentSource}>
                   <Select
                     value={form.freightPaymentSource}
                     onValueChange={(v) =>
                       setForm((p) => ({ ...p, freightPaymentSource: v as FreightPaymentSource }))
                     }
                   >
-                    <SelectTrigger className="h-9 w-[160px] bg-background">
+                    <SelectTrigger className="h-7 w-full bg-background text-xs" title={t.stockEntryUi.freightPaymentSource}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1322,13 +1391,22 @@ export function StockEntryDialog({
                       <SelectItem value="bank">{t.stockEntryUi.freightSourceBank}</SelectItem>
                     </SelectContent>
                   </Select>
+                </CompactField>
+                <CompactField
+                  label={
+                    form.freightPaymentSource === 'caixa'
+                      ? t.stockEntryUi.selectFreightCaixa
+                      : t.stockEntryUi.selectFreightBank
+                  }
+                  className="col-span-2 sm:col-span-3"
+                >
                   {form.freightPaymentSource === 'caixa' ? (
                     <Select
                       value={form.freightCaixaId || undefined}
                       onValueChange={(v) => setForm((p) => ({ ...p, freightCaixaId: v }))}
                       disabled={freightTreasuryLoading}
                     >
-                      <SelectTrigger className="h-9 min-w-[220px] flex-1 bg-background">
+                      <SelectTrigger className="h-7 w-full bg-background text-xs">
                         <SelectValue
                           placeholder={
                             freightTreasuryLoading
@@ -1357,7 +1435,7 @@ export function StockEntryDialog({
                       onValueChange={(v) => setForm((p) => ({ ...p, freightBankAccountId: v }))}
                       disabled={freightTreasuryLoading}
                     >
-                      <SelectTrigger className="h-9 min-w-[220px] flex-1 bg-background">
+                      <SelectTrigger className="h-7 w-full bg-background text-xs">
                         <SelectValue placeholder={t.stockEntryUi.selectFreightBank} />
                       </SelectTrigger>
                       <SelectContent>
@@ -1375,52 +1453,13 @@ export function StockEntryDialog({
                       </SelectContent>
                     </Select>
                   )}
-                </div>
-                <p className="text-[11px] text-muted-foreground font-mono">
-                  GL {form.freightSourceAccount}
-                  {form.freightSourceName ? ` — ${form.freightSourceName}` : ''}
-                </p>
-              </div>
+                </CompactField>
+              </>
             )}
           </div>
-
-          {totalLandingCosts > 0 && fulfilledItems.length > 0 && (
-            <p className="text-xs text-muted-foreground">
-              {t.stockEntryUi.landingCostsHint
-                .replace('{count}', String(fulfilledItems.length))
-                .replace(
-                  '{perUnit}',
-                  formatCurrency(totalLandingCosts / Math.max(1, totals.units)),
-                )}
-            </p>
-          )}
-
         </div>
 
-        <div className="flex flex-1 flex-col min-h-0 overflow-hidden px-4 sm:px-6 py-2">
-          <div className="shrink-0 flex items-center justify-between mb-2 gap-2">
-            <div>
-              <h3 className="text-sm font-semibold">{t.stockEntryUi.linesTitle}</h3>
-              <p className="text-[11px] text-muted-foreground">{t.stockEntryUi.pickerKeyboardHint}</p>
-            </div>
-            <div className="flex gap-2 shrink-0">
-              <Button type="button" variant="outline" size="sm" className="h-8" onClick={openImportDialog}>
-                <FileSpreadsheet className="h-3.5 w-3.5 mr-1" />
-                {t.stockEntryUi.importExcel}
-              </Button>
-              {onAddProduct ? (
-                <Button type="button" variant="outline" size="sm" className="h-8" onClick={onAddProduct}>
-                  <Package className="h-3.5 w-3.5 mr-1" />
-                  {t.stockEntryUi.newProduct}
-                </Button>
-              ) : null}
-              <Button type="button" variant="outline" size="sm" className="h-8" onClick={addRows}>
-                <Plus className="h-3.5 w-3.5 mr-1" />
-                {t.stockEntryUi.addLine}
-              </Button>
-            </div>
-          </div>
-
+        <div className="flex flex-1 flex-col min-h-0 overflow-hidden px-1 py-1 sm:px-2">
           <div className="flex-1 min-h-0 overflow-auto border rounded-md bg-background [&_th]:h-7 [&_th]:px-1.5 [&_th]:text-[11px] [&_td]:px-1.5 [&_td]:py-0.5">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm">
@@ -1509,7 +1548,7 @@ export function StockEntryDialog({
                           min={1}
                           value={line.quantity}
                           onValueChange={(q) => updateLineQuantity(line.rowId, q)}
-                          onKeyDown={(e) => handleQtyKeyDown(e, rowIndex)}
+                          onKeyDown={(e) => handleQtyKeyDown(e, rowIndex, line.rowId)}
                           className="h-7 text-[11px]"
                           disabled={!product}
                           tabIndex={product ? 0 : -1}
@@ -1517,9 +1556,13 @@ export function StockEntryDialog({
                       </TableCell>
                       <TableCell className="align-middle">
                         <NumericInput
+                          ref={(el) => {
+                            costRefs.current[line.rowId] = el;
+                          }}
                           min={0}
                           value={line.cost}
                           onValueChange={(c) => updateLineCost(line.rowId, c)}
+                          onKeyDown={(e) => handleCostKeyDown(e, rowIndex, line.rowId)}
                           className="h-7 text-[11px] font-mono"
                           disabled={!product}
                           tabIndex={product ? 0 : -1}
@@ -1532,8 +1575,12 @@ export function StockEntryDialog({
                           disabled={!product}
                         >
                           <SelectTrigger
+                            ref={(el) => {
+                              vatTriggerRefs.current[line.rowId] = el;
+                            }}
                             className="h-7 text-[11px] px-1.5"
                             tabIndex={product ? 0 : -1}
+                            onKeyDown={(e) => handleVatKeyDown(e, rowIndex, line.rowId)}
                           >
                             <SelectValue placeholder="IVA" />
                           </SelectTrigger>
@@ -1575,18 +1622,16 @@ export function StockEntryDialog({
           </div>
         </div>
 
-        <div className="shrink-0 border-t bg-muted/30 px-4 sm:px-6 py-3 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
-          <div className="flex flex-wrap gap-4 text-sm">
+        <div className="shrink-0 border-t bg-muted/30 px-2 sm:px-3 py-1.5 flex items-center gap-2 justify-between">
+          <div className="flex flex-wrap gap-3 text-xs">
             <div>
               <span className="text-muted-foreground">{t.stockEntryUi.summaryItems}: </span>
               <span className="font-semibold tabular-nums">{totals.items}</span>
             </div>
-            <Separator orientation="vertical" className="hidden sm:block h-5" />
             <div>
               <span className="text-muted-foreground">{t.stockEntryUi.summaryUnits}: </span>
               <span className="font-semibold tabular-nums">{totals.units}</span>
             </div>
-            <Separator orientation="vertical" className="hidden sm:block h-5" />
             <div>
               <span className="text-muted-foreground">{t.stockEntryUi.summaryGrandTotal}: </span>
               <span className="font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
@@ -1594,24 +1639,25 @@ export function StockEntryDialog({
               </span>
             </div>
           </div>
-          <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={() => handleDialogOpenChange(false)} disabled={submitting}>
+          <div className="flex gap-1.5 justify-end shrink-0">
+            <Button variant="outline" size="sm" className="h-7" onClick={() => handleDialogOpenChange(false)} disabled={submitting}>
               {t.common.cancel}
             </Button>
             <Button
               variant="outline"
-              className="text-foreground border-foreground hover:bg-muted min-w-[160px]"
+              size="sm"
+              className="h-7 text-foreground border-foreground hover:bg-muted"
               onClick={() => void handleApply()}
               disabled={fulfilledItems.length === 0 || !effectiveWarehouseId || submitting}
             >
               {submitting ? (
                 <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                   {t.stockEntryUi.applying}
                 </>
               ) : (
                 <>
-                  <Save className="h-4 w-4 mr-2" />
+                  <Save className="h-3.5 w-3.5 mr-1" />
                   {t.stockEntryUi.confirm.replace('{count}', String(fulfilledItems.length))}
                 </>
               )}
