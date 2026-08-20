@@ -2054,6 +2054,7 @@ export const api = {
       referenceType?: string;
       startDate?: string;
       endDate?: string;
+      q?: string;
       limit?: number;
       offset?: number;
       includeLines?: boolean;
@@ -2064,13 +2065,24 @@ export const api = {
       if (params?.referenceType) searchParams.append('referenceType', params.referenceType);
       if (params?.startDate) searchParams.append('startDate', params.startDate);
       if (params?.endDate) searchParams.append('endDate', params.endDate);
+      if (params?.q) searchParams.append('q', params.q);
       if (params?.limit != null) searchParams.append('limit', String(params.limit));
       if (params?.offset != null) searchParams.append('offset', String(params.offset));
       if (params?.includeLines) searchParams.append('includeLines', '1');
       if (params?.includeContext) searchParams.append('includeContext', '1');
       const qs = searchParams.toString();
-      return apiFetch<{ items: any[]; limit: number; offset: number; hasMore: boolean } | any[]>(
+      const timeoutMs = (params?.limit || 0) > 500 ? 30000 : 25000;
+      return apiFetch<{
+        items: any[];
+        total?: number;
+        totals?: { debit: number; credit: number };
+        limit: number;
+        offset: number;
+        hasMore: boolean;
+      } | any[]>(
         `/journal-entries${qs ? `?${qs}` : ''}`,
+        {},
+        { timeoutMs },
       );
     },
     get: (id: string) => {
@@ -2543,17 +2555,47 @@ export const api = {
 
   // Audit Trail
   audit: {
-    list: async (params?: { tableName?: string; action?: string; userId?: string; startDate?: string; endDate?: string; limit?: number }) => {
+    list: async (params?: {
+      tableName?: string;
+      action?: string;
+      userId?: string;
+      userName?: string;
+      startDate?: string;
+      endDate?: string;
+      branchId?: string;
+      q?: string;
+      limit?: number;
+      offset?: number;
+    }) => {
       const sp = new URLSearchParams();
       if (params?.tableName) sp.append('tableName', params.tableName);
       if (params?.action) sp.append('action', params.action);
       if (params?.userId) sp.append('userId', params.userId);
+      if (params?.userName) sp.append('userName', params.userName);
       if (params?.startDate) sp.append('startDate', params.startDate);
       if (params?.endDate) sp.append('endDate', params.endDate);
+      if (params?.branchId) sp.append('branchId', params.branchId);
+      if (params?.q) sp.append('q', params.q);
       if (params?.limit) sp.append('limit', params.limit.toString());
+      if (params?.offset) sp.append('offset', params.offset.toString());
       const qs = sp.toString();
-      const apiResult = await apiFetch<any[]>(`/audit${qs ? `?${qs}` : ''}`, {}, { timeoutMs: 8000 });
-      if (apiResult.data !== undefined && !apiResult.error) return apiResult;
+      const timeoutMs = (params?.limit || 0) > 500 ? 30000 : 12000;
+      const apiResult = await apiFetch<any>(`/audit${qs ? `?${qs}` : ''}`, {}, { timeoutMs });
+      if (apiResult.data !== undefined && !apiResult.error) {
+        const payload = apiResult.data;
+        if (Array.isArray(payload)) {
+          return { ...apiResult, data: payload, total: payload.length };
+        }
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        return {
+          ...apiResult,
+          data: items,
+          total: Number(payload?.total ?? items.length),
+          truncated: Boolean(payload?.truncated),
+          limit: payload?.limit,
+          offset: payload?.offset,
+        };
+      }
       if (isElectronMode()) {
         let sql = 'SELECT id, table_name, record_id, action, user_id, user_name, branch_id, description, created_at FROM audit_log WHERE 1=1';
         const sqlParams: any[] = [];
@@ -2577,13 +2619,43 @@ export const api = {
       }
       return apiFetch<any[]>(`/audit/record/${tableName}/${recordId}`);
     },
-    stats: (days?: number) => {
-      if (isElectronMode()) return ipcQuery<any>(
-        `SELECT entity_type, action, COUNT(*) as count FROM audit_logs 
-         WHERE timestamp >= NOW() - INTERVAL '${days || 30} days' 
-         GROUP BY entity_type, action ORDER BY count DESC`
-      );
-      return apiFetch<any[]>(`/audit/stats?days=${days || 30}`);
+    facets: (params?: { startDate?: string; endDate?: string; branchId?: string }) => {
+      const sp = new URLSearchParams();
+      if (params?.startDate) sp.append('startDate', params.startDate);
+      if (params?.endDate) sp.append('endDate', params.endDate);
+      if (params?.branchId) sp.append('branchId', params.branchId);
+      const qs = sp.toString();
+      return apiFetch<{ users: string[]; tables: string[] }>(`/audit/facets${qs ? `?${qs}` : ''}`);
+    },
+    stats: (params?: {
+      startDate?: string;
+      endDate?: string;
+      branchId?: string;
+      action?: string;
+      tableName?: string;
+      userName?: string;
+      q?: string;
+      days?: number;
+    }) => {
+      const sp = new URLSearchParams();
+      if (params?.startDate) sp.append('startDate', params.startDate);
+      if (params?.endDate) sp.append('endDate', params.endDate);
+      if (params?.branchId) sp.append('branchId', params.branchId);
+      if (params?.action) sp.append('action', params.action);
+      if (params?.tableName) sp.append('tableName', params.tableName);
+      if (params?.userName) sp.append('userName', params.userName);
+      if (params?.q) sp.append('q', params.q);
+      if (params?.days) sp.append('days', String(params.days));
+      const qs = sp.toString();
+      return apiFetch<{
+        total: number;
+        today: number;
+        creates: number;
+        updates: number;
+        voids: number;
+        logins: number;
+        byAction: Array<Record<string, unknown>>;
+      }>(`/audit/stats${qs ? `?${qs}` : ''}`);
     },
     log: (data: {
       tableName?: string;

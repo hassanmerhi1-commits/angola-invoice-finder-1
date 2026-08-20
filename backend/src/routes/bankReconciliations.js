@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const db = require('../db');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 function parseStatementRows(raw) {
   try {
@@ -62,6 +63,13 @@ module.exports = function bankReconciliationsRouter() {
 
       if (!statementRows.length) {
         await db.query(`DELETE FROM bank_reconciliations WHERE bank_account_id = $1`, [bankAccountId]);
+        auditErpSafe(req, {
+          table: 'bank_reconciliations',
+          id: bankAccountId,
+          action: 'delete',
+          description: `Reconciliação bancária limpa: ${bankAccountId}`,
+          branchId,
+        });
         return res.json({ success: true, cleared: true });
       }
 
@@ -108,6 +116,12 @@ module.exports = function bankReconciliationsRouter() {
     try {
       const bankAccountId = String(req.params.bankAccountId || '').trim();
       await db.query(`DELETE FROM bank_reconciliations WHERE bank_account_id = $1`, [bankAccountId]);
+      auditErpSafe(req, {
+        table: 'bank_reconciliations',
+        id: bankAccountId,
+        action: 'delete',
+        description: `Reconciliação bancária eliminada: ${bankAccountId}`,
+      });
       res.json({ success: true });
     } catch (e) {
       if (/does not exist|no such table/i.test(String(e.message))) {
@@ -182,6 +196,13 @@ module.exports = function bankReconciliationsRouter() {
         `SELECT * FROM bank_reconciliations WHERE bank_account_id = $1 LIMIT 1`,
         [bankAccountId],
       );
+      auditErpSafe(req, {
+        table: 'bank_reconciliations',
+        id: reconId,
+        action: 'approve',
+        description: `Reconciliação bancária confirmada: ${cleared} movimentos`,
+        newValues: { bankAccountId, cleared, matchedCount: matchedIds.length },
+      });
       res.json({
         success: true,
         cleared,

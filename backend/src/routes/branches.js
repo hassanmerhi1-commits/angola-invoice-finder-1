@@ -5,6 +5,7 @@ const { branchesListSql } = require('../lib/sqlDialect');
 const { ensureBranchCaixaAccount, ensureAllBranchCaixaAccounts } = require('../lib/branchCaixaAccounts');
 const { requirePermission } = require('../middleware/requirePermission');
 const crypto = require('crypto');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 /** Clamp any incoming value to a valid selling price level (1-4), defaulting to 1. */
 function clampPriceLevel(value) {
@@ -94,6 +95,13 @@ module.exports = function(broadcastTable) {
       await broadcastTable('branches');
       await broadcastTable('chart_of_accounts');
       await broadcastTable('warehouses');
+      auditErpSafe(req, {
+        table: 'branches',
+        id: branch?.id,
+        action: 'create',
+        description: `Filial criada: ${normalizedName} (${normalizedCode})`,
+        newValues: { name: normalizedName, code: normalizedCode, isMain: isMain || false },
+      });
       res.status(201).json(branch);
     } catch (error) {
       await client.query('ROLLBACK');
@@ -152,6 +160,13 @@ module.exports = function(broadcastTable) {
 
       const row = result.rows[0];
       await broadcastTable('branches');
+      auditErpSafe(req, {
+        table: 'branches',
+        id,
+        action: 'update',
+        description: `Filial actualizada: ${normalizedName} (${normalizedCode})`,
+        newValues: { name: normalizedName, code: normalizedCode, isMain },
+      });
       res.json({
         ...row,
         isMain: row.is_main === 1 || row.is_main === true || row.is_main === '1',
@@ -182,6 +197,12 @@ module.exports = function(broadcastTable) {
       }
       await db.query('UPDATE branches SET is_active = 0 WHERE id = $1', [id]);
       await broadcastTable('branches');
+      auditErpSafe(req, {
+        table: 'branches',
+        id,
+        action: 'delete',
+        description: `Filial desactivada: ${id}`,
+      });
       res.json({ success: true });
     } catch (error) {
       console.error('[BRANCHES ERROR]', error);

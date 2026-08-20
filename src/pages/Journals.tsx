@@ -2,9 +2,8 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
-import { branchIdsEquivalent } from '@/lib/branchAccess';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useAuth } from '@/hooks/useERP';
+import { useAuth, useSales } from '@/hooks/useERP';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useChartOfAccounts, useTrialBalance } from '@/hooks/useChartOfAccounts';
 import { Button } from '@/components/ui/button';
@@ -17,11 +16,12 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import {
-  Plus, Search, Edit2, Trash2, RefreshCw, FileText,
-  Calendar, Eye, Printer, Download, CheckCircle, XCircle,
-  Filter, ChevronLeft, ChevronRight, ExternalLink, Undo2, Loader2,
+  Plus, Search, Edit2, Trash2, RefreshCw,
+  Eye, Download, CheckCircle, XCircle,
+  ExternalLink, Undo2, Loader2,
 } from 'lucide-react';
 import { mapAuditLogRow, type AuditLogRow } from '@/lib/auditLogDisplay';
+import { AuditDetailPanel } from '@/components/audit/AuditDetailPanel';
 import {
   formatJournalDateTime,
   mapJournalEntryFromApi,
@@ -30,16 +30,17 @@ import {
 } from '@/lib/journalEntryDisplay';
 import { JournalEntryDetailDialog } from '@/components/accounting/JournalEntryDetailDialog';
 import { cn, generateId } from '@/lib/utils';
-import { format } from 'date-fns';
 import { Account } from '@/types/accounting';
 import { api } from '@/lib/api/client';
-import { getCachedList, setCachedList, unwrapListPayload, isCachedListFresh, markCachedListStale } from '@/lib/listCache';
+import { getCachedList, setCachedList, unwrapListPayload, markCachedListStale } from '@/lib/listCache';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
 import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
 import {
   isBeforeToday,
 } from '@/lib/workingDayAccess';
+import { exportReportExcel } from '@/lib/reportExport';
+import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 
 // Journal entry row for list + detail
 const ENTRY_TYPES = [
@@ -67,14 +68,23 @@ const ENTRY_TYPES = [
 const FILTER_ENTRY_TYPES = [
   { value: 'venda', labelKey: 'sale' },
   { value: 'compra', labelKey: 'purchase' },
-  { value: 'purchase_invoice', labelKey: 'purchase' },
   { value: 'credit_note', labelKey: 'creditNote' },
   { value: 'debit_note', labelKey: 'debitNote' },
   { value: 'recibo', labelKey: 'receipt' },
   { value: 'pagamento', labelKey: 'payment' },
   { value: 'ajuste', labelKey: 'adjustment' },
   { value: 'manual', labelKey: 'manual' },
+  { value: 'transfer', labelKey: 'transfer' },
+  { value: 'expense', labelKey: 'expense' },
 ];
+
+const CREATE_ENTRY_TYPES = [
+  { value: 'ajuste', labelKey: 'adjustment' },
+  { value: 'manual', labelKey: 'manual' },
+];
+
+const PAGE_SIZE = 200;
+const EXPORT_LIMIT = 5000;
 
 function resolveEntryType(type: string) {
   return (
@@ -107,146 +117,115 @@ function useJournalEntries(
   labels: JournalDisplayLabels,
   dateFrom?: string,
   dateTo?: string,
+  referenceType?: string,
+  q?: string,
 ) {
-  const cacheKey = `journalEntries:${branchId ?? 'all'}:${dateFrom ?? ''}:${dateTo ?? ''}`;
+  const cacheKey = `journalEntries:${branchId ?? 'all'}:${dateFrom ?? ''}:${dateTo ?? ''}:${referenceType || 'all'}:${q || ''}`;
   const [entries, setEntries] = useState<JournalDisplayEntry[]>(
     () => getCachedList<JournalDisplayEntry[]>(cacheKey) ?? [],
   );
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [periodTotals, setPeriodTotals] = useState({ debit: 0, credit: 0 });
+  const [hasMore, setHasMore] = useState(false);
+
+  const listParams = useCallback((offset: number, limit = PAGE_SIZE) => ({
+    ...(branchId ? { branchId } : {}),
+    ...(dateFrom ? { startDate: dateFrom } : {}),
+    ...(dateTo ? { endDate: dateTo } : {}),
+    ...(referenceType && referenceType !== 'all' ? { referenceType } : {}),
+    ...(q ? { q } : {}),
+    limit,
+    offset,
+    includeContext: true,
+  }), [branchId, dateFrom, dateTo, referenceType, q]);
 
   const loadAll = useCallback(async (opts?: { force?: boolean }) => {
-    const key = `journalEntries:${branchId ?? 'all'}:${dateFrom ?? ''}:${dateTo ?? ''}`;
+    const key = `journalEntries:${branchId ?? 'all'}:${dateFrom ?? ''}:${dateTo ?? ''}:${referenceType || 'all'}:${q || ''}`;
     const cached = getCachedList<JournalDisplayEntry[]>(key) ?? [];
-    // Drop previous branch rows immediately; seed only this scope's cache.
     setEntries(cached);
-
-    if (!opts?.force && isCachedListFresh(key) && cached.length > 0) {
-      setIsLoading(false);
-      return;
-    }
-
-    // Soft refresh when we already have rows — keep table interactive.
     setIsLoading(cached.length === 0);
 
-    const allEntries: JournalDisplayEntry[] = [];
-    let fetchOk = false;
-
     try {
-      const response = await api.journalEntries.list({
-        ...(branchId ? { branchId } : {}),
-        ...(dateFrom ? { startDate: dateFrom } : {}),
-        ...(dateTo ? { endDate: dateTo } : {}),
-        limit: 200,
-        offset: 0,
-      });
+      const response = await api.journalEntries.list(listParams(0));
       if (response.error) {
         console.warn('[Journals] Failed to load journal entries:', response.error);
-      } else {
-        fetchOk = true;
+        setIsLoading(false);
+        return;
       }
-      // Server already scopes by branchId / dates — no second client filter pass.
-      const { items: rows } = unwrapListPayload<Record<string, unknown>>(response.data);
-      for (const je of rows) {
-        allEntries.push(mapJournalEntryFromApi(je as Record<string, unknown>, labels));
-      }
-    } catch {
-      // Fallback: localStorage
-      try {
-        const raw = localStorage.getItem('kwanzaerp_journal_entries');
-        const journalEntries = raw ? JSON.parse(raw) : [];
-      for (const je of journalEntries) {
-          if (branchId && !branchIdsEquivalent(je.branchId, branchId)) continue;
-          allEntries.push(mapJournalEntryFromApi({
-            id: je.id,
-            entry_number: je.entryNumber,
-            entry_date: je.entryDate,
-            created_at: je.createdAt,
-            reference_type: je.referenceType,
-            description: je.description,
-            total_debit: je.totalDebit,
-            total_credit: je.totalCredit,
-            branch_name: je.branchName,
-            created_by: je.createdBy,
-            lines: je.lines,
-          } as Record<string, unknown>, labels));
-        }
-        fetchOk = true;
-      } catch { /* ignore */ }
-    }
-
-    if (!window.electronAPI?.isElectron) {
-      try {
-        const salesData = localStorage.getItem('kwanzaerp_sales');
-        const sales = salesData ? JSON.parse(salesData) : [];
-        const existingIds = new Set(allEntries.map(e => e.id));
-        
-        for (let idx = 0; idx < Math.min(sales.length, 50); idx++) {
-          const sale = sales[idx];
-          if (branchId && !branchIdsEquivalent(sale.branchId ?? sale.branch_id, branchId)) continue;
-          const id = `sale_je_${sale.id || idx}`;
-          if (existingIds.has(id)) continue;
-          
-          const inv = sale.invoiceNumber || '';
-          const cust = sale.customerName || sale.customer_name || '';
-          allEntries.push(mapJournalEntryFromApi({
-            id,
-            entry_number: `VD-${String(idx + 1).padStart(4, '0')}`,
-            entry_date: sale.createdAt,
-            created_at: sale.createdAt,
-            reference_type: 'sale',
-            description: `Venda ${inv}`.trim(),
-            total_debit: sale.total,
-            total_credit: sale.total,
-            branch_name: sale.branchName,
-            created_by: sale.cashierName,
-            context: {
-              documentNumber: inv,
-              customerName: cust,
-              paymentMethod: sale.paymentMethod || sale.payment_method,
-              total: sale.total,
-            },
-            lines: [
-              { account_code: '451', account_name: 'Caixa', description: 'Recebimento', debit_amount: sale.total, credit_amount: 0 },
-              { account_code: '613', account_name: labels.salesOfMerchandise, description: inv, debit_amount: 0, credit_amount: sale.subtotal || sale.total },
-              ...(sale.taxAmount ? [{ account_code: '3452', account_name: 'IVA Liquidado', description: 'IVA', debit_amount: 0, credit_amount: sale.taxAmount }] : []),
-            ],
-          } as Record<string, unknown>, labels));
-        }
-      } catch { /* ignore */ }
-    }
-
-    allEntries.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    // Only keep stale cache when the network fetch failed; a real empty branch must clear.
-    if (!fetchOk && allEntries.length === 0 && (getCachedList<JournalDisplayEntry[]>(key)?.length ?? 0) > 0) {
+      const payload = unwrapListPayload<Record<string, unknown>>(response.data);
+      const mapped = payload.items.map((je) => mapJournalEntryFromApi(je, labels));
+      setEntries(mapped);
+      setCachedList(key, mapped);
+      setTotal(Number(payload.total ?? mapped.length));
+      setPeriodTotals({
+        debit: Number(payload.totals?.debit ?? 0),
+        credit: Number(payload.totals?.credit ?? 0),
+      });
+      setHasMore(!!payload.hasMore || mapped.length < Number(payload.total ?? mapped.length));
+    } catch (err) {
+      console.warn('[Journals] Failed to load journal entries:', err);
+    } finally {
       setIsLoading(false);
-      return;
     }
-    setEntries(allEntries);
-    setCachedList(key, allEntries);
-    setIsLoading(false);
-  }, [branchId, labels, dateFrom, dateTo]);
+  }, [branchId, labels, dateFrom, dateTo, referenceType, q, listParams]);
+
+  const loadMore = useCallback(async () => {
+    setLoadingMore(true);
+    try {
+      const response = await api.journalEntries.list(listParams(entries.length));
+      if (response.error) throw new Error(response.error);
+      const payload = unwrapListPayload<Record<string, unknown>>(response.data);
+      const mapped = payload.items.map((je) => mapJournalEntryFromApi(je, labels));
+      setEntries((prev) => {
+        const next = [...prev, ...mapped];
+        setCachedList(cacheKey, next);
+        return next;
+      });
+      setTotal(Number(payload.total ?? entries.length + mapped.length));
+      if (payload.totals) {
+        setPeriodTotals({
+          debit: Number(payload.totals.debit ?? 0),
+          credit: Number(payload.totals.credit ?? 0),
+        });
+      }
+      setHasMore(!!payload.hasMore);
+    } catch (err) {
+      console.warn('[Journals] load more failed:', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [listParams, entries.length, labels, cacheKey]);
 
   useEffect(() => { void loadAll(); }, [loadAll]);
 
   useEffect(() => subscribeSupplierReturnsChanged(() => { void loadAll({ force: true }); }), [loadAll]);
 
-  // Soft refresh on remote journal posts — debounce so busy shops don't storm Tailscale.
   const journalRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onJournalTableRefresh = useCallback(() => {
-    const key = `journalEntries:${branchId ?? 'all'}:${dateFrom ?? ''}:${dateTo ?? ''}`;
-    markCachedListStale(key);
+    markCachedListStale(cacheKey);
     if (journalRefreshTimer.current) clearTimeout(journalRefreshTimer.current);
     journalRefreshTimer.current = setTimeout(() => {
       journalRefreshTimer.current = null;
       void loadAll();
     }, 2500);
-  }, [branchId, dateFrom, dateTo, loadAll]);
+  }, [cacheKey, loadAll]);
   useTableRefreshListener(['journal_entries'], onJournalTableRefresh);
   useEffect(() => () => {
     if (journalRefreshTimer.current) clearTimeout(journalRefreshTimer.current);
   }, []);
 
-  return { entries, refetch: () => loadAll({ force: true }), isLoading };
+  return {
+    entries,
+    refetch: () => loadAll({ force: true }),
+    isLoading,
+    loadingMore,
+    loadMore,
+    hasMore,
+    total,
+    periodTotals,
+  };
 }
 
 // ============= NEW ENTRY LINE INTERFACE =============
@@ -263,10 +242,12 @@ interface NewEntryLine {
 function JournalsTrialBalancePanel({ branchId }: { branchId?: string }) {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  const [startDate, setStartDate] = useState(monthStart.toISOString().split('T')[0]);
-  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [startDate, setStartDate] = useState(() => {
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    return localISODate(monthStart);
+  });
+  const [endDate, setEndDate] = useState(() => localISODate());
   const { data, isLoading, error, refetch, totals } = useTrialBalance(startDate, endDate, branchId);
 
   const rows = data.filter(r => !r.is_header && (Number(r.total_debits) > 0 || Number(r.total_credits) > 0));
@@ -360,6 +341,10 @@ const JOURNALS_AUDIT_ACTION_LABELS: Record<string, string> = {
   saft_export: 'actionExport',
   void: 'actionVoid',
   convert: 'actionConvert',
+  approve: 'actionApprove',
+  transfer: 'actionTransfer',
+  receive: 'actionReceive',
+  close: 'actionClose',
 };
 
 function JournalsAuditPanel() {
@@ -368,11 +353,48 @@ function JournalsAuditPanel() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const [rows, setRows] = useState<AuditLogRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<AuditLogRow | null>(null);
+
+  const auditDetailLabels = useMemo(
+    () => ({
+      fieldInvoiceNumber: t.auditTrailUi.fieldInvoiceNumber,
+      fieldInvoiceType: t.auditTrailUi.fieldInvoiceType,
+      fieldPaymentMethod: t.auditTrailUi.fieldPaymentMethod,
+      fieldTotal: t.auditTrailUi.fieldTotal,
+      fieldItemCount: t.auditTrailUi.fieldItemCount,
+      fieldProformaNumber: t.auditTrailUi.fieldProformaNumber,
+      fieldProformaId: t.auditTrailUi.fieldProformaId,
+      fieldEmpty: t.auditTrailUi.fieldEmpty,
+      fieldName: t.auditTrailUi.fieldName,
+      fieldSku: t.auditTrailUi.fieldSku,
+      fieldPrice: t.auditTrailUi.fieldPrice,
+      fieldCost: t.auditTrailUi.fieldCost,
+      fieldStock: t.auditTrailUi.fieldStock,
+      fieldTaxRate: t.auditTrailUi.fieldTaxRate,
+      fieldVatOverride: t.auditTrailUi.fieldVatOverride,
+      fieldCategory: t.auditTrailUi.fieldCategory,
+      fieldBranchId: t.auditTrailUi.fieldBranchId,
+      fieldIpAddress: t.auditTrailUi.fieldIpAddress,
+      fieldWorkstation: t.auditTrailUi.fieldWorkstation,
+      detailChanges: t.auditTrailUi.detailChanges,
+      detailSnapshot: t.auditTrailUi.detailSnapshot,
+      detailContext: t.auditTrailUi.detailContext,
+      changeArrow: t.auditTrailUi.changeArrow,
+      paymentCash: t.chartsUi.methodCash,
+      paymentCard: t.chartsUi.methodCard,
+      paymentTransfer: t.chartsUi.methodTransfer,
+      paymentCheque: t.supplierStatementUi.methodCheque,
+      paymentMixed: t.chartsUi.methodMixed,
+      paymentCredit: t.posUi.credit,
+      detailRawJson: t.auditTrailUi.detailRawJson,
+    }),
+    [t],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.audit.list({ limit: 80 });
+      const res = await api.audit.list({ limit: 200 });
       const raw = Array.isArray(res.data) ? res.data : [];
       setRows(raw.map((row) => mapAuditLogRow(row as Record<string, unknown>)));
     } catch {
@@ -388,7 +410,7 @@ function JournalsAuditPanel() {
   const formatAction = (action: string) => {
     const labelKey = JOURNALS_AUDIT_ACTION_LABELS[action];
     if (labelKey) {
-      return t.auditTrailUi[labelKey];
+      return t.auditTrailUi[labelKey as keyof typeof t.auditTrailUi];
     }
     return action;
   };
@@ -424,7 +446,18 @@ function JournalsAuditPanel() {
             </thead>
             <tbody className="divide-y">
               {rows.map(row => (
-                <tr key={row.id} className="hover:bg-accent/30">
+                <tr
+                  key={row.id}
+                  className="hover:bg-accent/30 cursor-pointer"
+                  onClick={() => {
+                    setSelected(row);
+                    void api.audit.get(row.id).then((res) => {
+                      if (res.data && !res.error) {
+                        setSelected(mapAuditLogRow(res.data as Record<string, unknown>));
+                      }
+                    });
+                  }}
+                >
                   <td className="px-3 py-1.5 text-muted-foreground">
                     {new Date(row.createdAt).toLocaleString(uiLocale)}
                   </td>
@@ -441,14 +474,62 @@ function JournalsAuditPanel() {
           <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.auditEmpty}</p>
         )}
       </div>
+      <Dialog open={!!selected} onOpenChange={() => setSelected(null)}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="w-4 h-4" /> {t.auditTrailUi.detailTitle}
+            </DialogTitle>
+          </DialogHeader>
+          {selected && (
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="text-muted-foreground text-xs">{t.auditTrailUi.detailDateTime}:</span>
+                  <p className="text-xs">{new Date(selected.createdAt).toLocaleString(uiLocale)}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground text-xs">{t.auditTrailUi.detailAction}:</span>
+                  <p className="text-xs">{formatAction(selected.action)}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground text-xs">{t.auditTrailUi.detailUser}:</span>
+                  <p className="text-xs">{selected.userName}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground text-xs">{t.auditTrailUi.colModule}:</span>
+                  <p className="text-xs font-mono">{selected.tableName}</p>
+                </div>
+              </div>
+              <p className="text-sm">{selected.description}</p>
+              <AuditDetailPanel
+                details={selected.details}
+                oldValues={selected.oldValues}
+                newValues={selected.newValues}
+                metadata={selected.metadata}
+                labels={auditDetailLabels}
+                locale={uiLocale}
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function JournalsCashiersPanel({ branchId }: { branchId?: string }) {
+function JournalsCashiersPanel({
+  branchId,
+  dateFrom,
+  dateTo,
+}: {
+  branchId?: string;
+  dateFrom: string;
+  dateTo: string;
+}) {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const { sales } = useSales(branchId);
+  const { sales } = useSales(branchId, { dateFrom, dateTo, limit: 5000 });
 
   const cashierRows = useMemo(() => {
     const map = new Map<string, { name: string; sales: number; count: number }>();
@@ -514,7 +595,8 @@ export default function Journals() {
   const { hasPermission } = usePermissions(user?.id);
   const canBackdatePost = hasPermission('backdate_post');
   const canEditHistorical = hasPermission('edit_historical');
-  const { currentBranch, listBranchId, isConsolidatedView } = useBranchScope();
+  const { currentBranch, listBranchId } = useBranchScope();
+  const { companyName } = useCompanyLogo();
 
   const journalLabels = useMemo<JournalDisplayLabels>(() => ({
     systemUser: t.journalsUi.systemUser,
@@ -559,6 +641,8 @@ export default function Journals() {
   const [dateTo, setDateTo] = useState(() => localISODate());
   const [filterType, setFilterType] = useState('all');
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+  const [debouncedQ, setDebouncedQ] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   // New / edit entry dialog state — declare before CoA so we can defer the chart fetch.
   const [viewEntryOpen, setViewEntryOpen] = useState(false);
@@ -567,17 +651,28 @@ export default function Journals() {
   const [editingEntryNumber, setEditingEntryNumber] = useState<string>('');
   const [savingEntry, setSavingEntry] = useState(false);
   const [reversingEntry, setReversingEntry] = useState(false);
-  const [newEntryDate, setNewEntryDate] = useState(new Date().toISOString().split('T')[0]);
+  const [newEntryDate, setNewEntryDate] = useState(() => localISODate());
   const [newEntryType, setNewEntryType] = useState('ajuste');
   const [newEntryLines, setNewEntryLines] = useState<NewEntryLine[]>([createEmptyLine(), createEmptyLine()]);
   const [accountSearch, setAccountSearch] = useState('');
   const [activeLineId, setActiveLineId] = useState<string | null>(null);
 
-  const { entries, refetch, isLoading: listLoading } = useJournalEntries(
+  const {
+    entries,
+    refetch,
+    isLoading: listLoading,
+    loadingMore,
+    loadMore,
+    hasMore,
+    total,
+    periodTotals,
+  } = useJournalEntries(
     listBranchId,
     journalLabels,
     dateFrom,
     dateTo,
+    filterType,
+    debouncedQ,
   );
   // Defer CoA until the New/Edit dialog opens — list view does not need the full chart.
   const { accounts: chartAccounts, refetch: refetchChartAccounts } = useChartOfAccounts({
@@ -593,6 +688,11 @@ export default function Journals() {
   );
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQ(searchTerm.trim()), 350);
+    return () => window.clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => {
     setSelectedEntryId(null);
   }, [listBranchId, activeTab]);
 
@@ -602,46 +702,6 @@ export default function Journals() {
       void refetchChartAccounts();
     }
   }, [newEntryOpen, refetchChartAccounts]);
-
-  // Filter entries
-  const filteredEntries = useMemo(() => {
-    return entries.filter(e => {
-      const haystack = [
-        e.entryNumber,
-        e.description,
-        e.readableTitle,
-        e.readableSubtitle,
-        e.customerName,
-        e.contextSummary,
-        e.branchName,
-        e.createdBy,
-      ].join(' ').toLowerCase();
-      const matchesSearch = !searchTerm || haystack.includes(searchTerm.toLowerCase());
-      const matchesType =
-        filterType === 'all'
-        || e.type === filterType
-        || e.referenceType === filterType
-        || (filterType === 'ajuste' && (e.type === 'adjustment' || e.referenceType === 'adjustment'))
-        || (filterType === 'adjustment' && (e.type === 'adjustment' || e.referenceType === 'adjustment' || e.type === 'ajuste'))
-        || (filterType === 'compra' && e.type === 'purchase_invoice')
-        || (filterType === 'venda' && (e.type === 'sale' || e.type === 'cogs' || e.referenceType === 'sale'))
-        || (filterType === 'recibo' && (e.type === 'payment_receipt' || e.type === 'receipt' || e.referenceType === 'receipt'))
-        || (filterType === 'pagamento' && (e.type === 'payment_out' || e.type === 'payment' || e.referenceType === 'payment'));
-      const sortDate = e.entryDate || e.createdAt;
-      const day = String(sortDate || '').slice(0, 10);
-      const matchesDateFrom = !dateFrom || day >= dateFrom;
-      const matchesDateTo = !dateTo || day <= dateTo;
-      return matchesSearch && matchesType && matchesDateFrom && matchesDateTo;
-    });
-  }, [entries, searchTerm, filterType, dateFrom, dateTo]);
-
-  // Totals
-  const totals = useMemo(() => {
-    return filteredEntries.reduce((acc, e) => ({
-      debit: acc.debit + e.totalDebit,
-      credit: acc.credit + e.totalCredit,
-    }), { debit: 0, credit: 0 });
-  }, [filteredEntries]);
 
   const selectedEntry = entries.find(e => e.id === selectedEntryId);
 
@@ -1002,6 +1062,56 @@ export default function Journals() {
     }
   }
 
+  async function exportJournals() {
+    setExporting(true);
+    try {
+      const response = await api.journalEntries.list({
+        ...(listBranchId ? { branchId: listBranchId } : {}),
+        startDate: dateFrom,
+        endDate: dateTo,
+        ...(filterType !== 'all' ? { referenceType: filterType } : {}),
+        ...(debouncedQ ? { q: debouncedQ } : {}),
+        limit: EXPORT_LIMIT,
+        offset: 0,
+        includeContext: true,
+      });
+      if (response.error) throw new Error(response.error);
+      const payload = unwrapListPayload<Record<string, unknown>>(response.data);
+      const mapped = payload.items.map((je) => mapJournalEntryFromApi(je, journalLabels));
+      if (!mapped.length) {
+        toast.error(t.journalsUi.noEntriesFound);
+        return;
+      }
+      const rows = mapped.map((entry) => {
+        const typeConfig = resolveEntryType(entry.type);
+        const typeLabel = t.journalsUi.entryTypes[typeConfig.labelKey as keyof typeof t.journalsUi.entryTypes] as string;
+        return {
+          [t.journalsUi.colDateTime]: formatJournalDateTime(entry, uiLocale),
+          [t.journalsUi.colBranch]: entry.branchName || '',
+          [t.common.type]: typeLabel,
+          [t.journalsUi.entryNo]: entry.entryNumber,
+          [t.journalsUi.colCustomer]: entry.customerName || '',
+          [t.common.description]: entry.readableTitle,
+          [t.journalsUi.debit]: entry.totalDebit,
+          [t.journalsUi.credit]: entry.totalCredit,
+          [t.common.user]: entry.createdBy,
+        };
+      });
+      await exportReportExcel(rows, `journals_${dateFrom}_${dateTo}`, {
+        title: t.journalsUi.tabJournals,
+        companyName,
+        periodLabel: `${dateFrom} – ${dateTo}`,
+        branchLabel: currentBranch?.name,
+        generatedAt: new Date().toLocaleString(uiLocale),
+        landscape: true,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t.journalsUi.exportFailed);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Toolbar */}
@@ -1051,6 +1161,15 @@ export default function Journals() {
           }
         >
           <Undo2 className="w-3 h-3" /> {t.journalsUi.reverseEntry}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs gap-1"
+          onClick={() => { void exportJournals(); }}
+          disabled={exporting}
+        >
+          <Download className="w-3 h-3" /> {t.journalsUi.export}
         </Button>
         <div className="w-px h-5 bg-border mx-1" />
         <span className="text-xs text-muted-foreground">{t.common.from}:</span>
@@ -1119,13 +1238,13 @@ export default function Journals() {
 
         <TabsContent value="diarios" className="flex-1 m-0 overflow-auto">
           <div className="relative">
-          {listLoading && filteredEntries.length > 0 && (
+          {listLoading && entries.length > 0 && (
             <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-center gap-2 border-b bg-background/80 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               {t.common.loading}
             </div>
           )}
-          <table className={cn('w-full text-xs', listLoading && filteredEntries.length > 0 && 'opacity-60 pointer-events-none')}>
+          <table className={cn('w-full text-xs', listLoading && entries.length > 0 && 'opacity-60 pointer-events-none')}>
             <thead className="bg-muted/60 border-b sticky top-0 z-10">
               <tr>
                 <th className="px-3 py-2 text-left font-semibold w-36">{t.journalsUi.colDateTime}</th>
@@ -1141,7 +1260,7 @@ export default function Journals() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {filteredEntries.map(entry => {
+              {entries.map(entry => {
                 const typeConfig = resolveEntryType(entry.type);
                 const typeLabel = typeConfig
                   ? (t.journalsUi.entryTypes[typeConfig.labelKey as keyof typeof t.journalsUi.entryTypes] as string)
@@ -1189,21 +1308,32 @@ export default function Journals() {
             </tbody>
             <tfoot className="bg-muted/80 border-t-2 border-primary/30">
               <tr className="font-bold text-xs">
-                <td className="px-3 py-2" colSpan={6}>{t.journalsUi.totalEntries.replace('{count}', String(filteredEntries.length))}</td>
-                <td className="px-3 py-2 text-right font-mono text-green-600">{totals.debit.toLocaleString(uiLocale)} Kz</td>
-                <td className="px-3 py-2 text-right font-mono text-red-600">{totals.credit.toLocaleString(uiLocale)} Kz</td>
+                <td className="px-3 py-2" colSpan={6}>
+                  {t.journalsUi.showingCount
+                    .replace('{shown}', String(entries.length))
+                    .replace('{total}', String(total))}
+                </td>
+                <td className="px-3 py-2 text-right font-mono text-green-600">{periodTotals.debit.toLocaleString(uiLocale)} Kz</td>
+                <td className="px-3 py-2 text-right font-mono text-red-600">{periodTotals.credit.toLocaleString(uiLocale)} Kz</td>
                 <td colSpan={2}></td>
               </tr>
             </tfoot>
           </table>
-          {listLoading && filteredEntries.length === 0 && (
+          {listLoading && entries.length === 0 && (
             <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
               <Loader2 className="h-8 w-8 animate-spin opacity-70" />
               <p className="text-sm">{t.common.loading}</p>
             </div>
           )}
-          {!listLoading && filteredEntries.length === 0 && (
+          {!listLoading && entries.length === 0 && (
             <div className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.noEntriesFound}</div>
+          )}
+          {!listLoading && hasMore && (
+            <div className="flex justify-center py-3">
+              <Button variant="outline" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>
+                {loadingMore ? t.common.loading : t.journalsUi.loadMore}
+              </Button>
+            </div>
           )}
           </div>
         </TabsContent>
@@ -1217,7 +1347,7 @@ export default function Journals() {
         </TabsContent>
 
         <TabsContent value="cashiers" className="flex-1 m-0 overflow-hidden">
-          <JournalsCashiersPanel branchId={listBranchId} />
+          <JournalsCashiersPanel branchId={listBranchId} dateFrom={dateFrom} dateTo={dateTo} />
         </TabsContent>
       </Tabs>
 
@@ -1303,7 +1433,7 @@ export default function Journals() {
                   <Select value={newEntryType} onValueChange={setNewEntryType}>
                     <SelectTrigger className="mt-1.5 h-10"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {ENTRY_TYPES.map(et => (
+                      {CREATE_ENTRY_TYPES.map(et => (
                         <SelectItem key={et.value} value={et.value}>
                           {t.journalsUi.entryTypes[et.labelKey as keyof typeof t.journalsUi.entryTypes] as string}
                         </SelectItem>

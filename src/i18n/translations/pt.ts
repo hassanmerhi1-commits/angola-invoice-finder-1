@@ -3890,10 +3890,18 @@ export const pt: TranslationKeys = {
     filterUser: "Utilizador",
     allUsers: "Todos Utilizadores",
     resultsCount: "{count} resultados",
+    showingCount: "A mostrar {shown} de {total}",
+    dateFrom: "De",
+    dateTo: "Até",
+    filterBranch: "Filial",
+    allBranches: "Todas as filiais",
+    loadMore: "Carregar mais",
+    truncatedHint: "Mais de {limit} eventos correspondem a estes filtros. Reduza as datas ou exporte os primeiros {limit}.",
 
     colTime: "Hora",
     colAction: "Acção",
     colModule: "Módulo",
+    colBranch: "Filial",
     colUser: "Utilizador",
     colDescription: "Descrição",
 
@@ -3957,6 +3965,8 @@ export const pt: TranslationKeys = {
     actionSendAgt: "Enviar para AGT",
     actionAuthorize: "Autorizar",
     actionAuthorizeFailed: "Autorização recusada",
+    actionReceive: "Receber",
+    actionClose: "Fechar",
     permissionDenied: "Não tem permissão para ver o histórico de auditoria",
 
     moduleSales: "Vendas",
@@ -3977,6 +3987,12 @@ export const pt: TranslationKeys = {
     moduleFiscal: "Fiscal",
     moduleExpenses: "Despesas",
     moduleBank: "Banco",
+    moduleWarehouses: "Armazéns",
+    moduleCategories: "Categorias",
+    moduleTax: "Códigos de IVA",
+    moduleDailyReports: "Fecho diário",
+    moduleBudgets: "Orçamentos",
+    moduleCostCenters: "Centros de custo",
   },
 
   bankAccountsUi: {
@@ -4677,6 +4693,8 @@ export const pt: TranslationKeys = {
       opening: "Abertura",
       closing: "Fecho",
       manual: "Manual",
+      transfer: "Transferência",
+      expense: "Despesa",
     },
 
     // Validação / toasts
@@ -4718,6 +4736,10 @@ export const pt: TranslationKeys = {
     credit: "Crédito",
     totalEntries: "TOTAL ({count} lançamentos)",
     noEntriesFound: "Nenhum lançamento encontrado",
+    loadMore: "Carregar mais",
+    showingCount: "A mostrar {shown} de {total}",
+    export: "Exportar",
+    exportFailed: "Falha ao exportar os diários",
 
     // View dialog
     entryTitle: "Lançamento {number}",
@@ -4730,7 +4752,7 @@ export const pt: TranslationKeys = {
     auditEmpty: "Ainda sem eventos. Após login, emitir documentos, imprimir, AGT ou exportar SAF-T, actualize aqui.",
     openFullAudit: "Auditoria completa",
     cashiersHintTitle: "Cashiers - Resumo por operador",
-    cashiersHintDesc: "Vendas e recebimentos por caixa",
+    cashiersHintDesc: "Vendas do período seleccionado nos diários, por caixa",
     cashierSalesCount: "N.º vendas",
     cashierSalesTotal: "Total vendas",
 

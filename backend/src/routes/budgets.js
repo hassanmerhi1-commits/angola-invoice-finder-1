@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
 const { recomputeBudgetActuals } = require('../lib/budgetActuals');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -27,7 +28,16 @@ module.exports = function(broadcastTable) {
         [code, name, parentId, branchId, managerId, description]
       );
       broadcastTable('cost_centers');
-      res.status(201).json(result.rows[0]);
+      const created = result.rows[0];
+      auditErpSafe(req, {
+        table: 'cost_centers',
+        id: created?.id,
+        action: 'create',
+        description: `Centro de custo criado: ${code} ${name || ''}`.trim(),
+        newValues: { code, name, branchId },
+        branchId,
+      });
+      res.status(201).json(created);
     } catch (error) {
       console.error('[BUDGET ERROR]', error);
       res.status(500).json({ error: 'Failed to create cost center' });
@@ -43,6 +53,13 @@ module.exports = function(broadcastTable) {
         [name, description, isActive, managerId, req.params.id]
       );
       broadcastTable('cost_centers');
+      auditErpSafe(req, {
+        table: 'cost_centers',
+        id: req.params.id,
+        action: 'update',
+        description: `Centro de custo actualizado: ${result.rows[0]?.code || req.params.id}`,
+        newValues: { name, isActive, managerId },
+      });
       res.json(result.rows[0]);
     } catch (error) {
       console.error('[BUDGET ERROR]', error);
@@ -111,7 +128,15 @@ module.exports = function(broadcastTable) {
         [costCenterId, accountCode, periodYear, periodMonth, budgetAmount, notes]
       );
       broadcastTable('budgets');
-      res.status(201).json(result.rows[0]);
+      const row = result.rows[0];
+      auditErpSafe(req, {
+        table: 'budgets',
+        id: row?.id,
+        action: 'update',
+        description: `Orçamento ${periodYear}/${periodMonth} conta ${accountCode}: ${budgetAmount}`,
+        newValues: { costCenterId, accountCode, periodYear, periodMonth, budgetAmount },
+      });
+      res.status(201).json(row);
     } catch (error) {
       console.error('[BUDGET ERROR]', error);
       res.status(500).json({ error: 'Failed to create/update budget' });

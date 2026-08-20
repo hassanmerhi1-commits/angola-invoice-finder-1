@@ -375,15 +375,244 @@ async function enrichJournalEntryContext(db, entry) {
   }
 }
 
-async function enrichJournalEntries(db, entries) {
+function collectReferenceIds(entries, types) {
+  const ids = [];
+  const seen = new Set();
+  const typeSet = new Set(types);
   for (const entry of entries) {
-    entry.context = await enrichJournalEntryContext(db, entry);
+    const t = String(entry.reference_type || entry.referenceType || '').toLowerCase();
+    const id = entry.reference_id || entry.referenceId;
+    if (!id || !typeSet.has(t)) continue;
+    const key = String(id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ids.push(key);
+  }
+  return ids;
+}
+
+async function fetchRowsByIds(db, sql, ids) {
+  if (!ids.length) return [];
+  const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+  const result = await db.query(sql.replace(/__IN__/g, placeholders), ids);
+  return result.rows || [];
+}
+
+/**
+ * Batch header context for journal lists (no line-item queries).
+ * Full per-entry context with items stays on GET /:id.
+ */
+async function enrichJournalEntriesLight(db, entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return entries;
+  const ctxByRef = new Map();
+
+  const put = (id, ctx, types) => {
+    if (!id || !ctx) return;
+    const keyId = String(id);
+    for (const t of types) ctxByRef.set(`${t}:${keyId}`, ctx);
+  };
+
+  try {
+    const saleIds = collectReferenceIds(entries, ['sale', 'venda']);
+    const sales = await fetchRowsByIds(db, `
+      SELECT s.id, s.invoice_number, s.payment_method,
+             COALESCE(NULLIF(TRIM(s.customer_name), ''), NULLIF(TRIM(c.name), '')) AS customer_name,
+             COALESCE(NULLIF(TRIM(s.customer_nif), ''), NULLIF(TRIM(c.nif), '')) AS customer_nif,
+             s.invoice_type, s.total, s.created_at, b.name AS branch_name
+      FROM sales s
+      LEFT JOIN branches b ON s.branch_id = b.id
+      LEFT JOIN clients c ON s.client_id = c.id
+      WHERE CAST(s.id AS TEXT) IN (__IN__)
+    `, saleIds);
+    for (const sale of sales) {
+      put(sale.id, {
+        documentType: 'sale',
+        documentNumber: sale.invoice_number,
+        documentDate: sale.created_at,
+        paymentMethod: sale.payment_method,
+        customerName: sale.customer_name,
+        customerNif: sale.customer_nif,
+        invoiceType: sale.invoice_type,
+        total: Number(sale.total) || 0,
+        branchName: sale.branch_name,
+      }, ['sale', 'venda']);
+    }
+  } catch (err) {
+    console.warn('[JOURNAL CONTEXT] sales batch:', err.message);
+  }
+
+  try {
+    const noteIds = collectReferenceIds(entries, ['credit_note']);
+    const notes = await fetchRowsByIds(db, `
+      SELECT id, document_number, original_invoice_number, customer_name, reason,
+             reason_description, total, branch_name, issued_at
+      FROM credit_notes WHERE CAST(id AS TEXT) IN (__IN__)
+    `, noteIds);
+    for (const note of notes) {
+      put(note.id, {
+        branchName: note.branch_name,
+      }, ['credit_note']);
+    }
+  } catch (err) {
+    console.warn('[JOURNAL CONTEXT] credit notes batch:', err.message);
+  }
+
+  try {
+    const noteIds = collectReferenceIds(entries, ['debit_note']);
+    const notes = await fetchRowsByIds(db, `
+      SELECT id, document_number, original_invoice_number, customer_name, reason,
+             reason_description, total, branch_name, issued_at
+      FROM debit_notes WHERE CAST(id AS TEXT) IN (__IN__)
+    `, noteIds);
+    for (const note of notes) {
+      put(note.id, {
+        branchName: note.branch_name,
+      }, ['debit_note']);
+    }
+  } catch (err) {
+    console.warn('[JOURNAL CONTEXT] debit notes batch:', err.message);
+  }
+
+  try {
+    const payIds = collectReferenceIds(entries, [
+      'receipt', 'payment', 'payment_receipt', 'payment_out', 'pagamento', 'recibo',
+    ]);
+    const pays = await fetchRowsByIds(db, `
+      SELECT p.id, p.payment_number, p.payment_type, p.entity_type, p.entity_id,
+             COALESCE(
+               NULLIF(TRIM(p.entity_name), ''),
+               CASE
+                 WHEN p.entity_type = 'supplier' THEN s.name
+                 WHEN p.entity_type = 'customer' THEN c.name
+                 ELSE NULL
+               END
+             ) AS entity_name,
+             p.payment_method, p.amount, p.reference, p.notes, p.created_at, p.posted_at,
+             b.name AS branch_name
+      FROM payments p
+      LEFT JOIN branches b ON p.branch_id = b.id
+      LEFT JOIN suppliers s ON p.entity_type = 'supplier' AND s.id = p.entity_id
+      LEFT JOIN clients c ON p.entity_type = 'customer' AND c.id = p.entity_id
+      WHERE CAST(p.id AS TEXT) IN (__IN__)
+    `, payIds);
+    for (const p of pays) {
+      const entityType = String(p.entity_type || '').toLowerCase();
+      const entityName = String(p.entity_name || '').trim();
+      put(p.id, {
+        documentType: p.payment_type === 'receipt' ? 'payment_receipt' : 'payment_out',
+        documentNumber: p.payment_number,
+        documentDate: p.posted_at || p.created_at,
+        entityType,
+        entityName,
+        supplierName: entityType === 'supplier' ? entityName : undefined,
+        customerName: entityType === 'customer' ? entityName : undefined,
+        paymentMethod: p.payment_method,
+        total: Number(p.amount) || 0,
+        reference: p.reference,
+        notes: p.notes,
+        branchName: p.branch_name,
+      }, ['receipt', 'payment', 'payment_receipt', 'payment_out', 'pagamento', 'recibo']);
+    }
+  } catch (err) {
+    console.warn('[JOURNAL CONTEXT] payments batch:', err.message);
+  }
+
+  try {
+    const invIds = collectReferenceIds(entries, ['purchase_invoice', 'compra', 'purchase']);
+    const invoices = await fetchRowsByIds(db, `
+      SELECT id, invoice_number, supplier_name, supplier_nif, date, total,
+             warehouse_name, branch_name, created_at
+      FROM purchase_invoices WHERE CAST(id AS TEXT) IN (__IN__)
+    `, invIds);
+    for (const inv of invoices) {
+      put(inv.id, {
+        documentType: 'purchase_invoice',
+        documentNumber: inv.invoice_number,
+        documentDate: inv.date || inv.created_at,
+        supplierName: inv.supplier_name,
+        supplierNif: inv.supplier_nif,
+        warehouseName: inv.warehouse_name,
+        total: Number(inv.total) || 0,
+        branchName: inv.branch_name,
+      }, ['purchase_invoice', 'compra', 'purchase']);
+    }
+  } catch (err) {
+    console.warn('[JOURNAL CONTEXT] purchase invoices batch:', err.message);
+  }
+
+  try {
+    const trIds = collectReferenceIds(entries, ['transfer']);
+    const transfers = await fetchRowsByIds(db, `
+      SELECT st.id, st.transfer_number, st.status, st.created_at,
+             fb.name AS from_branch_name, tb.name AS to_branch_name
+      FROM stock_transfers st
+      LEFT JOIN branches fb ON st.from_branch_id = fb.id
+      LEFT JOIN branches tb ON st.to_branch_id = tb.id
+      WHERE CAST(st.id AS TEXT) IN (__IN__)
+    `, trIds);
+    for (const tr of transfers) {
+      put(tr.id, {
+        documentType: 'transfer',
+        documentNumber: tr.transfer_number,
+        documentDate: tr.created_at,
+        status: tr.status,
+        fromBranchName: tr.from_branch_name,
+        toBranchName: tr.to_branch_name,
+        relatedDocument: tr.from_branch_name && tr.to_branch_name
+          ? { type: 'transfer', number: `${tr.from_branch_name} → ${tr.to_branch_name}` }
+          : null,
+      }, ['transfer']);
+    }
+  } catch (err) {
+    console.warn('[JOURNAL CONTEXT] transfers batch:', err.message);
+  }
+
+  try {
+    const expIds = collectReferenceIds(entries, ['expense', 'despesa']);
+    const expenses = await fetchRowsByIds(db, `
+      SELECT id, expense_number, description, category, total_amount, amount,
+             payment_source, payee_name, branch_name, paid_at, created_at
+      FROM expenses WHERE CAST(id AS TEXT) IN (__IN__)
+    `, expIds);
+    for (const e of expenses) {
+      put(e.id, {
+        documentType: 'expense',
+        documentNumber: e.expense_number || e.id,
+        documentDate: e.paid_at || e.created_at,
+        entityName: e.payee_name || e.description,
+        notes: e.description,
+        paymentMethod: e.payment_source,
+        total: Number(e.total_amount ?? e.amount) || 0,
+        branchName: e.branch_name,
+        itemsSummary: e.category ? String(e.category) : null,
+      }, ['expense', 'despesa']);
+    }
+  } catch (err) {
+    console.warn('[JOURNAL CONTEXT] expenses batch:', err.message);
+  }
+
+  for (const entry of entries) {
+    const id = entry.reference_id || entry.referenceId;
+    const type = String(entry.reference_type || entry.referenceType || '').toLowerCase();
+    if (id) {
+      entry.context = ctxByRef.get(`${type}:${String(id)}`) || null;
+    }
   }
   return entries;
+}
+
+async function enrichJournalEntries(db, entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return entries;
+  if (entries.length === 1) {
+    entries[0].context = await enrichJournalEntryContext(db, entries[0]);
+    return entries;
+  }
+  return enrichJournalEntriesLight(db, entries);
 }
 
 module.exports = {
   enrichJournalEntryContext,
   enrichJournalEntries,
+  enrichJournalEntriesLight,
   summarizeItems,
 };

@@ -137,15 +137,26 @@ export function unwrapListPayload<T>(data: unknown): {
   hasMore: boolean;
   limit?: number;
   offset?: number;
+  total?: number;
+  totals?: { debit?: number; credit?: number };
 } {
   if (Array.isArray(data)) return { items: data as T[], hasMore: false };
-  const obj = data as { items?: T[]; hasMore?: boolean; limit?: number; offset?: number } | null;
+  const obj = data as {
+    items?: T[];
+    hasMore?: boolean;
+    limit?: number;
+    offset?: number;
+    total?: number;
+    totals?: { debit?: number; credit?: number };
+  } | null;
   if (obj && Array.isArray(obj.items)) {
     return {
       items: obj.items,
       hasMore: !!obj.hasMore,
       limit: obj.limit,
       offset: obj.offset,
+      total: obj.total,
+      totals: obj.totals,
     };
   }
   return { items: [], hasMore: false };

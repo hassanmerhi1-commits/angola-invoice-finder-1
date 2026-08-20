@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 function mapRow(row) {
   return {
@@ -77,6 +78,14 @@ module.exports = function warehousesRouter(broadcastTable) {
       );
       const r = await db.query('SELECT * FROM warehouses WHERE id = $1', [id]);
       await broadcastTable?.('warehouses', id);
+      auditErpSafe(req, {
+        table: 'warehouses',
+        id,
+        action: 'create',
+        description: `Armazém criado: ${name} (${code})`,
+        newValues: { branchId, code, name, isDefault },
+        branchId,
+      });
       res.status(201).json(mapRow(r.rows[0]));
     } catch (e) {
       res.status(400).json({ error: e.message || 'Failed to create warehouse' });
@@ -113,6 +122,14 @@ module.exports = function warehousesRouter(broadcastTable) {
       );
       const r = await db.query('SELECT * FROM warehouses WHERE id = $1', [req.params.id]);
       await broadcastTable?.('warehouses', req.params.id);
+      auditErpSafe(req, {
+        table: 'warehouses',
+        id: req.params.id,
+        action: 'update',
+        description: `Armazém actualizado: ${r.rows[0]?.name || req.params.id}`,
+        newValues: { name, isDefault, isActive },
+        branchId: r.rows[0]?.branch_id,
+      });
       res.json(mapRow(r.rows[0]));
     } catch (e) {
       res.status(400).json({ error: e.message || 'Failed to update warehouse' });

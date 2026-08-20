@@ -7,6 +7,18 @@ export const AUDIT_TABLE_MODULE_MAP: Record<string, string> = {
   saft: 'fiscal',
   users: 'system',
   agt: 'fiscal',
+  purchase_orders: 'purchase_orders',
+  stock_transfers: 'stock',
+  supplier_returns: 'suppliers',
+  branches: 'system',
+  warehouses: 'stock',
+  categories: 'products',
+  tax_codes: 'fiscal',
+  daily_reports: 'system',
+  bank_reconciliations: 'bank',
+  bank_transactions: 'bank',
+  cost_centers: 'accounting',
+  budgets: 'accounting',
 };
 
 export function parseAuditJsonField(val: unknown): Record<string, unknown> | undefined {
@@ -27,6 +39,7 @@ export interface AuditLogRow {
   description: string;
   userName: string;
   userId: string;
+  branchId?: string;
   createdAt: string;
   /** Merged display bag (new values + metadata). Prefer oldValues/newValues for diffs. */
   details?: Record<string, unknown>;
@@ -54,6 +67,7 @@ export function mapAuditLogRow(row: Record<string, unknown>): AuditLogRow {
     description: String(row.description || `${row.action} ${tableName}`),
     userName: String(row.user_name || row.userName || 'System'),
     userId: String(row.user_id || row.userId || ''),
+    branchId: row.branch_id || row.branchId ? String(row.branch_id || row.branchId) : undefined,
     createdAt: String(row.created_at || row.timestamp || new Date().toISOString()),
     details: Object.keys(details).length ? details : undefined,
     oldValues,

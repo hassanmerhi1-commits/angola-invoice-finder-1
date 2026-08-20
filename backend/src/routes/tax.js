@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -27,7 +28,15 @@ module.exports = function(broadcastTable) {
         [code, name, rate, taxType || 'IVA', description || '', accountCodeOutput, accountCodeInput]
       );
       broadcastTable('tax_codes');
-      res.status(201).json(result.rows[0]);
+      const created = result.rows[0];
+      auditErpSafe(req, {
+        table: 'tax_codes',
+        id: created?.id,
+        action: 'create',
+        description: `Código de IVA criado: ${code} (${rate}%)`,
+        newValues: { code, name, rate, taxType: taxType || 'IVA' },
+      });
+      res.status(201).json(created);
     } catch (error) {
       console.error('[TAX ERROR]', error);
       res.status(500).json({ error: 'Failed to create tax code' });
@@ -47,6 +56,13 @@ module.exports = function(broadcastTable) {
         [name, rate, description, isActive, accountCodeOutput, accountCodeInput, req.params.id]
       );
       broadcastTable('tax_codes');
+      auditErpSafe(req, {
+        table: 'tax_codes',
+        id: req.params.id,
+        action: 'update',
+        description: `Código de IVA actualizado: ${result.rows[0]?.code || req.params.id}`,
+        newValues: { name, rate, isActive },
+      });
       res.json(result.rows[0]);
     } catch (error) {
       console.error('[TAX ERROR]', error);

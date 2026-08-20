@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const db = require('../db');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 function mapTxn(row) {
   if (!row) return null;
@@ -119,7 +120,16 @@ module.exports = function bankTransactionsRouter() {
         ],
       );
       const r = await db.query(`SELECT * FROM bank_transactions WHERE id = $1`, [id]);
-      res.status(201).json(mapTxn(r.rows[0]));
+      const mapped = mapTxn(r.rows[0]);
+      auditErpSafe(req, {
+        table: 'bank_transactions',
+        id,
+        action: 'create',
+        description: `Movimento bancário: ${direction} ${amount} (${mapped?.description || bankAccountId})`,
+        newValues: { bankAccountId, direction, amount, type: String(b.type || 'manual') },
+        branchId: String(b.branchId || b.branch_id || ''),
+      });
+      res.status(201).json(mapped);
     } catch (e) {
       if (/does not exist|no such table/i.test(String(e.message))) {
         return res.status(503).json({ error: 'bank_transactions table not ready' });

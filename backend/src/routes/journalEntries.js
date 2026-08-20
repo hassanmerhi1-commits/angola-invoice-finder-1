@@ -1,7 +1,7 @@
 // Journal Entries API routes
 const express = require('express');
 const db = require('../db');
-const { enrichJournalEntryContext, enrichJournalEntries } = require('../lib/journalEntryContext');
+const { enrichJournalEntryContext, enrichJournalEntries, enrichJournalEntriesLight } = require('../lib/journalEntryContext');
 const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
 const { parseListPagination, parseTruthyQuery } = require('../lib/listPagination');
 const { requirePermission } = require('../middleware/requirePermission');
@@ -14,13 +14,36 @@ const {
   toISODateOnly,
 } = require('../lib/workingDayAccess');
 
+const JOURNAL_TYPE_GROUPS = {
+  venda: ['sale', 'venda'],
+  sale: ['sale', 'venda'],
+  compra: ['purchase', 'purchase_invoice', 'compra'],
+  purchase: ['purchase', 'purchase_invoice', 'compra'],
+  purchase_invoice: ['purchase', 'purchase_invoice', 'compra'],
+  credit_note: ['credit_note'],
+  debit_note: ['debit_note'],
+  recibo: ['receipt', 'payment_receipt', 'recibo'],
+  receipt: ['receipt', 'payment_receipt', 'recibo'],
+  pagamento: ['payment', 'payment_out', 'pagamento'],
+  payment: ['payment', 'payment_out', 'pagamento'],
+  ajuste: ['adjustment', 'ajuste', 'journal', 'je'],
+  adjustment: ['adjustment', 'ajuste', 'journal', 'je'],
+  manual: ['manual'],
+  transfer: ['transfer'],
+  expense: ['expense', 'despesa'],
+};
+
+const ENTRY_FROM = `
+  FROM journal_entries je
+  LEFT JOIN users u ON je.created_by = u.id
+  LEFT JOIN branches b ON je.branch_id = b.id
+`;
+
 const ENTRY_HEADER_SELECT = `
   SELECT je.*,
     COALESCE(NULLIF(je.created_by_name, ''), u.name) AS created_by_name,
     b.name AS branch_name
-  FROM journal_entries je
-  LEFT JOIN users u ON je.created_by = u.id
-  LEFT JOIN branches b ON je.branch_id = b.id
+  ${ENTRY_FROM}
 `;
 
 async function loadJournalLines(entryId) {
@@ -42,38 +65,75 @@ module.exports = function(broadcastTable) {
   // Get all journal entries with lines
   router.get('/', async (req, res) => {
     try {
-      const { branchId, referenceType, startDate, endDate } = req.query;
-      const { limit, offset } = parseListPagination(req, { defaultLimit: 200, maxLimit: 500 });
+      const { branchId, referenceType, startDate, endDate, q } = req.query;
+      const dated = !!(String(startDate || '').trim() && String(endDate || '').trim());
+      const { limit, offset } = parseListPagination(req, {
+        defaultLimit: 200,
+        maxLimit: dated ? 5000 : 500,
+      });
       const includeLines = parseTruthyQuery(req.query.includeLines);
       const includeContext = parseTruthyQuery(req.query.includeContext);
-      let query = `${ENTRY_HEADER_SELECT} WHERE 1=1`;
+
       const params = [];
+      const conditions = ['1=1'];
       let paramIndex = 1;
 
       if (branchId) {
         const branchFilter = await buildJournalBranchFilter(db, branchId, paramIndex);
         if (branchFilter.sql) {
-          query += branchFilter.sql;
+          conditions.push(branchFilter.sql.replace(/^\s*AND\s+/i, ''));
           params.push(...branchFilter.params);
           paramIndex += branchFilter.params.length;
         }
       }
-      if (referenceType) {
-        query += ` AND je.reference_type = $${paramIndex++}`;
-        params.push(referenceType);
+      if (referenceType && String(referenceType) !== 'all') {
+        const key = String(referenceType).trim().toLowerCase();
+        const types = JOURNAL_TYPE_GROUPS[key] || [key];
+        const placeholders = types.map(() => `$${paramIndex++}`).join(', ');
+        conditions.push(`LOWER(COALESCE(je.reference_type, '')) IN (${placeholders})`);
+        params.push(...types);
       }
       if (startDate) {
-        query += ` AND je.entry_date >= $${paramIndex++}`;
+        conditions.push(`je.entry_date >= $${paramIndex++}`);
         params.push(startDate);
       }
       if (endDate) {
-        query += ` AND je.entry_date <= $${paramIndex++}`;
+        conditions.push(`je.entry_date <= $${paramIndex++}`);
         params.push(endDate);
       }
+      const search = String(q || '').trim();
+      if (search) {
+        params.push(`%${search.toLowerCase()}%`);
+        const p = `$${paramIndex++}`;
+        conditions.push(
+          `(LOWER(COALESCE(je.description, '')) LIKE ${p}
+            OR LOWER(COALESCE(je.entry_number, '')) LIKE ${p}
+            OR LOWER(COALESCE(je.created_by_name, '')) LIKE ${p}
+            OR LOWER(COALESCE(u.name, '')) LIKE ${p}
+            OR LOWER(COALESCE(b.name, '')) LIKE ${p}
+            OR LOWER(CAST(je.reference_id AS TEXT)) LIKE ${p})`,
+        );
+      }
 
-      query += ` ORDER BY je.entry_date DESC, je.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-      params.push(limit, offset);
-      const result = await db.query(query, params);
+      const where = `WHERE ${conditions.join(' AND ')}`;
+
+      const countResult = await db.query(
+        `SELECT COUNT(*) AS total,
+                COALESCE(SUM(je.total_debit), 0) AS total_debit,
+                COALESCE(SUM(je.total_credit), 0) AS total_credit
+         ${ENTRY_FROM}
+         ${where}`,
+        params,
+      );
+      const total = Number(countResult.rows[0]?.total || 0);
+      const totalDebit = Number(countResult.rows[0]?.total_debit || 0);
+      const totalCredit = Number(countResult.rows[0]?.total_credit || 0);
+
+      const listParams = [...params, limit, offset];
+      const query = `${ENTRY_HEADER_SELECT} ${where}
+         ORDER BY je.entry_date DESC, je.created_at DESC
+         LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`;
+      const result = await db.query(query, listParams);
 
       if (includeLines) {
         for (const entry of result.rows) {
@@ -85,14 +145,16 @@ module.exports = function(broadcastTable) {
         }
       }
       if (includeContext) {
-        await enrichJournalEntries(db, result.rows);
+        await enrichJournalEntriesLight(db, result.rows);
       }
 
       res.json({
         items: result.rows,
+        total,
+        totals: { debit: totalDebit, credit: totalCredit },
         limit,
         offset,
-        hasMore: result.rows.length === limit,
+        hasMore: offset + result.rows.length < total,
       });
     } catch (error) {
       console.error('[JOURNAL ENTRIES ERROR]', error);

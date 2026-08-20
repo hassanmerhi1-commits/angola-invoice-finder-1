@@ -3887,10 +3887,18 @@ export const en = {
     filterUser: "User",
     allUsers: "All users",
     resultsCount: "{count} results",
+    showingCount: "Showing {shown} of {total}",
+    dateFrom: "From",
+    dateTo: "To",
+    filterBranch: "Branch",
+    allBranches: "All branches",
+    loadMore: "Load more",
+    truncatedHint: "More than {limit} events match these filters. Narrow the dates or export the first {limit}.",
 
     colTime: "Time",
     colAction: "Action",
     colModule: "Module",
+    colBranch: "Branch",
     colUser: "User",
     colDescription: "Description",
 
@@ -3954,6 +3962,8 @@ export const en = {
     actionSendAgt: "Send to AGT",
     actionAuthorize: "Authorize",
     actionAuthorizeFailed: "Authorization denied",
+    actionReceive: "Receive",
+    actionClose: "Close",
     permissionDenied: "You do not have permission to view the audit trail",
 
     moduleSales: "Sales",
@@ -3974,6 +3984,12 @@ export const en = {
     moduleFiscal: "Fiscal",
     moduleExpenses: "Expenses",
     moduleBank: "Bank",
+    moduleWarehouses: "Warehouses",
+    moduleCategories: "Categories",
+    moduleTax: "Tax codes",
+    moduleDailyReports: "Daily close",
+    moduleBudgets: "Budgets",
+    moduleCostCenters: "Cost centers",
   },
 
   bankAccountsUi: {
@@ -4674,6 +4690,8 @@ export const en = {
       opening: "Opening",
       closing: "Closing",
       manual: "Manual",
+      transfer: "Transfer",
+      expense: "Expense",
     },
 
     // Validation / toasts
@@ -4715,6 +4733,10 @@ export const en = {
     credit: "Credit",
     totalEntries: "TOTAL ({count} entries)",
     noEntriesFound: "No entries found",
+    loadMore: "Load more",
+    showingCount: "Showing {shown} of {total}",
+    export: "Export",
+    exportFailed: "Failed to export journals",
 
     // View dialog
     entryTitle: "Entry {number}",
@@ -4727,7 +4749,7 @@ export const en = {
     auditEmpty: "No audit events yet. After login, issue documents, print, AGT, or SAF-T export, refresh here.",
     openFullAudit: "Full audit trail",
     cashiersHintTitle: "Cashiers — summary by operator",
-    cashiersHintDesc: "Sales and receipts by cashier",
+    cashiersHintDesc: "Sales in the selected journal period, by cashier",
     cashierSalesCount: "Sales count",
     cashierSalesTotal: "Sales total",
 

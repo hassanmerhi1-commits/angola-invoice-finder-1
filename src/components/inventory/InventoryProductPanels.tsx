@@ -755,7 +755,7 @@ export function InventoryProductAuditPanel({
         }
 
         const skuKey = (product.sku || '').trim().toLowerCase();
-        const broad = await api.audit.list({ limit: 500 });
+        const broad = await api.audit.list({ tableName: 'products', limit: 500 });
         for (const entry of broad.data || []) {
           const desc = String(
             entry.description || entry.new_values || entry.newValues || '',

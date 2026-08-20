@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   Shield, Search, FileText, User, Download, LogIn, LogOut, Edit,
   CheckCircle, XCircle, AlertTriangle, Printer, RefreshCw, ArrowRightLeft,
-  Eye, Trash2, RotateCcw, Package, DollarSign, Clock, Send
+  Eye, RotateCcw, Clock, Send, Package
 } from 'lucide-react';
 import { api } from '@/lib/api/client';
 import { useAuth } from '@/hooks/useERP';
@@ -21,8 +21,23 @@ import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 import { mapAuditLogRow, type AuditLogRow } from '@/lib/auditLogDisplay';
 import { AuditDetailPanel } from '@/components/audit/AuditDetailPanel';
+import { DatePickerButton } from '@/components/ui/DatePickerButton';
+import { localISODate } from '@/lib/workingDayAccess';
+import { useBranchContext } from '@/contexts/BranchContext';
+import { formatBranchDisplayName } from '@/lib/branchDisplay';
+import { exportReportExcel } from '@/lib/reportExport';
+import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 
 export type AuditEntry = AuditLogRow & { workstationId?: string };
+
+const PAGE_SIZE = 200;
+const EXPORT_LIMIT = 5000;
+
+function daysAgoISO(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return localISODate(d);
+}
 
 function mapBackendAuditRow(row: Record<string, unknown>): AuditEntry {
   const mapped = mapAuditLogRow(row);
@@ -30,15 +45,6 @@ function mapBackendAuditRow(row: Record<string, unknown>): AuditEntry {
     ...mapped,
     workstationId: row.workstation_id ? String(row.workstation_id) : undefined,
   };
-}
-
-async function loadAuditEntries(): Promise<AuditEntry[]> {
-  const res = await api.audit.list({ limit: 150 });
-  if (res.error) {
-    throw new Error(res.error);
-  }
-  const rows = Array.isArray(res.data) ? res.data : [];
-  return rows.map((row) => mapBackendAuditRow(row as Record<string, unknown>));
 }
 
 const ACTION_CONFIG: Record<string, { icon: typeof FileText; labelKey: string; color: string }> = {
@@ -63,6 +69,8 @@ const ACTION_CONFIG: Record<string, { icon: typeof FileText; labelKey: string; c
   saft_export: { icon: Download, labelKey: 'actionExport', color: 'text-muted-foreground' },
   restore: { icon: RotateCcw, labelKey: 'actionRestore', color: 'text-amber-600' },
   transfer: { icon: ArrowRightLeft, labelKey: 'actionTransfer', color: 'text-blue-600' },
+  receive: { icon: Package, labelKey: 'actionReceive', color: 'text-blue-600' },
+  close: { icon: CheckCircle, labelKey: 'actionClose', color: 'text-green-600' },
   authorize: { icon: CheckCircle, labelKey: 'actionAuthorize', color: 'text-green-600' },
   authorize_failed: { icon: AlertTriangle, labelKey: 'actionAuthorizeFailed', color: 'text-destructive' },
 };
@@ -87,9 +95,21 @@ const MODULE_LABELS: Record<string, string> = {
   fiscal: 'moduleFiscal',
   expenses: 'moduleExpenses',
   bank: 'moduleBank',
+  warehouses: 'moduleWarehouses',
+  categories: 'moduleCategories',
+  tax_codes: 'moduleTax',
+  daily_reports: 'moduleDailyReports',
+  budgets: 'moduleBudgets',
+  cost_centers: 'moduleCostCenters',
+  supplier_returns: 'moduleSuppliers',
+  stock_transfers: 'moduleStock',
+  bank_reconciliations: 'moduleBank',
+  bank_transactions: 'moduleBank',
 };
 
-// Seed demo data removed — audit trail reads from backend audit_log
+function defaultStats() {
+  return { total: 0, today: 0, creates: 0, updates: 0, voids: 0, logins: 0 };
+}
 
 export default function AuditTrail() {
   const { t, language } = useTranslation();
@@ -97,6 +117,8 @@ export default function AuditTrail() {
   const { hasPermission } = usePermissions(user?.id);
   const canViewAudit = hasPermission('reports_audit');
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
+  const { branches } = useBranchContext();
+  const { companyName } = useCompanyLogo();
 
   const auditDetailLabels = useMemo(
     () => ({
@@ -135,92 +157,188 @@ export default function AuditTrail() {
   );
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
   const [filterAction, setFilterAction] = useState('all');
-  const [filterModule, setFilterModule] = useState('all');
+  const [filterTable, setFilterTable] = useState('all');
   const [filterUser, setFilterUser] = useState('all');
+  const [filterBranch, setFilterBranch] = useState('all');
+  const [startDate, setStartDate] = useState(() => daysAgoISO(29));
+  const [endDate, setEndDate] = useState(() => localISODate());
   const [selectedEntry, setSelectedEntry] = useState<AuditEntry | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
-
+  const [total, setTotal] = useState(0);
+  const [facetUsers, setFacetUsers] = useState<string[]>([]);
+  const [facetTables, setFacetTables] = useState<string[]>([]);
+  const [stats, setStats] = useState(defaultStats);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQ(searchTerm.trim()), 350);
+    return () => window.clearTimeout(timer);
+  }, [searchTerm]);
+
+  const branchNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const b of branches) {
+      map.set(String(b.id), formatBranchDisplayName(b));
+    }
+    return map;
+  }, [branches]);
+
+  const moduleLabel = useCallback((tableOrModule: string) => {
+    const key = MODULE_LABELS[tableOrModule];
+    if (key) return t.auditTrailUi[key as keyof typeof t.auditTrailUi] || tableOrModule;
+    return tableOrModule;
+  }, [t]);
+
+  const listParams = useCallback((extra?: { limit?: number; offset?: number }) => ({
+    startDate,
+    endDate,
+    branchId: filterBranch !== 'all' ? filterBranch : undefined,
+    action: filterAction !== 'all' ? filterAction : undefined,
+    tableName: filterTable !== 'all' ? filterTable : undefined,
+    userName: filterUser !== 'all' ? filterUser : undefined,
+    q: debouncedQ || undefined,
+    limit: extra?.limit ?? PAGE_SIZE,
+    offset: extra?.offset ?? 0,
+  }), [startDate, endDate, filterBranch, filterAction, filterTable, filterUser, debouncedQ]);
 
   useEffect(() => {
     if (!canViewAudit) {
       setLoading(false);
       return;
     }
+    let cancelled = false;
     setLoading(true);
-    loadAuditEntries()
-      .then((entries) => {
-        setAuditEntries(entries);
+    const params = listParams({ limit: PAGE_SIZE, offset: 0 });
+    const facetParams = {
+      startDate: params.startDate,
+      endDate: params.endDate,
+      branchId: params.branchId,
+    };
+    Promise.all([
+      api.audit.list(params),
+      api.audit.stats({
+        startDate: params.startDate,
+        endDate: params.endDate,
+        branchId: params.branchId,
+        action: params.action,
+        tableName: params.tableName,
+        userName: params.userName,
+        q: params.q,
+      }),
+      api.audit.facets(facetParams),
+    ])
+      .then(([listRes, statsRes, facetsRes]) => {
+        if (cancelled) return;
+        if (listRes.error) throw new Error(listRes.error);
+        const rows = Array.isArray(listRes.data) ? listRes.data : [];
+        setAuditEntries(rows.map((row) => mapBackendAuditRow(row as Record<string, unknown>)));
+        setTotal(Number((listRes as { total?: number }).total ?? rows.length));
+        if (statsRes.data && !statsRes.error) {
+          setStats({
+            total: Number(statsRes.data.total || 0),
+            today: Number(statsRes.data.today || 0),
+            creates: Number(statsRes.data.creates || 0),
+            updates: Number(statsRes.data.updates || 0),
+            voids: Number(statsRes.data.voids || 0),
+            logins: Number(statsRes.data.logins || 0),
+          });
+        }
+        if (facetsRes.data && !facetsRes.error) {
+          setFacetUsers(facetsRes.data.users || []);
+          setFacetTables(facetsRes.data.tables || []);
+        }
         setLoadError(null);
       })
       .catch((err: unknown) => {
+        if (cancelled) return;
         setLoadError(err instanceof Error ? err.message : String(err));
         setAuditEntries([]);
+        setTotal(0);
       })
-      .finally(() => setLoading(false));
-  }, [refreshKey, canViewAudit]);
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [listParams, refreshKey, canViewAudit]);
 
-  const filtered = useMemo(() => {
-    return auditEntries.filter(entry => {
-      if (filterAction !== 'all' && entry.action !== filterAction) return false;
-      if (filterModule !== 'all' && entry.module !== filterModule) return false;
-      if (filterUser !== 'all' && entry.userName !== filterUser) return false;
-      if (searchTerm) {
-        const q = searchTerm.toLowerCase();
-        return entry.description?.toLowerCase().includes(q) ||
-               entry.userName?.toLowerCase().includes(q) ||
-               entry.module?.toLowerCase().includes(q);
-      }
-      return true;
-    });
-  }, [auditEntries, filterAction, filterModule, filterUser, searchTerm]);
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const res = await api.audit.list(listParams({ limit: PAGE_SIZE, offset: auditEntries.length }));
+      if (res.error) throw new Error(res.error);
+      const rows = Array.isArray(res.data) ? res.data : [];
+      setAuditEntries((prev) => [
+        ...prev,
+        ...rows.map((row) => mapBackendAuditRow(row as Record<string, unknown>)),
+      ]);
+      setTotal(Number((res as { total?: number }).total ?? auditEntries.length + rows.length));
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
-  const uniqueModules = useMemo(() => [...new Set(auditEntries.map(e => e.module))].sort(), [auditEntries]);
-  const uniqueUsers = useMemo(() => [...new Set(auditEntries.map(e => e.userName))].sort(), [auditEntries]);
-
-  const stats = useMemo(() => {
-    const today = new Date().toDateString();
-    const todayEntries = auditEntries.filter(e => new Date(e.createdAt).toDateString() === today);
-    return {
-      total: auditEntries.length,
-      today: todayEntries.length,
-      creates: auditEntries.filter(e => e.action === 'create').length,
-      updates: auditEntries.filter(e => e.action === 'update').length,
-      deletes: auditEntries.filter(e => e.action === 'delete' || e.action === 'void').length,
-      logins: auditEntries.filter(e => e.action === 'login').length,
-    };
-  }, [auditEntries]);
-
-  // Group by date for timeline
   const groupedByDate = useMemo(() => {
     const groups: Record<string, AuditEntry[]> = {};
-    filtered.forEach(entry => {
+    auditEntries.forEach((entry) => {
       const dateKey = new Date(entry.createdAt).toLocaleDateString(uiLocale);
       if (!groups[dateKey]) groups[dateKey] = [];
       groups[dateKey].push(entry);
     });
     return Object.entries(groups);
-  }, [filtered, uiLocale]);
+  }, [auditEntries, uiLocale]);
 
-  const exportAudit = () => {
-    const json = JSON.stringify(filtered, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `audit_trail_${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    void api.audit.log({
-      action: 'export',
-      tableName: 'audit_log',
-      description: t.auditTrailUi.auditExportedLog,
-    });
-    toast.success(t.auditTrailUi.auditExportedToast);
-    setRefreshKey(k => k + 1);
+  const exportAudit = async () => {
+    setExporting(true);
+    try {
+      const res = await api.audit.list(listParams({ limit: EXPORT_LIMIT, offset: 0 }));
+      if (res.error) throw new Error(res.error);
+      const rows = Array.isArray(res.data) ? res.data : [];
+      const mapped = rows.map((row) => mapBackendAuditRow(row as Record<string, unknown>));
+      if (!mapped.length) {
+        toast.error(t.auditTrailUi.empty);
+        return;
+      }
+      const exportRows = mapped.map((entry) => ({
+        [t.auditTrailUi.colTime]: new Date(entry.createdAt).toLocaleString(uiLocale),
+        [t.auditTrailUi.colAction]: ACTION_CONFIG[entry.action]?.labelKey
+          ? t.auditTrailUi[ACTION_CONFIG[entry.action].labelKey as keyof typeof t.auditTrailUi]
+          : entry.action,
+        [t.auditTrailUi.colModule]: moduleLabel(entry.module),
+        [t.auditTrailUi.colBranch]: entry.branchId ? (branchNameById.get(entry.branchId) || entry.branchId) : '',
+        [t.auditTrailUi.colUser]: entry.userName,
+        [t.auditTrailUi.colDescription]: entry.description,
+      }));
+      const branchLabel = filterBranch === 'all'
+        ? t.auditTrailUi.allBranches
+        : (branchNameById.get(filterBranch) || filterBranch);
+      await exportReportExcel(exportRows, `audit_trail_${startDate}_${endDate}`, {
+        title: t.auditTrailUi.title,
+        companyName,
+        periodLabel: `${startDate} – ${endDate}`,
+        branchLabel,
+        generatedAt: new Date().toLocaleString(uiLocale),
+        landscape: true,
+      });
+      void api.audit.log({
+        action: 'export',
+        tableName: 'audit_log',
+        description: t.auditTrailUi.auditExportedLog,
+      });
+      toast.success(t.auditTrailUi.auditExportedToast);
+      setRefreshKey((k) => k + 1);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting(false);
+    }
   };
 
   if (!canViewAudit) {
@@ -232,9 +350,10 @@ export default function AuditTrail() {
     );
   }
 
+  const hasMore = auditEntries.length < total;
+
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
       <div className="p-4 border-b">
         <div className="flex items-center justify-between">
           <div>
@@ -244,24 +363,23 @@ export default function AuditTrail() {
             <p className="text-sm text-muted-foreground">{t.auditTrailUi.subtitle}</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setRefreshKey(k => k + 1)}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setRefreshKey((k) => k + 1)}>
               <RefreshCw className="w-3.5 h-3.5" /> {t.auditTrailUi.refresh}
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={exportAudit}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void exportAudit()} disabled={exporting}>
               <Download className="w-3.5 h-3.5" /> {t.auditTrailUi.export}
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-6 gap-2 px-4 pt-3">
         {[
           { label: t.auditTrailUi.statsTotal, value: stats.total, icon: Shield },
           { label: t.auditTrailUi.statsToday, value: stats.today, icon: Clock },
           { label: t.auditTrailUi.statsCreates, value: stats.creates, icon: FileText },
           { label: t.auditTrailUi.statsUpdates, value: stats.updates, icon: Edit },
-          { label: t.auditTrailUi.statsVoids, value: stats.deletes, icon: XCircle },
+          { label: t.auditTrailUi.statsVoids, value: stats.voids, icon: XCircle },
           { label: t.auditTrailUi.statsLogins, value: stats.logins, icon: LogIn },
         ].map((s, i) => (
           <Card key={i}>
@@ -276,11 +394,32 @@ export default function AuditTrail() {
         ))}
       </div>
 
-      {/* Filters */}
-      <div className="flex items-center gap-2 px-4 py-3">
-        <div className="relative flex-1 max-w-xs">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+        <DatePickerButton
+          value={startDate}
+          onChange={setStartDate}
+          locale={language === 'pt' ? 'pt' : 'en'}
+          placeholder={t.auditTrailUi.dateFrom}
+        />
+        <DatePickerButton
+          value={endDate}
+          onChange={setEndDate}
+          locale={language === 'pt' ? 'pt' : 'en'}
+          placeholder={t.auditTrailUi.dateTo}
+          minDate={startDate}
+        />
+        <Select value={filterBranch} onValueChange={setFilterBranch}>
+          <SelectTrigger className="w-40 h-8 text-xs"><SelectValue placeholder={t.auditTrailUi.filterBranch} /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t.auditTrailUi.allBranches}</SelectItem>
+            {branches.map((b) => (
+              <SelectItem key={b.id} value={b.id}>{formatBranchDisplayName(b)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="relative flex-1 min-w-[12rem] max-w-xs">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input placeholder={t.auditTrailUi.searchPlaceholder} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-8 text-sm pl-8" />
+          <Input placeholder={t.auditTrailUi.searchPlaceholder} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="h-8 text-sm pl-8" />
         </div>
         <Select value={filterAction} onValueChange={setFilterAction}>
           <SelectTrigger className="w-36 h-8 text-xs"><SelectValue placeholder={t.auditTrailUi.filterAction} /></SelectTrigger>
@@ -291,13 +430,13 @@ export default function AuditTrail() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={filterModule} onValueChange={setFilterModule}>
+        <Select value={filterTable} onValueChange={setFilterTable}>
           <SelectTrigger className="w-36 h-8 text-xs"><SelectValue placeholder={t.auditTrailUi.filterModule} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{t.auditTrailUi.allModules}</SelectItem>
-            {uniqueModules.map(m => (
-              <SelectItem key={m as string} value={m as string}>
-                {t.auditTrailUi[MODULE_LABELS[m as string] as keyof typeof t.auditTrailUi] || (m as string)}
+            {facetTables.map((table) => (
+              <SelectItem key={table} value={table}>
+                {moduleLabel(table)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -306,17 +445,24 @@ export default function AuditTrail() {
           <SelectTrigger className="w-36 h-8 text-xs"><SelectValue placeholder={t.auditTrailUi.filterUser} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{t.auditTrailUi.allUsers}</SelectItem>
-            {uniqueUsers.map(u => (
-              <SelectItem key={u as string} value={u as string}>{u as string}</SelectItem>
+            {facetUsers.map((u) => (
+              <SelectItem key={u} value={u}>{u}</SelectItem>
             ))}
           </SelectContent>
         </Select>
         <Badge variant="outline" className="text-[10px] ml-auto">
-          {t.auditTrailUi.resultsCount.replace('{count}', String(filtered.length))}
+          {t.auditTrailUi.showingCount
+            .replace('{shown}', String(auditEntries.length))
+            .replace('{total}', String(total))}
         </Badge>
       </div>
 
-      {/* Timeline Table */}
+      {total > EXPORT_LIMIT && (
+        <p className="px-4 pb-2 text-xs text-amber-700">
+          {t.auditTrailUi.truncatedHint.replace('{limit}', String(EXPORT_LIMIT))}
+        </p>
+      )}
+
       <div className="flex-1 overflow-auto px-4 pb-4">
         {loading && (
           <div className="text-center py-12 text-muted-foreground text-sm">{t.auditTrailUi.refresh}…</div>
@@ -338,13 +484,14 @@ export default function AuditTrail() {
                   <TableHead className="w-20">{t.auditTrailUi.colTime}</TableHead>
                   <TableHead className="w-24">{t.auditTrailUi.colAction}</TableHead>
                   <TableHead className="w-28">{t.auditTrailUi.colModule}</TableHead>
+                  <TableHead className="w-28">{t.auditTrailUi.colBranch}</TableHead>
                   <TableHead className="w-24">{t.auditTrailUi.colUser}</TableHead>
                   <TableHead>{t.auditTrailUi.colDescription}</TableHead>
                   <TableHead className="w-10"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {entries.map(entry => {
+                {entries.map((entry) => {
                   const config = ACTION_CONFIG[entry.action] || { icon: FileText, labelKey: '', color: 'text-muted-foreground' };
                   const Icon = config.icon;
                   return (
@@ -373,8 +520,11 @@ export default function AuditTrail() {
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="text-[10px]">
-                          {t.auditTrailUi[MODULE_LABELS[entry.module] as keyof typeof t.auditTrailUi] || entry.module}
+                          {moduleLabel(entry.module)}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {entry.branchId ? (branchNameById.get(entry.branchId) || entry.branchId) : '—'}
                       </TableCell>
                       <TableCell className="text-xs">
                         <div className="flex items-center gap-1">
@@ -394,7 +544,15 @@ export default function AuditTrail() {
           </div>
         ))}
 
-        {!loading && filtered.length === 0 && (
+        {!loading && hasMore && (
+          <div className="flex justify-center py-3">
+            <Button variant="outline" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>
+              {loadingMore ? t.auditTrailUi.refresh : t.auditTrailUi.loadMore}
+            </Button>
+          </div>
+        )}
+
+        {!loading && auditEntries.length === 0 && (
           <div className="text-center py-12 text-muted-foreground">
             <Shield className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p className="text-sm">{t.auditTrailUi.empty}</p>
@@ -402,7 +560,6 @@ export default function AuditTrail() {
         )}
       </div>
 
-      {/* Detail Dialog */}
       <Dialog open={!!selectedEntry} onOpenChange={() => setSelectedEntry(null)}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -424,11 +581,17 @@ export default function AuditTrail() {
                 </div>
                 <div><span className="text-muted-foreground text-xs">{t.auditTrailUi.detailModule}:</span>
                   <Badge variant="outline" className="text-[10px] mt-0.5">
-                    {t.auditTrailUi[MODULE_LABELS[selectedEntry.module] as keyof typeof t.auditTrailUi] || selectedEntry.module}
+                    {moduleLabel(selectedEntry.module)}
                   </Badge>
                 </div>
                 <div><span className="text-muted-foreground text-xs">{t.auditTrailUi.detailUser}:</span><p className="text-xs">{selectedEntry.userName}</p></div>
                 <div><span className="text-muted-foreground text-xs">{t.auditTrailUi.detailUserId}:</span><p className="font-mono text-xs">{selectedEntry.userId || '-'}</p></div>
+                {selectedEntry.branchId && (
+                  <div>
+                    <span className="text-muted-foreground text-xs">{t.auditTrailUi.colBranch}:</span>
+                    <p className="text-xs">{branchNameById.get(selectedEntry.branchId) || selectedEntry.branchId}</p>
+                  </div>
+                )}
               </div>
               <Separator />
               <div>

@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -24,7 +25,15 @@ module.exports = function(broadcastTable) {
         [name, description, color]
       );
       await broadcastTable('categories');
-      res.status(201).json(result.rows[0]);
+      const created = result.rows[0];
+      auditErpSafe(req, {
+        table: 'categories',
+        id: created?.id,
+        action: 'create',
+        description: `Categoria criada: ${name || created?.name || ''}`,
+        newValues: { name, description, color },
+      });
+      res.status(201).json(created);
     } catch (error) {
       console.error('[CATEGORIES ERROR]', error);
       res.status(500).json({ error: 'Failed to create category' });
@@ -40,6 +49,13 @@ module.exports = function(broadcastTable) {
         [name, description, color, isActive, id]
       );
       await broadcastTable('categories');
+      auditErpSafe(req, {
+        table: 'categories',
+        id,
+        action: 'update',
+        description: `Categoria actualizada: ${name || id}`,
+        newValues: { name, description, color, isActive },
+      });
       res.json(result.rows[0]);
     } catch (error) {
       console.error('[CATEGORIES ERROR]', error);
@@ -52,6 +68,12 @@ module.exports = function(broadcastTable) {
       const { id } = req.params;
       await db.query('UPDATE categories SET is_active = false WHERE id = $1', [id]);
       await broadcastTable('categories');
+      auditErpSafe(req, {
+        table: 'categories',
+        id,
+        action: 'delete',
+        description: `Categoria desactivada: ${id}`,
+      });
       res.json({ success: true });
     } catch (error) {
       console.error('[CATEGORIES ERROR]', error);

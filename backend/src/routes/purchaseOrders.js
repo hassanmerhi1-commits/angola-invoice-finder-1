@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { createPurchaseOrder, processPurchaseReceive } = require('../transactionEngine');
 const { requirePermission } = require('../middleware/requirePermission');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -104,6 +105,13 @@ module.exports = function(broadcastTable) {
         );
       }
       await broadcastTable('purchase_orders');
+      auditErpSafe(req, {
+        table: 'purchase_orders',
+        id: orderId,
+        action: 'receive',
+        description: `Encomenda marcada como recebida via factura: ${num}`,
+        newValues: { orderNumber: num, supplierId, status: 'received' },
+      });
       res.json({ success: true });
     } catch (error) {
       console.error('[PURCHASE ORDERS ERROR]', error);
@@ -119,6 +127,14 @@ module.exports = function(broadcastTable) {
       const order = await createPurchaseOrder(client, req.body);
       await client.query('COMMIT');
       await broadcastTable('purchase_orders');
+      auditErpSafe(req, {
+        table: 'purchase_orders',
+        id: order?.id,
+        action: 'create',
+        description: `Ordem de compra criada: ${order?.order_number || order?.id || ''}`,
+        newValues: { orderNumber: order?.order_number, supplierId: order?.supplier_id, status: order?.status },
+        branchId: order?.branch_id,
+      });
       res.status(201).json(order);
     } catch (error) {
       await client.query('ROLLBACK');
@@ -215,6 +231,13 @@ module.exports = function(broadcastTable) {
       await client.query('COMMIT');
       await broadcastTable('purchase_orders');
       if (broadcastTable) await broadcastTable('approval_requests');
+      auditErpSafe(req, {
+        table: 'purchase_orders',
+        id,
+        action: 'approve',
+        description: `Ordem de compra aprovada: ${order.order_number || id}`,
+        newValues: { status: 'approved', orderNumber: order.order_number },
+      });
       res.json({ success: true, orderNumber: order.order_number });
     } catch (error) {
       await client.query('ROLLBACK');
@@ -254,6 +277,13 @@ module.exports = function(broadcastTable) {
       await client.query('COMMIT');
       await broadcastTable('purchase_orders');
       await broadcastTable('products');
+      auditErpSafe(req, {
+        table: 'purchase_orders',
+        id,
+        action: 'receive',
+        description: `Ordem de compra recebida: ${id}`,
+        newValues: { status: 'received' },
+      });
       res.json({ success: true });
     } catch (error) {
       await client.query('ROLLBACK');

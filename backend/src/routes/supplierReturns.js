@@ -5,6 +5,7 @@ const express = require('express');
 const { randomUUID } = require('crypto');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 function parseJsonColumn(val, fallback = []) {
   if (val == null || val === '') return fallback;
@@ -132,7 +133,16 @@ module.exports = function (broadcastTable) {
       );
       const created = await db.query('SELECT * FROM supplier_returns WHERE id = $1', [id]);
       await broadcastTable('supplier_returns');
-      res.status(201).json(mapRow(created.rows[0]));
+      const mapped = mapRow(created.rows[0]);
+      auditErpSafe(req, {
+        table: 'supplier_returns',
+        id,
+        action: 'create',
+        description: `Devolução a fornecedor criada: ${mapped.returnNumber || id}`,
+        newValues: { returnNumber: mapped.returnNumber, supplierName: mapped.supplierName, total: mapped.total, status: mapped.status },
+        branchId: mapped.branchId,
+      });
+      res.status(201).json(mapped);
     } catch (error) {
       console.error('[SUPPLIER RETURNS ERROR]', error);
       res.status(500).json({ error: error.message || 'Failed to create supplier return' });
@@ -167,7 +177,16 @@ module.exports = function (broadcastTable) {
       );
       const updated = await db.query('SELECT * FROM supplier_returns WHERE id = $1', [id]);
       await broadcastTable('supplier_returns');
-      res.json(mapRow(updated.rows[0]));
+      const mapped = mapRow(updated.rows[0]);
+      auditErpSafe(req, {
+        table: 'supplier_returns',
+        id,
+        action: 'update',
+        description: `Devolução a fornecedor actualizada: ${mapped.returnNumber || id}`,
+        newValues: { returnNumber: mapped.returnNumber, status: mapped.status, total: mapped.total },
+        branchId: mapped.branchId,
+      });
+      res.json(mapped);
     } catch (error) {
       console.error('[SUPPLIER RETURNS ERROR]', error);
       res.status(500).json({ error: error.message || 'Failed to update supplier return' });
@@ -181,6 +200,12 @@ module.exports = function (broadcastTable) {
         return res.status(404).json({ error: 'Return not found' });
       }
       await broadcastTable('supplier_returns');
+      auditErpSafe(req, {
+        table: 'supplier_returns',
+        id: req.params.id,
+        action: 'delete',
+        description: `Devolução a fornecedor eliminada: ${req.params.id}`,
+      });
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: 'Failed to delete supplier return' });

@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 function num(value) {
   const n = Number(value);
@@ -114,7 +115,16 @@ module.exports = function (broadcastTable) {
       }
 
       await broadcastTable('daily_reports');
-      res.json(result.rows[0]);
+      const report = result.rows[0];
+      auditErpSafe(req, {
+        table: 'daily_reports',
+        id: report?.id,
+        action: existing.rows[0]?.id ? 'update' : 'create',
+        description: `Relatório diário gerado: ${date} (${branchName || branchId})`,
+        newValues: { date, branchId, totalSales, totalTransactions },
+        branchId,
+      });
+      res.json(report);
     } catch (error) {
       console.error('[DAILY REPORTS ERROR]', error);
       res.status(500).json({ error: error.message || 'Failed to generate report' });
@@ -143,6 +153,14 @@ module.exports = function (broadcastTable) {
       }
 
       await broadcastTable('daily_reports');
+      auditErpSafe(req, {
+        table: 'daily_reports',
+        id,
+        action: 'close',
+        description: `Dia fechado: ${result.rows[0].date || id}`,
+        newValues: { status: 'closed', closingBalance, notes: notes || '' },
+        branchId: result.rows[0].branch_id,
+      });
       res.json(result.rows[0]);
     } catch (error) {
       console.error('[DAILY REPORTS ERROR]', error);

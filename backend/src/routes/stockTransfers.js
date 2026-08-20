@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { createStockTransfer, processTransferApprove, processTransferReceive } = require('../transactionEngine');
 const { requirePermission } = require('../middleware/requirePermission');
+const { auditErpSafe } = require('../lib/erpAudit');
 
 function mapStockTransferError(error) {
   const raw = error?.message || String(error);
@@ -71,6 +72,18 @@ module.exports = function(broadcastTable) {
       const transfer = await createStockTransfer(client, req.body);
       await client.query('COMMIT');
       await broadcastTable('stock_transfers');
+      auditErpSafe(req, {
+        table: 'stock_transfers',
+        id: transfer?.id,
+        action: 'create',
+        description: `Transferência de stock criada: ${transfer?.transfer_number || transfer?.id || ''}`,
+        newValues: {
+          fromBranchId: transfer?.from_branch_id,
+          toBranchId: transfer?.to_branch_id,
+          status: transfer?.status,
+        },
+        branchId: transfer?.from_branch_id,
+      });
       res.status(201).json(transfer);
     } catch (error) {
       await client.query('ROLLBACK');
@@ -99,6 +112,14 @@ module.exports = function(broadcastTable) {
           toBranchId: transfer.to_branch_id,
         }).catch((e) => console.warn('[WEBHOOKS] stock_transfer.approved:', e.message));
       } catch (_) { /* non-fatal */ }
+      auditErpSafe(req, {
+        table: 'stock_transfers',
+        id: req.params.id,
+        action: 'approve',
+        description: `Transferência de stock aprovada: ${req.params.id}`,
+        newValues: { fromBranchId: transfer.from_branch_id, toBranchId: transfer.to_branch_id },
+        branchId: transfer.from_branch_id,
+      });
       res.json({
         success: true,
         from_branch_id: transfer.from_branch_id,
@@ -131,6 +152,14 @@ module.exports = function(broadcastTable) {
           toBranchId: transfer.to_branch_id,
         }).catch((e) => console.warn('[WEBHOOKS] stock_transfer.received:', e.message));
       } catch (_) { /* non-fatal */ }
+      auditErpSafe(req, {
+        table: 'stock_transfers',
+        id: req.params.id,
+        action: 'receive',
+        description: `Transferência de stock recebida: ${req.params.id}`,
+        newValues: { fromBranchId: transfer.from_branch_id, toBranchId: transfer.to_branch_id },
+        branchId: transfer.to_branch_id,
+      });
       res.json({
         success: true,
         to_branch_id: transfer.to_branch_id,
@@ -166,6 +195,13 @@ module.exports = function(broadcastTable) {
       );
       await client.query('COMMIT');
       await broadcastTable('stock_transfers');
+      auditErpSafe(req, {
+        table: 'stock_transfers',
+        id: req.params.id,
+        action: 'void',
+        description: `Transferência de stock cancelada: ${req.params.id}`,
+        newValues: { status: 'cancelled' },
+      });
       res.json({ success: true });
     } catch (error) {
       await client.query('ROLLBACK');
