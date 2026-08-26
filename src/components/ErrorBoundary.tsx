@@ -30,7 +30,7 @@ export class ErrorBoundary extends React.Component<
           message={this.state.error?.message}
           onReset={() => {
             this.setState({ hasError: false, error: null });
-            window.location.href = '/';
+            window.location.href = window.location.pathname.startsWith('/app') ? '/app/' : '/';
           }}
         />
       );

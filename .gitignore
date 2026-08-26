@@ -53,5 +53,7 @@ import/*
 /blob-report/
 /playwright/.cache/
 backend/webapp/assets/
+backend/webapp/index.html
+backend/webapp/version.json
 .vs/
 release/

@@ -1,7 +1,8 @@
 // Daily checklist briefing — stock, print queue, price changes (AR/AP via /payments/checklist-dues)
 const express = require('express');
 const db = require('../db');
-const { coalesceActiveNotZero, isTruthySql } = require('../lib/sqlDialect');
+const { isTruthySql } = require('../lib/sqlDialect');
+const { queryLowStockProducts } = require('../lib/lowStock');
 
 const LOOKBACK_DAYS = 14;
 
@@ -12,20 +13,7 @@ function daysAgoIso(days) {
 }
 
 async function queryLowStock(branchId) {
-  const lowStockParams = [];
-  let lowStockQuery = `
-    SELECT id, sku, name, stock, min_stock, branch_id, unit
-    FROM products
-    WHERE ${coalesceActiveNotZero(db, 'is_active')}
-      AND COALESCE(min_stock, 0) > 0
-      AND COALESCE(stock, 0) <= COALESCE(min_stock, 0)`;
-  if (branchId) {
-    lowStockParams.push(branchId);
-    lowStockQuery += ` AND branch_id = $${lowStockParams.length}`;
-  }
-  lowStockQuery += ' ORDER BY stock ASC NULLS FIRST, name ASC LIMIT 150';
-  const result = await db.query(lowStockQuery, lowStockParams);
-  return result.rows || [];
+  return queryLowStockProducts({ branchId, limit: 150 });
 }
 
 module.exports = function dailyBriefingRoutes() {

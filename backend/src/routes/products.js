@@ -1985,21 +1985,10 @@ module.exports = function(broadcastTable) {
 
   router.get('/low-stock', async (req, res) => {
     try {
+      const { queryLowStockProducts } = require('../lib/lowStock');
       const branchId = req.query.branchId ? String(req.query.branchId).trim() : '';
-      const params = [];
-      let query = `
-        SELECT id, sku, name, stock, min_stock, branch_id, unit
-        FROM products
-        WHERE ${coalesceActiveNotZero(db, 'is_active')}
-          AND COALESCE(min_stock, 0) > 0
-          AND COALESCE(stock, 0) <= COALESCE(min_stock, 0)`;
-      if (branchId) {
-        params.push(branchId);
-        query += ` AND branch_id = $${params.length}`;
-      }
-      query += ' ORDER BY stock ASC NULLS FIRST, name ASC LIMIT 150';
-      const result = await db.query(query, params);
-      res.json(result.rows);
+      const rows = await queryLowStockProducts({ branchId, limit: 150 });
+      res.json(rows);
     } catch (error) {
       console.error('[PRODUCTS low-stock]', error);
       res.status(500).json({ error: 'Failed to fetch low-stock products' });

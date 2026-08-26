@@ -40,19 +40,11 @@ async function createNotification({
 
 async function scanLowStockNotifications() {
   try {
-    const r = await db.query(
-      `SELECT id, name, sku, stock, min_stock, branch_id
-       FROM products
-       WHERE COALESCE(is_active, true) = true
-         AND min_stock IS NOT NULL
-         AND stock IS NOT NULL
-         AND stock <= min_stock
-       ORDER BY stock ASC
-       LIMIT 40`,
-    );
+    const { queryLowStockProducts } = require('./lowStock');
+    const rows = await queryLowStockProducts({ limit: 40 });
     let created = 0;
     const day = new Date().toISOString().slice(0, 10);
-    for (const p of r.rows) {
+    for (const p of rows) {
       const stock = Number(p.stock);
       const min = Number(p.min_stock);
       const row = await createNotification({

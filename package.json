@@ -3,7 +3,7 @@
   "productName": "NEXOR ERP",
   "description": "NEXOR ERP — O futuro é construído com nós",
   "private": true,
-  "version": "1.1.168",
+  "version": "1.1.169",
   "author": "NEXOR ERP",
   "repository": {
     "type": "git",
@@ -14,7 +14,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:webapp": "vite build --mode webapp",
+    "build:webapp": "vite build --mode webapp && node scripts/copy-webapp.mjs",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",

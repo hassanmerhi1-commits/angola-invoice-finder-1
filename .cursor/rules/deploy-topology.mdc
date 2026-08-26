@@ -38,6 +38,8 @@ Invoke-RestMethod http://127.0.0.1:3000/api/health
 # docker exec -it nexor-backend node scripts/<repair-script>.js
 ```
 
+`npm run build:webapp` must copy `dist/` into `backend/webapp/` (the npm script does this). If `http://SERVER:3000/app` is a white page, the HTML is pointing at missing JS — on the server run `.\scripts\fix-webapp-on-server.ps1` then Ctrl+F5.
+
 ## Agent behavior
 
 - **Never commit, tag, or `git push` (no release) unless the user explicitly asks** in that message. Finish the code fix, then ask before releasing.

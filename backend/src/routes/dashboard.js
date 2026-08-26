@@ -1,6 +1,7 @@
 // Dashboard KPIs API Route
 const express = require('express');
 const db = require('../db');
+const { countLowStockProducts } = require('../lib/lowStock');
 
 function num(value) {
   const n = Number(value);
@@ -74,14 +75,9 @@ module.exports = function () {
                WHERE entity_type = 'supplier' AND status != 'cleared' AND remaining_amount > 0.01`,
           branchId ? [branchId] : []
         ).catch(emptyCount),
-        db.query(
-          branchId
-            ? `SELECT COUNT(*) AS count FROM products
-               WHERE is_active = 1 AND min_stock > 0 AND stock <= min_stock AND branch_id = $1`
-            : `SELECT COUNT(*) AS count FROM products
-               WHERE is_active = 1 AND min_stock > 0 AND stock <= min_stock`,
-          branchId ? [branchId] : []
-        ).catch(emptyCount),
+        countLowStockProducts({ branchId })
+          .then((count) => ({ rows: [{ count }] }))
+          .catch(emptyCount),
         db.query('SELECT COUNT(*) AS count FROM suppliers WHERE is_active = 1').catch(emptyCount),
         db.query('SELECT COUNT(*) AS count FROM categories WHERE is_active = 1').catch(emptyCount),
         db.query('SELECT COUNT(*) AS count FROM purchase_orders').catch(emptyCount),

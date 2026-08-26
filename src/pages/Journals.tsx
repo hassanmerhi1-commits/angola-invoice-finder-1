@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef, type KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
@@ -586,6 +587,23 @@ function createEmptyLine(description = ''): NewEntryLine {
   };
 }
 
+const ACCOUNT_LIST_CAP = 800;
+type JournalLineField = 'account' | 'description' | 'debit' | 'credit';
+const JOURNAL_LINE_FIELDS: JournalLineField[] = ['account', 'description', 'debit', 'credit'];
+
+function inputCaretAtStart(el: HTMLInputElement) {
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  return start == null || (start === 0 && end === 0);
+}
+
+function inputCaretAtEnd(el: HTMLInputElement) {
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  const len = el.value.length;
+  return start == null || (start === len && end === len);
+}
+
 export default function Journals() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
@@ -656,6 +674,14 @@ export default function Journals() {
   const [newEntryLines, setNewEntryLines] = useState<NewEntryLine[]>([createEmptyLine(), createEmptyLine()]);
   const [accountSearch, setAccountSearch] = useState('');
   const [activeLineId, setActiveLineId] = useState<string | null>(null);
+  const [accountHighlight, setAccountHighlight] = useState(0);
+  const [accountBrowserOpen, setAccountBrowserOpen] = useState(false);
+  const [accountMenuLineId, setAccountMenuLineId] = useState<string | null>(null);
+  const lineFieldRefs = useRef<Record<string, Partial<Record<JournalLineField, HTMLInputElement | null>>>>({});
+  const postButtonRef = useRef<HTMLButtonElement | null>(null);
+  const accountSearchRef = useRef<HTMLInputElement | null>(null);
+  const accountBlurTimer = useRef<number | null>(null);
+  const skipAccountMenuUntilRef = useRef(0);
 
   const {
     entries,
@@ -713,17 +739,31 @@ export default function Journals() {
 
   // Filtered accounts for picker
   const filteredAccounts = useMemo(() => {
-    if (!accountSearch) return pickerAccounts.slice(0, 50);
-    const term = accountSearch.toLowerCase();
-    return pickerAccounts.filter(a => {
+    const term = accountSearch.trim().toLowerCase();
+    if (!term) return pickerAccounts;
+    return pickerAccounts.filter((a) => {
       const displayName = resolveAccountDisplayName(a, language, t);
       return (
         a.code.toLowerCase().includes(term)
         || a.name.toLowerCase().includes(term)
         || displayName.toLowerCase().includes(term)
       );
-    }).slice(0, 50);
+    });
   }, [pickerAccounts, accountSearch, language, t]);
+  const visibleAccounts = filteredAccounts.slice(0, ACCOUNT_LIST_CAP);
+  const typeaheadAccounts = filteredAccounts.slice(0, 50);
+
+  useEffect(() => {
+    setAccountHighlight(0);
+  }, [accountSearch, activeLineId]);
+
+  useEffect(() => {
+    const selector = accountBrowserOpen
+      ? `[data-journal-acct="${accountHighlight}"]`
+      : `[data-journal-acct-type="${activeLineId}-${accountHighlight}"]`;
+    const el = document.querySelector(selector);
+    if (el instanceof HTMLElement) el.scrollIntoView({ block: 'nearest' });
+  }, [accountHighlight, accountBrowserOpen, activeLineId, visibleAccounts.length, typeaheadAccounts.length]);
 
   // Reset new entry form
   // When true, user edited the balancing (last) line amounts — stop overwriting credit/debit.
@@ -752,6 +792,10 @@ export default function Journals() {
     setNewEntryLines([createEmptyLine(), createEmptyLine()]);
     setAccountSearch('');
     setActiveLineId(null);
+    setAccountHighlight(0);
+    setAccountBrowserOpen(false);
+    setAccountMenuLineId(null);
+    skipAccountMenuUntilRef.current = 0;
   }
 
   function handleNewEntryDateChange(isoDate: string) {
@@ -812,6 +856,7 @@ export default function Journals() {
     );
     setAccountSearch('');
     setActiveLineId(null);
+    setAccountBrowserOpen(false);
     setNewEntryOpen(true);
 
     let lines = target.lines || [];
@@ -890,7 +935,13 @@ export default function Journals() {
     });
   }
 
-  function selectAccount(lineId: string, account: Account) {
+  function suppressAccountMenu() {
+    skipAccountMenuUntilRef.current = Date.now() + 400;
+    setAccountMenuLineId(null);
+  }
+
+  function selectAccount(lineId: string, account: Account, focusNext = true) {
+    suppressAccountMenu();
     setNewEntryLines(prev => prev.map(l => {
       if (l.id !== lineId) return l;
       return {
@@ -900,8 +951,13 @@ export default function Journals() {
         accountBalance: Number(account.current_balance) || 0,
       };
     }));
-    setActiveLineId(null);
+    setActiveLineId(lineId);
     setAccountSearch('');
+    setAccountHighlight(0);
+    setAccountBrowserOpen(false);
+    if (focusNext) {
+      window.requestAnimationFrame(() => focusLineField(lineId, 'description'));
+    }
   }
 
   function removeLine(lineId: string) {
@@ -912,8 +968,233 @@ export default function Journals() {
     setNewEntryLines(prev => prev.filter(l => l.id !== lineId));
   }
 
-  function addLine() {
-    setNewEntryLines(prev => [...prev, createEmptyLine(String(prev[0]?.description || ''))]);
+  function addLine(): string {
+    const line = createEmptyLine(String(newEntryLines[0]?.description || ''));
+    setNewEntryLines(prev => [...prev, line]);
+    return line.id;
+  }
+
+  function setLineFieldRef(lineId: string, field: JournalLineField, el: HTMLInputElement | null) {
+    if (!lineFieldRefs.current[lineId]) lineFieldRefs.current[lineId] = {};
+    lineFieldRefs.current[lineId][field] = el;
+  }
+
+  function focusLineField(lineId: string | undefined, field: JournalLineField) {
+    if (!lineId) return;
+    const tryFocus = (attempts: number) => {
+      const el = lineFieldRefs.current[lineId]?.[field];
+      if (el) {
+        el.focus();
+        el.select();
+        return;
+      }
+      if (attempts > 0) window.requestAnimationFrame(() => tryFocus(attempts - 1));
+    };
+    window.requestAnimationFrame(() => tryFocus(8));
+  }
+
+  function goToLineField(idx: number, field: JournalLineField, extraLines: NewEntryLine[] = newEntryLines) {
+    const pos = JOURNAL_LINE_FIELDS.indexOf(field);
+    if (pos < 0) return;
+    if (idx >= 0 && idx < extraLines.length) {
+      focusLineField(extraLines[idx].id, JOURNAL_LINE_FIELDS[pos]);
+    }
+  }
+
+  function moveJournalField(idx: number, field: JournalLineField, direction: 1 | -1) {
+    const pos = JOURNAL_LINE_FIELDS.indexOf(field);
+    const nextPos = pos + direction;
+    if (nextPos >= 0 && nextPos < JOURNAL_LINE_FIELDS.length) {
+      focusLineField(newEntryLines[idx]?.id, JOURNAL_LINE_FIELDS[nextPos]);
+      return;
+    }
+    if (direction > 0) {
+      if (idx < newEntryLines.length - 1) {
+        focusLineField(newEntryLines[idx + 1].id, 'account');
+        return;
+      }
+      const last = newEntryLines[idx];
+      if (last && (last.accountCode || last.description || last.debit || last.credit)) {
+        const id = addLine();
+        focusLineField(id, 'account');
+        return;
+      }
+      postButtonRef.current?.focus();
+      return;
+    }
+    if (idx > 0) {
+      focusLineField(newEntryLines[idx - 1].id, 'credit');
+      return;
+    }
+  }
+
+  function pickHighlightedAccount(lineId: string, fromModal = false): boolean {
+    const list = fromModal ? visibleAccounts : typeaheadAccounts;
+    const pick = list[accountHighlight] ?? list[0];
+    if (!pick) return false;
+    selectAccount(lineId, pick);
+    return true;
+  }
+
+  function openAccountBrowser(lineId: string, seed = '') {
+    setActiveLineId(lineId);
+    setAccountMenuLineId(null);
+    setAccountSearch(seed);
+    setAccountHighlight(0);
+    setAccountBrowserOpen(true);
+  }
+
+  useEffect(() => {
+    if (!accountBrowserOpen) return;
+    const timer = window.setTimeout(() => {
+      accountSearchRef.current?.focus();
+      accountSearchRef.current?.select();
+    }, 40);
+    return () => window.clearTimeout(timer);
+  }, [accountBrowserOpen]);
+
+  function closeAccountBrowser() {
+    setAccountBrowserOpen(false);
+    setAccountHighlight(0);
+    setAccountMenuLineId(null);
+  }
+
+  function handleAccountListKeyDown(e: KeyboardEvent<HTMLInputElement>, lineId: string | null) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (visibleAccounts.length === 0) return;
+      setAccountHighlight((i) => Math.min(i + 1, visibleAccounts.length - 1));
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (visibleAccounts.length === 0) return;
+      setAccountHighlight((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (lineId) pickHighlightedAccount(lineId, true);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeAccountBrowser();
+      suppressAccountMenu();
+      if (lineId) focusLineField(lineId, 'account');
+    }
+  }
+
+  function handleJournalLineKeyDown(
+    e: KeyboardEvent<HTMLInputElement>,
+    idx: number,
+    line: NewEntryLine,
+    field: JournalLineField,
+  ) {
+    const typeaheadOpen = field === 'account'
+      && accountMenuLineId === line.id
+      && !accountBrowserOpen
+      && String(line.accountCode || '').trim().length > 0;
+
+    if (e.key === 'F4' || (e.key === 'ArrowDown' && e.altKey && field === 'account')) {
+      e.preventDefault();
+      openAccountBrowser(line.id, line.accountCode);
+      return;
+    }
+
+    if (typeaheadOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (typeaheadAccounts.length === 0) return;
+        setAccountHighlight((i) => Math.min(i + 1, typeaheadAccounts.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (typeaheadAccounts.length === 0) return;
+        setAccountHighlight((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (!pickHighlightedAccount(line.id, false)) moveJournalField(idx, field, 1);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setActiveLineId(null);
+        return;
+      }
+    }
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (field === 'account' && !e.shiftKey && typeaheadOpen && typeaheadAccounts.length > 0
+        && String(line.accountCode || '').trim()) {
+        pickHighlightedAccount(line.id, false);
+        return;
+      }
+      if (field === 'account' && !e.shiftKey) {
+        const exact = accountsByCode.get(String(line.accountCode || '').trim());
+        if (exact) {
+          selectAccount(line.id, exact);
+          return;
+        }
+      }
+      setActiveLineId(null);
+      moveJournalField(idx, field, e.shiftKey ? -1 : 1);
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (field === 'account') {
+        const exact = accountsByCode.get(String(line.accountCode || '').trim());
+        if (exact) {
+          selectAccount(line.id, exact);
+          return;
+        }
+        if (typeaheadAccounts.length > 0) {
+          pickHighlightedAccount(line.id, false);
+          return;
+        }
+        return;
+      }
+      moveJournalField(idx, field, 1);
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (idx < newEntryLines.length - 1) {
+        goToLineField(idx + 1, field);
+        return;
+      }
+      const last = newEntryLines[idx];
+      if (last && (last.accountCode || last.description || last.debit || last.credit)) {
+        const id = addLine();
+        focusLineField(id, field);
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (idx > 0) goToLineField(idx - 1, field);
+      return;
+    }
+
+    if (e.key === 'ArrowRight' && inputCaretAtEnd(e.currentTarget)) {
+      e.preventDefault();
+      moveJournalField(idx, field, 1);
+      return;
+    }
+    if (e.key === 'ArrowLeft' && inputCaretAtStart(e.currentTarget)) {
+      e.preventDefault();
+      moveJournalField(idx, field, -1);
+    }
   }
 
   // Auto-fill last line to balance (button re-enables auto-fill after manual edits)
@@ -1368,7 +1649,13 @@ export default function Journals() {
         setNewEntryOpen(open);
         if (!open) resetNewEntry();
       }}>
-        <DialogContent className="max-w-[96vw] w-[96vw] max-h-[94vh] h-[90vh] flex flex-col gap-0 p-0 overflow-hidden sm:rounded-xl">
+        <DialogContent
+          className="max-w-[96vw] w-[96vw] max-h-[94vh] h-[90vh] flex flex-col gap-0 p-0 overflow-hidden sm:rounded-xl"
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            focusLineField(newEntryLines[0]?.id, 'account');
+          }}
+        >
           <DialogHeader className="shrink-0 space-y-1 border-b bg-muted/30 px-5 py-4 sm:px-6">
             <div className="flex flex-wrap items-start justify-between gap-3 pr-10">
               <div className="space-y-1">
@@ -1409,38 +1696,34 @@ export default function Journals() {
             </div>
           </DialogHeader>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-5 py-4 sm:px-6">
-            <div className="shrink-0 rounded-lg border bg-card p-4 shadow-sm">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
-                <div>
-                  <Label className="text-sm font-medium">{t.common.date}</Label>
-                  <div className="mt-1.5">
-                    <DatePickerButton
-                      value={newEntryDate}
-                      onChange={handleNewEntryDateChange}
-                      placeholder={t.common.date}
-                      locale={language === 'pt' ? 'pt' : 'en'}
-                      buttonClassName="h-10 w-full min-w-0"
-                      disableBeforeToday={!canBackdatePost}
-                    />
-                    {!canBackdatePost && (
-                      <p className="mt-1 text-[11px] text-muted-foreground">{t.journalsUi.dateLockedToToday}</p>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">{t.common.type}</Label>
-                  <Select value={newEntryType} onValueChange={setNewEntryType}>
-                    <SelectTrigger className="mt-1.5 h-10"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {CREATE_ENTRY_TYPES.map(et => (
-                        <SelectItem key={et.value} value={et.value}>
-                          {t.journalsUi.entryTypes[et.labelKey as keyof typeof t.journalsUi.entryTypes] as string}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-5 py-3 sm:px-6">
+            <div className="grid w-max max-w-full grid-cols-2 gap-x-4 gap-y-1">
+              <Label className="text-sm font-medium">{t.common.date}</Label>
+              <Label className="text-sm font-medium">{t.common.type}</Label>
+              <div>
+                <DatePickerButton
+                  value={newEntryDate}
+                  onChange={handleNewEntryDateChange}
+                  placeholder={t.common.date}
+                  locale={language === 'pt' ? 'pt' : 'en'}
+                  buttonClassName="h-10 w-[11.5rem] min-w-[11.5rem] justify-start"
+                  disableBeforeToday={!canBackdatePost}
+                />
+                {!canBackdatePost && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">{t.journalsUi.dateLockedToToday}</p>
+                )}
+              </div>
+              <div>
+                <Select value={newEntryType} onValueChange={setNewEntryType}>
+                  <SelectTrigger className="h-10 w-[14rem] min-w-[14rem]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {CREATE_ENTRY_TYPES.map(et => (
+                      <SelectItem key={et.value} value={et.value}>
+                        {t.journalsUi.entryTypes[et.labelKey as keyof typeof t.journalsUi.entryTypes] as string}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -1451,10 +1734,10 @@ export default function Journals() {
                   <p className="text-xs text-muted-foreground">{t.journalsUi.entryLinesHint}</p>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" className="h-8 gap-1" onClick={autoBalance}>
+                  <Button variant="outline" size="sm" className="h-8 gap-1" tabIndex={-1} onClick={autoBalance}>
                     {t.journalsUi.autoBalance}
                   </Button>
-                  <Button variant="outline" size="sm" className="h-8 gap-1" onClick={addLine}>
+                  <Button variant="outline" size="sm" className="h-8 gap-1" tabIndex={-1} onClick={addLine}>
                     <Plus className="h-4 w-4" /> {t.journalsUi.line}
                   </Button>
                 </div>
@@ -1464,7 +1747,7 @@ export default function Journals() {
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm">
                     <tr className="border-b">
-                      <th className="px-3 py-2.5 text-left w-32 font-semibold">{t.journalsUi.account}</th>
+                      <th className="px-3 py-2.5 text-left w-40 font-semibold">{t.journalsUi.account}</th>
                       <th className="px-3 py-2.5 text-left min-w-[200px] font-semibold">{t.journalsUi.accountName}</th>
                       <th className="px-3 py-2.5 text-left min-w-[180px] font-semibold">{t.common.description}</th>
                       <th className="px-3 py-2.5 text-right w-36 font-semibold">{t.journalsUi.debit}</th>
@@ -1473,46 +1756,105 @@ export default function Journals() {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {newEntryLines.map((line) => (
-                      <tr key={line.id} className="group hover:bg-muted/20">
-                        <td className="px-2 py-2 relative align-top">
-                          <Input
-                            value={line.accountCode}
-                            placeholder={t.journalsUi.accountCodeExample}
-                            className="h-9 font-mono"
-                            onFocus={() => { setActiveLineId(line.id); setAccountSearch(''); }}
-                            onChange={e => {
-                              updateLine(line.id, 'accountCode', e.target.value);
-                              setAccountSearch(e.target.value);
-                              setActiveLineId(line.id);
-                            }}
-                          />
-                          {activeLineId === line.id && (
-                            <div className="absolute top-full left-0 z-50 mt-1 w-96 max-h-56 overflow-y-auto rounded-md border bg-popover shadow-lg">
-                              <div className="sticky top-0 border-b bg-popover p-2 space-y-2">
-                                <Input
-                                  placeholder={t.journalsUi.searchAccountPlaceholder}
-                                  value={accountSearch}
-                                  onChange={e => setAccountSearch(e.target.value)}
-                                  className="h-8"
-                                  autoFocus
-                                />
-                                <div className="flex gap-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {newEntryLines.map((line, idx) => (
+                      <tr
+                        key={line.id}
+                        className={cn(
+                          'group',
+                          activeLineId === line.id ? 'bg-primary/5' : 'hover:bg-muted/20',
+                        )}
+                      >
+                        <td className="px-2 py-1.5 relative align-top">
+                          <div className="flex items-center gap-1">
+                            <Input
+                              ref={(el) => setLineFieldRef(line.id, 'account', el)}
+                              value={line.accountCode}
+                              placeholder={t.journalsUi.accountCodeExample}
+                              className="h-9 font-mono"
+                              autoComplete="off"
+                              onFocus={() => {
+                                if (accountBlurTimer.current) {
+                                  window.clearTimeout(accountBlurTimer.current);
+                                  accountBlurTimer.current = null;
+                                }
+                                setActiveLineId(line.id);
+                                if (Date.now() < skipAccountMenuUntilRef.current) {
+                                  setAccountMenuLineId(null);
+                                  return;
+                                }
+                                setAccountSearch(line.accountCode);
+                                setAccountHighlight(0);
+                                setAccountMenuLineId(line.id);
+                              }}
+                              onBlur={() => {
+                                if (accountBrowserOpen) return;
+                                accountBlurTimer.current = window.setTimeout(() => {
+                                  setAccountMenuLineId((prev) => (prev === line.id ? null : prev));
+                                }, 150);
+                              }}
+                              onChange={e => {
+                                skipAccountMenuUntilRef.current = 0;
+                                updateLine(line.id, 'accountCode', e.target.value);
+                                setAccountSearch(e.target.value);
+                                setActiveLineId(line.id);
+                                setAccountMenuLineId(line.id);
+                                setAccountHighlight(0);
+                              }}
+                              onKeyDown={(e) => handleJournalLineKeyDown(e, idx, line, 'account')}
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              tabIndex={-1}
+                              className="h-9 w-9 shrink-0"
+                              title={`${t.journalsUi.openAccountList} (F4)`}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => openAccountBrowser(line.id, line.accountCode)}
+                            >
+                              <Search className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          {accountMenuLineId === line.id
+                            && !accountBrowserOpen
+                            && String(line.accountCode || '').trim().length > 0
+                            && typeof document !== 'undefined'
+                            && createPortal(
+                            (() => {
+                              const box = lineFieldRefs.current[line.id]?.account?.getBoundingClientRect();
+                              if (!box) return null;
+                              return (
+                            <div
+                              className="fixed z-[120] max-h-64 overflow-y-auto rounded-md border bg-popover shadow-lg"
+                              style={{
+                                top: box.bottom + 4,
+                                left: box.left,
+                                width: Math.max(box.width + 36, 380),
+                              }}
+                            >
+                              <div className="sticky top-0 border-b bg-popover px-3 py-2">
+                                <div className="flex gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                                   <span className="w-16 shrink-0">{t.journalsUi.account}</span>
                                   <span className="min-w-0 flex-1">{t.journalsUi.accountName}</span>
                                   <span className="w-24 shrink-0 text-right">{t.chartOfAccountsUi.colBalance}</span>
                                 </div>
                               </div>
-                              {filteredAccounts.length === 0 ? (
+                              {typeaheadAccounts.length === 0 ? (
                                 <div className="px-3 py-4 text-center text-sm text-muted-foreground">
                                   {t.journalsUi.noAccountsFound}
                                 </div>
                               ) : (
-                                filteredAccounts.map(acct => (
+                                typeaheadAccounts.map((acct, acctIdx) => (
                                   <button
                                     key={acct.id}
                                     type="button"
-                                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent/50"
+                                    tabIndex={-1}
+                                    data-journal-acct-type={`${line.id}-${acctIdx}`}
+                                    className={cn(
+                                      'flex w-full items-center gap-2 px-3 py-2 text-left text-sm',
+                                      acctIdx === accountHighlight ? 'bg-accent' : 'hover:bg-accent/50',
+                                    )}
+                                    onMouseEnter={() => setAccountHighlight(acctIdx)}
                                     onMouseDown={e => {
                                       e.preventDefault();
                                       selectAccount(line.id, acct);
@@ -1529,9 +1871,12 @@ export default function Journals() {
                                 ))
                               )}
                             </div>
+                              );
+                            })(),
+                            document.body,
                           )}
                         </td>
-                        <td className="px-2 py-2 align-top">
+                        <td className="px-2 py-1.5 align-middle">
                           <Input
                             value={
                               line.accountCode
@@ -1543,49 +1888,61 @@ export default function Journals() {
                                 : line.accountName
                             }
                             disabled
+                            tabIndex={-1}
                             className="h-9 bg-muted/40"
                           />
-                          {line.accountCode && line.accountBalance != null && (
-                            <p className="mt-1 text-xs font-medium text-primary tabular-nums">
-                              {t.journalsUi.accountCurrentBalance
-                                .replace('{amount}', Number(line.accountBalance).toLocaleString(uiLocale))}
-                            </p>
-                          )}
                         </td>
-                        <td className="px-2 py-2 align-top">
+                        <td className="px-2 py-1.5 align-middle">
                           <Input
+                            ref={(el) => setLineFieldRef(line.id, 'description', el)}
                             value={line.description}
                             placeholder={t.journalsUi.entryDescriptionPlaceholder}
+                            onFocus={() => {
+                              setActiveLineId(line.id);
+                              setAccountMenuLineId(null);
+                            }}
                             onChange={e => updateLine(line.id, 'description', e.target.value)}
+                            onKeyDown={(e) => handleJournalLineKeyDown(e, idx, line, 'description')}
                             className="h-9"
                           />
                         </td>
-                        <td className="px-2 py-2 align-top">
+                        <td className="px-2 py-1.5 align-middle">
                           <Input
-                            type="number"
-                            min="0"
-                            step="0.01"
+                            ref={(el) => setLineFieldRef(line.id, 'debit', el)}
+                            type="text"
+                            inputMode="decimal"
                             value={line.debit}
                             placeholder="0.00"
+                            onFocus={() => {
+                              setActiveLineId(line.id);
+                              setAccountMenuLineId(null);
+                            }}
                             onChange={e => updateLine(line.id, 'debit', e.target.value)}
+                            onKeyDown={(e) => handleJournalLineKeyDown(e, idx, line, 'debit')}
                             className="h-9 text-right font-mono tabular-nums"
                           />
                         </td>
-                        <td className="px-2 py-2 align-top">
+                        <td className="px-2 py-1.5 align-middle">
                           <Input
-                            type="number"
-                            min="0"
-                            step="0.01"
+                            ref={(el) => setLineFieldRef(line.id, 'credit', el)}
+                            type="text"
+                            inputMode="decimal"
                             value={line.credit}
                             placeholder="0.00"
+                            onFocus={() => {
+                              setActiveLineId(line.id);
+                              setAccountMenuLineId(null);
+                            }}
                             onChange={e => updateLine(line.id, 'credit', e.target.value)}
+                            onKeyDown={(e) => handleJournalLineKeyDown(e, idx, line, 'credit')}
                             className="h-9 text-right font-mono tabular-nums"
                           />
                         </td>
-                        <td className="px-1 py-2 align-top">
+                        <td className="px-1 py-1.5 align-middle">
                           <Button
                             variant="ghost"
                             size="icon"
+                            tabIndex={-1}
                             className="h-8 w-8 opacity-60 hover:opacity-100"
                             onClick={() => removeLine(line.id)}
                           >
@@ -1626,6 +1983,7 @@ export default function Journals() {
               {t.common.cancel}
             </Button>
             <Button
+              ref={postButtonRef}
               size="lg"
               onClick={() => { void saveNewEntry(); }}
               disabled={savingEntry || !isBalanced || newEntryTotalDebit === 0 || !entryTitleFromLines()}
@@ -1635,6 +1993,86 @@ export default function Journals() {
               {editingEntryId ? t.journalsUi.saveEntry : t.journalsUi.postEntry}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={accountBrowserOpen}
+        onOpenChange={(open) => {
+          if (!open) closeAccountBrowser();
+        }}
+      >
+        <DialogContent
+          className="z-[110] flex h-[min(80vh,42rem)] w-[min(52rem,92vw)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl"
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            accountSearchRef.current?.focus();
+          }}
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+          }}
+          onEscapeKeyDown={(e) => {
+            e.preventDefault();
+            closeAccountBrowser();
+            suppressAccountMenu();
+            if (activeLineId) focusLineField(activeLineId, 'account');
+          }}
+        >
+          <DialogHeader className="shrink-0 space-y-1 border-b px-4 py-3 text-left">
+            <DialogTitle>{t.journalsUi.accountListTitle}</DialogTitle>
+            <DialogDescription>{t.journalsUi.accountListHint}</DialogDescription>
+          </DialogHeader>
+          <div className="shrink-0 px-4 pb-3">
+            <Input
+              ref={accountSearchRef}
+              value={accountSearch}
+              placeholder={t.journalsUi.searchAccountPlaceholder}
+              className="h-10"
+              autoComplete="off"
+              onChange={(e) => {
+                setAccountSearch(e.target.value);
+                setAccountHighlight(0);
+              }}
+              onKeyDown={(e) => handleAccountListKeyDown(e, activeLineId)}
+            />
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {visibleAccounts.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                {t.journalsUi.noAccountsFound}
+              </p>
+            ) : (
+              visibleAccounts.map((acct, acctIdx) => (
+                <button
+                  key={acct.id}
+                  type="button"
+                  tabIndex={-1}
+                  data-journal-acct={String(acctIdx)}
+                  className={cn(
+                    'flex w-full items-center gap-2 px-4 py-2 text-left text-sm border-b border-border/40',
+                    acctIdx === accountHighlight ? 'bg-accent' : 'hover:bg-accent/40',
+                  )}
+                  onMouseEnter={() => setAccountHighlight(acctIdx)}
+                  onClick={() => {
+                    if (activeLineId) selectAccount(activeLineId, acct);
+                  }}
+                >
+                  <span className="w-20 shrink-0 font-mono text-primary">{acct.code}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {resolveAccountDisplayName(acct, language, t)}
+                  </span>
+                  <span className="w-28 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                    {Number(acct.current_balance || 0).toLocaleString(uiLocale)} Kz
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+          <p className="shrink-0 border-t px-4 py-2 text-xs text-muted-foreground">
+            {t.journalsUi.showingAccounts
+              .replace('{shown}', String(visibleAccounts.length))
+              .replace('{total}', String(filteredAccounts.length))}
+          </p>
         </DialogContent>
       </Dialog>
     </div>

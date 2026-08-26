@@ -116,6 +116,38 @@ app.get(['/api/openapi.yaml', '/api/v1/openapi.yaml'], (_req, res) => {
 const webappPath = path.join(__dirname, '../webapp');
 if (!fs.existsSync(webappPath)) fs.mkdirSync(webappPath, { recursive: true });
 app.use('/app', express.static(webappPath, { index: false, fallthrough: true }));
+
+function webappEntryAssetsExist(indexHtml) {
+  const names = [...String(indexHtml || '').matchAll(/\/app\/assets\/([^"'>\s]+\.js)/g)].map((m) => m[1]);
+  if (!names.length) return false;
+  return names.every((name) => fs.existsSync(path.join(webappPath, 'assets', name)));
+}
+
+function webappMissingHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>NEXOR — web UI not built</title>
+  <style>
+    body { font-family: Segoe UI, sans-serif; max-width: 40rem; margin: 12vh auto; padding: 0 1.5rem;
+      color: #0f172a; line-height: 1.45; }
+    code { background: #f1f5f9; padding: 0.1rem 0.35rem; border-radius: 4px; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 1rem 1.1rem; border-radius: 8px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>NEXOR web UI is not installed</h1>
+  <p>The browser page at <code>/app</code> has no JavaScript bundle, so it stays blank.
+     Build it on the <strong>server PC</strong> (not the client repo):</p>
+  <pre>cd C:\\Users\\user\\Documents\\GitHub\\angola-invoice-finder
+.\\scripts\\fix-webapp-on-server.ps1</pre>
+  <p>Then hard-refresh the browser (Ctrl+F5) and open <code>http://SERVER:3000/app</code>.</p>
+</body>
+</html>`;
+}
+
 // SPA fallback — do not mask missing /app/assets/* (that causes a blank page).
 app.get(/^\/app(?:\/.*)?$/, (req, res) => {
   const reqPath = String(req.path || '');
@@ -123,8 +155,18 @@ app.get(/^\/app(?:\/.*)?$/, (req, res) => {
     return res.status(404).type('text').send('Webapp asset missing — run deploy-webapp / build:webapp on the server.');
   }
   const indexPath = path.join(webappPath, 'index.html');
-  if (fs.existsSync(indexPath)) res.sendFile(indexPath);
-  else res.status(404).json({ error: 'Webapp not deployed — run npm run build:webapp and copy dist/ to backend/webapp' });
+  if (fs.existsSync(indexPath)) {
+    let html = '';
+    try {
+      html = fs.readFileSync(indexPath, 'utf8');
+    } catch {
+      html = '';
+    }
+    if (webappEntryAssetsExist(html)) {
+      return res.sendFile(indexPath);
+    }
+  }
+  res.status(503).type('html').send(webappMissingHtml());
 });
 
 function isLoopbackMetricsRequest(req) {

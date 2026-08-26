@@ -59,6 +59,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 import { 
   Plus, 
   MoreHorizontal, 
@@ -515,7 +516,7 @@ export default function Expenses() {
   };
 
   const getCategoryLabel = (cat: ExpenseCategory) => {
-    return EXPENSE_CATEGORIES.find(c => c.value === cat)?.label || cat;
+    return t.expensesUi.categories[cat] || cat;
   };
 
   const getCategoryIcon = (cat: ExpenseCategory) => {
@@ -529,15 +530,6 @@ export default function Expenses() {
     const totalPending = expenses.filter(e => ['draft', 'pending_approval', 'approved'].includes(e.status)).reduce((sum, e) => sum + e.totalAmount, 0);
     return { pending, totalPaid, totalPending, total: expenses.length };
   }, [expenses]);
-
-  const selectedCaixa = useMemo(
-    () => caixas.find((c) => c.id === formData.caixaId),
-    [caixas, formData.caixaId],
-  );
-  const selectedBank = useMemo(
-    () => bankAccounts.find((a) => a.id === formData.bankAccountId),
-    [bankAccounts, formData.bankAccountId],
-  );
 
   return (
     <div className="space-y-6">
@@ -621,7 +613,7 @@ export default function Expenses() {
               <SelectItem value="__all__">{t.expensesUi.allCategories}</SelectItem>
                 {EXPENSE_CATEGORIES.map(cat => (
                   <SelectItem key={cat.value} value={cat.value}>
-                    {cat.icon} {cat.label}
+                    {t.expensesUi.categories[cat.value]}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -755,251 +747,273 @@ export default function Expenses() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-[96vw] w-[96vw] max-h-[94vh] h-[90vh] flex flex-col gap-0 p-0 overflow-hidden sm:rounded-xl">
-          <DialogHeader className="shrink-0 space-y-1 border-b bg-muted/30 px-5 py-4 sm:px-6">
-            <DialogTitle className="text-xl">{editingId ? t.expensesUi.editTitle : t.expensesUi.newTitle}</DialogTitle>
-            <DialogDescription className="text-sm space-y-1">
-              <span>{t.expensesUi.dialogDescription}</span>
-              <span className="block text-xs text-muted-foreground">{t.expensesUi.ledgerHint}</span>
-            </DialogDescription>
+        <DialogContent className="flex max-h-[90vh] w-[min(42rem,96vw)] max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl">
+          <DialogHeader className="shrink-0 space-y-0 border-b px-6 py-4 text-left">
+            <div className="flex items-start justify-between gap-4 pr-8">
+              <div className="min-w-0 space-y-1">
+                <DialogTitle className="flex items-center gap-2 text-xl">
+                  <Receipt className="h-5 w-5 text-muted-foreground" />
+                  {editingId ? t.expensesUi.editTitle : t.expensesUi.newTitle}
+                </DialogTitle>
+                <DialogDescription>{t.expensesUi.dialogDescription}</DialogDescription>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  {t.expensesUi.totalToPay}
+                </p>
+                <p className="font-mono text-xl font-semibold tabular-nums">
+                  {(formData.amount + formData.taxAmount).toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
+                </p>
+              </div>
+            </div>
           </DialogHeader>
 
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-4 sm:px-6">
-          <div className="grid gap-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Categoria *</Label>
-                <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v as ExpenseCategory })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EXPENSE_CATEGORIES.map(cat => (
-                      <SelectItem key={cat.value} value={cat.value}>
-                        {cat.icon} {cat.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <div className="grid gap-5">
+              <div className="space-y-1.5">
+                <Label htmlFor="expense-description">{t.common.description} *</Label>
+                <Input
+                  id="expense-description"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder={t.expensesUi.descriptionPlaceholder}
+                  className="h-10"
+                  autoFocus
+                />
               </div>
-              <div className="space-y-2">
-                <Label>Fonte de Pagamento *</Label>
-                <Select value={formData.paymentSource} onValueChange={(v) => setFormData({ ...formData, paymentSource: v as 'caixa' | 'bank' })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="caixa">💵 Caixa</SelectItem>
-                    <SelectItem value="bank">🏦 Conta Bancária</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
 
-            {formData.paymentSource === 'caixa' ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Label>Caixa *</Label>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs gap-1"
-                    onClick={() => setShowNewCaixaDialog(true)}
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    {t.expensesUi.newCaixa}
-                  </Button>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="expense-amount">{t.expensesUi.amountKz} *</Label>
+                  <Input
+                    id="expense-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={formData.amount || ''}
+                    onChange={(e) => setFormData({ ...formData, amount: parseFloat(e.target.value) || 0 })}
+                    placeholder="0.00"
+                    className="h-10 text-right font-mono tabular-nums"
+                  />
                 </div>
-                {caixaLoadHint && caixas.length === 0 && !caixaLoading && (
-                  <p className="text-xs text-amber-700 dark:text-amber-300 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5">
-                    {caixaLoadHint}
-                  </p>
-                )}
-                {caixaLoading && (
-                  <p className="text-xs text-muted-foreground">{t.expensesUi.caixaLoading}</p>
-                )}
-                <Select
-                  value={formData.caixaId}
-                  onValueChange={(v) => setFormData({ ...formData, caixaId: v })}
-                  disabled={caixaLoading}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={caixaLoading ? t.expensesUi.caixaLoading : t.expensesUi.selectCashPlaceholder} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {caixaLoading ? (
-                      <SelectItem value="__loading__" disabled>
-                        {t.expensesUi.caixaLoading}
-                      </SelectItem>
-                    ) : caixas.length === 0 ? (
-                      <SelectItem value="__none__" disabled>
-                        {t.expensesUi.noCashRegisters}
-                      </SelectItem>
-                    ) : (
-                      caixas.map(c => {
-                        const balance = c.currentBalance.toLocaleString(uiLocale);
-                        const branch = String(c.branchName || '').trim();
-                        const label = branch && treasuryAllBranches
-                          ? t.expensesUi.treasuryCaixaOption
-                            .replace('{branch}', branch)
-                            .replace('{name}', c.name)
-                            .replace('{balance}', balance)
-                          : t.expensesUi.cashWithBalance
-                            .replace('{name}', c.name)
-                            .replace('{balance}', balance);
-                        return (
-                          <SelectItem key={c.id} value={c.id}>
-                            {label}
-                          </SelectItem>
-                        );
-                      })
-                    )}
-                  </SelectContent>
-                </Select>
-                {selectedCaixa && (
-                  <p className="text-xs text-muted-foreground">
-                    {t.expensesUi.paymentFromCaixa
-                      .replace('{name}', selectedCaixa.name)
-                      .replace('{balance}', selectedCaixa.currentBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 }))}
-                  </p>
-                )}
+                <div className="space-y-1.5">
+                  <Label htmlFor="expense-vat">{t.expensesUi.vatKz}</Label>
+                  <Input
+                    id="expense-vat"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={formData.taxAmount || ''}
+                    onChange={(e) => setFormData({ ...formData, taxAmount: parseFloat(e.target.value) || 0 })}
+                    placeholder="0.00"
+                    className="h-10 text-right font-mono tabular-nums"
+                  />
+                </div>
               </div>
-            ) : (
-              <div className="space-y-2">
-                <Label>Conta Bancária *</Label>
-                <Select value={formData.bankAccountId} onValueChange={(v) => setFormData({ ...formData, bankAccountId: v })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={t.expensesUi.selectBankPlaceholder} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {bankAccounts.length === 0 ? (
-                      <SelectItem value="__none__" disabled>{t.expensesUi.noBanks}</SelectItem>
-                    ) : (
-                      bankAccounts.map(a => {
-                        const branch = String(a.branchName || '').trim();
-                        const label = branch && treasuryAllBranches
-                          ? t.expensesUi.treasuryBankOption
-                            .replace('{branch}', branch)
-                            .replace('{bank}', a.bankName)
-                            .replace('{account}', a.accountNumber)
-                          : `${a.bankName} - ${a.accountNumber} (${a.currency})`;
-                        return (
-                          <SelectItem key={a.id} value={a.id}>
-                            {label}
-                          </SelectItem>
-                        );
-                      })
-                    )}
-                  </SelectContent>
-                </Select>
-                {selectedBank && (
-                  <p className="text-xs text-muted-foreground">
-                    {t.expensesUi.paymentFromBank
-                      .replace('{bank}', selectedBank.bankName)
-                      .replace('{account}', selectedBank.accountNumber)
-                      .replace('{balance}', `${selectedBank.currentBalance.toLocaleString(uiLocale, { minimumFractionDigits: 2 })} ${selectedBank.currency}`)}
-                  </p>
-                )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>{t.expensesUi.colCategory} *</Label>
+                  <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v as ExpenseCategory })}>
+                    <SelectTrigger className="h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EXPENSE_CATEGORIES.map(cat => (
+                        <SelectItem key={cat.value} value={cat.value}>
+                          {t.expensesUi.categories[cat.value]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{t.expensesUi.payFrom} *</Label>
+                  <div className="grid grid-cols-2 rounded-md border bg-muted/50 p-0.5">
+                    <button
+                      type="button"
+                      className={cn(
+                        'inline-flex h-9 items-center justify-center gap-1.5 rounded-sm text-sm font-medium transition-colors',
+                        formData.paymentSource === 'caixa'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
+                      onClick={() => setFormData({ ...formData, paymentSource: 'caixa' })}
+                    >
+                      <Wallet className="h-3.5 w-3.5" />
+                      {t.expensesUi.cashRegister}
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        'inline-flex h-9 items-center justify-center gap-1.5 rounded-sm text-sm font-medium transition-colors',
+                        formData.paymentSource === 'bank'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
+                      onClick={() => setFormData({ ...formData, paymentSource: 'bank' })}
+                    >
+                      <Building className="h-3.5 w-3.5" />
+                      {t.expensesUi.bank}
+                    </button>
+                  </div>
+                </div>
               </div>
-            )}
 
-            <div className="space-y-2">
-              <Label>Descrição *</Label>
-              <Input
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder={t.expensesUi.descriptionPlaceholder}
-              />
-            </div>
+              {formData.paymentSource === 'caixa' ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label>{t.expensesUi.cashRegister} *</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs gap-1"
+                      onClick={() => setShowNewCaixaDialog(true)}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      {t.expensesUi.newCaixa}
+                    </Button>
+                  </div>
+                  {caixaLoadHint && caixas.length === 0 && !caixaLoading && (
+                    <p className="text-xs text-amber-700 dark:text-amber-300">{caixaLoadHint}</p>
+                  )}
+                  {caixaLoading && (
+                    <p className="text-xs text-muted-foreground">{t.expensesUi.caixaLoading}</p>
+                  )}
+                  <Select
+                    value={formData.caixaId}
+                    onValueChange={(v) => setFormData({ ...formData, caixaId: v })}
+                    disabled={caixaLoading}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder={caixaLoading ? t.expensesUi.caixaLoading : t.expensesUi.selectCashPlaceholder} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {caixaLoading ? (
+                        <SelectItem value="__loading__" disabled>
+                          {t.expensesUi.caixaLoading}
+                        </SelectItem>
+                      ) : caixas.length === 0 ? (
+                        <SelectItem value="__none__" disabled>
+                          {t.expensesUi.noCashRegisters}
+                        </SelectItem>
+                      ) : (
+                        caixas.map(c => {
+                          const balance = c.currentBalance.toLocaleString(uiLocale);
+                          const branch = String(c.branchName || '').trim();
+                          const label = branch && treasuryAllBranches
+                            ? t.expensesUi.treasuryCaixaOption
+                              .replace('{branch}', branch)
+                              .replace('{name}', c.name)
+                              .replace('{balance}', balance)
+                            : t.expensesUi.cashWithBalance
+                              .replace('{name}', c.name)
+                              .replace('{balance}', balance);
+                          return (
+                            <SelectItem key={c.id} value={c.id}>
+                              {label}
+                            </SelectItem>
+                          );
+                        })
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label>{t.expensesUi.bankAccount} *</Label>
+                  {bankAccounts.length === 0 && (
+                    <p className="text-xs text-amber-700 dark:text-amber-300">{t.expensesUi.noBanks}</p>
+                  )}
+                  <Select value={formData.bankAccountId} onValueChange={(v) => setFormData({ ...formData, bankAccountId: v })}>
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder={t.expensesUi.selectBankPlaceholder} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bankAccounts.length === 0 ? (
+                        <SelectItem value="__none__" disabled>{t.expensesUi.noBanks}</SelectItem>
+                      ) : (
+                        bankAccounts.map(a => {
+                          const branch = String(a.branchName || '').trim();
+                          const label = branch && treasuryAllBranches
+                            ? t.expensesUi.treasuryBankOption
+                              .replace('{branch}', branch)
+                              .replace('{bank}', a.bankName)
+                              .replace('{account}', a.accountNumber)
+                            : `${a.bankName} - ${a.accountNumber} (${a.currency})`;
+                          return (
+                            <SelectItem key={a.id} value={a.id}>
+                              {label}
+                            </SelectItem>
+                          );
+                        })
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Valor (Kz) *</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={formData.amount || ''}
-                  onChange={(e) => setFormData({ ...formData, amount: parseFloat(e.target.value) || 0 })}
-                  placeholder="0.00"
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="space-y-1.5 sm:col-span-1">
+                  <Label htmlFor="expense-payee">{t.expensesUi.colPayee}</Label>
+                  <Input
+                    id="expense-payee"
+                    value={formData.payeeName}
+                    onChange={(e) => setFormData({ ...formData, payeeName: e.target.value })}
+                    placeholder={t.expensesUi.payeePlaceholder}
+                    className="h-10"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="expense-nif">{t.expensesUi.payeeNif}</Label>
+                  <Input
+                    id="expense-nif"
+                    value={formData.payeeNif}
+                    onChange={(e) => setFormData({ ...formData, payeeNif: e.target.value })}
+                    placeholder="NIF"
+                    className="h-10 font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="expense-doc">{t.expensesUi.documentRef}</Label>
+                  <Input
+                    id="expense-doc"
+                    value={formData.invoiceNumber}
+                    onChange={(e) => setFormData({ ...formData, invoiceNumber: e.target.value })}
+                    placeholder={t.expensesUi.documentRefPlaceholder}
+                    className="h-10"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="expense-notes">{t.common.notes}</Label>
+                <Textarea
+                  id="expense-notes"
+                  value={formData.notes}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  placeholder={t.expensesUi.notesPlaceholder}
+                  rows={2}
+                  className="resize-none"
                 />
               </div>
-              <div className="space-y-2">
-                <Label>IVA (Kz)</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={formData.taxAmount || ''}
-                  onChange={(e) => setFormData({ ...formData, taxAmount: parseFloat(e.target.value) || 0 })}
-                  placeholder="0.00"
+
+              {editingId && (
+                <AttachmentPanel
+                  entityType="expense"
+                  entityId={editingId}
+                  title={language === 'pt' ? 'Anexos' : 'Attachments'}
                 />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Beneficiário</Label>
-                <Input
-                  value={formData.payeeName}
-                  onChange={(e) => setFormData({ ...formData, payeeName: e.target.value })}
-                  placeholder={t.expensesUi.payeePlaceholder}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>NIF do Beneficiário</Label>
-                <Input
-                  value={formData.payeeNif}
-                  onChange={(e) => setFormData({ ...formData, payeeNif: e.target.value })}
-                  placeholder="NIF"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Nº Factura/Recibo</Label>
-              <Input
-                value={formData.invoiceNumber}
-                onChange={(e) => setFormData({ ...formData, invoiceNumber: e.target.value })}
-                placeholder={t.expensesUi.documentRefPlaceholder}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Notas</Label>
-              <Textarea
-                value={formData.notes}
-                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                placeholder={t.expensesUi.notesPlaceholder}
-                rows={2}
-              />
-            </div>
-
-            {editingId && (
-              <AttachmentPanel
-                entityType="expense"
-                entityId={editingId}
-                title={language === 'pt' ? 'Anexos' : 'Attachments'}
-              />
-            )}
-
-            <div className="p-3 bg-muted rounded-lg">
-              <div className="flex justify-between items-center">
-                <span className="font-medium">{t.expensesUi.totalToPay}</span>
-                <span className="text-xl font-bold">
-                  {(formData.amount + formData.taxAmount).toLocaleString(uiLocale, { minimumFractionDigits: 2 })} Kz
-                </span>
-              </div>
+              )}
             </div>
           </div>
-          </div>
 
-          <DialogFooter className="shrink-0 flex-col gap-2 border-t bg-muted/20 px-5 py-4 sm:flex-row sm:justify-between sm:px-6">
+          <DialogFooter className="shrink-0 gap-2 border-t px-6 py-4 sm:justify-between">
             <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSubmitting}>
               {t.common.cancel}
             </Button>
-            <div className="flex flex-wrap gap-2 justify-end">
+            <div className="flex flex-wrap justify-end gap-2">
               {editingId ? (
                 <Button onClick={() => void handleSubmit('save')} disabled={isSubmitting}>
                   {t.common.saveChanges}
@@ -1007,7 +1021,7 @@ export default function Expenses() {
               ) : (
                 <>
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     onClick={() => void handleSubmit('save_and_new')}
                     disabled={isSubmitting}
                   >
