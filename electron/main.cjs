@@ -2360,6 +2360,14 @@ ipcMain.handle('syncOutbox:listPending', () => ({
   items: syncOutbox.listPendingForUi(),
 }));
 
+ipcMain.handle('syncOutbox:exportPending', (_, dateFrom, dateTo) => {
+  try {
+    return { success: true, ...syncOutbox.exportPendingEvents(dateFrom, dateTo) };
+  } catch (e) {
+    return { success: false, error: e.message, events: [], totalPending: 0 };
+  }
+});
+
 ipcMain.handle('syncOutbox:flush', async (_, apiBaseUrl) => {
   try {
     return { success: true, ...(await syncOutbox.flushToServer(apiBaseUrl || getCityApiBaseForClient())) };

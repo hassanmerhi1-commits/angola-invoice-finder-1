@@ -13,6 +13,7 @@ const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
 const { applyClientIngestEvent, SUPPORTED_TYPES } = require('../sync/clientIngestHandlers');
 const { fetchMasterDataForBranch } = require('../sync/masterData');
+const { buildDownPackage, verifyUpPackage } = require('../sync/usbPackage');
 const { logSyncAudit, fetchRecentAudit } = require('../sync/auditLog');
 const { applyHqIngestEvent, findHqIngestReceipt } = require('../sync/hqIngestMirror');
 const { buildConsolidationReport } = require('../sync/consolidation');
@@ -345,6 +346,129 @@ module.exports = function syncIngestRouter(broadcastTable) {
     } catch (e) {
       console.error('[SYNC MASTER DATA]', e);
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** Connected PC: export nexor-down catalog + POS stock snapshot for USB. */
+  router.get('/usb-catalog', requireAuth, requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const branchId = String(req.query.branchId || '').trim();
+      if (!branchId) return res.status(400).json({ error: 'branchId query required' });
+      const data = await fetchMasterDataForBranch(branchId, null);
+      const branch = await db.query(`SELECT name FROM branches WHERE id = $1 LIMIT 1`, [branchId]).catch(() => ({ rows: [] }));
+      const pkg = buildDownPackage({
+        branchId,
+        branchName: branch.rows[0]?.name || null,
+        appVersion: process.env.NEXOR_APP_VERSION || null,
+        data,
+      });
+      res.json({ package: pkg });
+    } catch (e) {
+      console.error('[SYNC USB CATALOG]', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** City office: apply nexor-up USB package through the same ingest handlers. */
+  router.post('/usb-ingest', requireAuth, requirePermission('admin_settings'), async (req, res) => {
+    const poolClient = await db.pool.connect();
+    try {
+      const pkg = req.body?.package || req.body;
+      const verified = verifyUpPackage(pkg);
+      if (!verified.ok) return res.status(400).json({ error: verified.error });
+
+      const events = Array.isArray(pkg.events) ? pkg.events : [];
+      const results = [];
+      let touchedSales = false;
+      let touchedProducts = false;
+      let touchedPayments = false;
+      let touchedPurchases = false;
+      let touchedCaixa = false;
+
+      for (const ev of events) {
+        const key = ev.idempotencyKey || ev.idempotency_key;
+        const type = ev.type || ev.event_type;
+        try {
+          const result = await applyClientIngestEvent(poolClient, ev);
+          if (result.ok !== false) {
+            await logSyncAudit({
+              eventType: type,
+              entityType: result.eventType || type,
+              entityId:
+                result.saleId
+                || result.paymentId
+                || result.movementId
+                || result.purchaseInvoiceId
+                || result.sessionId
+                || null,
+              branchId:
+                ev.payload?.saleData?.branchId
+                || ev.payload?.paymentData?.branchId
+                || ev.payload?.invoiceData?.branchId
+                || ev.payload?.sessionData?.branchId
+                || pkg.fromBranchId
+                || null,
+              source: 'usb_folder',
+              destination: 'city_server',
+              idempotencyKey: key,
+              status: 'completed',
+            });
+            if (type === 'sale.created') touchedSales = true;
+            if (type === 'payment.created') touchedPayments = true;
+            if (type === 'stock_movement' || type === 'purchase_invoice.created') touchedProducts = true;
+            if (type === 'purchase_invoice.created') touchedPurchases = true;
+            if (type === 'caixa.close') touchedCaixa = true;
+          } else {
+            await logSyncAudit({
+              eventType: type,
+              source: 'usb_folder',
+              destination: 'city_server',
+              idempotencyKey: key,
+              status: 'failed',
+              errorMessage: result.error,
+            });
+          }
+          results.push({ idempotencyKey: key, ...result });
+        } catch (e) {
+          await poolClient.query('ROLLBACK').catch(() => {});
+          await logSyncAudit({
+            eventType: type,
+            source: 'usb_folder',
+            destination: 'city_server',
+            idempotencyKey: key,
+            status: 'failed',
+            errorMessage: e.message,
+          });
+          results.push({ ok: false, idempotencyKey: key, error: e.message });
+        }
+      }
+
+      if (broadcastTable) {
+        if (touchedSales) await broadcastTable('sales');
+        if (touchedPayments) await broadcastTable('payments');
+        if (touchedProducts) await broadcastTable('products');
+        if (touchedPurchases) await broadcastTable('purchase_invoices');
+        if (touchedCaixa) {
+          await broadcastTable('caixas');
+          await broadcastTable('caixa_sessions');
+        }
+      }
+
+      const applied = results.filter((r) => r.ok !== false).length;
+      const duplicates = results.filter((r) => r.duplicate).length;
+      const failed = results.filter((r) => r.ok === false).length;
+      res.json({
+        success: failed === 0,
+        applied,
+        duplicates,
+        failed,
+        results,
+      });
+    } catch (e) {
+      console.error('[SYNC USB INGEST]', e);
+      res.status(500).json({ error: e.message });
+    } finally {
+      poolClient.release();
     }
   });
 

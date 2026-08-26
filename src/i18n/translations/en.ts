@@ -2480,93 +2480,63 @@ export const en = {
   dataSyncUi: {
     toastErrorTitle: "Error",
 
-    title: "Data sync",
-    subtitle: "Export and import data between branches and head office",
+    title: "USB / folder transfer",
+    subtitle: "Move pending shop work to the city, or load catalog and prices onto an offline PC — without internet.",
 
-    offlineFirstTitle: "Offline-first system",
-    offlineFirstDesc:
-      "Each branch works with local data. At the end of the day or week, export the data and send it to head office via USB drive or email. Head office imports data from all branches for consolidation.",
+    howItWorksTitle: "When the shop cannot reach the city",
+    howItWorksDesc:
+      "This is not a second database. Sales already saved on the city server stay there. USB only carries work this PC queued while offline, or a catalog snapshot for POS on this PC.",
 
-    tabExport: "Export data",
-    tabImport: "Import data",
+    tabToCity: "Send work to city",
+    tabToShop: "Load catalog onto this PC",
 
-    exportPackageTitle: "Export full package",
-    exportPackageDesc: "Generates a JSON file with all branch data to send to head office",
+    sendWorkTitle: "Export pending work",
+    sendWorkDesc: "Saves a nexor-up file of sales, payments, purchases, stock movements, and caixa closes still waiting on this PC. Copy it to a USB stick and apply it on a PC that can reach the city.",
+    exportPending: "Save pending work to file",
+
+    applyWorkTitle: "Apply pending work from USB",
+    applyWorkDesc: "On a connected city/office PC, open the nexor-up file. Duplicates are skipped.",
+
+    exportCatalogTitle: "Export catalog for a shop",
+    exportCatalogDesc: "On a PC that can reach the city, save products, prices, clients, and a stock snapshot for the destination branch.",
+    exportCatalog: "Save catalog to file",
+    stockSnapshotTitle: "Stock is a snapshot for POS only",
+    stockSnapshotDesc: "Quantities update the local catalog display. They are not posted to the stock ledger. Real stock between branches stays a stock transfer when the network is back.",
+
+    loadCatalogTitle: "Load catalog onto this PC",
+    loadCatalogDesc: "Open a nexor-down file so cashiers can sell with current SKUs and prices while this shop is offline.",
+
     branchLabel: "Branch",
     dateFromLabel: "Start date",
     dateToLabel: "End date",
-    preparePackage: "Prepare package",
+    selectBranchError: "Select a branch",
+    selectBranchPlaceholder: "Select branch",
+    selectFile: "Select file",
+    applyPackage: "Apply",
 
-    packageReadyTitle: "Package ready",
-    packageReadyDesc: "Ready for download or email",
-    periodLabel: "Period",
-    totalRecordsLabel: "Total records",
-    versionLabel: "Version",
-    branchCodeLabel: "Code: {code}",
+    packagePreparedTitle: "File saved",
+    recordsReady: "{count} pending event(s) written to the file",
+    catalogReady: "{products} products and {clients} clients written to the file",
+    exportFailed: "Could not create the file",
+
+    previewUp: "Pending work file (nexor-up)",
+    previewDown: "Catalog file (nexor-down)",
+    importCompletedTitle: "Applied",
+    recordsImported: "{count} event(s) applied",
+    catalogLoaded: "Catalog loaded onto this PC",
+    importErrorTitle: "Could not apply",
+    invalidOrCorruptedFile: "Invalid or corrupted file",
+    applyFailed: "None of the events could be applied",
+    upApplied: "Applied {applied} (duplicates {duplicates}, failed {failed})",
+    downApplied: "Loaded {products} products and {clients} clients onto this PC",
 
     statProducts: "Products",
-    statSuppliers: "Suppliers",
     statClients: "Clients",
     statPurchases: "Purchases",
     statSales: "Sales",
+    statPayments: "Payments",
     statMovements: "Movements",
-    statTransfers: "Transfers",
-    statReports: "Reports",
-
-    downloadUsb: "Download (USB drive)",
-    sendByEmail: "Send by email",
-
-    importBranchDataTitle: "Import branch data",
-    importBranchDataDesc: "Upload JSON files received from branches",
-    uploadSyncFileTitle: "Upload sync file",
-    uploadSyncFileDesc: "Drag and drop or click to select the JSON file",
-    importDoneAlertTitle: "Import completed",
-    totalImportedLabel: "Total records imported",
-
-    importInstructionsTitle: "Import instructions",
-    importStepReceiveFile: "Receive the JSON file from the branch (via USB drive or email)",
-    importStepSelectFile: 'Click "Select file" and choose the received file',
-    importStepAutoImport: "The system will validate and import the data automatically",
-    importStepDuplicates: "Duplicate records will be skipped (based on ID or tax ID)",
-    importStepConsolidate: "Data will be consolidated in the central system",
-    packageContentsTitle: "Data included in the package:",
-    packageItemProducts: "Products",
-    packageItemSuppliers: "Suppliers",
-    packageItemClients: "Clients",
-    packageItemPurchases: "Purchases (POs)",
-    packageItemSales: "Sales (invoices)",
-    packageItemStockMovements: "Stock movements",
-    packageItemStockTransfers: "Transfers",
-    packageItemDailyReports: "Daily reports",
-
-    emailDialogTitle: "Send by email",
-    emailDialogDesc: "The file will be downloaded and your email client will open",
-    headOfficeEmailLabel: "Head office email",
-    emailSubject: "Sync: {branch}",
-    emailBody: "Sync package with {count} records.",
-
-    selectBranchError: "Select a branch",
-    selectBranchPlaceholder: "Select branch",
-
-    packagePreparedTitle: "Package prepared",
-    recordsReady: "{count} records ready to export",
-
-    downloadStartedTitle: "Download started",
-    jsonDownloaded: "The JSON file was downloaded",
-
-    emailPreparedTitle: "Email prepared",
-    emailClientOpened: "Your email client was opened with the attachment",
-
-    invalidFileFormat: "Invalid file format",
-    importCompletedTitle: "Import completed",
-    recordsImported: "{count} records imported successfully",
-    importErrorTitle: "Import error",
-    invalidOrCorruptedFile: "Invalid or corrupted file",
-
-    toLabel: "to",
-    selectFile: "Select file",
-    headOfficeEmailPlaceholder: "headoffice@company.ao",
-    send: "Send",
+    statCaixa: "Caixa",
   },
 
   syncHealthUi: {

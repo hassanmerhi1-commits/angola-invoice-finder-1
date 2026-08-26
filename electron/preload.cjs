@@ -186,6 +186,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     enqueue: (event) => ipcRenderer.invoke('syncOutbox:enqueue', event),
     getPendingCount: () => ipcRenderer.invoke('syncOutbox:pendingCount'),
     listPending: () => ipcRenderer.invoke('syncOutbox:listPending'),
+    exportPending: (dateFrom, dateTo) => ipcRenderer.invoke('syncOutbox:exportPending', dateFrom, dateTo),
     flush: (apiBaseUrl) => ipcRenderer.invoke('syncOutbox:flush', apiBaseUrl),
   },
 

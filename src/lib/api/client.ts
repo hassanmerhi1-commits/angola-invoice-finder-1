@@ -2931,6 +2931,20 @@ export const api = {
       if (since) q.set('since', since);
       return apiFetch<any>(`/sync/master-data?${q.toString()}`);
     },
+    usbCatalog: (branchId: string) =>
+      apiFetch<{ package: any }>(`/sync/usb-catalog?${new URLSearchParams({ branchId }).toString()}`),
+    usbIngest: (pkg: unknown) =>
+      apiFetch<{
+        success: boolean;
+        applied: number;
+        duplicates: number;
+        failed: number;
+        results: Array<Record<string, unknown>>;
+        error?: string;
+      }>('/sync/usb-ingest', {
+        method: 'POST',
+        body: JSON.stringify({ package: pkg }),
+      }),
   },
 
   installations: {

@@ -152,6 +152,61 @@ function listPending() {
   return readJsonOutbox().filter((e) => e.status === 'pending' || e.status === 'failed');
 }
 
+function idempotencyKeyFromSqliteRow(ev, payload) {
+  return payload?.saleData?.clientRequestId
+    || payload?.clientRequestId
+    || (payload?.invoiceData?.id ? `purchase:${payload.invoiceData.id}` : null)
+    || (payload?.sessionData?.id ? `caixa:${payload.sessionData.id}` : null)
+    || ev.entity_id
+    || ev.id;
+}
+
+function normalizeOutboxEvent(ev) {
+  if (ev && ev.payload_json != null) {
+    let payload = {};
+    try {
+      payload = JSON.parse(ev.payload_json);
+    } catch {
+      payload = {};
+    }
+    return {
+      type: ev.event_type || 'sale.created',
+      idempotencyKey: String(idempotencyKeyFromSqliteRow(ev, payload)),
+      payload,
+      createdAt: ev.created_at || null,
+    };
+  }
+  return {
+    type: ev.type || 'sale.created',
+    idempotencyKey: String(ev.idempotencyKey || ev.id || ''),
+    payload: ev.payload || {},
+    createdAt: ev.createdAt || ev.created_at || null,
+  };
+}
+
+/** Full pending events for USB nexor-up export (not the UI summary). */
+function exportPendingEvents(dateFrom, dateTo) {
+  let raw = [];
+  const cdb = getClientDb();
+  if (useSqliteOutbox() && cdb) {
+    cdb.init();
+    raw = cdb.getPendingOutboxEvents('CITY_SERVER');
+  } else {
+    raw = readJsonOutbox().filter((e) => e.status === 'pending' || e.status === 'failed');
+  }
+  const events = raw.map(normalizeOutboxEvent).filter((e) => e.idempotencyKey);
+  const from = String(dateFrom || '').slice(0, 10);
+  const to = String(dateTo || '').slice(0, 10);
+  const filtered = events.filter((e) => {
+    const d = String(e.createdAt || '').slice(0, 10);
+    if (!d) return true;
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  });
+  return { events: filtered, totalPending: events.length };
+}
+
 /** Normalized rows for renderer tooltips / settings UI. */
 function listPendingForUi() {
   return listPending().map((row) => {
@@ -351,6 +406,7 @@ module.exports = {
   getPendingCount,
   listPending,
   listPendingForUi,
+  exportPendingEvents,
   flushToServer,
   OUTBOX_PATH,
   useSqliteOutbox,

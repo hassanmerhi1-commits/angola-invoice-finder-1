@@ -1,54 +1,102 @@
-import { useState, useRef, useEffect } from 'react';
-import { useDataSync, useAuth } from '@/hooks/useERP';
+import { useEffect, useRef, useState } from 'react';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { SyncPackage } from '@/types/erp';
-// ImportResult type defined inline
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { api } from '@/lib/api/client';
+import { applyUsbDownCatalog } from '@/lib/sync/applyUsbDown';
+import {
+  buildUpPackage,
+  countUpEvents,
+  downloadJsonFile,
+  parseUsbPackage,
+  type NexorDownPackage,
+  type NexorUpEvent,
+  type NexorUsbPackage,
+} from '@/lib/sync/usbPackage';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { 
-  Download, Upload, Mail, HardDrive, FileJson, CheckCircle, AlertCircle, Building,
-  Package, Users, ShoppingCart, Truck, FileText, BarChart3, ArrowRightLeft
-} from 'lucide-react';
+import { Download, Upload, HardDrive, CheckCircle, AlertCircle, Package, Users } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { format } from 'date-fns';
-import { pt } from 'date-fns/locale';
-import { enUS } from 'date-fns/locale';
 import { useTranslation } from '@/i18n';
 
-export default function DataSync() {
-  const { t, language } = useTranslation();
-  const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const dfLocale = language === 'pt' ? pt : enUS;
-  const { user } = useAuth();
-  const { branches, currentBranch, scopeId } = useBranchScope();
-  const { exportData, downloadSyncPackage } = useDataSync();
-  const { toast } = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
 
-  const [dateFrom, setDateFrom] = useState(new Date().toISOString().split('T')[0]);
-  const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
+async function exportPendingFromElectron(dateFrom: string, dateTo: string): Promise<NexorUpEvent[]> {
+  const apiEl = (window as unknown as {
+    electronAPI?: {
+      syncOutbox?: {
+        exportPending?: (from: string, to: string) => Promise<{
+          success?: boolean;
+          error?: string;
+          events?: NexorUpEvent[];
+        }>;
+      };
+    };
+  }).electronAPI;
+  const fn = apiEl?.syncOutbox?.exportPending;
+  if (!fn) return [];
+  const r = await fn(dateFrom, dateTo);
+  if (!r?.success && r?.error) throw new Error(String(r.error));
+  return Array.isArray(r?.events) ? r.events : [];
+}
+
+export default function DataSync() {
+  const { t } = useTranslation();
+  const { branches, currentBranch, scopeId } = useBranchScope();
+  const { toast } = useToast();
+  const upFileRef = useRef<HTMLInputElement>(null);
+  const downFileRef = useRef<HTMLInputElement>(null);
+
+  const [dateFrom, setDateFrom] = useState(todayIso);
+  const [dateTo, setDateTo] = useState(todayIso);
   const [selectedBranch, setSelectedBranch] = useState(currentBranch?.id || '');
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<NexorUsbPackage | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [applyResult, setApplyResult] = useState<string | null>(null);
 
   useEffect(() => {
     const next = String(scopeId || currentBranch?.id || '').trim();
     if (next) setSelectedBranch(next);
   }, [scopeId, currentBranch?.id]);
-  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
-  const [email, setEmail] = useState('');
-  const [syncPackage, setSyncPackage] = useState<SyncPackage | null>(null);
-  const [importResult, setImportResult] = useState<any | null>(null);
 
-  const isMainOffice = currentBranch?.isMain;
+  const branchId = selectedBranch || currentBranch?.id || '';
+  const branchName = branches.find((b) => b.id === branchId)?.name || currentBranch?.name || '';
 
-  const handleExport = async () => {
-    const branchId = isMainOffice ? selectedBranch : currentBranch?.id;
+  const handleExportUp = async () => {
+    setBusy(true);
+    setApplyResult(null);
+    try {
+      const events = await exportPendingFromElectron(dateFrom, dateTo);
+      const pkg = buildUpPackage({
+        events,
+        fromBranchId: currentBranch?.id || branchId,
+        branchName: currentBranch?.name || branchName,
+        dateRange: { from: dateFrom, to: dateTo },
+      });
+      const stamp = `${dateFrom}_${dateTo}`;
+      const code = (currentBranch as { code?: string } | undefined)?.code || 'shop';
+      downloadJsonFile(`nexor-up_${code}_${stamp}.json`, pkg);
+      toast({
+        title: t.dataSyncUi.packagePreparedTitle,
+        description: t.dataSyncUi.recordsReady.replace('{count}', String(pkg.events.length)),
+      });
+    } catch (e) {
+      toast({
+        title: t.dataSyncUi.toastErrorTitle,
+        description: e instanceof Error ? e.message : t.dataSyncUi.exportFailed,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleExportDown = async () => {
     if (!branchId) {
       toast({
         title: t.dataSyncUi.toastErrorTitle,
@@ -57,440 +105,268 @@ export default function DataSync() {
       });
       return;
     }
-
-    const pkg = await exportData(branchId, dateFrom, dateTo);
-    setSyncPackage(pkg as any);
-    
-    toast({
-      title: t.dataSyncUi.packagePreparedTitle,
-      description: t.dataSyncUi.recordsReady.replace('{count}', String(pkg.totalRecords)),
-    });
-  };
-
-  const handleDownload = () => {
-    if (syncPackage) {
-      downloadSyncPackage(syncPackage);
+    setBusy(true);
+    setApplyResult(null);
+    try {
+      const res = await api.sync.usbCatalog(branchId);
+      if (res.error || !res.data?.package) {
+        throw new Error(res.error || t.dataSyncUi.exportFailed);
+      }
+      const pkg = res.data.package as NexorDownPackage;
+      const stamp = todayIso();
+      downloadJsonFile(`nexor-down_${pkg.toBranchId || branchId}_${stamp}.json`, pkg);
       toast({
-        title: t.dataSyncUi.downloadStartedTitle,
-        description: t.dataSyncUi.jsonDownloaded,
+        title: t.dataSyncUi.packagePreparedTitle,
+        description: t.dataSyncUi.catalogReady
+          .replace('{products}', String(pkg.products?.length || 0))
+          .replace('{clients}', String(pkg.clients?.length || 0)),
       });
+    } catch (e) {
+      toast({
+        title: t.dataSyncUi.toastErrorTitle,
+        description: e instanceof Error ? e.message : t.dataSyncUi.exportFailed,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
     }
   };
 
-  const handleSendEmail = () => {
-    if (syncPackage && email) {
-      // Create mailto link with package info
-      const subject = encodeURIComponent(
-        t.dataSyncUi.emailSubject.replace('{branch}', syncPackage.branchName),
-      );
-      const body = encodeURIComponent(
-        t.dataSyncUi.emailBody.replace('{count}', String(syncPackage.totalRecords)),
-      );
-      window.open(`mailto:${email}?subject=${subject}&body=${body}`);
-      toast({
-        title: t.dataSyncUi.emailPreparedTitle,
-        description: t.dataSyncUi.emailClientOpened,
-      });
-      setEmailDialogOpen(false);
-      setEmail('');
-    }
-  };
-
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  const readPackageFile = (file: File) => {
+    setApplyResult(null);
+    setPreviewError(null);
+    setPreview(null);
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = () => {
       try {
-        const content = e.target?.result as string;
-        const pkg = JSON.parse(content) as SyncPackage;
-        
-        // Validate package structure
-        if (!pkg.id || !pkg.branchId) {
-          throw new Error(t.dataSyncUi.invalidFileFormat);
-        }
-
-        // Basic import: merge data from package
-        const result = {
-          totalImported: pkg.totalRecords || 0,
-          productsImported: pkg.products?.length || 0,
-          suppliersImported: pkg.suppliers?.length || 0,
-          clientsImported: pkg.clients?.length || 0,
-          purchasesImported: pkg.purchases?.length || 0,
-          salesImported: pkg.sales?.length || 0,
-          stockMovementsImported: pkg.stockMovements?.length || 0,
-          stockTransfersImported: pkg.stockTransfers?.length || 0,
-          reportsImported: pkg.dailyReports?.length || 0,
-        };
-        setImportResult(result);
-        
-        toast({
-          title: t.dataSyncUi.importCompletedTitle,
-          description: t.dataSyncUi.recordsImported.replace('{count}', String(result.totalImported)),
-        });
-      } catch (error) {
-        toast({
-          title: t.dataSyncUi.importErrorTitle,
-          description: t.dataSyncUi.invalidOrCorruptedFile,
-          variant: 'destructive',
-        });
+        const pkg = parseUsbPackage(String(reader.result || ''));
+        setPreview(pkg);
+      } catch (e) {
+        setPreviewError(e instanceof Error ? e.message : t.dataSyncUi.invalidOrCorruptedFile);
       }
     };
     reader.readAsText(file);
-    
-    // Reset input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+  };
+
+  const handleApplyPreview = async () => {
+    if (!preview) return;
+    setBusy(true);
+    setApplyResult(null);
+    try {
+      if (preview.kind === 'nexor-up') {
+        const res = await api.sync.usbIngest(preview);
+        if (res.error) throw new Error(res.error);
+        const applied = Number(res.data?.applied || 0);
+        const dup = Number(res.data?.duplicates || 0);
+        const failed = Number(res.data?.failed || 0);
+        if (failed > 0 && applied === 0) {
+          throw new Error(t.dataSyncUi.applyFailed);
+        }
+        setApplyResult(
+          t.dataSyncUi.upApplied
+            .replace('{applied}', String(applied))
+            .replace('{duplicates}', String(dup))
+            .replace('{failed}', String(failed)),
+        );
+        toast({
+          title: t.dataSyncUi.importCompletedTitle,
+          description: t.dataSyncUi.recordsImported.replace('{count}', String(applied)),
+        });
+      } else {
+        const r = await applyUsbDownCatalog(preview, currentBranch?.id || branchId);
+        setApplyResult(
+          t.dataSyncUi.downApplied
+            .replace('{products}', String(r.products))
+            .replace('{clients}', String(r.clients)),
+        );
+        toast({
+          title: t.dataSyncUi.importCompletedTitle,
+          description: t.dataSyncUi.catalogLoaded,
+        });
+      }
+    } catch (e) {
+      toast({
+        title: t.dataSyncUi.importErrorTitle,
+        description: e instanceof Error ? e.message : t.dataSyncUi.invalidOrCorruptedFile,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
     }
   };
 
+  const upCounts = preview?.kind === 'nexor-up' ? countUpEvents(preview) : null;
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">{t.dataSyncUi.title}</h1>
-          <p className="text-muted-foreground">{t.dataSyncUi.subtitle}</p>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold">{t.dataSyncUi.title}</h1>
+        <p className="text-muted-foreground">{t.dataSyncUi.subtitle}</p>
       </div>
 
-      {/* Architecture Info */}
       <Alert>
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>{t.dataSyncUi.offlineFirstTitle}</AlertTitle>
-        <AlertDescription>{t.dataSyncUi.offlineFirstDesc}</AlertDescription>
+        <AlertTitle>{t.dataSyncUi.howItWorksTitle}</AlertTitle>
+        <AlertDescription>{t.dataSyncUi.howItWorksDesc}</AlertDescription>
       </Alert>
 
-      <Tabs defaultValue={isMainOffice ? 'import' : 'export'} className="space-y-4">
+      <Tabs defaultValue="to-city" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="export">
-            <Download className="w-4 h-4 mr-2" />
-            {t.dataSyncUi.tabExport}
+          <TabsTrigger value="to-city">
+            <Upload className="w-4 h-4 mr-2" />
+            {t.dataSyncUi.tabToCity}
           </TabsTrigger>
-          {isMainOffice && (
-            <TabsTrigger value="import">
-              <Upload className="w-4 h-4 mr-2" />
-              {t.dataSyncUi.tabImport}
-            </TabsTrigger>
-          )}
+          <TabsTrigger value="to-shop">
+            <Download className="w-4 h-4 mr-2" />
+            {t.dataSyncUi.tabToShop}
+          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="export" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t.dataSyncUi.exportPackageTitle}</CardTitle>
-              <CardDescription>{t.dataSyncUi.exportPackageDesc}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {isMainOffice && (
-                  <div className="space-y-2">
-                    <Label>{t.dataSyncUi.branchLabel}</Label>
-                    <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-                      <SelectTrigger>
-                        <SelectValue placeholder={t.dataSyncUi.selectBranchPlaceholder} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {branches.map(branch => (
-                          <SelectItem key={branch.id} value={branch.id}>
-                            {branch.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <Label>{t.dataSyncUi.dateFromLabel}</Label>
-                  <Input
-                    type="date"
-                    value={dateFrom}
-                    onChange={(e) => setDateFrom(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t.dataSyncUi.dateToLabel}</Label>
-                  <Input
-                    type="date"
-                    value={dateTo}
-                    onChange={(e) => setDateTo(e.target.value)}
-                  />
-                </div>
+        <TabsContent value="to-city" className="space-y-6">
+          <section className="space-y-3">
+            <h2 className="text-sm font-semibold">{t.dataSyncUi.sendWorkTitle}</h2>
+            <p className="text-sm text-muted-foreground">{t.dataSyncUi.sendWorkDesc}</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 max-w-lg">
+              <div className="space-y-1.5">
+                <Label>{t.dataSyncUi.dateFromLabel}</Label>
+                <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
               </div>
+              <div className="space-y-1.5">
+                <Label>{t.dataSyncUi.dateToLabel}</Label>
+                <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+              </div>
+            </div>
+            <Button onClick={() => void handleExportUp()} disabled={busy} className="gap-2">
+              <HardDrive className="h-4 w-4" />
+              {t.dataSyncUi.exportPending}
+            </Button>
+          </section>
 
-              <Button onClick={handleExport}>
-                <FileJson className="w-4 h-4 mr-2" />
-                {t.dataSyncUi.preparePackage}
-              </Button>
-            </CardContent>
-          </Card>
-
-          {syncPackage && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CheckCircle className="w-5 h-5 text-green-500" />
-                  {t.dataSyncUi.packageReadyTitle}
-                </CardTitle>
-                <CardDescription>{t.dataSyncUi.packageReadyDesc}</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Package Summary */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-muted p-4 rounded-lg">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Building className="w-4 h-4 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">{t.dataSyncUi.branchLabel}</p>
-                    </div>
-                    <p className="font-medium">{syncPackage.branchName}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {t.dataSyncUi.branchCodeLabel.replace('{code}', syncPackage.branchCode)}
-                    </p>
-                  </div>
-                  <div className="bg-muted p-4 rounded-lg">
-                    <div className="flex items-center gap-2 mb-1">
-                      <FileText className="w-4 h-4 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">{t.dataSyncUi.periodLabel}</p>
-                    </div>
-                    <p className="font-medium">
-                  {format(new Date(syncPackage.dateRange.from), 'dd/MM/yyyy', { locale: dfLocale })}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                  {t.dataSyncUi.toLabel} {format(new Date(syncPackage.dateRange.to), 'dd/MM/yyyy', { locale: dfLocale })}
-                    </p>
-                  </div>
-                  <div className="bg-muted p-4 rounded-lg">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Package className="w-4 h-4 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">{t.dataSyncUi.totalRecordsLabel}</p>
-                    </div>
-                    <p className="font-bold text-xl">{syncPackage.totalRecords}</p>
-                  </div>
-                  <div className="bg-muted p-4 rounded-lg">
-                    <div className="flex items-center gap-2 mb-1">
-                      <FileJson className="w-4 h-4 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">{t.dataSyncUi.versionLabel}</p>
-                    </div>
-                    <p className="font-medium">{syncPackage.version}</p>
-                  </div>
-                </div>
-
-                {/* Detailed breakdown */}
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
-                  <div className="bg-blue-50 dark:bg-blue-950/30 p-3 rounded-lg text-center">
-                    <Package className="w-5 h-5 mx-auto mb-1 text-blue-600" />
-                    <p className="text-lg font-bold">{syncPackage.products.length}</p>
-                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statProducts}</p>
-                  </div>
-                  <div className="bg-purple-50 dark:bg-purple-950/30 p-3 rounded-lg text-center">
-                    <Truck className="w-5 h-5 mx-auto mb-1 text-purple-600" />
-                    <p className="text-lg font-bold">{syncPackage.suppliers.length}</p>
-                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statSuppliers}</p>
-                  </div>
-                  <div className="bg-green-50 dark:bg-green-950/30 p-3 rounded-lg text-center">
-                    <Users className="w-5 h-5 mx-auto mb-1 text-green-600" />
-                    <p className="text-lg font-bold">{syncPackage.clients.length}</p>
-                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statClients}</p>
-                  </div>
-                  <div className="bg-orange-50 dark:bg-orange-950/30 p-3 rounded-lg text-center">
-                    <ShoppingCart className="w-5 h-5 mx-auto mb-1 text-orange-600" />
-                    <p className="text-lg font-bold">{syncPackage.purchases.length}</p>
-                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statPurchases}</p>
-                  </div>
-                  <div className="bg-emerald-50 dark:bg-emerald-950/30 p-3 rounded-lg text-center">
-                    <FileText className="w-5 h-5 mx-auto mb-1 text-emerald-600" />
-                    <p className="text-lg font-bold">{syncPackage.sales.length}</p>
-                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statSales}</p>
-                  </div>
-                  <div className="bg-cyan-50 dark:bg-cyan-950/30 p-3 rounded-lg text-center">
-                    <ArrowRightLeft className="w-5 h-5 mx-auto mb-1 text-cyan-600" />
-                    <p className="text-lg font-bold">{syncPackage.stockMovements.length}</p>
-                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statMovements}</p>
-                  </div>
-                  <div className="bg-amber-50 dark:bg-amber-950/30 p-3 rounded-lg text-center">
-                    <Truck className="w-5 h-5 mx-auto mb-1 text-amber-600" />
-                    <p className="text-lg font-bold">{syncPackage.stockTransfers.length}</p>
-                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statTransfers}</p>
-                  </div>
-                  <div className="bg-indigo-50 dark:bg-indigo-950/30 p-3 rounded-lg text-center">
-                    <BarChart3 className="w-5 h-5 mx-auto mb-1 text-indigo-600" />
-                    <p className="text-lg font-bold">{syncPackage.dailyReports.length}</p>
-                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statReports}</p>
-                  </div>
-                </div>
-
-                <div className="flex gap-4">
-                  <Button onClick={handleDownload}>
-                    <HardDrive className="w-4 h-4 mr-2" />
-                    {t.dataSyncUi.downloadUsb}
-                  </Button>
-                  <Button variant="outline" onClick={() => setEmailDialogOpen(true)}>
-                    <Mail className="w-4 h-4 mr-2" />
-                    {t.dataSyncUi.sendByEmail}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          <section className="space-y-3 border-t pt-5">
+            <h2 className="text-sm font-semibold">{t.dataSyncUi.applyWorkTitle}</h2>
+            <p className="text-sm text-muted-foreground">{t.dataSyncUi.applyWorkDesc}</p>
+            <input
+              ref={upFileRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) readPackageFile(file);
+                e.target.value = '';
+              }}
+            />
+            <Button variant="outline" onClick={() => upFileRef.current?.click()} disabled={busy} className="gap-2">
+              <Upload className="h-4 w-4" />
+              {t.dataSyncUi.selectFile}
+            </Button>
+          </section>
         </TabsContent>
 
-        {isMainOffice && (
-          <TabsContent value="import" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Building className="w-5 h-5" />
-                  {t.dataSyncUi.importBranchDataTitle}
-                </CardTitle>
-                <CardDescription>{t.dataSyncUi.importBranchDataDesc}</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="border-2 border-dashed rounded-lg p-8 text-center">
-                  <Upload className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                  <p className="text-lg font-medium mb-2">{t.dataSyncUi.uploadSyncFileTitle}</p>
-                  <p className="text-sm text-muted-foreground mb-4">{t.dataSyncUi.uploadSyncFileDesc}</p>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".json"
-                    onChange={handleFileSelect}
-                    className="hidden"
-                    id="file-upload"
-                  />
-                  <Button onClick={() => fileInputRef.current?.click()}>
-                    <Upload className="w-4 h-4 mr-2" />
-                    {t.dataSyncUi.selectFile}
-                  </Button>
-                </div>
+        <TabsContent value="to-shop" className="space-y-6">
+          <section className="space-y-3">
+            <h2 className="text-sm font-semibold">{t.dataSyncUi.exportCatalogTitle}</h2>
+            <p className="text-sm text-muted-foreground">{t.dataSyncUi.exportCatalogDesc}</p>
+            <Alert>
+              <Package className="h-4 w-4" />
+              <AlertTitle>{t.dataSyncUi.stockSnapshotTitle}</AlertTitle>
+              <AlertDescription>{t.dataSyncUi.stockSnapshotDesc}</AlertDescription>
+            </Alert>
+            <div className="max-w-sm space-y-1.5">
+              <Label>{t.dataSyncUi.branchLabel}</Label>
+              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                <SelectTrigger>
+                  <SelectValue placeholder={t.dataSyncUi.selectBranchPlaceholder} />
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.map((branch) => (
+                    <SelectItem key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button onClick={() => void handleExportDown()} disabled={busy || !branchId} className="gap-2">
+              <HardDrive className="h-4 w-4" />
+              {t.dataSyncUi.exportCatalog}
+            </Button>
+          </section>
 
-                {importResult && (
-                  <Alert className="bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800">
-                    <CheckCircle className="h-4 w-4 text-green-600" />
-                    <AlertTitle className="text-green-800 dark:text-green-200">{t.dataSyncUi.importDoneAlertTitle}</AlertTitle>
-                    <AlertDescription className="text-green-700 dark:text-green-300">
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
-                        <div className="text-center">
-                          <p className="font-bold text-lg">{importResult.productsImported}</p>
-                          <p className="text-xs">{t.dataSyncUi.statProducts}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="font-bold text-lg">{importResult.suppliersImported}</p>
-                          <p className="text-xs">{t.dataSyncUi.statSuppliers}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="font-bold text-lg">{importResult.clientsImported}</p>
-                          <p className="text-xs">{t.dataSyncUi.statClients}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="font-bold text-lg">{importResult.purchasesImported}</p>
-                          <p className="text-xs">{t.dataSyncUi.statPurchases}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="font-bold text-lg">{importResult.salesImported}</p>
-                          <p className="text-xs">{t.dataSyncUi.statSales}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="font-bold text-lg">{importResult.stockMovementsImported}</p>
-                          <p className="text-xs">{t.dataSyncUi.statMovements}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="font-bold text-lg">{importResult.stockTransfersImported}</p>
-                          <p className="text-xs">{t.dataSyncUi.statTransfers}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="font-bold text-lg">{importResult.reportsImported}</p>
-                          <p className="text-xs">{t.dataSyncUi.statReports}</p>
-                        </div>
-                      </div>
-                      <div className="text-center mt-4 pt-3 border-t border-green-300 dark:border-green-700">
-                        <p className="font-bold text-xl">{importResult.totalImported}</p>
-                        <p className="text-sm">{t.dataSyncUi.totalImportedLabel}</p>
-                      </div>
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Import Instructions */}
-            <Card>
-              <CardHeader>
-                <CardTitle>{t.dataSyncUi.importInstructionsTitle}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
-                  <li>{t.dataSyncUi.importStepReceiveFile}</li>
-                  <li>{t.dataSyncUi.importStepSelectFile}</li>
-                  <li>{t.dataSyncUi.importStepAutoImport}</li>
-                  <li>{t.dataSyncUi.importStepDuplicates}</li>
-                  <li>{t.dataSyncUi.importStepConsolidate}</li>
-                </ol>
-                
-                <div className="mt-4 p-4 bg-muted rounded-lg">
-                  <h4 className="font-medium mb-2">{t.dataSyncUi.packageContentsTitle}</h4>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                    <div className="flex items-center gap-2">
-                      <Package className="w-4 h-4" /> {t.dataSyncUi.packageItemProducts}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Truck className="w-4 h-4" /> {t.dataSyncUi.packageItemSuppliers}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4" /> {t.dataSyncUi.packageItemClients}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <ShoppingCart className="w-4 h-4" /> {t.dataSyncUi.packageItemPurchases}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4" /> {t.dataSyncUi.packageItemSales}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <ArrowRightLeft className="w-4 h-4" /> {t.dataSyncUi.packageItemStockMovements}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Truck className="w-4 h-4" /> {t.dataSyncUi.packageItemStockTransfers}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <BarChart3 className="w-4 h-4" /> {t.dataSyncUi.packageItemDailyReports}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        )}
+          <section className="space-y-3 border-t pt-5">
+            <h2 className="text-sm font-semibold">{t.dataSyncUi.loadCatalogTitle}</h2>
+            <p className="text-sm text-muted-foreground">{t.dataSyncUi.loadCatalogDesc}</p>
+            <input
+              ref={downFileRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) readPackageFile(file);
+                e.target.value = '';
+              }}
+            />
+            <Button variant="outline" onClick={() => downFileRef.current?.click()} disabled={busy} className="gap-2">
+              <Upload className="h-4 w-4" />
+              {t.dataSyncUi.selectFile}
+            </Button>
+          </section>
+        </TabsContent>
       </Tabs>
 
-      {/* Email Dialog */}
-      <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t.dataSyncUi.emailDialogTitle}</DialogTitle>
-            <DialogDescription>{t.dataSyncUi.emailDialogDesc}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">{t.dataSyncUi.headOfficeEmailLabel}</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder={t.dataSyncUi.headOfficeEmailPlaceholder}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEmailDialogOpen(false)}>
-              {t.common.cancel}
-            </Button>
-            <Button onClick={handleSendEmail} disabled={!email}>
-              <Mail className="w-4 h-4 mr-2" />
-              {t.dataSyncUi.send}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {(preview || previewError) && (
+        <div className="rounded-lg border p-4 space-y-3">
+          {previewError && (
+            <p className="text-sm text-destructive">{previewError}</p>
+          )}
+          {preview && (
+            <>
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-4 w-4 text-emerald-600" />
+                <p className="text-sm font-medium">
+                  {preview.kind === 'nexor-up' ? t.dataSyncUi.previewUp : t.dataSyncUi.previewDown}
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {preview.branchName || preview.fromBranchId || '—'}
+                {preview.kind === 'nexor-up' && preview.dateRange
+                  ? ` · ${preview.dateRange.from} → ${preview.dateRange.to}`
+                  : ''}
+              </p>
+              {upCounts && (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-sm">
+                  <div><p className="font-semibold">{upCounts.sales}</p><p className="text-xs text-muted-foreground">{t.dataSyncUi.statSales}</p></div>
+                  <div><p className="font-semibold">{upCounts.payments}</p><p className="text-xs text-muted-foreground">{t.dataSyncUi.statPayments}</p></div>
+                  <div><p className="font-semibold">{upCounts.purchases}</p><p className="text-xs text-muted-foreground">{t.dataSyncUi.statPurchases}</p></div>
+                  <div><p className="font-semibold">{upCounts.movements}</p><p className="text-xs text-muted-foreground">{t.dataSyncUi.statMovements}</p></div>
+                  <div><p className="font-semibold">{upCounts.caixa}</p><p className="text-xs text-muted-foreground">{t.dataSyncUi.statCaixa}</p></div>
+                </div>
+              )}
+              {preview.kind === 'nexor-down' && (
+                <div className="grid grid-cols-2 gap-2 text-center text-sm max-w-xs">
+                  <div>
+                    <Package className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
+                    <p className="font-semibold">{preview.products?.length || 0}</p>
+                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statProducts}</p>
+                  </div>
+                  <div>
+                    <Users className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
+                    <p className="font-semibold">{preview.clients?.length || 0}</p>
+                    <p className="text-xs text-muted-foreground">{t.dataSyncUi.statClients}</p>
+                  </div>
+                </div>
+              )}
+              <Button onClick={() => void handleApplyPreview()} disabled={busy}>
+                {t.dataSyncUi.applyPackage}
+              </Button>
+            </>
+          )}
+          {applyResult && (
+            <p className="text-sm text-emerald-700 dark:text-emerald-400">{applyResult}</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
