@@ -104,6 +104,27 @@ async function findEntityLeafCode(client, groupCode, parentCode, name, nif) {
   return best;
 }
 
+/**
+ * A leaf for this entity may exist but be deactivated (unused accounts are
+ * pruned from the chart). Reuse it instead of burning a new code.
+ */
+async function reactivateEntityLeaf(client, groupCode, name) {
+  const target = normalizeEntityName(name);
+  if (!target) return null;
+  const r = await client.query(
+    `SELECT id, code, name FROM chart_of_accounts
+     WHERE CAST(code AS TEXT) LIKE $1
+       AND LENGTH(CAST(code AS TEXT)) >= 8
+       AND is_header IS NOT TRUE
+       AND is_active = false`,
+    [`${groupCode}%`],
+  ).catch(() => ({ rows: [] }));
+  const match = (r.rows || []).find((row) => normalizeEntityName(row.name) === target);
+  if (!match) return null;
+  await client.query(`UPDATE chart_of_accounts SET is_active = true WHERE id = $1`, [match.id]);
+  return match.code;
+}
+
 async function createEntityLeaf(client, opts) {
   const {
     groupCode,
@@ -121,6 +142,9 @@ async function createEntityLeaf(client, opts) {
 
   const existing = await findEntityLeafCode(client, groupCode, defaultParentCode, normalizedName, normalizedNif);
   if (existing) return existing;
+
+  const dormant = await reactivateEntityLeaf(client, groupCode, normalizedName);
+  if (dormant) return dormant;
 
   let resolvedParentCode = cleanText(parentCode) || defaultParentCode;
   if (!resolvedParentCode.startsWith(groupCode)) {

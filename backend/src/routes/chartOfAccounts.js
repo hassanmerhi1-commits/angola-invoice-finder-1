@@ -325,7 +325,11 @@ module.exports = function(broadcastTable) {
         client = await db.pool.connect();
       }
       const q = client || db;
-      const result = await repairParentEntityCoaPostings(q, { dryRun: false, classifyOrphans: false });
+      const result = await repairParentEntityCoaPostings(q, {
+        dryRun: false,
+        classifyOrphans: false,
+        pruneUnused: true,
+      });
       if ((result.moved || 0) > 0) {
         try { await fastRecomputeCoaCurrentBalances(q); } catch (_) { /* balances refresh later */ }
       }

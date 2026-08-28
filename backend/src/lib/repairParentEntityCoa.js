@@ -353,6 +353,17 @@ const CLASSIFY_LEAF_NAMES = {
   '311': 'Clientes - por classificar',
 };
 
+const CLASSIFY_NAME_SQL = `LOWER(TRIM(COALESCE(%ALIAS%.name, ''))) LIKE '%por classificar%'`;
+
+function classifyNameClause(alias) {
+  return CLASSIFY_NAME_SQL.replace('%ALIAS%', alias);
+}
+
+function entityLeafCodeClause(alias) {
+  return `(CAST(${alias}.code AS TEXT) LIKE '321%' OR CAST(${alias}.code AS TEXT) LIKE '311%')
+    AND LENGTH(CAST(${alias}.code AS TEXT)) >= 8`;
+}
+
 /** Last-resort leaf so parent 321/311 never keeps residual postings. */
 async function ensureClassifyLeaf(client, parentCode) {
   const name = CLASSIFY_LEAF_NAMES[parentCode] || `Por classificar (${parentCode})`;
@@ -773,6 +784,11 @@ async function ensureLeavesFromPostedPurchases(client) {
   return n;
 }
 
+/**
+ * Moves a journal's supplier lines onto the supplier leaf. Sources are both the
+ * parent 321 account and any “por classificar” 321 leaf an earlier repair swept
+ * them into.
+ */
 async function moveParentLinesOnJournal(client, journalId, supplierId, supplierName) {
   const code = await safeResolveEntity(client, 'supplier', supplierId, supplierName);
   if (!isLeafCode(code, '321')) return 0;
@@ -781,11 +797,24 @@ async function moveParentLinesOnJournal(client, journalId, supplierId, supplierN
   const result = await client.query(
     `UPDATE journal_entry_lines AS jel
      SET account_id = $1
-     FROM journal_entries je
-     INNER JOIN chart_of_accounts parent ON parent.code = '321'
-     WHERE CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)
-       AND CAST(je.id AS TEXT) = CAST($2 AS TEXT)
-       AND ${parentAccountMatchSql('parent')}`,
+     WHERE CAST(jel.journal_entry_id AS TEXT) = CAST($2 AS TEXT)
+       AND CAST(jel.account_id AS TEXT) <> CAST($1 AS TEXT)
+       AND (
+         EXISTS (
+           SELECT 1 FROM chart_of_accounts parent
+           WHERE parent.code = '321'
+             AND (
+               CAST(jel.account_id AS TEXT) = CAST(parent.id AS TEXT)
+               OR CAST(jel.account_id AS TEXT) = '321'
+             )
+         )
+         OR EXISTS (
+           SELECT 1 FROM chart_of_accounts cls
+           WHERE CAST(cls.id AS TEXT) = CAST(jel.account_id AS TEXT)
+             AND CAST(cls.code AS TEXT) LIKE '321%'
+             AND ${classifyNameClause('cls')}
+         )
+       )`,
     [leafId, journalId],
   );
   return Number(result.rowCount || 0);
@@ -832,12 +861,158 @@ async function remapParentLinesByResolvedSupplier(client) {
   return moved;
 }
 
+async function loadMisfiledClassifyLines(db) {
+  const r = await db.query(
+    `SELECT
+       jel.id AS line_id,
+       jel.journal_entry_id,
+       jel.account_id AS old_account_id,
+       jel.debit_amount,
+       jel.credit_amount,
+       jel.description AS line_description,
+       je.description AS journal_description,
+       je.reference_type,
+       je.reference_id,
+       je.entry_number,
+       CASE WHEN CAST(coa.code AS TEXT) LIKE '311%' THEN '311' ELSE '321' END AS old_code
+     FROM journal_entry_lines jel
+     INNER JOIN journal_entries je ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
+     INNER JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
+     WHERE ${entityLeafCodeClause('coa')}
+       AND ${classifyNameClause('coa')}
+     ORDER BY je.entry_date, je.created_at`,
+  ).catch(() => ({ rows: [] }));
+  return r.rows || [];
+}
+
+async function countMisfiledClassifyLines(db) {
+  const r = await db.query(
+    `SELECT COUNT(*) AS n
+     FROM journal_entry_lines jel
+     INNER JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
+     WHERE ${entityLeafCodeClause('coa')}
+       AND ${classifyNameClause('coa')}`,
+  ).catch(() => ({ rows: [{ n: 0 }] }));
+  return Number(r.rows?.[0]?.n) || 0;
+}
+
+async function isClassifyCode(db, code) {
+  const r = await db.query(
+    `SELECT 1 AS hit FROM chart_of_accounts coa
+     WHERE CAST(coa.code AS TEXT) = CAST($1 AS TEXT)
+       AND ${classifyNameClause('coa')}`,
+    [code],
+  ).catch(() => ({ rows: [] }));
+  return (r.rows || []).length > 0;
+}
+
+/**
+ * Earlier repairs parked unresolved 321/311 lines on a “por classificar” leaf,
+ * which hides the amount from the real supplier ledger and makes the parent
+ * account look clean. Pull those lines back onto the entity they belong to.
+ */
+async function remapMisfiledClassifyLines(db, opts = {}) {
+  const dryRun = opts.dryRun === true;
+  const rows = await loadMisfiledClassifyLines(db);
+  const details = [];
+  let moved = 0;
+  let stillUnresolved = 0;
+
+  for (const row of rows) {
+    const parentCode = row.old_code === '311' ? '311' : '321';
+    let leafCode = null;
+    try {
+      ({ leafCode } = await resolveLeafForLine(db, row));
+    } catch (e) {
+      stillUnresolved += 1;
+      continue;
+    }
+    if (!leafCode || !isLeafCode(leafCode, parentCode) || (await isClassifyCode(db, leafCode))) {
+      stillUnresolved += 1;
+      if (details.length < 40) {
+        details.push(
+          `classify still unresolved ${row.entry_number || row.line_id}: ref=${row.reference_type || '?'} “${cleanText(row.journal_description || row.line_description).slice(0, 60)}”`,
+        );
+      }
+      continue;
+    }
+    const leafId = await accountIdForCode(db, leafCode);
+    if (!leafId || String(leafId) === String(row.old_account_id)) continue;
+
+    if (dryRun) {
+      details.push(`would rescue ${row.entry_number}: por classificar → ${leafCode}`);
+      moved += 1;
+      continue;
+    }
+    try {
+      await db.query(`UPDATE journal_entry_lines SET account_id = $1 WHERE id = $2`, [leafId, row.line_id]);
+      if (details.length < 40) {
+        details.push(`rescued ${row.entry_number}: por classificar → ${leafCode}`);
+      }
+      moved += 1;
+    } catch (e) {
+      details.push(`rescue error ${row.entry_number}: ${e.message}`);
+    }
+  }
+  return { moved, scanned: rows.length, stillUnresolved, details };
+}
+
+/**
+ * A party ledger account exists because something was posted to it. Deactivates
+ * 31x/32x leaves that carry no journal line, no balance and no document link —
+ * these are the rows a bulk “create a leaf for every master record” pass left
+ * behind. `ensureSupplierSubAccount` reactivates one on the next posting.
+ */
+async function pruneUnusedEntityLeaves(db, opts = {}) {
+  const dryRun = opts.dryRun === true;
+  const r = await db.query(
+    `SELECT coa.id, coa.code, coa.name
+     FROM chart_of_accounts coa
+     WHERE ${entityLeafCodeClause('coa')}
+       AND coa.is_header IS NOT TRUE
+       AND coa.is_active IS NOT FALSE
+       AND NOT (${classifyNameClause('coa')})
+       AND COALESCE(coa.opening_balance, 0) = 0
+       AND COALESCE(coa.current_balance, 0) = 0
+       AND NOT EXISTS (
+         SELECT 1 FROM journal_entry_lines jel
+         WHERE CAST(jel.account_id AS TEXT) = CAST(coa.id AS TEXT)
+            OR CAST(jel.account_id AS TEXT) = CAST(coa.code AS TEXT)
+       )
+     ORDER BY coa.code`,
+  ).catch(() => ({ rows: [] }));
+
+  const rows = r.rows || [];
+  const linked = await db.query(
+    `SELECT DISTINCT TRIM(COALESCE(supplier_account_code, '')) AS code
+     FROM purchase_invoices
+     WHERE NULLIF(TRIM(COALESCE(supplier_account_code, '')), '') IS NOT NULL`,
+  ).catch(() => ({ rows: [] }));
+  const linkedCodes = new Set((linked.rows || []).map((x) => String(x.code)));
+
+  const candidates = rows.filter((row) => !linkedCodes.has(String(row.code)));
+  if (dryRun) {
+    return { candidates: candidates.length, deactivated: 0, sample: candidates.slice(0, 10).map((c) => `${c.code} ${c.name}`) };
+  }
+
+  let deactivated = 0;
+  for (const row of candidates) {
+    try {
+      await db.query(`UPDATE chart_of_accounts SET is_active = false WHERE id = $1`, [row.id]);
+      deactivated += 1;
+    } catch (e) {
+      console.warn(`[COA REPAIR] prune skipped ${row.code}: ${e.message}`);
+    }
+  }
+  return { candidates: candidates.length, deactivated, sample: candidates.slice(0, 10).map((c) => `${c.code} ${c.name}`) };
+}
+
 /**
  * @returns {{ moved: number, skipped: number, remaining: number, bulkMoved: number, details: string[] }}
  */
 async function repairParentEntityCoaPostings(db, opts = {}) {
   const dryRun = opts.dryRun === true;
-  const classifyOrphans = opts.classifyOrphans !== false;
+  const classifyOrphans = opts.classifyOrphans === true;
   const parentIds = await loadParentIds(db);
   if (parentIds.size === 0) {
     return { moved: 0, skipped: 0, remaining: 0, bulkMoved: 0, details: ['no parent 321/311 accounts'] };
@@ -854,6 +1029,22 @@ async function repairParentEntityCoaPostings(db, opts = {}) {
       details.push(`resolved-supplier remapped ${resolvedMoved} line(s)`);
     }
     bulkMoved += await bulkRemapByDocumentJoin(db);
+
+    const rescued = await remapMisfiledClassifyLines(db);
+    if (rescued.scanned > 0) {
+      bulkMoved += rescued.moved;
+      details.push(
+        `por classificar: scanned ${rescued.scanned}, rescued ${rescued.moved}, unresolved ${rescued.stillUnresolved}`,
+      );
+      for (const line of rescued.details.slice(0, 10)) details.push(line);
+    }
+
+    if (opts.pruneUnused === true) {
+      const pruned = await pruneUnusedEntityLeaves(db);
+      if (pruned.deactivated > 0) {
+        details.push(`deactivated ${pruned.deactivated} unused supplier/customer leaf account(s)`);
+      }
+    }
   }
 
   const lines = await loadParentLines(db);
@@ -956,7 +1147,7 @@ async function countParentEntityLines(db) {
  * Patch 024 marks “attempted”; residual keeps re-running each startup / CoA open.
  */
 async function ensureParentEntityCoaRepaired(db) {
-  const patchId = '028_repair_parent_entity_coa_v7';
+  const patchId = '029_repair_parent_entity_coa_v8';
   try {
     await db.query(`
       CREATE TABLE IF NOT EXISTS schema_patches (
@@ -979,14 +1170,27 @@ async function ensureParentEntityCoaRepaired(db) {
     }
   }
 
-  const remainingBefore = await countParentEntityLines(db);
-  if (remainingBefore === 0) {
+  const alreadyApplied = (
+    await db.query('SELECT 1 AS hit FROM schema_patches WHERE id = $1', [patchId]).catch(() => ({ rows: [] }))
+  ).rows?.length > 0;
+  if (!alreadyApplied) {
+    const pruned = await pruneUnusedEntityLeaves(db);
+    if (pruned.deactivated > 0) {
+      console.log(
+        `[SCHEMA] Deactivated ${pruned.deactivated} supplier/customer account(s) that never received a posting`,
+      );
+    }
+  }
+
+  const parentBefore = await countParentEntityLines(db);
+  const classifyBefore = await countMisfiledClassifyLines(db);
+  if (parentBefore === 0 && classifyBefore === 0) {
     await db.query('INSERT INTO schema_patches (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [patchId]);
     return { skipped: true, reason: 'no_parent_lines', moved: 0, remaining: 0 };
   }
 
-  const result = await repairParentEntityCoaPostings(db, { dryRun: false });
-  const remainingAfter = await countParentEntityLines(db);
+  const result = await repairParentEntityCoaPostings(db, { dryRun: false, pruneUnused: true });
+  const remainingAfter = (await countParentEntityLines(db)) + (await countMisfiledClassifyLines(db));
   if (remainingAfter === 0) {
     await db.query('INSERT INTO schema_patches (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [patchId]);
   } else {
@@ -995,16 +1199,19 @@ async function ensureParentEntityCoaRepaired(db) {
     );
   }
   console.log(
-    `[SCHEMA] Parent 321/311 COA repair v7: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter}`,
+    `[SCHEMA] Parent 321/311 COA repair v8: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter} (parent-before=${parentBefore}, por-classificar-before=${classifyBefore})`,
   );
   return { ...result, remaining: remainingAfter };
 }
 
 module.exports = {
   remapJournalParentSupplierLines,
+  remapMisfiledClassifyLines,
+  pruneUnusedEntityLeaves,
   repairParentEntityCoaPostings,
   ensureParentEntityCoaRepaired,
   countParentEntityLines,
+  countMisfiledClassifyLines,
   isLeafCode,
   bulkRemapByDocumentJoin,
 };
