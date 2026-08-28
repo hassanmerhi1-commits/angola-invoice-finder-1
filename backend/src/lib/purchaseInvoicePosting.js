@@ -506,6 +506,23 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
     result.warnings.push(
       'Journal de mercadorias já lançado na OC — FC não duplica diário (AP open item apenas).',
     );
+    try {
+      const { remapJournalParentSupplierLines } = require('./repairParentEntityCoa');
+      const supplierId = String(inv.supplierId || inv.supplier_id || '').trim();
+      const supplierName = String(inv.supplierName || inv.supplier_name || '').trim();
+      const moved = await remapJournalParentSupplierLines(
+        client,
+        linkedPo.poId,
+        'purchase',
+        supplierId || null,
+        supplierName,
+      );
+      if (moved > 0) {
+        result.warnings.push(`Journal OC: ${moved} linha(s) 321 movidas para a conta do fornecedor.`);
+      }
+    } catch (remapErr) {
+      result.warnings.push(`Journal OC remap: ${remapErr.message}`);
+    }
   } else if (!result.journalEntryId && Number(inv.total || 0) > 0) {
     try {
       const { resolveEntityAccountCode } = require('./entityCoaAccounts');

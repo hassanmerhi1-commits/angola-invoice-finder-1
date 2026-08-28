@@ -746,6 +746,92 @@ async function bulkRemapByDocumentJoin(db) {
   return total;
 }
 
+async function ensureLeavesFromPostedPurchases(client) {
+  const r = await client.query(
+    `SELECT name, nif FROM (
+       SELECT TRIM(COALESCE(NULLIF(TRIM(po.supplier_name), ''), NULLIF(TRIM(s.name), ''))) AS name,
+              NULLIF(TRIM(s.nif), '') AS nif
+       FROM purchase_orders po
+       LEFT JOIN suppliers s ON CAST(s.id AS TEXT) = CAST(po.supplier_id AS TEXT)
+       UNION
+       SELECT TRIM(COALESCE(NULLIF(TRIM(pi.supplier_name), ''), NULLIF(TRIM(s.name), ''))) AS name,
+              NULLIF(TRIM(s.nif), '') AS nif
+       FROM purchase_invoices pi
+       LEFT JOIN suppliers s ON CAST(s.id AS TEXT) = CAST(pi.supplier_id AS TEXT)
+     ) x
+     WHERE name IS NOT NULL AND TRIM(name) <> ''`,
+  ).catch(() => ({ rows: [] }));
+  let n = 0;
+  for (const row of r.rows || []) {
+    try {
+      const code = await ensureSupplierSubAccount(client, row.name, row.nif);
+      if (isLeafCode(code, '321')) n += 1;
+    } catch (e) {
+      console.warn('[COA REPAIR] posted-purchase leaf skipped:', e.message);
+    }
+  }
+  return n;
+}
+
+async function moveParentLinesOnJournal(client, journalId, supplierId, supplierName) {
+  const code = await safeResolveEntity(client, 'supplier', supplierId, supplierName);
+  if (!isLeafCode(code, '321')) return 0;
+  const leafId = await accountIdForCode(client, code);
+  if (!leafId) return 0;
+  const result = await client.query(
+    `UPDATE journal_entry_lines AS jel
+     SET account_id = $1
+     FROM journal_entries je
+     INNER JOIN chart_of_accounts parent ON parent.code = '321'
+     WHERE CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)
+       AND CAST(je.id AS TEXT) = CAST($2 AS TEXT)
+       AND ${parentAccountMatchSql('parent')}`,
+    [leafId, journalId],
+  );
+  return Number(result.rowCount || 0);
+}
+
+async function remapJournalParentSupplierLines(client, documentId, referenceType, supplierId, supplierName) {
+  const je = await client.query(
+    `SELECT id FROM journal_entries
+     WHERE LOWER(TRIM(COALESCE(reference_type, ''))) = LOWER($1)
+       AND CAST(reference_id AS TEXT) = CAST($2 AS TEXT)`,
+    [referenceType, documentId],
+  ).catch(() => ({ rows: [] }));
+  let n = 0;
+  for (const row of je.rows || []) {
+    n += await moveParentLinesOnJournal(client, row.id, supplierId, supplierName);
+  }
+  return n;
+}
+
+async function remapParentLinesByResolvedSupplier(client) {
+  let moved = 0;
+  const poJournals = await client.query(
+    `SELECT DISTINCT je.id AS journal_id, po.supplier_id, po.supplier_name
+     FROM journal_entries je
+     INNER JOIN purchase_orders po ON CAST(po.id AS TEXT) = CAST(je.reference_id AS TEXT)
+     INNER JOIN journal_entry_lines jel ON CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)
+     INNER JOIN chart_of_accounts parent ON parent.code = '321'
+     WHERE ${parentAccountMatchSql('parent')}`,
+  ).catch(() => ({ rows: [] }));
+  for (const row of poJournals.rows || []) {
+    moved += await moveParentLinesOnJournal(client, row.journal_id, row.supplier_id, row.supplier_name);
+  }
+  const piJournals = await client.query(
+    `SELECT DISTINCT je.id AS journal_id, pi.supplier_id, pi.supplier_name
+     FROM journal_entries je
+     INNER JOIN purchase_invoices pi ON CAST(pi.id AS TEXT) = CAST(je.reference_id AS TEXT)
+     INNER JOIN journal_entry_lines jel ON CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)
+     INNER JOIN chart_of_accounts parent ON parent.code = '321'
+     WHERE ${parentAccountMatchSql('parent')}`,
+  ).catch(() => ({ rows: [] }));
+  for (const row of piJournals.rows || []) {
+    moved += await moveParentLinesOnJournal(client, row.journal_id, row.supplier_id, row.supplier_name);
+  }
+  return moved;
+}
+
 /**
  * @returns {{ moved: number, skipped: number, remaining: number, bulkMoved: number, details: string[] }}
  */
@@ -758,14 +844,21 @@ async function repairParentEntityCoaPostings(db, opts = {}) {
   }
 
   let bulkMoved = 0;
+  const details = [];
   if (!dryRun) {
-    bulkMoved = await bulkRemapByDocumentJoin(db);
+    const fromDocs = await ensureLeavesFromPostedPurchases(db);
+    if (fromDocs > 0) details.push(`ensured ${fromDocs} supplier leaf(s) from OC/FC`);
+    const resolvedMoved = await remapParentLinesByResolvedSupplier(db);
+    if (resolvedMoved > 0) {
+      bulkMoved += resolvedMoved;
+      details.push(`resolved-supplier remapped ${resolvedMoved} line(s)`);
+    }
+    bulkMoved += await bulkRemapByDocumentJoin(db);
   }
 
   const lines = await loadParentLines(db);
   let moved = 0;
   let skipped = 0;
-  const details = [];
   if (bulkMoved > 0) details.push(`bulk SQL remapped ${bulkMoved} line(s)`);
 
   for (const row of lines) {
@@ -863,7 +956,7 @@ async function countParentEntityLines(db) {
  * Patch 024 marks “attempted”; residual keeps re-running each startup / CoA open.
  */
 async function ensureParentEntityCoaRepaired(db) {
-  const patchId = '027_repair_parent_entity_coa_v6';
+  const patchId = '028_repair_parent_entity_coa_v7';
   try {
     await db.query(`
       CREATE TABLE IF NOT EXISTS schema_patches (
@@ -902,12 +995,13 @@ async function ensureParentEntityCoaRepaired(db) {
     );
   }
   console.log(
-    `[SCHEMA] Parent 321/311 COA repair v6: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter}`,
+    `[SCHEMA] Parent 321/311 COA repair v7: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter}`,
   );
   return { ...result, remaining: remainingAfter };
 }
 
 module.exports = {
+  remapJournalParentSupplierLines,
   repairParentEntityCoaPostings,
   ensureParentEntityCoaRepaired,
   countParentEntityLines,

@@ -1258,16 +1258,7 @@ async function ensurePhaseSchema(db) {
     await ensureProductVatOverrideColumn(db);
     try {
       const { ensureParentEntityCoaRepaired } = require('./repairParentEntityCoa');
-      const { ensureAllMasterEntityLeaves } = require('./entityCoaAccounts');
       const { fastRecomputeCoaCurrentBalances } = require('../accounting');
-      try {
-        const leaves = await ensureAllMasterEntityLeaves(db);
-        if ((leaves.suppliers || 0) + (leaves.clients || 0) > 0) {
-          console.log(`[SCHEMA] COA entity leaves: ${leaves.suppliers} suppliers, ${leaves.clients} clients`);
-        }
-      } catch (leafErr) {
-        console.warn('[SCHEMA] entity COA leaves:', leafErr.message);
-      }
       const repair = await ensureParentEntityCoaRepaired(db);
       if (repair && !repair.skipped && repair.moved > 0) {
         await fastRecomputeCoaCurrentBalances(db);
@@ -1346,16 +1337,7 @@ async function ensurePhaseSchema(db) {
     await ensureProductVatOverrideColumn(db);
     try {
       const { ensureParentEntityCoaRepaired } = require('./repairParentEntityCoa');
-      const { ensureAllMasterEntityLeaves } = require('./entityCoaAccounts');
       const { fastRecomputeCoaCurrentBalances } = require('../accounting');
-      try {
-        const leaves = await ensureAllMasterEntityLeaves(db);
-        if ((leaves.suppliers || 0) + (leaves.clients || 0) > 0) {
-          console.log(`[SCHEMA] COA entity leaves (sqlite): ${leaves.suppliers} suppliers, ${leaves.clients} clients`);
-        }
-      } catch (leafErr) {
-        console.warn('[SCHEMA] entity COA leaves (sqlite):', leafErr.message);
-      }
       const repair = await ensureParentEntityCoaRepaired(db);
       if (repair && !repair.skipped && repair.moved > 0) {
         await fastRecomputeCoaCurrentBalances(db);

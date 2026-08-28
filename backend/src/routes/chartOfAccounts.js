@@ -319,17 +319,21 @@ module.exports = function(broadcastTable) {
   router.post('/ensure-entity-leaves', requirePermission('purchase_create', 'accounting_create', 'admin_settings', 'accounting_view'), async (req, res) => {
     let client = null;
     try {
-      const { ensureAllMasterEntityLeaves } = require('../lib/entityCoaAccounts');
+      const { repairParentEntityCoaPostings } = require('../lib/repairParentEntityCoa');
+      const { fastRecomputeCoaCurrentBalances } = require('../accounting');
       if (db.engine === 'postgres' && db.pool) {
         client = await db.pool.connect();
       }
       const q = client || db;
-      const result = await ensureAllMasterEntityLeaves(q);
+      const result = await repairParentEntityCoaPostings(q, { dryRun: false, classifyOrphans: false });
+      if ((result.moved || 0) > 0) {
+        try { await fastRecomputeCoaCurrentBalances(q); } catch (_) { /* balances refresh later */ }
+      }
       try { broadcastTable('chart_of_accounts'); } catch (_) { /* ignore */ }
       res.json(result);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ensure-entity-leaves]', error);
-      res.status(500).json({ error: error.message || 'Failed to ensure entity accounts' });
+      res.status(500).json({ error: error.message || 'Failed to repair supplier/customer postings' });
     } finally {
       if (client) {
         try { client.release(); } catch (_) { /* ignore */ }

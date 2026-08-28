@@ -9,7 +9,6 @@ import {
   buildRolledBalanceById,
   buildVisibleCoaForest,
   coaIdKey,
-  flattenEntityRegistryTab,
   idsOfAccountsWithChildren,
 } from '@/lib/coaTreeBalances';
 import { prefetchAccountLedger } from '@/lib/ledgerPrefetch';
@@ -142,7 +141,6 @@ export default function ChartOfAccounts() {
   const [inlineParentCode, setInlineParentCode] = useState('');
   const [inlineParentName, setInlineParentName] = useState('');
   const [creatingInlineParent, setCreatingInlineParent] = useState(false);
-  const entityLeavesEnsured = useRef(false);
   const treeExpandTab = useRef<string | null>(null);
   const seenCoaIds = useRef(new Set<string>());
 
@@ -245,11 +243,10 @@ export default function ChartOfAccounts() {
     });
   }, [accounts, activeTab, searchTerm, currentTabConfig, language, t]);
 
-  const displayForest = useMemo(() => {
-    if (activeTab === 'fornecedores') return flattenEntityRegistryTab(filteredAccounts, '32');
-    if (activeTab === 'clientes') return flattenEntityRegistryTab(filteredAccounts, '31');
-    return buildVisibleCoaForest(filteredAccounts);
-  }, [activeTab, filteredAccounts]);
+  const displayForest = useMemo(
+    () => buildVisibleCoaForest(filteredAccounts),
+    [filteredAccounts],
+  );
   const childrenByParent = displayForest.childrenByParent;
   childrenByParentRef.current = childrenByParent;
   const rootAccounts = displayForest.roots;
@@ -320,15 +317,6 @@ export default function ChartOfAccounts() {
       return next;
     });
   }, [activeTab, filteredAccounts, childrenByParent, filteredById]);
-
-  useEffect(() => {
-    if (entityLeavesEnsured.current) return;
-    entityLeavesEnsured.current = true;
-    void api.chartOfAccounts.ensureEntityLeaves().then((res) => {
-      if (res.error) return;
-      void refetch({ force: true });
-    }).catch(() => { /* old server without this route */ });
-  }, [refetch]);
 
   const openCreateDialog = (tabOverride?: string) => {
     const tabKey = tabOverride ?? activeTab;
@@ -752,11 +740,7 @@ export default function ChartOfAccounts() {
               <tr className="font-bold text-xs">
                 <td className="px-3 py-2" colSpan={3}>
                   {t.chartOfAccountsUi.totalAccounts
-                    .replace('{count}', String(
-                      (activeTab === 'fornecedores' || activeTab === 'clientes')
-                        ? filteredAccounts.filter((a) => !a.is_header && String(a.code || '').length >= 8).length
-                        : filteredAccounts.filter((a) => !a.is_header).length,
-                    ))}
+                    .replace('{count}', String(filteredAccounts.filter(a => !a.is_header).length))}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-green-600">{totals.debit.toLocaleString(uiLocale)} Kz</td>
                 <td className="px-3 py-2 text-right font-mono text-red-600">{totals.credit.toLocaleString(uiLocale)} Kz</td>

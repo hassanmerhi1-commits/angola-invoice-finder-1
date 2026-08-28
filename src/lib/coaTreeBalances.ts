@@ -76,11 +76,6 @@ export function buildRolledBalanceById(accounts: Account[]): Map<string, number>
   return memo;
 }
 
-function isEntityRegistryLeaf(account: Account, groupPrefix: string): boolean {
-  const code = String(account.code || '');
-  return !account.is_header && code.startsWith(groupPrefix) && code.length >= 8;
-}
-
 /**
  * Every filtered account must appear as a root or a child. parent_id mismatches
  * (UUID case/format) used to nest a supplier under 321 and then fail to find
@@ -130,25 +125,6 @@ export function buildVisibleCoaForest(accounts: Account[]): {
     rootIds.add(id);
   }
   return { roots, childrenByParent };
-}
-
-/**
- * Fornecedores / Clientes: paint every 8-digit party leaf as its own row.
- * Nesting under 321/311 hid names even when Expand ran (321 is not a header).
- */
-export function flattenEntityRegistryTab(accounts: Account[], groupPrefix: string): {
-  roots: Account[];
-  childrenByParent: Map<string, Account[]>;
-} {
-  const groups: Account[] = [];
-  const leaves: Account[] = [];
-  for (const a of accounts) {
-    if (isEntityRegistryLeaf(a, groupPrefix)) leaves.push(a);
-    else groups.push(a);
-  }
-  groups.sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')));
-  leaves.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));
-  return { roots: [...groups, ...leaves], childrenByParent: new Map() };
 }
 
 /** Any row that has nested children — including PGC “leaves” like 311/321. */
