@@ -6,9 +6,10 @@ import { Account, AccountType, AccountFormData, getDefaultNature } from '@/types
 import { resolveAccountDisplayName, resolveAccountTypeLabel } from '@/lib/chartOfAccountsDisplay';
 import {
   ancestorIdsOf,
-  buildChildrenByParentId,
   buildRolledBalanceById,
+  buildVisibleCoaForest,
   coaIdKey,
+  flattenEntityRegistryTab,
   idsOfAccountsWithChildren,
 } from '@/lib/coaTreeBalances';
 import { prefetchAccountLedger } from '@/lib/ledgerPrefetch';
@@ -42,14 +43,20 @@ import { chartNewActionTab, type ChartNewAction } from '@/lib/chartOfAccountsNew
 // 31 Clientes, 32 Fornecedores, 45 Caixa, 42/43/44 Depósitos, 36/72 Pessoal,
 // class 6 Proveitos (revenue), class 7 Custos (expense), class 5 Capital.
 const CATEGORY_TABS = [
-  { key: 'clientes', labelKey: 'tabCustomers', filter: (a: Account) => a.code.startsWith('31') },
-  { key: 'fornecedores', labelKey: 'tabSuppliers', filter: (a: Account) => a.code.startsWith('32') },
-  { key: 'caixa', labelKey: 'tabCash', filter: (a: Account) => a.code.startsWith('45') },
-  { key: 'bancos', labelKey: 'tabBanks', filter: (a: Account) => a.code.startsWith('42') || a.code.startsWith('43') || a.code.startsWith('44') },
+  { key: 'clientes', labelKey: 'tabCustomers', filter: (a: Account) => String(a.code || '').startsWith('31') },
+  { key: 'fornecedores', labelKey: 'tabSuppliers', filter: (a: Account) => String(a.code || '').startsWith('32') },
+  { key: 'caixa', labelKey: 'tabCash', filter: (a: Account) => String(a.code || '').startsWith('45') },
+  { key: 'bancos', labelKey: 'tabBanks', filter: (a: Account) => {
+    const code = String(a.code || '');
+    return code.startsWith('42') || code.startsWith('43') || code.startsWith('44');
+  } },
   { key: 'ativos', labelKey: 'tabAssets', filter: (a: Account) => a.account_type === 'asset' },
   { key: 'recebimentos', labelKey: 'tabRevenue', filter: (a: Account) => a.account_type === 'revenue' },
   { key: 'custos', labelKey: 'tabExpenses', filter: (a: Account) => a.account_type === 'expense' },
-  { key: 'funcionarios', labelKey: 'tabEmployees', filter: (a: Account) => a.code.startsWith('36') || a.code.startsWith('72') },
+  { key: 'funcionarios', labelKey: 'tabEmployees', filter: (a: Account) => {
+    const code = String(a.code || '');
+    return code.startsWith('36') || code.startsWith('72');
+  } },
   { key: 'capital', labelKey: 'tabEquity', filter: (a: Account) => a.account_type === 'equity' },
   { key: 'todos', labelKey: 'tabAll', filter: () => true },
 ] as const;
@@ -231,18 +238,21 @@ export default function ChartOfAccounts() {
       const displayName = resolveAccountDisplayName(a, language, t);
       const q = searchTerm.toLowerCase();
       const matchesSearch = !searchTerm ||
-        a.code.toLowerCase().includes(q) ||
-        a.name.toLowerCase().includes(q) ||
+        String(a.code || '').toLowerCase().includes(q) ||
+        String(a.name || '').toLowerCase().includes(q) ||
         displayName.toLowerCase().includes(q);
       return matchesTab && matchesSearch;
     });
   }, [accounts, activeTab, searchTerm, currentTabConfig, language, t]);
 
-  const childrenByParent = useMemo(
-    () => buildChildrenByParentId(filteredAccounts),
-    [filteredAccounts],
-  );
+  const displayForest = useMemo(() => {
+    if (activeTab === 'fornecedores') return flattenEntityRegistryTab(filteredAccounts, '32');
+    if (activeTab === 'clientes') return flattenEntityRegistryTab(filteredAccounts, '31');
+    return buildVisibleCoaForest(filteredAccounts);
+  }, [activeTab, filteredAccounts]);
+  const childrenByParent = displayForest.childrenByParent;
   childrenByParentRef.current = childrenByParent;
+  const rootAccounts = displayForest.roots;
 
   const rolledBalanceById = useMemo(
     () => buildRolledBalanceById(filteredAccounts),
@@ -254,11 +264,6 @@ export default function ChartOfAccounts() {
     for (const a of filteredAccounts) m.set(coaIdKey(a.id), a);
     return m;
   }, [filteredAccounts]);
-
-  const rootAccounts = useMemo(
-    () => filteredAccounts.filter((a) => !coaIdKey(a.parent_id) || !filteredById.has(coaIdKey(a.parent_id))),
-    [filteredAccounts, filteredById],
-  );
 
   // Summary totals
   const totals = useMemo(() => {
@@ -747,7 +752,11 @@ export default function ChartOfAccounts() {
               <tr className="font-bold text-xs">
                 <td className="px-3 py-2" colSpan={3}>
                   {t.chartOfAccountsUi.totalAccounts
-                    .replace('{count}', String(filteredAccounts.filter(a => !a.is_header).length))}
+                    .replace('{count}', String(
+                      (activeTab === 'fornecedores' || activeTab === 'clientes')
+                        ? filteredAccounts.filter((a) => !a.is_header && String(a.code || '').length >= 8).length
+                        : filteredAccounts.filter((a) => !a.is_header).length,
+                    ))}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-green-600">{totals.debit.toLocaleString(uiLocale)} Kz</td>
                 <td className="px-3 py-2 text-right font-mono text-red-600">{totals.credit.toLocaleString(uiLocale)} Kz</td>
