@@ -12,7 +12,7 @@ import {
   FileText, ShoppingCart, Package, BarChart3, TrendingUp,
   ArrowRight, ClipboardList, Receipt, DollarSign, FileCheck,
   PieChart, Truck, CheckCircle, Search, BookOpen, ArrowRightLeft,
-  Users, Calendar, AlertTriangle, CreditCard, GitBranch,
+  Users, Calendar, CreditCard, GitBranch,
 } from 'lucide-react';
 import { NEXOR_STAT_CARD_TONE, NEXOR_SECTION_LABEL, NEXOR_TONE_TILE, NEXOR_FLOW_STEP, type NexorTone } from '@/lib/nexorToneStyles';
 import { themeChrome } from '@/themes/active';
@@ -30,9 +30,9 @@ interface DashboardKPIs {
   monthExpenses: number;
 }
 
-// Session-scoped SWR for KPIs/low-stock: paint last values instantly, refresh in background.
+// Session-scoped SWR for KPIs: paint last values instantly, refresh in background.
 const KPI_CACHE_TTL_MS = 30_000;
-const kpiCache = new Map<string, { at: number; kpis: DashboardKPIs | null; lowStock: unknown[] }>();
+const kpiCache = new Map<string, { at: number; kpis: DashboardKPIs | null }>();
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -41,14 +41,6 @@ export default function Dashboard() {
   const { language, t } = useTranslation();
   const d = t.dashboardUi;
   const { companyName, logo } = useCompanyLogo();
-  const [lowStockProducts, setLowStockProducts] = useState<Array<{
-    id: string;
-    name: string;
-    sku: string;
-    stock: number;
-    minStock: number;
-    unit: string;
-  }>>([]);
   const cacheKey = String(apiBranchId || 'all');
   const cached = kpiCache.get(cacheKey);
   const [kpis, setKpis] = useState<DashboardKPIs | null>(cached?.kpis ?? null);
@@ -64,42 +56,10 @@ export default function Dashboard() {
         const result = await api.dashboard.kpis(apiBranchId);
         if (result.data) {
           setKpis(result.data);
-          const prev = kpiCache.get(cacheKey);
-          kpiCache.set(cacheKey, { at: Date.now(), kpis: result.data, lowStock: prev?.lowStock ?? [] });
+          kpiCache.set(cacheKey, { at: Date.now(), kpis: result.data });
         }
       } catch {
         // API not available — use zeros
-      }
-    })();
-  }, [apiBranchId, cacheKey]);
-
-  useEffect(() => {
-    const mapRows = (rows: Array<Record<string, unknown>>) => rows
-      .slice(0, 10)
-      .map((row) => ({
-        id: String(row.id || ''),
-        name: String(row.name || ''),
-        sku: String(row.sku || ''),
-        stock: Number(row.stock || 0),
-        minStock: Number(row.min_stock ?? row.minStock ?? 0),
-        unit: String(row.unit || ''),
-      }));
-    const entry = kpiCache.get(cacheKey);
-    if (entry?.lowStock?.length) {
-      setLowStockProducts(mapRows(entry.lowStock as Array<Record<string, unknown>>));
-    }
-    if (entry && Date.now() - entry.at < KPI_CACHE_TTL_MS) return;
-    (async () => {
-      try {
-        const { api } = await import('@/lib/api/client');
-        const result = await api.products.lowStock(apiBranchId);
-        if (!result.data) return;
-        const rows = result.data as Array<Record<string, unknown>>;
-        setLowStockProducts(mapRows(rows));
-        const prev = kpiCache.get(cacheKey);
-        kpiCache.set(cacheKey, { at: prev?.at ?? Date.now(), kpis: prev?.kpis ?? null, lowStock: rows });
-      } catch {
-        setLowStockProducts([]);
       }
     })();
   }, [apiBranchId, cacheKey]);
@@ -203,14 +163,8 @@ export default function Dashboard() {
           </Card>
         </div>
 
-        {/* Alerts Row */}
+        {((kpis?.pendingApprovals ?? 0) > 0 || (kpis?.monthExpenses ?? 0) > 0) && (
         <div className="flex gap-2 flex-wrap">
-          {((kpis?.lowStockCount ?? 0) > 0 || lowStockProducts.length > 0) && (
-            <Badge variant="outline" className="cursor-pointer gap-1.5 py-1 bg-amber-50/80 border-amber-200/80 text-amber-800 hover:bg-amber-100/80" onClick={() => navigate('/inventory')}>
-              <AlertTriangle className="w-3 h-3" />
-              {d.lowStockBadge.replace('{count}', String(kpis?.lowStockCount ?? lowStockProducts.length))}
-            </Badge>
-          )}
           {(kpis?.pendingApprovals ?? 0) > 0 && (
             <Badge variant="outline" className="cursor-pointer gap-1.5 py-1 bg-indigo-50/80 border-indigo-200/80 text-indigo-700 hover:bg-indigo-100/80" onClick={() => navigate('/approvals')}>
               <GitBranch className="w-3 h-3" />
@@ -224,36 +178,6 @@ export default function Dashboard() {
             </Badge>
           )}
         </div>
-
-        {/* Low Stock Alerts Widget */}
-        {lowStockProducts.length > 0 && (
-          <Card className="border-amber-200/60 bg-amber-50/30 shadow-sm">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold text-amber-800 uppercase tracking-widest flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" /> {d.lowStockAlerts}
-                </h3>
-                <Button variant="ghost" size="sm" className="h-6 text-xs text-slate-600" onClick={() => navigate('/inventory')}>
-                  {d.viewAll} →
-                </Button>
-              </div>
-              <div className="space-y-1.5">
-                {lowStockProducts.map(p => (
-                  <div key={p.id} className="flex items-center justify-between text-xs p-2 rounded-lg bg-white/70 border border-amber-100/80">
-                    <div className="flex items-center gap-2">
-                      <Package className="w-3.5 h-3.5 text-amber-700" />
-                      <span className="font-medium text-slate-700">{p.name}</span>
-                      <span className="text-slate-500 font-mono">{p.sku}</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-amber-800 font-semibold">{p.stock} {p.unit}</span>
-                      <span className="text-slate-500">{d.minLabel} {p.minStock}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
         )}
 
         {/* Document Flow */}
