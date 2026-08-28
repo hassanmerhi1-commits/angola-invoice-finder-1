@@ -1903,6 +1903,13 @@ export const api = {
         { method: 'POST', body: JSON.stringify(body) },
         { timeoutMs: 30000 },
       ),
+    /** Create missing 31x/32x leaves for every customer/supplier master row. */
+    ensureEntityLeaves: () =>
+      apiFetch<{ suppliers: number; clients: number; errors: number }>(
+        '/chart-of-accounts/ensure-entity-leaves',
+        { method: 'POST', body: '{}' },
+        { timeoutMs: 60000 },
+      ),
     get: (id: string) => {
       if (isElectronMode()) return ipcQuery<any>('SELECT * FROM chart_of_accounts WHERE id = $1', [id]).then(r => ({ data: r.data?.[0] }));
       return apiFetch<any>(`/chart-of-accounts/${id}`);

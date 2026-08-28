@@ -235,6 +235,40 @@ async function resolveEntityAccountCode(client, entityType, entityId, entityName
   return parentCode;
 }
 
+/**
+ * Find-or-create 31x/32x leaves for every supplier and customer master row.
+ * Creating a supplier used to skip the COA leaf when 321 was missing or the
+ * insert was non-fatal; purchases then had no Fornecedores line to show.
+ */
+async function ensureAllMasterEntityLeaves(client) {
+  const result = { suppliers: 0, clients: 0, errors: 0 };
+  const supplierRows = await client.query(
+    `SELECT name, nif FROM suppliers WHERE TRIM(COALESCE(name, '')) <> ''`,
+  ).catch(() => ({ rows: [] }));
+  for (const row of supplierRows.rows || []) {
+    try {
+      const code = await ensureSupplierSubAccount(client, row.name, row.nif);
+      if (code) result.suppliers += 1;
+    } catch (e) {
+      result.errors += 1;
+      console.warn('[ENTITY COA] supplier leaf skipped:', cleanText(row.name), e.message);
+    }
+  }
+  const clientRows = await client.query(
+    `SELECT name, nif FROM clients WHERE TRIM(COALESCE(name, '')) <> ''`,
+  ).catch(() => ({ rows: [] }));
+  for (const row of clientRows.rows || []) {
+    try {
+      const code = await ensureClientSubAccount(client, row.name, row.nif);
+      if (code) result.clients += 1;
+    } catch (e) {
+      result.errors += 1;
+      console.warn('[ENTITY COA] client leaf skipped:', cleanText(row.name), e.message);
+    }
+  }
+  return result;
+}
+
 module.exports = {
   CLIENT_GROUP_CODE,
   CLIENT_PARENT_CODE,
@@ -242,6 +276,7 @@ module.exports = {
   SUPPLIER_PARENT_CODE,
   ensureSupplierSubAccount,
   ensureClientSubAccount,
+  ensureAllMasterEntityLeaves,
   resolveEntityAccountCode,
   findEntityLeafCode,
 };

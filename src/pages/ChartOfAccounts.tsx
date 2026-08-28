@@ -4,7 +4,13 @@ import { useTranslation, type TranslationKeys } from '@/i18n';
 import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
 import { Account, AccountType, AccountFormData, getDefaultNature } from '@/types/accounting';
 import { resolveAccountDisplayName, resolveAccountTypeLabel } from '@/lib/chartOfAccountsDisplay';
-import { buildChildrenByParentId, buildRolledBalanceById } from '@/lib/coaTreeBalances';
+import {
+  ancestorIdsOf,
+  buildChildrenByParentId,
+  buildRolledBalanceById,
+  coaIdKey,
+  idsOfAccountsWithChildren,
+} from '@/lib/coaTreeBalances';
 import { prefetchAccountLedger } from '@/lib/ledgerPrefetch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -129,6 +135,9 @@ export default function ChartOfAccounts() {
   const [inlineParentCode, setInlineParentCode] = useState('');
   const [inlineParentName, setInlineParentName] = useState('');
   const [creatingInlineParent, setCreatingInlineParent] = useState(false);
+  const entityLeavesEnsured = useRef(false);
+  const treeExpandTab = useRef<string | null>(null);
+  const seenCoaIds = useRef(new Set<string>());
 
   const openNewClientDialog = () => {
     setActiveTab('clientes');
@@ -184,6 +193,14 @@ export default function ChartOfAccounts() {
       || accounts.find((a) => a.code.startsWith(code) && !a.is_header)
       || accounts.find((a) => a.code.startsWith(code));
     if (!match) return;
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.add(coaIdKey(match.id));
+      for (const id of ancestorIdsOf(match, new Map(accounts.map((a) => [coaIdKey(a.id), a])))) {
+        next.add(id);
+      }
+      return next;
+    });
     openLedger(match);
     navigate('.', { replace: true, state: {} });
   }, [accounts, location.state, navigate, openLedger]);
@@ -234,12 +251,12 @@ export default function ChartOfAccounts() {
 
   const filteredById = useMemo(() => {
     const m = new Map<string, Account>();
-    for (const a of filteredAccounts) m.set(a.id, a);
+    for (const a of filteredAccounts) m.set(coaIdKey(a.id), a);
     return m;
   }, [filteredAccounts]);
 
   const rootAccounts = useMemo(
-    () => filteredAccounts.filter((a) => !a.parent_id || !filteredById.has(String(a.parent_id))),
+    () => filteredAccounts.filter((a) => !coaIdKey(a.parent_id) || !filteredById.has(coaIdKey(a.parent_id))),
     [filteredAccounts, filteredById],
   );
 
@@ -257,15 +274,56 @@ export default function ChartOfAccounts() {
   }, [filteredAccounts]);
 
   const handleToggle = useCallback((id: string) => {
+    const key = coaIdKey(id);
     setExpandedIds(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
   }, []);
 
-  const expandAll = () => setExpandedIds(new Set(accounts.filter(a => a.is_header).map(a => a.id)));
+  const expandAll = () => {
+    setExpandedIds(new Set(idsOfAccountsWithChildren(filteredAccounts, childrenByParent)));
+  };
   const collapseAll = () => setExpandedIds(new Set());
+
+  // Default-open every parent that has children (311/321, caixa, banks, …), not only is_header.
+  // New accounts expand their ancestors so a fresh supplier/customer/caixa is never left collapsed.
+  useEffect(() => {
+    if (filteredAccounts.length === 0) return;
+    const tabChanged = treeExpandTab.current !== activeTab;
+    treeExpandTab.current = activeTab;
+
+    const toExpand = new Set<string>();
+    if (tabChanged) {
+      for (const id of idsOfAccountsWithChildren(filteredAccounts, childrenByParent)) {
+        toExpand.add(id);
+      }
+      for (const a of filteredAccounts) seenCoaIds.current.add(coaIdKey(a.id));
+    } else {
+      const newcomers = filteredAccounts.filter((a) => !seenCoaIds.current.has(coaIdKey(a.id)));
+      if (newcomers.length === 0) return;
+      for (const a of newcomers) {
+        seenCoaIds.current.add(coaIdKey(a.id));
+        for (const id of ancestorIdsOf(a, filteredById)) toExpand.add(id);
+      }
+    }
+    if (toExpand.size === 0) return;
+    setExpandedIds((prev) => {
+      const next = tabChanged ? new Set<string>() : new Set(prev);
+      for (const id of toExpand) next.add(id);
+      return next;
+    });
+  }, [activeTab, filteredAccounts, childrenByParent, filteredById]);
+
+  useEffect(() => {
+    if (entityLeavesEnsured.current) return;
+    entityLeavesEnsured.current = true;
+    void api.chartOfAccounts.ensureEntityLeaves().then((res) => {
+      if (res.error) return;
+      void refetch({ force: true });
+    }).catch(() => { /* old server without this route */ });
+  }, [refetch]);
 
   const openCreateDialog = (tabOverride?: string) => {
     const tabKey = tabOverride ?? activeTab;
@@ -670,7 +728,7 @@ export default function ChartOfAccounts() {
                   key={account.id}
                   account={account}
                   level={0}
-                  isExpanded={expandedIds.has(account.id)}
+                  isExpanded={expandedIds.has(coaIdKey(account.id))}
                   isSelected={selectedAccountId === account.id}
                   onToggle={handleToggle}
                   onSelect={handleSelectAccount}
@@ -924,11 +982,11 @@ const AccountTreeRow = memo(function AccountTreeRow({
 }: AccountTreeRowProps) {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const displayName = resolveAccountDisplayName(account, language, t);
-  const children = childrenByParent.get(account.id) || [];
+  const children = childrenByParent.get(coaIdKey(account.id)) || [];
   const hasChildren = children.length > 0;
 
   const rawBalance = hasChildren || account.is_header || String(account.code || '').length <= 3
-    ? (rolledBalanceById.get(account.id) ?? (Number(account.current_balance) || 0))
+    ? (rolledBalanceById.get(account.id) ?? rolledBalanceById.get(coaIdKey(account.id)) ?? (Number(account.current_balance) || 0))
     : (Number(account.current_balance) || 0);
   const ownBalance = Number(account.current_balance) || 0;
   const isCreditNature = account.account_nature === 'credit';
@@ -995,7 +1053,7 @@ const AccountTreeRow = memo(function AccountTreeRow({
           key={child.id}
           account={child}
           level={level + 1}
-          isExpanded={expandedIds.has(child.id)}
+          isExpanded={expandedIds.has(coaIdKey(child.id))}
           isSelected={selectedAccountId === child.id}
           onToggle={onToggle}
           onSelect={onSelect}

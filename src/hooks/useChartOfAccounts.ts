@@ -137,9 +137,19 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     const incomingHasBal = sorted.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
     setAccounts((prev) => {
       const prevHasBal = prev.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
-      // A mid-recompute snapshot is all zeros — keep the last good numbers on screen.
+      // A mid-recompute snapshot is all zeros — keep last balances, but still
+      // merge newly created leaves (e.g. Basel Angola) from the incoming list.
       if (prevHasBal && !incomingHasBal && sorted.length > 0) {
-        return prev;
+        const prevByCode = new Map(prev.map((a) => [a.code, a]));
+        const merged = sortAccountsByCode(sorted.map((a) => {
+          const old = prevByCode.get(a.code);
+          if (!old) return a;
+          return { ...a, current_balance: old.current_balance, opening_balance: old.opening_balance };
+        }));
+        setCachedList('chartOfAccounts', merged);
+        hasRowsRef.current = true;
+        saveLocalAccounts(merged);
+        return merged;
       }
       setCachedList('chartOfAccounts', sorted);
       hasRowsRef.current = sorted.length > 0;
