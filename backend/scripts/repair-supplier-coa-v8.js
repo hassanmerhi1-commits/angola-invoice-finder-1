@@ -25,6 +25,7 @@ async function main() {
     countParentEntityLines,
     countMisfiledClassifyLines,
     pruneUnusedEntityLeaves,
+    remapMisattributedSupplierLines,
     repairParentEntityCoaPostings,
   } = require('../src/lib/repairParentEntityCoa');
   const { fastRecomputeCoaCurrentBalances } = require('../src/accounting');
@@ -34,6 +35,12 @@ async function main() {
   console.log(
     `[repair-v8] before: parent 321/311 lines=${parentBefore}, “por classificar” lines=${classifyBefore}${dryRun ? ' (dry-run)' : ''}`,
   );
+
+  const wrong = await remapMisattributedSupplierLines(db, { dryRun });
+  console.log(
+    `[repair-v8] lines credited to the wrong supplier: checked=${wrong.checked} moved=${wrong.moved} invoices corrected=${wrong.invoicesFixed}`,
+  );
+  for (const line of (wrong.details || []).slice(0, 40)) console.log('  ', line);
 
   const result = await repairParentEntityCoaPostings(db, { dryRun, pruneUnused: false });
   console.log(`[repair-v8] moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped}`);

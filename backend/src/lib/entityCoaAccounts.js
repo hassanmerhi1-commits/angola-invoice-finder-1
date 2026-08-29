@@ -39,66 +39,78 @@ function normalizeEntityName(value) {
     .toLowerCase();
 }
 
+/**
+ * NIFs live inside the free-text `description` ("NIF: 5417003210008"). Splitting on
+ * non-alphanumerics gives whole identifiers, so a short NIF can no longer match as a
+ * fragment of a longer one belonging to a different entity.
+ */
+function descriptionNifTokens(description) {
+  return cleanText(description)
+    .split(/[^0-9a-zA-Z]+/)
+    .filter((token) => token.length >= 4)
+    .map((token) => token.toLowerCase());
+}
+
+/**
+ * Company suffixes are already stripped by normalizeEntityName, so containment is
+ * only allowed to absorb a couple of leftover characters. A whole extra word means a
+ * different party — "BASEL ANGOLA" and "BASEL ANGOLA SOYO" are two suppliers.
+ */
+function namesRelated(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 3) return false;
+  if (a.length >= 5 && b.includes(a)) return true;
+  if (b.length >= 5 && a.includes(b)) return true;
+  return false;
+}
+
 async function findEntityLeafCode(client, groupCode, parentCode, name, nif) {
   const normalizedName = cleanText(name);
   const normalizedNif = normalizeNif(nif);
   if (!normalizedName && !normalizedNif) return null;
 
-  const result = normalizedNif
-    ? await client.query(
-        `SELECT code
-         FROM chart_of_accounts
-         WHERE code LIKE $1
-           AND code <> $2
-           AND LENGTH(CAST(code AS TEXT)) > LENGTH($2)
-           AND LENGTH(CAST(code AS TEXT)) >= 8
-           AND is_header IS NOT TRUE
-           AND is_active IS NOT FALSE
-           AND (
-             ($3 != '' AND LOWER(TRIM(name)) = LOWER($3))
-             OR LOWER(COALESCE(description, '')) LIKE '%' || LOWER($4) || '%'
-           )
-         ORDER BY LENGTH(CAST(code AS TEXT)) DESC
-         LIMIT 1`,
-        [`${groupCode}%`, parentCode, normalizedName, normalizedNif],
-      )
-    : await client.query(
-        `SELECT code
-         FROM chart_of_accounts
-         WHERE code LIKE $1
-           AND code <> $2
-           AND LENGTH(CAST(code AS TEXT)) > LENGTH($2)
-           AND LENGTH(CAST(code AS TEXT)) >= 8
-           AND is_header IS NOT TRUE
-           AND is_active IS NOT FALSE
-           AND LOWER(TRIM(name)) = LOWER($3)
-         ORDER BY LENGTH(CAST(code AS TEXT)) DESC
-         LIMIT 1`,
-        [`${groupCode}%`, parentCode, normalizedName],
-      );
-  if (result.rows[0]?.code) return result.rows[0].code;
-
-  const want = normalizeEntityName(normalizedName);
-  if (!want || want.length < 3) return null;
-  const loose = await client.query(
-    `SELECT code, name FROM chart_of_accounts
+  const candidates = await client.query(
+    `SELECT code, name, description FROM chart_of_accounts
      WHERE code LIKE $1
        AND code <> $2
+       AND LENGTH(CAST(code AS TEXT)) > LENGTH($2)
        AND LENGTH(CAST(code AS TEXT)) >= 8
        AND is_header IS NOT TRUE
-       AND is_active IS NOT FALSE`,
+       AND is_active IS NOT FALSE
+     ORDER BY LENGTH(CAST(code AS TEXT)) DESC, code`,
     [`${groupCode}%`, parentCode],
   ).catch(() => ({ rows: [] }));
+  const rows = candidates.rows || [];
+
+  const wantExact = normalizedName.toLowerCase();
+  if (wantExact) {
+    const exact = rows.find((row) => cleanText(row.name).toLowerCase() === wantExact);
+    if (exact) return exact.code;
+  }
+
+  const want = normalizeEntityName(normalizedName);
+  const wantNif = normalizedNif ? normalizedNif.toLowerCase() : '';
+
+  // A NIF hit is only trusted when the account name belongs to the same entity.
+  // Otherwise a shared or mistyped NIF would post onto someone else's ledger.
+  if (wantNif) {
+    for (const row of rows) {
+      if (!descriptionNifTokens(row.description).includes(wantNif)) continue;
+      if (!want || namesRelated(want, normalizeEntityName(row.name))) return row.code;
+    }
+  }
+
+  if (!want || want.length < 3) return null;
   let best = null;
-  let bestLen = 0;
-  for (const row of loose.rows || []) {
+  let bestDelta = Infinity;
+  for (const row of rows) {
     const got = normalizeEntityName(row.name);
-    if (!got) continue;
-    if (got === want || (want.length >= 5 && got.includes(want)) || (got.length >= 5 && want.includes(got))) {
-      if (got.length > bestLen) {
-        best = row.code;
-        bestLen = got.length;
-      }
+    if (!got || !namesRelated(want, got)) continue;
+    const delta = Math.abs(got.length - want.length);
+    if (delta < bestDelta) {
+      best = row.code;
+      bestDelta = delta;
     }
   }
   return best;
@@ -302,4 +314,6 @@ module.exports = {
   ensureClientSubAccount,
   resolveEntityAccountCode,
   findEntityLeafCode,
+  normalizeEntityName,
+  namesRelated,
 };

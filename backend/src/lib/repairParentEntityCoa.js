@@ -42,6 +42,21 @@ function namesLooselyMatch(a, b) {
   return false;
 }
 
+/**
+ * `purchase_invoices.supplier_account_code` arrives from the client and has been seen
+ * pointing at another supplier's account, so it is only usable when the account it
+ * names actually belongs to this supplier.
+ */
+async function storedCodeBelongsTo(client, code, supplierName) {
+  if (!isLeafCode(code, '321') || !cleanText(supplierName)) return false;
+  const r = await client.query(
+    `SELECT name FROM chart_of_accounts WHERE code = $1 LIMIT 1`,
+    [cleanText(code)],
+  ).catch(() => ({ rows: [] }));
+  const owner = r.rows?.[0]?.name;
+  return owner ? namesLooselyMatch(owner, supplierName) : false;
+}
+
 function isLeafCode(code, parentCode) {
   const c = cleanText(code);
   if (!c || c === parentCode) return false;
@@ -174,10 +189,10 @@ async function resolveLeafFromPurchaseInvoice(client, journalEntryId) {
   ).catch(() => ({ rows: [] }));
   const row = r.rows?.[0];
   if (!row) return null;
-  const stored = cleanText(row.supplier_account_code);
-  if (isLeafCode(stored, '321')) return stored;
   const code = await safeResolveEntity(client, 'supplier', row.supplier_id, row.supplier_name);
-  return isLeafCode(code, '321') ? code : null;
+  if (isLeafCode(code, '321')) return code;
+  const stored = cleanText(row.supplier_account_code);
+  return (await storedCodeBelongsTo(client, stored, row.supplier_name)) ? stored : null;
 }
 
 async function resolveLeafFromPurchaseOrder(client, journalEntryId) {
@@ -221,8 +236,6 @@ async function resolveLeafFromDocumentNumber(client, parentCode, description) {
         [v],
       ).catch(() => ({ rows: [] }));
       if (pi.rows?.[0]) {
-        const stored = cleanText(pi.rows[0].supplier_account_code);
-        if (isLeafCode(stored, '321')) return stored;
         const code = await safeResolveEntity(
           client,
           'supplier',
@@ -230,6 +243,8 @@ async function resolveLeafFromDocumentNumber(client, parentCode, description) {
           pi.rows[0].supplier_name,
         );
         if (isLeafCode(code, '321')) return code;
+        const stored = cleanText(pi.rows[0].supplier_account_code);
+        if (await storedCodeBelongsTo(client, stored, pi.rows[0].supplier_name)) return stored;
       }
       const po = await client.query(
         `SELECT supplier_id, supplier_name
@@ -677,9 +692,7 @@ async function bulkRemapByDocumentJoin(db) {
        ON leaf.is_active = true AND leaf.is_header = false
       AND leaf.code LIKE '321%' AND LENGTH(leaf.code) > 3
       AND (
-        (NULLIF(TRIM(pi.supplier_account_code), '') IS NOT NULL
-          AND leaf.code = TRIM(pi.supplier_account_code))
-        OR LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(pi.supplier_name, '')))
+        LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(pi.supplier_name, '')))
         OR LOWER(TRIM(leaf.name)) = LOWER(TRIM(COALESCE(s.name, '')))
       )
      WHERE CAST(jel.journal_entry_id AS TEXT) = CAST(je.id AS TEXT)
@@ -958,6 +971,87 @@ async function remapMisfiledClassifyLines(db, opts = {}) {
 }
 
 /**
+ * Finds supplier lines sitting on an account that belongs to a *different* supplier.
+ * The NIF lookup used to match as a substring of another account's description, so a
+ * purchase could be credited to an unrelated supplier's ledger. The document's own
+ * supplier is authoritative here, never the account code stored on the invoice.
+ */
+async function remapMisattributedSupplierLines(db, opts = {}) {
+  const dryRun = opts.dryRun === true;
+  const r = await db.query(
+    `SELECT
+       jel.id AS line_id,
+       jel.account_id AS old_account_id,
+       jel.debit_amount,
+       jel.credit_amount,
+       coa.code AS old_code,
+       coa.name AS old_name,
+       je.entry_number,
+       je.reference_type,
+       pi.id AS invoice_id,
+       COALESCE(pi.supplier_id, po.supplier_id) AS supplier_id,
+       COALESCE(NULLIF(TRIM(pi.supplier_name), ''), NULLIF(TRIM(po.supplier_name), '')) AS supplier_name
+     FROM journal_entry_lines jel
+     INNER JOIN journal_entries je ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
+     INNER JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
+     LEFT JOIN purchase_invoices pi ON CAST(pi.id AS TEXT) = CAST(je.reference_id AS TEXT)
+     LEFT JOIN purchase_orders po ON CAST(po.id AS TEXT) = CAST(je.reference_id AS TEXT)
+     WHERE CAST(coa.code AS TEXT) LIKE '321%'
+       AND LENGTH(CAST(coa.code AS TEXT)) >= 8
+       AND (pi.id IS NOT NULL OR po.id IS NOT NULL)
+     ORDER BY je.entry_date`,
+  ).catch(() => ({ rows: [] }));
+
+  const details = [];
+  let moved = 0;
+  let checked = 0;
+  const fixedInvoices = new Set();
+
+  for (const row of r.rows || []) {
+    const supplierName = cleanText(row.supplier_name);
+    if (!supplierName) continue;
+    checked += 1;
+    if (namesLooselyMatch(row.old_name, supplierName)) continue;
+
+    const correct = await safeResolveEntity(db, 'supplier', row.supplier_id, supplierName);
+    if (!isLeafCode(correct, '321')) {
+      details.push(`cannot resolve account for ${supplierName} (${row.entry_number})`);
+      continue;
+    }
+    const leafId = await accountIdForCode(db, correct);
+    if (!leafId || String(leafId) === String(row.old_account_id)) continue;
+
+    const amount = Number(row.credit_amount) || Number(row.debit_amount) || 0;
+    if (dryRun) {
+      details.push(
+        `would move ${row.entry_number} ${amount}: ${row.old_code} “${row.old_name}” → ${correct} “${supplierName}”`,
+      );
+      moved += 1;
+      continue;
+    }
+    try {
+      await db.query(`UPDATE journal_entry_lines SET account_id = $1 WHERE id = $2`, [leafId, row.line_id]);
+      moved += 1;
+      if (details.length < 40) {
+        details.push(
+          `moved ${row.entry_number} ${amount}: ${row.old_code} “${row.old_name}” → ${correct} “${supplierName}”`,
+        );
+      }
+      if (row.invoice_id && !fixedInvoices.has(String(row.invoice_id))) {
+        fixedInvoices.add(String(row.invoice_id));
+        await db.query(
+          `UPDATE purchase_invoices SET supplier_account_code = $1 WHERE CAST(id AS TEXT) = CAST($2 AS TEXT)`,
+          [correct, row.invoice_id],
+        ).catch(() => {});
+      }
+    } catch (e) {
+      details.push(`error ${row.entry_number}: ${e.message}`);
+    }
+  }
+  return { moved, checked, invoicesFixed: fixedInvoices.size, details };
+}
+
+/**
  * A party ledger account exists because something was posted to it. Deactivates
  * 31x/32x leaves that carry no journal line, no balance and no document link —
  * these are the rows a bulk “create a leaf for every master record” pass left
@@ -1037,6 +1131,15 @@ async function repairParentEntityCoaPostings(db, opts = {}) {
         `por classificar: scanned ${rescued.scanned}, rescued ${rescued.moved}, unresolved ${rescued.stillUnresolved}`,
       );
       for (const line of rescued.details.slice(0, 10)) details.push(line);
+    }
+
+    const misattributed = await remapMisattributedSupplierLines(db);
+    if (misattributed.moved > 0) {
+      bulkMoved += misattributed.moved;
+      details.push(
+        `wrong-supplier account: moved ${misattributed.moved} line(s), corrected ${misattributed.invoicesFixed} invoice(s)`,
+      );
+      for (const line of misattributed.details.slice(0, 20)) details.push(line);
     }
 
     if (opts.pruneUnused === true) {
@@ -1147,7 +1250,7 @@ async function countParentEntityLines(db) {
  * Patch 024 marks “attempted”; residual keeps re-running each startup / CoA open.
  */
 async function ensureParentEntityCoaRepaired(db) {
-  const patchId = '029_repair_parent_entity_coa_v8';
+  const patchId = '030_repair_parent_entity_coa_v9';
   try {
     await db.query(`
       CREATE TABLE IF NOT EXISTS schema_patches (
@@ -1173,7 +1276,22 @@ async function ensureParentEntityCoaRepaired(db) {
   const alreadyApplied = (
     await db.query('SELECT 1 AS hit FROM schema_patches WHERE id = $1', [patchId]).catch(() => ({ rows: [] }))
   ).rows?.length > 0;
+  // Not gated on the parent/classify counters: a line credited to the wrong
+  // supplier's leaf leaves both of those at zero, which is how this went unseen.
   if (!alreadyApplied) {
+    const misattributed = await remapMisattributedSupplierLines(db);
+    if (misattributed.moved > 0) {
+      console.log(
+        `[SCHEMA] Moved ${misattributed.moved} line(s) off the wrong supplier's account, corrected ${misattributed.invoicesFixed} invoice(s)`,
+      );
+      for (const line of misattributed.details.slice(0, 20)) console.log(`  ${line}`);
+      try {
+        const { fastRecomputeCoaCurrentBalances } = require('../accounting');
+        await fastRecomputeCoaCurrentBalances(db);
+      } catch (e) {
+        console.warn(`[SCHEMA] balance recompute after supplier remap failed: ${e.message}`);
+      }
+    }
     const pruned = await pruneUnusedEntityLeaves(db);
     if (pruned.deactivated > 0) {
       console.log(
@@ -1199,7 +1317,7 @@ async function ensureParentEntityCoaRepaired(db) {
     );
   }
   console.log(
-    `[SCHEMA] Parent 321/311 COA repair v8: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter} (parent-before=${parentBefore}, por-classificar-before=${classifyBefore})`,
+    `[SCHEMA] Parent 321/311 COA repair v9: moved=${result.moved} bulk=${result.bulkMoved || 0} skipped=${result.skipped} remaining=${remainingAfter} (parent-before=${parentBefore}, por-classificar-before=${classifyBefore})`,
   );
   return { ...result, remaining: remainingAfter };
 }
@@ -1207,6 +1325,7 @@ async function ensureParentEntityCoaRepaired(db) {
 module.exports = {
   remapJournalParentSupplierLines,
   remapMisfiledClassifyLines,
+  remapMisattributedSupplierLines,
   pruneUnusedEntityLeaves,
   repairParentEntityCoaPostings,
   ensureParentEntityCoaRepaired,

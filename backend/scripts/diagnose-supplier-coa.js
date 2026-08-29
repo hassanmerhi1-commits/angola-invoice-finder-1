@@ -182,6 +182,25 @@ async function main() {
     console.log(`  ${p.code}  ${p.name}  lines=${p.lines}  D=${money(p.debits)}  C=${money(p.credits)}`);
   }
 
+  head('Accounts whose description contains this NIF as a fragment (cross-posting risk)');
+  for (const s of suppliers) {
+    const nif = String(s.nif || '').trim();
+    if (!nif) continue;
+    const hits = await q(
+      db,
+      `SELECT code, name, description FROM chart_of_accounts
+       WHERE LOWER(COALESCE(description, '')) LIKE $1
+         AND (CAST(code AS TEXT) LIKE '321%' OR CAST(code AS TEXT) LIKE '311%')`,
+      [`%${nif.toLowerCase()}%`],
+    );
+    for (const h of hits) {
+      const owns = String(h.name || '').toLowerCase().includes(term.toLowerCase());
+      console.log(
+        `  NIF ${nif} (${s.name}) appears in ${h.code} ${h.name} — “${h.description || ''}”${owns ? '' : '  <-- belongs to someone else'}`,
+      );
+    }
+  }
+
   head('Supplier/customer leaf accounts on the chart');
   const counts = await q(
     db,
