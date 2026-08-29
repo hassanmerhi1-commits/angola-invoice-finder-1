@@ -978,40 +978,68 @@ async function remapMisfiledClassifyLines(db, opts = {}) {
  */
 async function remapMisattributedSupplierLines(db, opts = {}) {
   const dryRun = opts.dryRun === true;
-  const r = await db.query(
-    `SELECT
-       jel.id AS line_id,
-       jel.account_id AS old_account_id,
-       jel.debit_amount,
-       jel.credit_amount,
-       coa.code AS old_code,
-       coa.name AS old_name,
-       je.entry_number,
-       je.reference_type,
-       pi.id AS invoice_id,
-       COALESCE(pi.supplier_id, po.supplier_id) AS supplier_id,
-       COALESCE(NULLIF(TRIM(pi.supplier_name), ''), NULLIF(TRIM(po.supplier_name), '')) AS supplier_name
-     FROM journal_entry_lines jel
-     INNER JOIN journal_entries je ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
-     INNER JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
-     LEFT JOIN purchase_invoices pi ON CAST(pi.id AS TEXT) = CAST(je.reference_id AS TEXT)
-     LEFT JOIN purchase_orders po ON CAST(po.id AS TEXT) = CAST(je.reference_id AS TEXT)
-     WHERE CAST(coa.code AS TEXT) LIKE '321%'
-       AND LENGTH(CAST(coa.code AS TEXT)) >= 8
-       AND (pi.id IS NOT NULL OR po.id IS NOT NULL)
-     ORDER BY je.entry_date`,
-  ).catch(() => ({ rows: [] }));
-
   const details = [];
   let moved = 0;
   let checked = 0;
   const fixedInvoices = new Set();
+
+  // supplier_id is VARCHAR on purchase_invoices and UUID on purchase_orders, so both
+  // sides must be cast before COALESCE or Postgres refuses the whole statement.
+  let r;
+  try {
+    r = await db.query(
+      `SELECT
+         jel.id AS line_id,
+         jel.account_id AS old_account_id,
+         jel.debit_amount,
+         jel.credit_amount,
+         coa.code AS old_code,
+         coa.name AS old_name,
+         je.entry_number,
+         je.reference_type,
+         CAST(pi.id AS TEXT) AS invoice_id,
+         COALESCE(
+           NULLIF(TRIM(CAST(pi.supplier_id AS TEXT)), ''),
+           NULLIF(TRIM(CAST(po.supplier_id AS TEXT)), '')
+         ) AS supplier_id,
+         COALESCE(
+           NULLIF(TRIM(CAST(pi.supplier_name AS TEXT)), ''),
+           NULLIF(TRIM(CAST(po.supplier_name AS TEXT)), '')
+         ) AS supplier_name
+       FROM journal_entry_lines jel
+       INNER JOIN journal_entries je ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
+       INNER JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
+       LEFT JOIN purchase_invoices pi ON CAST(pi.id AS TEXT) = CAST(je.reference_id AS TEXT)
+       LEFT JOIN purchase_orders po ON CAST(po.id AS TEXT) = CAST(je.reference_id AS TEXT)
+       WHERE CAST(coa.code AS TEXT) LIKE '321%'
+         AND LENGTH(CAST(coa.code AS TEXT)) >= 8
+         AND (pi.id IS NOT NULL OR po.id IS NOT NULL)
+       ORDER BY je.entry_date`,
+    );
+  } catch (e) {
+    // Never report a clean run when the scan itself did not execute.
+    console.error('[COA REPAIR] wrong-supplier scan failed:', e.message);
+    return { moved: 0, checked: 0, invoicesFixed: 0, failed: e.message, details: [`scan failed: ${e.message}`] };
+  }
 
   for (const row of r.rows || []) {
     const supplierName = cleanText(row.supplier_name);
     if (!supplierName) continue;
     checked += 1;
     if (namesLooselyMatch(row.old_name, supplierName)) continue;
+
+    // A dry run must not create accounts, so it only looks the supplier up.
+    if (dryRun) {
+      const { findEntityLeafCode } = require('./entityCoaAccounts');
+      const found = await findEntityLeafCode(db, '32', '321', supplierName, null).catch(() => null);
+      details.push(
+        isLeafCode(found, '321')
+          ? `would move ${row.entry_number}: ${row.old_code} “${row.old_name}” → ${found} “${supplierName}”`
+          : `would create an account for “${supplierName}” and move ${row.entry_number} off ${row.old_code} “${row.old_name}”`,
+      );
+      moved += 1;
+      continue;
+    }
 
     const correct = await safeResolveEntity(db, 'supplier', row.supplier_id, supplierName);
     if (!isLeafCode(correct, '321')) {
@@ -1022,13 +1050,6 @@ async function remapMisattributedSupplierLines(db, opts = {}) {
     if (!leafId || String(leafId) === String(row.old_account_id)) continue;
 
     const amount = Number(row.credit_amount) || Number(row.debit_amount) || 0;
-    if (dryRun) {
-      details.push(
-        `would move ${row.entry_number} ${amount}: ${row.old_code} “${row.old_name}” → ${correct} “${supplierName}”`,
-      );
-      moved += 1;
-      continue;
-    }
     try {
       await db.query(`UPDATE journal_entry_lines SET account_id = $1 WHERE id = $2`, [leafId, row.line_id]);
       moved += 1;
@@ -1134,7 +1155,9 @@ async function repairParentEntityCoaPostings(db, opts = {}) {
     }
 
     const misattributed = await remapMisattributedSupplierLines(db);
-    if (misattributed.moved > 0) {
+    if (misattributed.failed) {
+      details.push(`wrong-supplier scan failed: ${misattributed.failed}`);
+    } else if (misattributed.moved > 0) {
       bulkMoved += misattributed.moved;
       details.push(
         `wrong-supplier account: moved ${misattributed.moved} line(s), corrected ${misattributed.invoicesFixed} invoice(s)`,
@@ -1273,14 +1296,24 @@ async function ensureParentEntityCoaRepaired(db) {
     }
   }
 
-  const alreadyApplied = (
-    await db.query('SELECT 1 AS hit FROM schema_patches WHERE id = $1', [patchId]).catch(() => ({ rows: [] }))
+  // Keyed on its own patch id. Sharing the parent-line key does not work: the
+  // early return below stamps that key whenever 321 looks clean, which is exactly
+  // the state a wrong-supplier posting leaves behind.
+  const wrongAccountPatchId = '031_supplier_wrong_account_repair_v1';
+  const wrongAccountDone = (
+    await db.query('SELECT 1 AS hit FROM schema_patches WHERE id = $1', [wrongAccountPatchId])
+      .catch(() => ({ rows: [] }))
   ).rows?.length > 0;
-  // Not gated on the parent/classify counters: a line credited to the wrong
-  // supplier's leaf leaves both of those at zero, which is how this went unseen.
-  if (!alreadyApplied) {
+  if (!wrongAccountDone) {
     const misattributed = await remapMisattributedSupplierLines(db);
-    if (misattributed.moved > 0) {
+    if (misattributed.failed) {
+      console.error(`[SCHEMA] Wrong-supplier repair did not run: ${misattributed.failed}`);
+    } else {
+      await db.query('INSERT INTO schema_patches (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [
+        wrongAccountPatchId,
+      ]).catch(() => {});
+    }
+    if (!misattributed.failed && misattributed.moved > 0) {
       console.log(
         `[SCHEMA] Moved ${misattributed.moved} line(s) off the wrong supplier's account, corrected ${misattributed.invoicesFixed} invoice(s)`,
       );

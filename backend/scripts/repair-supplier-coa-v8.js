@@ -37,6 +37,9 @@ async function main() {
   );
 
   const wrong = await remapMisattributedSupplierLines(db, { dryRun });
+  if (wrong.failed) {
+    console.error(`[repair-v8] wrong-supplier scan FAILED, nothing was checked: ${wrong.failed}`);
+  }
   console.log(
     `[repair-v8] lines credited to the wrong supplier: checked=${wrong.checked} moved=${wrong.moved} invoices corrected=${wrong.invoicesFixed}`,
   );
