@@ -26,7 +26,7 @@ import { api } from '@/lib/api/client';
 import {
   Search, Edit2, Trash2, RefreshCw,
   FileText, Receipt, CreditCard, Banknote,
-  ChevronRight, ChevronDown, Printer, Download, Eye, RotateCcw, Plus
+  ChevronRight, ChevronDown, Printer, Download, Eye, RotateCcw, Plus, X
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NEXOR_TAB_TRIGGER, NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
@@ -182,6 +182,7 @@ export default function ChartOfAccounts() {
   }, []);
 
   const childrenByParentRef = useRef<Map<string, Account[]>>(new Map());
+  const filteredAccountsRef = useRef<Account[]>([]);
 
   const openLedger = useCallback((account: Account) => {
     // Warm fetch on first click of a double-click; open dialog immediately.
@@ -230,18 +231,39 @@ export default function ChartOfAccounts() {
   // Filter accounts by tab + search
   const currentTabConfig = CATEGORY_TABS.find(t => t.key === activeTab) || CATEGORY_TABS[CATEGORY_TABS.length - 1];
   
+  const searchQuery = searchTerm.trim().toLowerCase();
+
+  const matchesQuery = useCallback((a: Account) => {
+    if (!searchQuery) return true;
+    return String(a.code || '').toLowerCase().includes(searchQuery)
+      || String(a.name || '').toLowerCase().includes(searchQuery)
+      // Entity accounts keep the NIF here, so a NIF finds its account.
+      || String(a.description || '').toLowerCase().includes(searchQuery)
+      || resolveAccountDisplayName(a, language, t).toLowerCase().includes(searchQuery);
+  }, [searchQuery, language, t]);
+
   const filteredAccounts = useMemo(() => {
-    return accounts.filter(a => {
-      const matchesTab = currentTabConfig.filter(a);
-      const displayName = resolveAccountDisplayName(a, language, t);
-      const q = searchTerm.toLowerCase();
-      const matchesSearch = !searchTerm ||
-        String(a.code || '').toLowerCase().includes(q) ||
-        String(a.name || '').toLowerCase().includes(q) ||
-        displayName.toLowerCase().includes(q);
-      return matchesTab && matchesSearch;
-    });
-  }, [accounts, activeTab, searchTerm, currentTabConfig, language, t]);
+    if (!searchQuery) return accounts.filter((a) => currentTabConfig.filter(a));
+
+    // A search covers the whole chart: scoping it to the open tab meant a supplier
+    // could not be found from any other tab. Ancestors of each hit come along so the
+    // row still renders in its branch instead of disappearing with its parent.
+    const byId = new Map(accounts.map((a) => [coaIdKey(a.id), a]));
+    const keep = new Set<string>();
+    for (const a of accounts) {
+      if (!matchesQuery(a)) continue;
+      keep.add(coaIdKey(a.id));
+      for (const pid of ancestorIdsOf(a, byId)) {
+        if (byId.has(pid)) keep.add(pid);
+      }
+    }
+    return accounts.filter((a) => keep.has(coaIdKey(a.id)));
+  }, [accounts, currentTabConfig, searchQuery, matchesQuery]);
+
+  const searchHitCount = useMemo(
+    () => (searchQuery ? filteredAccounts.filter(matchesQuery).length : 0),
+    [searchQuery, filteredAccounts, matchesQuery],
+  );
 
   const displayForest = useMemo(
     () => buildVisibleCoaForest(filteredAccounts),
@@ -249,6 +271,7 @@ export default function ChartOfAccounts() {
   );
   const childrenByParent = displayForest.childrenByParent;
   childrenByParentRef.current = childrenByParent;
+  filteredAccountsRef.current = filteredAccounts;
   const rootAccounts = displayForest.roots;
 
   const rolledBalanceById = useMemo(
@@ -288,6 +311,15 @@ export default function ChartOfAccounts() {
     setExpandedIds(new Set(idsOfAccountsWithChildren(filteredAccounts, childrenByParent)));
   };
   const collapseAll = () => setExpandedIds(new Set());
+
+  // A hit deep in the tree is useless behind a collapsed parent, so opening or clearing
+  // the search reopens every branch of the current view. Keyed on the term alone: a
+  // background refresh must not undo a collapse the user just made.
+  useEffect(() => {
+    const rows = filteredAccountsRef.current;
+    if (rows.length === 0) return;
+    setExpandedIds(new Set(idsOfAccountsWithChildren(rows, childrenByParentRef.current)));
+  }, [searchQuery]);
 
   // Default-open every parent that has children (311/321, caixa, banks, …), not only is_header.
   // New accounts expand their ancestors so a fresh supplier/customer/caixa is never left collapsed.
@@ -672,7 +704,16 @@ export default function ChartOfAccounts() {
         <div className="flex-1" />
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-          <Input placeholder={t.chartOfAccountsUi.searchPlaceholder} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-7 text-xs pl-7 w-48" />
+          <Input placeholder={t.chartOfAccountsUi.searchPlaceholder} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className={cn('h-7 text-xs pl-7 w-48', searchTerm && 'pr-7')} />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => setSearchTerm('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -740,7 +781,11 @@ export default function ChartOfAccounts() {
               <tr className="font-bold text-xs">
                 <td className="px-3 py-2" colSpan={3}>
                   {t.chartOfAccountsUi.totalAccounts
-                    .replace('{count}', String(filteredAccounts.filter(a => !a.is_header).length))}
+                    .replace('{count}', String(
+                      // While searching, count the hits — not the ancestor rows carried
+                      // along to keep each hit inside its branch.
+                      searchQuery ? searchHitCount : filteredAccounts.filter(a => !a.is_header).length,
+                    ))}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-green-600">{totals.debit.toLocaleString(uiLocale)} Kz</td>
                 <td className="px-3 py-2 text-right font-mono text-red-600">{totals.credit.toLocaleString(uiLocale)} Kz</td>

@@ -85,45 +85,41 @@ export function buildVisibleCoaForest(accounts: Account[]): {
   roots: Account[];
   childrenByParent: Map<string, Account[]>;
 } {
-  const childrenByParent = buildChildrenByParentId(accounts);
   const byId = new Map(accounts.map((a) => [coaIdKey(a.id), a]));
-  const listedAsChild = new Set<string>();
-  for (const kids of childrenByParent.values()) {
-    for (const kid of kids) listedAsChild.add(coaIdKey(kid.id));
+  const childrenByParent = new Map<string, Account[]>();
+  const placed = new Set<string>();
+
+  const attach = (parentKey: string, child: Account) => {
+    const list = childrenByParent.get(parentKey);
+    if (list) list.push(child);
+    else childrenByParent.set(parentKey, [child]);
+    placed.add(coaIdKey(child.id));
+  };
+
+  // Only nest under a parent that is actually in this list.
+  for (const a of accounts) {
+    const pid = coaIdKey(a.parent_id);
+    if (pid && pid !== coaIdKey(a.id) && byId.has(pid)) attach(pid, a);
   }
 
-  const unplaced = accounts.filter((a) => {
-    const id = coaIdKey(a.id);
-    if (listedAsChild.has(id)) return false;
-    const pid = coaIdKey(a.parent_id);
-    return !!pid && byId.has(pid);
-  });
-
-  for (const orphan of unplaced) {
-    const oCode = String(orphan.code || '');
+  // A row whose parent is absent — filtered out by a search, or a broken parent_id —
+  // still has to appear. Nest it under the closest ancestor by PGC code, else promote
+  // it to a root. Registering it under a missing parent dropped it from the tree.
+  for (const a of accounts) {
+    if (placed.has(coaIdKey(a.id))) continue;
+    const code = String(a.code || '');
+    if (!code) continue;
     let best: Account | null = null;
     for (const cand of accounts) {
-      if (coaIdKey(cand.id) === coaIdKey(orphan.id)) continue;
+      if (coaIdKey(cand.id) === coaIdKey(a.id)) continue;
       const cCode = String(cand.code || '');
-      if (!cCode || oCode.length <= cCode.length || !oCode.startsWith(cCode)) continue;
+      if (!cCode || code.length <= cCode.length || !code.startsWith(cCode)) continue;
       if (!best || String(best.code || '').length < cCode.length) best = cand;
     }
-    if (!best) continue;
-    const pid = coaIdKey(best.id);
-    const list = childrenByParent.get(pid);
-    if (list) list.push(orphan);
-    else childrenByParent.set(pid, [orphan]);
-    listedAsChild.add(coaIdKey(orphan.id));
+    if (best) attach(coaIdKey(best.id), a);
   }
 
-  const roots: Account[] = [];
-  const rootIds = new Set<string>();
-  for (const a of accounts) {
-    const id = coaIdKey(a.id);
-    if (listedAsChild.has(id) || rootIds.has(id)) continue;
-    roots.push(a);
-    rootIds.add(id);
-  }
+  const roots = accounts.filter((a) => !placed.has(coaIdKey(a.id)));
   return { roots, childrenByParent };
 }
 
