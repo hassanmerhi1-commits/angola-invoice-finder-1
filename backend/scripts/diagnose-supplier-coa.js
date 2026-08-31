@@ -149,6 +149,76 @@ async function main() {
     }
   }
 
+  head('Client master rows');
+  const clients = await q(
+    db,
+    `SELECT id, name, nif FROM clients WHERE LOWER(COALESCE(name, '')) LIKE $1 ORDER BY name`,
+    [like],
+  );
+  if (clients.length === 0) console.log('  none');
+  for (const c of clients) console.log(`  ${c.id}  ${c.name}  NIF=${c.nif || '-'}`);
+
+  head('Sales journals for this name, and the accounts they hit');
+  const sales = await q(
+    db,
+    `SELECT s.id, s.invoice_number, s.customer_name, s.total, je.id AS journal_id, je.entry_number
+     FROM sales s
+     LEFT JOIN journal_entries je ON CAST(je.reference_id AS TEXT) = CAST(s.id AS TEXT)
+     WHERE LOWER(COALESCE(s.customer_name, '')) LIKE $1
+     ORDER BY s.created_at`,
+    [like],
+  );
+  if (sales.length === 0) console.log('  none');
+  for (const s of sales) {
+    console.log(`  ${s.invoice_number || s.id}  ${s.customer_name}  total=${money(s.total)}  ${s.entry_number || '(no journal)'}`);
+    if (!s.journal_id) continue;
+    const lines = await q(
+      db,
+      `SELECT COALESCE(coa.code, CAST(jel.account_id AS TEXT)) AS code,
+              COALESCE(coa.name, '(account row missing)') AS name,
+              jel.debit_amount, jel.credit_amount
+       FROM journal_entry_lines jel
+       LEFT JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
+       WHERE CAST(jel.journal_entry_id AS TEXT) = CAST($1 AS TEXT)
+         AND CAST(COALESCE(coa.code, '') AS TEXT) LIKE '311%'
+       ORDER BY jel.id`,
+      [s.journal_id],
+    );
+    for (const l of lines) {
+      console.log(`      ${l.code}  ${l.name}  D=${money(l.debit_amount)}  C=${money(l.credit_amount)}`);
+    }
+  }
+
+  head('Payments for this name, and the accounts they hit');
+  const payments = await q(
+    db,
+    `SELECT p.id, p.payment_number, p.entity_type, p.entity_name, p.amount, je.id AS journal_id, je.entry_number
+     FROM payments p
+     LEFT JOIN journal_entries je ON CAST(je.reference_id AS TEXT) = CAST(p.id AS TEXT)
+     WHERE LOWER(COALESCE(p.entity_name, '')) LIKE $1
+     ORDER BY p.created_at`,
+    [like],
+  );
+  if (payments.length === 0) console.log('  none');
+  for (const p of payments) {
+    console.log(`  ${p.payment_number}  ${p.entity_type}  ${p.entity_name}  amount=${money(p.amount)}  ${p.entry_number || '(no journal)'}`);
+    if (!p.journal_id) continue;
+    const lines = await q(
+      db,
+      `SELECT COALESCE(coa.code, CAST(jel.account_id AS TEXT)) AS code,
+              COALESCE(coa.name, '(account row missing)') AS name,
+              jel.debit_amount, jel.credit_amount
+       FROM journal_entry_lines jel
+       LEFT JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
+       WHERE CAST(jel.journal_entry_id AS TEXT) = CAST($1 AS TEXT)
+       ORDER BY jel.id`,
+      [p.journal_id],
+    );
+    for (const l of lines) {
+      console.log(`      ${l.code}  ${l.name}  D=${money(l.debit_amount)}  C=${money(l.credit_amount)}`);
+    }
+  }
+
   head('“por classificar” buckets (money parked away from the real supplier)');
   const classify = await q(
     db,

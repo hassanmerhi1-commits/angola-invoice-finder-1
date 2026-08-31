@@ -970,106 +970,207 @@ async function remapMisfiledClassifyLines(db, opts = {}) {
   return { moved, scanned: rows.length, stillUnresolved, details };
 }
 
-/**
- * Finds supplier lines sitting on an account that belongs to a *different* supplier.
- * The NIF lookup used to match as a substring of another account's description, so a
- * purchase could be credited to an unrelated supplier's ledger. The document's own
- * supplier is authoritative here, never the account code stored on the invoice.
- */
-async function remapMisattributedSupplierLines(db, opts = {}) {
-  const dryRun = opts.dryRun === true;
-  const details = [];
-  let moved = 0;
-  let checked = 0;
-  const fixedInvoices = new Set();
+const LINE_COLUMNS = `
+  jel.id AS line_id,
+  jel.account_id AS old_account_id,
+  jel.debit_amount,
+  jel.credit_amount,
+  coa.code AS old_code,
+  coa.name AS old_name,
+  je.entry_number`;
 
-  // supplier_id is VARCHAR on purchase_invoices and UUID on purchase_orders, so both
-  // sides must be cast before COALESCE or Postgres refuses the whole statement.
-  let r;
-  try {
-    r = await db.query(
-      `SELECT
-         jel.id AS line_id,
-         jel.account_id AS old_account_id,
-         jel.debit_amount,
-         jel.credit_amount,
-         coa.code AS old_code,
-         coa.name AS old_name,
-         je.entry_number,
-         je.reference_type,
+const LINE_JOINS = `
+  FROM journal_entry_lines jel
+  INNER JOIN journal_entries je ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
+  INNER JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)`;
+
+/**
+ * supplier_id is VARCHAR on purchase_invoices and UUID on purchase_orders, so every
+ * value is cast to TEXT before COALESCE or Postgres rejects the whole statement.
+ */
+function misattributionScans() {
+  return [
+    {
+      label: 'purchases',
+      entityType: 'supplier',
+      sql: `SELECT ${LINE_COLUMNS},
          CAST(pi.id AS TEXT) AS invoice_id,
          COALESCE(
            NULLIF(TRIM(CAST(pi.supplier_id AS TEXT)), ''),
            NULLIF(TRIM(CAST(po.supplier_id AS TEXT)), '')
-         ) AS supplier_id,
+         ) AS entity_id,
          COALESCE(
            NULLIF(TRIM(CAST(pi.supplier_name AS TEXT)), ''),
            NULLIF(TRIM(CAST(po.supplier_name AS TEXT)), '')
-         ) AS supplier_name
-       FROM journal_entry_lines jel
-       INNER JOIN journal_entries je ON CAST(je.id AS TEXT) = CAST(jel.journal_entry_id AS TEXT)
-       INNER JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
+         ) AS entity_name
+       ${LINE_JOINS}
        LEFT JOIN purchase_invoices pi ON CAST(pi.id AS TEXT) = CAST(je.reference_id AS TEXT)
        LEFT JOIN purchase_orders po ON CAST(po.id AS TEXT) = CAST(je.reference_id AS TEXT)
        WHERE CAST(coa.code AS TEXT) LIKE '321%'
          AND LENGTH(CAST(coa.code AS TEXT)) >= 8
          AND (pi.id IS NOT NULL OR po.id IS NOT NULL)
        ORDER BY je.entry_date`,
+    },
+    {
+      // Matched on customer_name only: sales.client_id is added by an ALTER and is
+      // not guaranteed to exist on every deployment.
+      label: 'sales',
+      entityType: 'customer',
+      // Only rescue lines parked on another real client's ledger. Without this a POS
+      // walk-in name would get its own account, which is not what a sale needs.
+      requireOtherPartyAccount: true,
+      sql: `SELECT ${LINE_COLUMNS},
+         NULL AS invoice_id,
+         NULL AS entity_id,
+         NULLIF(TRIM(CAST(s.customer_name AS TEXT)), '') AS entity_name
+       ${LINE_JOINS}
+       INNER JOIN sales s ON CAST(s.id AS TEXT) = CAST(je.reference_id AS TEXT)
+       WHERE CAST(coa.code AS TEXT) LIKE '311%'
+         AND LENGTH(CAST(coa.code AS TEXT)) >= 8
+       ORDER BY je.entry_date`,
+    },
+    {
+      label: 'payments',
+      entityType: null, // taken from payments.entity_type per row
+      sql: `SELECT ${LINE_COLUMNS},
+         NULL AS invoice_id,
+         NULLIF(TRIM(CAST(p.entity_id AS TEXT)), '') AS entity_id,
+         LOWER(TRIM(CAST(COALESCE(p.entity_type, '') AS TEXT))) AS entity_type,
+         COALESCE(
+           NULLIF(TRIM(CAST(p.entity_name AS TEXT)), ''),
+           NULLIF(TRIM(CAST(sup.name AS TEXT)), ''),
+           NULLIF(TRIM(CAST(cli.name AS TEXT)), '')
+         ) AS entity_name
+       ${LINE_JOINS}
+       INNER JOIN payments p ON CAST(p.id AS TEXT) = CAST(je.reference_id AS TEXT)
+       LEFT JOIN suppliers sup ON CAST(sup.id AS TEXT) = CAST(p.entity_id AS TEXT)
+       LEFT JOIN clients cli ON CAST(cli.id AS TEXT) = CAST(p.entity_id AS TEXT)
+       WHERE (CAST(coa.code AS TEXT) LIKE '321%' OR CAST(coa.code AS TEXT) LIKE '311%')
+         AND LENGTH(CAST(coa.code AS TEXT)) >= 8
+       ORDER BY je.entry_date`,
+    },
+  ];
+}
+
+/**
+ * Finds supplier/customer lines sitting on an account that belongs to a *different*
+ * party. The NIF lookup used to match as a substring of another account's description,
+ * so a purchase or a receipt could land on an unrelated ledger. The document's own
+ * party is authoritative here, never an account code stored on the document.
+ */
+async function remapMisattributedEntityLines(db, opts = {}) {
+  const dryRun = opts.dryRun === true;
+  const details = [];
+  const fixedInvoices = new Set();
+  const failures = [];
+  const masterNameCache = new Map();
+  let moved = 0;
+  let checked = 0;
+
+  /** Normalized names of every party of this kind, so "is this someone else's ledger?" is answerable. */
+  const masterNames = async (entityType) => {
+    if (masterNameCache.has(entityType)) return masterNameCache.get(entityType);
+    const table = entityType === 'supplier' ? 'suppliers' : 'clients';
+    const r = await db.query(`SELECT name FROM ${table}`).catch(() => ({ rows: [] }));
+    const set = new Set(
+      (r.rows || []).map((row) => normalizeEntityName(row.name)).filter(Boolean),
     );
-  } catch (e) {
-    // Never report a clean run when the scan itself did not execute.
-    console.error('[COA REPAIR] wrong-supplier scan failed:', e.message);
-    return { moved: 0, checked: 0, invoicesFixed: 0, failed: e.message, details: [`scan failed: ${e.message}`] };
-  }
+    masterNameCache.set(entityType, set);
+    return set;
+  };
 
-  for (const row of r.rows || []) {
-    const supplierName = cleanText(row.supplier_name);
-    if (!supplierName) continue;
-    checked += 1;
-    if (namesLooselyMatch(row.old_name, supplierName)) continue;
-
-    // A dry run must not create accounts, so it only looks the supplier up.
-    if (dryRun) {
-      const { findEntityLeafCode } = require('./entityCoaAccounts');
-      const found = await findEntityLeafCode(db, '32', '321', supplierName, null).catch(() => null);
-      details.push(
-        isLeafCode(found, '321')
-          ? `would move ${row.entry_number}: ${row.old_code} “${row.old_name}” → ${found} “${supplierName}”`
-          : `would create an account for “${supplierName}” and move ${row.entry_number} off ${row.old_code} “${row.old_name}”`,
-      );
-      moved += 1;
-      continue;
-    }
-
-    const correct = await safeResolveEntity(db, 'supplier', row.supplier_id, supplierName);
-    if (!isLeafCode(correct, '321')) {
-      details.push(`cannot resolve account for ${supplierName} (${row.entry_number})`);
-      continue;
-    }
-    const leafId = await accountIdForCode(db, correct);
-    if (!leafId || String(leafId) === String(row.old_account_id)) continue;
-
-    const amount = Number(row.credit_amount) || Number(row.debit_amount) || 0;
+  for (const scan of misattributionScans()) {
+    let rows = [];
     try {
-      await db.query(`UPDATE journal_entry_lines SET account_id = $1 WHERE id = $2`, [leafId, row.line_id]);
-      moved += 1;
-      if (details.length < 40) {
-        details.push(
-          `moved ${row.entry_number} ${amount}: ${row.old_code} “${row.old_name}” → ${correct} “${supplierName}”`,
-        );
-      }
-      if (row.invoice_id && !fixedInvoices.has(String(row.invoice_id))) {
-        fixedInvoices.add(String(row.invoice_id));
-        await db.query(
-          `UPDATE purchase_invoices SET supplier_account_code = $1 WHERE CAST(id AS TEXT) = CAST($2 AS TEXT)`,
-          [correct, row.invoice_id],
-        ).catch(() => {});
-      }
+      rows = (await db.query(scan.sql)).rows || [];
     } catch (e) {
-      details.push(`error ${row.entry_number}: ${e.message}`);
+      // Never report a clean run when a scan did not execute.
+      console.error(`[COA REPAIR] wrong-account scan (${scan.label}) failed:`, e.message);
+      failures.push(`${scan.label}: ${e.message}`);
+      continue;
+    }
+
+    for (const row of rows) {
+      const entityName = cleanText(row.entity_name);
+      if (!entityName) continue;
+
+      const group = String(row.old_code || '').startsWith('311') ? '311' : '321';
+      let entityType = scan.entityType;
+      if (!entityType) {
+        const raw = String(row.entity_type || '').toLowerCase();
+        entityType = raw === 'client' || raw === 'customer' ? 'customer' : raw === 'supplier' ? 'supplier' : null;
+        if (!entityType) continue;
+        // Moving between the customer and supplier groups would change the account
+        // type, so report the mismatch instead of rewriting it.
+        const expected = entityType === 'supplier' ? '321' : '311';
+        if (expected !== group) {
+          details.push(
+            `${row.entry_number}: ${entityType} payment sits in group ${group} (${row.old_code} “${row.old_name}”) — needs a manual journal`,
+          );
+          continue;
+        }
+      }
+
+      checked += 1;
+      if (namesLooselyMatch(row.old_name, entityName)) continue;
+
+      if (scan.requireOtherPartyAccount) {
+        const known = await masterNames(entityType);
+        if (!known.has(normalizeEntityName(row.old_name))) continue;
+      }
+
+      // A dry run must not create accounts, so it only looks the party up.
+      if (dryRun) {
+        const { findEntityLeafCode } = require('./entityCoaAccounts');
+        const groupPrefix = group === '311' ? '31' : '32';
+        const found = await findEntityLeafCode(db, groupPrefix, group, entityName, null).catch(() => null);
+        details.push(
+          isLeafCode(found, group)
+            ? `would move ${row.entry_number} (${scan.label}): ${row.old_code} “${row.old_name}” → ${found} “${entityName}”`
+            : `would create an account for “${entityName}” and move ${row.entry_number} (${scan.label}) off ${row.old_code} “${row.old_name}”`,
+        );
+        moved += 1;
+        continue;
+      }
+
+      const correct = await safeResolveEntity(db, entityType, row.entity_id, entityName);
+      if (!isLeafCode(correct, group)) {
+        details.push(`cannot resolve account for ${entityName} (${row.entry_number})`);
+        continue;
+      }
+      const leafId = await accountIdForCode(db, correct);
+      if (!leafId || String(leafId) === String(row.old_account_id)) continue;
+
+      const amount = Number(row.credit_amount) || Number(row.debit_amount) || 0;
+      try {
+        await db.query(`UPDATE journal_entry_lines SET account_id = $1 WHERE id = $2`, [leafId, row.line_id]);
+        moved += 1;
+        if (details.length < 60) {
+          details.push(
+            `moved ${row.entry_number} ${amount} (${scan.label}): ${row.old_code} “${row.old_name}” → ${correct} “${entityName}”`,
+          );
+        }
+        if (row.invoice_id && !fixedInvoices.has(String(row.invoice_id))) {
+          fixedInvoices.add(String(row.invoice_id));
+          await db.query(
+            `UPDATE purchase_invoices SET supplier_account_code = $1 WHERE CAST(id AS TEXT) = CAST($2 AS TEXT)`,
+            [correct, row.invoice_id],
+          ).catch(() => {});
+        }
+      } catch (e) {
+        details.push(`error ${row.entry_number}: ${e.message}`);
+      }
     }
   }
-  return { moved, checked, invoicesFixed: fixedInvoices.size, details };
+
+  const result = { moved, checked, invoicesFixed: fixedInvoices.size, details };
+  if (failures.length > 0) result.failed = failures.join('; ');
+  return result;
+}
+
+/** Kept for callers that only care about the purchase side. */
+async function remapMisattributedSupplierLines(db, opts = {}) {
+  return remapMisattributedEntityLines(db, opts);
 }
 
 /**
@@ -1154,13 +1255,13 @@ async function repairParentEntityCoaPostings(db, opts = {}) {
       for (const line of rescued.details.slice(0, 10)) details.push(line);
     }
 
-    const misattributed = await remapMisattributedSupplierLines(db);
+    const misattributed = await remapMisattributedEntityLines(db);
     if (misattributed.failed) {
-      details.push(`wrong-supplier scan failed: ${misattributed.failed}`);
+      details.push(`wrong-account scan failed: ${misattributed.failed}`);
     } else if (misattributed.moved > 0) {
       bulkMoved += misattributed.moved;
       details.push(
-        `wrong-supplier account: moved ${misattributed.moved} line(s), corrected ${misattributed.invoicesFixed} invoice(s)`,
+        `wrong party account: moved ${misattributed.moved} line(s), corrected ${misattributed.invoicesFixed} invoice(s)`,
       );
       for (const line of misattributed.details.slice(0, 20)) details.push(line);
     }
@@ -1299,15 +1400,15 @@ async function ensureParentEntityCoaRepaired(db) {
   // Keyed on its own patch id. Sharing the parent-line key does not work: the
   // early return below stamps that key whenever 321 looks clean, which is exactly
   // the state a wrong-supplier posting leaves behind.
-  const wrongAccountPatchId = '031_supplier_wrong_account_repair_v1';
+  const wrongAccountPatchId = '032_entity_wrong_account_repair_v2';
   const wrongAccountDone = (
     await db.query('SELECT 1 AS hit FROM schema_patches WHERE id = $1', [wrongAccountPatchId])
       .catch(() => ({ rows: [] }))
   ).rows?.length > 0;
   if (!wrongAccountDone) {
-    const misattributed = await remapMisattributedSupplierLines(db);
+    const misattributed = await remapMisattributedEntityLines(db);
     if (misattributed.failed) {
-      console.error(`[SCHEMA] Wrong-supplier repair did not run: ${misattributed.failed}`);
+      console.error(`[SCHEMA] Wrong-account repair did not run: ${misattributed.failed}`);
     } else {
       await db.query('INSERT INTO schema_patches (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [
         wrongAccountPatchId,
@@ -1315,7 +1416,7 @@ async function ensureParentEntityCoaRepaired(db) {
     }
     if (!misattributed.failed && misattributed.moved > 0) {
       console.log(
-        `[SCHEMA] Moved ${misattributed.moved} line(s) off the wrong supplier's account, corrected ${misattributed.invoicesFixed} invoice(s)`,
+        `[SCHEMA] Moved ${misattributed.moved} line(s) off the wrong party's account, corrected ${misattributed.invoicesFixed} invoice(s)`,
       );
       for (const line of misattributed.details.slice(0, 20)) console.log(`  ${line}`);
       try {
@@ -1359,6 +1460,7 @@ module.exports = {
   remapJournalParentSupplierLines,
   remapMisfiledClassifyLines,
   remapMisattributedSupplierLines,
+  remapMisattributedEntityLines,
   pruneUnusedEntityLeaves,
   repairParentEntityCoaPostings,
   ensureParentEntityCoaRepaired,

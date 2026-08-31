@@ -51,6 +51,15 @@ sqlite.exec(`
     id TEXT PRIMARY KEY, order_number TEXT, supplier_name TEXT, supplier_id TEXT,
     total REAL DEFAULT 0, status TEXT
   );
+  CREATE TABLE sales (
+    id TEXT PRIMARY KEY, invoice_number TEXT, customer_name TEXT, customer_nif TEXT,
+    total REAL DEFAULT 0, status TEXT, created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE payments (
+    id TEXT PRIMARY KEY, payment_number TEXT, payment_type TEXT, entity_type TEXT,
+    entity_id TEXT, entity_name TEXT, amount REAL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 let failures = 0;
@@ -162,8 +171,108 @@ async function main() {
   const again = await remapMisattributedSupplierLines(db);
   assert(again.moved === 0, `re-running is a no-op (moved=${again.moved})`);
 
+  await customerCases();
+
   console.log(failures ? `\nFAILED (${failures})` : '\nPASSED');
   process.exit(failures ? 1 : 0);
+}
+
+/** A receipt credited to the wrong customer, and a POS sale that must be left alone. */
+async function customerCases() {
+  const { remapMisattributedEntityLines } = require('../src/lib/repairParentEntityCoa');
+  console.log('\n--- customers and payments ---');
+
+  const clientsParentId = randomUUID();
+  const wrongClientAcc = randomUUID();
+  const genericAcc = randomUUID();
+  const caixaId = randomUUID();
+  const mariaId = randomUUID();
+
+  await db.query(
+    `INSERT INTO chart_of_accounts (id, code, name, description, account_type, account_nature, level, is_header, is_active)
+     VALUES ($1, '311', 'Clientes - correntes', '', 'asset', 'debit', 2, 0, 1)`,
+    [clientsParentId],
+  );
+  await db.query(
+    `INSERT INTO chart_of_accounts (id, code, name, description, account_type, account_nature, parent_id, level, is_header, is_active)
+     VALUES ($1, '31100004', 'JOSE SILVA', 'NIF: 31100045', 'asset', 'debit', $2, 3, 0, 1)`,
+    [wrongClientAcc, clientsParentId],
+  );
+  await db.query(
+    `INSERT INTO chart_of_accounts (id, code, name, description, account_type, account_nature, parent_id, level, is_header, is_active)
+     VALUES ($1, '31100099', 'Clientes diversos', '', 'asset', 'debit', $2, 3, 0, 1)`,
+    [genericAcc, clientsParentId],
+  );
+  await db.query(
+    `INSERT INTO chart_of_accounts (id, code, name, description, account_type, account_nature, level, is_header, is_active)
+     VALUES ($1, '431', 'Caixa', '', 'asset', 'debit', 2, 0, 1)`,
+    [caixaId],
+  );
+  await db.query(`INSERT INTO clients (id, name, nif) VALUES ($1, 'MARIA COSTA', '3110004')`, [mariaId]);
+  await db.query(`INSERT INTO clients (id, name, nif) VALUES ($1, 'JOSE SILVA', '31100045')`, [randomUUID()]);
+
+  // A receipt from MARIA COSTA credited to JOSE SILVA's ledger.
+  const paymentId = randomUUID();
+  const payJournalId = randomUUID();
+  const payLineId = randomUUID();
+  await db.query(
+    `INSERT INTO payments (id, payment_number, payment_type, entity_type, entity_id, entity_name, amount)
+     VALUES ($1, 'RC-2026-0001', 'receipt', 'customer', $2, 'MARIA COSTA', 500000)`,
+    [paymentId, mariaId],
+  );
+  await db.query(
+    `INSERT INTO journal_entries (id, entry_number, entry_date, description, reference_type, reference_id)
+     VALUES ($1, 'RC-2026-0001', '2026-08-20', 'Recibo MARIA COSTA', 'payment', $2)`,
+    [payJournalId, paymentId],
+  );
+  await db.query(
+    `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, debit_amount, credit_amount, description)
+     VALUES ($1, $2, $3, 0, 500000, 'MARIA COSTA')`,
+    [payLineId, payJournalId, wrongClientAcc],
+  );
+
+  // A POS sale on the generic receivable account: must not become its own account.
+  const saleId = randomUUID();
+  const saleJournalId = randomUUID();
+  const saleLineId = randomUUID();
+  await db.query(
+    `INSERT INTO sales (id, invoice_number, customer_name, total, status)
+     VALUES ($1, 'FT-2026-9001', 'CLIENTE BALCAO', 12000, 'completed')`,
+    [saleId],
+  );
+  await db.query(
+    `INSERT INTO journal_entries (id, entry_number, entry_date, description, reference_type, reference_id)
+     VALUES ($1, 'VD-2026-9001', '2026-08-21', 'Venda FT-2026-9001', 'sale', $2)`,
+    [saleJournalId, saleId],
+  );
+  await db.query(
+    `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, debit_amount, credit_amount, description)
+     VALUES ($1, $2, $3, 12000, 0, 'CLIENTE BALCAO')`,
+    [saleLineId, saleJournalId, genericAcc],
+  );
+
+  const run = await remapMisattributedEntityLines(db);
+  for (const d of run.details) console.log(`      ${d}`);
+  assert(!run.failed, `all scans run without a SQL error (${run.failed || 'none'})`);
+
+  const receipt = (await db.query(
+    `SELECT coa.code, coa.name FROM journal_entry_lines jel
+     INNER JOIN chart_of_accounts coa ON coa.id = jel.account_id WHERE jel.id = $1`,
+    [payLineId],
+  )).rows[0];
+  console.log(`      receipt now on ${receipt.code} — ${receipt.name}`);
+  assert(receipt.name === 'MARIA COSTA', 'receipt moved to MARIA COSTA');
+  assert(receipt.code.startsWith('311'), 'receipt stayed in the client group');
+
+  const saleLine = (await db.query(
+    `SELECT account_id FROM journal_entry_lines WHERE id = $1`,
+    [saleLineId],
+  )).rows[0];
+  assert(saleLine.account_id === genericAcc, 'POS sale left on Clientes diversos');
+  const balcao = await db.query(
+    `SELECT COUNT(*) AS n FROM chart_of_accounts WHERE LOWER(name) = 'cliente balcao'`,
+  );
+  assert(Number(balcao.rows[0].n) === 0, 'no account created for the walk-in name');
 }
 
 main().catch((e) => {
