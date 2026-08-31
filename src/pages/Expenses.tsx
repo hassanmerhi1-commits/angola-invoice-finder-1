@@ -398,6 +398,7 @@ export default function Expenses() {
           formData.caixaId || undefined,
           formData.bankAccountId || undefined,
           formData.payeeName || undefined,
+          formData.payeeNif || undefined,
           formData.taxAmount || undefined,
           formData.invoiceNumber || undefined,
           formData.notes || undefined,

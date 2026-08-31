@@ -247,6 +247,7 @@ function mapRow(row) {
     caixaId: row.caixa_id,
     bankAccountId: row.bank_account_id,
     payeeName: row.payee_name,
+    payeeNif: row.payee_nif,
     invoiceNumber: row.invoice_number,
     status: row.status,
     requestedBy: row.created_by,
@@ -263,7 +264,12 @@ function mapRow(row) {
 }
 
 async function ensureExpensesTable() {
-  if (db.engine === 'postgres') return;
+  if (db.engine === 'postgres') {
+    try {
+      await db.query('ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payee_nif VARCHAR(32)');
+    } catch (_) { /* table may not exist yet; 053 creates it */ }
+    return;
+  }
   try {
     db.sqlite.exec(`
       CREATE TABLE IF NOT EXISTS expenses (
@@ -280,6 +286,7 @@ async function ensureExpensesTable() {
         caixa_id TEXT,
         bank_account_id TEXT,
         payee_name TEXT,
+        payee_nif TEXT,
         invoice_number TEXT,
         status TEXT NOT NULL DEFAULT 'draft',
         created_by TEXT,
@@ -294,6 +301,7 @@ async function ensureExpensesTable() {
       );
       CREATE INDEX IF NOT EXISTS idx_expenses_branch ON expenses(branch_id);
     `);
+    try { db.sqlite.exec('ALTER TABLE expenses ADD COLUMN payee_nif TEXT'); } catch (_) { /* already present */ }
   } catch (_) {}
 }
 
@@ -353,10 +361,10 @@ module.exports = function expensesRouter(broadcastTable) {
         `INSERT INTO expenses (
           id, expense_number, branch_id, branch_name, category, description,
           amount, tax_amount, total_amount, payment_source, caixa_id, bank_account_id,
-          payee_name, invoice_number, status, created_by, approved_by, approved_at,
+          payee_name, payee_nif, invoice_number, status, created_by, approved_by, approved_at,
           paid_by, paid_at, transaction_id, notes, created_at, updated_at
         ) VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
         )
         ON CONFLICT (id) DO UPDATE SET
           expense_number = EXCLUDED.expense_number,
@@ -371,6 +379,7 @@ module.exports = function expensesRouter(broadcastTable) {
           caixa_id = EXCLUDED.caixa_id,
           bank_account_id = EXCLUDED.bank_account_id,
           payee_name = EXCLUDED.payee_name,
+          payee_nif = EXCLUDED.payee_nif,
           invoice_number = EXCLUDED.invoice_number,
           status = EXCLUDED.status,
           created_by = EXCLUDED.created_by,
@@ -395,6 +404,7 @@ module.exports = function expensesRouter(broadcastTable) {
           body.caixaId || body.caixa_id || null,
           body.bankAccountId || body.bank_account_id || null,
           body.payeeName || body.payee_name || null,
+          body.payeeNif || body.payee_nif || null,
           body.invoiceNumber || body.invoice_number || null,
           body.status || 'draft',
           body.requestedBy || body.created_by || req.user?.id || null,

@@ -55,6 +55,8 @@ export function PosPayExpenseDialog({
 }: PosPayExpenseDialogProps) {
   const { t } = useTranslation();
   const [category, setCategory] = useState<ExpenseCategory>('transport');
+  const [payeeName, setPayeeName] = useState('');
+  const [payeeNif, setPayeeNif] = useState('');
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -62,6 +64,8 @@ export function PosPayExpenseDialog({
   useEffect(() => {
     if (!open) return;
     setCategory('transport');
+    setPayeeName('');
+    setPayeeNif('');
     setDescription('');
     setAmount('');
     setSubmitting(false);
@@ -75,6 +79,16 @@ export function PosPayExpenseDialog({
   const handlePay = async () => {
     if (!branchId || !caixaId) {
       toast.error(t.posUi.payExpenseCaixaRequired);
+      return;
+    }
+    const name = payeeName.trim();
+    if (!name) {
+      toast.error(t.expensesUi.payeeNameRequired);
+      return;
+    }
+    const nif = payeeNif.trim();
+    if (!nif) {
+      toast.error(t.expensesUi.payeeNifRequired);
       return;
     }
     const desc = description.trim();
@@ -99,6 +113,9 @@ export function PosPayExpenseDialog({
         'caixa',
         requestedBy,
         caixaId,
+        undefined,
+        name,
+        nif,
       );
       const result = await payExpense(expense.id, requestedBy);
       if (result.glError) {
@@ -159,6 +176,40 @@ export function PosPayExpenseDialog({
               </SelectContent>
             </Select>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="pos-expense-payee">{t.expensesUi.colPayee} *</Label>
+              <Input
+                id="pos-expense-payee"
+                value={payeeName}
+                onChange={(e) => setPayeeName(e.target.value)}
+                placeholder={t.expensesUi.payeePlaceholder}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void handlePay();
+                  }
+                }}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pos-expense-nif">{t.expensesUi.payeeNif} *</Label>
+              <Input
+                id="pos-expense-nif"
+                value={payeeNif}
+                onChange={(e) => setPayeeNif(e.target.value)}
+                placeholder="NIF"
+                className="font-mono"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void handlePay();
+                  }
+                }}
+              />
+            </div>
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="pos-expense-desc">{t.common.description}</Label>
             <Input
@@ -166,7 +217,6 @@ export function PosPayExpenseDialog({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t.expensesUi.descriptionPlaceholder}
-              autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();

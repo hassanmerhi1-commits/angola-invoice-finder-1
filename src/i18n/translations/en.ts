@@ -2672,6 +2672,8 @@ export const en = {
     markAsPaid: "Mark as paid",
 
     descriptionRequired: "Description is required",
+    payeeNameRequired: "Payee name is required",
+    payeeNifRequired: "Payee NIF is required",
     amountMustBeGreaterThanZero: "Amount must be greater than zero",
     selectCashRegister: "Select a cash register",
     selectBankAccount: "Select a bank account",

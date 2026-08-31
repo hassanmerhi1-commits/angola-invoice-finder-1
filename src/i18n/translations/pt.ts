@@ -2674,6 +2674,8 @@ export const pt: TranslationKeys = {
     markAsPaid: "Marcar como Pago",
 
     descriptionRequired: "Descrição é obrigatória",
+    payeeNameRequired: "O nome do beneficiário é obrigatório",
+    payeeNifRequired: "O NIF do beneficiário é obrigatório",
     amountMustBeGreaterThanZero: "Valor deve ser maior que zero",
     selectCashRegister: "Seleccione uma caixa",
     selectBankAccount: "Seleccione uma conta bancária",
