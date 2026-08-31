@@ -16,10 +16,11 @@ const ROLE_PERMISSIONS = {
     'reports_daily', 'reports_close', 'reports_financial', 'reports_stock', 'reports_audit',
     'reports_client_statement', 'reports_supplier_statement',
   ],
-  // POS-only baseline. Everything else is granted per-user via permission overrides.
+  // POS + petty-cash expenses (taxi, materials) from the open till.
   cashier: [
     'pos_access', 'pos_discount',
     'receipt_create', 'invoice_print',
+    'expense_create',
   ],
   viewer: [
     'invoice_view',

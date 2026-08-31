@@ -111,11 +111,12 @@ export const DEFAULT_ROLE_PERMISSIONS: RolePermissions[] = [
   },
   {
     role: 'cashier',
-    // POS-only baseline. Everything else (invoices, inventory, caixa, reports, …)
-    // is granted per-user via permission overrides in User Management.
+    // POS + petty-cash expenses (taxi, materials) from the open till.
+    // Everything else is granted per-user via permission overrides in User Management.
     permissions: [
       'pos_access', 'pos_discount',
       'receipt_create', 'invoice_print',
+      'expense_create',
     ],
   },
   {

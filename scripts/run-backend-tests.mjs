@@ -20,6 +20,7 @@ const testFiles = [
   'test/resolveBranchCaixaGlAccount.test.js',
   'test/fiscalInvoiceType.test.js',
   'test/agtFePayload.test.js',
+  'test/expensePaymentScope.test.js',
 ];
 
 function resolveElectronBinary() {

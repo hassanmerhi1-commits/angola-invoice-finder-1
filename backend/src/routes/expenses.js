@@ -5,6 +5,7 @@ const { postCaixaGlMovement } = require('../lib/caixaGlPosting');
 const { createJournalEntry } = require('../accounting');
 const { auditErpSafe } = require('../lib/erpAudit');
 const { requirePermission } = require('../middleware/requirePermission');
+const { assertExpensePaymentScope } = require('../lib/expensePaymentScope');
 const {
   recordExpenseOnOpenSession,
   syncOpenSessionExpensesFromLedger,
@@ -339,6 +340,11 @@ module.exports = function expensesRouter(broadcastTable) {
     try {
       await ensureExpensesTable();
       const body = req.body || {};
+      try {
+        assertExpensePaymentScope(req.user, body);
+      } catch (scopeErr) {
+        return res.status(scopeErr.statusCode || 403).json({ error: scopeErr.message });
+      }
       const id = String(body.id || randomUUID());
       const now = new Date().toISOString();
       const prior = await db.query('SELECT status FROM expenses WHERE id = $1 LIMIT 1', [id]);
@@ -455,6 +461,11 @@ module.exports = function expensesRouter(broadcastTable) {
       const paidAt = new Date().toISOString();
       const existing = await db.query('SELECT * FROM expenses WHERE id = $1', [req.params.id]);
       if (!existing.rows[0]) return res.status(404).json({ error: 'Expense not found' });
+      try {
+        assertExpensePaymentScope(req.user, mapRow(existing.rows[0]));
+      } catch (scopeErr) {
+        return res.status(scopeErr.statusCode || 403).json({ error: scopeErr.message });
+      }
 
       const alreadyPaid = String(existing.rows[0].status || '') === 'paid';
       const priorStatus = String(existing.rows[0].status || 'draft');

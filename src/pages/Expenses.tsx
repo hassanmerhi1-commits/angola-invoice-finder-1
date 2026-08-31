@@ -5,6 +5,7 @@ import { ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
+import { userHasPermission } from '@/lib/permissions';
 import { 
   getExpenses, 
   createExpense, 
@@ -118,6 +119,18 @@ export default function Expenses() {
   const { currentBranch, apiBranchId, treasuryAllBranches, userBranch } = useBranchScope();
   const { user } = useAuth();
   const { toast } = useToast();
+  const canPayFromBank = !!user && userHasPermission(user.role, user.permissionOverrides, 'bank_manage');
+  const canPayStaff = !!user && (
+    user.role !== 'cashier'
+    || userHasPermission(user.role, user.permissionOverrides, 'expense_approve')
+  );
+  const canApproveExpense = !!user && userHasPermission(user.role, user.permissionOverrides, 'expense_approve');
+  const canCreateCaixa = !!user && (
+    userHasPermission(user.role, user.permissionOverrides, 'caixa_open')
+    || userHasPermission(user.role, user.permissionOverrides, 'admin_settings')
+  );
+  const canRepostGl = !!user && userHasPermission(user.role, user.permissionOverrides, 'accounting_create');
+  const visibleCategories = EXPENSE_CATEGORIES.filter((cat) => canPayStaff || cat.value !== 'staff');
 
   const [expenses, setExpenses] = useState<Expense[]>(
     () => getCachedList<Expense[]>(`expenses:${apiBranchId ?? 'all'}`) ?? [],
@@ -319,6 +332,14 @@ export default function Expenses() {
     }
     if (formData.amount <= 0) {
       toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.amountMustBeGreaterThanZero, variant: 'destructive' });
+      return false;
+    }
+    if (!canPayStaff && formData.category === 'staff') {
+      toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.staffNotAllowed, variant: 'destructive' });
+      return false;
+    }
+    if (!canPayFromBank && formData.paymentSource === 'bank') {
+      toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.selectCashRegister, variant: 'destructive' });
       return false;
     }
     if (formData.paymentSource === 'caixa' && !formData.caixaId) {
@@ -685,9 +706,9 @@ export default function Expenses() {
                       <TableCell>
                         {(
                           expense.status === 'draft'
-                          || expense.status === 'pending_approval'
-                          || expense.status === 'approved'
-                          || expense.status === 'paid'
+                          || (expense.status === 'pending_approval' && canApproveExpense)
+                          || (expense.status === 'approved' && (canPayFromBank || expense.paymentSource !== 'bank'))
+                          || (expense.status === 'paid' && canRepostGl)
                         ) ? (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -698,15 +719,19 @@ export default function Expenses() {
                             <DropdownMenuContent align="end" className="bg-popover border">
                               {expense.status === 'draft' && (
                                 <>
-                                  <DropdownMenuItem onClick={() => handleOpenDialog(expense)}>
-                                    {t.common.edit}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleSubmitForApproval(expense)}>
-                                    {t.expensesUi.sendForApproval}
-                                  </DropdownMenuItem>
+                                  {(canPayStaff || expense.category !== 'staff') && (
+                                    <DropdownMenuItem onClick={() => handleOpenDialog(expense)}>
+                                      {t.common.edit}
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canApproveExpense && (
+                                    <DropdownMenuItem onClick={() => handleSubmitForApproval(expense)}>
+                                      {t.expensesUi.sendForApproval}
+                                    </DropdownMenuItem>
+                                  )}
                                 </>
                               )}
-                              {expense.status === 'pending_approval' && (
+                              {expense.status === 'pending_approval' && canApproveExpense && (
                                 <>
                                   <DropdownMenuItem onClick={() => handleApprove(expense)} className="text-green-600">
                                     <CheckCircle className="w-4 h-4 mr-2" />
@@ -718,13 +743,13 @@ export default function Expenses() {
                                   </DropdownMenuItem>
                                 </>
                               )}
-                              {expense.status === 'approved' && (
+                              {expense.status === 'approved' && (canPayFromBank || expense.paymentSource !== 'bank') && (
                                 <DropdownMenuItem onClick={() => void handlePay(expense)} className="text-green-600">
                                   <Receipt className="w-4 h-4 mr-2" />
                                   {t.expensesUi.markAsPaid}
                                 </DropdownMenuItem>
                               )}
-                              {expense.status === 'paid' && (
+                              {expense.status === 'paid' && canRepostGl && (
                                 <DropdownMenuItem onClick={() => void handleRepostGl(expense)}>
                                   <Receipt className="w-4 h-4 mr-2" />
                                   {t.expensesUi.repostToLedger}
@@ -819,7 +844,7 @@ export default function Expenses() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {EXPENSE_CATEGORIES.map(cat => (
+                      {visibleCategories.map(cat => (
                         <SelectItem key={cat.value} value={cat.value}>
                           {t.expensesUi.categories[cat.value]}
                         </SelectItem>
@@ -829,7 +854,7 @@ export default function Expenses() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t.expensesUi.payFrom} *</Label>
-                  <div className="grid grid-cols-2 rounded-md border bg-muted/50 p-0.5">
+                  <div className={cn('grid rounded-md border bg-muted/50 p-0.5', canPayFromBank ? 'grid-cols-2' : 'grid-cols-1')}>
                     <button
                       type="button"
                       className={cn(
@@ -843,19 +868,21 @@ export default function Expenses() {
                       <Wallet className="h-3.5 w-3.5" />
                       {t.expensesUi.cashRegister}
                     </button>
-                    <button
-                      type="button"
-                      className={cn(
-                        'inline-flex h-9 items-center justify-center gap-1.5 rounded-sm text-sm font-medium transition-colors',
-                        formData.paymentSource === 'bank'
-                          ? 'bg-background text-foreground shadow-sm'
-                          : 'text-muted-foreground hover:text-foreground',
-                      )}
-                      onClick={() => setFormData({ ...formData, paymentSource: 'bank' })}
-                    >
-                      <Building className="h-3.5 w-3.5" />
-                      {t.expensesUi.bank}
-                    </button>
+                    {canPayFromBank && (
+                      <button
+                        type="button"
+                        className={cn(
+                          'inline-flex h-9 items-center justify-center gap-1.5 rounded-sm text-sm font-medium transition-colors',
+                          formData.paymentSource === 'bank'
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground',
+                        )}
+                        onClick={() => setFormData({ ...formData, paymentSource: 'bank' })}
+                      >
+                        <Building className="h-3.5 w-3.5" />
+                        {t.expensesUi.bank}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -864,16 +891,18 @@ export default function Expenses() {
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <Label>{t.expensesUi.cashRegister} *</Label>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs gap-1"
-                      onClick={() => setShowNewCaixaDialog(true)}
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      {t.expensesUi.newCaixa}
-                    </Button>
+                    {canCreateCaixa && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs gap-1"
+                        onClick={() => setShowNewCaixaDialog(true)}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        {t.expensesUi.newCaixa}
+                      </Button>
+                    )}
                   </div>
                   {caixaLoadHint && caixas.length === 0 && !caixaLoading && (
                     <p className="text-xs text-amber-700 dark:text-amber-300">{caixaLoadHint}</p>

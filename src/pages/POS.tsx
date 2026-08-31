@@ -34,9 +34,10 @@ import { CheckoutDialog } from '@/components/pos/CheckoutDialog';
 import { ReceiptDialog } from '@/components/pos/ReceiptDialog';
 import { PrinterSettingsDialog } from '@/components/pos/PrinterSettingsDialog';
 import { BranchSelector } from '@/components/BranchSelector';
-import { Search, ScanBarcode, Keyboard, ShoppingCart, FileText, Check, ChevronsUpDown } from 'lucide-react';
+import { Search, ScanBarcode, Keyboard, ShoppingCart, FileText, Check, ChevronsUpDown, Wallet } from 'lucide-react';
 import { PosEndOfDayReportDialog } from '@/components/pos/PosEndOfDayReportDialog';
 import { PosOpenCaixaDialog } from '@/components/pos/PosOpenCaixaDialog';
+import { PosPayExpenseDialog } from '@/components/pos/PosPayExpenseDialog';
 import { PosShiftInvoicesPanel } from '@/components/pos/PosShiftInvoicesPanel';
 import { PosUpdateMenu } from '@/components/pos/PosUpdateMenu';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -73,6 +74,7 @@ export default function POS() {
   // Only admins/managers (anyone with `pos_price_change`) may pick the price tier.
   // Cashiers always get the admin-chosen default (or the selected client's level).
   const canChoosePrice = !!user && userHasPermission(user.role, user.permissionOverrides, 'pos_price_change');
+  const canPayExpense = !!user && userHasPermission(user.role, user.permissionOverrides, 'expense_create');
 
   const [priceLevel, setPriceLevel] = useState(() =>
     normalizePriceLevel(getCompanySettings().posDefaultPriceLevel ?? 1),
@@ -154,11 +156,13 @@ export default function POS() {
   const [lastSale, setLastSale] = useState<Sale | null>(null);
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
   const [endOfDayOpen, setEndOfDayOpen] = useState(false);
+  const [payExpenseOpen, setPayExpenseOpen] = useState(false);
   const [posMainTab, setPosMainTab] = useState<'cart' | 'invoices'>('cart');
   const [shiftIssuesVersion, setShiftIssuesVersion] = useState(0);
   const [shiftExpenses, setShiftExpenses] = useState<Expense[]>([]);
   const bumpShiftIssues = useCallback(() => setShiftIssuesVersion((v) => v + 1), []);
   const {
+    caixa,
     session: caixaSession,
     loading: caixaLoading,
     openSession: openCaixaSessionForBranch,
@@ -960,6 +964,24 @@ export default function POS() {
             <FileText className="w-3.5 h-3.5" />
             {t.posUi.endOfDayButton}
           </Button>
+          {canPayExpense && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 text-xs gap-1.5 shrink-0"
+              onClick={() => {
+                if (!caixaOpen || !caixaSession?.caixaId) {
+                  toast.error(t.posUi.payExpenseCaixaRequired);
+                  return;
+                }
+                setPayExpenseOpen(true);
+              }}
+            >
+              <Wallet className="w-3.5 h-3.5" />
+              {t.posUi.payExpenseButton}
+            </Button>
+          )}
           <PosUpdateMenu />
           <Popover>
             <PopoverTrigger asChild>
@@ -1028,6 +1050,17 @@ export default function POS() {
             notes,
           );
         }}
+      />
+
+      <PosPayExpenseDialog
+        open={payExpenseOpen}
+        onOpenChange={setPayExpenseOpen}
+        branchId={currentBranch?.id || branchId}
+        branchName={currentBranch?.name || branchId}
+        branchCode={currentBranch?.code}
+        caixaId={caixaSession?.caixaId}
+        caixaName={caixa?.name}
+        requestedBy={user?.id || user?.name || user?.username || 'POS'}
       />
 
       <PosOpenCaixaDialog
