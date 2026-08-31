@@ -264,44 +264,17 @@ async function withSavepoint(client, name, work) {
  * override any code whose account name belongs to somebody else.
  */
 async function alignSupplierJournalAccount(client, journalLines, inv, warnings = []) {
-  const supplierLines = (journalLines || []).filter((line) =>
-    /^321\d+$/i.test(String(line.accountCode || line.account_code || '').trim()),
+  const { alignEntityJournalAccounts } = require('./entityJournalGuard');
+  await alignEntityJournalAccounts(
+    client,
+    journalLines,
+    {
+      entityType: 'supplier',
+      entityId: String(inv.supplierId || inv.supplier_id || '').trim(),
+      entityName: String(inv.supplierName || inv.supplier_name || '').trim(),
+    },
+    warnings,
   );
-  if (!supplierLines.length) return;
-
-  const supplierName = String(inv.supplierName || inv.supplier_name || '').trim();
-  const supplierId = String(inv.supplierId || inv.supplier_id || '').trim();
-  if (!supplierName && !supplierId) return;
-
-  let expected = null;
-  try {
-    const { resolveEntityAccountCode } = require('./entityCoaAccounts');
-    expected = await resolveEntityAccountCode(client, 'supplier', supplierId || null, supplierName);
-  } catch (e) {
-    warnings.push(`Conta do fornecedor não resolvida (${e.message}) — código do pedido mantido`);
-    return;
-  }
-  if (!/^321\d+$/.test(String(expected || ''))) return;
-
-  const { namesRelated, normalizeEntityName } = require('./entityCoaAccounts');
-  const want = normalizeEntityName(supplierName);
-
-  for (const line of supplierLines) {
-    const code = String(line.accountCode || line.account_code || '').trim();
-    if (code === expected) continue;
-    const owner = await client.query(
-      `SELECT name FROM chart_of_accounts WHERE code = $1 LIMIT 1`,
-      [code],
-    ).catch(() => ({ rows: [] }));
-    const ownerName = owner.rows[0] ? normalizeEntityName(owner.rows[0].name) : '';
-    if (ownerName && want && namesRelated(want, ownerName)) continue;
-
-    line.accountCode = expected;
-    if (line.account_code) line.account_code = expected;
-    warnings.push(
-      `Conta ${code}${ownerName ? ` (${owner.rows[0].name})` : ''} não pertence a ${supplierName} — lançado em ${expected}`,
-    );
-  }
 }
 
 async function ensureSupplierJournalAccounts(client, journalLines, inv) {

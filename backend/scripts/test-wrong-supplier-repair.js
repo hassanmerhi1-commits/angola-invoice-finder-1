@@ -15,12 +15,17 @@ const sqlite = new DatabaseSync(':memory:');
 const db = {
   engine: 'sqlite',
   async query(sql, params = []) {
-    const text = sql.replace(/\$(\d+)/g, '?');
+    // Postgres allows $2 to appear twice; rebuild the arg list in order of appearance.
+    const ordered = [];
+    const text = sql.replace(/\$(\d+)/g, (_, n) => {
+      ordered.push(params[Number(n) - 1]);
+      return '?';
+    });
     const stmt = sqlite.prepare(text);
     if (/^\s*(select|with)/i.test(text)) {
-      return { rows: stmt.all(...params), rowCount: 0 };
+      return { rows: stmt.all(...ordered), rowCount: 0 };
     }
-    const info = stmt.run(...params);
+    const info = stmt.run(...ordered);
     return { rows: [], rowCount: Number(info.changes || 0) };
   },
 };

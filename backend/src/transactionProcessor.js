@@ -14,6 +14,7 @@ const {
   applyPurchaseSupplierToProducts,
 } = require('./transactionEngine');
 const { isUniqueSkuBranchError } = require('./lib/productSkuResolve');
+const { alignEntityJournalAccounts } = require('./lib/entityJournalGuard');
 const { coalesceActiveNotZero } = require('./lib/sqlDialect');
 const {
   createJournalEntry,
@@ -373,6 +374,22 @@ async function processTransactionBody(client, body) {
         if (journalLines.some((line) => line.accountCode === '752')) {
           await ensureFreightExpenseAccount(client);
         }
+        // Runs first: correct a party account code before the helpers below create it.
+        const guardWarnings = [];
+        await alignEntityJournalAccounts(
+          client,
+          journalLines,
+          {
+            entityType: entityBalanceUpdate?.entityType || openItem?.entityType,
+            entityId: entityBalanceUpdate?.entityId || openItem?.entityId,
+            entityName: entityBalanceUpdate?.entityName || openItem?.entityName,
+          },
+          guardWarnings,
+        );
+        for (const warning of guardWarnings) {
+          console.warn(`[TX API] ${documentNumber || documentId}: ${warning}`);
+        }
+
         await ensureJournalLineAccounts(client, journalLines, entityBalanceUpdate, openItem);
         await ensureSupplierJournalAccounts(client, journalLines, entityBalanceUpdate, openItem);
 
