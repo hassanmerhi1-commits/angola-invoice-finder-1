@@ -79,6 +79,7 @@ export function JournalEntryDetailDialog({
     descReceipt: t.journalsUi.descReceipt,
     descPayment: t.journalsUi.descPayment,
     descAdjustment: t.journalsUi.descAdjustment,
+    descExpense: t.journalsUi.descExpense,
     descCreditNote: t.journalsUi.descCreditNote,
     descDebitNote: t.journalsUi.descDebitNote,
     descTransfer: t.journalsUi.descTransfer,

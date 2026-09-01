@@ -94,6 +94,7 @@ export type JournalDisplayLabels = {
   descReceipt: string;
   descPayment: string;
   descAdjustment: string;
+  descExpense: string;
   descCreditNote: string;
   descDebitNote: string;
   descTransfer: string;
@@ -135,6 +136,9 @@ export function formatPaymentMethod(method: string | undefined, labels: JournalD
     mixed: labels.paymentMixed,
     credit: labels.paymentCredit,
     mobile: labels.paymentMobile,
+    caixa: labels.paymentCash,
+    bank: labels.paymentTransfer,
+    banco: labels.paymentTransfer,
   };
   return map[key] || method || '';
 }
@@ -300,7 +304,17 @@ function buildReadableText(
     };
   }
 
-  if (ref === 'adjustment' || ref === 'ajuste' || ref === 'manual' || ref === 'journal' || ref === 'je' || ref === 'expense') {
+  if (ref === 'expense' || ref === 'despesa') {
+    const entity = String(context?.entityName || '').trim();
+    return {
+      title: rawDescription.trim()
+        || (docNo ? `${labels.descExpense} — ${docNo}` : labels.descExpense),
+      subtitle: [entity, payment, products].filter(Boolean).join(' · '),
+      customerName: entity,
+    };
+  }
+
+  if (ref === 'adjustment' || ref === 'ajuste' || ref === 'manual' || ref === 'journal' || ref === 'je') {
     return {
       title: rawDescription.trim()
         || (docNo ? `${labels.descAdjustment} — ${docNo}` : labels.descAdjustment),

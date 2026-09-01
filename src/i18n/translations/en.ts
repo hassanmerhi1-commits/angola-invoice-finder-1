@@ -4794,6 +4794,7 @@ export const en = {
     descReceipt: "Receipt",
     descPayment: "Payment",
     descAdjustment: "Stock adjustment",
+    descExpense: "Expense",
     descCreditNote: "Credit note",
     descDebitNote: "Debit note",
     descTransfer: "Transfer",

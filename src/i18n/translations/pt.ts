@@ -4796,6 +4796,7 @@ export const pt: TranslationKeys = {
     descReceipt: "Recebimento",
     descPayment: "Pagamento",
     descAdjustment: "Ajuste de stock",
+    descExpense: "Despesa",
     descCreditNote: "Nota de crédito",
     descDebitNote: "Nota de débito",
     descTransfer: "Transferência",
