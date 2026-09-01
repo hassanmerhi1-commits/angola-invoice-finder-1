@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { assertExpensePaymentScope } = require('../src/lib/expensePaymentScope');
+const {
+  assertExpensePaymentScope,
+  assertExpenseCanPay,
+  cashierNeedsExpenseApproval,
+  coerceExpenseCreateStatus,
+} = require('../src/lib/expensePaymentScope');
 
 const cashier = { role: 'cashier', permissionOverrides: { granted: [], revoked: [] } };
 const manager = { role: 'manager', permissionOverrides: { granted: [], revoked: [] } };
@@ -66,4 +71,20 @@ test('admin is unrestricted', () => {
     paymentSource: 'bank',
     category: 'staff',
   }));
+});
+
+test('cashier till expenses wait for manager/admin approval', () => {
+  assert.equal(cashierNeedsExpenseApproval(cashier), true);
+  assert.equal(cashierNeedsExpenseApproval(manager), false);
+  assert.equal(cashierNeedsExpenseApproval(admin), false);
+  assert.equal(coerceExpenseCreateStatus(cashier, 'paid', false), 'pending_approval');
+  assert.equal(coerceExpenseCreateStatus(cashier, 'draft', false), 'pending_approval');
+  assert.equal(coerceExpenseCreateStatus(manager, 'draft', false), 'draft');
+  assert.equal(coerceExpenseCreateStatus(cashier, 'paid', true), 'paid');
+});
+
+test('cashier cannot pay until an approver does', () => {
+  throwsStatus(() => assertExpenseCanPay(cashier), 403, /aprovação/);
+  assert.doesNotThrow(() => assertExpenseCanPay(manager));
+  assert.doesNotThrow(() => assertExpenseCanPay(admin));
 });

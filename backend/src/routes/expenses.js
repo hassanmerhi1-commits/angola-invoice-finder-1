@@ -5,7 +5,11 @@ const { postCaixaGlMovement } = require('../lib/caixaGlPosting');
 const { createJournalEntry } = require('../accounting');
 const { auditErpSafe } = require('../lib/erpAudit');
 const { requirePermission } = require('../middleware/requirePermission');
-const { assertExpensePaymentScope } = require('../lib/expensePaymentScope');
+const {
+  assertExpensePaymentScope,
+  assertExpenseCanPay,
+  coerceExpenseCreateStatus,
+} = require('../lib/expensePaymentScope');
 const {
   recordExpenseOnOpenSession,
   syncOpenSessionExpensesFromLedger,
@@ -357,6 +361,8 @@ module.exports = function expensesRouter(broadcastTable) {
       const now = new Date().toISOString();
       const prior = await db.query('SELECT status FROM expenses WHERE id = $1 LIMIT 1', [id]);
       const wasAlreadyPaid = String(prior.rows[0]?.status || '') === 'paid';
+      const status = coerceExpenseCreateStatus(req.user, body.status, wasAlreadyPaid);
+      const cashierHeld = status === 'pending_approval' && !wasAlreadyPaid;
       await db.query(
         `INSERT INTO expenses (
           id, expense_number, branch_id, branch_name, category, description,
@@ -406,12 +412,12 @@ module.exports = function expensesRouter(broadcastTable) {
           body.payeeName || body.payee_name || null,
           body.payeeNif || body.payee_nif || null,
           body.invoiceNumber || body.invoice_number || null,
-          body.status || 'draft',
+          status,
           body.requestedBy || body.created_by || req.user?.id || null,
           body.approvedBy || body.approved_by || null,
           body.approvedAt || body.approved_at || null,
-          body.paidBy || body.paid_by || null,
-          body.paidAt || body.paid_at || null,
+          cashierHeld ? null : (body.paidBy || body.paid_by || null),
+          cashierHeld ? null : (body.paidAt || body.paid_at || null),
           body.transactionId || body.transaction_id || null,
           body.notes || null,
           body.createdAt || body.created_at || now,
@@ -473,6 +479,7 @@ module.exports = function expensesRouter(broadcastTable) {
       if (!existing.rows[0]) return res.status(404).json({ error: 'Expense not found' });
       try {
         assertExpensePaymentScope(req.user, mapRow(existing.rows[0]));
+        assertExpenseCanPay(req.user);
       } catch (scopeErr) {
         return res.status(scopeErr.statusCode || 403).json({ error: scopeErr.message });
       }

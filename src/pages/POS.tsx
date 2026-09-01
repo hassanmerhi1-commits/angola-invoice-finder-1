@@ -75,6 +75,8 @@ export default function POS() {
   // Cashiers always get the admin-chosen default (or the selected client's level).
   const canChoosePrice = !!user && userHasPermission(user.role, user.permissionOverrides, 'pos_price_change');
   const canPayExpense = !!user && userHasPermission(user.role, user.permissionOverrides, 'expense_create');
+  const canApproveExpense = !!user && userHasPermission(user.role, user.permissionOverrides, 'expense_approve');
+  const expenseNeedsApproval = !!user && user.role === 'cashier' && !canApproveExpense;
 
   const [priceLevel, setPriceLevel] = useState(() =>
     normalizePriceLevel(getCompanySettings().posDefaultPriceLevel ?? 1),
@@ -979,7 +981,7 @@ export default function POS() {
               }}
             >
               <Wallet className="w-3.5 h-3.5" />
-              {t.posUi.payExpenseButton}
+              {expenseNeedsApproval ? t.posUi.requestExpenseButton : t.posUi.payExpenseButton}
             </Button>
           )}
           <PosUpdateMenu />
@@ -1061,6 +1063,7 @@ export default function POS() {
         caixaId={caixaSession?.caixaId}
         caixaName={caixa?.name}
         requestedBy={user?.id || user?.name || user?.username || 'POS'}
+        requiresApproval={expenseNeedsApproval}
       />
 
       <PosOpenCaixaDialog

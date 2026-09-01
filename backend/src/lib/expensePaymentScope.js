@@ -6,8 +6,26 @@ function scopeError(message) {
   return error;
 }
 
+/** Cashiers may request a till expense; a manager/admin must approve before it is paid. */
+function cashierNeedsExpenseApproval(user) {
+  return user?.role === 'cashier'
+    && !userHasPermission(user.role, user.permissionOverrides, 'expense_approve');
+}
+
+function coerceExpenseCreateStatus(user, status, alreadyPaid) {
+  if (alreadyPaid) return String(status || 'paid');
+  if (cashierNeedsExpenseApproval(user)) return 'pending_approval';
+  return String(status || 'draft');
+}
+
+function assertExpenseCanPay(user) {
+  if (cashierNeedsExpenseApproval(user)) {
+    throw scopeError('Esta despesa precisa de aprovação do gerente ou administrador antes de ser paga.');
+  }
+}
+
 /**
- * Cashiers may pay operating expenses from caixa (taxi, materials, …).
+ * Cashiers may request operating expenses from caixa (taxi, materials, …).
  * Bank payouts need bank_manage. Staff/salaries stay off the cashier till
  * unless that user was explicitly given expense_approve.
  */
@@ -28,4 +46,9 @@ function assertExpensePaymentScope(user, payload = {}) {
   }
 }
 
-module.exports = { assertExpensePaymentScope };
+module.exports = {
+  assertExpensePaymentScope,
+  assertExpenseCanPay,
+  cashierNeedsExpenseApproval,
+  coerceExpenseCreateStatus,
+};

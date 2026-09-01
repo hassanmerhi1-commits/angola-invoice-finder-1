@@ -1418,7 +1418,8 @@ export async function createExpense(
   payeeNif?: string,
   taxAmount?: number,
   invoiceNumber?: string,
-  notes?: string
+  notes?: string,
+  status?: Expense['status'],
 ): Promise<Expense> {
   const expense: Expense = {
     id: crypto.randomUUID(),
@@ -1436,7 +1437,7 @@ export async function createExpense(
     payeeName,
     payeeNif,
     invoiceNumber,
-    status: 'draft',
+    status: status || 'draft',
     requestedBy,
     requestedAt: new Date().toISOString(),
     notes,

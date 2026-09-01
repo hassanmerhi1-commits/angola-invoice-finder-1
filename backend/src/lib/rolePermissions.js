@@ -9,7 +9,7 @@ const ROLE_PERMISSIONS = {
     'credit_note_create', 'debit_note_create', 'receipt_create', 'agt_send', 'saft_export',
     'accounting_view', 'accounting_create', 'accounting_journal', 'backdate_post', 'edit_historical',
     'accounting_payment', 'accounting_receipt',
-    'caixa_open', 'caixa_close', 'bank_manage', 'expense_create', 'client_manage',
+    'caixa_open', 'caixa_close', 'bank_manage', 'expense_create', 'expense_approve', 'client_manage',
     'inventory_view', 'inventory_create', 'inventory_edit', 'inventory_adjust', 'inventory_transfer',
     'inventory_import', 'inventory_export', 'price_view', 'price_edit',
     'purchase_create', 'purchase_receive',

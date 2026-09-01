@@ -41,6 +41,7 @@ interface PosPayExpenseDialogProps {
   caixaId?: string;
   caixaName?: string;
   requestedBy: string;
+  requiresApproval?: boolean;
 }
 
 export function PosPayExpenseDialog({
@@ -52,6 +53,7 @@ export function PosPayExpenseDialog({
   caixaId,
   caixaName,
   requestedBy,
+  requiresApproval = false,
 }: PosPayExpenseDialogProps) {
   const { t } = useTranslation();
   const [category, setCategory] = useState<ExpenseCategory>('transport');
@@ -116,7 +118,22 @@ export function PosPayExpenseDialog({
         undefined,
         name,
         nif,
+        undefined,
+        undefined,
+        undefined,
+        requiresApproval ? 'pending_approval' : 'draft',
       );
+      if (requiresApproval) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('nexor:expenses-changed'));
+        }
+        toast.success(
+          t.posUi.payExpenseSubmitted.replace('{number}', expense.expenseNumber),
+          { description: t.posUi.payExpenseWaiting },
+        );
+        onOpenChange(false);
+        return;
+      }
       const result = await payExpense(expense.id, requestedBy);
       if (result.glError) {
         toast.error(t.expensesUi.paidGlFailedTitle, {
@@ -146,9 +163,11 @@ export function PosPayExpenseDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Wallet className="w-5 h-5 text-primary" />
-            {t.posUi.payExpenseTitle}
+            {requiresApproval ? t.posUi.requestExpenseTitle : t.posUi.payExpenseTitle}
           </DialogTitle>
-          <DialogDescription>{t.posUi.payExpenseDesc}</DialogDescription>
+          <DialogDescription>
+            {requiresApproval ? t.posUi.requestExpenseDesc : t.posUi.payExpenseDesc}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -252,7 +271,9 @@ export function PosPayExpenseDialog({
           </Button>
           <Button type="button" onClick={() => void handlePay()} disabled={submitting} className="gap-1.5">
             <Receipt className="w-4 h-4" />
-            {submitting ? t.posUi.payExpensePaying : t.expensesUi.registerAndPay}
+            {submitting
+              ? (requiresApproval ? t.posUi.payExpenseSubmitting : t.posUi.payExpensePaying)
+              : (requiresApproval ? t.expensesUi.sendForApproval : t.expensesUi.registerAndPay)}
           </Button>
         </DialogFooter>
       </DialogContent>

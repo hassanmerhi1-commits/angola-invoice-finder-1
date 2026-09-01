@@ -130,6 +130,7 @@ export default function Expenses() {
     || userHasPermission(user.role, user.permissionOverrides, 'admin_settings')
   );
   const canRepostGl = !!user && userHasPermission(user.role, user.permissionOverrides, 'accounting_create');
+  const expenseNeedsApproval = !!user && user.role === 'cashier' && !canApproveExpense;
   const visibleCategories = EXPENSE_CATEGORIES.filter((cat) => canPayStaff || cat.value !== 'staff');
 
   const [expenses, setExpenses] = useState<Expense[]>(
@@ -356,7 +357,7 @@ export default function Expenses() {
   const handleSubmit = async (action: ExpenseSubmitAction) => {
     if (!validateForm()) return;
 
-    const payNow = action === 'save_and_pay' || action === 'save_pay_and_new';
+    const payNow = !expenseNeedsApproval && (action === 'save_and_pay' || action === 'save_pay_and_new');
     const stayOpen = action === 'save_and_new' || action === 'save_pay_and_new';
 
     setIsSubmitting(true);
@@ -402,6 +403,7 @@ export default function Expenses() {
           formData.taxAmount || undefined,
           formData.invoiceNumber || undefined,
           formData.notes || undefined,
+          expenseNeedsApproval ? 'pending_approval' : 'draft',
         );
 
         if (payNow) {
@@ -420,6 +422,8 @@ export default function Expenses() {
               description: t.expensesUi.expenseRecordedAndPaid.replace('{number}', expense.expenseNumber),
             });
           }
+        } else if (expenseNeedsApproval) {
+          toast({ title: t.expensesUi.sentTitle, description: t.expensesUi.sentForApproval });
         } else {
           toast({ title: t.expensesUi.toastSuccessTitle, description: t.expensesUi.expenseRecorded });
         }
@@ -476,10 +480,40 @@ export default function Expenses() {
     }
   };
 
-  const handleApprove = (expense: Expense) => {
-    saveExpense({ ...expense, status: 'approved', approvedBy: user?.name, approvedAt: new Date().toISOString() });
-    toast({ title: t.expensesUi.approvedTitle, description: t.expensesUi.expenseApproved.replace('{number}', expense.expenseNumber) });
-    loadData();
+  const handleApprove = async (expense: Expense) => {
+    try {
+      await saveExpense({
+        ...expense,
+        status: 'approved',
+        approvedBy: user?.name || user?.id,
+        approvedAt: new Date().toISOString(),
+      });
+      const result = await payExpense(expense.id, user?.id || user?.name || t.expensesUi.systemUser);
+      if (result.glError) {
+        toast({
+          title: t.expensesUi.paidGlFailedTitle,
+          description: t.expensesUi.expensePaidGlFailed
+            .replace('{number}', expense.expenseNumber)
+            .replace('{error}', result.glError),
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: t.expensesUi.approvedTitle,
+          description: t.expensesUi.expenseApprovedAndPaid.replace('{number}', expense.expenseNumber),
+        });
+      }
+    } catch (e) {
+      toast({
+        title: t.expensesUi.toastErrorTitle,
+        description: e instanceof Error ? e.message : t.expensesUi.saveFailed,
+        variant: 'destructive',
+      });
+    }
+    await loadData();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('nexor:expenses-changed'));
+    }
   };
 
   const handleReject = (expense: Expense) => {
@@ -725,7 +759,7 @@ export default function Expenses() {
                                       {t.common.edit}
                                     </DropdownMenuItem>
                                   )}
-                                  {canApproveExpense && (
+                                  {(canApproveExpense || expenseNeedsApproval) && (
                                     <DropdownMenuItem onClick={() => handleSubmitForApproval(expense)}>
                                       {t.expensesUi.sendForApproval}
                                     </DropdownMenuItem>
@@ -734,7 +768,7 @@ export default function Expenses() {
                               )}
                               {expense.status === 'pending_approval' && canApproveExpense && (
                                 <>
-                                  <DropdownMenuItem onClick={() => handleApprove(expense)} className="text-green-600">
+                                  <DropdownMenuItem onClick={() => void handleApprove(expense)} className="text-green-600">
                                     <CheckCircle className="w-4 h-4 mr-2" />
                                     {t.expensesUi.approve}
                                   </DropdownMenuItem>
@@ -1050,28 +1084,32 @@ export default function Expenses() {
                 </Button>
               ) : (
                 <>
-                  <Button
-                    variant="ghost"
-                    onClick={() => void handleSubmit('save_and_new')}
-                    disabled={isSubmitting}
-                  >
-                    {t.expensesUi.registerAndNew}
-                  </Button>
+                  {!expenseNeedsApproval && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => void handleSubmit('save_and_new')}
+                      disabled={isSubmitting}
+                    >
+                      {t.expensesUi.registerAndNew}
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     onClick={() => void handleSubmit('save')}
                     disabled={isSubmitting}
                   >
-                    {t.expensesUi.registerExpense}
+                    {expenseNeedsApproval ? t.expensesUi.sendForApproval : t.expensesUi.registerExpense}
                   </Button>
-                  <Button
-                    onClick={() => void handleSubmit('save_and_pay')}
-                    disabled={isSubmitting}
-                    className="gap-1"
-                  >
-                    <Receipt className="w-4 h-4" />
-                    {t.expensesUi.registerAndPay}
-                  </Button>
+                  {!expenseNeedsApproval && (
+                    <Button
+                      onClick={() => void handleSubmit('save_and_pay')}
+                      disabled={isSubmitting}
+                      className="gap-1"
+                    >
+                      <Receipt className="w-4 h-4" />
+                      {t.expensesUi.registerAndPay}
+                    </Button>
+                  )}
                 </>
               )}
             </div>
