@@ -27,14 +27,14 @@ test.describe('Chart of accounts + journal E2E', () => {
     await dismissBlockingDialogs(page);
 
     await openChartNewAccountDialog(page);
-    const coaDialog = page.getByRole('dialog', { name: /new account/i });
+    const coaDialog = page.getByRole('dialog', { name: /new account|nova conta/i });
     await expect(coaDialog).toBeVisible();
-    await coaDialog.getByPlaceholder('e.g., 451').fill(accountCode);
-    await coaDialog.getByPlaceholder('e.g., Caixa').fill(accountName);
-    await coaDialog.getByRole('combobox').filter({ hasText: /^asset$/i }).click();
-    await page.getByRole('option', { name: /^expense$/i }).click();
-    await coaDialog.getByRole('button', { name: /^save$/i }).click();
-    await expect(page.getByText(/account created/i)).toBeVisible({ timeout: 15_000 });
+    await coaDialog.getByPlaceholder(/451/).fill(accountCode);
+    await coaDialog.getByPlaceholder(/caixa/i).fill(accountName);
+    await coaDialog.getByRole('combobox').filter({ hasText: /asset|ativo/i }).click();
+    await page.getByRole('option', { name: /^(expense|despesa)$/i }).click();
+    await coaDialog.getByRole('button', { name: /^(save|guardar)$/i }).click();
+    await expect(page.getByText(/account created|conta criada/i)).toBeVisible({ timeout: 15_000 });
 
     const accounts = await fetchChartOfAccounts(request, auth);
     expect(accounts.some((a: { code?: string }) => a.code === accountCode)).toBeTruthy();
@@ -43,8 +43,8 @@ test.describe('Chart of accounts + journal E2E', () => {
     await page.goto('/journals');
     await dismissBlockingDialogs(page);
 
-    await page.getByRole('button', { name: /new entry/i }).click();
-    const journalDialog = page.getByRole('dialog', { name: /new manual entry/i });
+    await page.getByRole('button', { name: /new entry|novo lan/i }).click();
+    const journalDialog = page.getByRole('dialog', { name: /new manual entry|novo lan/i });
     await expect(journalDialog).toBeVisible();
 
     await journalDialog
@@ -52,16 +52,17 @@ test.describe('Chart of accounts + journal E2E', () => {
       .first()
       .fill(journalDescription);
 
-    const accountInputs = journalDialog.getByPlaceholder('e.g., 451');
+    const accountInputs = journalDialog.getByPlaceholder(/e\.g\., 451|ex:\s*451/i);
     await accountInputs.nth(0).fill(accountCode);
-    await journalDialog.getByRole('button', { name: new RegExp(`^${accountCode}\\s`) }).click();
+    await page.getByRole('button', { name: new RegExp(`^${accountCode}\\s`) }).click();
 
-    const debitInputs = journalDialog.locator('input[type="number"]');
-    await debitInputs.nth(0).fill(String(amount));
+    const amountInputs = journalDialog.locator('input[placeholder="0.00"]');
+    await amountInputs.nth(0).fill(String(amount));
 
     await accountInputs.nth(1).fill('451');
+    // Account picker is portaled to document.body — do not scope to the dialog.
     // Anchor to the code so we don't also match 3451 (IVA dedutível).
-    await journalDialog.getByRole('button', { name: /^451\s/ }).click();
+    await page.getByRole('button', { name: /^451\s/ }).click();
 
     // Re-assert title after account picks (some flows rewrite line text).
     await journalDialog
@@ -69,8 +70,8 @@ test.describe('Chart of accounts + journal E2E', () => {
       .first()
       .fill(journalDescription);
 
-    await journalDialog.getByRole('button', { name: /auto balance/i }).click();
-    await journalDialog.getByRole('button', { name: /^post$/i }).click();
+    await journalDialog.getByRole('button', { name: /auto balance|balancear auto/i }).click();
+    await journalDialog.getByRole('button', { name: /^(post|lançar)$/i }).click();
     await expect(journalDialog).toBeHidden({ timeout: 30_000 });
 
     await expect

@@ -29,7 +29,7 @@ test.describe('Stock transfer E2E', () => {
     const createDialog = page.getByRole('dialog', { name: /new transfer/i });
     await expect(createDialog).toBeVisible();
 
-    await createDialog.locator('label', { hasText: /para \(destino\)/i }).locator('..').getByRole('combobox').click();
+    await createDialog.locator('label', { hasText: /to \(destination|para \(destino\)/i }).locator('..').getByRole('combobox').click();
     await page.getByRole('option', { name: new RegExp(scenario.destBranchName, 'i') }).click();
 
     await createDialog.getByPlaceholder(/search|code|product/i).fill(scenario.sku);
@@ -39,25 +39,25 @@ test.describe('Stock transfer E2E', () => {
     await qtyInput.fill(String(scenario.transferQty));
     await qtyInput.blur();
 
-    await createDialog.getByRole('button', { name: /create transfer/i }).click();
+    await createDialog.getByRole('button', { name: /create transfer|criar transfer/i }).click();
     await expect(createDialog).toBeHidden({ timeout: 30_000 });
 
     const pendingRow = page.getByRole('row').filter({ hasText: scenario.destBranchName });
     await expect(pendingRow).toBeVisible({ timeout: 15_000 });
-    await pendingRow.getByRole('button', { name: /^aprovar$/i }).click();
+    await pendingRow.getByRole('button', { name: /^(approve|aprovar)$/i }).click();
 
-    await page.getByRole('tab', { name: /in transit/i }).click();
+    await page.getByRole('tab', { name: /in transit|em trânsito/i }).click();
 
     await page.locator('header').getByRole('combobox').click();
     await page.getByRole('option', { name: new RegExp(scenario.destBranchName, 'i') }).click();
 
     const transitRow = page.getByRole('row').filter({ hasText: scenario.destBranchName });
     await expect(transitRow).toBeVisible({ timeout: 15_000 });
-    await transitRow.getByRole('button', { name: /confirmar recepção/i }).click();
+    await transitRow.getByRole('button', { name: /confirm receipt|confirmar recep/i }).click();
 
     const receiveDialog = page.getByRole('dialog', { name: /receive|recepção/i });
     await expect(receiveDialog).toBeVisible();
-    await receiveDialog.getByRole('button', { name: /confirm receiving/i }).click();
+    await receiveDialog.getByRole('button', { name: /confirm receiv|confirmar recep/i }).click();
     await expect(receiveDialog).toBeHidden({ timeout: 30_000 });
 
     const sourceAfter = await fetchProductStock(

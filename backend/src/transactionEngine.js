@@ -1492,21 +1492,37 @@ async function ensureLocalProductForWarehouseStock(client, productId, warehouseI
   // Always pull foreign/catalog movements for this SKU@warehouse onto the local row —
   // even when the caller already passed the local product id (Adjust In after clone).
   if (sku) {
-    const remapped = await client.query(
-      `UPDATE stock_movements sm
-       SET product_id = $1
-       FROM products pm
-       WHERE sm.product_id = pm.id
-         AND sm.warehouse_id = $2
-         AND ${sqlMovementSkuKey('pm')} = LOWER(TRIM($3))
-         AND sm.product_id IS DISTINCT FROM $1
-         AND (
-           ${emptyBranchIdClause(db, 'pm.branch_id')}
-           OR pm.branch_id IS DISTINCT FROM $2
-         )
-       RETURNING sm.id`,
-      [localId, wh, sku],
-    );
+    const skuMatch = sqlMovementSkuKey('pm');
+    const foreignOwner = `
+      (
+        ${emptyBranchIdClause(db, 'pm.branch_id')}
+        OR pm.branch_id != $2
+      )`;
+    // Postgres allows UPDATE … FROM with a target alias; SQLite does not (`near "sm"`).
+    const remapSql = db.engine === 'postgres'
+      ? `UPDATE stock_movements sm
+         SET product_id = $1
+         FROM products pm
+         WHERE sm.product_id = pm.id
+           AND sm.warehouse_id = $2
+           AND ${skuMatch} = LOWER(TRIM($3))
+           AND sm.product_id IS DISTINCT FROM $1
+           AND (
+             ${emptyBranchIdClause(db, 'pm.branch_id')}
+             OR pm.branch_id IS DISTINCT FROM $2
+           )
+         RETURNING sm.id`
+      : `UPDATE stock_movements
+         SET product_id = $1
+         WHERE warehouse_id = $2
+           AND product_id != $1
+           AND EXISTS (
+             SELECT 1 FROM products pm
+             WHERE pm.id = stock_movements.product_id
+               AND ${skuMatch} = LOWER(TRIM($3))
+               AND ${foreignOwner}
+           )`;
+    const remapped = await client.query(remapSql, [localId, wh, sku]);
     if ((remapped.rowCount || 0) > 0) {
       console.log(
         `[TX ENGINE] Remapped ${remapped.rowCount} movement(s) for ${sku} @ ${wh} → local product ${localId}`,

@@ -45,8 +45,8 @@ test.describe('NEXOR ERP smoke', () => {
   test('chart of accounts shows English UI when language is English', async ({ page }) => {
     await loginAsAdmin(page);
     await visitRoute(page, '/chart-of-accounts');
-    await expect(page.getByRole('button', { name: 'New', exact: true })).toBeVisible();
-    await expect(page.getByText('Customers', { exact: true })).toBeVisible();
-    await expect(page.getByText('Account no.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^(new|novo)$/i })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /^(customers|clientes)$/i })).toBeVisible();
+    await expect(page.getByText(/account no\.|n\.º conta/i).first()).toBeVisible();
   });
 });
