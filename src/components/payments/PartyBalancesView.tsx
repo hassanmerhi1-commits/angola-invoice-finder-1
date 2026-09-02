@@ -191,11 +191,21 @@ export function PartyBalancesView({ mode }: { mode: PartyBalanceMode }) {
   const openCollectOrPay = (party: PartyRow) => {
     if (mode === 'receivables') {
       navigate('/payments', {
-        state: { openReceipt: true, entityId: party.entityId, entityName: party.name },
+        state: {
+          openReceipt: true,
+          entityId: party.entityId,
+          entityName: party.name,
+          returnTo: '/receivables',
+        },
       });
     } else {
       navigate('/payments', {
-        state: { openPayment: true, entityId: party.entityId, entityName: party.name },
+        state: {
+          openPayment: true,
+          entityId: party.entityId,
+          entityName: party.name,
+          returnTo: '/payables',
+        },
       });
     }
   };

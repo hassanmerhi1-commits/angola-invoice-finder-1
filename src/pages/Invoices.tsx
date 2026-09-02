@@ -5,7 +5,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { navigateThenStartPurchaseCreate } from '@/lib/nexorPurchaseCreate';
 import { useTranslation } from '@/i18n';
-import { useAuth, useClients } from '@/hooks/useERP';
+import { useAuth, useClients, useSales } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 import { salesOrderToErpDocumentPrefill, type SalesOrder } from '@/lib/salesOrderToDocument';
 import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
-import type { CreditNote, TransportDocument } from '@/types/erp';
+import type { CreditNote, CreditNoteItem, DebitNote, DebitNoteItem, Sale, TransportDocument } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList, markCachedListsStaleByPrefix } from '@/lib/listCache';
 import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
@@ -55,6 +55,9 @@ import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton
 import { DocumentFormDialog } from '@/components/documents/DocumentFormDialog';
 import { ProFormaCreateDialog } from '@/components/proforma/ProFormaCreateDialog';
 import { TransportDocumentPrintDialog } from '@/components/fiscal/TransportDocumentPrintDialog';
+import { CreditNoteCreateDialog } from '@/components/fiscal/CreditNoteCreateDialog';
+import { DebitNoteCreateDialog } from '@/components/fiscal/DebitNoteCreateDialog';
+import { useCreditNotes, useDebitNotes } from '@/hooks/useFiscalDocuments';
 import { getProFormas } from '@/lib/proforma';
 import { proformaToErpDocumentPrefill } from '@/lib/proformaToDocument';
 import { isFiscallyImmutable } from '@/lib/fiscalImmutability';
@@ -161,6 +164,12 @@ export default function Invoices() {
   const { user } = useAuth();
   const [formOpen, setFormOpen] = useState(false);
   const [proformaCreateOpen, setProformaCreateOpen] = useState(false);
+  const [creditNoteDialog, setCreditNoteDialog] = useState(false);
+  const [debitNoteDialog, setDebitNoteDialog] = useState(false);
+  const [initialCreditSaleId, setInitialCreditSaleId] = useState<string | null>(null);
+  const [initialDebitSaleId, setInitialDebitSaleId] = useState<string | null>(null);
+  const [creditNoteSubmitting, setCreditNoteSubmitting] = useState(false);
+  const [debitNoteSubmitting, setDebitNoteSubmitting] = useState(false);
   const { clients } = useClients(!formOpen);
   const { hasPermission } = usePermissions(user?.id);
   const canSendAgt = hasPermission('agt_send');
@@ -168,6 +177,10 @@ export default function Invoices() {
   const canCreateDebitNote = hasPermission('debit_note_create');
   const canVoidInvoice = hasPermission('pos_void');
   const { currentBranch, branches, isHeadOffice, listBranchId } = useBranchScope();
+  const noteDialogOpen = creditNoteDialog || debitNoteDialog;
+  const { sales } = useSales(listBranchId, !noteDialogOpen);
+  const { creditNotes, createCreditNote } = useCreditNotes(listBranchId, !creditNoteDialog);
+  const { debitNotes, createDebitNote } = useDebitNotes(listBranchId, !debitNoteDialog);
   const navigate = useNavigate();
   const location = useLocation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
@@ -437,23 +450,105 @@ export default function Invoices() {
     navigate(location.pathname, { replace: true, state: {} });
   }, [location.state, location.pathname, navigate, clients]);
 
-  const openFiscalCreditNoteCreate = useCallback(() => {
+  const resolveSaleBranch = useCallback((sale: Sale) => {
+    const saleBranchId = sale.branchId || currentBranch?.id;
+    const saleBranch = branches.find((b) => b.id === saleBranchId) || currentBranch;
+    if (!saleBranchId || !saleBranch) return null;
+    return { id: saleBranchId, code: saleBranch.code, name: saleBranch.name };
+  }, [branches, currentBranch]);
+
+  const openCreditNoteCreate = useCallback((saleId?: string) => {
     if (!canCreateCreditNote) {
       toast.error(t.fiscalDocumentsUi.creditNotePermissionDenied);
       return;
     }
-    toast.info(t.invoicesUi.creditNoteUseFiscalDocs);
-    navigate('/fiscal-documents', { state: { openCreditNoteCreate: true } });
-  }, [navigate, canCreateCreditNote, t]);
+    setInitialCreditSaleId(saleId || null);
+    setCreditNoteDialog(true);
+  }, [canCreateCreditNote, t]);
 
-  const openFiscalDebitNoteCreate = useCallback(() => {
+  const openDebitNoteCreate = useCallback((saleId?: string) => {
     if (!canCreateDebitNote) {
       toast.error(t.fiscalDocumentsUi.debitNotePermissionDenied);
       return;
     }
-    toast.info(t.invoicesUi.debitNoteUseFiscalDocs);
-    navigate('/fiscal-documents', { state: { openDebitNoteCreate: true } });
-  }, [navigate, canCreateDebitNote, t]);
+    setInitialDebitSaleId(saleId || null);
+    setDebitNoteDialog(true);
+  }, [canCreateDebitNote, t]);
+
+  const handleCreateCreditNote = async (payload: {
+    sale: Sale;
+    reason: CreditNote['reason'];
+    description: string;
+    items: CreditNoteItem[];
+    restoreStock: boolean;
+  }) => {
+    if (!user) return;
+    const saleBranch = resolveSaleBranch(payload.sale);
+    if (!saleBranch) {
+      toast.error(t.common.error);
+      return;
+    }
+    setCreditNoteSubmitting(true);
+    try {
+      await createCreditNote(
+        saleBranch.id,
+        saleBranch.code,
+        payload.sale,
+        payload.reason,
+        payload.description,
+        payload.items,
+        user.id,
+        payload.restoreStock,
+        saleBranch.name,
+      );
+      toast.success(t.fiscalDocumentsUi.creditNoteCreatedTitle);
+      setCreditNoteDialog(false);
+      setInitialCreditSaleId(null);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t.common.error);
+      throw err;
+    } finally {
+      setCreditNoteSubmitting(false);
+    }
+  };
+
+  const handleCreateDebitNote = async (payload: {
+    sale: Sale;
+    reason: DebitNote['reason'];
+    description: string;
+    items: DebitNoteItem[];
+  }) => {
+    if (!user) return;
+    const saleBranch = resolveSaleBranch(payload.sale);
+    if (!saleBranch) {
+      toast.error(t.common.error);
+      return;
+    }
+    setDebitNoteSubmitting(true);
+    try {
+      await createDebitNote(
+        saleBranch.id,
+        saleBranch.code,
+        payload.sale,
+        payload.reason,
+        payload.description,
+        payload.items,
+        user.id,
+        payload.sale.customerNif,
+        payload.sale.customerName,
+      );
+      toast.success(t.fiscalDocumentsUi.debitNoteCreatedTitle);
+      setDebitNoteDialog(false);
+      setInitialDebitSaleId(null);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t.common.error);
+      throw err;
+    } finally {
+      setDebitNoteSubmitting(false);
+    }
+  };
 
   const openFiscalTransportCreate = useCallback((saleId?: string) => {
     toast.info(t.invoicesUi.deliveryNoteUseFiscalDocs);
@@ -491,11 +586,11 @@ export default function Invoices() {
     (tab?: InvoicesWorkspaceTab) => {
       const resolved = tab ?? getInvoicesWorkspaceTab();
       if (resolved === 'nota_credito') {
-        openFiscalCreditNoteCreate();
+        openCreditNoteCreate();
         return;
       }
       if (resolved === 'nota_debito') {
-        openFiscalDebitNoteCreate();
+        openDebitNoteCreate();
         return;
       }
       if (resolved === 'guia_remessa') {
@@ -528,7 +623,7 @@ export default function Invoices() {
       setPrefillDoc(null);
       setFormOpen(true);
     },
-    [navigate, location.pathname, openFiscalCreditNoteCreate, openFiscalDebitNoteCreate, openFiscalTransportCreate],
+    [navigate, location.pathname, openCreditNoteCreate, openDebitNoteCreate, openFiscalTransportCreate],
   );
 
   // TopNav toolbar "Novo" — match active document tab (read tab at click time)
@@ -762,8 +857,7 @@ export default function Invoices() {
         return;
       }
       if (doc.documentType === 'fatura_venda') {
-        navigate('/fiscal-documents', { state: { openCreditNoteForSaleId: doc.id } });
-        toast.info(t.invoicesUi.creditNoteUseFiscalDocs);
+        openCreditNoteCreate(doc.id);
         return;
       }
     }
@@ -773,8 +867,7 @@ export default function Invoices() {
         return;
       }
       if (doc.documentType === 'fatura_venda') {
-        navigate('/fiscal-documents', { state: { openDebitNoteForSaleId: doc.id } });
-        toast.info(t.invoicesUi.debitNoteUseFiscalDocs);
+        openDebitNoteCreate(doc.id);
         return;
       }
     }
@@ -839,9 +932,9 @@ export default function Invoices() {
                 if (key === 'fatura_compra') {
                   navigateThenStartPurchaseCreate(navigate, location.pathname);
                 } else if (key === 'nota_credito') {
-                  openFiscalCreditNoteCreate();
+                  openCreditNoteCreate();
                 } else if (key === 'nota_debito') {
-                  openFiscalDebitNoteCreate();
+                  openDebitNoteCreate();
                 } else if (key === 'guia_remessa') {
                   openFiscalTransportCreate();
                 } else if (key === 'proforma') {
@@ -1020,7 +1113,7 @@ export default function Invoices() {
                 variant="outline"
                 size="sm"
                 className="h-7 shrink-0 text-xs"
-                onClick={() => navigate('/fiscal-documents', { state: { openDebitNoteCreate: true } })}
+                onClick={() => navigate('/fiscal-documents')}
               >
                 {t.invoicesUi.openFiscalDocuments}
               </Button>
@@ -1297,6 +1390,33 @@ export default function Invoices() {
         open={proformaCreateOpen}
         onOpenChange={setProformaCreateOpen}
         onCreated={() => refresh()}
+      />
+
+      <CreditNoteCreateDialog
+        open={creditNoteDialog && canCreateCreditNote}
+        initialSaleId={initialCreditSaleId}
+        sales={sales}
+        creditNotes={creditNotes}
+        branchId={listBranchId}
+        submitting={creditNoteSubmitting}
+        onOpenChange={(open) => {
+          setCreditNoteDialog(open);
+          if (!open) setInitialCreditSaleId(null);
+        }}
+        onSubmit={handleCreateCreditNote}
+      />
+
+      <DebitNoteCreateDialog
+        open={debitNoteDialog && canCreateDebitNote}
+        initialSaleId={initialDebitSaleId}
+        sales={sales}
+        debitNotes={debitNotes}
+        submitting={debitNoteSubmitting}
+        onOpenChange={(open) => {
+          setDebitNoteDialog(open);
+          if (!open) setInitialDebitSaleId(null);
+        }}
+        onSubmit={handleCreateDebitNote}
       />
 
       <TransportDocumentPrintDialog

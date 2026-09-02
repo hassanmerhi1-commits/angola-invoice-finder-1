@@ -160,6 +160,7 @@ export default function Payments() {
   const location = useLocation();
   const navigate = useNavigate();
   const deepLinkHandled = useRef(false);
+  const returnToRef = useRef<string | null>(null);
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const { apiBranchId, treasuryAllBranches } = useBranchScope();
@@ -312,6 +313,18 @@ export default function Payments() {
     setReference('');
     setNotes('');
     setSelectedOpenItems(new Set());
+  };
+
+  const closeNewDialog = (open = false) => {
+    if (open) {
+      setShowNewDialog(true);
+      return;
+    }
+    setShowNewDialog(false);
+    resetForm();
+    const dest = returnToRef.current;
+    returnToRef.current = null;
+    if (dest) navigate(dest, { replace: true });
   };
 
   const refreshTreasurySources = useCallback(async () => {
@@ -489,8 +502,7 @@ export default function Payments() {
       } else {
         toast.success(paymentType === 'receipt' ? t.paymentsUi.receiptRecorded : t.paymentsUi.paymentRecorded);
       }
-      setShowNewDialog(false);
-      resetForm();
+      closeNewDialog();
     } catch (err: any) {
       toast.error(err.message || t.paymentsUi.recordFailed);
       console.error('[PAYMENTS] Create failed:', err);
@@ -535,10 +547,14 @@ export default function Payments() {
       openPayment?: boolean;
       entityId?: string;
       entityName?: string;
+      returnTo?: string;
     } | null;
     if (!state || deepLinkHandled.current) return;
     if (!state.openReceipt && !state.openPayment) return;
     deepLinkHandled.current = true;
+    returnToRef.current = state.returnTo === '/payables' || state.returnTo === '/receivables'
+      ? state.returnTo
+      : null;
     const type = state.openReceipt ? 'receipt' : 'payment';
     openNewDialog(type, {
       entityId: state.entityId,
@@ -738,7 +754,7 @@ export default function Payments() {
       </Tabs>
 
       {/* New Payment Dialog */}
-      <Dialog open={showNewDialog} onOpenChange={setShowNewDialog}>
+      <Dialog open={showNewDialog} onOpenChange={closeNewDialog}>
         <DialogContent
           className="max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto"
           onOpenAutoFocus={(e) => e.preventDefault()}
@@ -982,7 +998,7 @@ export default function Payments() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewDialog(false)}>{t.paymentsUi.cancel}</Button>
+            <Button variant="outline" onClick={() => closeNewDialog()}>{t.paymentsUi.cancel}</Button>
             <Button onClick={handleCreate}>
               {paymentType === 'receipt' ? t.paymentsUi.registerReceipt : t.paymentsUi.registerPayment}
             </Button>

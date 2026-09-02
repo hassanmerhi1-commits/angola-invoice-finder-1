@@ -147,7 +147,7 @@ export function useCreditNotes(branchId?: string, deferInitialLoad = false) {
 
 // ==================== DEBIT NOTES ====================
 
-export function useDebitNotes(branchId?: string) {
+export function useDebitNotes(branchId?: string, deferInitialLoad = false) {
   const [debitNotes, setDebitNotes] = useState<DebitNote[]>(
     () => getCachedList<DebitNote[]>(`debitNotes:${branchId ?? 'all'}`) ?? [],
   );
@@ -171,8 +171,9 @@ export function useDebitNotes(branchId?: string) {
   }, [branchId]);
 
   useEffect(() => {
+    if (deferInitialLoad) return;
     void refreshDebitNotes();
-  }, [refreshDebitNotes]);
+  }, [refreshDebitNotes, deferInitialLoad]);
 
   const createDebitNote = useCallback(async (
     branchIdParam: string,
