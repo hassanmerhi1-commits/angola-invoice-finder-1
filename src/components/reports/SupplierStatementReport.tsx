@@ -13,6 +13,7 @@ import { Download, Printer, Truck, Search, Loader2, FileDown } from 'lucide-reac
 import { format, parseISO, subMonths } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { api } from '@/lib/api/client';
+import { isGenericPartyName, isPlaceholderNif } from '@/lib/accountStatement';
 import { useTranslation } from '@/i18n';
 import { formatDisplayDate } from '@/lib/formatDisplayDate';
 import { buildReportHtml, escapeHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
@@ -50,8 +51,11 @@ function invoiceMatchesSupplier(inv: PurchaseInvoice, supplierId: string, suppli
     inv.supplierId === supplierId ||
     inv.supplierAccountCode === supplierId ||
     inv.supplierAccountCode === supplier.id ||
-    (!!inv.supplierNif && inv.supplierNif === supplier.nif) ||
-    inv.supplierName.trim().toLowerCase() === supplier.name.trim().toLowerCase()
+    (!!inv.supplierNif && inv.supplierNif === supplier.nif && !isPlaceholderNif(supplier.nif)) ||
+    (
+      inv.supplierName.trim().toLowerCase() === supplier.name.trim().toLowerCase()
+      && !isGenericPartyName(supplier.name)
+    )
   );
 }
 

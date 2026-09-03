@@ -21,6 +21,7 @@ const testFiles = [
   'test/fiscalInvoiceType.test.js',
   'test/agtFePayload.test.js',
   'test/expensePaymentScope.test.js',
+  'test/accountStatement.test.js',
 ];
 
 function resolveElectronBinary() {

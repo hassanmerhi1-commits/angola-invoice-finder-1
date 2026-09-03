@@ -283,8 +283,7 @@ module.exports = function(broadcastTable) {
   router.get('/statement/:entityType/:entityId', async (req, res) => {
     try {
       const { entityType, entityId } = req.params;
-      const { dateFrom, dateTo } = req.query;
-      const payload = await loadAccountStatement(db, entityType, entityId, { dateFrom, dateTo });
+      const payload = await loadAccountStatement(db, entityType, entityId);
       const balResult = await db.query(getEntityBalanceSelect(), [entityType, entityId]);
       res.json({
         ...payload,

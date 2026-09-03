@@ -49,9 +49,75 @@ function str(value: unknown): string {
   return String(value ?? '').trim();
 }
 
-function isoDate(value: unknown): string {
+const PLACEHOLDER_NIFS = new Set([
+  '000000000', '0000000000', '111111111', '1111111111', '999999999', '9999999999',
+]);
+
+const GENERIC_PARTY_NAMES = new Set([
+  'consumidor final', 'cliente', 'cliente final', 'walk-in', 'walk in',
+  'final test', 'consumidor', 'fornecedor', 'supplier',
+]);
+
+export function isPlaceholderNif(nif: string): boolean {
+  const n = String(nif || '').replace(/\s/g, '');
+  if (!n) return true;
+  if (/^(.)\1+$/.test(n)) return true;
+  return PLACEHOLDER_NIFS.has(n);
+}
+
+export function isGenericPartyName(name: string): boolean {
+  return GENERIC_PARTY_NAMES.has(String(name || '').trim().toLowerCase().replace(/\s+/g, ' '));
+}
+
+export function normalizePartyName(name: string): string {
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export function isoDate(value: unknown): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
   const s = str(value);
-  return s.length >= 10 ? s.slice(0, 10) : s;
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const dmy = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
+  if (dmy) {
+    return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  }
+  return '';
+}
+
+export function unwrapList(data: unknown): RawRecord[] {
+  if (Array.isArray(data)) return data as RawRecord[];
+  const d = asRecord(data);
+  if (Array.isArray(d.items)) return d.items as RawRecord[];
+  if (Array.isArray(d.data)) return d.data as RawRecord[];
+  if (Array.isArray(d.rows)) return d.rows as RawRecord[];
+  return [];
+}
+
+export function partyMatchesDocument(
+  party: { id: string; name: string; nif: string },
+  doc: { entityId?: string; clientId?: string; supplierId?: string; nif?: string; name?: string },
+): boolean {
+  const docId = str(doc.entityId || doc.clientId || doc.supplierId);
+  if (docId && docId.toLowerCase() === party.id.toLowerCase()) return true;
+  const partyName = normalizePartyName(party.name);
+  const docName = normalizePartyName(doc.name || '');
+  if (partyName && docName && partyName === docName && !isGenericPartyName(partyName)) return true;
+  const partyNif = party.nif.replace(/\s/g, '');
+  const docNif = str(doc.nif).replace(/\s/g, '');
+  if (!isPlaceholderNif(partyNif) && !isPlaceholderNif(docNif) && partyNif === docNif) return true;
+  return false;
+}
+
+export function statementHasDocuments(payload: unknown): boolean {
+  const n = normalizeStatementPayload(payload);
+  return n.openItems.length + n.payments.length + n.sales.length
+    + n.creditNotes.length + n.debitNotes.length + n.purchases.length > 0;
 }
 
 function amount(value: unknown): number {
@@ -69,6 +135,12 @@ function paymentMethodLabel(method: string, labels: AccountStatementLabels): str
 
 export function normalizeStatementPayload(data: unknown) {
   const d = asRecord(data);
+  if (
+    !d.openItems && !d.open_items && !d.sales && !d.payments && !d.purchases
+    && d.data && typeof d.data === 'object'
+  ) {
+    return normalizeStatementPayload(d.data);
+  }
   return {
     openItems: (d.openItems ?? d.open_items ?? []) as RawRecord[],
     payments: (d.payments ?? []) as RawRecord[],

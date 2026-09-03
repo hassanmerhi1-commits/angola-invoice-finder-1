@@ -15,6 +15,7 @@ import { Download, Printer, FileText, Search, TrendingUp, TrendingDown, FileDown
 import { format, parseISO } from 'date-fns';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
+import { isGenericPartyName, isPlaceholderNif } from '@/lib/accountStatement';
 import { buildReportHtml, escapeHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 
 interface StatementEntry {
@@ -38,8 +39,14 @@ function matchesClient(
 ) {
   if (!client) return false;
   if (opts.clientId && opts.clientId === client.id) return true;
-  if (client.nif && opts.customerNif && opts.customerNif === client.nif) return true;
-  if (client.name && opts.customerName && opts.customerName === client.name) return true;
+  if (
+    client.nif && opts.customerNif && opts.customerNif === client.nif
+    && !isPlaceholderNif(client.nif)
+  ) return true;
+  if (
+    client.name && opts.customerName && opts.customerName === client.name
+    && !isGenericPartyName(client.name)
+  ) return true;
   return false;
 }
 

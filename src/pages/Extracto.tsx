@@ -14,6 +14,11 @@ import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton
 import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 import {
   buildAccountStatement,
+  isGenericPartyName,
+  isPlaceholderNif,
+  partyMatchesDocument,
+  statementHasDocuments,
+  unwrapList,
   type AccountStatementLabels,
   type AccountStatementMovement,
   type AccountStatementParty,
@@ -28,6 +33,94 @@ function formatIsoDate(iso: string): string {
   if (!iso || iso.length < 10) return '—';
   const [y, m, d] = iso.slice(0, 10).split('-');
   return y && m && d ? `${d}/${m}/${y}` : '—';
+}
+
+type PartyRow = { id: string; name: string; nif: string; balance: number };
+
+function mapPartyRow(row: Record<string, unknown>): PartyRow {
+  return {
+    id: String(row.id || ''),
+    name: String(row.name || row.entity_name || ''),
+    nif: String(row.nif || ''),
+    balance: Number(row.balance ?? row.current_balance ?? row.currentBalance ?? 0),
+  };
+}
+
+function keepPartyRow(row: PartyRow): boolean {
+  if (!row.id) return false;
+  if (Math.abs(row.balance) > 0.005) return true;
+  return !(isGenericPartyName(row.name) && isPlaceholderNif(row.nif));
+}
+
+async function loadPartiesFromDocuments(partyKind: AccountStatementParty): Promise<PartyRow[]> {
+  if (partyKind === 'supplier') {
+    const [suppliersRes, purchasesRes] = await Promise.all([
+      api.suppliers.list(),
+      api.purchaseInvoices.list({ limit: 2000 }),
+    ]);
+    const suppliers = unwrapList(suppliersRes.data).map(mapPartyRow).filter((row) => row.id);
+    const purchases = unwrapList(purchasesRes.data);
+    const matched = suppliers.filter((supplier) => (
+      Math.abs(supplier.balance) > 0.005
+      || purchases.some((purchase) => partyMatchesDocument(supplier, {
+        supplierId: String(purchase.supplier_id ?? purchase.supplierId ?? ''),
+        nif: String(purchase.supplier_nif ?? purchase.supplierNif ?? ''),
+        name: String(purchase.supplier_name ?? purchase.supplierName ?? ''),
+      }))
+    ));
+    return matched.filter(keepPartyRow);
+  }
+
+  const [clientsRes, salesRes] = await Promise.all([
+    api.clients.list(),
+    api.sales.list(undefined, { limit: 2000, light: true }),
+  ]);
+  const clients = unwrapList(clientsRes.data).map(mapPartyRow).filter((row) => row.id);
+  const sales = unwrapList(salesRes.data);
+  const matched = clients.filter((client) => (
+    Math.abs(client.balance) > 0.005
+    || sales.some((sale) => partyMatchesDocument(client, {
+      clientId: String(sale.client_id ?? sale.clientId ?? ''),
+      nif: String(sale.customer_nif ?? sale.customerNif ?? ''),
+      name: String(sale.customer_name ?? sale.customerName ?? ''),
+    }))
+  ));
+  return matched.filter(keepPartyRow);
+}
+
+async function loadStatementDocuments(
+  partyKind: AccountStatementParty,
+  party: PartyRow,
+): Promise<Record<string, unknown>> {
+  const [openRes, payRes] = await Promise.all([
+    api.payments.openItems(partyKind, party.id),
+    api.payments.list({ entityType: partyKind, entityId: party.id, limit: 5000 }),
+  ]);
+  const payload: Record<string, unknown> = {
+    openItems: unwrapList(openRes.data),
+    payments: unwrapList(payRes.data),
+    sales: [],
+    creditNotes: [],
+    debitNotes: [],
+    purchases: [],
+  };
+
+  if (partyKind === 'supplier') {
+    const purchasesRes = await api.purchaseInvoices.list({ limit: 2000 });
+    payload.purchases = unwrapList(purchasesRes.data).filter((purchase) => partyMatchesDocument(party, {
+      supplierId: String(purchase.supplier_id ?? purchase.supplierId ?? ''),
+      nif: String(purchase.supplier_nif ?? purchase.supplierNif ?? ''),
+      name: String(purchase.supplier_name ?? purchase.supplierName ?? ''),
+    }));
+  } else {
+    const salesRes = await api.sales.list(undefined, { limit: 2000, light: true });
+    payload.sales = unwrapList(salesRes.data).filter((sale) => partyMatchesDocument(party, {
+      clientId: String(sale.client_id ?? sale.clientId ?? ''),
+      nif: String(sale.customer_nif ?? sale.customerNif ?? ''),
+      name: String(sale.customer_name ?? sale.customerName ?? ''),
+    }));
+  }
+  return payload;
 }
 
 function typeBadge(type: AccountStatementMovement['type']): string {
@@ -102,16 +195,22 @@ export default function Extracto() {
       try {
         const res = await api.payments.statementParties(partyKind);
         if (cancelled) return;
-        const rows = Array.isArray(res.data) ? res.data : res.data?.items;
-        const list = (Array.isArray(rows) ? rows : []).map((row) => ({
-          id: String(row.id || ''),
-          name: String(row.name || ''),
-          nif: String(row.nif || ''),
-          balance: Number(row.balance || 0),
-        })).filter((row) => row.id);
+        let list = unwrapList(res.data).map(mapPartyRow).filter(keepPartyRow);
+        const polluted = list.filter((row) => isPlaceholderNif(row.nif)).length >= 2;
+        if (res.error || list.length === 0 || polluted) {
+          const fromDocs = await loadPartiesFromDocuments(partyKind);
+          if (fromDocs.length > 0) list = fromDocs;
+        }
+        if (cancelled) return;
         setAllParties(list);
       } catch {
-        if (!cancelled) setAllParties([]);
+        if (!cancelled) {
+          try {
+            setAllParties(await loadPartiesFromDocuments(partyKind));
+          } catch {
+            setAllParties([]);
+          }
+        }
       } finally {
         if (!cancelled) setPartiesLoading(false);
       }
@@ -139,12 +238,17 @@ export default function Extracto() {
     try {
       const res = await api.payments.statement(partyKind, selectedId);
       if (generation !== fetchGen.current) return;
-      if (res.error) throw new Error(res.error);
+      let payload = res.data;
+      if ((res.error || !statementHasDocuments(payload)) && selected) {
+        payload = await loadStatementDocuments(partyKind, selected);
+      } else if (res.error) {
+        throw new Error(res.error);
+      }
       const built = buildAccountStatement({
         party: partyKind,
         dateFrom,
         dateTo,
-        payload: res.data,
+        payload,
         labels,
       });
       setLines(built.lines);
@@ -161,7 +265,7 @@ export default function Extracto() {
     } finally {
       if (generation === fetchGen.current) setLoading(false);
     }
-  }, [selectedId, partyKind, dateFrom, dateTo, labels, ui.loadFailed]);
+  }, [selectedId, selected, partyKind, dateFrom, dateTo, labels, ui.loadFailed]);
 
   useEffect(() => {
     void loadStatement();
