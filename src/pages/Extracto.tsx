@@ -1,334 +1,494 @@
-// NEXOR ERP - Extracto (Account Statement)
-// Shows all documents linked to a customer/supplier with running balance
-
-import { useState, useMemo, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '@/i18n';
-import { useAuth } from '@/hooks/useERP';
-import { useBranchScope } from '@/hooks/useBranchScope';
+import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Card, CardContent } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  Search, RefreshCw, FileText, Download, Printer,
-  TrendingUp, TrendingDown, ArrowRight, User, Building2
+  Search, RefreshCw, FileText, Download, Printer, FileDown, Loader2, User, Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getDocuments, getSalesInvoicesAsDocuments } from '@/lib/documentStorage';
-import { DOCUMENT_TYPE_CONFIG, ERPDocument } from '@/types/documents';
-import { exportToExcel } from '@/lib/excel';
+import { api } from '@/lib/api/client';
 import { toast } from 'sonner';
+import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
+import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
+import {
+  buildAccountStatement,
+  type AccountStatementLabels,
+  type AccountStatementMovement,
+  type AccountStatementParty,
+} from '@/lib/accountStatement';
+import { buildReportHtml, escapeHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 
-interface EntitySummary {
-  name: string;
-  nif: string;
-  totalInvoiced: number;
-  totalPaid: number;
-  balance: number;
-  documentCount: number;
-  lastActivity: string;
+function yearStartIso(): string {
+  return `${new Date().getFullYear()}-01-01`;
 }
 
-function entitySide(doc: ERPDocument): 'customer' | 'supplier' {
-  if (doc.entityType === 'customer' || doc.entityType === 'supplier') return doc.entityType;
-  return DOCUMENT_TYPE_CONFIG[doc.documentType]?.entityType === 'supplier' ? 'supplier' : 'customer';
+function formatIsoDate(iso: string): string {
+  if (!iso || iso.length < 10) return '—';
+  const [y, m, d] = iso.slice(0, 10).split('-');
+  return y && m && d ? `${d}/${m}/${y}` : '—';
 }
 
-/** Running balance: debits increase what they owe us / we owe them; credits decrease it. */
-/** Legacy purchase returns were saved as supplier nota_debito — treat as credit on statements. */
-function isLegacySupplierPurchaseReturn(doc: ERPDocument): boolean {
-  return (
-    doc.documentType === 'nota_debito' &&
-    (doc.entityType === 'supplier' || doc.parentDocumentType === 'fatura_compra')
-  );
-}
-
-function isStatementDebit(doc: ERPDocument, isCustomer: boolean): boolean {
-  if (isLegacySupplierPurchaseReturn(doc)) return false;
-  if (isCustomer) {
-    return ['fatura_venda', 'nota_debito'].includes(doc.documentType);
+function typeBadge(type: AccountStatementMovement['type']): string {
+  switch (type) {
+    case 'invoice': return 'FT';
+    case 'purchase': return 'FC';
+    case 'receipt': return 'REC';
+    case 'payment': return 'PAG';
+    case 'credit_note': return 'NC';
+    case 'debit_note': return 'ND';
+    case 'advance': return 'AD';
+    default: return '';
   }
-  return doc.documentType === 'fatura_compra';
-}
-
-function isStatementCredit(doc: ERPDocument, isCustomer: boolean): boolean {
-  if (isLegacySupplierPurchaseReturn(doc)) return true;
-  if (isCustomer) {
-    return ['recibo', 'nota_credito'].includes(doc.documentType);
-  }
-  return ['pagamento', 'nota_credito'].includes(doc.documentType);
 }
 
 export default function Extracto() {
-  const { t } = useTranslation();
-  const { listBranchId, isHeadOffice, branches } = useBranchScope();
-  const [activeTab, setActiveTab] = useState('clientes');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedEntity, setSelectedEntity] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const { t, language } = useTranslation();
+  const ui = t.extractoUi;
+  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const dateLocale = language === 'pt' ? 'pt' : 'en';
+  const { companyName } = useCompanyLogo();
 
-  const [allDocs, setAllDocs] = useState<ERPDocument[]>([]);
+  const [partyKind, setPartyKind] = useState<AccountStatementParty>('customer');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [allParties, setAllParties] = useState<Array<{ id: string; name: string; nif: string; balance: number }>>([]);
+  const [partiesLoading, setPartiesLoading] = useState(false);
+  const [dateFrom, setDateFrom] = useState(yearStartIso);
+  const [dateTo, setDateTo] = useState(localISODate);
+  const [loading, setLoading] = useState(false);
+  const [lines, setLines] = useState<AccountStatementMovement[]>([]);
+  const [openingBalance, setOpeningBalance] = useState(0);
+  const [periodDebit, setPeriodDebit] = useState(0);
+  const [periodCredit, setPeriodCredit] = useState(0);
+  const [closingBalance, setClosingBalance] = useState(0);
+  const fetchGen = useRef(0);
+
+  const labels: AccountStatementLabels = useMemo(() => ({
+    invoice: ui.invoice,
+    purchase: ui.purchase,
+    receipt: ui.receipt,
+    payment: ui.payment,
+    creditNote: ui.creditNote,
+    debitNote: ui.debitNote,
+    advance: ui.advance,
+    openingBalance: ui.openingBalance,
+    paymentWithMethod: ui.paymentWithMethod,
+    methodCash: t.chartsUi.methodCash,
+    methodCard: t.chartsUi.methodCard,
+    methodTransfer: t.chartsUi.methodTransfer,
+    methodCheque: ui.methodCheque,
+  }), [ui, t.chartsUi.methodCash, t.chartsUi.methodCard, t.chartsUi.methodTransfer]);
+
+  const parties = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    const filtered = q
+      ? allParties.filter((p) => p.name.toLowerCase().includes(q) || (p.nif || '').toLowerCase().includes(q))
+      : allParties;
+    return [...filtered].sort((a, b) => a.name.localeCompare(b.name, locale, { sensitivity: 'base' }));
+  }, [allParties, searchTerm, locale]);
+
+  const selected = useMemo(
+    () => allParties.find((row) => row.id === selectedId) ?? parties.find((row) => row.id === selectedId) ?? null,
+    [allParties, parties, selectedId],
+  );
 
   useEffect(() => {
-    const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
-    Promise.all([
-      getDocuments(undefined, listBranchId),
-      getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice),
-    ]).then(([docs, salesDocs]) => {
-      const seen = new Set(docs.map((d) => d.documentNumber));
-      const merged = [...docs];
-      for (const doc of salesDocs) {
-        if (doc.documentNumber && !seen.has(doc.documentNumber)) merged.push(doc);
+    let cancelled = false;
+    setPartiesLoading(true);
+    setSelectedId(null);
+    void (async () => {
+      try {
+        const res = await api.payments.statementParties(partyKind);
+        if (cancelled) return;
+        const rows = Array.isArray(res.data) ? res.data : res.data?.items;
+        const list = (Array.isArray(rows) ? rows : []).map((row) => ({
+          id: String(row.id || ''),
+          name: String(row.name || ''),
+          nif: String(row.nif || ''),
+          balance: Number(row.balance || 0),
+        })).filter((row) => row.id);
+        setAllParties(list);
+      } catch {
+        if (!cancelled) setAllParties([]);
+      } finally {
+        if (!cancelled) setPartiesLoading(false);
       }
-      setAllDocs(merged);
-    });
-  }, [listBranchId, isHeadOffice, branches, refreshKey]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [partyKind]);
 
-  // Group documents by entity
-  const entitySummaries = useMemo(() => {
-    const isCustomer = activeTab === 'clientes';
-    const relevantDocs = allDocs.filter(d => entitySide(d) === (isCustomer ? 'customer' : 'supplier'));
+  const money = useCallback((n: number) => (
+    new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 2 }).format(n)
+  ), [locale]);
 
-    const grouped = new Map<string, EntitySummary>();
-    relevantDocs.forEach(doc => {
-      const key = doc.entityNif || doc.entityName;
-      if (!grouped.has(key)) {
-        grouped.set(key, {
-          name: doc.entityName,
-          nif: doc.entityNif || '',
-          totalInvoiced: 0,
-          totalPaid: 0,
-          balance: 0,
-          documentCount: 0,
-          lastActivity: doc.issueDate,
-        });
-      }
-      const s = grouped.get(key)!;
-      s.documentCount++;
-      if (doc.issueDate > s.lastActivity) s.lastActivity = doc.issueDate;
-
-      if (isStatementDebit(doc, isCustomer)) {
-        s.totalInvoiced += doc.total;
-      }
-      if (isStatementCredit(doc, isCustomer)) {
-        s.totalPaid += doc.total;
-      }
-      s.balance = s.totalInvoiced - s.totalPaid;
-    });
-
-    return Array.from(grouped.values())
-      .filter(s => !searchTerm || s.name.toLowerCase().includes(searchTerm.toLowerCase()) || s.nif.includes(searchTerm))
-      .sort((a, b) => b.balance - a.balance);
-  }, [allDocs, activeTab, searchTerm]);
-
-  // Documents for selected entity
-  const entityDocuments = useMemo(() => {
-    if (!selectedEntity) return [];
-    return allDocs
-      .filter(d => (d.entityNif || d.entityName) === selectedEntity)
-      .sort((a, b) => new Date(a.issueDate).getTime() - new Date(b.issueDate).getTime());
-  }, [allDocs, selectedEntity]);
-
-  // Running balance for statement
-  const statementLines = useMemo(() => {
-    let running = 0;
-    return entityDocuments.map(doc => {
-      const isDebit = isStatementDebit(doc, activeTab === 'clientes');
-      const amount = doc.total;
-      running += isDebit ? amount : -amount;
-      return { doc, debit: isDebit ? amount : 0, credit: isDebit ? 0 : amount, running };
-    });
-  }, [entityDocuments]);
-
-  const totals = useMemo(() => entitySummaries.reduce((a, s) => ({
-    invoiced: a.invoiced + s.totalInvoiced,
-    paid: a.paid + s.totalPaid,
-    balance: a.balance + s.balance,
-  }), { invoiced: 0, paid: 0, balance: 0 }), [entitySummaries]);
-
-  const selectedSummary = entitySummaries.find(s => (s.nif || s.name) === selectedEntity);
-
-  const handlePrintStatement = () => {
-    if (!selectedSummary || !statementLines.length) return;
-    const html = `<html><head><title>Extracto — ${selectedSummary.name}</title>
-      <style>body{font-family:Arial,sans-serif;font-size:12px;padding:24px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px;text-align:left}th{background:#f5f5f5}.right{text-align:right}</style>
-      </head><body><h2>Extracto — ${selectedSummary.name}</h2><p>NIF: ${selectedSummary.nif || '-'}</p>
-      <table><thead><tr><th>Data</th><th>Documento</th><th class="right">Débito</th><th class="right">Crédito</th><th class="right">Saldo</th></tr></thead><tbody>
-      ${statementLines.map(({ doc, debit, credit, running }) =>
-        `<tr><td>${doc.issueDate}</td><td>${doc.documentNumber}</td><td class="right">${debit ? debit.toLocaleString('pt-AO') : ''}</td><td class="right">${credit ? credit.toLocaleString('pt-AO') : ''}</td><td class="right">${running.toLocaleString('pt-AO')}</td></tr>`
-      ).join('')}
-      </tbody></table></body></html>`;
-    const win = window.open('', '_blank');
-    if (!win) {
-      toast.error('Popup bloqueado — permita popups para imprimir.');
+  const loadStatement = useCallback(async () => {
+    if (!selectedId) {
+      setLines([]);
+      setOpeningBalance(0);
+      setPeriodDebit(0);
+      setPeriodCredit(0);
+      setClosingBalance(0);
       return;
     }
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    win.print();
+    const generation = ++fetchGen.current;
+    setLoading(true);
+    try {
+      const res = await api.payments.statement(partyKind, selectedId);
+      if (generation !== fetchGen.current) return;
+      if (res.error) throw new Error(res.error);
+      const built = buildAccountStatement({
+        party: partyKind,
+        dateFrom,
+        dateTo,
+        payload: res.data,
+        labels,
+      });
+      setLines(built.lines);
+      setOpeningBalance(built.openingBalance);
+      setPeriodDebit(built.periodDebit);
+      setPeriodCredit(built.periodCredit);
+      setClosingBalance(built.closingBalance);
+    } catch (err) {
+      console.error('[Extracto] load failed:', err);
+      if (generation === fetchGen.current) {
+        setLines([]);
+        toast.error(ui.loadFailed);
+      }
+    } finally {
+      if (generation === fetchGen.current) setLoading(false);
+    }
+  }, [selectedId, partyKind, dateFrom, dateTo, labels, ui.loadFailed]);
+
+  useEffect(() => {
+    void loadStatement();
+  }, [loadStatement]);
+
+  const movementCount = Math.max(0, lines.length - (lines[0]?.type === 'opening' ? 1 : 0));
+
+  const buildPrintHtml = () => {
+    if (!selected) return '';
+    const rows = lines.map((entry) => `<tr class="${entry.type === 'opening' ? 'sub' : ''}">
+      <td>${escapeHtml(formatIsoDate(entry.date))}</td>
+      <td>${escapeHtml(typeBadge(entry.type) || '—')}</td>
+      <td>${escapeHtml(entry.reference)}</td>
+      <td>${escapeHtml(entry.description)}</td>
+      <td class="r">${entry.debit > 0 ? escapeHtml(money(entry.debit)) : ''}</td>
+      <td class="r">${entry.credit > 0 ? escapeHtml(money(entry.credit)) : ''}</td>
+      <td class="r b">${escapeHtml(money(entry.balance))}</td>
+    </tr>`).join('');
+    return buildReportHtml({
+      title: ui.title,
+      companyName,
+      subtitle: `${selected.name} · ${t.reportsUi.nif} ${selected.nif || '—'}`,
+      periodLabel: t.incomeStatementUi.periodLabel
+        .replace('{from}', formatIsoDate(dateFrom))
+        .replace('{to}', formatIsoDate(dateTo)),
+      bodyHtml: `<table>
+        <thead><tr>
+          <th>${escapeHtml(t.common.date)}</th>
+          <th>${escapeHtml(t.reportsUi.type)}</th>
+          <th>${escapeHtml(t.reportsUi.reference)}</th>
+          <th>${escapeHtml(t.common.description)}</th>
+          <th class="r">${escapeHtml(t.reportsUi.debit)}</th>
+          <th class="r">${escapeHtml(t.reportsUi.credit)}</th>
+          <th class="r">${escapeHtml(t.reportsUi.balance)}</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr class="tot">
+          <td colspan="4">${escapeHtml(t.common.total)}</td>
+          <td class="r">${escapeHtml(money(periodDebit))}</td>
+          <td class="r">${escapeHtml(money(periodCredit))}</td>
+          <td class="r">${escapeHtml(money(closingBalance))}</td>
+        </tr></tfoot>
+      </table>
+      <p class="muted">${escapeHtml(ui.openingBalance)}: ${escapeHtml(money(openingBalance))}
+        · ${escapeHtml(ui.closingBalance)}: ${escapeHtml(money(closingBalance))}</p>`,
+    });
   };
 
-  const handleExportExcel = () => {
-    if (!selectedSummary || !statementLines.length) return;
-    exportToExcel(
-      statementLines.map(({ doc, debit, credit, running }) => ({
-        Data: doc.issueDate,
-        Documento: doc.documentNumber,
-        Tipo: doc.documentType,
-        Debito: debit,
-        Credito: credit,
-        Saldo: running,
-      })),
-      `Extracto_${selectedSummary.name.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}`,
-    );
-    toast.success('Extracto exportado para Excel.');
+  const handlePrint = async () => {
+    const html = buildPrintHtml();
+    if (!html) return;
+    try {
+      await printReport(html);
+    } catch (e) {
+      console.error('[Extracto] print failed:', e);
+    }
+  };
+
+  const handlePdf = async () => {
+    const html = buildPrintHtml();
+    if (!html || !selected) return;
+    try {
+      await saveReportPdf(html, `Extracto_${selected.name}_${dateTo}`);
+    } catch (e) {
+      console.error('[Extracto] pdf failed:', e);
+    }
+  };
+
+  const handleExcel = async () => {
+    if (!selected || lines.length === 0) return;
+    try {
+      await exportReportExcel(
+        lines.map((entry) => ({
+          [t.common.date]: formatIsoDate(entry.date),
+          [t.reportsUi.type]: typeBadge(entry.type) || entry.description,
+          [t.reportsUi.reference]: entry.reference,
+          [t.common.description]: entry.description,
+          [t.reportsUi.debit]: entry.debit,
+          [t.reportsUi.credit]: entry.credit,
+          [t.reportsUi.balance]: entry.balance,
+        })),
+        `Extracto_${selected.name.replace(/\s+/g, '_')}_${dateTo}`,
+        { title: ui.title, subtitle: `${selected.name} — ${formatIsoDate(dateFrom)} — ${formatIsoDate(dateTo)}` },
+      );
+      toast.success(ui.excelExported);
+    } catch (e) {
+      console.error('[Extracto] excel failed:', e);
+    }
   };
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      {/* Toolbar */}
-      <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b">
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedEntity} onClick={handlePrintStatement}>
-          <Printer className="w-3 h-3" /> Imprimir Extracto
-        </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={!selectedEntity} onClick={handleExportExcel}>
-          <Download className="w-3 h-3" /> Excel
-        </Button>
-        <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setRefreshKey(k => k + 1)}>
-          <RefreshCw className="w-3 h-3" />
-        </Button>
+    <div className="flex h-full flex-col bg-background">
+      <div className="flex flex-wrap items-center gap-1 border-b bg-muted/50 px-2 py-1">
+        <span className="px-2 text-xs font-semibold">{ui.title}</span>
+        <div className="mx-1 h-5 w-px bg-border" />
+        <DatePickerButton
+          value={dateFrom}
+          onChange={setDateFrom}
+          locale={dateLocale}
+          buttonClassName="h-7 text-xs"
+        />
+        <span className="text-xs text-muted-foreground">–</span>
+        <DatePickerButton
+          value={dateTo}
+          onChange={setDateTo}
+          locale={dateLocale}
+          minDate={dateFrom}
+          buttonClassName="h-7 text-xs"
+        />
         <div className="flex-1" />
+        <Button
+          variant="outline"
+          size="sm"
+          className={NEXOR_TOOLBAR_BTN_SM}
+          disabled={!selectedId || loading}
+          onClick={() => void handlePrint()}
+        >
+          <Printer className="h-3 w-3" /> {t.reportsUi.print}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className={NEXOR_TOOLBAR_BTN_SM}
+          disabled={!selectedId || loading}
+          onClick={() => void handlePdf()}
+        >
+          <FileDown className="h-3 w-3" /> {t.reportsUi.savePdf}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className={NEXOR_TOOLBAR_BTN_SM}
+          disabled={!selectedId || loading}
+          onClick={() => void handleExcel()}
+        >
+          <Download className="h-3 w-3" /> {t.reportsUi.exportExcel}
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-7 w-7"
+          onClick={() => void loadStatement()}
+          disabled={loading}
+        >
+          <RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} />
+        </Button>
         <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-          <Input placeholder="Pesquisar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-7 text-xs pl-7 w-48" />
+          <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder={ui.searchParty}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="h-7 w-52 pl-7 text-xs"
+          />
         </div>
       </div>
 
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={v => { setActiveTab(v); setSelectedEntity(null); }}>
-        <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 h-auto p-0">
-          <TabsTrigger value="clientes" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-1.5 gap-1">
-            <User className="w-3 h-3" /> Clientes
+      <Tabs
+        value={partyKind}
+        onValueChange={(v) => {
+          setPartyKind(v as AccountStatementParty);
+          setSelectedId(null);
+        }}
+      >
+        <TabsList className="h-auto w-full justify-start rounded-none border-b bg-muted/30 p-0">
+          <TabsTrigger
+            value="customer"
+            className="gap-1 rounded-none border-b-2 border-transparent px-4 py-1.5 text-xs data-[state=active]:border-primary"
+          >
+            <User className="h-3 w-3" /> {ui.customers}
           </TabsTrigger>
-          <TabsTrigger value="fornecedores" className="text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-1.5 gap-1">
-            <Building2 className="w-3 h-3" /> Fornecedores
+          <TabsTrigger
+            value="supplier"
+            className="gap-1 rounded-none border-b-2 border-transparent px-4 py-1.5 text-xs data-[state=active]:border-primary"
+          >
+            <Building2 className="h-3 w-3" /> {ui.suppliers}
           </TabsTrigger>
         </TabsList>
       </Tabs>
 
-      {/* Split view: entity list + statement */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left: Entity list */}
-        <div className="w-96 border-r overflow-auto">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="w-96 overflow-auto border-r">
           <table className="w-full text-xs">
-            <thead className="bg-muted/60 border-b sticky top-0">
+            <thead className="sticky top-0 border-b bg-muted/60">
               <tr>
-                <th className="px-3 py-1.5 text-left font-semibold">Nome</th>
-                <th className="px-3 py-1.5 text-left font-semibold w-24">NIF</th>
-                <th className="px-3 py-1.5 text-right font-semibold w-28">Saldo</th>
+                <th className="px-3 py-1.5 text-left font-semibold">{partyKind === 'customer' ? t.reportsUi.client : t.reportsUi.supplier}</th>
+                <th className="w-24 px-3 py-1.5 text-left font-semibold">{t.reportsUi.nif}</th>
+                <th className="w-28 px-3 py-1.5 text-right font-semibold">{t.reportsUi.balance}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {entitySummaries.map(s => {
-                const key = s.nif || s.name;
-                return (
-                  <tr key={key} className={cn("cursor-pointer hover:bg-accent/50", selectedEntity === key && "nexor-row-selected")}
-                    onClick={() => setSelectedEntity(key)}>
-                    <td className="px-3 py-1.5 font-medium">{s.name}</td>
-                    <td className="px-3 py-1.5 text-muted-foreground">{s.nif || '-'}</td>
-                    <td className={cn("px-3 py-1.5 text-right font-mono font-medium", s.balance > 0 ? "text-destructive" : "text-green-600")}>
-                      {s.balance.toLocaleString('pt-AO')} Kz
-                    </td>
-                  </tr>
-                );
-              })}
+              {partiesLoading && (
+                <tr>
+                  <td colSpan={3} className="px-3 py-6 text-center text-muted-foreground">
+                    <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin" />
+                    {t.common.loading}
+                  </td>
+                </tr>
+              )}
+              {parties.map((party) => (
+                <tr
+                  key={party.id}
+                  className={cn('cursor-pointer hover:bg-accent/50', selectedId === party.id && 'nexor-row-selected')}
+                  onClick={() => setSelectedId(party.id)}
+                >
+                  <td className="px-3 py-1.5 font-medium">{party.name}</td>
+                  <td className="px-3 py-1.5 text-muted-foreground">{party.nif || '—'}</td>
+                  <td className={cn(
+                    'px-3 py-1.5 text-right font-mono font-medium',
+                    party.balance > 0.005 ? 'text-destructive' : party.balance < -0.005 ? 'text-green-600' : '',
+                  )}>
+                    {party.balance.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              ))}
             </tbody>
-            <tfoot className="bg-muted/80 border-t-2">
-              <tr className="font-bold text-xs">
-                <td className="px-3 py-2" colSpan={2}>TOTAL ({entitySummaries.length})</td>
-                <td className={cn("px-3 py-2 text-right font-mono", totals.balance > 0 ? "text-destructive" : "text-green-600")}>
-                  {totals.balance.toLocaleString('pt-AO')} Kz
-                </td>
-              </tr>
-            </tfoot>
           </table>
+          {!partiesLoading && parties.length === 0 && (
+            <p className="p-6 text-center text-xs text-muted-foreground">
+              {searchTerm.trim() ? t.common.noResults : ui.onlyWithMovement}
+            </p>
+          )}
         </div>
 
-        {/* Right: Statement */}
-        <div className="flex-1 overflow-auto">
-          {!selectedEntity ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+        <div className="min-w-0 flex-1 overflow-auto">
+          {!selectedId ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
               <div className="text-center">
-                <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                <p>Seleccione um {activeTab === 'clientes' ? 'cliente' : 'fornecedor'}</p>
-                <p className="text-xs mt-1">para ver o extracto</p>
+                <FileText className="mx-auto mb-3 h-12 w-12 opacity-30" />
+                <p>{partyKind === 'customer' ? ui.selectCustomer : ui.selectSupplier}</p>
               </div>
             </div>
+          ) : loading && lines.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              {t.common.loading}
+            </div>
           ) : (
-            <div className="flex flex-col h-full">
-              {/* Entity header */}
-              {selectedSummary && (
-                <div className="px-4 py-2 bg-muted/30 border-b flex items-center justify-between">
+            <div className="flex h-full flex-col">
+              {selected && (
+                <div className="flex items-center justify-between gap-4 border-b bg-muted/30 px-4 py-2">
                   <div>
-                    <h3 className="font-bold text-sm">{selectedSummary.name}</h3>
-                    <p className="text-xs text-muted-foreground">NIF: {selectedSummary.nif || 'N/A'} • {selectedSummary.documentCount} documentos</p>
+                    <h3 className="text-sm font-bold">{selected.name}</h3>
+                    <p className="text-xs text-muted-foreground">
+                      {t.reportsUi.nif}: {selected.nif || '—'}
+                      {' · '}
+                      {ui.documents.replace('{count}', String(movementCount))}
+                    </p>
                   </div>
                   <div className="flex gap-4 text-xs">
                     <div className="text-center">
-                      <div className="text-muted-foreground">Facturado</div>
-                      <div className="font-mono font-bold">{selectedSummary.totalInvoiced.toLocaleString('pt-AO')} Kz</div>
+                      <div className="text-muted-foreground">{ui.openingBalance}</div>
+                      <div className="font-mono font-bold">{money(openingBalance)}</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-muted-foreground">Pago</div>
-                      <div className="font-mono font-bold text-green-600">{selectedSummary.totalPaid.toLocaleString('pt-AO')} Kz</div>
+                      <div className="text-muted-foreground">{t.reportsUi.debit}</div>
+                      <div className="font-mono font-bold">{money(periodDebit)}</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-muted-foreground">Saldo</div>
-                      <div className={cn("font-mono font-bold", selectedSummary.balance > 0 ? "text-destructive" : "text-green-600")}>
-                        {selectedSummary.balance.toLocaleString('pt-AO')} Kz
+                      <div className="text-muted-foreground">{t.reportsUi.credit}</div>
+                      <div className="font-mono font-bold text-green-600">{money(periodCredit)}</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-muted-foreground">{ui.closingBalance}</div>
+                      <div className={cn(
+                        'font-mono font-bold',
+                        closingBalance > 0.005 ? 'text-destructive' : 'text-green-600',
+                      )}>
+                        {money(closingBalance)}
                       </div>
+                      {closingBalance > 0.005 && (
+                        <div className="text-[10px] text-muted-foreground">
+                          {partyKind === 'customer' ? ui.theyOwe : ui.weOwe}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Statement grid */}
-              <div className="flex-1 overflow-auto">
+              <div className="relative min-h-0 flex-1 overflow-auto">
+                {loading && (
+                  <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-2 border-b bg-background/80 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {t.common.loading}
+                  </div>
+                )}
                 <table className="w-full text-xs">
-                  <thead className="bg-muted/60 border-b sticky top-0">
+                  <thead className="sticky top-0 z-10 border-b bg-muted/60">
                     <tr>
-                      <th className="px-3 py-1.5 text-left font-semibold w-24">Data</th>
-                      <th className="px-3 py-1.5 text-left font-semibold w-14">Tipo</th>
-                      <th className="px-3 py-1.5 text-left font-semibold w-40">Nº Documento</th>
-                      <th className="px-3 py-1.5 text-left font-semibold">Descrição</th>
-                      <th className="px-3 py-1.5 text-right font-semibold w-28">Débito</th>
-                      <th className="px-3 py-1.5 text-right font-semibold w-28">Crédito</th>
-                      <th className="px-3 py-1.5 text-right font-semibold w-28">Saldo</th>
+                      <th className="w-24 px-3 py-1.5 text-left font-semibold">{t.common.date}</th>
+                      <th className="w-14 px-3 py-1.5 text-left font-semibold">{t.reportsUi.type}</th>
+                      <th className="w-40 px-3 py-1.5 text-left font-semibold">{t.reportsUi.reference}</th>
+                      <th className="px-3 py-1.5 text-left font-semibold">{t.common.description}</th>
+                      <th className="w-32 px-3 py-1.5 text-right font-semibold">{t.reportsUi.debit}</th>
+                      <th className="w-32 px-3 py-1.5 text-right font-semibold">{t.reportsUi.credit}</th>
+                      <th className="w-32 px-3 py-1.5 text-right font-semibold">{t.reportsUi.balance}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50">
-                    {statementLines.map(({ doc, debit, credit, running }) => {
-                      const cfg = DOCUMENT_TYPE_CONFIG[doc.documentType];
-                      return (
-                        <tr key={doc.id} className="hover:bg-accent/30">
-                          <td className="px-3 py-1.5 text-muted-foreground">{new Date(doc.issueDate).toLocaleDateString('pt-AO')}</td>
-                          <td className={cn("px-3 py-1.5 font-medium", cfg.color)}>{cfg.prefix}</td>
-                          <td className="px-3 py-1.5 font-mono">{doc.documentNumber}</td>
-                          <td className="px-3 py-1.5">{doc.lines.length > 0 ? `${doc.lines.length} linhas` : '-'}</td>
-                          <td className="px-3 py-1.5 text-right font-mono">{debit > 0 ? debit.toLocaleString('pt-AO') : ''}</td>
-                          <td className="px-3 py-1.5 text-right font-mono text-green-600">{credit > 0 ? credit.toLocaleString('pt-AO') : ''}</td>
-                          <td className={cn("px-3 py-1.5 text-right font-mono font-medium", running > 0 ? "text-destructive" : "text-green-600")}>
-                            {running.toLocaleString('pt-AO')}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {lines.map((entry) => (
+                      <tr
+                        key={`${entry.type}-${entry.id}`}
+                        className={cn(entry.type === 'opening' && 'bg-muted/40 font-medium')}
+                      >
+                        <td className="px-3 py-1.5 text-muted-foreground">{formatIsoDate(entry.date)}</td>
+                        <td className="px-3 py-1.5 font-medium">{typeBadge(entry.type) || '—'}</td>
+                        <td className="px-3 py-1.5 font-mono">{entry.reference || '—'}</td>
+                        <td className="px-3 py-1.5">{entry.description}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">
+                          {entry.debit > 0 ? money(entry.debit) : ''}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-green-600">
+                          {entry.credit > 0 ? money(entry.credit) : ''}
+                        </td>
+                        <td className={cn(
+                          'px-3 py-1.5 text-right font-mono font-medium',
+                          entry.balance > 0.005 ? 'text-destructive' : 'text-green-600',
+                        )}>
+                          {money(entry.balance)}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
-                {statementLines.length === 0 && (
-                  <div className="text-center py-8 text-muted-foreground text-sm">Sem movimentos</div>
+                {movementCount === 0 && !loading && (
+                  <div className="py-8 text-center text-sm text-muted-foreground">{ui.noMovements}</div>
                 )}
               </div>
             </div>

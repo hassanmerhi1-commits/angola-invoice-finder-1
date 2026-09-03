@@ -76,13 +76,33 @@ export default function SupplierStatementReport() {
   const [dateFrom, setDateFrom] = useState(format(subMonths(new Date(), 6), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeParties, setActiveParties] = useState<Array<{ id: string; name: string; nif: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [statementEntries, setStatementEntries] = useState<StatementEntry[]>([]);
   const [currentBalance, setCurrentBalance] = useState(0);
 
   const selectedSupplierData = useMemo(() => {
-    return suppliers.find(s => s.id === selectedSupplier);
-  }, [suppliers, selectedSupplier]);
+    return suppliers.find(s => s.id === selectedSupplier)
+      || activeParties.find(s => s.id === selectedSupplier);
+  }, [suppliers, activeParties, selectedSupplier]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.payments.statementParties('supplier').then((res) => {
+      if (cancelled) return;
+      const rows = Array.isArray(res.data) ? res.data : res.data?.items;
+      setActiveParties(
+        (Array.isArray(rows) ? rows : []).map((row) => ({
+          id: String(row.id || ''),
+          name: String(row.name || ''),
+          nif: String(row.nif || ''),
+        })).filter((row) => row.id),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const fetchGenerationRef = useRef(0);
 
@@ -263,13 +283,13 @@ export default function SupplierStatementReport() {
   }, [statementEntries]);
 
   const filteredSuppliers = useMemo(() => {
-    if (!searchTerm) return suppliers;
+    const source = activeParties.length > 0 ? activeParties : suppliers;
+    if (!searchTerm) return source;
     const term = searchTerm.toLowerCase();
-    return suppliers.filter(s => 
-      s.name.toLowerCase().includes(term) || 
-      s.nif.toLowerCase().includes(term)
+    return source.filter((s) =>
+      s.name.toLowerCase().includes(term) || (s.nif || '').toLowerCase().includes(term),
     );
-  }, [suppliers, searchTerm]);
+  }, [activeParties, suppliers, searchTerm]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat(locale, { 

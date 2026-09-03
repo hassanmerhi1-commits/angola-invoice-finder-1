@@ -3284,6 +3284,34 @@ export const en = {
     converted: "Converted",
   },
 
+  extractoUi: {
+    title: "Account Statement",
+    subtitle: "Customer and supplier movements with opening and closing balance",
+    customers: "Customers",
+    suppliers: "Suppliers",
+    searchParty: "Search name or NIF...",
+    selectCustomer: "Select a customer to view the statement",
+    selectSupplier: "Select a supplier to view the statement",
+    openingBalance: "Opening balance",
+    closingBalance: "Closing balance",
+    theyOwe: "Customer owes",
+    weOwe: "We owe",
+    invoice: "Sales invoice",
+    purchase: "Purchase invoice",
+    receipt: "Receipt",
+    payment: "Payment",
+    creditNote: "Credit note",
+    debitNote: "Debit note",
+    advance: "Advance",
+    paymentWithMethod: "{method}",
+    methodCheque: "Cheque",
+    noMovements: "No movements in this period",
+    onlyWithMovement: "No customers or suppliers with invoices or payments yet",
+    documents: "{count} documents",
+    loadFailed: "Could not load the account statement",
+    excelExported: "Statement exported to Excel",
+  },
+
   dashboardUi: {
     headquarters: "Head Office",
     documentFlowTitle: "Document Flow",
@@ -3311,7 +3339,7 @@ export const en = {
     },
     documentFlow: {
       salesInvoice: "Sales Invoice",
-      statement: "Statement",
+      statement: "Account Statement",
     },
     quickActions: {
       posSales: "POS / Sales",

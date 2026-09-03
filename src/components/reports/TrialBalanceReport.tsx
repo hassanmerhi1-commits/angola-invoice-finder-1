@@ -2,7 +2,7 @@
  * Balancete (Trial Balance) Report — live data from chart of accounts + journal entries.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -94,10 +94,23 @@ function rowHasActivity(row: TrialBalanceRow): boolean {
   );
 }
 
-export default function TrialBalanceReport() {
+export default function TrialBalanceReport({
+  highlightAccountCode,
+  defaultDateFrom,
+  defaultDateTo,
+}: {
+  highlightAccountCode?: string;
+  defaultDateFrom?: string;
+  defaultDateTo?: string;
+} = {}) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const filters = useSharedReportFilters();
+  const highlightRef = useRef<HTMLTableRowElement | null>(null);
+  const filters = useSharedReportFilters(
+    defaultDateFrom && defaultDateTo
+      ? { dateFrom: defaultDateFrom, dateTo: defaultDateTo }
+      : undefined,
+  );
   const {
     dateFrom: startDate,
     dateTo: endDate,
@@ -111,6 +124,7 @@ export default function TrialBalanceReport() {
   const { preview } = useReportExportMeta();
 
   const [accountType, setAccountType] = useState('all');
+  const [query, setQuery] = useState(highlightAccountCode ?? '');
   const branchId = apiBranchId;
   const { data, isLoading, error, refetch } = useTrialBalance(startDate, endDate, branchId);
 
@@ -126,15 +140,28 @@ export default function TrialBalanceReport() {
   );
 
   const accounts = useMemo(() => {
-    const rows = data.filter(rowHasActivity).map((row) => {
+    let rows = data.filter(rowHasActivity).map((row) => {
       const filterKey = API_TYPE_TO_FILTER[row.account_type] || row.account_type;
       const typeLabel = typeLabels[filterKey as keyof typeof typeLabels] || row.account_type;
       return mapRowToAccountBalance(row, typeLabel, filterKey, language, t);
     });
 
-    if (accountType === 'all') return rows;
-    return rows.filter((a) => a.filterKey === accountType);
-  }, [data, accountType, typeLabels, language, t]);
+    if (accountType !== 'all') {
+      rows = rows.filter((a) => a.filterKey === accountType);
+    }
+    const q = query.trim().toLowerCase();
+    if (q) {
+      rows = rows.filter(
+        (a) => a.accountCode.toLowerCase().includes(q) || a.accountName.toLowerCase().includes(q),
+      );
+    }
+    return rows;
+  }, [data, accountType, query, typeLabels, language, t]);
+
+  useEffect(() => {
+    if (!highlightAccountCode) return;
+    highlightRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [highlightAccountCode, accounts]);
 
   const totals = accounts.reduce(
     (acc, account) => ({
@@ -301,6 +328,15 @@ export default function TrialBalanceReport() {
               </>
             )}
             <div className="space-y-1">
+              <Label className="text-xs">{t.common.search}</Label>
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t.trialBalanceUi.colCode}
+                className="h-8 w-40"
+              />
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs">{t.trialBalanceUi.accountType}</Label>
               <Select value={accountType} onValueChange={setAccountType}>
                 <SelectTrigger className="h-8 w-40">
@@ -370,7 +406,11 @@ export default function TrialBalanceReport() {
                 </TableHeader>
                 <TableBody>
                   {accounts.map((account) => (
-                    <TableRow key={account.accountCode}>
+                    <TableRow
+                      key={account.accountCode}
+                      ref={account.accountCode === highlightAccountCode ? highlightRef : undefined}
+                      className={account.accountCode === highlightAccountCode ? 'bg-indigo-50 dark:bg-indigo-950/40' : undefined}
+                    >
                       <TableCell className="font-mono text-sm">{account.accountCode}</TableCell>
                       <TableCell>{account.accountName}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{account.accountType}</TableCell>

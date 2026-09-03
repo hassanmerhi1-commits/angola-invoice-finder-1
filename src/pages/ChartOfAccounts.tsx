@@ -134,6 +134,7 @@ export default function ChartOfAccounts() {
   const editSelectedRef = useRef<() => void>(() => {});
   const [ledgerAccount, setLedgerAccount] = useState<Account | null>(null);
   const [isLedgerOpen, setIsLedgerOpen] = useState(false);
+  const [ledgerDates, setLedgerDates] = useState<{ from: string; to: string } | null>(null);
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
   const [isSupplierDialogOpen, setIsSupplierDialogOpen] = useState(false);
   // Inline "+" quick-create of a parent/sub header account from inside the account dialog.
@@ -184,15 +185,20 @@ export default function ChartOfAccounts() {
   const childrenByParentRef = useRef<Map<string, Account[]>>(new Map());
   const filteredAccountsRef = useRef<Account[]>([]);
 
-  const openLedger = useCallback((account: Account) => {
-    // Warm fetch on first click of a double-click; open dialog immediately.
+  const openLedger = useCallback((account: Account, range?: { from: string; to: string } | null) => {
     prefetchAccountLedger(account.id, { days: 7, limit: 50 });
+    setLedgerDates(range ?? null);
     setLedgerAccount(account);
     setIsLedgerOpen(true);
   }, []);
 
   useEffect(() => {
-    const code = String((location.state as { openLedgerCode?: string } | null)?.openLedgerCode || '').trim();
+    const st = location.state as {
+      openLedgerCode?: string;
+      openLedgerDateFrom?: string;
+      openLedgerDateTo?: string;
+    } | null;
+    const code = String(st?.openLedgerCode || '').trim();
     if (!code || accounts.length === 0) return;
     const match =
       accounts.find((a) => a.code === code)
@@ -207,7 +213,10 @@ export default function ChartOfAccounts() {
       }
       return next;
     });
-    openLedger(match);
+    const range = st?.openLedgerDateFrom && st?.openLedgerDateTo
+      ? { from: st.openLedgerDateFrom, to: st.openLedgerDateTo }
+      : null;
+    openLedger(match, range);
     navigate('.', { replace: true, state: {} });
   }, [accounts, location.state, navigate, openLedger]);
 
@@ -978,7 +987,16 @@ export default function ChartOfAccounts() {
       </Dialog>
 
       {/* Account Ledger Dialog */}
-      <AccountLedgerDialog account={ledgerAccount} open={isLedgerOpen} onOpenChange={setIsLedgerOpen} />
+      <AccountLedgerDialog
+        account={ledgerAccount}
+        open={isLedgerOpen}
+        onOpenChange={(next) => {
+          setIsLedgerOpen(next);
+          if (!next) setLedgerDates(null);
+        }}
+        initialDateFrom={ledgerDates?.from}
+        initialDateTo={ledgerDates?.to}
+      />
       <ClientFormDialog open={isClientDialogOpen} onOpenChange={setIsClientDialogOpen} onSaved={() => refetch()} />
       <SupplierFormDialog open={isSupplierDialogOpen} onOpenChange={setIsSupplierDialogOpen} onSaved={() => refetch()} />
     </div>

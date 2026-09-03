@@ -1,15 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -17,6 +10,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   RefreshCw,
   Download,
@@ -39,6 +38,9 @@ import { NEXOR_PILL_BTN, NEXOR_PILL_BTN_PRIMARY } from '@/lib/nexorToolbarStyles
 import { NEXOR_STAT_CARD } from '@/lib/nexorToneStyles';
 import { formatDisplayDate } from '@/lib/formatDisplayDate';
 import { awaitPrefetchedLedger, takePrefetchedLedger } from '@/lib/ledgerPrefetch';
+import { JournalEntryDetailDialog } from '@/components/accounting/JournalEntryDetailDialog';
+import { LedgerReportDialog, type LedgerReportKind } from '@/components/accounting/LedgerReportDialog';
+import type { JournalDisplayEntry } from '@/lib/journalEntryDisplay';
 
 const LEDGER_FETCH_LIMIT = 50;
 /** Fast first paint on double-click. */
@@ -90,14 +92,24 @@ interface Props {
   account: Account | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialDateFrom?: string;
+  initialDateTo?: string;
 }
 
-export default function AccountLedgerDialog({ account, open, onOpenChange }: Props) {
+export default function AccountLedgerDialog({
+  account,
+  open,
+  onOpenChange,
+  initialDateFrom,
+  initialDateTo,
+}: Props) {
   const { t, language } = useTranslation();
   const { users } = useUsers();
-  const navigate = useNavigate();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
+  const [journalEntry, setJournalEntry] = useState<JournalDisplayEntry | null>(null);
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [reportKind, setReportKind] = useState<LedgerReportKind | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -118,7 +130,9 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
   // fetch with the previous account's dates (that doubled wait on cash accounts).
   if (open && account?.id && account.id !== ledgerAccountId) {
     setLedgerAccountId(account.id);
-    const bounds = lastDaysBounds(INITIAL_LEDGER_DAYS);
+    const bounds = initialDateFrom && initialDateTo
+      ? { from: initialDateFrom, to: initialDateTo }
+      : lastDaysBounds(INITIAL_LEDGER_DAYS);
     setStartDate(bounds.from);
     setEndDate(bounds.to);
     setSearchTerm('');
@@ -133,6 +147,9 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     setLedgerAccountId(null);
     autoExpandRef.current = false;
     reqIdRef.current += 1;
+    setJournalOpen(false);
+    setJournalEntry(null);
+    setReportKind(null);
   }
 
   const refTypeLabels: Record<string, string> = useMemo(() => ({
@@ -506,12 +523,36 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
     }
   };
 
-  const handleOpenReport = (tab: string) => {
-    onOpenChange(false);
-    navigate(`/reports?tab=${encodeURIComponent(tab)}`);
+  const openJournal = (entry: LedgerEntry) => {
+    const id = String(entry.journal_entry_id || '').trim();
+    if (!id) return;
+    setJournalEntry({
+      id,
+      entryNumber: entry.entry_number || '',
+      entryDate: entry.entry_date || '',
+      createdAt: '',
+      type: entry.reference_type || 'manual',
+      displayType: entry.reference_type || 'manual',
+      referenceType: entry.reference_type || '',
+      referenceId: entry.reference_id,
+      currency: 'AOA',
+      description: entry.journal_description || entry.description || '',
+      readableTitle: entry.journal_description || entry.entry_number || '',
+      readableSubtitle: '',
+      customerName: '',
+      contextSummary: '',
+      totalDebit: Number(entry.debit_amount) || 0,
+      totalCredit: Number(entry.credit_amount) || 0,
+      isPosted: entry.is_posted,
+      createdBy: entry.created_by_name || entry.created_by || '',
+      branchName: entry.branch_name || '',
+      lines: [],
+    });
+    setJournalOpen(true);
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[96vw] w-[96vw] max-h-[95vh] h-[90vh] flex flex-col gap-4 p-4 sm:p-6 bg-slate-50/40">
         <DialogHeader className="shrink-0 space-y-0">
@@ -541,13 +582,13 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="rounded-xl">
-              <DropdownMenuItem onClick={() => handleOpenReport('trial-balance')}>
+              <DropdownMenuItem onClick={() => setReportKind('trial-balance')}>
                 {t.ledgerUi.reportTrialBalance}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleOpenReport('cash-flow')}>
+              <DropdownMenuItem onClick={() => setReportKind('cash-flow')}>
                 {t.ledgerUi.reportCashFlow}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => { onOpenChange(false); navigate('/journals'); }}>
+              <DropdownMenuItem onClick={() => setReportKind('journals')}>
                 {t.ledgerUi.reportJournals}
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -560,7 +601,7 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
           </Button>
           <div className="flex-1" />
           <Button variant="outline" size="sm" className={NEXOR_PILL_BTN} onClick={() => void fetchLedger()} disabled={isLoading}>
-            <RefreshCw className={cn('w-3.5 h-3.5 text-slate-500', isLoading && 'animate-spin')} /> {t.ledgerUi.filter}
+            <RefreshCw className={cn('w-3.5 h-3.5 text-slate-500', isLoading && 'animate-spin')} /> {t.common.refresh}
           </Button>
         </div>
 
@@ -727,7 +768,19 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
                   return (
                     <tr key={entry.id} className="hover:bg-accent/30 transition-colors">
                       <td className="px-3 py-2 font-mono text-muted-foreground">{fmtDate(entry.entry_date)}</td>
-                      <td className="px-3 py-2 font-mono">{entry.entry_number}</td>
+                      <td className="px-3 py-2 font-mono">
+                        {entry.journal_entry_id ? (
+                          <button
+                            type="button"
+                            className="text-left text-indigo-700 underline-offset-2 hover:underline"
+                            onClick={() => openJournal(entry)}
+                          >
+                            {entry.entry_number}
+                          </button>
+                        ) : (
+                          entry.entry_number
+                        )}
+                      </td>
                       {showBranchColumn && (
                         <td className="px-3 py-2 text-muted-foreground text-xs">
                           {entry.branch_name || '—'}
@@ -779,5 +832,31 @@ export default function AccountLedgerDialog({ account, open, onOpenChange }: Pro
         </div>
       </DialogContent>
     </Dialog>
+    <LedgerReportDialog
+      open={!!reportKind}
+      onOpenChange={(next) => { if (!next) setReportKind(null); }}
+      kind={reportKind}
+      accountCode={account?.code || ''}
+      dateFrom={startDate}
+      dateTo={endDate}
+      onOpenJournal={(entry) => {
+        setJournalEntry(entry);
+        setJournalOpen(true);
+      }}
+    />
+    <JournalEntryDetailDialog
+      entry={journalEntry}
+      open={journalOpen}
+      onOpenChange={(next) => {
+        setJournalOpen(next);
+        if (!next) setJournalEntry(null);
+      }}
+      entryTypeLabel={
+        journalEntry
+          ? (refTypeLabels[journalEntry.referenceType] || journalEntry.referenceType || '')
+          : ''
+      }
+    />
+    </>
   );
 }

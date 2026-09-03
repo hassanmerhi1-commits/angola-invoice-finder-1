@@ -37,10 +37,20 @@ function isDisbursement(p: PaymentRow) {
 }
 
 /** Treasury-style cash movement from the payments ledger (REC / PAG). */
-export default function CashFlowReport() {
+export default function CashFlowReport({
+  defaultDateFrom,
+  defaultDateTo,
+}: {
+  defaultDateFrom?: string;
+  defaultDateTo?: string;
+} = {}) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const filters = useSharedReportFilters();
+  const filters = useSharedReportFilters(
+    defaultDateFrom && defaultDateTo
+      ? { dateFrom: defaultDateFrom, dateTo: defaultDateTo }
+      : undefined,
+  );
   const { dateFrom, dateTo, setDateFrom, setDateTo, apiBranchId, shared } = filters;
   const { preview } = useReportExportMeta();
 

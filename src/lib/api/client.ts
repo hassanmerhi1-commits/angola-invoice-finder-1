@@ -2062,6 +2062,7 @@ export const api = {
       startDate?: string;
       endDate?: string;
       q?: string;
+      accountCode?: string;
       limit?: number;
       offset?: number;
       includeLines?: boolean;
@@ -2073,6 +2074,7 @@ export const api = {
       if (params?.startDate) searchParams.append('startDate', params.startDate);
       if (params?.endDate) searchParams.append('endDate', params.endDate);
       if (params?.q) searchParams.append('q', params.q);
+      if (params?.accountCode) searchParams.append('accountCode', params.accountCode);
       if (params?.limit != null) searchParams.append('limit', String(params.limit));
       if (params?.offset != null) searchParams.append('offset', String(params.offset));
       if (params?.includeLines) searchParams.append('includeLines', '1');
@@ -2296,10 +2298,18 @@ export const api = {
       }
       return apiFetch<any>(`/payments/balance/${entityType}/${entityId}`);
     },
+    statementParties: (entityType: string) =>
+      apiFetch<{ items: Array<{ id: string; name: string; nif?: string; balance?: number }> }>(
+        `/payments/statement-parties/${encodeURIComponent(entityType)}`,
+      ),
     statement: (entityType: string, entityId: string, dateFrom?: string, dateTo?: string) => {
       if (isElectronMode()) {
-        // Build combined query for electron mode
-        return (async () => {
+        const sp = new URLSearchParams();
+        if (dateFrom) sp.append('dateFrom', dateFrom);
+        if (dateTo) sp.append('dateTo', dateTo);
+        const qs = sp.toString();
+        return apiFetch<any>(`/payments/statement/${entityType}/${entityId}${qs ? `?${qs}` : ''}`).then(async (http) => {
+          if (http.data !== undefined && !http.error) return http;
           const oiParams: any[] = [entityType, entityId];
           let oiSql = `SELECT id, document_type, document_id, document_number, document_date, due_date,
                         original_amount, remaining_amount, is_debit, status, created_at
@@ -2328,7 +2338,7 @@ export const api = {
           ]);
 
           return { data: { openItems: oiRes.data || [], payments: pRes.data || [], balance: balRes.data?.[0] || { balance: 0 } } } as ApiResponse<any>;
-        })();
+        });
       }
       if (isDemoMode()) {
         const openItems = JSON.parse(localStorage.getItem('kwanzaerp_open_items') || '[]')

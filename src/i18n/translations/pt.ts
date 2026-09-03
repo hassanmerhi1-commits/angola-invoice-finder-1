@@ -3287,6 +3287,34 @@ export const pt: TranslationKeys = {
     converted: "Convertido",
   },
 
+  extractoUi: {
+    title: "Extracto de Conta",
+    subtitle: "Movimentos de clientes e fornecedores com saldo inicial e final",
+    customers: "Clientes",
+    suppliers: "Fornecedores",
+    searchParty: "Pesquisar nome ou NIF...",
+    selectCustomer: "Seleccione um cliente para ver o extracto",
+    selectSupplier: "Seleccione um fornecedor para ver o extracto",
+    openingBalance: "Saldo anterior",
+    closingBalance: "Saldo actual",
+    theyOwe: "Cliente deve",
+    weOwe: "Devemos",
+    invoice: "Fatura de venda",
+    purchase: "Fatura de compra",
+    receipt: "Recibo",
+    payment: "Pagamento",
+    creditNote: "Nota de crédito",
+    debitNote: "Nota de débito",
+    advance: "Adiantamento",
+    paymentWithMethod: "{method}",
+    methodCheque: "Cheque",
+    noMovements: "Sem movimentos neste período",
+    onlyWithMovement: "Ainda não há clientes ou fornecedores com facturas ou pagamentos",
+    documents: "{count} documentos",
+    loadFailed: "Não foi possível carregar o extracto de conta",
+    excelExported: "Extracto exportado para Excel",
+  },
+
   dashboardUi: {
     headquarters: "Sede",
     documentFlowTitle: "Fluxo Documental",
@@ -3314,7 +3342,7 @@ export const pt: TranslationKeys = {
     },
     documentFlow: {
       salesInvoice: "Fatura De Venda",
-      statement: "Extracto",
+      statement: "Extracto de Conta",
     },
     quickActions: {
       posSales: "POS / Vendas",

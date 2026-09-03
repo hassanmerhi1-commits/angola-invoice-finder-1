@@ -54,12 +54,32 @@ export default function ClientStatementReport() {
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [receipts, setReceipts] = useState<any[]>([]);
+  const [activeParties, setActiveParties] = useState<Array<{ id: string; name: string; nif: string }>>([]);
 
   const { creditNotes } = useReportCreditNotes(apiBranchId, { dateFrom, dateTo });
 
   const selectedClientData = useMemo(() => {
-    return clients.find((c) => c.id === selectedClient);
-  }, [clients, selectedClient]);
+    return clients.find((c) => c.id === selectedClient)
+      || activeParties.find((c) => c.id === selectedClient);
+  }, [clients, activeParties, selectedClient]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.payments.statementParties('customer').then((res) => {
+      if (cancelled) return;
+      const rows = Array.isArray(res.data) ? res.data : res.data?.items;
+      setActiveParties(
+        (Array.isArray(rows) ? rows : []).map((row) => ({
+          id: String(row.id || ''),
+          name: String(row.name || ''),
+          nif: String(row.nif || ''),
+        })).filter((row) => row.id),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedClient) {
@@ -194,12 +214,20 @@ export default function ClientStatementReport() {
   }, [statementEntries]);
 
   const filteredClients = useMemo(() => {
-    if (!searchTerm) return clients;
+    const source = activeParties.length > 0
+      ? activeParties
+      : clients.filter((c) =>
+          sales.some((sale) => matchesClient(
+            { clientId: sale.clientId, customerNif: sale.customerNif, customerName: sale.customerName },
+            c,
+          )),
+        );
+    if (!searchTerm) return source;
     const term = searchTerm.toLowerCase();
-    return clients.filter(
-      (c) => c.name.toLowerCase().includes(term) || c.nif.toLowerCase().includes(term),
+    return source.filter(
+      (c) => c.name.toLowerCase().includes(term) || (c.nif || '').toLowerCase().includes(term),
     );
-  }, [clients, searchTerm]);
+  }, [activeParties, clients, sales, searchTerm]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat(locale, {

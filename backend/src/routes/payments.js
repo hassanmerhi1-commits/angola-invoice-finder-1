@@ -7,6 +7,7 @@ const { getEntityBalanceSelect } = require('../entityBalanceSql');
 const { listSupplierPayables } = require('../lib/supplierPayablesList');
 const { listCustomerReceivables } = require('../lib/customerReceivablesList');
 const { listChecklistDues } = require('../lib/openItemsBriefing');
+const { loadAccountStatement, listStatementParties } = require('../lib/accountStatement');
 const { requirePermission } = require('../middleware/requirePermission');
 const { ensureYearPeriods, fetchPeriods, getPeriodById } = require('../lib/accountingPeriods');
 const { auditErpSafe } = require('../lib/erpAudit');
@@ -267,40 +268,27 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // READ: Full statement for an entity (all open_items + payments)
+  // Parties that actually have invoices / payments (not the full master).
+  router.get('/statement-parties/:entityType', async (req, res) => {
+    try {
+      const rows = await listStatementParties(db, req.params.entityType);
+      res.json({ items: rows });
+    } catch (error) {
+      console.error('[PAYMENTS STATEMENT PARTIES ERROR]', error);
+      res.status(500).json({ error: 'Failed to fetch statement parties' });
+    }
+  });
+
+  // READ: Full statement — open items, payments, plus cash invoices / purchases
   router.get('/statement/:entityType/:entityId', async (req, res) => {
     try {
       const { entityType, entityId } = req.params;
       const { dateFrom, dateTo } = req.query;
-
-      // 1) All open items (invoices, credit notes, debit notes) — including cleared
-      let oiQuery = `SELECT id, document_type, document_id, document_number, document_date, due_date,
-                      original_amount, remaining_amount, is_debit, status, created_at
-                      FROM open_items WHERE entity_type = $1 AND entity_id = $2`;
-      const oiParams = [entityType, entityId];
-      let idx = 3;
-      if (dateFrom) { oiQuery += ` AND document_date >= $${idx++}`; oiParams.push(dateFrom); }
-      if (dateTo)   { oiQuery += ` AND document_date <= $${idx++}`; oiParams.push(dateTo); }
-      oiQuery += ' ORDER BY document_date ASC, created_at ASC';
-      const oiResult = await db.query(oiQuery, oiParams);
-
-      // 2) All payments for this entity
-      let pQuery = `SELECT id, payment_number, payment_type, payment_method, amount, reference, notes, created_at
-                    FROM payments WHERE entity_type = $1 AND entity_id = $2`;
-      const pParams = [entityType, entityId];
-      idx = 3;
-      if (dateFrom) { pQuery += ` AND created_at >= $${idx++}`; pParams.push(dateFrom); }
-      if (dateTo)   { pQuery += ` AND created_at <= $${idx++}`; pParams.push(dateTo + 'T23:59:59'); }
-      pQuery += ' ORDER BY created_at ASC';
-      const pResult = await db.query(pQuery, pParams);
-
-      // 3) Current balance
+      const payload = await loadAccountStatement(db, entityType, entityId, { dateFrom, dateTo });
       const balResult = await db.query(getEntityBalanceSelect(), [entityType, entityId]);
-
       res.json({
-        openItems: oiResult.rows,
-        payments: pResult.rows,
-        balance: balResult.rows[0] || { balance: 0, open_items_count: 0 }
+        ...payload,
+        balance: balResult.rows[0] || { balance: 0, open_items_count: 0 },
       });
     } catch (error) {
       console.error('[PAYMENTS STATEMENT ERROR]', error);

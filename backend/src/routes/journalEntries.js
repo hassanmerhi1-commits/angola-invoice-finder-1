@@ -65,7 +65,7 @@ module.exports = function(broadcastTable) {
   // Get all journal entries with lines
   router.get('/', async (req, res) => {
     try {
-      const { branchId, referenceType, startDate, endDate, q } = req.query;
+      const { branchId, referenceType, startDate, endDate, q, accountCode } = req.query;
       const dated = !!(String(startDate || '').trim() && String(endDate || '').trim());
       const { limit, offset } = parseListPagination(req, {
         defaultLimit: 200,
@@ -100,6 +100,17 @@ module.exports = function(broadcastTable) {
       if (endDate) {
         conditions.push(`je.entry_date <= $${paramIndex++}`);
         params.push(endDate);
+      }
+      const codeFilter = String(accountCode || '').trim();
+      if (codeFilter) {
+        params.push(codeFilter);
+        conditions.push(
+          `EXISTS (
+            SELECT 1 FROM journal_entry_lines jel_acc
+            JOIN chart_of_accounts coa_acc ON coa_acc.id = jel_acc.account_id
+            WHERE jel_acc.journal_entry_id = je.id AND coa_acc.code = $${paramIndex++}
+          )`,
+        );
       }
       const search = String(q || '').trim();
       if (search) {

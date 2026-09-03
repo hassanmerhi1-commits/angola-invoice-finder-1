@@ -116,7 +116,7 @@ export function JournalEntryDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto z-[80]">
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2">
             <span>{t.journalsUi.entryTitle.replace('{number}', display?.entryNumber || '')}</span>
