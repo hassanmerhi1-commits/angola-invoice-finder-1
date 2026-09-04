@@ -16,8 +16,6 @@ import {
   buildAccountStatement,
   isGenericPartyName,
   isPlaceholderNif,
-  partyMatchesDocument,
-  statementHasDocuments,
   unwrapList,
   type AccountStatementLabels,
   type AccountStatementMovement,
@@ -52,75 +50,11 @@ function keepPartyRow(row: PartyRow): boolean {
   return !(isGenericPartyName(row.name) && isPlaceholderNif(row.nif));
 }
 
-async function loadPartiesFromDocuments(partyKind: AccountStatementParty): Promise<PartyRow[]> {
-  if (partyKind === 'supplier') {
-    const [suppliersRes, purchasesRes] = await Promise.all([
-      api.suppliers.list(),
-      api.purchaseInvoices.list({ limit: 2000 }),
-    ]);
-    const suppliers = unwrapList(suppliersRes.data).map(mapPartyRow).filter((row) => row.id);
-    const purchases = unwrapList(purchasesRes.data);
-    const matched = suppliers.filter((supplier) => (
-      Math.abs(supplier.balance) > 0.005
-      || purchases.some((purchase) => partyMatchesDocument(supplier, {
-        supplierId: String(purchase.supplier_id ?? purchase.supplierId ?? ''),
-        nif: String(purchase.supplier_nif ?? purchase.supplierNif ?? ''),
-        name: String(purchase.supplier_name ?? purchase.supplierName ?? ''),
-      }))
-    ));
-    return matched.filter(keepPartyRow);
-  }
-
-  const [clientsRes, salesRes] = await Promise.all([
-    api.clients.list(),
-    api.sales.list(undefined, { limit: 2000, light: true }),
-  ]);
-  const clients = unwrapList(clientsRes.data).map(mapPartyRow).filter((row) => row.id);
-  const sales = unwrapList(salesRes.data);
-  const matched = clients.filter((client) => (
-    Math.abs(client.balance) > 0.005
-    || sales.some((sale) => partyMatchesDocument(client, {
-      clientId: String(sale.client_id ?? sale.clientId ?? ''),
-      nif: String(sale.customer_nif ?? sale.customerNif ?? ''),
-      name: String(sale.customer_name ?? sale.customerName ?? ''),
-    }))
+async function loadPartiesFallback(partyKind: AccountStatementParty): Promise<PartyRow[]> {
+  const res = partyKind === 'supplier' ? await api.suppliers.list() : await api.clients.list();
+  return unwrapList(res.data).map(mapPartyRow).filter((row) => (
+    keepPartyRow(row) && Math.abs(row.balance) > 0.005
   ));
-  return matched.filter(keepPartyRow);
-}
-
-async function loadStatementDocuments(
-  partyKind: AccountStatementParty,
-  party: PartyRow,
-): Promise<Record<string, unknown>> {
-  const [openRes, payRes] = await Promise.all([
-    api.payments.openItems(partyKind, party.id),
-    api.payments.list({ entityType: partyKind, entityId: party.id, limit: 5000 }),
-  ]);
-  const payload: Record<string, unknown> = {
-    openItems: unwrapList(openRes.data),
-    payments: unwrapList(payRes.data),
-    sales: [],
-    creditNotes: [],
-    debitNotes: [],
-    purchases: [],
-  };
-
-  if (partyKind === 'supplier') {
-    const purchasesRes = await api.purchaseInvoices.list({ limit: 2000 });
-    payload.purchases = unwrapList(purchasesRes.data).filter((purchase) => partyMatchesDocument(party, {
-      supplierId: String(purchase.supplier_id ?? purchase.supplierId ?? ''),
-      nif: String(purchase.supplier_nif ?? purchase.supplierNif ?? ''),
-      name: String(purchase.supplier_name ?? purchase.supplierName ?? ''),
-    }));
-  } else {
-    const salesRes = await api.sales.list(undefined, { limit: 2000, light: true });
-    payload.sales = unwrapList(salesRes.data).filter((sale) => partyMatchesDocument(party, {
-      clientId: String(sale.client_id ?? sale.clientId ?? ''),
-      nif: String(sale.customer_nif ?? sale.customerNif ?? ''),
-      name: String(sale.customer_name ?? sale.customerName ?? ''),
-    }));
-  }
-  return payload;
 }
 
 function typeBadge(type: AccountStatementMovement['type']): string {
@@ -156,7 +90,11 @@ export default function Extracto() {
   const [periodDebit, setPeriodDebit] = useState(0);
   const [periodCredit, setPeriodCredit] = useState(0);
   const [closingBalance, setClosingBalance] = useState(0);
+  const [rawPayload, setRawPayload] = useState<unknown>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const fetchGen = useRef(0);
+  const partyCache = useRef<Partial<Record<AccountStatementParty, PartyRow[]>>>({});
+  const statementCache = useRef<Record<string, unknown>>({});
 
   const labels: AccountStatementLabels = useMemo(() => ({
     invoice: ui.invoice,
@@ -188,25 +126,38 @@ export default function Extracto() {
   );
 
   useEffect(() => {
-    let cancelled = false;
-    setPartiesLoading(true);
     setSelectedId(null);
+    setRawPayload(null);
+  }, [partyKind]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const cached = partyCache.current[partyKind];
+    if (cached) {
+      setAllParties(cached);
+      setPartiesLoading(false);
+      return undefined;
+    }
+    setPartiesLoading(true);
+    setAllParties([]);
     void (async () => {
       try {
         const res = await api.payments.statementParties(partyKind);
         if (cancelled) return;
         let list = unwrapList(res.data).map(mapPartyRow).filter(keepPartyRow);
-        const polluted = list.filter((row) => isPlaceholderNif(row.nif)).length >= 2;
-        if (res.error || list.length === 0 || polluted) {
-          const fromDocs = await loadPartiesFromDocuments(partyKind);
-          if (fromDocs.length > 0) list = fromDocs;
+        if (res.error || list.length === 0) {
+          const fallback = await loadPartiesFallback(partyKind);
+          if (fallback.length > 0) list = fallback;
         }
         if (cancelled) return;
+        partyCache.current[partyKind] = list;
         setAllParties(list);
       } catch {
         if (!cancelled) {
           try {
-            setAllParties(await loadPartiesFromDocuments(partyKind));
+            const fallback = await loadPartiesFallback(partyKind);
+            partyCache.current[partyKind] = fallback;
+            setAllParties(fallback);
           } catch {
             setAllParties([]);
           }
@@ -218,14 +169,30 @@ export default function Extracto() {
     return () => {
       cancelled = true;
     };
-  }, [partyKind]);
+  }, [partyKind, refreshNonce]);
 
   const money = useCallback((n: number) => (
     new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 2 }).format(n)
   ), [locale]);
 
-  const loadStatement = useCallback(async () => {
+  const applyPayload = useCallback((payload: unknown) => {
+    const built = buildAccountStatement({
+      party: partyKind,
+      dateFrom,
+      dateTo,
+      payload,
+      labels,
+    });
+    setLines(built.lines);
+    setOpeningBalance(built.openingBalance);
+    setPeriodDebit(built.periodDebit);
+    setPeriodCredit(built.periodCredit);
+    setClosingBalance(built.closingBalance);
+  }, [partyKind, dateFrom, dateTo, labels]);
+
+  useEffect(() => {
     if (!selectedId) {
+      setRawPayload(null);
       setLines([]);
       setOpeningBalance(0);
       setPeriodDebit(0);
@@ -233,43 +200,38 @@ export default function Extracto() {
       setClosingBalance(0);
       return;
     }
+    const cacheKey = `${partyKind}:${selectedId}`;
+    const cached = statementCache.current[cacheKey];
+    if (cached) {
+      setRawPayload(cached);
+      return;
+    }
     const generation = ++fetchGen.current;
     setLoading(true);
-    try {
-      const res = await api.payments.statement(partyKind, selectedId);
-      if (generation !== fetchGen.current) return;
-      let payload = res.data;
-      if ((res.error || !statementHasDocuments(payload)) && selected) {
-        payload = await loadStatementDocuments(partyKind, selected);
-      } else if (res.error) {
-        throw new Error(res.error);
+    void (async () => {
+      try {
+        const res = await api.payments.statement(partyKind, selectedId);
+        if (generation !== fetchGen.current) return;
+        if (res.error) throw new Error(res.error);
+        statementCache.current[cacheKey] = res.data;
+        setRawPayload(res.data);
+      } catch (err) {
+        console.error('[Extracto] load failed:', err);
+        if (generation === fetchGen.current) {
+          setRawPayload(null);
+          setLines([]);
+          toast.error(ui.loadFailed);
+        }
+      } finally {
+        if (generation === fetchGen.current) setLoading(false);
       }
-      const built = buildAccountStatement({
-        party: partyKind,
-        dateFrom,
-        dateTo,
-        payload,
-        labels,
-      });
-      setLines(built.lines);
-      setOpeningBalance(built.openingBalance);
-      setPeriodDebit(built.periodDebit);
-      setPeriodCredit(built.periodCredit);
-      setClosingBalance(built.closingBalance);
-    } catch (err) {
-      console.error('[Extracto] load failed:', err);
-      if (generation === fetchGen.current) {
-        setLines([]);
-        toast.error(ui.loadFailed);
-      }
-    } finally {
-      if (generation === fetchGen.current) setLoading(false);
-    }
-  }, [selectedId, selected, partyKind, dateFrom, dateTo, labels, ui.loadFailed]);
+    })();
+  }, [selectedId, partyKind, refreshNonce, ui.loadFailed]);
 
   useEffect(() => {
-    void loadStatement();
-  }, [loadStatement]);
+    if (!selectedId || !rawPayload) return;
+    applyPayload(rawPayload);
+  }, [selectedId, rawPayload, applyPayload]);
 
   const movementCount = Math.max(0, lines.length - (lines[0]?.type === 'opening' ? 1 : 0));
 
@@ -407,8 +369,12 @@ export default function Extracto() {
           variant="outline"
           size="icon"
           className="h-7 w-7"
-          onClick={() => void loadStatement()}
-          disabled={loading}
+          onClick={() => {
+            delete partyCache.current[partyKind];
+            if (selectedId) delete statementCache.current[`${partyKind}:${selectedId}`];
+            setRefreshNonce((n) => n + 1);
+          }}
+          disabled={loading || partiesLoading}
         >
           <RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} />
         </Button>

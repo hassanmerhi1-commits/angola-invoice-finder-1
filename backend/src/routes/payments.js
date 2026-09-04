@@ -283,8 +283,10 @@ module.exports = function(broadcastTable) {
   router.get('/statement/:entityType/:entityId', async (req, res) => {
     try {
       const { entityType, entityId } = req.params;
-      const payload = await loadAccountStatement(db, entityType, entityId);
-      const balResult = await db.query(getEntityBalanceSelect(), [entityType, entityId]);
+      const [payload, balResult] = await Promise.all([
+        loadAccountStatement(db, entityType, entityId),
+        db.query(getEntityBalanceSelect(), [entityType, entityId]),
+      ]);
       res.json({
         ...payload,
         balance: balResult.rows[0] || { balance: 0, open_items_count: 0 },
