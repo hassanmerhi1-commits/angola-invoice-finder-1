@@ -16,6 +16,7 @@ import {
   buildAccountStatement,
   isGenericPartyName,
   isPlaceholderNif,
+  statementHasDocuments,
   unwrapList,
   type AccountStatementLabels,
   type AccountStatementMovement,
@@ -213,8 +214,20 @@ export default function Extracto() {
         const res = await api.payments.statement(partyKind, selectedId);
         if (generation !== fetchGen.current) return;
         if (res.error) throw new Error(res.error);
-        if (res.data) statementCache.current[cacheKey] = res.data;
-        setRawPayload(res.data);
+        let payload = res.data;
+        if (!statementHasDocuments(payload)) {
+          const [oiRes, payRes] = await Promise.all([
+            api.payments.openItems(partyKind, selectedId),
+            api.payments.list({ entityType: partyKind, entityId: selectedId, limit: 2000 }),
+          ]);
+          payload = {
+            ...(payload && typeof payload === 'object' ? payload : {}),
+            openItems: unwrapList(oiRes.data),
+            payments: unwrapList(payRes.data),
+          };
+        }
+        if (statementHasDocuments(payload)) statementCache.current[cacheKey] = payload;
+        setRawPayload(payload);
       } catch (err) {
         console.error('[Extracto] load failed:', err);
         if (generation === fetchGen.current) {

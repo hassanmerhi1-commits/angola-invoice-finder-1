@@ -283,13 +283,27 @@ module.exports = function(broadcastTable) {
   router.get('/statement/:entityType/:entityId', async (req, res) => {
     try {
       const { entityType, entityId } = req.params;
-      const [payload, balResult] = await Promise.all([
-        loadAccountStatement(db, entityType, entityId),
-        db.query(getEntityBalanceSelect(), [entityType, entityId]),
-      ]);
+      const payload = await loadAccountStatement(db, entityType, entityId);
+      let balance = { balance: 0, open_items_count: 0 };
+      try {
+        const balResult = await db.query(getEntityBalanceSelect(), [entityType, entityId]);
+        balance = balResult.rows[0] || balance;
+      } catch (balErr) {
+        console.warn('[PAYMENTS STATEMENT] balance skipped:', balErr.message);
+      }
+      console.log(
+        '[PAYMENTS STATEMENT]',
+        entityType,
+        String(entityId).slice(0, 8),
+        `oi=${(payload.openItems || []).length}`,
+        `pay=${(payload.payments || []).length}`,
+        `sales=${(payload.sales || []).length}`,
+        `purch=${(payload.purchases || []).length}`,
+        payload._errors?.length ? `errors=${payload._errors.join(' | ')}` : 'ok',
+      );
       res.json({
         ...payload,
-        balance: balResult.rows[0] || { balance: 0, open_items_count: 0 },
+        balance,
       });
     } catch (error) {
       console.error('[PAYMENTS STATEMENT ERROR]', error);

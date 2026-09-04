@@ -119,4 +119,30 @@ describe('accountStatement', { concurrency: 1 }, () => {
     const statement = await accountStatement.loadAccountStatement(harness.db, 'customer', clientId);
     assert.equal(statement.sales.some((row) => row.invoice_number === 'FT-NAME-1'), true);
   });
+
+  it('loads a sale when client_id is stored without dashes', async () => {
+    const clientId = randomUUID();
+    const saleId = randomUUID();
+    await harness.db.query(
+      `INSERT INTO clients (id, name, nif, current_balance, is_active, created_at, updated_at)
+       VALUES ($1, 'SOYO MOTORS', '5000777888', 500, 1, datetime('now'), datetime('now'))`,
+      [clientId],
+    );
+    await harness.db.query(
+      `INSERT INTO sales (id, invoice_number, customer_name, customer_nif, client_id, total, amount_paid,
+                          payment_method, status, created_at, subtotal, tax_amount)
+       VALUES ($1, 'FT-NODASH-1', 'SOYO MOTORS', '5000777888', $2, 500, 0, 'credit', 'completed',
+               '2026-07-01T10:00:00', 500, 0)`,
+      [saleId, clientId.replace(/-/g, '')],
+    );
+    await harness.db.query(
+      `INSERT INTO open_items (id, entity_type, entity_id, document_type, document_id, document_number,
+                               document_date, original_amount, remaining_amount, is_debit, status, created_at)
+       VALUES ($1, 'customer', $2, 'sale', $3, 'FT-NODASH-1', '2026-07-01', 500, 500, 1, 'open', datetime('now'))`,
+      [randomUUID(), clientId.replace(/-/g, ''), saleId],
+    );
+    const statement = await accountStatement.loadAccountStatement(harness.db, 'customer', clientId);
+    assert.equal(statement.sales.some((row) => row.invoice_number === 'FT-NODASH-1'), true);
+    assert.ok(statement.openItems.length >= 1, 'open item must match dashless entity_id');
+  });
 });

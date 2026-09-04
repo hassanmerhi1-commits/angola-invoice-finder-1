@@ -1,7 +1,7 @@
 /**
  * Customer / supplier extracto.
- * Keep lookups on indexed id columns. CAST/TRIM on UUID columns cannot use
- * Postgres indexes and made the customers tab scan every sale for every client.
+ * Compare ids as text with dashes stripped — live data mixes UUID and
+ * dashless TEXT keys from the SQLite era. Never use `$1::uuid`.
  */
 
 const PLACEHOLDER_NIFS = new Set([
@@ -25,10 +25,6 @@ const GENERIC_PARTY_NAMES = new Set([
   'supplier',
 ]);
 
-function isPg(db) {
-  return db?.engine === 'postgres';
-}
-
 function normalizeParty(entityType) {
   const raw = String(entityType || '').trim().toLowerCase();
   if (raw === 'supplier' || raw === 'fornecedor') return 'supplier';
@@ -51,25 +47,24 @@ function usablePartyName(name) {
   return n.length >= 4 && !isGenericPartyName(n);
 }
 
-function asText(db, expr) {
-  return isPg(db) ? `${expr}::text` : `CAST(${expr} AS TEXT)`;
+function asText(expr) {
+  return `CAST(${expr} AS TEXT)`;
 }
 
-/**
- * Compare ids as text. `$1::uuid` throws `text = uuid` when the column is TEXT
- * (common after SQLite→Postgres), and `safeQuery` was swallowing that into [].
- * One-party lookups stay small; the customers-tab slowness was a nested scan.
- */
-function idEq(db, column, param = '$1') {
-  return `LOWER(TRIM(${asText(db, column)})) = LOWER(TRIM(${asText(db, param)}))`;
+function idKey(expr) {
+  return `REPLACE(LOWER(TRIM(${asText(expr)})), '-', '')`;
+}
+
+function idEq(column, param = '$1') {
+  return `${idKey(column)} = ${idKey(param)}`;
 }
 
 function customerTypeSql(column = 'entity_type') {
-  return `LOWER(TRIM(CAST(${column} AS TEXT))) IN ('customer', 'client')`;
+  return `LOWER(TRIM(${asText(column)})) IN ('customer', 'client')`;
 }
 
 function supplierTypeSql(column = 'entity_type') {
-  return `LOWER(TRIM(CAST(${column} AS TEXT))) = 'supplier'`;
+  return `LOWER(TRIM(${asText(column)})) = 'supplier'`;
 }
 
 function notVoidedSql(column) {
@@ -80,12 +75,12 @@ function notDraftSql(column) {
   return `LOWER(COALESCE(${column}, '')) NOT IN ('draft', 'voided', 'cancelled', 'canceled')`;
 }
 
-function hasLinkedIdSql(db, column) {
-  return `TRIM(COALESCE(${asText(db, column)}, '')) <> ''`;
+function hasLinkedIdSql(column) {
+  return `TRIM(COALESCE(${asText(column)}, '')) <> ''`;
 }
 
-function missingLinkedIdSql(db, column) {
-  return `TRIM(COALESCE(${asText(db, column)}, '')) = ''`;
+function missingLinkedIdSql(column) {
+  return `TRIM(COALESCE(${asText(column)}, '')) = ''`;
 }
 
 function keepListedParty(row) {
@@ -113,105 +108,151 @@ function mapPartyRows(rows) {
   return out;
 }
 
-async function safeQuery(db, sql, params = [], label = 'query') {
+function idVariants(entityId) {
+  const raw = String(entityId || '').trim();
+  if (!raw) return [];
+  const nodash = raw.replace(/-/g, '').toLowerCase();
+  const variants = new Set([raw, raw.toLowerCase(), nodash]);
+  if (/^[0-9a-f]{32}$/i.test(nodash)) {
+    variants.add(`${nodash.slice(0, 8)}-${nodash.slice(8, 12)}-${nodash.slice(12, 16)}-${nodash.slice(16, 20)}-${nodash.slice(20)}`);
+  }
+  return [...variants].filter(Boolean);
+}
+
+async function runQuery(db, sql, params, errors, label) {
   try {
     return (await db.query(sql, params)).rows || [];
   } catch (err) {
-    console.warn(`[accountStatement] ${label} skipped:`, err.message);
+    const message = `${label}: ${err.message}`;
+    errors.push(message);
+    console.warn('[accountStatement]', message);
     return [];
   }
 }
 
-async function loadPartyRow(db, party, entityId) {
+async function loadPartyRow(db, party, entityId, errors) {
   const table = party === 'supplier' ? 'suppliers' : 'clients';
-  const rows = await safeQuery(
+  const rows = await runQuery(
     db,
-    `SELECT id, name, nif FROM ${table} WHERE ${idEq(db, 'id')} LIMIT 1`,
+    `SELECT id, name, nif FROM ${table} WHERE ${idEq('id')} LIMIT 1`,
     [entityId],
+    errors,
     `${table} lookup`,
   );
   return rows[0] || null;
 }
 
-async function queryOpenItems(db, party, entityId) {
+async function queryOpenItems(db, party, entityId, errors) {
+  const variants = idVariants(entityId);
+  const keys = [...new Set(variants.map((id) => id.replace(/-/g, '').toLowerCase()))];
+  if (!keys.length) return [];
+  const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
   const typeSql = party === 'supplier' ? supplierTypeSql() : customerTypeSql();
-  return safeQuery(
+
+  let rows = await runQuery(
+    db,
+    `SELECT id, entity_type, document_type, document_id, document_number, document_date, due_date,
+            original_amount, remaining_amount, is_debit, status, created_at
+     FROM open_items
+     WHERE ${idKey('entity_id')} IN (${placeholders})
+     ORDER BY document_date ASC, created_at ASC`,
+    keys,
+    errors,
+    'open_items',
+  );
+  if (rows.length) {
+    const typed = rows.filter((row) => {
+      const t = String(row.entity_type || '').trim().toLowerCase();
+      return party === 'supplier' ? t === 'supplier' : (t === 'customer' || t === 'client' || !t);
+    });
+    return typed.length ? typed : rows;
+  }
+
+  return runQuery(
     db,
     `SELECT id, document_type, document_id, document_number, document_date, due_date,
             original_amount, remaining_amount, is_debit, status, created_at
      FROM open_items
-     WHERE ${typeSql} AND ${idEq(db, 'entity_id')}
+     WHERE ${typeSql} AND ${idEq('entity_id')}
      ORDER BY document_date ASC, created_at ASC`,
     [entityId],
-    'open_items',
+    errors,
+    'open_items typed',
   );
 }
 
-async function queryPayments(db, party, entityId) {
-  const typeSql = party === 'supplier' ? supplierTypeSql() : customerTypeSql();
-  return safeQuery(
+async function queryPayments(db, party, entityId, errors) {
+  const variants = idVariants(entityId);
+  const keys = [...new Set(variants.map((id) => id.replace(/-/g, '').toLowerCase()))];
+  if (!keys.length) return [];
+  const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
+  return runQuery(
     db,
     `SELECT id, payment_number, payment_type, payment_method, amount, reference, notes, created_at, entity_name
      FROM payments
-     WHERE ${typeSql} AND ${idEq(db, 'entity_id')}
+     WHERE ${idKey('entity_id')} IN (${placeholders})
      ORDER BY created_at ASC`,
-    [entityId],
+    keys,
+    errors,
     'payments',
   );
 }
 
-async function queryCustomerSales(db, entityId, name) {
+async function queryCustomerSales(db, entityId, name, errors) {
   const params = [entityId];
   let nameClause = '';
   if (usablePartyName(name)) {
     params.push(String(name).trim().toLowerCase());
-    nameClause = ` OR LOWER(TRIM(s.customer_name)) = $${params.length}`;
+    nameClause = ` OR LOWER(TRIM(customer_name)) = $${params.length}`;
   }
-  return safeQuery(
+  return runQuery(
     db,
-    `SELECT s.id, s.invoice_number, s.created_at, s.total, s.amount_paid, s.payment_method,
-            s.status, s.customer_nif, s.customer_name, s.client_id
-     FROM sales s
-     WHERE ${notVoidedSql('s.status')}
-       AND (${idEq(db, 's.client_id')} ${nameClause})
-     ORDER BY s.created_at ASC`,
+    `SELECT id, invoice_number, created_at, total, amount_paid, payment_method,
+            status, customer_nif, customer_name, client_id
+     FROM sales
+     WHERE ${notVoidedSql('status')}
+       AND (${idEq('client_id')} ${nameClause})
+     ORDER BY created_at ASC`,
     params,
+    errors,
     'sales',
   );
 }
 
-async function queryCustomerNotes(db, table, saleIds) {
+async function queryCustomerNotes(db, table, saleIds, errors) {
   if (!saleIds.length) return [];
   const placeholders = saleIds.map((_, i) => `$${i + 1}`).join(', ');
-  return safeQuery(
+  return runQuery(
     db,
     `SELECT id, document_number, total, issued_at, created_at, status, original_invoice_id,
             customer_nif, customer_name
      FROM ${table}
      WHERE LOWER(COALESCE(status, '')) IN ('issued', 'transmitted')
-       AND ${asText(db, 'original_invoice_id')} IN (${placeholders})
+       AND ${asText('original_invoice_id')} IN (${placeholders})
      ORDER BY COALESCE(issued_at, created_at) ASC`,
     saleIds,
+    errors,
     table,
   );
 }
 
-async function querySupplierPurchases(db, entityId, name) {
+async function querySupplierPurchases(db, entityId, name, errors) {
   const params = [entityId];
   let nameClause = '';
   if (usablePartyName(name)) {
     params.push(String(name).trim().toLowerCase());
     nameClause = ` OR LOWER(TRIM(supplier_name)) = $${params.length}`;
   }
-  return safeQuery(
+  return runQuery(
     db,
     `SELECT id, invoice_number, date, created_at, total, status, supplier_id,
             supplier_account_code, supplier_nif, supplier_name
      FROM purchase_invoices
      WHERE ${notDraftSql('status')}
-       AND (${idEq(db, 'supplier_id')} ${nameClause})
+       AND (${idEq('supplier_id')} ${nameClause})
      ORDER BY COALESCE(date, created_at) ASC`,
     params,
+    errors,
     'purchases',
   );
 }
@@ -219,29 +260,48 @@ async function querySupplierPurchases(db, entityId, name) {
 async function loadAccountStatement(db, entityType, entityId) {
   const party = normalizeParty(entityType);
   const id = String(entityId || '').trim();
+  const errors = [];
   const [row, openItems, payments] = await Promise.all([
-    loadPartyRow(db, party, id),
-    queryOpenItems(db, party, id),
-    queryPayments(db, party, id),
+    loadPartyRow(db, party, id, errors),
+    queryOpenItems(db, party, id, errors),
+    queryPayments(db, party, id, errors),
   ]);
   const name = String(row?.name || '').trim();
 
   if (party === 'supplier') {
+    let supplierIds = [id];
+    try {
+      const { resolveSupplierEntityIds } = require('../supplierBalanceRepair');
+      supplierIds = await resolveSupplierEntityIds(id);
+    } catch (err) {
+      errors.push(`supplier ids: ${err.message}`);
+    }
+    const purchases = [];
+    const seen = new Set();
+    for (const supplierId of supplierIds.length ? supplierIds : [id]) {
+      for (const purchase of await querySupplierPurchases(db, supplierId, name, errors)) {
+        const key = String(purchase.id || purchase.invoice_number || '');
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        purchases.push(purchase);
+      }
+    }
     return {
       openItems,
       payments,
       sales: [],
       creditNotes: [],
       debitNotes: [],
-      purchases: await querySupplierPurchases(db, id, name),
+      purchases,
+      _errors: errors,
     };
   }
 
-  const sales = await queryCustomerSales(db, id, name);
+  const sales = await queryCustomerSales(db, id, name, errors);
   const saleIds = sales.map((s) => String(s.id)).filter(Boolean);
   const [creditNotes, debitNotes] = await Promise.all([
-    queryCustomerNotes(db, 'credit_notes', saleIds),
-    queryCustomerNotes(db, 'debit_notes', saleIds),
+    queryCustomerNotes(db, 'credit_notes', saleIds, errors),
+    queryCustomerNotes(db, 'debit_notes', saleIds, errors),
   ]);
   return {
     openItems,
@@ -250,90 +310,93 @@ async function loadAccountStatement(db, entityType, entityId) {
     creditNotes,
     debitNotes,
     purchases: [],
+    _errors: errors,
   };
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-async function loadPartiesByIds(db, table, ids, balanceColumn) {
+async function loadPartiesByIds(db, table, ids, balanceColumn, errors) {
   const unique = [...new Set(
     (ids || [])
       .map((id) => String(id || '').trim())
-      .filter((id) => id && UUID_RE.test(id)),
+      .filter((id) => id && id.replace(/-/g, '').length >= 8),
   )];
   if (!unique.length) return [];
-  const placeholders = unique.map((_, i) => `$${i + 1}`).join(', ');
-  return safeQuery(
+  const keys = unique.map((id) => id.replace(/-/g, '').toLowerCase());
+  const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
+  return runQuery(
     db,
     `SELECT id, name, nif, COALESCE(${balanceColumn}, 0) AS balance
      FROM ${table}
-     WHERE LOWER(TRIM(${asText(db, 'id')})) IN (${placeholders})
+     WHERE ${idKey('id')} IN (${placeholders})
      ORDER BY name`,
-    unique.map((id) => id.toLowerCase()),
+    keys,
+    errors,
     `${table} by ids`,
   );
 }
 
-async function collectTextIds(db, sql, params, label) {
-  const rows = await safeQuery(db, sql, params, label);
+async function collectTextIds(db, sql, params, errors, label) {
+  const rows = await runQuery(db, sql, params, errors, label);
   return rows.map((row) => String(row.id || '').trim()).filter(Boolean);
 }
 
 async function listCustomerParties(db) {
+  const errors = [];
   const linkedIds = await collectTextIds(
     db,
-    `SELECT ${asText(db, 'entity_id')} AS id
+    `SELECT ${asText('entity_id')} AS id
      FROM open_items
      WHERE ${customerTypeSql()}
      UNION
-     SELECT ${asText(db, 'entity_id')}
+     SELECT ${asText('entity_id')}
      FROM payments
      WHERE ${customerTypeSql()}
      UNION
-     SELECT ${asText(db, 'client_id')}
+     SELECT ${asText('client_id')}
      FROM sales
-     WHERE ${hasLinkedIdSql(db, 'client_id')}
+     WHERE ${hasLinkedIdSql('client_id')}
        AND ${notVoidedSql('status')}`,
     [],
+    errors,
     'customer linked ids',
   );
-
-  return loadPartiesByIds(db, 'clients', linkedIds, 'current_balance');
+  return loadPartiesByIds(db, 'clients', linkedIds, 'current_balance', errors);
 }
 
 async function listSupplierParties(db) {
+  const errors = [];
   const linkedIds = await collectTextIds(
     db,
-    `SELECT ${asText(db, 'entity_id')} AS id
+    `SELECT ${asText('entity_id')} AS id
      FROM open_items
      WHERE ${supplierTypeSql()}
      UNION
-     SELECT ${asText(db, 'entity_id')}
+     SELECT ${asText('entity_id')}
      FROM payments
      WHERE ${supplierTypeSql()}
      UNION
-     SELECT supplier_id
+     SELECT ${asText('supplier_id')}
      FROM purchase_invoices
-     WHERE ${hasLinkedIdSql(db, 'supplier_id')}
+     WHERE ${hasLinkedIdSql('supplier_id')}
        AND ${notDraftSql('status')}`,
     [],
+    errors,
     'supplier linked ids',
   );
-
   const namedIds = await collectTextIds(
     db,
-    `SELECT ${asText(db, 's.id')} AS id
+    `SELECT ${asText('s.id')} AS id
      FROM suppliers s
      JOIN purchase_invoices pi
-       ON ${missingLinkedIdSql(db, 'pi.supplier_id')}
+       ON ${missingLinkedIdSql('pi.supplier_id')}
       AND LOWER(TRIM(pi.supplier_name)) = LOWER(TRIM(s.name))
      WHERE ${notDraftSql('pi.status')}
        AND LENGTH(TRIM(s.name)) >= 4`,
     [],
+    errors,
     'supplier name ids',
   );
-
-  return loadPartiesByIds(db, 'suppliers', [...linkedIds, ...namedIds], 'balance');
+  return loadPartiesByIds(db, 'suppliers', [...linkedIds, ...namedIds], 'balance', errors);
 }
 
 async function listStatementParties(db, entityType) {
@@ -348,6 +411,7 @@ module.exports = {
   normalizeParty,
   isPlaceholderNif,
   isGenericPartyName,
+  idVariants,
   loadAccountStatement,
   listStatementParties,
 };
