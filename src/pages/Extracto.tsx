@@ -213,7 +213,7 @@ export default function Extracto() {
         const res = await api.payments.statement(partyKind, selectedId);
         if (generation !== fetchGen.current) return;
         if (res.error) throw new Error(res.error);
-        statementCache.current[cacheKey] = res.data;
+        if (res.data) statementCache.current[cacheKey] = res.data;
         setRawPayload(res.data);
       } catch (err) {
         console.error('[Extracto] load failed:', err);

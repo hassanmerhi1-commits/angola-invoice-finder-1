@@ -55,18 +55,21 @@ function asText(db, expr) {
   return isPg(db) ? `${expr}::text` : `CAST(${expr} AS TEXT)`;
 }
 
-/** Indexed equality for UUID/text id columns. Never TRIM/CAST a UUID. */
+/**
+ * Compare ids as text. `$1::uuid` throws `text = uuid` when the column is TEXT
+ * (common after SQLite→Postgres), and `safeQuery` was swallowing that into [].
+ * One-party lookups stay small; the customers-tab slowness was a nested scan.
+ */
 function idEq(db, column, param = '$1') {
-  if (isPg(db)) return `${column} = ${param}::uuid`;
-  return `${column} = ${param}`;
+  return `LOWER(TRIM(${asText(db, column)})) = LOWER(TRIM(${asText(db, param)}))`;
 }
 
 function customerTypeSql(column = 'entity_type') {
-  return `${column} IN ('customer', 'client')`;
+  return `LOWER(TRIM(CAST(${column} AS TEXT))) IN ('customer', 'client')`;
 }
 
 function supplierTypeSql(column = 'entity_type') {
-  return `${column} = 'supplier'`;
+  return `LOWER(TRIM(CAST(${column} AS TEXT))) = 'supplier'`;
 }
 
 function notVoidedSql(column) {
@@ -78,13 +81,11 @@ function notDraftSql(column) {
 }
 
 function hasLinkedIdSql(db, column) {
-  if (isPg(db)) return `${column} IS NOT NULL`;
-  return `TRIM(COALESCE(${column}, '')) <> ''`;
+  return `TRIM(COALESCE(${asText(db, column)}, '')) <> ''`;
 }
 
 function missingLinkedIdSql(db, column) {
-  if (isPg(db)) return `${column} IS NULL`;
-  return `TRIM(COALESCE(${column}, '')) = ''`;
+  return `TRIM(COALESCE(${asText(db, column)}, '')) = ''`;
 }
 
 function keepListedParty(row) {
@@ -160,31 +161,22 @@ async function queryPayments(db, party, entityId) {
 }
 
 async function queryCustomerSales(db, entityId, name) {
-  const byId = await safeQuery(
-    db,
-    `SELECT s.id, s.invoice_number, s.created_at, s.total, s.amount_paid, s.payment_method,
-            s.status, s.customer_nif, s.customer_name, s.client_id
-     FROM sales s
-     WHERE ${notVoidedSql('s.status')}
-       AND ${idEq(db, 's.client_id')}
-     ORDER BY s.created_at ASC`,
-    [entityId],
-    'sales by client_id',
-  );
-  if (byId.length || !usablePartyName(name)) return byId;
-
+  const params = [entityId];
+  let nameClause = '';
+  if (usablePartyName(name)) {
+    params.push(String(name).trim().toLowerCase());
+    nameClause = ` OR LOWER(TRIM(s.customer_name)) = $${params.length}`;
+  }
   return safeQuery(
     db,
     `SELECT s.id, s.invoice_number, s.created_at, s.total, s.amount_paid, s.payment_method,
             s.status, s.customer_nif, s.customer_name, s.client_id
      FROM sales s
      WHERE ${notVoidedSql('s.status')}
-       AND ${missingLinkedIdSql(db, 's.client_id')}
-       AND LOWER(TRIM(s.customer_name)) = $2
-     ORDER BY s.created_at ASC
-     LIMIT 2000`,
-    [entityId, String(name).trim().toLowerCase()],
-    'sales by name',
+       AND (${idEq(db, 's.client_id')} ${nameClause})
+     ORDER BY s.created_at ASC`,
+    params,
+    'sales',
   );
 }
 
@@ -205,31 +197,22 @@ async function queryCustomerNotes(db, table, saleIds) {
 }
 
 async function querySupplierPurchases(db, entityId, name) {
-  const byId = await safeQuery(
-    db,
-    `SELECT id, invoice_number, date, created_at, total, status, supplier_id,
-            supplier_account_code, supplier_nif, supplier_name
-     FROM purchase_invoices
-     WHERE ${notDraftSql('status')}
-       AND supplier_id = $1
-     ORDER BY COALESCE(date, created_at) ASC`,
-    [entityId],
-    'purchases by supplier_id',
-  );
-  if (byId.length || !usablePartyName(name)) return byId;
-
+  const params = [entityId];
+  let nameClause = '';
+  if (usablePartyName(name)) {
+    params.push(String(name).trim().toLowerCase());
+    nameClause = ` OR LOWER(TRIM(supplier_name)) = $${params.length}`;
+  }
   return safeQuery(
     db,
     `SELECT id, invoice_number, date, created_at, total, status, supplier_id,
             supplier_account_code, supplier_nif, supplier_name
      FROM purchase_invoices
      WHERE ${notDraftSql('status')}
-       AND ${missingLinkedIdSql(db, 'supplier_id')}
-       AND LOWER(TRIM(supplier_name)) = $2
-     ORDER BY COALESCE(date, created_at) ASC
-     LIMIT 2000`,
-    [entityId, String(name).trim().toLowerCase()],
-    'purchases by name',
+       AND (${idEq(db, 'supplier_id')} ${nameClause})
+     ORDER BY COALESCE(date, created_at) ASC`,
+    params,
+    'purchases',
   );
 }
 
@@ -280,16 +263,13 @@ async function loadPartiesByIds(db, table, ids, balanceColumn) {
   )];
   if (!unique.length) return [];
   const placeholders = unique.map((_, i) => `$${i + 1}`).join(', ');
-  const idFilter = isPg(db)
-    ? `id IN (${unique.map((_, i) => `$${i + 1}::uuid`).join(', ')})`
-    : `id IN (${placeholders})`;
   return safeQuery(
     db,
     `SELECT id, name, nif, COALESCE(${balanceColumn}, 0) AS balance
      FROM ${table}
-     WHERE ${idFilter}
+     WHERE LOWER(TRIM(${asText(db, 'id')})) IN (${placeholders})
      ORDER BY name`,
-    unique,
+    unique.map((id) => id.toLowerCase()),
     `${table} by ids`,
   );
 }

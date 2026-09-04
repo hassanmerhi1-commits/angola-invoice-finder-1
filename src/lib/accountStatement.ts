@@ -87,6 +87,13 @@ export function isoDate(value: unknown): string {
   if (dmy) {
     return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
   }
+  const parsed = new Date(s);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
   return '';
 }
 
@@ -368,14 +375,17 @@ export function buildAccountStatement(opts: {
   });
 
   let openingBalance = 0;
-  const periodMoves: Omit<AccountStatementMovement, 'balance'>[] = [];
+  let periodMoves: Omit<AccountStatementMovement, 'balance'>[] = [];
   for (const move of rawMoves) {
-    if (move.date && move.date < dateFrom) {
+    if (move.date && dateFrom && move.date < dateFrom) {
       openingBalance += signedDelta(party, move.debit, move.credit);
       continue;
     }
-    if (move.date && move.date > dateTo) continue;
+    if (move.date && dateTo && move.date > dateTo) continue;
     periodMoves.push(move);
+  }
+  if (periodMoves.length === 0 && rawMoves.length > 0 && Math.abs(openingBalance) < 0.005) {
+    periodMoves = rawMoves;
   }
 
   let running = openingBalance;

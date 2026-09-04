@@ -101,4 +101,22 @@ describe('accountStatement', { concurrency: 1 }, () => {
     const statement = await accountStatement.loadAccountStatement(harness.db, 'supplier', supplierId);
     assert.equal(statement.purchases.some((row) => row.invoice_number === 'FC-NAME-1'), true);
   });
+
+  it('loads a customer invoice by name when client_id is empty', async () => {
+    const clientId = randomUUID();
+    await harness.db.query(
+      `INSERT INTO clients (id, name, nif, current_balance, is_active, created_at, updated_at)
+       VALUES ($1, 'MOTORIZADA NESTLE', '5000123456', 1000, 1, datetime('now'), datetime('now'))`,
+      [clientId],
+    );
+    await harness.db.query(
+      `INSERT INTO sales (id, invoice_number, customer_name, customer_nif, client_id, total, amount_paid,
+                          payment_method, status, created_at, subtotal, tax_amount)
+       VALUES ($1, 'FT-NAME-1', 'MOTORIZADA NESTLE', '5000123456', '', 1000, 0, 'credit', 'completed',
+               '2026-06-01T10:00:00', 1000, 0)`,
+      [randomUUID()],
+    );
+    const statement = await accountStatement.loadAccountStatement(harness.db, 'customer', clientId);
+    assert.equal(statement.sales.some((row) => row.invoice_number === 'FT-NAME-1'), true);
+  });
 });
