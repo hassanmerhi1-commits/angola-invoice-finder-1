@@ -372,7 +372,7 @@ async function syncPurchaseInvoiceDocument(
 
 // ─────────── Product Picker Dialog ───────────
 function ProductPickerDialog({
-  open, onClose, products, productsLoading, onSelect, onCreateNew,
+  open, onClose, products, productsLoading, onSelect, onCreateNew, initialSearch = '', priorityProductId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -380,27 +380,39 @@ function ProductPickerDialog({
   productsLoading?: boolean;
   onSelect: (p: Product) => void;
   onCreateNew: () => void;
+  initialSearch?: string;
+  priorityProductId?: string;
 }) {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const [search, setSearch] = useState('');
+  useEffect(() => {
+    if (open) setSearch(initialSearch);
+  }, [open, initialSearch]);
   const filtered = useMemo(() => {
-    if (!search) return products.slice(0, 1000);
-    const q = search.toLowerCase();
-    return products.filter(p =>
-      p.name.toLowerCase().includes(q) ||
-      p.sku.toLowerCase().includes(q) ||
-      p.barcode?.toLowerCase().includes(q)
-    ).slice(0, 1000);
-  }, [products, search]);
+    const q = search.trim().toLowerCase();
+    const rows = !q
+      ? products.slice(0, 1000)
+      : products.filter(p =>
+          p.name.toLowerCase().includes(q) ||
+          p.sku.toLowerCase().includes(q) ||
+          p.barcode?.toLowerCase().includes(q)
+        ).slice(0, 1000);
+    if (!priorityProductId) return rows;
+    const idx = rows.findIndex((p) => p.id === priorityProductId);
+    if (idx <= 0) return rows;
+    const next = rows.slice();
+    const [hit] = next.splice(idx, 1);
+    return [hit, ...next];
+  }, [products, search, priorityProductId]);
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent className="max-w-4xl max-h-[80vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
             <span>{t.purchaseInvoicesUi.productListTitle}</span>
-            <Button variant="outline" size="sm" className="gap-1" onClick={() => { onClose(); onCreateNew(); }}>
+            <Button variant="outline" size="sm" className="gap-1" onClick={onCreateNew}>
               <Plus className="h-4 w-4" /> {t.purchaseInvoicesUi.newProductBtn}
             </Button>
           </DialogTitle>
@@ -428,7 +440,10 @@ function ProductPickerDialog({
               {filtered.map(p => (
                 <TableRow
                   key={p.id}
-                  className="cursor-pointer hover:bg-accent"
+                  className={cn(
+                    'cursor-pointer hover:bg-accent',
+                    p.id === priorityProductId && 'bg-accent/70',
+                  )}
                   onClick={() => { onSelect(p); onClose(); }}
                 >
                   <TableCell className="font-mono text-xs">{p.sku}</TableCell>
@@ -454,7 +469,7 @@ function ProductPickerDialog({
                   <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     {t.purchaseInvoicesUi.poNoProductsFound}
                     <br />
-                    <Button variant="link" size="sm" className="mt-2 gap-1" onClick={() => { onClose(); onCreateNew(); }}>
+                    <Button variant="link" size="sm" className="mt-2 gap-1" onClick={onCreateNew}>
                       <Plus className="h-4 w-4" /> {t.purchaseInvoicesUi.productPickerCreateNew}
                     </Button>
                   </TableCell>
@@ -1241,6 +1256,10 @@ export default function PurchaseInvoices() {
   const [viewLoading, setViewLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('fatura');
   const [showCreateProduct, setShowCreateProduct] = useState(false);
+  const [createProductReturnTo, setCreateProductReturnTo] = useState<'invoice' | 'po' | null>(null);
+  const [pickerSeed, setPickerSeed] = useState<{ search: string; id: string } | null>(null);
+  const skipPickerRefreshRef = useRef(false);
+  const openCreateProductTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showCreateSupplier, setShowCreateSupplier] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savingPurchase, setSavingPurchase] = useState(false);
@@ -1337,10 +1356,28 @@ export default function PurchaseInvoices() {
   }, [mode, poCreateOpen, productsBranchId, refreshProducts]);
 
   useEffect(() => {
-    if (productPickerOpen || poProductPickerOpen) {
-      void refreshProducts({ force: true });
+    if (!(productPickerOpen || poProductPickerOpen)) return;
+    if (skipPickerRefreshRef.current) {
+      skipPickerRefreshRef.current = false;
+      return;
     }
+    void refreshProducts({ force: true });
   }, [productPickerOpen, poProductPickerOpen, refreshProducts]);
+
+  const openCreateProductFromPicker = useCallback((source: 'invoice' | 'po') => {
+    setCreateProductReturnTo(source);
+    setProductPickerOpen(false);
+    setPoProductPickerOpen(false);
+    if (openCreateProductTimerRef.current) clearTimeout(openCreateProductTimerRef.current);
+    openCreateProductTimerRef.current = setTimeout(() => {
+      setShowCreateProduct(true);
+      openCreateProductTimerRef.current = null;
+    }, 80);
+  }, []);
+
+  useEffect(() => () => {
+    if (openCreateProductTimerRef.current) clearTimeout(openCreateProductTimerRef.current);
+  }, []);
 
   // Suppliers are deferred on list open — load when create / PO / picker needs them.
   useEffect(() => {
@@ -2093,6 +2130,11 @@ export default function PurchaseInvoices() {
       avgCost: p.avgCost || p.cost || 0,
     });
     setLines((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.productId === p.id) {
+        setGridFocusCell({ row: prev.length - 1, field: 'quantity' });
+        return prev;
+      }
       setGridFocusCell({ row: prev.length, field: 'quantity' });
       return [...prev, newLine];
     });
@@ -3467,7 +3509,18 @@ export default function PurchaseInvoices() {
             {/* Add product — outside scroll clip so dropdown receives clicks */}
             <div className="px-6 pb-2 shrink-0">
               <div className="border rounded-lg p-3 space-y-3 overflow-visible relative z-20">
-                <Label className="font-medium">{t.purchaseInvoicesUi.poAddProductSection}</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="font-medium">{t.purchaseInvoicesUi.poAddProductSection}</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1"
+                    onClick={() => openCreateProductFromPicker('po')}
+                  >
+                    <Plus className="h-3 w-3" /> {t.purchaseInvoicesUi.newProductBtn}
+                  </Button>
+                </div>
                 <div className="grid grid-cols-4 gap-3">
                   <div ref={poProductSearchRef} className="col-span-2 relative">
                     <Input
@@ -3496,7 +3549,19 @@ export default function PurchaseInvoices() {
                             return <div className="p-3 text-sm text-muted-foreground text-center">{t.common.loading}</div>;
                           }
                           if (filtered.length === 0) {
-                            return <div className="p-3 text-sm text-muted-foreground text-center">{t.purchaseInvoicesUi.poNoProductsFound}</div>;
+                            return (
+                              <div className="p-3 text-sm text-muted-foreground text-center">
+                                {t.purchaseInvoicesUi.poNoProductsFound}
+                                <Button
+                                  variant="link"
+                                  size="sm"
+                                  className="mt-1 gap-1"
+                                  onClick={() => openCreateProductFromPicker('po')}
+                                >
+                                  <Plus className="h-4 w-4" /> {t.purchaseInvoicesUi.productPickerCreateNew}
+                                </Button>
+                              </div>
+                            );
                           }
                           return filtered.map(p => (
                             <div
@@ -4273,22 +4338,33 @@ export default function PurchaseInvoices() {
       />
       <ProductPickerDialog
         open={productPickerOpen}
-        onClose={() => setProductPickerOpen(false)}
+        onClose={() => {
+          setProductPickerOpen(false);
+          setPickerSeed(null);
+        }}
         products={products}
         productsLoading={productsLoading}
         onSelect={handleAddProduct}
-        onCreateNew={() => setShowCreateProduct(true)}
+        onCreateNew={() => openCreateProductFromPicker('invoice')}
+        initialSearch={pickerSeed?.search ?? ''}
+        priorityProductId={pickerSeed?.id}
       />
       <ProductPickerDialog
         open={poProductPickerOpen}
-        onClose={() => setPoProductPickerOpen(false)}
+        onClose={() => {
+          setPoProductPickerOpen(false);
+          setPickerSeed(null);
+        }}
         products={products}
         productsLoading={productsLoading}
         onSelect={(p) => {
           setPoNewItem(prev => ({ ...prev, productId: p.id, unitCost: p.cost || 0 }));
+          setPoProductSearch(p.name);
           setPoProductPickerOpen(false);
         }}
-        onCreateNew={() => setShowCreateProduct(true)}
+        onCreateNew={() => openCreateProductFromPicker('po')}
+        initialSearch={pickerSeed?.search ?? ''}
+        priorityProductId={pickerSeed?.id}
       />
       <AccountPickerDialog
         open={accountPickerOpen}
@@ -4302,8 +4378,26 @@ export default function PurchaseInvoices() {
         scopeBranchId={productsBranchId}
         defaultSupplierName={String((form as { supplierName?: string }).supplierName || '')}
         onSave={async (newProduct) => {
-          const savedProduct = await addProductToStock(newProduct);
-          handleAddProduct(savedProduct);
+          const savedProduct = await addProductToStock(newProduct, {
+            skipListRefresh: true,
+            lightweightChangedEvent: true,
+          });
+          const seed = { search: savedProduct.name || savedProduct.sku || '', id: savedProduct.id };
+          setPickerSeed(seed);
+          skipPickerRefreshRef.current = true;
+          if (createProductReturnTo === 'po') {
+            setPoNewItem((prev) => ({
+              ...prev,
+              productId: savedProduct.id,
+              unitCost: savedProduct.cost || prev.unitCost || 0,
+            }));
+            setPoProductSearch(savedProduct.name);
+            setPoProductDropdownOpen(true);
+          } else {
+            handleAddProduct(savedProduct);
+            window.setTimeout(() => setProductPickerOpen(true), 80);
+          }
+          setCreateProductReturnTo(null);
           toast({
             title: t.purchaseInvoicesUi.productCreatedTitle,
             description: t.purchaseInvoicesUi.productCreatedDesc.replace('{name}', savedProduct.name),

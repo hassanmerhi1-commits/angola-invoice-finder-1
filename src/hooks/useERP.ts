@@ -241,6 +241,36 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
   );
   /** Ignores stale list fetches that finish after a newer write (e.g. add product). */
   const listGenerationRef = useRef(0);
+  /** Keep just-created rows visible if a force-refresh still omits them. */
+  const pinnedProductsRef = useRef<Map<string, Product>>(new Map());
+
+  const pinProduct = useCallback((saved: Product) => {
+    const id = String(saved?.id || '').trim();
+    if (id) pinnedProductsRef.current.set(id, saved);
+  }, []);
+
+  const withPinnedProducts = useCallback((list: Product[]): Product[] => {
+    const pinned = pinnedProductsRef.current;
+    if (pinned.size === 0) return list;
+    const ids = new Set(list.map((p) => String(p.id)));
+    const extras: Product[] = [];
+    for (const [id, product] of pinned) {
+      if (ids.has(id)) {
+        pinned.delete(id);
+      } else if (product) {
+        extras.push(product);
+      }
+    }
+    if (!extras.length) return list;
+    return dedupeProductsBySku([...extras, ...list], branchId, catalogBranchIds);
+  }, [branchId, catalogBranchIds]);
+
+  const applyProductList = useCallback((list: Product[], generation: number) => {
+    if (generation !== listGenerationRef.current) return;
+    const merged = withPinnedProducts(list);
+    setProducts(merged);
+    setCachedList(productsCacheKey, merged);
+  }, [productsCacheKey, withPinnedProducts]);
 
   const fetchMergedProductList = useCallback(async (): Promise<Product[]> => {
     let apiProducts: Product[] | null = null;
@@ -373,8 +403,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     try {
       const list = await fetchMergedProductList();
       if (generation === listGenerationRef.current) {
-        setProducts(list);
-        setCachedList(productsCacheKey, list);
+        applyProductList(list, generation);
         try {
           const { syncProductsToLocalCache } = await import('@/lib/sync/offlineFirst');
           await syncProductsToLocalCache(
@@ -398,7 +427,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
         setProductsLoading(false);
       }
     }
-  }, [fetchMergedProductList, listEnabled, productsCacheKey]);
+  }, [applyProductList, fetchMergedProductList, listEnabled, productsCacheKey]);
 
   useEffect(() => {
     if (!listEnabled) {
@@ -443,22 +472,31 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     };
   }, [branchId, refreshProducts, productsCacheKey]);
 
-  type ProductWriteOptions = { skipListMerge?: boolean; lightweightChangedEvent?: boolean };
+  type ProductWriteOptions = {
+    skipListMerge?: boolean;
+    lightweightChangedEvent?: boolean;
+    skipListRefresh?: boolean;
+    branchId?: string;
+  };
 
   const mergeSavedIntoProductList = useCallback(
     (saved: Product, generation: number) => {
+      pinProduct(saved);
       if (generation !== listGenerationRef.current) return;
       setProducts((prev) => {
         const idx = prev.findIndex((p) => p.id === saved.id);
-        if (idx >= 0) {
-          const next = prev.slice();
-          next[idx] = saved;
-          return next;
-        }
-        return dedupeProductsBySku([saved, ...prev], branchId, catalogBranchIds);
+        const next = idx >= 0
+          ? (() => {
+            const copy = prev.slice();
+            copy[idx] = saved;
+            return copy;
+          })()
+          : dedupeProductsBySku([saved, ...prev], branchId, catalogBranchIds);
+        setCachedList(productsCacheKey, next);
+        return next;
       });
     },
-    [branchId, catalogBranchIds],
+    [branchId, catalogBranchIds, pinProduct, productsCacheKey],
   );
 
   const dispatchProductsChanged = useCallback(
@@ -471,6 +509,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
           detail: {
             branchId: changedBranch,
             lightweight: options?.lightweightChangedEvent === true,
+            skipListRefresh: options?.skipListRefresh === true,
           },
         }),
       );
@@ -511,9 +550,8 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
           if (!merged.some((p) => p.id === product.id)) {
             merged = [...merged, product];
           }
-          if (writeGeneration === listGenerationRef.current) {
-            setProducts(merged);
-          }
+          pinProduct(product);
+          applyProductList(merged, writeGeneration);
           return product;
         } catch (e) {
           console.error('[useProducts] addProduct: demo local save failed:', e);
@@ -533,13 +571,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     if (!options?.skipListMerge) {
       void fetchMergedProductList()
         .then((merged) => {
-          let list = merged;
-          if (!list.some((p) => p.id === savedProduct.id)) {
-            list = dedupeProductsBySku([savedProduct, ...list], branchId, catalogBranchIds);
-          }
-          if (writeGeneration === listGenerationRef.current) {
-            setProducts(list);
-          }
+          applyProductList(merged, writeGeneration);
         })
         .catch(() => { /* list already has optimistic row */ });
     }
@@ -558,11 +590,13 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     });
     return savedProduct;
   }, [
+    applyProductList,
     branchId,
     catalogBranchIds,
     dispatchProductsChanged,
     fetchMergedProductList,
     mergeSavedIntoProductList,
+    pinProduct,
   ]);
 
   const updateProduct = useCallback(async (
@@ -603,9 +637,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
         merged = merged.slice();
         merged[idx] = resolved;
       }
-      if (writeGeneration === listGenerationRef.current) {
-        setProducts(merged);
-      }
+      applyProductList(merged, writeGeneration);
     }
     const changedBranch = resolved.branchId || branchId || 'all';
     invalidateInventoryGridCacheForBranches([
@@ -618,6 +650,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
   }, [
     branchId,
     dispatchProductsChanged,
+    applyProductList,
     fetchMergedProductList,
     mergeSavedIntoProductList,
   ]);
