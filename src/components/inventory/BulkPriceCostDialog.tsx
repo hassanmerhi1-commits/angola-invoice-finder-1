@@ -50,9 +50,13 @@ type PriceLine = {
   sku: string;
   name: string;
   search: string;
+  taxRate: number;
+  /** Shelf price as stored (ex-IVA) — what the save payload has to carry. */
   origPrice: number;
+  origPriceIVA: number;
   origCost: number;
-  price: number;
+  /** Edited inc-IVA shelf price; the ex-IVA base is derived from it on save. */
+  priceIVA: number;
   cost: number;
 };
 
@@ -60,15 +64,26 @@ const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 const sameMoney = (a: number, b: number) => Math.abs(round2(a) - round2(b)) < 0.005;
 const unitCost = (p: Product) => round2(p.avgCost || p.lastCost || p.cost || 0);
 
+const ivaFactor = (taxRate: number) => {
+  const factor = 1 + (Number(taxRate) || 0) / 100;
+  return factor > 0 ? factor : 1;
+};
+const toIncIva = (exPrice: number, taxRate: number) =>
+  round2((Number(exPrice) || 0) * ivaFactor(taxRate));
+const toExIva = (incPrice: number, taxRate: number) =>
+  round2((Number(incPrice) || 0) / ivaFactor(taxRate));
+
 const createEmptyLine = (): PriceLine => ({
   rowId: newLineRowId(),
   productId: null,
   sku: '',
   name: '',
   search: '',
+  taxRate: 0,
   origPrice: 0,
+  origPriceIVA: 0,
   origCost: 0,
-  price: 0,
+  priceIVA: 0,
   cost: 0,
 });
 
@@ -124,7 +139,7 @@ export function BulkPriceCostDialog({
   const isDirty = useCallback(
     (line: PriceLine) =>
       Boolean(line.productId)
-      && (!sameMoney(line.price, line.origPrice) || !sameMoney(line.cost, line.origCost)),
+      && (!sameMoney(line.priceIVA, line.origPriceIVA) || !sameMoney(line.cost, line.origCost)),
     [],
   );
 
@@ -246,7 +261,9 @@ export function BulkPriceCostDialog({
         toast.info(ui.alreadyOnList);
         return;
       }
+      const taxRate = Number(product.taxRate) || 0;
       const origPrice = round2(product.price);
+      const origPriceIVA = toIncIva(origPrice, taxRate);
       const origCost = unitCost(product);
       setLines((prev) => {
         const mapped = prev.map((l) =>
@@ -257,9 +274,11 @@ export function BulkPriceCostDialog({
                 sku: product.sku || '',
                 name: product.name || '',
                 search: '',
+                taxRate,
                 origPrice,
+                origPriceIVA,
                 origCost,
-                price: origPrice,
+                priceIVA: origPriceIVA,
                 cost: origCost,
               }
             : l,
@@ -289,7 +308,7 @@ export function BulkPriceCostDialog({
     requestAnimationFrame(() => productInputRefs.current[rowId]?.focus());
   };
 
-  const patchLine = (rowId: string, field: 'price' | 'cost', value: number) => {
+  const patchLine = (rowId: string, field: 'priceIVA' | 'cost', value: number) => {
     const nextVal = round2(Math.max(0, value));
     setLines((prev) =>
       prev.map((l) => (l.rowId === rowId ? { ...l, [field]: nextVal } : l)),
@@ -380,15 +399,26 @@ export function BulkPriceCostDialog({
     if (!confirm(ui.confirm.replace('{count}', String(dirtyLines.length)))) return;
     setSaving(true);
     try {
-      const items = dirtyLines.map((row) => {
-        const payload: { id: string; sku: string; price?: number; cost?: number } = {
-          id: row.productId as string,
-          sku: row.sku,
-        };
-        if (!sameMoney(row.price, row.origPrice)) payload.price = row.price;
-        if (!sameMoney(row.cost, row.origCost)) payload.cost = row.cost;
-        return payload;
-      });
+      const items = dirtyLines
+        .map((row) => {
+          const payload: { id: string; sku: string; price?: number; cost?: number } = {
+            id: row.productId as string,
+            sku: row.sku,
+          };
+          if (!sameMoney(row.priceIVA, row.origPriceIVA)) {
+            // Several inc-IVA amounts can round back to the same base, so only
+            // send a price when the stored ex-IVA value really moves.
+            const nextPrice = toExIva(row.priceIVA, row.taxRate);
+            if (!sameMoney(nextPrice, row.origPrice)) payload.price = nextPrice;
+          }
+          if (!sameMoney(row.cost, row.origCost)) payload.cost = row.cost;
+          return payload;
+        })
+        .filter((payload) => payload.price !== undefined || payload.cost !== undefined);
+      if (items.length === 0) {
+        toast.info(ui.noChanges);
+        return;
+      }
       const res = await api.products.bulkPriceCost(items);
       if (res.error || !res.data?.success) {
         throw new Error(res.error || ui.failed);
@@ -434,6 +464,7 @@ export function BulkPriceCostDialog({
             <TableHeader className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm">
               <TableRow>
                 <TableHead className="min-w-[240px]">{ui.colProduct}</TableHead>
+                <TableHead className="w-[56px] text-right">{ui.colIva}</TableHead>
                 <TableHead className="w-[110px] text-right">{ui.priceOld}</TableHead>
                 <TableHead className="w-[120px] text-right">{ui.priceNew}</TableHead>
                 <TableHead className="w-[110px] text-right">{ui.costOld}</TableHead>
@@ -444,9 +475,12 @@ export function BulkPriceCostDialog({
             </TableHeader>
             <TableBody>
               {lines.map((line, rowIndex) => {
-                const dirtyPrice = Boolean(line.productId) && !sameMoney(line.price, line.origPrice);
+                const dirtyPrice = Boolean(line.productId)
+                  && !sameMoney(line.priceIVA, line.origPriceIVA);
                 const dirtyCost = Boolean(line.productId) && !sameMoney(line.cost, line.origCost);
-                const newMargin = line.price > 0 ? ((line.price - line.cost) / line.price) * 100 : 0;
+                // Margin has to stay on the ex-IVA base: avg cost is ex-IVA too.
+                const exPrice = toExIva(line.priceIVA, line.taxRate);
+                const newMargin = exPrice > 0 ? ((exPrice - line.cost) / exPrice) * 100 : 0;
                 return (
                   <TableRow
                     key={line.rowId}
@@ -480,7 +514,10 @@ export function BulkPriceCostDialog({
                       )}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-xs text-muted-foreground align-middle">
-                      {line.productId ? fmt(line.origPrice) : '—'}
+                      {line.productId ? `${line.taxRate}%` : '—'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-xs text-muted-foreground align-middle">
+                      {line.productId ? fmt(line.origPriceIVA) : '—'}
                     </TableCell>
                     <TableCell className="align-middle">
                       <NumericInput
@@ -488,8 +525,8 @@ export function BulkPriceCostDialog({
                           priceRefs.current[line.rowId] = el;
                         }}
                         min={0}
-                        value={line.price}
-                        onValueChange={(v) => patchLine(line.rowId, 'price', v)}
+                        value={line.priceIVA}
+                        onValueChange={(v) => patchLine(line.rowId, 'priceIVA', v)}
                         onKeyDown={(e) => handlePriceKeyDown(e, line)}
                         disabled={!line.productId}
                         tabIndex={line.productId ? 0 : -1}
@@ -616,7 +653,7 @@ export function BulkPriceCostDialog({
                     <span className="mx-0.5">—</span>
                     {p.name}
                     <span className="text-muted-foreground ml-1 tabular-nums">
-                      ({fmt(p.price)} / {fmt(unitCost(p))})
+                      ({fmt(toIncIva(p.price, p.taxRate))} / {fmt(unitCost(p))})
                     </span>
                   </button>
                 ))
