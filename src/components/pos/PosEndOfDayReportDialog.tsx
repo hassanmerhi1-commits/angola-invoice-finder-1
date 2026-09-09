@@ -21,7 +21,7 @@ import { pt, enUS } from 'date-fns/locale';
 import { api } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { filterShiftSalesForCashier, filterShiftCashRefunds, filterShiftCashExpenses, todayLocalDate, withRecoveredShiftStart } from '@/lib/posShiftSales';
+import { filterShiftSalesForCashier, filterShiftCashRefunds, filterShiftCashExpenses, todayLocalDate, shiftBusinessDate, withRecoveredShiftStart } from '@/lib/posShiftSales';
 
 interface CaixaGlReconciliation {
   caixaAccountCode: string;
@@ -72,6 +72,8 @@ export function PosEndOfDayReportDialog({
   const dfLocale = language === 'pt' ? pt : enUS;
   const company = getCompanySettings();
   const today = todayLocalDate();
+  const reportDay = shiftBusinessDate(session, today);
+  const reportDayDate = useMemo(() => new Date(`${reportDay}T12:00:00`), [reportDay]);
   const [countedCash, setCountedCash] = useState('');
   const [closeNotes, setCloseNotes] = useState('');
   const [closing, setClosing] = useState(false);
@@ -96,7 +98,7 @@ export function PosEndOfDayReportDialog({
     void api.caixa
       .reconciliation({
         branchId: branch.id,
-        date: today,
+        date: reportDay,
         session: session
           ? {
               openingBalance: session.openingBalance,
@@ -129,17 +131,17 @@ export function PosEndOfDayReportDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, branch?.id, session, today, t.posUi.caixa.glUnavailable]);
+  }, [open, branch?.id, session, reportDay, t.posUi.caixa.glUnavailable]);
 
   const effectiveSession = useMemo(
-    () => (session ? withRecoveredShiftStart(session, sales, cashier, today) : null),
-    [session, sales, cashier, today],
+    () => (session ? withRecoveredShiftStart(session, sales, cashier, reportDay) : null),
+    [session, sales, cashier, reportDay],
   );
 
   const cashierSales = useMemo(() => {
-    const rows = filterShiftSalesForCashier(sales, cashier, effectiveSession || session, today);
+    const rows = filterShiftSalesForCashier(sales, cashier, effectiveSession || session, reportDay);
     return [...rows].reverse();
-  }, [sales, cashier, today, session, effectiveSession]);
+  }, [sales, cashier, reportDay, session, effectiveSession]);
 
   const shiftOpenedLabel = useMemo(() => {
     const openedAt = effectiveSession?.openedAt || session?.openedAt;
@@ -153,23 +155,23 @@ export function PosEndOfDayReportDialog({
   }, [effectiveSession?.openedAt, session?.openedAt, locale, t.posUi.endOfDayShiftSince]);
 
   const shiftCashRefunds = useMemo(
-    () => filterShiftCashRefunds(creditNotes, sales, cashier, effectiveSession || session, today),
-    [creditNotes, sales, cashier, session, effectiveSession, today],
+    () => filterShiftCashRefunds(creditNotes, sales, cashier, effectiveSession || session, reportDay),
+    [creditNotes, sales, cashier, session, effectiveSession, reportDay],
   );
 
   // All cashiers on this caixa — used only to peel refunds out of session.totalOut
   // so another cashier's refund does not land as "manual cash out" on this report.
   const allCaixaCashRefundsTotal = useMemo(
-    () => filterShiftCashRefunds(creditNotes, sales, null, effectiveSession || session, today)
+    () => filterShiftCashRefunds(creditNotes, sales, null, effectiveSession || session, reportDay)
       .reduce((sum, note) => sum + note.total, 0),
-    [creditNotes, sales, session, effectiveSession, today],
+    [creditNotes, sales, session, effectiveSession, reportDay],
   );
 
   // Caixa expenses are shared (payment picks a cash box, not a cashier).
   // Show them once as info — do not fold into each cashier's net or expected drawer.
   const shiftCaixaExpenses = useMemo(
-    () => filterShiftCashExpenses(expenses, effectiveSession || session, sales, null, session?.caixaId, today),
-    [expenses, session, effectiveSession, sales, today],
+    () => filterShiftCashExpenses(expenses, effectiveSession || session, sales, null, session?.caixaId, reportDay),
+    [expenses, session, effectiveSession, sales, reportDay],
   );
 
   const totals = useMemo(() => {
@@ -219,7 +221,7 @@ export function PosEndOfDayReportDialog({
     <div>${company.tradeName || company.name}</div>
     <div>${branch?.name || ''}</div>
     <div>${t.posUi.endOfDayCashier}: <strong>${cashier?.name || cashier?.username || '—'}</strong></div>
-    <div>${t.posUi.endOfDayDate}: <strong>${format(new Date(), 'PPP', { locale: dfLocale })}</strong></div>
+    <div>${t.posUi.endOfDayDate}: <strong>${format(reportDayDate, 'PPP', { locale: dfLocale })}</strong></div>
     ${shiftOpenedLabel ? `<div>${shiftOpenedLabel}</div>` : ''}
   </div>
   <div class="totals">
@@ -295,7 +297,7 @@ export function PosEndOfDayReportDialog({
             {t.posUi.endOfDayCashier}: {cashier?.name || cashier?.username || '—'}
           </Badge>
           <Badge variant="outline">
-            {format(new Date(), 'PPP', { locale: dfLocale })}
+            {format(reportDayDate, 'PPP', { locale: dfLocale })}
           </Badge>
           {shiftOpenedLabel && (
             <Badge variant="secondary" className="text-xs">
@@ -348,14 +350,31 @@ export function PosEndOfDayReportDialog({
               </div>
             )}
             {totals.cashExpensesTotal > 0 && (
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">
-                  {t.posUi.endOfDaySharedCaixaExpenses.replace('{count}', String(totals.expenseCount))}
-                </span>
-                <span className="font-mono font-semibold text-amber-700">
-                  -{totals.cashExpensesTotal.toLocaleString(locale)} Kz
-                </span>
-              </div>
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">
+                    {t.posUi.endOfDaySharedCaixaExpenses.replace('{count}', String(totals.expenseCount))}
+                  </span>
+                  <span className="font-mono font-semibold text-amber-700">
+                    -{totals.cashExpensesTotal.toLocaleString(locale)} Kz
+                  </span>
+                </div>
+                <ul className="space-y-0.5 pt-1">
+                  {shiftCaixaExpenses.map((exp) => (
+                    <li
+                      key={exp.id}
+                      className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
+                    >
+                      <span className="truncate">
+                        {exp.description || exp.expenseNumber || exp.id}
+                      </span>
+                      <span className="font-mono tabular-nums shrink-0">
+                        {exp.totalAmount.toLocaleString(locale)} Kz
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
             {totals.cashRefundsTotal > 0 && (
               <div className="flex items-center justify-between font-medium pt-1 border-t border-amber-500/20">

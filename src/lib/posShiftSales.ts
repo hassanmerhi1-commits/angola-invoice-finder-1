@@ -50,6 +50,29 @@ export function todayLocalDate(): string {
   return saleLocalDate(new Date().toISOString());
 }
 
+/** Business day of the open register (YYYY-MM-DD), not the clock after midnight. */
+export function shiftBusinessDate(
+  session: CaixaSession | null | undefined,
+  fallback = todayLocalDate(),
+): string {
+  const raw = String(session?.date || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (session?.openedAt) return saleLocalDate(session.openedAt);
+  return fallback;
+}
+
+function expensePaidTimestamp(expense: Expense): string | undefined {
+  // Never use updatedAt — a later edit/sync would move a closed-day expense onto today.
+  const raw = expense.paidAt || expense.createdAt || expense.requestedAt;
+  if (raw == null || raw === '') return undefined;
+  if (raw instanceof Date) {
+    const ms = raw.getTime();
+    return Number.isFinite(ms) ? raw.toISOString() : undefined;
+  }
+  const text = String(raw).trim();
+  return text || undefined;
+}
+
 export function isSameShiftCashier(
   sale: Sale,
   cashier: User | null | undefined,
@@ -258,8 +281,9 @@ export function filterShiftCashRefunds(
  * Like credit notes: do NOT require expense.caixaId === session.caixaId —
  * users often open "Caixa Principal" but pay from the COA "Caixa - SOYO XX".
  *
- * Uses the open-shift window only (not calendar day) so overnight open registers
- * still show expenses, matching how the drawer session counters work.
+ * Same rules as sales/refunds: the shift window (openedAt / last EOD close)
+ * plus the register's business day. An overnight close still lists that day's
+ * expenses; a new session the next morning does not.
  *
  * Expenses are caixa/drawer movements — the payment UI picks a cash box, not a
  * cashier — so this list is intentionally NOT filtered by cashier. Callers decide
@@ -274,14 +298,26 @@ export function filterShiftCashExpenses(
   day = todayLocalDate(),
 ): Expense[] {
   if (!session) return [];
-  const effective = withRecoveredShiftStart(session, sales, cashier ?? null, day);
+  const reportDay = day || shiftBusinessDate(session);
+  const effective = withRecoveredShiftStart(session, sales, cashier ?? null, reportDay);
+  const sessionDay = shiftBusinessDate(effective, reportDay);
   return expenses.filter((expense) => {
     if (String(expense.status || '').toLowerCase() !== 'paid') return false;
     const source = String(expense.paymentSource || '').trim().toLowerCase();
     if (source && source !== 'caixa') return false;
     if (!branchIdsEquivalent(expense.branchId, effective.branchId)) return false;
-    const paidAt = expense.paidAt || expense.updatedAt || expense.createdAt;
+    const paidAt = expensePaidTimestamp(expense);
     if (!paidAt) return false;
+    const paidDay = saleLocalDate(paidAt);
+    const clockDay = todayLocalDate();
+    // New session today: previous calendar day's expenses stay on the closed day.
+    // Overnight close (session.date still yesterday): keep that day's payments,
+    // plus anything paid after midnight before they actually close.
+    if (sessionDay === clockDay) {
+      if (paidDay !== sessionDay) return false;
+    } else if (paidDay < sessionDay) {
+      return false;
+    }
     return eventInShift(paidAt, effective);
   });
 }
