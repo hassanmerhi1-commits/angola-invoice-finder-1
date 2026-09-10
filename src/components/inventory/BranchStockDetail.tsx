@@ -28,6 +28,50 @@ type BranchStockRow = {
   stock: number;
 };
 
+type ApiStockRow = {
+  branchId: string;
+  branchName: string;
+  branchCode?: string;
+  isMain?: boolean;
+  stock: number;
+};
+
+const STOCK_BY_SKU_TTL_MS = 60_000;
+const stockBySkuCache = new Map<string, { at: number; rows: ApiStockRow[] }>();
+const stockBySkuInflight = new Map<string, Promise<ApiStockRow[]>>();
+
+function stockBySkuCacheKey(sku: string, productId?: string) {
+  return `${sku.trim()}|${String(productId || '').trim()}`;
+}
+
+async function loadStockBySkuCached(sku: string, productId?: string): Promise<ApiStockRow[]> {
+  const key = stockBySkuCacheKey(sku, productId);
+  const hit = stockBySkuCache.get(key);
+  if (hit && Date.now() - hit.at < STOCK_BY_SKU_TTL_MS) return hit.rows;
+  const pending = stockBySkuInflight.get(key);
+  if (pending) return pending;
+  const request = (async () => {
+    const result = await api.products.stockBySku(sku, productId);
+    if (result.error) throw new Error(result.error);
+    const rows = Array.isArray(result.data?.rows) ? result.data.rows : [];
+    stockBySkuCache.set(key, { at: Date.now(), rows });
+    return rows;
+  })();
+  stockBySkuInflight.set(key, request);
+  try {
+    return await request;
+  } finally {
+    stockBySkuInflight.delete(key);
+  }
+}
+
+/** Warm Qtd detalhada before the tab is opened. */
+export function prefetchStockBySku(sku: string, productId?: string) {
+  const trimmed = String(sku || '').trim();
+  if (!trimmed) return;
+  void loadStockBySkuCached(trimmed, productId).catch(() => undefined);
+}
+
 export function BranchStockDetail({
   selectedProduct,
   branchList,
@@ -54,15 +98,15 @@ export function BranchStockDetail({
     }
 
     let cancelled = false;
-    setLoading(true);
+    const cached = stockBySkuCache.get(stockBySkuCacheKey(sku, selectedProduct.id));
+    const cacheFresh = Boolean(cached && Date.now() - cached.at < STOCK_BY_SKU_TTL_MS);
+    if (!cacheFresh) setLoading(true);
     setError(null);
 
     void (async () => {
       try {
-        const result = await api.products.stockBySku(sku);
+        const apiRows = await loadStockBySkuCached(sku, selectedProduct.id);
         if (cancelled) return;
-        if (result.error) throw new Error(result.error);
-        const apiRows = Array.isArray(result.data?.rows) ? result.data.rows : [];
         const byId = new Map(apiRows.map((r) => [String(r.branchId), r]));
 
         // Prefer live branch list order/names from the client; fill qty from API.

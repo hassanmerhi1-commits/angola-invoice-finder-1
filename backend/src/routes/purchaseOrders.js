@@ -12,25 +12,25 @@ module.exports = function(broadcastTable) {
   router.get('/', async (req, res) => {
     try {
       const { branchId, sku } = req.query;
-      const skuKey = String(sku || '').trim().toLowerCase();
+      const rawSku = String(sku || '').trim();
+      const skuKey = rawSku.toLowerCase();
       let query = 'SELECT * FROM purchase_orders';
       const params = [];
       if (skuKey) {
         query += ` WHERE id IN (
           SELECT DISTINCT order_id FROM purchase_order_items
-          WHERE LOWER(TRIM(COALESCE(sku, ''))) = $1
-             OR LOWER(TRIM(COALESCE(sku, ''))) LIKE $2
+          WHERE sku = $1 OR sku = $2 OR sku LIKE $3
         )`;
-        params.push(skuKey, `${skuKey}-dup-%`);
+        params.push(rawSku, skuKey, `${rawSku}-dup-%`);
         if (branchId) {
-          query += ' AND branch_id = $3';
+          query += ' AND branch_id = $4';
           params.push(branchId);
         }
       } else if (branchId) {
         query += ' WHERE branch_id = $1';
         params.push(branchId);
       }
-      query += ' ORDER BY created_at DESC';
+      query += skuKey ? ' ORDER BY created_at DESC LIMIT 80' : ' ORDER BY created_at DESC';
       const result = await db.query(query, params);
       const orders = result.rows || [];
       if (orders.length > 0) {

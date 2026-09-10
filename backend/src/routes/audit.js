@@ -151,7 +151,7 @@ module.exports = function(broadcastTable) {
   router.get('/record/:tableName/:recordId', requireAuth, requirePermission('reports_audit'), async (req, res) => {
     try {
       const result = await db.query(
-        'SELECT * FROM audit_log WHERE table_name = $1 AND record_id = $2 ORDER BY created_at DESC',
+        'SELECT * FROM audit_log WHERE table_name = $1 AND record_id = $2 ORDER BY created_at DESC LIMIT 100',
         [req.params.tableName, req.params.recordId],
       );
       res.json(result.rows);

@@ -561,7 +561,7 @@ export function InventoryProductOrdersPanel({ product }: { product: Product | nu
     return () => {
       cancelled = true;
     };
-  }, [product, currentBranch?.id]);
+  }, [product?.id, product?.sku, currentBranch?.id]);
 
   if (!product) {
     return <SelectProductHint message={t.inventoryPageUi.selectProductToViewInfo} />;
@@ -766,7 +766,7 @@ export function InventoryProductAuditPanel({
     return () => {
       cancelled = true;
     };
-  }, [product, allBranchProducts, scopedBranchIds]);
+  }, [product?.id, product?.sku, allBranchProducts, scopedBranchIds]);
 
   const rows = useMemo((): ProductAuditRow[] => {
     if (!product) return [];

@@ -1424,7 +1424,7 @@ module.exports = function(broadcastTable) {
       if (!sku) {
         return res.status(400).json({ error: 'sku is required' });
       }
-      const ids = await resolveProductIdsForMovementSku(db, sku);
+      const ids = await resolveProductIdsForMovementSku(db, sku, req.query.productId);
       const [branchesResult, stockResult] = await Promise.all([
         db.query(
           `SELECT id::text AS id, name, code, is_main
@@ -1433,21 +1433,16 @@ module.exports = function(broadcastTable) {
              CASE WHEN ${coalesceMainTruthy(db, 'is_main')} THEN 0 ELSE 1 END,
              name`,
         ),
+        // Per-warehouse qty from the product row — do not SUM the whole movement
+        // history (that made Qtd detalhada wait on popular SKUs).
         ids.length === 0
           ? Promise.resolve({ rows: [] })
           : db.query(
               `SELECT
-                 sm.warehouse_id::text AS warehouse_id,
-                 COALESCE(SUM(
-                   CASE
-                     WHEN sm.movement_type = 'IN' THEN sm.quantity
-                     WHEN sm.movement_type = 'OUT' THEN -sm.quantity
-                     ELSE 0
-                   END
-                 ), 0) AS ledger_stock
-               FROM stock_movements sm
-               WHERE sm.product_id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})
-               GROUP BY sm.warehouse_id`,
+                 COALESCE(branch_id::text, '') AS warehouse_id,
+                 COALESCE(stock, 0) AS ledger_stock
+               FROM products
+               WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})`,
               ids,
             ),
       ]);

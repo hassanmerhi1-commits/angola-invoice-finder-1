@@ -876,14 +876,17 @@ export const api = {
       );
     },
     /** Qty of one SKU at every warehouse (Inventory Qtd detalhada). */
-    stockBySku: (sku: string) =>
-      apiFetch<{ sku: string; rows: Array<{
+    stockBySku: (sku: string, productId?: string) => {
+      const sp = new URLSearchParams({ sku });
+      if (productId) sp.set('productId', productId);
+      return apiFetch<{ sku: string; rows: Array<{
         branchId: string;
         branchName: string;
         branchCode?: string;
         isMain?: boolean;
         stock: number;
-      }> }>(`/products/stock-by-sku?sku=${encodeURIComponent(sku)}`),
+      }> }>(`/products/stock-by-sku?${sp}`);
+    },
     sellingPrices: () =>
       apiFetch<Record<string, number>>('/products/selling-prices'),
     bulkTierPricing: (pcts: { price2Pct?: number | null; price3Pct?: number | null; price4Pct?: number | null }) =>
@@ -2634,7 +2637,7 @@ export const api = {
     recordHistory: (tableName: string, recordId: string) => {
       if (isElectronMode()) {
         return ipcQuery<any>(
-          'SELECT * FROM audit_log WHERE table_name = $1 AND record_id = $2 ORDER BY created_at DESC',
+          'SELECT * FROM audit_log WHERE table_name = $1 AND record_id = $2 ORDER BY created_at DESC LIMIT 100',
           [tableName, recordId],
         );
       }
@@ -3521,22 +3524,22 @@ export const api = {
       if (isElectronMode()) {
         return apiFetch<any[]>(`/transactions/stock-movements?${sp}`).then(result => {
           if (result.data !== undefined) return result;
-          let sql = `SELECT sm.*, p.name AS product_name, p.sku,
-            b.name AS branch_name, b.code AS branch_code,
-            u.name AS created_by_name, u.email AS created_by_email
+          let sql = `SELECT sm.id, sm.product_id, sm.warehouse_id, sm.movement_type,
+            sm.quantity, sm.unit_cost, sm.reference_type, sm.reference_id,
+            sm.reference_number, sm.notes, sm.created_by, sm.created_at
             FROM stock_movements sm
-            LEFT JOIN products p ON p.id = sm.product_id
-            LEFT JOIN branches b ON b.id = sm.warehouse_id
-            LEFT JOIN users u ON u.id = sm.created_by
             WHERE 1=1`;
           const sqlParams: any[] = [];
           let idx = 1;
-          if (params?.sku) {
-            sql += ` AND LOWER(TRIM(COALESCE(p.sku, ''))) = LOWER(TRIM($${idx++}))`;
-            sqlParams.push(params.sku);
-          } else if (params?.productId) {
+          if (params?.productId) {
             sql += ` AND sm.product_id = $${idx++}`;
             sqlParams.push(params.productId);
+          } else if (params?.sku) {
+            sql += ` AND sm.product_id IN (
+              SELECT id FROM products WHERE sku = $${idx} OR sku = LOWER($${idx})
+            )`;
+            sqlParams.push(params.sku);
+            idx += 1;
           }
           if (params?.warehouseId) { sql += ` AND sm.warehouse_id = $${idx++}`; sqlParams.push(params.warehouseId); }
           if (params?.referenceType) { sql += ` AND sm.reference_type = $${idx++}`; sqlParams.push(params.referenceType); }

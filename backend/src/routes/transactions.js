@@ -109,26 +109,24 @@ module.exports = function(broadcastTable) {
         return res.json([]);
       }
       const { resolveProductIdsForMovementSku, expandProductIdVariants } = require('../lib/productSkuResolve');
-      let query = `SELECT sm.*, p.name AS product_name, p.sku,
-        b.name AS branch_name, b.code AS branch_code,
-        u.name AS created_by_name, u.email AS created_by_email
+      const skuTrim = String(sku || '').trim();
+      const ids = skuTrim
+        ? await resolveProductIdsForMovementSku(db, skuTrim, productId)
+        : expandProductIdVariants([productId]);
+      if ((skuTrim || productId) && ids.length === 0) {
+        return res.json([]);
+      }
+
+      // No product/branch/user joins — those made every Inventory tab scan the ledger.
+      // The grid already has branch names; created_by is shown as-is when the name is missing.
+      let query = `SELECT sm.id, sm.product_id, sm.warehouse_id, sm.movement_type,
+        sm.quantity, sm.unit_cost, sm.reference_type, sm.reference_id,
+        sm.reference_number, sm.notes, sm.created_by, sm.created_at
         FROM stock_movements sm
-        LEFT JOIN products p ON p.id = sm.product_id
-        LEFT JOIN branches b ON b.id = sm.warehouse_id
-        LEFT JOIN users u ON u.id = sm.created_by
         WHERE 1=1`;
       const params = [];
       let idx = 1;
-      const skuTrim = String(sku || '').trim();
-      if (skuTrim) {
-        const ids = await resolveProductIdsForMovementSku(db, skuTrim);
-        if (ids.length === 0) {
-          return res.json([]);
-        }
-        query += ` AND sm.product_id IN (${ids.map(() => `$${idx++}`).join(', ')})`;
-        params.push(...ids);
-      } else if (productId) {
-        const ids = expandProductIdVariants([productId]);
+      if (ids.length > 0) {
         query += ` AND sm.product_id IN (${ids.map(() => `$${idx++}`).join(', ')})`;
         params.push(...ids);
       }
@@ -160,11 +158,43 @@ module.exports = function(broadcastTable) {
           )`;
       }
 
-      const lim = Math.min(Math.max(parseInt(String(limit || ''), 10) || 500, 1), 5000);
+      const lim = Math.min(Math.max(parseInt(String(limit || ''), 10) || 200, 1), 5000);
       query += ` ORDER BY sm.created_at DESC LIMIT $${idx++}`;
       params.push(lim);
       const result = await db.query(query, params);
-      res.json(result.rows.map(mapStockMovementRow));
+      const rows = result.rows || [];
+      if (rows.length === 0) {
+        return res.json([]);
+      }
+      const productIds = [...new Set(rows.map((r) => String(r.product_id || '')).filter(Boolean))];
+      const warehouseIds = [...new Set(rows.map((r) => String(r.warehouse_id || '')).filter(Boolean))];
+      const [productsRes, branchesRes] = await Promise.all([
+        productIds.length
+          ? db.query(
+              `SELECT id, name, sku FROM products WHERE id IN (${productIds.map((_, i) => `$${i + 1}`).join(', ')})`,
+              productIds,
+            )
+          : Promise.resolve({ rows: [] }),
+        warehouseIds.length
+          ? db.query(
+              `SELECT id, name, code FROM branches WHERE id IN (${warehouseIds.map((_, i) => `$${i + 1}`).join(', ')})`,
+              warehouseIds,
+            )
+          : Promise.resolve({ rows: [] }),
+      ]);
+      const productById = new Map((productsRes.rows || []).map((p) => [String(p.id), p]));
+      const branchById = new Map((branchesRes.rows || []).map((b) => [String(b.id), b]));
+      res.json(rows.map((row) => {
+        const product = productById.get(String(row.product_id)) || {};
+        const branch = branchById.get(String(row.warehouse_id)) || {};
+        return mapStockMovementRow({
+          ...row,
+          product_name: product.name || '',
+          sku: product.sku || skuTrim,
+          branch_name: branch.name || '',
+          branch_code: branch.code || '',
+        });
+      }));
     } catch (error) {
       console.error('[STOCK MOVEMENTS]', error);
       res.status(500).json({ error: 'Failed to fetch stock movements' });

@@ -21,7 +21,7 @@ import { normalizeIsMain } from '@/lib/branchAccess';
 import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { parseTaxRateOrNull } from '@/lib/taxUtils';
-import { saveProduct, getProducts as storageGetProducts, getStockMovements as localGetStockMovements, PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
+import { saveProduct, getProducts as storageGetProducts, PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -46,7 +46,7 @@ import { BulkTierPricingDialog } from '@/components/inventory/BulkTierPricingDia
 import { BulkPriceCostDialog } from '@/components/inventory/BulkPriceCostDialog';
 import { BulkIvaDialog } from '@/components/inventory/BulkIvaDialog';
 import { ProductDetailDialog } from '@/components/inventory/ProductDetailDialog';
-import { BranchStockDetail } from '@/components/inventory/BranchStockDetail';
+import { BranchStockDetail, prefetchStockBySku } from '@/components/inventory/BranchStockDetail';
 import {
   filterMovementsForProduct,
   InventoryMonthlyMovementsPanel,
@@ -343,10 +343,11 @@ export default function Inventory() {
       const result = await api.transactions.stockMovements({
         warehouseId: isHeadOffice ? undefined : currentBranch?.id,
         sku,
+        productId: selectedProduct?.id,
         limit: 200,
       });
       if (gen !== stockMovementsGenRef.current) return;
-      if (result.data && Array.isArray(result.data)) {
+      if (Array.isArray(result.data)) {
         const mapped: StockMovement[] = result.data.map((m: any) => ({
           id: m.id,
           productId: m.product_id || m.productId,
@@ -370,25 +371,18 @@ export default function Inventory() {
           createdAt: m.created_at || m.createdAt || '',
         }));
         setStockMovements(mapped);
-        setStockMovementsLoading(false);
-        stockMovementsScopeRef.current = scopeKey;
-        stockMovementsLoadedAtRef.current = Date.now();
-        return;
+      } else {
+        setStockMovements([]);
       }
-    } catch (e) {
-      // API unreachable — fall through to local
+    } catch {
+      if (gen !== stockMovementsGenRef.current) return;
+      setStockMovements([]);
     }
     if (gen !== stockMovementsGenRef.current) return;
-    const data = await localGetStockMovements(isHeadOffice ? undefined : currentBranch?.id);
-    if (gen !== stockMovementsGenRef.current) return;
-    const skuKey = sku.toLowerCase();
-    setStockMovements(
-      data.filter((m) => String(m.sku || '').trim().toLowerCase() === skuKey),
-    );
     setStockMovementsLoading(false);
     stockMovementsScopeRef.current = scopeKey;
     stockMovementsLoadedAtRef.current = Date.now();
-  }, [currentBranch?.id, isHeadOffice, selectedProduct?.sku]);
+  }, [currentBranch?.id, isHeadOffice, selectedProduct?.id, selectedProduct?.sku]);
 
   const MOVEMENT_TABS = useMemo(
     () =>
@@ -499,6 +493,21 @@ export default function Inventory() {
   const [bulkIvaOpen, setBulkIvaOpen] = useState(false);
   const [adjustmentHistoryOpen, setAdjustmentHistoryOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('lista');
+  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => new Set(['lista']));
+  /** Radix forceMount only accepts `true`; undefined unmounts as usual. */
+  const keepMounted = useCallback(
+    (tab: string) => (visitedTabs.has(tab) ? true : undefined),
+    [visitedTabs],
+  );
+  const openInventoryTab = useCallback((tab: string) => {
+    setActiveTab(tab);
+    setVisitedTabs((prev) => {
+      if (prev.has(tab)) return prev;
+      const next = new Set(prev);
+      next.add(tab);
+      return next;
+    });
+  }, []);
 
   const branchList = allBranches.length > 0 ? allBranches : branches;
 
@@ -617,12 +626,10 @@ export default function Inventory() {
       setStockMovementsLoading(false);
       return;
     }
-    // Prefetch as soon as a row is selected so Extracto / Mês / chart open from cache.
-    const timer = window.setTimeout(() => {
-      void loadStockMovements();
-    }, MOVEMENT_TABS.has(activeTab) ? 0 : 120);
-    return () => window.clearTimeout(timer);
-  }, [activeTab, loadStockMovements, MOVEMENT_TABS, selectedProduct?.sku]);
+    // Prefetch as soon as a row is selected so Extracto / Mês / Qtd detalhada open from cache.
+    void loadStockMovements();
+    prefetchStockBySku(String(selectedProduct.sku).trim(), selectedProduct.id);
+  }, [activeTab, loadStockMovements, MOVEMENT_TABS, selectedProduct?.id, selectedProduct?.sku]);
 
   const gridProducts = useMemo(() => {
     let rows = displayProducts;
@@ -1591,7 +1598,7 @@ export default function Inventory() {
       </div>
 
       {/* Sub-tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
+      <Tabs value={activeTab} onValueChange={openInventoryTab} className="flex-1 flex flex-col min-h-0">
         <div className="flex items-stretch border-b bg-muted/30">
           <TabsList className="min-w-0 flex-1 justify-start rounded-none bg-transparent h-auto p-0 overflow-x-auto">
           <TabsTrigger value="lista" className={NEXOR_TAB_TRIGGER}>
@@ -1711,7 +1718,7 @@ export default function Inventory() {
           )}
         </TabsContent>
 
-        <TabsContent value="extracto" className={tabPanelClass}>
+        <TabsContent value="extracto" forceMount={keepMounted('extracto')} className={tabPanelClass}>
           {!selectedProduct ? (
             <Card>
               <CardContent className="pt-6">
@@ -1781,7 +1788,7 @@ export default function Inventory() {
           )}
         </TabsContent>
 
-        <TabsContent value="mes" className={tabPanelClass}>
+        <TabsContent value="mes" forceMount={keepMounted('mes')} className={tabPanelClass}>
           <InventoryMonthlyMovementsPanel
             product={selectedProduct}
             movements={stockMovements}
@@ -1790,7 +1797,7 @@ export default function Inventory() {
         </TabsContent>
 
         {showDetailedQtyTab && (
-          <TabsContent value="qtd-detalhada" className={tabPanelClass}>
+          <TabsContent value="qtd-detalhada" forceMount={keepMounted('qtd-detalhada')} className={tabPanelClass}>
             <BranchStockDetail
               selectedProduct={selectedProduct}
               allBranchProducts={allBranchProducts}
@@ -1799,7 +1806,7 @@ export default function Inventory() {
           </TabsContent>
         )}
 
-        <TabsContent value="transferencia" forceMount className={tabPanelClass}>
+        <TabsContent value="transferencia" forceMount={keepMounted('transferencia')} className={tabPanelClass}>
           <InventoryPendingTransfersPanel
             product={selectedProduct}
             allBranchProducts={allBranchProducts}
@@ -1810,7 +1817,7 @@ export default function Inventory() {
           />
         </TabsContent>
 
-        <TabsContent value="grafico" className={tabPanelClass}>
+        <TabsContent value="grafico" forceMount={keepMounted('grafico')} className={tabPanelClass}>
           <InventoryMovementChartPanel
             product={selectedProduct}
             movements={stockMovements}
@@ -1818,15 +1825,15 @@ export default function Inventory() {
           />
         </TabsContent>
 
-        <TabsContent value="preco-compra" className={tabPanelClass}>
+        <TabsContent value="preco-compra" forceMount={keepMounted('preco-compra')} className={tabPanelClass}>
           <InventoryPurchasePricePanel {...panelProps} />
         </TabsContent>
 
-        <TabsContent value="no-serie" className={tabPanelClass}>
+        <TabsContent value="no-serie" forceMount={keepMounted('no-serie')} className={tabPanelClass}>
           <InventorySerialNumbersPanel product={selectedProduct} />
         </TabsContent>
 
-        <TabsContent value="info-produto" className={tabPanelClass}>
+        <TabsContent value="info-produto" forceMount={keepMounted('info-produto')} className={tabPanelClass}>
           {selectedProduct ? (
             <Card>
               <CardContent className="pt-6">
@@ -1867,23 +1874,23 @@ export default function Inventory() {
           )}
         </TabsContent>
 
-        <TabsContent value="cost-history" className={tabPanelClass}>
+        <TabsContent value="cost-history" forceMount={keepMounted('cost-history')} className={tabPanelClass}>
           <InventoryCostHistoryPanel {...panelProps} />
         </TabsContent>
 
-        <TabsContent value="pedidos" className={tabPanelClass}>
+        <TabsContent value="pedidos" forceMount={keepMounted('pedidos')} className={tabPanelClass}>
           <InventoryProductOrdersPanel product={selectedProduct} />
         </TabsContent>
 
-        <TabsContent value="barcode-qty" className={tabPanelClass}>
+        <TabsContent value="barcode-qty" forceMount={keepMounted('barcode-qty')} className={tabPanelClass}>
           <InventoryBarcodeQtyPanel product={selectedProduct} allBranchProducts={allBranchProducts} />
         </TabsContent>
 
-        <TabsContent value="vendas-mensais" className={tabPanelClass}>
+        <TabsContent value="vendas-mensais" forceMount={keepMounted('vendas-mensais')} className={tabPanelClass}>
           <InventoryMonthlySalesPanel {...panelProps} />
         </TabsContent>
 
-        <TabsContent value="auditoria" className={tabPanelClass}>
+        <TabsContent value="auditoria" forceMount={keepMounted('auditoria')} className={tabPanelClass}>
           <InventoryProductAuditPanel {...panelProps} />
         </TabsContent>
       </Tabs>

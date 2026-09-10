@@ -185,17 +185,41 @@ function expandProductIdVariants(ids) {
  * Inventory tabs should look up movements by these ids — not by LOWER(TRIM(CASE sku…))
  * on every stock_movements row, which cannot use idx_stock_movements_product.
  */
-async function resolveProductIdsForMovementSku(queryable, sku) {
-  const key = canonicalSkuString(sku).toLowerCase();
-  if (!key) return [];
+async function resolveProductIdsForMovementSku(queryable, sku, extraId) {
+  const ids = new Set();
+  const extra = String(extraId || '').trim();
+  if (extra) ids.add(extra);
+  const rawSku = String(sku || '').trim();
+  const key = canonicalSkuString(rawSku);
+  if (!key) return Array.from(ids);
   const q = queryable?.query ? queryable : db;
-  const result = await q.query(
+  // Exact sku first so idx_products_sku_branch can be used.
+  const exact = await q.query(
     `SELECT id FROM products
-     WHERE LOWER(TRIM(COALESCE(sku, ''))) = $1
-        OR LOWER(TRIM(COALESCE(sku, ''))) LIKE $2`,
-    [key, `${key}-dup-%`],
+     WHERE sku = $1 OR sku = $2
+     LIMIT 80`,
+    [rawSku, key],
   );
-  return (result.rows || []).map((row) => String(row.id || '').trim()).filter(Boolean);
+  for (const row of exact.rows || []) {
+    const id = String(row.id || '').trim();
+    if (id) ids.add(id);
+  }
+  // Extra id must not skip SKU lookup — HQ rows often have -dup- copies.
+  if (exact.rows?.length === 0) {
+    const lowered = key.toLowerCase();
+    const fuzzy = await q.query(
+      `SELECT id FROM products
+       WHERE LOWER(TRIM(COALESCE(sku, ''))) = $1
+          OR LOWER(TRIM(COALESCE(sku, ''))) LIKE $2
+       LIMIT 80`,
+      [lowered, `${lowered}-dup-%`],
+    );
+    for (const row of fuzzy.rows || []) {
+      const id = String(row.id || '').trim();
+      if (id) ids.add(id);
+    }
+  }
+  return Array.from(ids);
 }
 
 module.exports = {
