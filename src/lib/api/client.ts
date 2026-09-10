@@ -1653,8 +1653,12 @@ export const api = {
 
   // Purchase Orders
   purchaseOrders: {
-    list: async (branchId?: string) => {
-      const apiResult = await apiFetch<any[]>(`/purchase-orders${branchId ? `?branchId=${branchId}` : ''}`);
+    list: async (branchId?: string, sku?: string) => {
+      const sp = new URLSearchParams();
+      if (branchId) sp.set('branchId', branchId);
+      if (sku) sp.set('sku', sku);
+      const qs = sp.toString();
+      const apiResult = await apiFetch<any[]>(`/purchase-orders${qs ? `?${qs}` : ''}`);
       if (apiResult.data !== undefined || !isElectronMode()) return apiResult;
 
       const ordersResult = branchId

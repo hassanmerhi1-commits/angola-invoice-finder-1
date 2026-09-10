@@ -31,6 +31,7 @@ const {
   canonicalSkuString,
   sqlMovementSkuKey,
   sqlCanonicalSkuText,
+  resolveProductIdsForMovementSku,
 } = require('../lib/productSkuResolve');
 const {
   ensureFilialProductsForWarehouse,
@@ -1423,7 +1424,7 @@ module.exports = function(broadcastTable) {
       if (!sku) {
         return res.status(400).json({ error: 'sku is required' });
       }
-      const skuKey = sqlMovementSkuKey('pm');
+      const ids = await resolveProductIdsForMovementSku(db, sku);
       const [branchesResult, stockResult] = await Promise.all([
         db.query(
           `SELECT id::text AS id, name, code, is_main
@@ -1432,22 +1433,23 @@ module.exports = function(broadcastTable) {
              CASE WHEN ${coalesceMainTruthy(db, 'is_main')} THEN 0 ELSE 1 END,
              name`,
         ),
-        db.query(
-          `SELECT
-             sm.warehouse_id::text AS warehouse_id,
-             COALESCE(SUM(
-               CASE
-                 WHEN sm.movement_type = 'IN' THEN sm.quantity
-                 WHEN sm.movement_type = 'OUT' THEN -sm.quantity
-                 ELSE 0
-               END
-             ), 0) AS ledger_stock
-           FROM stock_movements sm
-           INNER JOIN products pm ON pm.id = sm.product_id
-           WHERE ${skuKey} = LOWER(TRIM($1))
-           GROUP BY sm.warehouse_id`,
-          [sku],
-        ),
+        ids.length === 0
+          ? Promise.resolve({ rows: [] })
+          : db.query(
+              `SELECT
+                 sm.warehouse_id::text AS warehouse_id,
+                 COALESCE(SUM(
+                   CASE
+                     WHEN sm.movement_type = 'IN' THEN sm.quantity
+                     WHEN sm.movement_type = 'OUT' THEN -sm.quantity
+                     ELSE 0
+                   END
+                 ), 0) AS ledger_stock
+               FROM stock_movements sm
+               WHERE sm.product_id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})
+               GROUP BY sm.warehouse_id`,
+              ids,
+            ),
       ]);
       const stockByWarehouse = new Map();
       for (const row of stockResult.rows || []) {

@@ -313,8 +313,10 @@ export default function Inventory() {
 
   const stockMovementsScopeRef = useRef<string>('');
   const stockMovementsLoadedAtRef = useRef(0);
+  const stockMovementsGenRef = useRef(0);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+  const [stockMovementsLoading, setStockMovementsLoading] = useState(false);
 
   const loadStockMovements = useCallback(async (force = false) => {
     const sku = String(selectedProduct?.sku || '').trim();
@@ -327,19 +329,23 @@ export default function Inventory() {
     ) {
       return;
     }
+    const gen = ++stockMovementsGenRef.current;
     // Product tabs: fetch only this SKU's movements (not the last 500 of everything).
     if (!sku) {
       setStockMovements([]);
+      setStockMovementsLoading(false);
       stockMovementsScopeRef.current = scopeKey;
       stockMovementsLoadedAtRef.current = Date.now();
       return;
     }
+    setStockMovementsLoading(true);
     try {
       const result = await api.transactions.stockMovements({
         warehouseId: isHeadOffice ? undefined : currentBranch?.id,
         sku,
         limit: 200,
       });
+      if (gen !== stockMovementsGenRef.current) return;
       if (result.data && Array.isArray(result.data)) {
         const mapped: StockMovement[] = result.data.map((m: any) => ({
           id: m.id,
@@ -364,6 +370,7 @@ export default function Inventory() {
           createdAt: m.created_at || m.createdAt || '',
         }));
         setStockMovements(mapped);
+        setStockMovementsLoading(false);
         stockMovementsScopeRef.current = scopeKey;
         stockMovementsLoadedAtRef.current = Date.now();
         return;
@@ -371,11 +378,14 @@ export default function Inventory() {
     } catch (e) {
       // API unreachable — fall through to local
     }
+    if (gen !== stockMovementsGenRef.current) return;
     const data = await localGetStockMovements(isHeadOffice ? undefined : currentBranch?.id);
+    if (gen !== stockMovementsGenRef.current) return;
     const skuKey = sku.toLowerCase();
     setStockMovements(
       data.filter((m) => String(m.sku || '').trim().toLowerCase() === skuKey),
     );
+    setStockMovementsLoading(false);
     stockMovementsScopeRef.current = scopeKey;
     stockMovementsLoadedAtRef.current = Date.now();
   }, [currentBranch?.id, isHeadOffice, selectedProduct?.sku]);
@@ -602,12 +612,16 @@ export default function Inventory() {
   );
 
   useEffect(() => {
-    if (!MOVEMENT_TABS.has(activeTab)) return;
     if (!selectedProduct?.sku) {
       setStockMovements([]);
+      setStockMovementsLoading(false);
       return;
     }
-    void loadStockMovements();
+    // Prefetch as soon as a row is selected so Extracto / Mês / chart open from cache.
+    const timer = window.setTimeout(() => {
+      void loadStockMovements();
+    }, MOVEMENT_TABS.has(activeTab) ? 0 : 120);
+    return () => window.clearTimeout(timer);
   }, [activeTab, loadStockMovements, MOVEMENT_TABS, selectedProduct?.sku]);
 
   const gridProducts = useMemo(() => {
@@ -1752,7 +1766,11 @@ export default function Inventory() {
                       ))}
                       {selectedProductMovements.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">{t.inventoryUi.noMovementsForProduct}</TableCell>
+                          <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                            {stockMovementsLoading
+                              ? t.common.loading
+                              : t.inventoryUi.noMovementsForProduct}
+                          </TableCell>
                         </TableRow>
                       )}
                     </TableBody>

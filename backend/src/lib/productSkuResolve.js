@@ -168,6 +168,36 @@ function sqlMovementSkuKey(alias = 'pm') {
   return `LOWER(TRIM(${sqlCanonicalSkuText(alias)}))`;
 }
 
+function expandProductIdVariants(ids) {
+  const out = new Set();
+  for (const raw of ids) {
+    const id = String(raw || '').trim();
+    if (!id) continue;
+    out.add(id);
+    const stripped = id.replace(/-/g, '');
+    if (stripped && stripped !== id) out.add(stripped);
+  }
+  return Array.from(out);
+}
+
+/**
+ * Product ids for a catalogue SKU (including -dup- repair copies).
+ * Inventory tabs should look up movements by these ids — not by LOWER(TRIM(CASE sku…))
+ * on every stock_movements row, which cannot use idx_stock_movements_product.
+ */
+async function resolveProductIdsForMovementSku(queryable, sku) {
+  const key = canonicalSkuString(sku).toLowerCase();
+  if (!key) return [];
+  const q = queryable?.query ? queryable : db;
+  const result = await q.query(
+    `SELECT id FROM products
+     WHERE LOWER(TRIM(COALESCE(sku, ''))) = $1
+        OR LOWER(TRIM(COALESCE(sku, ''))) LIKE $2`,
+    [key, `${key}-dup-%`],
+  );
+  return (result.rows || []).map((row) => String(row.id || '').trim()).filter(Boolean);
+}
+
 module.exports = {
   loadMainBranchIds,
   isCatalogBranchScope,
@@ -177,4 +207,6 @@ module.exports = {
   canonicalSkuString,
   sqlCanonicalSkuText,
   sqlMovementSkuKey,
+  resolveProductIdsForMovementSku,
+  expandProductIdVariants,
 };

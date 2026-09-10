@@ -108,7 +108,7 @@ module.exports = function(broadcastTable) {
       if (warehouseId === undefined) {
         return res.json([]);
       }
-      const { sqlMovementSkuKey } = require('../lib/productSkuResolve');
+      const { resolveProductIdsForMovementSku, expandProductIdVariants } = require('../lib/productSkuResolve');
       let query = `SELECT sm.*, p.name AS product_name, p.sku,
         b.name AS branch_name, b.code AS branch_code,
         u.name AS created_by_name, u.email AS created_by_email
@@ -121,11 +121,16 @@ module.exports = function(broadcastTable) {
       let idx = 1;
       const skuTrim = String(sku || '').trim();
       if (skuTrim) {
-        query += ` AND ${sqlMovementSkuKey('p')} = LOWER(TRIM($${idx++}))`;
-        params.push(skuTrim);
+        const ids = await resolveProductIdsForMovementSku(db, skuTrim);
+        if (ids.length === 0) {
+          return res.json([]);
+        }
+        query += ` AND sm.product_id IN (${ids.map(() => `$${idx++}`).join(', ')})`;
+        params.push(...ids);
       } else if (productId) {
-        query += ` AND sm.product_id = $${idx++}`;
-        params.push(productId);
+        const ids = expandProductIdVariants([productId]);
+        query += ` AND sm.product_id IN (${ids.map(() => `$${idx++}`).join(', ')})`;
+        params.push(...ids);
       }
       if (warehouseId) { query += ` AND sm.warehouse_id = $${idx++}`; params.push(warehouseId); }
       if (referenceType) { query += ` AND sm.reference_type = $${idx++}`; params.push(referenceType); }

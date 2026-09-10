@@ -11,10 +11,25 @@ module.exports = function(broadcastTable) {
   // READ: Get all purchase orders (read-only queries are fine in routes)
   router.get('/', async (req, res) => {
     try {
-      const { branchId } = req.query;
+      const { branchId, sku } = req.query;
+      const skuKey = String(sku || '').trim().toLowerCase();
       let query = 'SELECT * FROM purchase_orders';
       const params = [];
-      if (branchId) { query += ' WHERE branch_id = $1'; params.push(branchId); }
+      if (skuKey) {
+        query += ` WHERE id IN (
+          SELECT DISTINCT order_id FROM purchase_order_items
+          WHERE LOWER(TRIM(COALESCE(sku, ''))) = $1
+             OR LOWER(TRIM(COALESCE(sku, ''))) LIKE $2
+        )`;
+        params.push(skuKey, `${skuKey}-dup-%`);
+        if (branchId) {
+          query += ' AND branch_id = $3';
+          params.push(branchId);
+        }
+      } else if (branchId) {
+        query += ' WHERE branch_id = $1';
+        params.push(branchId);
+      }
       query += ' ORDER BY created_at DESC';
       const result = await db.query(query, params);
       const orders = result.rows || [];

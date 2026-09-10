@@ -670,6 +670,30 @@ async function ensureBankReconciliationsTable(db) {
   }
 }
 
+/** Inventory product tabs look up movements by product_id + created_at. */
+async function ensureStockMovementLookupIndexes(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query(
+        `CREATE INDEX IF NOT EXISTS idx_stock_movements_product_created
+         ON stock_movements (product_id, created_at DESC)`,
+      );
+    } catch (err) {
+      console.warn('[SCHEMA] stock_movements product_created index:', err.message);
+    }
+    return;
+  }
+  if (!db.sqlite) return;
+  try {
+    db.sqlite.exec(
+      `CREATE INDEX IF NOT EXISTS idx_stock_movements_product_created
+       ON stock_movements (product_id, created_at DESC)`,
+    );
+  } catch (err) {
+    console.warn('[SCHEMA] stock_movements product_created index (sqlite):', err.message);
+  }
+}
+
 /** Sales order ship qty + optional stock location stamp (migration 067). */
 async function ensureSoShipAndLocationColumns(db) {
   if (db.engine === 'postgres') {
@@ -1291,6 +1315,7 @@ async function ensurePhaseSchema(db) {
     await ensureBankReconciliationsTable(db);
     await ensureBankTransactionsTable(db);
     await ensureSoShipAndLocationColumns(db);
+    await ensureStockMovementLookupIndexes(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
@@ -1356,6 +1381,7 @@ async function ensurePhaseSchema(db) {
     await ensureBankReconciliationsTable(db);
     await ensureBankTransactionsTable(db);
     await ensureSoShipAndLocationColumns(db);
+    await ensureStockMovementLookupIndexes(db);
     await ensurePgcChartOfAccounts(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {

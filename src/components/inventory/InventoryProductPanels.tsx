@@ -531,7 +531,7 @@ export function InventoryProductOrdersPanel({ product }: { product: Product | nu
     (async () => {
       setLoading(true);
       try {
-        const result = await api.purchaseOrders.list(currentBranch?.id);
+        const result = await api.purchaseOrders.list(currentBranch?.id, product.sku);
         const raw = result.data || [];
         const skuKey = (product.sku || '').trim().toLowerCase();
         const matched: typeof orders = [];
@@ -733,10 +733,11 @@ export function InventoryProductAuditPanel({
           rows.push(row);
         };
 
-        for (const pid of productIds) {
-          const result = await api.audit.recordHistory('products', pid);
-          const list = result.data || [];
-          for (const entry of list) {
+        const historyResults = await Promise.all(
+          [...productIds].slice(0, 8).map((pid) => api.audit.recordHistory('products', pid)),
+        );
+        for (const result of historyResults) {
+          for (const entry of result.data || []) {
             push({
               id: `audit-${entry.id}`,
               timestamp: entry.created_at || entry.createdAt || entry.timestamp || '',
@@ -752,26 +753,6 @@ export function InventoryProductAuditPanel({
                 '—',
             });
           }
-        }
-
-        const skuKey = (product.sku || '').trim().toLowerCase();
-        const broad = await api.audit.list({ tableName: 'products', limit: 500 });
-        for (const entry of broad.data || []) {
-          const desc = String(
-            entry.description || entry.new_values || entry.newValues || '',
-          ).toLowerCase();
-          const recordId = entry.record_id || entry.recordId || '';
-          const matchesId = recordId && productIds.has(recordId);
-          const matchesSkuInText = skuKey && desc.includes(skuKey);
-          if (!matchesId && !matchesSkuInText) continue;
-          push({
-            id: `audit-b-${entry.id}`,
-            timestamp: entry.created_at || entry.createdAt || '',
-            action: entry.action || '—',
-            userName: entry.user_name || entry.userName || '—',
-            branchLabel: entry.branch_name || entry.branch_id || '—',
-            description: entry.description || desc || '—',
-          });
         }
 
         if (!cancelled) setServerAuditRows(rows);
