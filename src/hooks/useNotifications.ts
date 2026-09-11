@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { isDemoMode } from '@/lib/api/config';
 import { api } from '@/lib/api/client';
+import { onTableSync } from '@/lib/realtime/socket';
 
 export interface Notification {
   id: string;
-  type: 'low_stock' | 'approval_pending' | 'payment_received' | 'stock_transfer' | 'system' | 'agt_failure' | 'overdue_ar' | 'period_close';
+  type: 'low_stock' | 'approval_pending' | 'approval_result' | 'payment_received' | 'stock_transfer' | 'system' | 'agt_failure' | 'overdue_ar' | 'period_close';
   title: string;
   message: string;
   timestamp: string;
@@ -93,6 +94,15 @@ export function useNotifications() {
     if (isDemoMode()) return;
     const interval = setInterval(() => void refreshFromServer(), 60_000);
     return () => clearInterval(interval);
+  }, [refreshFromServer]);
+
+  // An approval waiting on someone is useless a minute late, so the poll above is only
+  // the fallback for when the socket is down.
+  useEffect(() => {
+    if (isDemoMode()) return;
+    return onTableSync('notifications', () => {
+      void refreshFromServer();
+    });
   }, [refreshFromServer]);
 
   // Demo/localStorage-only low-stock scan

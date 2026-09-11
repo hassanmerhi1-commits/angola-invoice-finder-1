@@ -47,6 +47,7 @@ import { TextSizeSwitcher } from '@/components/TextSizeSwitcher';
 import { ServerConnectionIndicator } from '@/components/layout/ServerConnectionIndicator';
 import { OfflineModeBanner } from '@/components/layout/OfflineModeBanner';
 import { SyncPendingBadge } from '@/components/layout/SyncPendingBadge';
+import { NotificationBell } from '@/components/layout/NotificationBell';
 import { GlobalSearch } from '@/components/layout/GlobalSearch';
 import { CalculatorDialog } from '@/components/utilities/CalculatorDialog';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
@@ -741,6 +742,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         <div className="flex shrink-0 items-center gap-2">
           <ServerConnectionIndicator />
           <SyncPendingBadge />
+          <NotificationBell />
           <GlobalSearch />
           {showDailyChecklist && (
             <Button

@@ -151,6 +151,12 @@ export default function Expenses() {
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('__all__');
+  // Approval notifications link here with ?status=pending_approval so the admin lands
+  // on the request instead of the whole expense history.
+  useEffect(() => {
+    const requested = new URLSearchParams(location.search).get('status');
+    if (requested) setStatusFilter(requested);
+  }, [location.search]);
   const [categoryFilter, setCategoryFilter] = useState<string>('__all__');
 
   const expenseBranchId = apiBranchId || userBranch?.id || currentBranch?.id || user?.branchId;

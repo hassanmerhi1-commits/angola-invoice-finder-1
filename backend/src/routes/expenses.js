@@ -15,6 +15,7 @@ const {
   syncOpenSessionExpensesFromLedger,
 } = require('../lib/caixaCashRefund');
 const { resolveBranchFilterId, normalizeBranchIdKey } = require('../lib/branchIdMatch');
+const { notifyExpenseApprovalChange } = require('../lib/notifications');
 
 const BANK_GL = '431';
 
@@ -360,7 +361,8 @@ module.exports = function expensesRouter(broadcastTable) {
       const id = String(body.id || randomUUID());
       const now = new Date().toISOString();
       const prior = await db.query('SELECT status FROM expenses WHERE id = $1 LIMIT 1', [id]);
-      const wasAlreadyPaid = String(prior.rows[0]?.status || '') === 'paid';
+      const priorStatus = String(prior.rows[0]?.status || '');
+      const wasAlreadyPaid = priorStatus === 'paid';
       const status = coerceExpenseCreateStatus(req.user, body.status, wasAlreadyPaid);
       const cashierHeld = status === 'pending_approval' && !wasAlreadyPaid;
       await db.query(
@@ -448,6 +450,9 @@ module.exports = function expensesRouter(broadcastTable) {
       }
 
       if (broadcastTable) await broadcastTable('expenses');
+      if (await notifyExpenseApprovalChange(row, priorStatus, req.user)) {
+        if (broadcastTable) await broadcastTable('notifications');
+      }
       auditErpSafe(req, {
         table: 'expenses',
         id: row.id,

@@ -1,5 +1,29 @@
 const db = require('../db');
 const crypto = require('crypto');
+const { selectExpenseApprovers } = require('./expenseApprovers');
+
+/** Postgres gets the table from migration 062; SQLite (tests, Electron local) needs it here. */
+async function ensureNotificationsTable() {
+  if (db.engine === 'postgres') return;
+  try {
+    db.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        branch_id TEXT,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'info',
+        link TEXT,
+        is_read INTEGER NOT NULL DEFAULT 0,
+        dedupe_key TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+    `);
+  } catch (_) {}
+}
 
 /**
  * Insert a notification. When dedupeKey is set, duplicate inserts are ignored.
@@ -16,6 +40,7 @@ async function createNotification({
 }) {
   const id = crypto.randomUUID();
   try {
+    await ensureNotificationsTable();
     if (dedupeKey) {
       const existing = await db.query(
         'SELECT id FROM notifications WHERE dedupe_key = $1 LIMIT 1',
@@ -155,6 +180,124 @@ async function scanPeriodCloseReminders() {
   }
 }
 
+const EXPENSE_PENDING_LINK = '/expenses?status=pending_approval';
+const DECIDED_EXPENSE_STATUSES = new Set(['approved', 'rejected', 'paid']);
+
+function formatAoa(value) {
+  const n = Number(value || 0);
+  return `${n.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AOA`;
+}
+
+async function listUsersForNotifications() {
+  const columns = [
+    'SELECT id, name, role, branch_id, is_active, permissions FROM users',
+    'SELECT id, name, role, branch_id, is_active FROM users',
+  ];
+  for (const sql of columns) {
+    try {
+      const r = await db.query(sql);
+      return r.rows || [];
+    } catch (_) { /* older schema: try a narrower projection */ }
+  }
+  return [];
+}
+
+/**
+ * `expenses.created_by` holds whatever the client stamped — a display name from the
+ * Expenses page and POS, an id elsewhere — so the requester is matched on either.
+ */
+function findUserIdByRef(users, ref) {
+  const value = String(ref || '').trim();
+  if (!value) return null;
+  const match = users.find((u) => String(u.id) === value)
+    || users.find((u) => String(u.name || '').trim() === value);
+  return match ? String(match.id) : null;
+}
+
+async function resolveUserIdByRef(ref) {
+  return findUserIdByRef(await listUsersForNotifications(), ref);
+}
+
+async function resolveExpenseApprovers(branchId) {
+  return selectExpenseApprovers(await listUsersForNotifications(), branchId);
+}
+
+async function notifyExpensePendingApproval(expense) {
+  const users = await listUsersForNotifications();
+  const approvers = selectExpenseApprovers(users, expense.branchId);
+  if (!approvers.length) return 0;
+  const requesterId = findUserIdByRef(users, expense.requestedBy);
+  const requester = String(expense.requestedBy || '').trim();
+  const detail = expense.description || expense.expenseNumber || 'despesa';
+  let created = 0;
+  for (const approver of approvers) {
+    if (requesterId && String(approver.id) === requesterId) continue;
+    const row = await createNotification({
+      type: 'approval_pending',
+      title: 'Despesa aguarda aprovação',
+      message: `${requester || 'Operador'} pediu ${formatAoa(expense.totalAmount)} — ${detail}`,
+      severity: 'warning',
+      link: EXPENSE_PENDING_LINK,
+      userId: String(approver.id),
+      branchId: expense.branchId || null,
+      dedupeKey: `expense_approval:${expense.id}:${approver.id}`,
+    });
+    if (row && row.id) created += 1;
+  }
+  return created;
+}
+
+/** Once someone decides, the request must stop counting as unread for the other approvers. */
+async function clearExpenseApprovalAlerts(expenseId) {
+  await db.query(
+    'UPDATE notifications SET is_read = true WHERE dedupe_key LIKE $1',
+    [`expense_approval:${expenseId}:%`],
+  ).catch(() => undefined);
+}
+
+async function notifyExpenseDecision(expense, decision, actorName) {
+  const requesterId = await resolveUserIdByRef(expense.requestedBy);
+  if (!requesterId) return 0;
+  const approved = decision !== 'rejected';
+  const by = String(actorName || '').trim();
+  const detail = expense.description || expense.expenseNumber || 'despesa';
+  const row = await createNotification({
+    type: 'approval_result',
+    title: approved ? 'Despesa aprovada' : 'Despesa recusada',
+    message: `${formatAoa(expense.totalAmount)} — ${detail}${by ? ` (${by})` : ''}`,
+    severity: approved ? 'info' : 'warning',
+    link: '/expenses',
+    userId: requesterId,
+    branchId: expense.branchId || null,
+    dedupeKey: `expense_decision:${expense.id}:${approved ? 'approved' : 'rejected'}`,
+  });
+  return row && row.id ? 1 : 0;
+}
+
+/**
+ * Drive the approval inbox off the expense status transition: a new pending_approval
+ * alerts the branch approvers, and any decision closes those alerts and tells the
+ * cashier what happened. Returns how many clients should refresh.
+ */
+async function notifyExpenseApprovalChange(expense, priorStatus, actor) {
+  try {
+    if (!expense || !expense.id) return 0;
+    const before = String(priorStatus || '').toLowerCase();
+    const after = String(expense.status || '').toLowerCase();
+    if (before === after) return 0;
+    if (after === 'pending_approval') return await notifyExpensePendingApproval(expense);
+    if (before === 'pending_approval' && DECIDED_EXPENSE_STATUSES.has(after)) {
+      await clearExpenseApprovalAlerts(expense.id);
+      await notifyExpenseDecision(expense, after === 'rejected' ? 'rejected' : 'approved', actor?.name);
+      return 1;
+    }
+    return 0;
+  } catch (err) {
+    console.warn('[NOTIFICATIONS] expense approval:', err.message);
+    return 0;
+  }
+}
+
 async function runNotificationScans() {
   const low = await scanLowStockNotifications();
   const ar = await scanOverdueReceivables();
@@ -164,6 +307,9 @@ async function runNotificationScans() {
 
 module.exports = {
   createNotification,
+  ensureNotificationsTable,
+  notifyExpenseApprovalChange,
+  resolveExpenseApprovers,
   scanLowStockNotifications,
   scanOverdueReceivables,
   scanPeriodCloseReminders,

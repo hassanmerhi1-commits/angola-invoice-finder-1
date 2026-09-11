@@ -14,6 +14,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
+import { useAuth } from '@/hooks/useERP';
 
 const iconMap: Record<string, React.ReactNode> = {
   low_stock: <Package className="w-4 h-4 text-orange-500" />,
@@ -21,6 +22,7 @@ const iconMap: Record<string, React.ReactNode> = {
   period_close: <Info className="w-4 h-4 text-blue-500" />,
   agt_failure: <Info className="w-4 h-4 text-destructive" />,
   approval_pending: <CheckCircle className="w-4 h-4 text-blue-500" />,
+  approval_result: <CheckCircle className="w-4 h-4 text-emerald-500" />,
   payment_received: <CreditCard className="w-4 h-4 text-emerald-500" />,
   stock_transfer: <ArrowRightLeft className="w-4 h-4 text-purple-500" />,
   system: <Info className="w-4 h-4 text-muted-foreground" />,
@@ -37,7 +39,10 @@ export function NotificationBell() {
   const dfLocale = language === 'pt' ? pt : enUS;
   const { notifications, unreadCount, markAsRead, markAllAsRead, clearAll, scanAll, refreshFromServer } = useNotifications();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [scanning, setScanning] = useState(false);
+  // The scan endpoint is manager/admin only; showing it to a cashier only buys a 403.
+  const canScan = user?.role === 'admin' || user?.role === 'manager';
 
   const handleClick = (notif: Notification) => {
     markAsRead(notif.id);
@@ -78,16 +83,18 @@ export function NotificationBell() {
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h4 className="font-semibold text-sm">{t.notificationsUi.title}</h4>
           <div className="flex gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs h-7"
-              disabled={scanning}
-              onClick={() => void handleScan()}
-              title={t.notificationsUi.scanTitle}
-            >
-              {scanning ? '…' : 'Scan'}
-            </Button>
+            {canScan && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs h-7"
+                disabled={scanning}
+                onClick={() => void handleScan()}
+                title={t.notificationsUi.scanTitle}
+              >
+                {scanning ? '…' : 'Scan'}
+              </Button>
+            )}
             {unreadCount > 0 && (
               <Button variant="ghost" size="sm" className="text-xs h-7" onClick={markAllAsRead}>
                 {t.notificationsUi.markAllRead}

@@ -26,7 +26,8 @@ type TableName =
   | 'caixa_sessions'
   | 'chart_of_accounts'
   | 'proformas'
-  | 'expenses';
+  | 'expenses'
+  | 'notifications';
 
 type TableListener = (payload: { table: TableName; ts?: number; entityId?: string }) => void;
 
