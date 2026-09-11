@@ -249,6 +249,27 @@ let electronResolvedBase: string | null = null;
 let electronCacheVerifiedAt = 0;
 const ELECTRON_CACHE_VERIFY_MS = 12_000;
 
+/** Set when a request failed, so the next resolve re-probes instead of trusting storage. */
+let lanDiscoveryRequired = false;
+let lanBaseRefreshInFlight: Promise<void> | null = null;
+
+function refreshLanClientApiBase(): Promise<void> {
+  if (lanBaseRefreshInFlight) return lanBaseRefreshInFlight;
+  lanBaseRefreshInFlight = resolveLanClientApiBaseAsync()
+    .then((resolved) => {
+      if (resolved) {
+        lanDiscoveryRequired = false;
+        electronResolvedBase = resolved;
+        electronCacheVerifiedAt = Date.now();
+      }
+    })
+    .catch(() => undefined)
+    .then(() => {
+      lanBaseRefreshInFlight = null;
+    });
+  return lanBaseRefreshInFlight;
+}
+
 function parseLoopbackPort(base: string): number | null {
   try {
     const u = new URL(base);
@@ -271,6 +292,7 @@ async function verifyElectronCachedBase(): Promise<boolean> {
 export function invalidateElectronApiBaseCache(): void {
   electronResolvedBase = null;
   electronCacheVerifiedAt = 0;
+  lanDiscoveryRequired = true;
   invalidateIpFileRoleCache();
   import('@/lib/electronHttp').then(({ invalidateElectronLanClientCache }) => {
     invalidateElectronLanClientCache();
@@ -488,7 +510,7 @@ async function tryHealthOnPort(p: number): Promise<number | null> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 680);
   try {
-    const r = await fetch(`http://127.0.0.1:${p}/api/health`, { signal: ctrl.signal });
+    const r = await fetch(`http://127.0.0.1:${p}/api/health?lite=1`, { signal: ctrl.signal });
     if (!r.ok) return null;
     const j = await r.json().catch(() => null);
     if (!isEmbeddedHealthPayload(j)) return null;
@@ -503,7 +525,9 @@ async function tryHealthOnPort(p: number): Promise<number | null> {
 const REMOTE_ERP_PORTS = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009];
 
 async function tryRemoteHealthOnPort(host: string, port: number): Promise<number | null> {
-  const url = `http://${host}:${port}/api/health`;
+  // lite=1 skips the schema report and the products COUNT(*) — a port probe only needs
+  // to know something NEXOR-shaped answers here.
+  const url = `http://${host}:${port}/api/health?lite=1`;
   if (typeof window !== 'undefined' && (window as any).electronAPI?.network?.httpJson) {
     try {
       const r = await electronHttpJson(url, { timeoutMs: 1500 });
@@ -732,8 +756,19 @@ export async function getApiUrlAsync(options?: { waitForPortMs?: number }): Prom
   }
 
   if (isThinClientMode()) {
+    // The stored client config already carries host + port, and the probe below almost
+    // always re-derives the same value. Awaiting it made the first API call of every
+    // page session wait on a health round-trip to the server. Trust the stored base and
+    // re-probe in the background; a failed request invalidates it and forces a real probe.
+    if (lanEarly && !lanDiscoveryRequired) {
+      electronResolvedBase = lanEarly;
+      electronCacheVerifiedAt = Date.now();
+      void refreshLanClientApiBase();
+      return lanEarly;
+    }
     const lanRemote = await resolveLanClientApiBaseAsync();
     if (lanRemote) {
+      lanDiscoveryRequired = false;
       electronResolvedBase = lanRemote;
       electronCacheVerifiedAt = Date.now();
       return lanRemote;
