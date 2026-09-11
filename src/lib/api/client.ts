@@ -3289,12 +3289,13 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(all ? { all: true } : { ids: ids || [] }),
       }),
-    scanLowStock: () =>
-      apiFetch<{ success: boolean; created: number }>('/notifications/scan-low-stock', {
+    dismiss: (ids?: string[], all = false) =>
+      apiFetch<{ success: boolean }>('/notifications/dismiss', {
         method: 'POST',
+        body: JSON.stringify(all ? { all: true } : { ids: ids || [] }),
       }),
     scanAll: () =>
-      apiFetch<{ success: boolean; low: number; ar: number; periods: number; total: number }>(
+      apiFetch<{ success: boolean; ar: number; periods: number; total: number }>(
         '/notifications/scan',
         { method: 'POST' },
       ),

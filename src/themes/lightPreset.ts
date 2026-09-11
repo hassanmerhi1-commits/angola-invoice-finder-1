@@ -58,8 +58,6 @@ export const lightPreset: ThemePreset = {
     navBrand: 'font-bold text-sm tracking-tight text-slate-800',
     navMenuBtn:
       'h-7 px-2.5 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md',
-    checklistIconBtn:
-      'h-7 w-7 rounded-md text-slate-600 hover:text-slate-900 hover:bg-slate-100',
     navTabsRow:
       'h-10 px-2 bg-slate-50/80 hidden lg:flex items-end gap-0.5 border-b border-slate-200 overflow-x-auto',
     navTabActive:

@@ -19,7 +19,6 @@ export interface ThemeChrome {
   navLogoRing: string;
   navBrand: string;
   navMenuBtn: string;
-  checklistIconBtn: string;
   navTabsRow: string;
   navTabActive: string;
   navTabIdle: string;

@@ -63,30 +63,17 @@ async function createNotification({
   }
 }
 
-async function scanLowStockNotifications() {
+/**
+ * Low stock belongs to the daily checklist, which reads the products directly.
+ * As notifications they were unreadable noise: the dedupe key carried the date, so
+ * dismissing them only bought a day of silence. Drop the ones already stored.
+ */
+async function purgeRetiredNotifications() {
   try {
-    const { queryLowStockProducts } = require('./lowStock');
-    const rows = await queryLowStockProducts({ limit: 40 });
-    let created = 0;
-    const day = new Date().toISOString().slice(0, 10);
-    for (const p of rows) {
-      const stock = Number(p.stock);
-      const min = Number(p.min_stock);
-      const row = await createNotification({
-        type: 'low_stock',
-        title: 'Low stock',
-        message: `${p.name || p.sku}: ${stock} (min ${min})`,
-        severity: stock <= 0 ? 'critical' : 'warning',
-        link: '/inventory',
-        branchId: p.branch_id || null,
-        dedupeKey: `low_stock:${p.id}:${day}`,
-      });
-      if (row && row.id) created += 1;
-    }
-    return created;
+    await ensureNotificationsTable();
+    await db.query("DELETE FROM notifications WHERE type = 'low_stock'");
   } catch (err) {
-    console.warn('[NOTIFICATIONS] low-stock scan:', err.message);
-    return 0;
+    console.warn('[NOTIFICATIONS] purge:', err.message);
   }
 }
 
@@ -299,10 +286,9 @@ async function notifyExpenseApprovalChange(expense, priorStatus, actor) {
 }
 
 async function runNotificationScans() {
-  const low = await scanLowStockNotifications();
   const ar = await scanOverdueReceivables();
   const periods = await scanPeriodCloseReminders();
-  return { low, ar, periods, total: low + ar + periods };
+  return { ar, periods, total: ar + periods };
 }
 
 module.exports = {
@@ -310,7 +296,7 @@ module.exports = {
   ensureNotificationsTable,
   notifyExpenseApprovalChange,
   resolveExpenseApprovers,
-  scanLowStockNotifications,
+  purgeRetiredNotifications,
   scanOverdueReceivables,
   scanPeriodCloseReminders,
   runNotificationScans,

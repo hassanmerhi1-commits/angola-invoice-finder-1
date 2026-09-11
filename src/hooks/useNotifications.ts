@@ -17,10 +17,18 @@ export interface Notification {
 const STORAGE_KEY = 'kwanza_notifications';
 const MAX_NOTIFICATIONS = 50;
 
+/** Low stock lives in the daily checklist now; drop any still sitting in the cache. */
+const RETIRED_TYPES = new Set<string>(['low_stock']);
+
+function isRetired(n: Notification): boolean {
+  return RETIRED_TYPES.has(n.type);
+}
+
 function loadLocalNotifications(): Notification[] {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
+    const parsed: Notification[] = stored ? JSON.parse(stored) : [];
+    return Array.isArray(parsed) ? parsed.filter((n) => !isRetired(n)) : [];
   } catch {
     return [];
   }
@@ -46,6 +54,7 @@ function mapServerRow(row: Record<string, unknown>): Notification {
 function mergeById(primary: Notification[], secondary: Notification[]): Notification[] {
   const map = new Map<string, Notification>();
   for (const n of [...primary, ...secondary]) {
+    if (isRetired(n)) continue;
     if (!map.has(n.id)) map.set(n.id, n);
   }
   return [...map.values()]
@@ -105,54 +114,6 @@ export function useNotifications() {
     });
   }, [refreshFromServer]);
 
-  // Demo/localStorage-only low-stock scan
-  useEffect(() => {
-    if (!isDemoMode()) return;
-
-    const checkLowStock = () => {
-      try {
-        const productsStr = localStorage.getItem('kwanzaerp_products');
-        if (!productsStr) return;
-        const products = JSON.parse(productsStr);
-        const lowStockItems = products.filter((p: { stock?: number; minStock?: number }) =>
-          p.stock !== undefined && p.minStock !== undefined && p.stock <= p.minStock && p.stock >= 0,
-        );
-
-        if (lowStockItems.length > 0) {
-          setNotifications((prev) => {
-            const existingIds = new Set(prev.filter((n) => n.type === 'low_stock' && !n.read).map((n) => n.id));
-            const newAlerts: Notification[] = [];
-            for (const item of lowStockItems) {
-              const alertId = `low_stock_${item.id}_${new Date().toDateString()}`;
-              if (!existingIds.has(alertId)) {
-                newAlerts.push({
-                  id: alertId,
-                  type: 'low_stock',
-                  title: 'Stock Baixo',
-                  message: `${item.name}: ${item.stock} unidades (mín: ${item.minStock})`,
-                  timestamp: new Date().toISOString(),
-                  read: false,
-                  severity: item.stock === 0 ? 'critical' : 'warning',
-                  link: '/inventory',
-                });
-              }
-            }
-            if (newAlerts.length === 0) return prev;
-            const updated = [...newAlerts, ...prev].slice(0, MAX_NOTIFICATIONS);
-            saveLocalNotifications(updated);
-            return updated;
-          });
-        }
-      } catch {
-        // Ignore
-      }
-    };
-
-    checkLowStock();
-    const interval = setInterval(checkLowStock, 60_000);
-    return () => clearInterval(interval);
-  }, []);
-
   const unreadCount = useMemo(() => notifications.filter((n) => !n.read).length, [notifications]);
 
   const markAsRead = useCallback((id: string) => {
@@ -177,9 +138,13 @@ export function useNotifications() {
     }
   }, []);
 
+  // Clearing only the local cache made everything reappear on the next server refresh.
   const clearAll = useCallback(() => {
     setNotifications([]);
     saveLocalNotifications([]);
+    if (!isDemoMode()) {
+      void api.notifications.dismiss(undefined, true);
+    }
   }, []);
 
   const addNotification = useCallback((notif: Omit<Notification, 'id' | 'timestamp' | 'read'>) => {

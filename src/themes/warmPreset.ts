@@ -60,8 +60,6 @@ export const warmChrome = {
   navBrand: 'font-bold text-sm tracking-tight text-orange-900',
   navMenuBtn:
     'h-7 px-2.5 text-xs font-medium text-orange-950/80 hover:text-orange-950 hover:bg-white/60 rounded-md',
-  checklistIconBtn:
-    'h-7 w-7 rounded-md bg-amber-300/80 text-amber-950 hover:bg-amber-400/80 hover:text-amber-950',
   navTabsRow:
     'h-10 px-2 bg-gradient-to-r from-orange-100 via-amber-50 to-rose-100/80 hidden lg:flex items-end gap-0.5 border-b border-orange-200/70 overflow-x-auto',
   navTabActive:

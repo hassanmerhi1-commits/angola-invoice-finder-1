@@ -58,8 +58,6 @@ export const mediumPreset: ThemePreset = {
     navBrand: 'font-bold text-sm tracking-tight text-teal-800',
     navMenuBtn:
       'h-7 px-2.5 text-xs font-medium text-teal-900/75 hover:text-teal-950 hover:bg-white/60 rounded-md',
-    checklistIconBtn:
-      'h-7 w-7 rounded-md bg-amber-100/80 text-amber-900 hover:bg-amber-200/80',
     navTabsRow:
       'h-10 px-2 bg-gradient-to-r from-card via-sky-50/40 to-card hidden lg:flex items-end gap-0.5 border-b border-sky-100 overflow-x-auto',
     navTabActive:

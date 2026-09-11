@@ -60,8 +60,6 @@ export const coolChrome = {
   navBrand: 'font-bold text-sm tracking-tight text-teal-800',
   navMenuBtn:
     'h-7 px-2.5 text-xs font-medium text-teal-900/80 hover:text-teal-950 hover:bg-white/60 rounded-md',
-  checklistIconBtn:
-    'h-7 w-7 rounded-md bg-amber-200/70 text-amber-900 hover:bg-amber-300/80 hover:text-amber-950',
   navTabsRow:
     'h-10 px-2 bg-gradient-to-r from-sky-100 via-cyan-50 to-emerald-100/80 hidden lg:flex items-end gap-0.5 border-b border-teal-200/60 overflow-x-auto',
   navTabActive:

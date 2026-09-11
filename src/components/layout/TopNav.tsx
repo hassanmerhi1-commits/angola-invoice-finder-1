@@ -744,19 +744,6 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <SyncPendingBadge />
           <NotificationBell />
           <GlobalSearch />
-          {showDailyChecklist && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className={themeChrome.checklistIconBtn}
-              onClick={openDailyTodos}
-              title={t.topNav.utilities.dailyChecklist}
-              aria-label={t.topNav.utilities.dailyChecklist}
-            >
-              <ListTodo className="w-4 h-4" />
-            </Button>
-          )}
           <ColorThemeSwitcher compact />
           <TextSizeSwitcher compact />
           <LanguageSwitcher compact />

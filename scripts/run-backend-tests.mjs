@@ -22,6 +22,7 @@ const testFiles = [
   'test/agtFePayload.test.js',
   'test/expensePaymentScope.test.js',
   'test/expenseApprovers.test.js',
+  'test/notificationVisibility.test.js',
   'test/accountStatement.test.js',
 ];
 

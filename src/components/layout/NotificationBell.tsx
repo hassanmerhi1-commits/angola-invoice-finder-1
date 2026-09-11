@@ -108,15 +108,17 @@ export function NotificationBell() {
           </div>
         </div>
 
-        <ScrollArea className="max-h-80">
-          {notifications.length === 0 ? (
-            <div className="p-8 text-center text-muted-foreground text-sm">
-              <Bell className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              {t.notificationsUi.empty}
-            </div>
-          ) : (
+        {notifications.length === 0 ? (
+          <div className="p-8 text-center text-muted-foreground text-sm">
+            <Bell className="w-8 h-8 mx-auto mb-2 opacity-30" />
+            {t.notificationsUi.empty}
+          </div>
+        ) : (
+          // A fixed height, not max-h: the badge counts every unread one, so the list
+          // has to be able to scroll down to all of them.
+          <ScrollArea className="h-80">
             <div>
-              {notifications.slice(0, 20).map((notif, i) => (
+              {notifications.map((notif, i) => (
                 <div key={notif.id}>
                   <button
                     onClick={() => handleClick(notif)}
@@ -144,8 +146,8 @@ export function NotificationBell() {
                 </div>
               ))}
             </div>
-          )}
-        </ScrollArea>
+          </ScrollArea>
+        )}
       </PopoverContent>
     </Popover>
   );

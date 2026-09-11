@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
+import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { userHasPermission } from '@/lib/permissions';
@@ -82,6 +83,20 @@ const STATUS_CONFIG: Record<Expense['status'], { labelKey: 'statusDraft' | 'stat
   rejected: { labelKey: 'statusRejected', variant: 'destructive', icon: XCircle },
 };
 
+/** The server treats all three as waiting for an approver, so the filter must too. */
+const PENDING_STATUSES = new Set(['pending_approval', 'submitted', 'awaiting_approval']);
+
+function normalizeStatus(status: string | undefined): string {
+  return String(status || '').trim().toLowerCase();
+}
+
+/** An unrecognised status must not crash the row it belongs to. */
+function statusConfigFor(status: Expense['status']) {
+  const normalized = normalizeStatus(status);
+  return STATUS_CONFIG[normalized as Expense['status']]
+    ?? (PENDING_STATUSES.has(normalized) ? STATUS_CONFIG.pending_approval : STATUS_CONFIG.draft);
+}
+
 interface ExpenseFormData {
   category: ExpenseCategory;
   description: string;
@@ -136,6 +151,9 @@ export default function Expenses() {
   const [expenses, setExpenses] = useState<Expense[]>(
     () => getCachedList<Expense[]>(`expenses:${apiBranchId ?? 'all'}`) ?? [],
   );
+  // The cached list above is a stale snapshot, so an expense submitted since the last
+  // visit is missing until the fetch lands. Say so instead of claiming there are none.
+  const [loadingExpenses, setLoadingExpenses] = useState(true);
   const [caixas, setCaixas] = useState<Caixa[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [caixaLoadHint, setCaixaLoadHint] = useState<string | null>(null);
@@ -218,6 +236,14 @@ export default function Expenses() {
   ]);
 
   const loadData = async () => {
+    try {
+      await loadDataInner();
+    } finally {
+      setLoadingExpenses(false);
+    }
+  };
+
+  const loadDataInner = async () => {
     if (!treasuryAllBranches && !expenseBranchId) {
       setCaixaLoadHint(t.expensesUi.caixaNeedsBranch);
       setCaixas([]);
@@ -257,6 +283,15 @@ export default function Expenses() {
     void loadData();
   }, [apiBranchId, expenseBranchId, expenseBranchName, treasuryAllBranches]);
 
+  // An approval queue has to react to other people: a request submitted on a till
+  // must appear here without the approver reloading the page.
+  const onExpensesChanged = useCallback(
+    () => { void loadData(); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [apiBranchId, expenseBranchId, expenseBranchName, treasuryAllBranches],
+  );
+  useTableRefreshListener('expenses', onExpensesChanged);
+
   useEffect(() => {
     const onRefresh = () => { void loadData(); };
     const onBanksChanged = () => { void refreshBanksForExpense(); };
@@ -283,7 +318,10 @@ export default function Expenses() {
       const matchesSearch = exp.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
         exp.expenseNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
         exp.payeeName?.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesStatus = statusFilter === '__all__' || exp.status === statusFilter;
+      const status = normalizeStatus(exp.status);
+      const matchesStatus = statusFilter === '__all__'
+        || status === statusFilter
+        || (statusFilter === 'pending_approval' && PENDING_STATUSES.has(status));
       const matchesCategory = categoryFilter === '__all__' || exp.category === categoryFilter;
       return matchesSearch && matchesStatus && matchesCategory;
     });
@@ -705,12 +743,12 @@ export default function Expenses() {
               {filteredExpenses.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
-                    {t.expensesUi.empty}
+                    {loadingExpenses ? t.common.loading : t.expensesUi.empty}
                   </TableCell>
                 </TableRow>
               ) : (
                 filteredExpenses.map(expense => {
-                  const statusConfig = STATUS_CONFIG[expense.status];
+                  const statusConfig = statusConfigFor(expense.status);
                   const StatusIcon = statusConfig.icon;
                   return (
                     <TableRow key={expense.id}>
