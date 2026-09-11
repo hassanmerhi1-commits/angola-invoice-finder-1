@@ -75,7 +75,9 @@ export function ServerConnectionIndicator() {
         // Also try the Express backend for extra info
         try {
           const apiUrl = await getApiUrlAsync({ waitForPortMs: 10000 });
-          const res = await electronAwareJsonRequest(`${new URL(apiUrl).origin}/api/health`, {
+          // lite=1: this polls every 15s from every client, and the full payload makes
+          // the server run the schema report plus COUNT(*) over products each time.
+          const res = await electronAwareJsonRequest(`${new URL(apiUrl).origin}/api/health?lite=1`, {
             timeoutMs: 5000,
           });
           if (res.ok && res.json) {
@@ -96,7 +98,7 @@ export function ServerConnectionIndicator() {
           try { return new URL(apiUrl); } catch { return new URL(`http://${apiUrl.replace(/^https?:\/\//, '')}`); }
         })();
 
-        const response = await fetch(`${parsedUrl.origin}/api/health`, {
+        const response = await fetch(`${parsedUrl.origin}/api/health?lite=1`, {
           signal: AbortSignal.timeout(5000),
         });
 

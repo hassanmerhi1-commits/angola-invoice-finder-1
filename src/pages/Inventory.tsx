@@ -687,6 +687,26 @@ export default function Inventory() {
     });
   }, [listSearch, gridProducts, listBranchId, currentBranch?.id]);
 
+  // The first movement request of a session carries a warm-up cost the later ones do not.
+  // Spend it on the first row while the user is still reading the list, so the first tab
+  // they actually open does not have to wait for it.
+  const movementPathWarmedRef = useRef(false);
+  useEffect(() => {
+    if (movementPathWarmedRef.current) return;
+    const first = gridProducts[0];
+    const sku = String(first?.sku || '').trim();
+    if (!sku) return;
+    movementPathWarmedRef.current = true;
+    void api.transactions
+      .stockMovements({
+        warehouseId: isHeadOffice ? undefined : currentBranch?.id,
+        sku,
+        productId: first.id,
+        limit: 1,
+      })
+      .catch(() => undefined);
+  }, [gridProducts, isHeadOffice, currentBranch?.id]);
+
   const navigateProduct = useCallback((direction: -1 | 1) => {
     if (!gridProducts.length) return;
     const currentIndex = selectedProduct
