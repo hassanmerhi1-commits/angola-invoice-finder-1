@@ -176,18 +176,6 @@ test.describe('Money paths (API)', () => {
       },
     });
     expect(createUser.ok(), await createUser.text()).toBeTruthy();
-    const user = await createUser.json();
-
-    const patch = await request.put(`${E2E_BACKEND_URL}/api/auth/users/${encodeURIComponent(user.id)}`, {
-      headers: {
-        Authorization: `Bearer ${admin.token}`,
-        'Content-Type': 'application/json',
-      },
-      data: {
-        permissionOverrides: { granted: [], revoked: ['backdate_post'] },
-      },
-    });
-    expect(patch.ok(), await patch.text()).toBeTruthy();
 
     const loginRes = await request.post(`${E2E_BACKEND_URL}/api/auth/login`, {
       data: { email: username, username, password },

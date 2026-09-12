@@ -6,11 +6,11 @@ Control corrections after a period is closed so the general ledger and fiscal do
 ## Who may act
 | Action | Permission | Typical role |
 |--------|------------|--------------|
-| Post with date **before today** | `backdate_post` | admin, manager |
-| Edit / reverse documents dated before today | `edit_historical` | admin, manager |
+| Post with date **before today** | `backdate_post` | admin only (grant per user) |
+| Edit / reverse documents dated before today | `edit_historical` | admin only (grant per user) |
 | Reopen a closed accounting period | admin / period APIs | admin |
 
-Cashiers and viewers must **not** have `backdate_post` or `edit_historical`.
+Managers, cashiers and viewers must **not** have `backdate_post` or `edit_historical` unless an admin grants it on that user.
 
 ## Backdating a journal or adjustment
 1. Confirm the business reason (omitted invoice, bank fee, stock correction).

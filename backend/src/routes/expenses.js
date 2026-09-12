@@ -16,6 +16,35 @@ const {
 } = require('../lib/caixaCashRefund');
 const { resolveBranchFilterId, normalizeBranchIdKey } = require('../lib/branchIdMatch');
 const { notifyExpenseApprovalChange } = require('../lib/notifications');
+const {
+  assertCanUsePostingDate,
+  assertCanEditHistorical,
+} = require('../lib/workingDayAccess');
+
+function sameMoney(a, b) {
+  return Number(a || 0) === Number(b || 0);
+}
+
+function sameText(a, b) {
+  return String(a || '') === String(b || '');
+}
+
+/** Approval / pay only changes workflow fields. Rewriting the slip needs edit_historical. */
+function expenseContentChanged(prior, next) {
+  if (!prior) return false;
+  return !sameMoney(prior.amount, next.amount)
+    || !sameMoney(prior.tax_amount, next.taxAmount)
+    || !sameMoney(prior.total_amount, next.totalAmount)
+    || !sameText(prior.category, next.category)
+    || !sameText(prior.description, next.description)
+    || !sameText(prior.payment_source, next.paymentSource)
+    || !sameText(prior.caixa_id, next.caixaId)
+    || !sameText(prior.bank_account_id, next.bankAccountId)
+    || !sameText(prior.payee_name, next.payeeName)
+    || !sameText(prior.payee_nif, next.payeeNif)
+    || !sameText(prior.invoice_number, next.invoiceNumber)
+    || !sameText(prior.notes, next.notes);
+}
 
 const BANK_GL = '431';
 
@@ -391,6 +420,31 @@ module.exports = function expensesRouter(broadcastTable) {
       const category = wasAlreadyPaid
         ? (priorRow.category || 'other')
         : (body.category || 'other');
+      try {
+        if (!priorRow) {
+          assertCanUsePostingDate(req.user, body.createdAt || body.created_at || now);
+        } else if (expenseContentChanged(priorRow, {
+          amount,
+          taxAmount,
+          totalAmount,
+          category,
+          description: body.description || '',
+          paymentSource,
+          caixaId,
+          bankAccountId,
+          payeeName: body.payeeName || body.payee_name || null,
+          payeeNif: body.payeeNif || body.payee_nif || null,
+          invoiceNumber: body.invoiceNumber || body.invoice_number || null,
+          notes: body.notes || null,
+        })) {
+          assertCanEditHistorical(req.user, priorRow.created_at);
+        }
+      } catch (dayErr) {
+        return res.status(dayErr.status || 403).json({
+          error: dayErr.message,
+          code: dayErr.code,
+        });
+      }
       await db.query(
         `INSERT INTO expenses (
           id, expense_number, branch_id, branch_name, category, description,

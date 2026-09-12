@@ -23,6 +23,7 @@ const testFiles = [
   'test/expensePaymentScope.test.js',
   'test/expenseApprovers.test.js',
   'test/notificationVisibility.test.js',
+  'test/rolePermissions.test.js',
   'test/accountStatement.test.js',
 ];
 

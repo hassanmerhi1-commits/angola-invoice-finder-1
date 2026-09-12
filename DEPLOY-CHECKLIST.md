@@ -232,7 +232,7 @@ npm run electron:build
 - [ ] Health watchdog optional: `.\scripts\watchdog-health.ps1 -ServerIp <server>`
 - [ ] Cash / card / transfer / credit sale verified
 - [ ] Purchase invoice → stock → WAC → balanced journal
-- [ ] Cashier cannot backdate (`backdate_post` denied)
+- [ ] Cashier and manager cannot backdate unless granted (`backdate_post` is admin-only by default)
 - [ ] AGT: production does **not** invent CUCE unless `AGT_SIMULATE=true` is intentional
 - [ ] Period reopen / backdate SOP reviewed: [docs/PERIOD-REOPEN-BACKDATE-SOP.md](./docs/PERIOD-REOPEN-BACKDATE-SOP.md)
 

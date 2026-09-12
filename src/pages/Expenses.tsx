@@ -26,7 +26,7 @@ import { pt } from 'date-fns/locale';
 import { enUS } from 'date-fns/locale';
 
 import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
-import { toISODateOnly } from '@/lib/workingDayAccess';
+import { canEditRecordDated, toISODateOnly } from '@/lib/workingDayAccess';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -179,11 +179,13 @@ export default function Expenses() {
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('__all__');
-  // Approval notifications link here with ?status=pending_approval so the admin lands
-  // on the request instead of the whole expense history.
+  // Older alerts still carry ?status=pending_approval. That filter is what made the
+  // table look empty — land on every status so the list is visible immediately.
   useEffect(() => {
-    const requested = new URLSearchParams(location.search).get('status');
-    if (requested) setStatusFilter(requested);
+    const params = new URLSearchParams(location.search);
+    if (params.has('status') || params.has('expenseId')) {
+      setStatusFilter('__all__');
+    }
   }, [location.search]);
 
   /**
@@ -452,6 +454,10 @@ export default function Expenses() {
         }
         if (expenseIsPaid(existing.status)) {
           toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.paidCannotEdit, variant: 'destructive' });
+          return;
+        }
+        if (!canEditRecordDated(user?.role, user?.permissionOverrides, existing.createdAt || existing.requestedAt)) {
+          toast({ title: t.expensesUi.toastErrorTitle, description: t.journalsUi.cannotEditHistorical, variant: 'destructive' });
           return;
         }
         await saveExpense({
@@ -845,7 +851,9 @@ export default function Expenses() {
                 filteredExpenses.map(expense => {
                   const statusConfig = statusConfigFor(expense.status);
                   const StatusIcon = statusConfig.icon;
-                  const canEditThis = canCreateExpense && !expenseIsPaid(expense.status);
+                  const canEditThis = canCreateExpense
+                    && !expenseIsPaid(expense.status)
+                    && canEditRecordDated(user?.role, user?.permissionOverrides, expense.createdAt || expense.requestedAt);
                   const showRowMenu = canEditThis
                     || (expense.status === 'pending_approval' && canApproveExpense)
                     || (expense.status === 'approved' && (canPayFromBank || expense.paymentSource !== 'bank'))

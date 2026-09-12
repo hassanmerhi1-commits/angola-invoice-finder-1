@@ -169,7 +169,7 @@ async function scanPeriodCloseReminders() {
 
 /** The id keeps the request visible even when the approver's branch scope would hide it. */
 function expensePendingLink(expenseId) {
-  return `/expenses?status=pending_approval&expenseId=${encodeURIComponent(expenseId)}`;
+  return `/expenses?expenseId=${encodeURIComponent(expenseId)}`;
 }
 
 function expenseDecisionLink(expenseId) {
