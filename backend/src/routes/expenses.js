@@ -360,11 +360,37 @@ module.exports = function expensesRouter(broadcastTable) {
       }
       const id = String(body.id || randomUUID());
       const now = new Date().toISOString();
-      const prior = await db.query('SELECT status FROM expenses WHERE id = $1 LIMIT 1', [id]);
-      const priorStatus = String(prior.rows[0]?.status || '');
+      const prior = await db.query('SELECT * FROM expenses WHERE id = $1 LIMIT 1', [id]);
+      const priorRow = prior.rows[0] || null;
+      const priorStatus = String(priorRow?.status || '');
       const wasAlreadyPaid = priorStatus === 'paid';
-      const status = coerceExpenseCreateStatus(req.user, body.status, wasAlreadyPaid);
+      const status = wasAlreadyPaid
+        ? 'paid'
+        : coerceExpenseCreateStatus(req.user, body.status, wasAlreadyPaid);
       const cashierHeld = status === 'pending_approval' && !wasAlreadyPaid;
+      // A paid expense has already moved caixa/bank and posted GL. Re-saving
+      // must not rewrite those numbers even if the client sends a new amount.
+      const amount = wasAlreadyPaid
+        ? Number(priorRow.amount) || 0
+        : Number(body.amount) || 0;
+      const taxAmount = wasAlreadyPaid
+        ? Number(priorRow.tax_amount) || 0
+        : Number(body.taxAmount ?? body.tax_amount) || 0;
+      const totalAmount = wasAlreadyPaid
+        ? Number(priorRow.total_amount) || 0
+        : Number(body.totalAmount ?? body.total_amount) || 0;
+      const paymentSource = wasAlreadyPaid
+        ? (priorRow.payment_source || 'caixa')
+        : (body.paymentSource || body.payment_source || 'caixa');
+      const caixaId = wasAlreadyPaid
+        ? (priorRow.caixa_id || null)
+        : (body.caixaId || body.caixa_id || null);
+      const bankAccountId = wasAlreadyPaid
+        ? (priorRow.bank_account_id || null)
+        : (body.bankAccountId || body.bank_account_id || null);
+      const category = wasAlreadyPaid
+        ? (priorRow.category || 'other')
+        : (body.category || 'other');
       await db.query(
         `INSERT INTO expenses (
           id, expense_number, branch_id, branch_name, category, description,
@@ -403,14 +429,14 @@ module.exports = function expensesRouter(broadcastTable) {
           body.expenseNumber || body.expense_number || '',
           body.branchId || body.branch_id || '',
           body.branchName || body.branch_name || '',
-          body.category || 'other',
+          category,
           body.description || '',
-          Number(body.amount) || 0,
-          Number(body.taxAmount ?? body.tax_amount) || 0,
-          Number(body.totalAmount ?? body.total_amount) || 0,
-          body.paymentSource || body.payment_source || 'caixa',
-          body.caixaId || body.caixa_id || null,
-          body.bankAccountId || body.bank_account_id || null,
+          amount,
+          taxAmount,
+          totalAmount,
+          paymentSource,
+          caixaId,
+          bankAccountId,
           body.payeeName || body.payee_name || null,
           body.payeeNif || body.payee_nif || null,
           body.invoiceNumber || body.invoice_number || null,

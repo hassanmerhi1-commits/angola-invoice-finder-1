@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
@@ -7,8 +7,9 @@ import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
 import { userHasPermission } from '@/lib/permissions';
-import { 
+import {
   getExpenses, 
+  getExpenseById,
   createExpense, 
   saveExpense,
   payExpense, 
@@ -24,6 +25,8 @@ import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { enUS } from 'date-fns/locale';
 
+import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
+import { toISODateOnly } from '@/lib/workingDayAccess';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -65,6 +68,7 @@ import { cn } from '@/lib/utils';
 import { 
   Plus, 
   MoreHorizontal, 
+  Pencil,
   Receipt, 
   CheckCircle, 
   XCircle, 
@@ -95,6 +99,11 @@ function statusConfigFor(status: Expense['status']) {
   const normalized = normalizeStatus(status);
   return STATUS_CONFIG[normalized as Expense['status']]
     ?? (PENDING_STATUSES.has(normalized) ? STATUS_CONFIG.pending_approval : STATUS_CONFIG.draft);
+}
+
+/** Paid expenses have already moved cash and posted GL — those numbers stay put. */
+function expenseIsPaid(status: Expense['status'] | string | undefined): boolean {
+  return normalizeStatus(status) === 'paid';
 }
 
 interface ExpenseFormData {
@@ -145,6 +154,7 @@ export default function Expenses() {
     || userHasPermission(user.role, user.permissionOverrides, 'admin_settings')
   );
   const canRepostGl = !!user && userHasPermission(user.role, user.permissionOverrides, 'accounting_create');
+  const canCreateExpense = !!user && userHasPermission(user.role, user.permissionOverrides, 'expense_create');
   const expenseNeedsApproval = !!user && user.role === 'cashier' && !canApproveExpense;
   const visibleCategories = EXPENSE_CATEGORIES.filter((cat) => canPayStaff || cat.value !== 'staff');
 
@@ -175,7 +185,19 @@ export default function Expenses() {
     const requested = new URLSearchParams(location.search).get('status');
     if (requested) setStatusFilter(requested);
   }, [location.search]);
+
+  /**
+   * The notified expense, which must be shown whatever the filters say. This list is
+   * scoped to the branch picked in the top bar, so a request raised on another
+   * filial's till is otherwise absent no matter which status is selected.
+   */
+  const deepLinkExpenseId = useMemo(
+    () => new URLSearchParams(location.search).get('expenseId')?.trim() || '',
+    [location.search],
+  );
   const [categoryFilter, setCategoryFilter] = useState<string>('__all__');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const expenseBranchId = apiBranchId || userBranch?.id || currentBranch?.id || user?.branchId;
   const expenseBranchName = userBranch?.name || currentBranch?.name || t.branchUi.headOffice;
@@ -292,6 +314,18 @@ export default function Expenses() {
   );
   useTableRefreshListener('expenses', onExpensesChanged);
 
+  const fetchedDeepLinkRef = useRef('');
+  useEffect(() => {
+    if (!deepLinkExpenseId || fetchedDeepLinkRef.current === deepLinkExpenseId) return;
+    if (expenses.some((e) => e.id === deepLinkExpenseId)) return;
+    fetchedDeepLinkRef.current = deepLinkExpenseId;
+    void (async () => {
+      const found = await getExpenseById(deepLinkExpenseId);
+      if (!found) return;
+      setExpenses((prev) => (prev.some((e) => e.id === found.id) ? prev : [found, ...prev]));
+    })();
+  }, [deepLinkExpenseId, expenses]);
+
   useEffect(() => {
     const onRefresh = () => { void loadData(); };
     const onBanksChanged = () => { void refreshBanksForExpense(); };
@@ -315,6 +349,7 @@ export default function Expenses() {
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter(exp => {
+      if (deepLinkExpenseId && exp.id === deepLinkExpenseId) return true;
       const matchesSearch = exp.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
         exp.expenseNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
         exp.payeeName?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -323,9 +358,12 @@ export default function Expenses() {
         || status === statusFilter
         || (statusFilter === 'pending_approval' && PENDING_STATUSES.has(status));
       const matchesCategory = categoryFilter === '__all__' || exp.category === categoryFilter;
-      return matchesSearch && matchesStatus && matchesCategory;
+      const day = toISODateOnly(exp.createdAt || exp.requestedAt);
+      const matchesDate = (!dateFrom || !day || day >= dateFrom)
+        && (!dateTo || !day || day <= dateTo);
+      return matchesSearch && matchesStatus && matchesCategory && matchesDate;
     });
-  }, [expenses, searchTerm, statusFilter, categoryFilter]);
+  }, [expenses, searchTerm, statusFilter, categoryFilter, dateFrom, dateTo, deepLinkExpenseId]);
 
   const handleOpenDialog = (expense?: Expense) => {
     if (expense) {
@@ -407,15 +445,21 @@ export default function Expenses() {
     setIsSubmitting(true);
     try {
       if (editingId) {
-        const existing = expenses.find(e => e.id === editingId);
-        if (existing) {
-          await saveExpense({
-            ...existing,
-            ...formData,
-            totalAmount: formData.amount + formData.taxAmount,
-          });
-          toast({ title: t.expensesUi.toastSuccessTitle, description: t.expensesUi.expenseUpdated });
+        const existing = expenses.find(e => e.id === editingId) || await getExpenseById(editingId);
+        if (!existing) {
+          toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.saveFailed, variant: 'destructive' });
+          return;
         }
+        if (expenseIsPaid(existing.status)) {
+          toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.paidCannotEdit, variant: 'destructive' });
+          return;
+        }
+        await saveExpense({
+          ...existing,
+          ...formData,
+          totalAmount: formData.amount + formData.taxAmount,
+        });
+        toast({ title: t.expensesUi.toastSuccessTitle, description: t.expensesUi.expenseUpdated });
         setIsDialogOpen(false);
       } else {
         // Stamp expense on the treasury source branch when HQ picks another filial's caixa/bank.
@@ -682,42 +726,93 @@ export default function Expenses() {
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder={t.expensesUi.searchPlaceholder}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9"
-              />
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder={t.expensesUi.searchPlaceholder}
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder={t.common.status} />
+                </SelectTrigger>
+                <SelectContent>
+                <SelectItem value="__all__">{t.expensesUi.allStatuses}</SelectItem>
+                <SelectItem value="draft">{t.expensesUi.statusDraft}</SelectItem>
+                <SelectItem value="pending_approval">{t.expensesUi.statusPendingShort}</SelectItem>
+                <SelectItem value="approved">{t.expensesUi.statusApproved}</SelectItem>
+                <SelectItem value="paid">{t.expensesUi.statusPaid}</SelectItem>
+                <SelectItem value="rejected">{t.expensesUi.statusRejected}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder={t.expensesUi.categoryPlaceholder} />
+                </SelectTrigger>
+                <SelectContent>
+                <SelectItem value="__all__">{t.expensesUi.allCategories}</SelectItem>
+                  {EXPENSE_CATEGORIES.map(cat => (
+                    <SelectItem key={cat.value} value={cat.value}>
+                      {t.expensesUi.categories[cat.value]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder={t.common.status} />
-              </SelectTrigger>
-              <SelectContent>
-              <SelectItem value="__all__">{t.expensesUi.allStatuses}</SelectItem>
-              <SelectItem value="draft">{t.expensesUi.statusDraft}</SelectItem>
-              <SelectItem value="pending_approval">{t.expensesUi.statusPendingShort}</SelectItem>
-              <SelectItem value="approved">{t.expensesUi.statusApproved}</SelectItem>
-              <SelectItem value="paid">{t.expensesUi.statusPaid}</SelectItem>
-              <SelectItem value="rejected">{t.expensesUi.statusRejected}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder={t.expensesUi.categoryPlaceholder} />
-              </SelectTrigger>
-              <SelectContent>
-              <SelectItem value="__all__">{t.expensesUi.allCategories}</SelectItem>
-                {EXPENSE_CATEGORIES.map(cat => (
-                  <SelectItem key={cat.value} value={cat.value}>
-                    {t.expensesUi.categories[cat.value]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">{t.common.from}:</span>
+              <DatePickerButton
+                value={dateFrom}
+                onChange={(iso) => {
+                  setDateFrom(iso);
+                  if (dateTo && iso > dateTo) setDateTo(iso);
+                }}
+                placeholder={t.common.from}
+                locale={language === 'pt' ? 'pt' : 'en'}
+                buttonClassName="h-10 min-w-[9.5rem]"
+              />
+              <span className="text-xs text-muted-foreground">{t.common.to}:</span>
+              <DatePickerButton
+                value={dateTo}
+                onChange={setDateTo}
+                placeholder={t.common.to}
+                locale={language === 'pt' ? 'pt' : 'en'}
+                minDate={dateFrom || undefined}
+                buttonClassName="h-10 min-w-[9.5rem]"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-10 text-xs"
+                onClick={() => {
+                  const today = localISODate();
+                  setDateFrom(today);
+                  setDateTo(today);
+                }}
+              >
+                {t.expensesUi.todayOnly}
+              </Button>
+              {(dateFrom || dateTo) && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-10 text-xs"
+                  onClick={() => {
+                    setDateFrom('');
+                    setDateTo('');
+                  }}
+                >
+                  {t.expensesUi.allDates}
+                </Button>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -750,9 +845,26 @@ export default function Expenses() {
                 filteredExpenses.map(expense => {
                   const statusConfig = statusConfigFor(expense.status);
                   const StatusIcon = statusConfig.icon;
+                  const canEditThis = canCreateExpense && !expenseIsPaid(expense.status);
+                  const showRowMenu = canEditThis
+                    || (expense.status === 'pending_approval' && canApproveExpense)
+                    || (expense.status === 'approved' && (canPayFromBank || expense.paymentSource !== 'bank'))
+                    || (expense.status === 'paid' && canRepostGl);
                   return (
                     <TableRow key={expense.id}>
-                      <TableCell className="font-mono text-sm">{expense.expenseNumber}</TableCell>
+                      <TableCell className="font-mono text-sm">
+                        {canEditThis ? (
+                          <button
+                            type="button"
+                            className="text-left hover:underline"
+                            onClick={() => handleOpenDialog(expense)}
+                          >
+                            {expense.expenseNumber}
+                          </button>
+                        ) : (
+                          expense.expenseNumber
+                        )}
+                      </TableCell>
                       <TableCell>
                         <span className="flex items-center gap-2">
                           <span>{getCategoryIcon(expense.category)}</span>
@@ -783,12 +895,7 @@ export default function Expenses() {
                         {format(new Date(expense.createdAt), 'dd/MM/yyyy', { locale: dfLocale })}
                       </TableCell>
                       <TableCell>
-                        {(
-                          expense.status === 'draft'
-                          || (expense.status === 'pending_approval' && canApproveExpense)
-                          || (expense.status === 'approved' && (canPayFromBank || expense.paymentSource !== 'bank'))
-                          || (expense.status === 'paid' && canRepostGl)
-                        ) ? (
+                        {showRowMenu ? (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -796,19 +903,16 @@ export default function Expenses() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="bg-popover border">
-                              {expense.status === 'draft' && (
-                                <>
-                                  {(canPayStaff || expense.category !== 'staff') && (
-                                    <DropdownMenuItem onClick={() => handleOpenDialog(expense)}>
-                                      {t.common.edit}
-                                    </DropdownMenuItem>
-                                  )}
-                                  {(canApproveExpense || expenseNeedsApproval) && (
-                                    <DropdownMenuItem onClick={() => handleSubmitForApproval(expense)}>
-                                      {t.expensesUi.sendForApproval}
-                                    </DropdownMenuItem>
-                                  )}
-                                </>
+                              {canEditThis && (
+                                <DropdownMenuItem onClick={() => handleOpenDialog(expense)}>
+                                  <Pencil className="w-4 h-4 mr-2" />
+                                  {t.common.edit}
+                                </DropdownMenuItem>
+                              )}
+                              {expense.status === 'draft' && (canApproveExpense || expenseNeedsApproval) && (
+                                <DropdownMenuItem onClick={() => handleSubmitForApproval(expense)}>
+                                  {t.expensesUi.sendForApproval}
+                                </DropdownMenuItem>
                               )}
                               {expense.status === 'pending_approval' && canApproveExpense && (
                                 <>

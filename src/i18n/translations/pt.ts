@@ -2656,6 +2656,8 @@ export const pt: TranslationKeys = {
     allStatuses: "Todos Estados",
     categoryPlaceholder: "Categoria",
     allCategories: "Todas Categorias",
+    todayOnly: "Hoje",
+    allDates: "Todas as datas",
 
     statusDraft: "Rascunho",
     statusPendingApproval: "Aguardando Aprovação",
@@ -2690,6 +2692,7 @@ export const pt: TranslationKeys = {
 
     expenseUpdated: "Despesa actualizada",
     expenseRecorded: "Despesa registada",
+    paidCannotEdit: "Uma despesa paga não pode ser alterada — o dinheiro e o diário já foram lançados.",
 
     approvedTitle: "Aprovado",
     expenseApproved: "Despesa {number} aprovada",

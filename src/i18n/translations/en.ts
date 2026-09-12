@@ -2654,6 +2654,8 @@ export const en = {
     allStatuses: "All statuses",
     categoryPlaceholder: "Category",
     allCategories: "All categories",
+    todayOnly: "Today",
+    allDates: "All dates",
 
     statusDraft: "Draft",
     statusPendingApproval: "Awaiting approval",
@@ -2688,6 +2690,7 @@ export const en = {
 
     expenseUpdated: "Expense updated",
     expenseRecorded: "Expense recorded",
+    paidCannotEdit: "A paid expense cannot be changed — cash and the ledger have already moved.",
 
     approvedTitle: "Approved",
     expenseApproved: "Expense {number} approved",
