@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useClients } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { Client } from '@/types/erp';
@@ -14,6 +15,8 @@ import { exportClientsToExcel, parseClientsFromExcel, validateImportedClients, d
 import { ExcelImportDialog } from '@/components/import/ExcelImportDialog';
 import { ClientFormDialog } from '@/components/clients/ClientFormDialog';
 import { useTranslation } from '@/i18n';
+import { cn } from '@/lib/utils';
+import { readAppSearchParams, readNexorSearchFocus, scrollToNexorRow } from '@/lib/searchFocus';
 
 export default function Clients() {
   const { t, language } = useTranslation();
@@ -27,6 +30,8 @@ export default function Clients() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const location = useLocation();
+  const searchFocusKeyRef = useRef('');
 
   const isMainOffice = currentBranch?.isMain;
 
@@ -49,6 +54,25 @@ export default function Clients() {
     window.addEventListener('nexor:clients-new', onNewClient);
     return () => window.removeEventListener('nexor:clients-new', onNewClient);
   }, []);
+
+  useEffect(() => {
+    const focus = readNexorSearchFocus(location.state);
+    const clientId = readAppSearchParams(location.search).get('clientId')?.trim()
+      || (focus?.kind === 'client' ? focus.clientId : '')
+      || '';
+    if (!clientId) return;
+    const hit = clients.find((c) => c.id === clientId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === clientId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = clientId;
+    setSearchTerm(hit.name || hit.nif || '');
+    setSelectedClient(hit);
+    setDialogOpen(true);
+    scrollToNexorRow(hit.id);
+  }, [clients, location.search, location.hash, location.state]);
 
   const handleDelete = () => {
     if (selectedClient) {
@@ -250,7 +274,11 @@ export default function Clients() {
                 </TableRow>
               ) : (
                 filteredClients.map(client => (
-                  <TableRow key={client.id}>
+                  <TableRow
+                    key={client.id}
+                    data-nexor-id={client.id}
+                    className={cn(selectedClient?.id === client.id && 'nexor-row-selected')}
+                  >
                     <TableCell className="font-medium">{client.name}</TableCell>
                     <TableCell>{client.nif}</TableCell>
                     <TableCell>{client.phone || '-'}</TableCell>

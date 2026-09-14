@@ -11,6 +11,12 @@ import {
 } from '@/lib/sellingPriceHints';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import {
+  findProductForSearchFocus,
+  readAppSearchParams,
+  readNexorSearchFocus,
+  scrollToNexorRow,
+} from '@/lib/searchFocus';
 import { useProducts } from '@/hooks/useERP';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
 import { fetchInventoryGrid, invalidateInventoryGridCache, isInventoryGridCacheFresh, readProductStock } from '@/lib/inventoryGrid';
@@ -697,6 +703,48 @@ export default function Inventory() {
       return prev && prev.id === next.id ? prev : next;
     });
   }, [listSearch, gridProducts, listBranchId, currentBranch?.id]);
+
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    const params = readAppSearchParams(location.search);
+    const focus = readNexorSearchFocus(location.state);
+    const productId = params.get('productId')?.trim()
+      || (focus?.kind === 'product' ? focus.productId : '')
+      || '';
+    const sku = params.get('sku')?.trim()
+      || (focus?.kind === 'product' ? focus.sku : '')
+      || '';
+    const name = params.get('name')?.trim()
+      || (focus?.kind === 'product' ? focus.name : '')
+      || '';
+    if (!productId && !sku && !name) return;
+
+    const key = `${productId}|${sku}|${name}`;
+    if (searchFocusKeyRef.current === key) return;
+
+    setStockListFilter('all');
+    setActiveTab('lista');
+    setShowSearchResults(false);
+
+    const pool = displayProducts.length > 0 ? displayProducts : inventoryRows;
+    if (pool.length === 0) return;
+
+    const hit = findProductForSearchFocus(pool, { productId, sku, name });
+    const term = (hit?.sku || hit?.name || sku || name || '').trim();
+    if (term) setListSearch(term);
+    if (!hit) return;
+
+    searchFocusKeyRef.current = key;
+    openEditProductDialog(hit);
+    scrollToNexorRow(hit.id);
+  }, [
+    location.search,
+    location.hash,
+    location.state,
+    displayProducts,
+    inventoryRows,
+    openEditProductDialog,
+  ]);
 
   // The first movement request of a session carries a warm-up cost the later ones do not.
   // Spend it on the first row while the user is still reading the list, so the first tab

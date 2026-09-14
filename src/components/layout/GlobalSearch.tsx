@@ -5,6 +5,14 @@ import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
 import { useTranslation } from '@/i18n';
+import {
+  clientSearchHref,
+  productSearchHref,
+  purchaseSearchHref,
+  saleSearchHref,
+  splitAppHref,
+  type NexorSearchFocus,
+} from '@/lib/searchFocus';
 
 type SearchResult = {
   clients: { id: string; name: string; nif?: string; href: string }[];
@@ -69,20 +77,25 @@ export function GlobalSearch() {
     }
   }, []);
 
-  const go = (href: string) => {
+  const go = (href: string, focus: NexorSearchFocus) => {
     setOpen(false);
     setQ('');
     setResults(EMPTY);
-    navigate(href);
+    const { pathname, search } = splitAppHref(href);
+    navigate({ pathname, search }, { state: { nexorSearchFocus: focus } });
   };
 
-  const sections: { title: string; rows: { key: string; label: string; href: string }[] }[] = [
+  const sections: {
+    title: string;
+    rows: { key: string; label: string; href: string; focus: NexorSearchFocus }[];
+  }[] = [
     {
       title: gs.clients,
       rows: results.clients.map((r) => ({
         key: `c-${r.id}`,
         label: `${r.name}${r.nif ? ` · ${r.nif}` : ''}`,
-        href: r.href,
+        href: clientSearchHref(r.id),
+        focus: { kind: 'client', clientId: r.id },
       })),
     },
     {
@@ -90,7 +103,8 @@ export function GlobalSearch() {
       rows: results.products.map((r) => ({
         key: `p-${r.id}`,
         label: `${r.name}${r.sku ? ` · ${r.sku}` : ''}`,
-        href: r.href,
+        href: productSearchHref(r.id, r.sku, r.name),
+        focus: { kind: 'product', productId: r.id, sku: r.sku, name: r.name },
       })),
     },
     {
@@ -98,7 +112,8 @@ export function GlobalSearch() {
       rows: results.sales.map((r) => ({
         key: `s-${r.id}`,
         label: `${r.invoiceNumber || r.id}${r.customerName ? ` · ${r.customerName}` : ''}`,
-        href: r.href,
+        href: saleSearchHref(r.id, r.invoiceNumber),
+        focus: { kind: 'sale', invoiceId: r.id, q: r.invoiceNumber },
       })),
     },
     {
@@ -106,10 +121,13 @@ export function GlobalSearch() {
       rows: results.purchaseInvoices.map((r) => ({
         key: `pi-${r.id}`,
         label: `${r.invoiceNumber || r.id}${r.supplierName ? ` · ${r.supplierName}` : ''}`,
-        href: r.href,
+        href: purchaseSearchHref(r.id, r.invoiceNumber),
+        focus: { kind: 'purchase', invoiceId: r.id, q: r.invoiceNumber },
       })),
     },
   ].filter((s) => s.rows.length > 0);
+
+  const firstRow = sections[0]?.rows[0];
 
   const showPanel = open && (loading || q.trim().length >= 2);
 
@@ -122,6 +140,11 @@ export function GlobalSearch() {
         onChange={(e) => void runSearch(e.target.value)}
         onFocus={() => {
           if (q.trim().length >= 2) setOpen(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' || !firstRow) return;
+          e.preventDefault();
+          go(firstRow.href, firstRow.focus);
         }}
         placeholder={gs.placeholder}
         title={gs.buttonTitle}
@@ -151,7 +174,7 @@ export function GlobalSearch() {
                   key={row.key}
                   type="button"
                   className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
-                  onClick={() => go(row.href)}
+                  onClick={() => go(row.href, row.focus)}
                 >
                   {row.label}
                 </button>

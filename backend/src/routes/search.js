@@ -102,7 +102,7 @@ module.exports = function searchRouter() {
           name: r.name,
           nif: r.nif,
           phone: r.phone,
-          href: `/clients`,
+          href: `/clients?clientId=${encodeURIComponent(String(r.id))}`,
         })),
         products: (products.rows || []).map((r) => ({
           id: r.id,
@@ -110,7 +110,7 @@ module.exports = function searchRouter() {
           sku: r.sku,
           barcode: r.barcode,
           stock: r.stock,
-          href: `/inventory`,
+          href: `/inventory?productId=${encodeURIComponent(String(r.id))}${r.sku ? `&sku=${encodeURIComponent(String(r.sku))}` : ''}${r.name ? `&name=${encodeURIComponent(String(r.name))}` : ''}`,
         })),
         sales: (sales.rows || []).map((r) => ({
           id: r.id,
@@ -118,7 +118,7 @@ module.exports = function searchRouter() {
           customerName: r.customer_name,
           total: r.total,
           status: r.status,
-          href: `/invoices`,
+          href: `/invoices?invoiceId=${encodeURIComponent(String(r.id))}${r.invoice_number ? `&q=${encodeURIComponent(String(r.invoice_number))}` : ''}`,
         })),
         purchaseInvoices: (purchaseInvoices.rows || []).map((r) => ({
           id: r.id,
@@ -126,7 +126,7 @@ module.exports = function searchRouter() {
           supplierName: r.supplier_name,
           total: r.total,
           status: r.status,
-          href: `/purchase-invoices`,
+          href: `/purchase-invoices?invoiceId=${encodeURIComponent(String(r.id))}${r.invoice_number ? `&q=${encodeURIComponent(String(r.invoice_number))}` : ''}`,
         })),
       });
     } catch (e) {

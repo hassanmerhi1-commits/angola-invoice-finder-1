@@ -105,6 +105,7 @@ import {
   PURCHASE_INVOICES_NEW_PATH,
 } from '@/lib/nexorPurchaseCreate';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
+import { readAppSearchParams, readNexorSearchFocus, scrollToNexorRow } from '@/lib/searchFocus';
 import { setContextMenuResolver } from '@/lib/contextMenuRegistry';
 
 function ivaRateToTaxCode(rate: number): string {
@@ -1851,6 +1852,52 @@ export default function PurchaseInvoices() {
       setViewLoading(false);
     }
   }, []);
+
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    if (mode === 'create') return;
+    const params = readAppSearchParams(location.search);
+    const focus = readNexorSearchFocus(location.state);
+    const invoiceId = params.get('invoiceId')?.trim()
+      || (focus?.kind === 'purchase' ? focus.invoiceId : '')
+      || '';
+    const q = params.get('q')?.trim()
+      || (focus?.kind === 'purchase' ? focus.q : '')
+      || '';
+    if (!invoiceId && !q) return;
+    const key = `${invoiceId}|${q}`;
+    if (searchFocusKeyRef.current === key) return;
+
+    if (q && searchTerm !== q) setSearchTerm(q);
+    setFilterDateFrom('');
+    setFilterDateTo('');
+    setFilterSupplier('');
+    setListTab('faturas');
+
+    const qLower = q.toLowerCase();
+    const hit = invoices.find((i) => i.id === invoiceId)
+      || (qLower
+        ? invoices.find((i) => String(i.invoiceNumber || '').toLowerCase() === qLower)
+        : undefined)
+      || (qLower
+        ? invoices.find((i) => String(i.invoiceNumber || '').toLowerCase().includes(qLower))
+        : undefined);
+
+    if (hit) {
+      searchFocusKeyRef.current = key;
+      setSelectedListInvoiceId(hit.id);
+      scrollToNexorRow(hit.id);
+      void openViewInvoice(hit);
+      return;
+    }
+    if (!invoiceId) return;
+    searchFocusKeyRef.current = key;
+    void getPurchaseInvoiceById(invoiceId).then((full) => {
+      if (!full) return;
+      setSelectedListInvoiceId(full.id);
+      void openViewInvoice(full);
+    });
+  }, [location.search, location.hash, location.state, invoices, mode, searchTerm, openViewInvoice]);
 
   const startEditInvoice = useCallback(async (inv: PurchaseInvoice) => {
     const full = (await getPurchaseInvoiceById(inv.id)) || inv;

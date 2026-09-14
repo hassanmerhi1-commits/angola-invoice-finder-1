@@ -280,6 +280,22 @@ export function AdvancedDataGrid({
     return values;
   }, [products, visibleColumns]);
 
+  useEffect(() => {
+    if (!selectedProductId) return;
+    const idx = filteredProducts.findIndex((p) => p.id === selectedProductId);
+    if (idx < 0) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const rowTop = idx * ROW_HEIGHT;
+    const viewTop = el.scrollTop;
+    const viewHeight = Math.max(ROW_HEIGHT, el.clientHeight - 32);
+    const rowBottom = rowTop + ROW_HEIGHT;
+    if (rowTop >= viewTop && rowBottom <= viewTop + viewHeight) return;
+    const next = Math.max(0, rowTop - viewHeight / 2 + ROW_HEIGHT / 2);
+    el.scrollTop = next;
+    setScrollTop(next);
+  }, [selectedProductId, filteredProducts]);
+
   const virtualWindow = useMemo(() => {
     const total = filteredProducts.length;
     if (total === 0) {

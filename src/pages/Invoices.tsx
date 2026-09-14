@@ -22,6 +22,7 @@ import {
   Clock, ChevronDown, ArrowRightLeft, Send, Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { readAppSearchParams, readNexorSearchFocus, scrollToNexorRow } from '@/lib/searchFocus';
 import { salesOrderToErpDocumentPrefill, type SalesOrder } from '@/lib/salesOrderToDocument';
 import { printDocument, downloadDocumentHTML } from '@/lib/documentPDF';
 import { DocumentType, ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentStatus } from '@/types/documents';
@@ -727,6 +728,63 @@ export default function Invoices() {
     setPrefillDoc(null);
     setFormOpen(true);
   };
+
+  const openEditDocumentRef = useRef(openEditDocument);
+  openEditDocumentRef.current = openEditDocument;
+
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    const params = readAppSearchParams(location.search);
+    const focus = readNexorSearchFocus(location.state);
+    const invoiceId = params.get('invoiceId')?.trim()
+      || (focus?.kind === 'sale' ? focus.invoiceId : '')
+      || '';
+    const q = params.get('q')?.trim()
+      || (focus?.kind === 'sale' ? focus.q : '')
+      || '';
+    if (!invoiceId && !q) return;
+
+    const key = `${invoiceId}|${q}`;
+    if (searchFocusKeyRef.current === key) return;
+
+    setActiveTab('all');
+    if (dateFrom || dateTo) {
+      setDateFrom('');
+      setDateTo('');
+      return;
+    }
+    if (q && searchTerm !== q) {
+      setSearchTerm(q);
+    }
+
+    const qLower = q.toLowerCase();
+    const hit = documents.find((d) => d.id === invoiceId)
+      || (qLower
+        ? documents.find((d) => String(d.documentNumber || '').toLowerCase() === qLower)
+        : undefined)
+      || (qLower
+        ? documents.find((d) => String(d.documentNumber || '').toLowerCase().includes(qLower))
+        : undefined);
+
+    if (hit) {
+      searchFocusKeyRef.current = key;
+      setSelectedDocId(hit.id);
+      scrollToNexorRow(hit.id);
+      void openEditDocumentRef.current(hit);
+      return;
+    }
+
+    if (listLoading) return;
+    if (!invoiceId) return;
+
+    searchFocusKeyRef.current = key;
+    const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
+    void getSaleInvoiceAsDocument(invoiceId, branchNames).then((full) => {
+      if (!full) return;
+      setSelectedDocId(full.id);
+      void openEditDocumentRef.current(full);
+    });
+  }, [location.search, location.hash, location.state, documents, dateFrom, dateTo, searchTerm, listLoading, branches]);
 
   useEffect(() => {
     const selected = documents.find((d) => d.id === selectedDocId) || null;
