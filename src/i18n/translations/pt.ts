@@ -757,6 +757,15 @@ export const pt: TranslationKeys = {
     actionCreated: "criado",
     editTitle: "Editar Produto",
     newTitle: "Novo Produto",
+    saveAsNew: "Guardar como novo",
+    skuMustChange: "Indique um SKU novo. O original ({sku}) não é alterado.",
+    copyFromLabel: "Copiar de um existente",
+    copyFromPlaceholder: "Pesquisar nome ou SKU para copiar…",
+    copyFromHint: "Os dados são copiados. Defina um SKU novo — o produto original mantém-se.",
+    copiedFrom: "Copiado de {sku} — {name}",
+    newFromCopyTitle: "Novo produto (a partir de {name})",
+    copyThis: "Copiar como novo",
+    editThis: "Editar",
     description: "Atualize os dados do produto e role com o mouse normalmente pela lista de campos.",
     productNameLabel: "Nome do Produto",
     barcodeLabel: "Código de Barras",
@@ -973,6 +982,7 @@ export const pt: TranslationKeys = {
     colCode: "Código",
     colProduct: "Produto",
     addLine: "Adicionar linha",
+    newProduct: "Novo produto",
     colUnit: "Un.",
     colCurrentStock: "Exist. actual",
     colQtyOut: "Qtd. a sair",
@@ -3109,6 +3119,10 @@ export const pt: TranslationKeys = {
     portuguese: "Português",
   },
 
+  appearance: {
+    select: "Aparência",
+  },
+
   colorTheme: {
     select: "Tema de cores",
     light: "Claro",
@@ -3136,6 +3150,7 @@ export const pt: TranslationKeys = {
       transactions: "Transações",
       reports: "Relatórios",
       utilities: "Utilitários",
+      display: "Aparência",
       help: "Ajuda",
     },
     file: {
@@ -5254,6 +5269,8 @@ export const pt: TranslationKeys = {
     placeholderTaxId: "NIF",
     productCreatedTitle: "Produto criado",
     productCreatedDesc: "{name} adicionado ao stock e à fatura",
+    productUpdatedTitle: "Produto actualizado",
+    productUpdatedDesc: "{name} foi actualizado e aplicado a esta compra",
 
     // Purchase orders UI
     poNewTitle: "Nova Encomenda de Compra",
@@ -5397,6 +5414,12 @@ export const pt: TranslationKeys = {
     selectDestinationBranch: "Selecione a filial de destino",
     selectProduct: "Selecione um produto",
     searchProductPlaceholder: "Pesquisar por código ou nome…",
+    searchShortPlaceholder: "Código ou nome...",
+    pickerKeyboardHint: "Escreva código ou nome · Enter para escolher · Tab campo seguinte · Enter na qtd linha seguinte",
+    addLine: "Adicionar linha",
+    newProduct: "Novo produto",
+    summaryItems: "Itens",
+    summaryUnits: "Unidades",
     noSearchResults: "Nenhum produto corresponde à pesquisa",
     selectSourceFirst: "Seleccione primeiro a filial de origem",
     stockAvailable: "Stock: {stock}",

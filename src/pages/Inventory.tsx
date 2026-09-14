@@ -451,9 +451,20 @@ export default function Inventory() {
   }, [adjustmentBranchId, listBranchId, currentBranch?.id, inventoryRows, allBranchProducts]);
 
   const [productCreateScopeBranchId, setProductCreateScopeBranchId] = useState<string | null>(null);
+  const [adjustLineSeed, setAdjustLineSeed] = useState<Product | null>(null);
 
   const openNewProductDialog = useCallback((branchId?: string) => {
     setSelectedProduct(null);
+    setLockedDialogProduct(null);
+    setProductCreateScopeBranchId(
+      branchId || listBranchId || currentBranch?.id || null,
+    );
+    setDialogOpen(true);
+  }, [listBranchId, currentBranch?.id]);
+
+  const openEditProductDialog = useCallback((product: Product, branchId?: string) => {
+    setSelectedProduct(product);
+    setLockedDialogProduct(product);
     setProductCreateScopeBranchId(
       branchId || listBranchId || currentBranch?.id || null,
     );
@@ -898,7 +909,8 @@ export default function Inventory() {
     // Patch UI immediately; do not await a full Tailscale inventory-grid reload.
     const writeOpts = { skipListMerge: true, lightweightChangedEvent: true } as const;
     try {
-      if (selectedProduct) {
+      const isUpdate = Boolean(selectedProduct && selectedProduct.id === product.id);
+      if (isUpdate) {
         const saved = await updateProduct(gridProduct, writeOpts);
         const savedRow = { ...saved, branchId: saved.branchId || gridProduct.branchId };
         patchInventoryRow(savedRow);
@@ -906,12 +918,18 @@ export default function Inventory() {
           prev && prev.id === product.id ? { ...prev, ...saved } : prev,
         );
         toast.success(t.productFormUi.productUpdated);
+        if (stockEntryDialogOpen || stockExitDialogOpen) {
+          setAdjustLineSeed(savedRow);
+        }
       } else {
         const saved = await addProduct(gridProduct, writeOpts);
         const savedRow = { ...saved, branchId: saved.branchId || gridProduct.branchId };
         patchInventoryRow(savedRow);
         toast.success(t.productFormUi.productCreated);
         setSelectedProduct(null);
+        if (stockEntryDialogOpen || stockExitDialogOpen) {
+          setAdjustLineSeed(savedRow);
+        }
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
@@ -1937,6 +1955,7 @@ export default function Inventory() {
           }}
           product={lockedDialogProduct || dialogProduct}
           catalogProducts={flatCatalog}
+          copyCatalog={flatCatalog.length > 0 ? flatCatalog : inventoryRows}
           scopeBranchId={
             productCreateScopeBranchId
             ?? listBranchId
@@ -1944,6 +1963,10 @@ export default function Inventory() {
             ?? null
           }
           onSave={handleSaveProduct}
+          onEditExisting={(p) => {
+            setSelectedProduct(p);
+            setLockedDialogProduct(p);
+          }}
           onProductLoaded={(fresh) => {
             patchInventoryRow({
               ...fresh,
@@ -2080,7 +2103,12 @@ export default function Inventory() {
           onAddProduct={() =>
             openNewProductDialog(listBranchId || currentBranch?.id || undefined)
           }
+          onEditProduct={(p) =>
+            openEditProductDialog(p, listBranchId || currentBranch?.id || undefined)
+          }
           initialProduct={null}
+          seedProduct={adjustLineSeed}
+          onSeedConsumed={() => setAdjustLineSeed(null)}
           onApplyEntry={handleApplyStockEntry}
         />
       ) : null}
@@ -2097,6 +2125,14 @@ export default function Inventory() {
           currentBranch={currentBranch}
           warehouseId={warehouseId}
           initialProduct={null}
+          onAddProduct={() =>
+            openNewProductDialog(listBranchId || currentBranch?.id || undefined)
+          }
+          onEditProduct={(p) =>
+            openEditProductDialog(p, listBranchId || currentBranch?.id || undefined)
+          }
+          seedProduct={adjustLineSeed}
+          onSeedConsumed={() => setAdjustLineSeed(null)}
           onApplyExit={handleApplyStockExit}
         />
       ) : null}

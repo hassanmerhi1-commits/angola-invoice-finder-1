@@ -755,6 +755,15 @@ export const en = {
     actionCreated: "created",
     editTitle: "Edit product",
     newTitle: "New product",
+    saveAsNew: "Save as new",
+    skuMustChange: "Give this product a new SKU. The original ({sku}) is not changed.",
+    copyFromLabel: "Copy from existing",
+    copyFromPlaceholder: "Search name or SKU to copy…",
+    copyFromHint: "Details are copied. Set a new SKU — the original product stays as it is.",
+    copiedFrom: "Copied from {sku} — {name}",
+    newFromCopyTitle: "New product (from {name})",
+    copyThis: "Copy as new",
+    editThis: "Edit",
     description: "Update product details. You can scroll normally through the fields.",
     productNameLabel: "Product name",
     barcodeLabel: "Barcode",
@@ -971,6 +980,7 @@ export const en = {
     colCode: "Code",
     colProduct: "Product",
     addLine: "Add line",
+    newProduct: "New product",
     colUnit: "Unit",
     colCurrentStock: "Current stock",
     colQtyOut: "Qty out",
@@ -3106,6 +3116,10 @@ export const en = {
     portuguese: "Portuguese",
   },
 
+  appearance: {
+    select: "Display",
+  },
+
   colorTheme: {
     select: "Color theme",
     light: "Light",
@@ -3133,6 +3147,7 @@ export const en = {
       transactions: "Transactions",
       reports: "Reports",
       utilities: "Utilities",
+      display: "Display",
       help: "Help",
     },
     file: {
@@ -5252,6 +5267,8 @@ export const en = {
     placeholderTaxId: "Tax ID",
     productCreatedTitle: "Product created",
     productCreatedDesc: "{name} added to stock and invoice",
+    productUpdatedTitle: "Product updated",
+    productUpdatedDesc: "{name} was updated and applied to this purchase",
 
     // Purchase orders UI
     poNewTitle: "New purchase order",
@@ -5395,6 +5412,12 @@ export const en = {
     selectDestinationBranch: "Select destination branch",
     selectProduct: "Select a product",
     searchProductPlaceholder: "Search by code or name…",
+    searchShortPlaceholder: "Code or name...",
+    pickerKeyboardHint: "Type code or name · Enter to pick · Tab next field · Enter on qty next row",
+    addLine: "Add line",
+    newProduct: "New product",
+    summaryItems: "Items",
+    summaryUnits: "Units",
     noSearchResults: "No products match your search",
     selectSourceFirst: "Select a source branch first",
     stockAvailable: "Stock: {stock}",

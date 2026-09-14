@@ -53,6 +53,12 @@ import {
 } from '@/lib/productSupplierResolve';
 import { buildSellingPriceBySku, withSellingPriceFromMap } from '@/lib/productDedupe';
 import { readSellingPriceHintsSession } from '@/lib/sellingPriceHints';
+import {
+  filterProductsForSearch,
+  normalizeSearchText,
+  PRODUCT_LINE_SUGGESTION_LIMIT,
+  sortProductSearchResults,
+} from '@/components/inventory/productLineSearch';
 
 interface ProductDetailDialogProps {
   open: boolean;
@@ -67,6 +73,22 @@ interface ProductDetailDialogProps {
   defaultSupplierName?: string;
   /** Inventory branch scope (overrides global top-nav branch when creating). */
   scopeBranchId?: string | null;
+  /** Catalog used by “Copy from existing” on a blank create form. */
+  copyCatalog?: Product[];
+  /** Prefill the create form from this product (save creates a new id). */
+  copySource?: Product | null;
+  /** Open an existing catalog row for in-place edit (same SKU / same id). */
+  onEditExisting?: (product: Product) => void;
+}
+
+function suggestCopySku(sku: string, usedNormalized: Set<string>): string {
+  const base = String(sku || '').trim().toUpperCase();
+  if (!base) return '';
+  for (let n = 2; n < 50; n++) {
+    const candidate = `${base}-${n}`;
+    if (!usedNormalized.has(normalizeSearchText(candidate))) return candidate;
+  }
+  return `${base}-NEW`;
 }
 
 const UNITS = [
@@ -130,6 +152,9 @@ export function ProductDetailDialog({
   onProductLoaded,
   defaultSupplierName = '',
   scopeBranchId = null,
+  copyCatalog = [],
+  copySource = null,
+  onEditExisting,
 }: ProductDetailDialogProps) {
   const { branches } = useBranches();
   const { categories } = useCategories();
@@ -337,14 +362,36 @@ export function ProductDetailDialog({
     [activeCategories, supplierSelectOptions, scopeBranchId],
   );
 
+  const [saveAsNew, setSaveAsNew] = useState(false);
+  const [copiedFrom, setCopiedFrom] = useState<Product | null>(null);
+  const [copySearch, setCopySearch] = useState('');
+
+  const copyPool = useMemo(() => {
+    const pool = copyCatalog.length > 0 ? copyCatalog : catalogProducts;
+    return pool.filter((p) => p.isActive !== false);
+  }, [copyCatalog, catalogProducts]);
+
+  const usedSkuKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const p of copyPool) keys.add(normalizeSearchText(p.sku));
+    return keys;
+  }, [copyPool]);
+
   useEffect(() => {
     if (!open) {
       formSnapshotRef.current = '';
       formInitKeyRef.current = '';
       apiHydratedIdRef.current = null;
+      setSaveAsNew(false);
+      setCopiedFrom(null);
+      setCopySearch('');
       return;
     }
-    const initKey = effectiveProduct?.id || 'new';
+    // Copy / Save as new already replaced the form — do not wipe it when the catalog refreshes.
+    // If the parent switched this dialog into edit mode, allow re-init.
+    if (formInitKeyRef.current.startsWith('copy:') && !effectiveProduct?.id) return;
+    const initKey = effectiveProduct?.id
+      || (copySource?.id ? `copy:${copySource.id}` : 'new');
     if (formInitKeyRef.current === initKey) return;
     formInitKeyRef.current = initKey;
     setTierPct({});
@@ -353,6 +400,29 @@ export function ProductDetailDialog({
       const next = buildFormFromProduct(effectiveProduct);
       formSnapshotRef.current = JSON.stringify(next);
       setFormData(next);
+      setSaveAsNew(false);
+      setCopiedFrom(null);
+    } else if (copySource) {
+      const next = {
+        ...buildFormFromProduct(copySource),
+        id: '',
+        sku: suggestCopySku(copySource.sku, usedSkuKeys),
+        barcode: '',
+        stock: 0,
+        barcodes: [
+          {
+            barPrice: '',
+            embalagem: 1,
+            priceLC: copySource.price || 0,
+            plu: '',
+            ultimoCusto: copySource.lastCost || copySource.cost || 0,
+          },
+        ],
+      };
+      formSnapshotRef.current = JSON.stringify(next);
+      setFormData(next);
+      setSaveAsNew(true);
+      setCopiedFrom(copySource);
     } else {
       const supplierId = resolveProductSupplierId(null, supplierSelectOptions, defaultSupplierName);
       const next = {
@@ -387,13 +457,17 @@ export function ProductDetailDialog({
       };
       formSnapshotRef.current = JSON.stringify(next);
       setFormData(next);
+      setSaveAsNew(false);
+      setCopiedFrom(null);
     }
   }, [
     effectiveProduct?.id,
+    copySource?.id,
     open,
     buildFormFromProduct,
     defaultSupplierName,
     scopeBranchId,
+    usedSkuKeys,
   ]);
 
   // Keep a ref mirror of the latest committed form so the hydration effect can read it without
@@ -543,10 +617,41 @@ export function ProductDetailDialog({
 
   const [saving, setSaving] = useState(false);
 
-  const handleSave = async () => {
+  const copyHits = useMemo(() => {
+    const term = copySearch.trim();
+    if (!term) return [];
+    return filterProductsForSearch(copyPool, term, new Set(), scopeBranchId || '')
+      .sort((a, b) => sortProductSearchResults(a, b, term, scopeBranchId || ''))
+      .slice(0, PRODUCT_LINE_SUGGESTION_LIMIT);
+  }, [copyPool, copySearch, scopeBranchId]);
+
+  const applyCopyFromProduct = useCallback(
+    (src: Product) => {
+      const next = {
+        ...buildFormFromProduct(src),
+        id: '',
+        sku: suggestCopySku(src.sku, usedSkuKeys),
+        barcode: '',
+        stock: 0,
+        barcodes: [
+          { barPrice: '', embalagem: 1, priceLC: src.price || 0, plu: '', ultimoCusto: src.lastCost || src.cost || 0 },
+        ],
+      };
+      setCopiedFrom(src);
+      setSaveAsNew(true);
+      setCopySearch('');
+      formInitKeyRef.current = `copy:${src.id}`;
+      apiHydratedIdRef.current = null;
+      formSnapshotRef.current = JSON.stringify(next);
+      setFormData(next);
+    },
+    [buildFormFromProduct, usedSkuKeys],
+  );
+
+  const handleSave = async (asNew = false) => {
     if (saving) return;
     const skuTrim = String(formData.sku || '').trim();
-    if (!skuTrim) {
+    if (!skuTrim || !String(formData.name || '').trim()) {
       toast.error(t.productFormUi.nameSkuRequired);
       return;
     }
@@ -574,7 +679,16 @@ export function ProductDetailDialog({
       ? undefined
       : rawSupplierId || undefined;
 
-    const isEdit = Boolean(effectiveProduct?.id || product?.id);
+    const sourceSku = String(copiedFrom?.sku || product?.sku || effectiveProduct?.sku || '').trim();
+    const willCreate = asNew || saveAsNew || !product?.id;
+    if (willCreate && sourceSku && skuTrim.toUpperCase() === sourceSku.toUpperCase()) {
+      const suggested = suggestCopySku(sourceSku, usedSkuKeys);
+      set('sku', suggested);
+      toast.error(t.productFormUi.skuMustChange.replace('{sku}', sourceSku));
+      return;
+    }
+
+    const isEdit = !willCreate && Boolean(effectiveProduct?.id || product?.id);
     const stockFromDb =
       loadedProduct?.stock ??
       effectiveProduct?.stock ??
@@ -582,7 +696,9 @@ export function ProductDetailDialog({
       formData.stock;
 
     const savedProduct: Product & { preserveStock?: boolean } = {
-      id: formData.id || `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: willCreate
+        ? `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        : (formData.id || `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`),
       name: formData.name,
       sku: skuTrim,
       barcode: formData.barcode || formData.barcodes[0]?.barPrice || undefined,
@@ -592,9 +708,9 @@ export function ProductDetailDialog({
       price3: formData.price3 || undefined,
       price4: formData.price4 || undefined,
       cost: formData.cost,
-      firstCost: effectiveProduct?.firstCost || product?.firstCost || formData.cost,
-      lastCost: effectiveProduct?.lastCost || formData.lastCost || formData.cost,
-      avgCost: formData.avgCost || formData.cost,
+      firstCost: willCreate ? formData.cost : (effectiveProduct?.firstCost || product?.firstCost || formData.cost),
+      lastCost: willCreate ? formData.cost : (effectiveProduct?.lastCost || formData.lastCost || formData.cost),
+      avgCost: willCreate ? formData.cost : (formData.avgCost || formData.cost),
       stock: isEdit ? stockFromDb : formData.stock,
       preserveStock: isEdit,
       unit: formData.unit,
@@ -602,14 +718,15 @@ export function ProductDetailDialog({
       vatOverride: formData.vatOverride,
       // Only force when the user actually changed IVA in this session (incl. to 5%).
       forceVatChange:
-        !!effectiveProduct?.id
+        !willCreate
+        && !!effectiveProduct?.id
         && formData.iva != null
         && Number(formData.iva) !== Number(effectiveProduct?.taxRate),
       branchId: resolvedBranchId,
       supplierId: resolvedSupplierId,
       supplierName: resolvedSupplierName,
       isActive: formData.isActive,
-      createdAt: effectiveProduct?.createdAt || product?.createdAt || new Date().toISOString(),
+      createdAt: willCreate ? new Date().toISOString() : (effectiveProduct?.createdAt || product?.createdAt || new Date().toISOString()),
       updatedAt: new Date().toISOString(),
     };
     formSnapshotRef.current = JSON.stringify(formData);
@@ -637,11 +754,18 @@ export function ProductDetailDialog({
     <>
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
-        className="max-w-4xl gap-0 p-0 [&>button[data-dialog-close]]:hidden"
+        className="z-[60] max-w-4xl gap-0 p-0 [&>button[data-dialog-close]]:hidden"
+        overlayClassName="z-[60]"
         onOpenAutoFocus={e => e.preventDefault()}
       >
         <DialogHeader className="flex flex-row items-center justify-between gap-2 space-y-0 border-b bg-muted/50 px-4 py-2 pr-4">
-          <DialogTitle className="text-sm">{t.productDetailUi.title}</DialogTitle>
+          <DialogTitle className="text-sm">
+            {!product?.id || saveAsNew
+              ? (copiedFrom
+                ? t.productFormUi.newFromCopyTitle.replace('{name}', copiedFrom.name)
+                : t.productFormUi.newTitle)
+              : t.productDetailUi.title}
+          </DialogTitle>
           <Button
             type="button"
             variant="ghost"
@@ -653,6 +777,69 @@ export function ProductDetailDialog({
             <X className="h-4 w-4" />
           </Button>
         </DialogHeader>
+
+        {(!product?.id || saveAsNew) && (
+          <div className="relative border-b bg-background px-4 py-2 space-y-1">
+            {!product?.id && (
+              <>
+                <p className="text-[11px] font-medium text-muted-foreground">{t.productFormUi.copyFromLabel}</p>
+                <Input
+                  value={copySearch}
+                  onChange={(e) => setCopySearch(e.target.value)}
+                  placeholder={t.productFormUi.copyFromPlaceholder}
+                  className="h-7 text-xs"
+                  autoComplete="off"
+                />
+              </>
+            )}
+            {copiedFrom && (
+              <p className="text-[11px] text-muted-foreground">
+                {t.productFormUi.copiedFrom
+                  .replace('{sku}', copiedFrom.sku)
+                  .replace('{name}', copiedFrom.name)}
+                {' '}
+                {t.productFormUi.copyFromHint}
+              </p>
+            )}
+            {!product?.id && copyHits.length > 0 && (
+              <div className="absolute left-4 right-4 top-full z-[70] max-h-48 overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md">
+                {copyHits.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-1 border-b px-2 py-1 last:border-b-0 hover:bg-muted"
+                  >
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left text-[11px]"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        applyCopyFromProduct(p);
+                      }}
+                    >
+                      <span className="font-mono">{p.sku}</span>
+                      <span className="mx-0.5">—</span>
+                      {p.name}
+                    </button>
+                    {onEditExisting ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 shrink-0 px-1.5 text-[11px]"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          onEditExisting(p);
+                        }}
+                      >
+                        {t.productFormUi.editThis}
+                      </Button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <Tabs defaultValue="info" className="flex flex-col">
           <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 px-4 h-8">
@@ -673,7 +860,7 @@ export function ProductDetailDialog({
                 <Row label={t.inventory.category}>
                   <Select value={resolveProductCategoryName(formData.category, activeCategories)} onValueChange={v => set('category', v)}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-50 max-h-[min(60vh,320px)]">
+                    <SelectContent className="bg-popover border shadow-lg z-[80] max-h-[min(60vh,320px)]">
                       {categorySelectOptions.map((c) => (
                         <SelectItem key={c.key} value={c.name}>{c.name}</SelectItem>
                       ))}
@@ -694,7 +881,7 @@ export function ProductDetailDialog({
                     }}
                   >
                     <SelectTrigger className="h-7 text-xs"><SelectValue placeholder={t.productDetailUi.select} /></SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-50">
+                    <SelectContent className="bg-popover border shadow-lg z-[80]">
                       <SelectItem value="__none__">—</SelectItem>
                       {supplierSelectOptions.map((s) => (
                         <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
@@ -714,7 +901,7 @@ export function ProductDetailDialog({
                 <Row label={t.inventory.unit}>
                   <Select value={formData.unit} onValueChange={v => set('unit', v)}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-50">
+                    <SelectContent className="bg-popover border shadow-lg z-[80]">
                       {UNITS.map((u) => (
                         <SelectItem key={u.value} value={u.value}>
                           {t.productDetailUi.units[u.labelKey as keyof typeof t.productDetailUi.units] as string}
@@ -731,7 +918,7 @@ export function ProductDetailDialog({
                     <SelectTrigger className="h-7 text-xs">
                       <SelectValue placeholder={t.productFormUi.ivaPlaceholder} />
                     </SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-50">
+                    <SelectContent className="bg-popover border shadow-lg z-[80]">
                       {ALLOWED_VAT_RATES.map((r) => (
                         <SelectItem key={r} value={String(r)}>
                           {r}%
@@ -754,7 +941,7 @@ export function ProductDetailDialog({
                 <Row label={t.productDetailUi.type}>
                   <Select value={formData.tipo} onValueChange={v => set('tipo', v)}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-50">
+                    <SelectContent className="bg-popover border shadow-lg z-[80]">
                       <SelectItem value="INVENTARIO">{t.productDetailUi.inventoryType}</SelectItem>
                       <SelectItem value="SERVICO">{t.productDetailUi.serviceType}</SelectItem>
                       <SelectItem value="CONSUMIVEL">{t.productDetailUi.consumableType}</SelectItem>
@@ -837,7 +1024,7 @@ export function ProductDetailDialog({
                 <Row label={t.productDetailUi.branch}>
                   <Select value={formData.branchId} onValueChange={v => set('branchId', v)}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-50">
+                    <SelectContent className="bg-popover border shadow-lg z-[80]">
                       <SelectItem value="all">{t.productDetailUi.all}</SelectItem>
                       {branches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
                     </SelectContent>
@@ -907,7 +1094,20 @@ export function ProductDetailDialog({
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-4 py-3 border-t bg-muted/50">
-          <Button variant="outline" onClick={handleSave} size="sm" className="h-8 gap-1 text-foreground border-foreground hover:bg-muted" disabled={saving}>
+          {product?.id && !saveAsNew && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1"
+              disabled={saving}
+              onClick={() => {
+                if (effectiveProduct) applyCopyFromProduct(effectiveProduct);
+              }}
+            >
+              {t.productFormUi.saveAsNew}
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => void handleSave(false)} size="sm" className="h-8 gap-1 text-foreground border-foreground hover:bg-muted" disabled={saving}>
             <Check className="w-4 h-4" /> {saving ? t.common.saving : t.common.save}
           </Button>
           <Button variant="outline" size="sm" className="h-8 gap-1" onClick={requestClose}>

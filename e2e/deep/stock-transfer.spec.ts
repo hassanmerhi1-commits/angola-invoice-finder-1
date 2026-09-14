@@ -32,7 +32,7 @@ test.describe('Stock transfer E2E', () => {
     await createDialog.locator('label', { hasText: /to \(destination|para \(destino\)/i }).locator('..').getByRole('combobox').click();
     await page.getByRole('option', { name: new RegExp(scenario.destBranchName, 'i') }).click();
 
-    await createDialog.getByPlaceholder(/search|code|product/i).fill(scenario.sku);
+    await createDialog.getByPlaceholder(/search|code|product/i).first().fill(scenario.sku);
     await createDialog.getByRole('button', { name: new RegExp(scenario.sku) }).click();
 
     const qtyInput = createDialog.locator('tbody input').first();

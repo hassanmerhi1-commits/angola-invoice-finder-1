@@ -59,7 +59,7 @@ export const lightPreset: ThemePreset = {
     navMenuBtn:
       'h-7 px-2.5 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md',
     navTabsRow:
-      'h-10 px-2 bg-slate-50/80 hidden lg:flex items-end gap-0.5 border-b border-slate-200 overflow-x-auto',
+      'h-10 px-2 bg-slate-50/80 hidden lg:flex items-end justify-between gap-2 border-b border-slate-200 overflow-hidden',
     navTabActive:
       'bg-white text-sky-800 border-t-[3px] border-x border-t-sky-500 border-x-slate-200 -mb-px shadow-sm',
     navTabIdle: 'text-slate-500 hover:text-slate-800 hover:bg-white/80',

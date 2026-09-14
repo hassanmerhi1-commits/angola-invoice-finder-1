@@ -1,5 +1,5 @@
 // NEXOR ERP - Modern Top Navigation
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Branch, User } from '@/types/erp';
 import { Button } from '@/components/ui/button';
@@ -41,9 +41,7 @@ import {
 } from 'lucide-react';
 import { ensureDayTodos, todayKey } from '@/lib/dailyTodos';
 import { useTranslation } from '@/i18n';
-import { LanguageSwitcher } from '@/components/LanguageSwitcher';
-import { ColorThemeSwitcher } from '@/components/ColorThemeSwitcher';
-import { TextSizeSwitcher } from '@/components/TextSizeSwitcher';
+import { AppearanceSwitcher } from '@/components/AppearanceSwitcher';
 import { ServerConnectionIndicator } from '@/components/layout/ServerConnectionIndicator';
 import { OfflineModeBanner } from '@/components/layout/OfflineModeBanner';
 import { SyncPendingBadge } from '@/components/layout/SyncPendingBadge';
@@ -706,7 +704,11 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
 
           <div className="flex min-w-0 items-center gap-0.5 overflow-x-auto">
             {visibleMenus.map((menu) => (
-              <DropdownMenu key={menu.label}>
+              <Fragment key={menu.label}>
+              {menu.label === t.topNav.menus.help && (
+                <AppearanceSwitcher variant="menu" triggerClassName={themeChrome.navMenuBtn} />
+              )}
+              <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" className={`${themeChrome.navMenuBtn} shrink-0 whitespace-nowrap`}>
                     {menu.label}
@@ -735,18 +737,14 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>
+              </Fragment>
             ))}
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <ServerConnectionIndicator />
           <SyncPendingBadge />
-          <NotificationBell />
           <GlobalSearch />
-          <ColorThemeSwitcher compact />
-          <TextSizeSwitcher compact />
-          <LanguageSwitcher compact />
 
           {canSwitchBranch ? (
             <Select value={scopeId} onValueChange={setOperatingScope}>
@@ -796,11 +794,13 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <NotificationBell />
         </div>
       </div>
 
       {/* ====== ROW 2: Main Tabs ====== */}
       <div className={themeChrome.navTabsRow}>
+        <div className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto">
         {visibleMainTabs.map((tab) => (
           <NavLink
             key={tab.path}
@@ -828,6 +828,10 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
             {t.dailyTodosUi.shortTab}
           </button>
         )}
+        </div>
+        <div className="flex shrink-0 items-center self-center pr-1">
+          <ServerConnectionIndicator compact />
+        </div>
       </div>
 
       {/* ====== ROW 3: Action Toolbar ====== */}
@@ -920,8 +924,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
               <ListTodo className="w-5 h-5" />
             </Button>
           )}
-          <ColorThemeSwitcher />
-          <TextSizeSwitcher />
+          <AppearanceSwitcher />
           <Button variant="ghost" size="icon" className="h-8 w-8 text-sidebar-foreground" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
             <Menu className="w-5 h-5" />
           </Button>

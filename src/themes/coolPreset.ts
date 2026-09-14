@@ -61,7 +61,7 @@ export const coolChrome = {
   navMenuBtn:
     'h-7 px-2.5 text-xs font-medium text-teal-900/80 hover:text-teal-950 hover:bg-white/60 rounded-md',
   navTabsRow:
-    'h-10 px-2 bg-gradient-to-r from-sky-100 via-cyan-50 to-emerald-100/80 hidden lg:flex items-end gap-0.5 border-b border-teal-200/60 overflow-x-auto',
+    'h-10 px-2 bg-gradient-to-r from-sky-100 via-cyan-50 to-emerald-100/80 hidden lg:flex items-end justify-between gap-2 border-b border-teal-200/60 overflow-hidden',
   navTabActive:
     'bg-white text-teal-800 border-t-[3px] border-x border-t-teal-500 border-x-teal-200 -mb-px shadow-sm',
   navTabIdle: 'text-teal-800/70 hover:text-teal-950 hover:bg-white/70',

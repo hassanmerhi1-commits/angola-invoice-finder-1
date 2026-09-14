@@ -372,7 +372,7 @@ async function syncPurchaseInvoiceDocument(
 
 // ─────────── Product Picker Dialog ───────────
 function ProductPickerDialog({
-  open, onClose, products, productsLoading, onSelect, onCreateNew, initialSearch = '', priorityProductId,
+  open, onClose, products, productsLoading, onSelect, onCreateNew, onCopyProduct, onEditProduct, initialSearch = '', priorityProductId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -380,6 +380,8 @@ function ProductPickerDialog({
   productsLoading?: boolean;
   onSelect: (p: Product) => void;
   onCreateNew: () => void;
+  onCopyProduct?: (p: Product) => void;
+  onEditProduct?: (p: Product) => void;
   initialSearch?: string;
   priorityProductId?: string;
 }) {
@@ -434,6 +436,7 @@ function ProductPickerDialog({
                 <TableHead className="text-right">{t.purchaseInvoicesUi.gridColVat}</TableHead>
                 <TableHead>{t.purchaseInvoicesUi.gridColUnit}</TableHead>
                 <TableHead>{t.purchaseInvoicesUi.productPickerCategory}</TableHead>
+                {(onCopyProduct || onEditProduct) && <TableHead className="w-[1%] whitespace-nowrap" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -455,18 +458,50 @@ function ProductPickerDialog({
                   <TableCell className="text-right">{p.taxRate}%</TableCell>
                   <TableCell>{p.unit || 'UN'}</TableCell>
                   <TableCell className="text-xs">{p.category}</TableCell>
+                  {(onCopyProduct || onEditProduct) && (
+                    <TableCell className="text-right whitespace-nowrap">
+                      {onEditProduct ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onEditProduct(p);
+                          }}
+                        >
+                          {t.productFormUi.editThis}
+                        </Button>
+                      ) : null}
+                      {onCopyProduct ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCopyProduct(p);
+                          }}
+                        >
+                          {t.productFormUi.copyThis}
+                        </Button>
+                      ) : null}
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
-              {productsLoading && products.length === 0 && (
+                  {productsLoading && products.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={(onCopyProduct || onEditProduct) ? 8 : 7} className="text-center text-muted-foreground py-8">
                     {t.common.loading}
                   </TableCell>
                 </TableRow>
               )}
               {!productsLoading && filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={(onCopyProduct || onEditProduct) ? 8 : 7} className="text-center text-muted-foreground py-8">
                     {t.purchaseInvoicesUi.poNoProductsFound}
                     <br />
                     <Button variant="link" size="sm" className="mt-2 gap-1" onClick={onCreateNew}>
@@ -1256,6 +1291,8 @@ export default function PurchaseInvoices() {
   const [viewLoading, setViewLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('fatura');
   const [showCreateProduct, setShowCreateProduct] = useState(false);
+  const [copySourceProduct, setCopySourceProduct] = useState<Product | null>(null);
+  const [editProduct, setEditProduct] = useState<Product | null>(null);
   const [createProductReturnTo, setCreateProductReturnTo] = useState<'invoice' | 'po' | null>(null);
   const [pickerSeed, setPickerSeed] = useState<{ search: string; id: string } | null>(null);
   const skipPickerRefreshRef = useRef(false);
@@ -1342,7 +1379,7 @@ export default function PurchaseInvoices() {
     return String(currentBranch?.id || '').trim() || undefined;
   }, [poCreateOpen, poForm.branchId, purchaseWarehouseId, listBranchId, currentBranch?.id]);
 
-  const { products, productsLoading, addProduct: addProductToStock, refreshProducts } = useProducts(
+  const { products, productsLoading, addProduct: addProductToStock, updateProduct, refreshProducts } = useProducts(
     productsBranchId,
     { light: true, enabled: mode === 'create' || poCreateOpen },
   );
@@ -1364,8 +1401,13 @@ export default function PurchaseInvoices() {
     void refreshProducts({ force: true });
   }, [productPickerOpen, poProductPickerOpen, refreshProducts]);
 
-  const openCreateProductFromPicker = useCallback((source: 'invoice' | 'po') => {
+  const openCreateProductFromPicker = useCallback((
+    source: 'invoice' | 'po',
+    opts?: { copyFrom?: Product; edit?: Product },
+  ) => {
     setCreateProductReturnTo(source);
+    setCopySourceProduct(opts?.copyFrom ?? null);
+    setEditProduct(opts?.edit ?? null);
     setProductPickerOpen(false);
     setPoProductPickerOpen(false);
     if (openCreateProductTimerRef.current) clearTimeout(openCreateProductTimerRef.current);
@@ -2135,6 +2177,57 @@ export default function PurchaseInvoices() {
         setGridFocusCell({ row: prev.length - 1, field: 'quantity' });
         return prev;
       }
+      setGridFocusCell({ row: prev.length, field: 'quantity' });
+      return [...prev, newLine];
+    });
+  }, [form.warehouseId, form.warehouseName, currentBranch]);
+
+  const applySavedProductToInvoice = useCallback((p: Product) => {
+    setLines((prev) => {
+      const existing = prev.findIndex((line) => line.productId === p.id);
+      if (existing >= 0) {
+        setGridFocusCell({ row: existing, field: 'quantity' });
+        return prev.map((line, idx) => {
+          if (idx !== existing) return line;
+          return calculateLine({
+            ...line,
+            productCode: p.sku,
+            description: p.name,
+            ivaRate: p.taxRate ?? line.ivaRate,
+            unit: p.unit || line.unit || 'UN',
+            barcode: p.barcode,
+            price1: p.price || line.price1 || 0,
+            price2: p.price2 || 0,
+            price3: p.price3 || 0,
+            price4: p.price4 || 0,
+            lastCost: p.lastCost || p.cost || line.lastCost,
+            avgCost: p.avgCost || p.cost || line.avgCost,
+            currentStock: p.stock,
+          });
+        });
+      }
+      const newLine = calculateLine({
+        productId: p.id,
+        productCode: p.sku,
+        description: p.name,
+        quantity: 1,
+        packaging: 1,
+        unitPrice: p.lastCost || p.cost || 0,
+        discountPct: 0,
+        discountPct2: 0,
+        ivaRate: p.taxRate ?? DEFAULT_VAT_RATE,
+        warehouseId: form.warehouseId || currentBranch?.id || '',
+        warehouseName: form.warehouseName || currentBranch?.name || '',
+        currentStock: p.stock,
+        unit: p.unit || 'UN',
+        barcode: p.barcode,
+        price1: p.price || 0,
+        price2: p.price2 || 0,
+        price3: p.price3 || 0,
+        price4: p.price4 || 0,
+        lastCost: p.lastCost || p.cost || 0,
+        avgCost: p.avgCost || p.cost || 0,
+      });
       setGridFocusCell({ row: prev.length, field: 'quantity' });
       return [...prev, newLine];
     });
@@ -4346,6 +4439,8 @@ export default function PurchaseInvoices() {
         productsLoading={productsLoading}
         onSelect={handleAddProduct}
         onCreateNew={() => openCreateProductFromPicker('invoice')}
+        onCopyProduct={(p) => openCreateProductFromPicker('invoice', { copyFrom: p })}
+        onEditProduct={(p) => openCreateProductFromPicker('invoice', { edit: p })}
         initialSearch={pickerSeed?.search ?? ''}
         priorityProductId={pickerSeed?.id}
       />
@@ -4363,6 +4458,8 @@ export default function PurchaseInvoices() {
           setPoProductPickerOpen(false);
         }}
         onCreateNew={() => openCreateProductFromPicker('po')}
+        onCopyProduct={(p) => openCreateProductFromPicker('po', { copyFrom: p })}
+        onEditProduct={(p) => openCreateProductFromPicker('po', { edit: p })}
         initialSearch={pickerSeed?.search ?? ''}
         priorityProductId={pickerSeed?.id}
       />
@@ -4373,15 +4470,29 @@ export default function PurchaseInvoices() {
       />
       <ProductDetailDialog
         open={showCreateProduct}
-        onOpenChange={setShowCreateProduct}
-        product={null}
+        onOpenChange={(next) => {
+          setShowCreateProduct(next);
+          if (!next) {
+            setCopySourceProduct(null);
+            setEditProduct(null);
+          }
+        }}
+        product={editProduct}
+        copySource={copySourceProduct}
+        copyCatalog={products}
+        catalogProducts={products}
         scopeBranchId={productsBranchId}
         defaultSupplierName={String((form as { supplierName?: string }).supplierName || '')}
-        onSave={async (newProduct) => {
-          const savedProduct = await addProductToStock(newProduct, {
-            skipListRefresh: true,
-            lightweightChangedEvent: true,
-          });
+        onEditExisting={(p) => {
+          setCopySourceProduct(null);
+          setEditProduct(p);
+        }}
+        onSave={async (savedDraft) => {
+          const writeOpts = { skipListRefresh: true, lightweightChangedEvent: true } as const;
+          const isUpdate = Boolean(editProduct && savedDraft.id === editProduct.id);
+          const savedProduct = isUpdate
+            ? await updateProduct(savedDraft, writeOpts)
+            : await addProductToStock(savedDraft, writeOpts);
           const seed = { search: savedProduct.name || savedProduct.sku || '', id: savedProduct.id };
           setPickerSeed(seed);
           skipPickerRefreshRef.current = true;
@@ -4393,14 +4504,23 @@ export default function PurchaseInvoices() {
             }));
             setPoProductSearch(savedProduct.name);
             setPoProductDropdownOpen(true);
+          } else if (isUpdate) {
+            applySavedProductToInvoice(savedProduct);
           } else {
             handleAddProduct(savedProduct);
             window.setTimeout(() => setProductPickerOpen(true), 80);
           }
           setCreateProductReturnTo(null);
+          setEditProduct(null);
+          setCopySourceProduct(null);
           toast({
-            title: t.purchaseInvoicesUi.productCreatedTitle,
-            description: t.purchaseInvoicesUi.productCreatedDesc.replace('{name}', savedProduct.name),
+            title: isUpdate
+              ? t.purchaseInvoicesUi.productUpdatedTitle
+              : t.purchaseInvoicesUi.productCreatedTitle,
+            description: (isUpdate
+              ? t.purchaseInvoicesUi.productUpdatedDesc
+              : t.purchaseInvoicesUi.productCreatedDesc
+            ).replace('{name}', savedProduct.name),
           });
         }}
       />

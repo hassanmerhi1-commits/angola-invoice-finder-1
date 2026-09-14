@@ -59,7 +59,7 @@ export const mediumPreset: ThemePreset = {
     navMenuBtn:
       'h-7 px-2.5 text-xs font-medium text-teal-900/75 hover:text-teal-950 hover:bg-white/60 rounded-md',
     navTabsRow:
-      'h-10 px-2 bg-gradient-to-r from-card via-sky-50/40 to-card hidden lg:flex items-end gap-0.5 border-b border-sky-100 overflow-x-auto',
+      'h-10 px-2 bg-gradient-to-r from-card via-sky-50/40 to-card hidden lg:flex items-end justify-between gap-2 border-b border-sky-100 overflow-hidden',
     navTabActive:
       'bg-white text-teal-800 border-t-[3px] border-x border-t-teal-500 border-x-sky-100 -mb-px shadow-sm',
     navTabIdle: 'text-teal-800/65 hover:text-teal-950 hover:bg-sky-50/80',

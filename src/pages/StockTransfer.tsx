@@ -1,6 +1,6 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { useTranslation } from '@/i18n';
-import { useStockTransfers, useAuth } from '@/hooks/useERP';
+import { useStockTransfers, useAuth, useProducts } from '@/hooks/useERP';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { canApproveStockTransfer, canReceiveStockTransfer } from '@/lib/branchAccess';
@@ -15,11 +15,16 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowRightLeft, Plus, Package, Check, X, Truck, Clock, Search } from 'lucide-react';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { ArrowRightLeft, Plus, Package, Check, X, Truck, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { userHasPermission } from '@/lib/permissions';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
+import { TransferLineGrid, type TransferLineItem } from '@/components/inventory/TransferLineGrid';
+import { ProductDetailDialog } from '@/components/inventory/ProductDetailDialog';
+import { format, type Locale } from 'date-fns';
+import { pt, enUS } from 'date-fns/locale';
+import { useToast } from '@/hooks/use-toast';
+import { api } from '@/lib/api/client';
 
 const transferDialogFullscreen = cn(
   'fixed inset-0 left-0 top-0 z-50 flex h-screen w-screen max-w-none translate-x-0 translate-y-0',
@@ -27,34 +32,11 @@ const transferDialogFullscreen = cn(
   'data-[state=open]:slide-in-from-left-0 data-[state=open]:slide-in-from-top-0',
   'data-[state=closed]:slide-out-to-left-0 data-[state=closed]:slide-out-to-top-0',
 );
-import {
-  filterProductsForSearch,
-  sortProductSearchResults,
-  PRODUCT_LINE_SUGGESTION_LIMIT,
-} from '@/components/inventory/productLineSearch';
-import { format, type Locale } from 'date-fns';
-import { pt, enUS } from 'date-fns/locale';
-import { useToast } from '@/hooks/use-toast';
-import { api } from '@/lib/api/client';
 
-interface TransferItem {
-  productId: string;
-  productName: string;
-  sku: string;
-  quantity: number;
-  availableStock: number;
-}
+type TransferItem = TransferLineItem;
 
 function clampInt(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-function parsePositiveQty(raw: string, fallback: number, max: number): number {
-  const digits = raw.replace(/\D/g, '');
-  if (!digits) return fallback;
-  const n = parseInt(digits, 10);
-  if (Number.isNaN(n)) return fallback;
-  return clampInt(n, 1, max);
 }
 
 function parseNonNegativeQty(raw: string, fallback: number, max: number): number {
@@ -76,6 +58,9 @@ export default function StockTransfer() {
   const canTransfer = !!user && userHasPermission(user.role, user.permissionOverrides, 'inventory_transfer');
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [showCreateProduct, setShowCreateProduct] = useState(false);
+  const [transferLineSeed, setTransferLineSeed] = useState<Product | null>(null);
+  const [createdOverlay, setCreatedOverlay] = useState<Product[]>([]);
   const [receiveDialogOpen, setReceiveDialogOpen] = useState(false);
   const [selectedTransfer, setSelectedTransfer] = useState<StockTransferType | null>(null);
   const [fromBranchId, setFromBranchId] = useState(currentBranch?.id || '');
@@ -86,8 +71,6 @@ export default function StockTransfer() {
   const [toWarehouses, setToWarehouses] = useState<Array<{ id: string; code: string; name: string; isDefault?: boolean }>>([]);
   const [notes, setNotes] = useState('');
   const [transferItems, setTransferItems] = useState<TransferItem[]>([]);
-  const [transferQtyDrafts, setTransferQtyDrafts] = useState<Record<string, string>>({});
-  const [productSearch, setProductSearch] = useState('');
   const [receivedQuantities, setReceivedQuantities] = useState<Record<string, number>>({});
   const [receivedQtyDrafts, setReceivedQtyDrafts] = useState<Record<string, string>>({});
 
@@ -132,31 +115,21 @@ export default function StockTransfer() {
     }
   }, [dialogOpen, fromBranchId, refreshSourceProducts]);
 
+  const { addProduct, products: createCatalog } = useProducts(fromBranchId || undefined, {
+    enabled: showCreateProduct,
+    light: true,
+  });
+
+  const transferCatalog = useMemo(() => {
+    const extra = createdOverlay.filter((p) => !sourceProducts.some((s) => s.id === p.id));
+    return extra.length ? [...sourceProducts, ...extra] : sourceProducts;
+  }, [sourceProducts, createdOverlay]);
+
   const sourceStockByProductId = useMemo(() => {
     const map = new Map<string, number>();
-    for (const p of sourceProducts) map.set(p.id, Number(p.stock) || 0);
+    for (const p of transferCatalog) map.set(p.id, Number(p.stock) || 0);
     return map;
-  }, [sourceProducts]);
-
-  // Keep each line's available-stock cap live: a snapshot taken at "add" time would
-  // otherwise stay stuck at a stale (often lower) number even after a purchase/adjust
-  // brings the real stock up, capping the qty the user is allowed to type in.
-  useEffect(() => {
-    setTransferItems((items) => {
-      let changed = false;
-      const next = items.map((item) => {
-        const liveStock = sourceStockByProductId.get(item.productId);
-        if (liveStock == null || liveStock === item.availableStock) return item;
-        changed = true;
-        return {
-          ...item,
-          availableStock: liveStock,
-          quantity: Math.min(item.quantity, liveStock),
-        };
-      });
-      return changed ? next : items;
-    });
-  }, [sourceStockByProductId]);
+  }, [transferCatalog]);
 
   const pendingTransfers = transfers.filter(t => t.status === 'pending');
   const inTransitTransfers = transfers.filter(t => t.status === 'in_transit');
@@ -169,72 +142,31 @@ export default function StockTransfer() {
     setToWarehouseId('');
     setNotes('');
     setTransferItems([]);
-    setTransferQtyDrafts({});
-    setProductSearch('');
   };
 
-  const usedProductIds = useMemo(
-    () => new Set(transferItems.map((item) => item.productId)),
-    [transferItems],
-  );
-
-  const searchableSourceProducts = useMemo(
-    () => sourceProducts.filter((p) => p.isActive !== false && (p.stock ?? 0) > 0),
-    [sourceProducts],
-  );
-
-  const productSearchResults = useMemo(() => {
-    const term = productSearch.trim();
-    if (!term || !fromBranchId) return [];
-    return filterProductsForSearch(
-      searchableSourceProducts,
-      term,
-      usedProductIds,
-      fromBranchId,
-    )
-      .sort((a, b) => sortProductSearchResults(a, b, term, fromBranchId))
-      .slice(0, PRODUCT_LINE_SUGGESTION_LIMIT);
-  }, [productSearch, fromBranchId, searchableSourceProducts, usedProductIds]);
-
-  const commitTransferItems = (items: TransferItem[], drafts: Record<string, string>): TransferItem[] =>
-    items.map((item) => {
-      const raw = drafts[item.productId];
-      if (raw === undefined) return item;
-      return {
-        ...item,
-        quantity: parsePositiveQty(raw, item.quantity, item.availableStock),
-      };
+  const handleTransferLinesChange = useCallback((items: TransferItem[]) => {
+    setTransferItems((prev) => {
+      if (
+        prev.length === items.length &&
+        prev.every((item, i) =>
+          item.productId === items[i].productId
+          && item.quantity === items[i].quantity
+          && item.availableStock === items[i].availableStock,
+        )
+      ) {
+        return prev;
+      }
+      return items;
     });
-
-  const handleAddProduct = (product: Product) => {
-    if (transferItems.find(item => item.productId === product.id)) {
-      toast({
-        title: t.stockTransferUi.productAlreadyAddedTitle,
-        description: t.stockTransferUi.productAlreadyInTransferList,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setTransferItems([
-      ...transferItems,
-      {
-        productId: product.id,
-        productName: product.name,
-        sku: product.sku,
-        quantity: 1,
-        availableStock: product.stock,
-      },
-    ]);
-  };
+  }, []);
 
   // Clear items when source branch changes
   const handleFromBranchChange = (branchId: string) => {
     setFromBranchId(branchId);
     setFromWarehouseId('');
     setTransferItems([]);
-    setTransferQtyDrafts({});
-    setProductSearch('');
+    setCreatedOverlay([]);
+    setTransferLineSeed(null);
     // Reset destination if same as new source
     if (toBranchId === branchId) {
       setToBranchId('');
@@ -278,25 +210,6 @@ export default function StockTransfer() {
     return () => { cancelled = true; };
   }, [toBranchId]);
 
-  const updateItemQuantity = (productId: string, quantity: number) => {
-    setTransferItems(items =>
-      items.map(item =>
-        item.productId === productId
-          ? { ...item, quantity: Math.min(quantity, item.availableStock) }
-          : item
-      )
-    );
-  };
-
-  const removeItem = (productId: string) => {
-    setTransferItems(items => items.filter(item => item.productId !== productId));
-    setTransferQtyDrafts((prev) => {
-      const next = { ...prev };
-      delete next[productId];
-      return next;
-    });
-  };
-
   const handleCreateTransfer = async () => {
     if (!fromBranchId || !toBranchId || transferItems.length === 0 || !user) {
       toast({
@@ -308,7 +221,7 @@ export default function StockTransfer() {
     }
 
     try {
-      const itemsToSend = commitTransferItems(transferItems, transferQtyDrafts);
+      const itemsToSend = transferItems;
       await createTransfer(
         fromBranchId,
         toBranchId,
@@ -575,7 +488,12 @@ export default function StockTransfer() {
         open={dialogOpen}
         onOpenChange={(open) => {
           setDialogOpen(open);
-          if (!open) resetForm();
+          if (!open) {
+            resetForm();
+            setCreatedOverlay([]);
+            setTransferLineSeed(null);
+            setShowCreateProduct(false);
+          }
         }}
       >
         <DialogContent className={cn(transferDialogFullscreen, '[&>button]:hidden')}>
@@ -602,8 +520,8 @@ export default function StockTransfer() {
               </Button>
             </div>
           </DialogHeader>
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-4 py-3 sm:px-6">
-            <div className="grid grid-cols-2 gap-4">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3 sm:px-6">
+            <div className="grid shrink-0 grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>{t.stockTransferUi.fromLabel}</Label>
                 <Select value={fromBranchId} onValueChange={handleFromBranchChange}>
@@ -674,131 +592,20 @@ export default function StockTransfer() {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>
-                {t.stockTransferUi.selectProduct}
-                {fromBranchId
-                  ? ` — ${branches.find((b) => b.id === fromBranchId)?.name || ''}`
-                  : ''}
-              </Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                <Input
-                  value={productSearch}
-                  onChange={(e) => setProductSearch(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && productSearchResults[0]) {
-                      e.preventDefault();
-                      handleAddProduct(productSearchResults[0]);
-                      setProductSearch('');
-                    }
-                  }}
-                  placeholder={
-                    fromBranchId
-                      ? t.stockTransferUi.searchProductPlaceholder
-                      : t.stockTransferUi.selectSourceFirst
-                  }
-                  disabled={!fromBranchId}
-                  className="pl-10"
-                  autoComplete="off"
-                />
-              </div>
-              {fromBranchId && productSearch.trim() && (
-                <ScrollArea className="h-52 border rounded-md bg-background">
-                  {productSearchResults.length === 0 ? (
-                    <p className="text-sm text-muted-foreground p-3">
-                      {t.stockTransferUi.noSearchResults}
-                    </p>
-                  ) : (
-                    <ul className="divide-y">
-                      {productSearchResults.map((product) => (
-                        <li key={product.id}>
-                          <button
-                            type="button"
-                            className={cn(
-                              'w-full text-left px-3 py-2 text-sm hover:bg-muted/80 transition-colors',
-                              'flex flex-wrap items-baseline gap-x-2 gap-y-0.5',
-                            )}
-                            onClick={() => {
-                              handleAddProduct(product);
-                              setProductSearch('');
-                            }}
-                          >
-                            <span className="font-mono font-semibold">{product.sku}</span>
-                            <span className="text-muted-foreground">—</span>
-                            <span className="flex-1 min-w-0">{product.name}</span>
-                            <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                              {t.stockTransferUi.stockAvailable.replace(
-                                '{stock}',
-                                String(product.stock ?? 0),
-                              )}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </ScrollArea>
-              )}
-            </div>
+            <TransferLineGrid
+              key={`${dialogOpen}-${fromBranchId}`}
+              products={transferCatalog}
+              branchId={fromBranchId}
+              stockByProductId={sourceStockByProductId}
+              enabled={!!fromBranchId}
+              onItemsChange={handleTransferLinesChange}
+              autoFocus={dialogOpen}
+              onAddProduct={() => setShowCreateProduct(true)}
+              seedProduct={transferLineSeed}
+              onSeedConsumed={() => setTransferLineSeed(null)}
+            />
 
-            {transferItems.length > 0 && (
-              <div className="border rounded-lg max-h-[min(40vh,320px)] overflow-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t.stockTransferUi.colProduct}</TableHead>
-                      <TableHead>{t.stockTransferUi.colSku}</TableHead>
-                      <TableHead>{t.stockTransferUi.colAvailable}</TableHead>
-                      <TableHead>{t.stockTransferUi.colQuantity}</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {transferItems.map(item => (
-                      <TableRow key={item.productId}>
-                        <TableCell>{item.productName}</TableCell>
-                        <TableCell>{item.sku}</TableCell>
-                        <TableCell>{item.availableStock}</TableCell>
-                        <TableCell>
-                          <Input
-                            type="text"
-                            inputMode="numeric"
-                            autoComplete="off"
-                            value={transferQtyDrafts[item.productId] ?? String(item.quantity)}
-                            onChange={(e) => {
-                              const raw = e.target.value.replace(/\D/g, '');
-                              setTransferQtyDrafts((prev) => ({ ...prev, [item.productId]: raw }));
-                            }}
-                            onBlur={() => {
-                              const raw = transferQtyDrafts[item.productId];
-                              if (raw === undefined) return;
-                              updateItemQuantity(
-                                item.productId,
-                                parsePositiveQty(raw, item.quantity, item.availableStock),
-                              );
-                              setTransferQtyDrafts((prev) => {
-                                const next = { ...prev };
-                                delete next[item.productId];
-                                return next;
-                              });
-                            }}
-                            className="w-24"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Button size="sm" variant="ghost" onClick={() => removeItem(item.productId)}>
-                            <X className="w-4 h-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-
-            <div className="space-y-2">
+            <div className="shrink-0 space-y-2">
               <Label>{t.stockTransferUi.notesLabel}</Label>
               <Textarea
                 value={notes}
@@ -819,6 +626,35 @@ export default function StockTransfer() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {showCreateProduct ? (
+        <ProductDetailDialog
+          open
+          onOpenChange={setShowCreateProduct}
+          product={null}
+          copyCatalog={createCatalog.length > 0 ? createCatalog : transferCatalog}
+          catalogProducts={createCatalog.length > 0 ? createCatalog : transferCatalog}
+          scopeBranchId={fromBranchId || null}
+          onSave={async (product) => {
+            const saved = await addProduct(
+              {
+                ...product,
+                branchId: fromBranchId || product.branchId,
+              },
+              { skipListRefresh: true, lightweightChangedEvent: true },
+            );
+            setCreatedOverlay((prev) => [...prev.filter((p) => p.id !== saved.id), saved]);
+            setTransferLineSeed(saved);
+            void refreshSourceProducts();
+            toast({
+              title: t.productFormUi.productCreated,
+              description: t.productFormUi.savedDesc
+                .replace('{name}', saved.name)
+                .replace('{action}', t.productFormUi.actionCreated),
+            });
+          }}
+        />
+      ) : null}
 
       {/* Receive Dialog */}
       <Dialog open={receiveDialogOpen} onOpenChange={setReceiveDialogOpen}>

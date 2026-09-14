@@ -27,6 +27,7 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   PackageMinus,
+  Package,
   Plus,
   Trash2,
   Save,
@@ -109,6 +110,10 @@ interface StockExitDialogProps {
   currentBranch: Branch | null;
   warehouseId: string | null;
   initialProduct?: Product | null;
+  onAddProduct?: () => void;
+  onEditProduct?: (product: Product) => void;
+  seedProduct?: Product | null;
+  onSeedConsumed?: () => void;
   onApplyExit: (
     items: ExitItem[],
     meta: {
@@ -175,6 +180,10 @@ export function StockExitDialog({
   currentBranch,
   warehouseId,
   initialProduct,
+  onAddProduct,
+  onEditProduct,
+  seedProduct = null,
+  onSeedConsumed,
   onApplyExit,
 }: StockExitDialogProps) {
   const { toast } = useToast();
@@ -193,9 +202,14 @@ export function StockExitDialog({
   const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
 
   const catalogProducts = useMemo(() => {
-    if (searchProducts && searchProducts.length > 0) return searchProducts;
-    return products;
-  }, [searchProducts, products]);
+    const base = searchProducts && searchProducts.length > 0 ? searchProducts : products;
+    if (!seedProduct) return base;
+    const idx = base.findIndex((p) => p.id === seedProduct.id);
+    if (idx < 0) return [...base, seedProduct];
+    const next = base.slice();
+    next[idx] = { ...base[idx], ...seedProduct };
+    return next;
+  }, [searchProducts, products, seedProduct]);
 
   const branchNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -535,6 +549,26 @@ export function StockExitDialog({
     [focusQtyLine, resolveProductForExit, toast, t.stockExitUi, searchableProducts, exitBranchId, resolveBranchName],
   );
 
+  useEffect(() => {
+    if (!open || !seedProduct) return;
+    const lines = linesRef.current;
+    if (lines.some((l) => l.productId === seedProduct.id)) {
+      onSeedConsumed?.();
+      return;
+    }
+    if ((seedProduct.stock ?? 0) <= 0) {
+      onSeedConsumed?.();
+      return;
+    }
+    const empty = lines.find((l) => !l.productId) || lines[0];
+    if (!empty) {
+      onSeedConsumed?.();
+      return;
+    }
+    selectProductOnRow(empty.rowId, seedProduct);
+    onSeedConsumed?.();
+  }, [open, seedProduct, selectProductOnRow, onSeedConsumed]);
+
   const updateLineSearch = (rowId: string, search: string) => {
     setForm((prev) => ({
       ...prev,
@@ -738,6 +772,12 @@ export function StockExitDialog({
               </Badge>
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              {onAddProduct ? (
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs px-2" onClick={onAddProduct}>
+                  <Package className="h-3.5 w-3.5 mr-1" />
+                  {t.stockExitUi.newProduct}
+                </Button>
+              ) : null}
               <Button type="button" variant="outline" size="sm" className="h-7 text-xs px-2" onClick={addRows}>
                 <Plus className="h-3.5 w-3.5 mr-1" />
                 {t.stockExitUi.addLine}
@@ -1074,32 +1114,51 @@ export function StockExitDialog({
                 activePickerSuggestions.map((p, idx) => {
                   const outOfStock = (p.stock ?? 0) <= 0;
                   return (
-                    <button
+                    <div
                       key={p.id}
-                      type="button"
                       role="option"
                       aria-selected={idx === pickerHighlightIndex}
                       className={cn(
-                        'w-full cursor-pointer text-left px-2 py-1.5 text-[11px] leading-tight border-b last:border-b-0 hover:bg-muted',
+                        'flex items-center gap-1 border-b last:border-b-0 hover:bg-muted',
                         outOfStock && 'opacity-60',
                         idx === pickerHighlightIndex && 'nexor-row-selected',
                       )}
                       onMouseEnter={() => setPickerHighlightIndex(idx)}
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        selectProductOnRow(pickerRowId, p);
-                      }}
                     >
-                      <span className="font-mono">{p.sku}</span>
-                      <span className="mx-0.5">—</span>
-                      {p.name}
-                      <span className="text-muted-foreground ml-1">
-                        ({p.stock} {p.unit}
-                        {p.branchId ? ` · ${resolveBranchName(p.branchId)}` : ''}
-                        {outOfStock ? ` · ${t.stockExitUi.noStockShort}` : ''})
-                      </span>
-                    </button>
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 cursor-pointer text-left px-2 py-1.5 text-[11px] leading-tight"
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          selectProductOnRow(pickerRowId, p);
+                        }}
+                      >
+                        <span className="font-mono">{p.sku}</span>
+                        <span className="mx-0.5">—</span>
+                        {p.name}
+                        <span className="text-muted-foreground ml-1">
+                          ({p.stock} {p.unit}
+                          {p.branchId ? ` · ${resolveBranchName(p.branchId)}` : ''}
+                          {outOfStock ? ` · ${t.stockExitUi.noStockShort}` : ''})
+                        </span>
+                      </button>
+                      {onEditProduct ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 shrink-0 px-1.5 mr-1 text-[11px]"
+                          onPointerDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onEditProduct(p);
+                          }}
+                        >
+                          {t.productFormUi.editThis}
+                        </Button>
+                      ) : null}
+                    </div>
                   );
                 })
               )}

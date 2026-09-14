@@ -123,7 +123,10 @@ interface StockEntryDialogProps {
   warehouseId: string | null;
   canSwitchBranch?: boolean;
   onAddProduct?: () => void;
+  onEditProduct?: (product: Product) => void;
   initialProduct?: Product | null;
+  seedProduct?: Product | null;
+  onSeedConsumed?: () => void;
   onApplyEntry: (
     items: EntryItem[],
     meta: {
@@ -211,7 +214,10 @@ export function StockEntryDialog({
   warehouseId,
   canSwitchBranch = false,
   onAddProduct,
+  onEditProduct,
   initialProduct,
+  seedProduct = null,
+  onSeedConsumed,
   onApplyEntry,
 }: StockEntryDialogProps) {
   const { toast } = useToast();
@@ -238,9 +244,14 @@ export function StockEntryDialog({
   const [importCatalogLoading, setImportCatalogLoading] = useState(false);
 
   const catalogProducts = useMemo(() => {
-    if (searchProducts && searchProducts.length > 0) return searchProducts;
-    return products;
-  }, [searchProducts, products]);
+    const base = searchProducts && searchProducts.length > 0 ? searchProducts : products;
+    if (!seedProduct) return base;
+    const idx = base.findIndex((p) => p.id === seedProduct.id);
+    if (idx < 0) return [...base, seedProduct];
+    const next = base.slice();
+    next[idx] = { ...base[idx], ...seedProduct };
+    return next;
+  }, [searchProducts, products, seedProduct]);
 
   const searchableProducts = useMemo(
     () => catalogProducts.filter((p) => p.isActive !== false),
@@ -715,6 +726,22 @@ export function StockEntryDialog({
     },
     [focusQtyLine, resolveProductForEntry],
   );
+
+  useEffect(() => {
+    if (!open || !seedProduct) return;
+    const lines = linesRef.current;
+    if (lines.some((l) => l.productId === seedProduct.id)) {
+      onSeedConsumed?.();
+      return;
+    }
+    const empty = lines.find((l) => !l.productId) || lines[0];
+    if (!empty) {
+      onSeedConsumed?.();
+      return;
+    }
+    selectProductOnRow(empty.rowId, seedProduct);
+    onSeedConsumed?.();
+  }, [open, seedProduct, selectProductOnRow, onSeedConsumed]);
 
   const updateLineSearch = (rowId: string, search: string) => {
     setForm((prev) => ({
@@ -1686,29 +1713,48 @@ export function StockEntryDialog({
                 </p>
               ) : (
                 activePickerSuggestions.map((p, idx) => (
-                  <button
+                  <div
                     key={p.id}
-                    type="button"
                     role="option"
                     aria-selected={idx === pickerHighlightIndex}
                     className={cn(
-                      'w-full cursor-pointer text-left px-2 py-1.5 text-[11px] leading-tight border-b last:border-b-0 hover:bg-muted',
+                      'flex items-center gap-1 border-b last:border-b-0 hover:bg-muted',
                       idx === pickerHighlightIndex && 'nexor-row-selected',
                     )}
                     onMouseEnter={() => setPickerHighlightIndex(idx)}
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      selectProductOnRow(pickerRowId, p);
-                    }}
                   >
-                    <span className="font-mono">{p.sku}</span>
-                    <span className="mx-0.5">—</span>
-                    {p.name}
-                    <span className="text-muted-foreground ml-1">
-                      ({stockAtEntryBranch(p)} {p.unit} @ {resolveBranchName(entryBranchId)})
-                    </span>
-                  </button>
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 cursor-pointer text-left px-2 py-1.5 text-[11px] leading-tight"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        selectProductOnRow(pickerRowId, p);
+                      }}
+                    >
+                      <span className="font-mono">{p.sku}</span>
+                      <span className="mx-0.5">—</span>
+                      {p.name}
+                      <span className="text-muted-foreground ml-1">
+                        ({stockAtEntryBranch(p)} {p.unit} @ {resolveBranchName(entryBranchId)})
+                      </span>
+                    </button>
+                    {onEditProduct ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 shrink-0 px-1.5 mr-1 text-[11px]"
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onEditProduct(p);
+                        }}
+                      >
+                        {t.productFormUi.editThis}
+                      </Button>
+                    ) : null}
+                  </div>
                 ))
               )}
             </div>,

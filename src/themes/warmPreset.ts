@@ -61,7 +61,7 @@ export const warmChrome = {
   navMenuBtn:
     'h-7 px-2.5 text-xs font-medium text-orange-950/80 hover:text-orange-950 hover:bg-white/60 rounded-md',
   navTabsRow:
-    'h-10 px-2 bg-gradient-to-r from-orange-100 via-amber-50 to-rose-100/80 hidden lg:flex items-end gap-0.5 border-b border-orange-200/70 overflow-x-auto',
+    'h-10 px-2 bg-gradient-to-r from-orange-100 via-amber-50 to-rose-100/80 hidden lg:flex items-end justify-between gap-2 border-b border-orange-200/70 overflow-hidden',
   navTabActive:
     'bg-white text-orange-900 border-t-[3px] border-x border-t-orange-500 border-x-orange-200 -mb-px shadow-sm',
   navTabIdle: 'text-orange-900/70 hover:text-orange-950 hover:bg-white/70',

@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Loader2 } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api/client';
 import { isDemoMode } from '@/lib/api/config';
@@ -20,24 +19,40 @@ export function GlobalSearch() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const gs = t.globalSearchUi;
-  const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<SearchResult>(EMPTY);
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
+        inputRef.current?.focus();
         setOpen(true);
+      }
+      if (e.key === 'Escape' && document.activeElement === inputRef.current) {
+        setOpen(false);
+        inputRef.current?.blur();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
   const runSearch = useCallback(async (value: string) => {
     setQ(value);
+    setOpen(true);
     if (isDemoMode() || value.trim().length < 2) {
       setResults(EMPTY);
       return;
@@ -96,61 +111,55 @@ export function GlobalSearch() {
     },
   ].filter((s) => s.rows.length > 0);
 
-  return (
-    <>
-      <button
-        type="button"
-        className="hidden md:inline-flex items-center gap-2 h-7 px-2 rounded-md border border-sidebar-border bg-sidebar-accent text-xs text-sidebar-foreground/80 hover:text-sidebar-foreground"
-        onClick={() => setOpen(true)}
-        title={gs.buttonTitle}
-      >
-        <Search className="h-3.5 w-3.5" />
-        <span>{gs.buttonLabel}</span>
-        <kbd className="text-[10px] opacity-70">Ctrl+K</kbd>
-      </button>
+  const showPanel = open && (loading || q.trim().length >= 2);
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden">
-          <DialogHeader className="px-4 pt-4 pb-2">
-            <DialogTitle className="text-base">{gs.dialogTitle}</DialogTitle>
-          </DialogHeader>
-          <div className="px-4 pb-3">
-            <Input
-              autoFocus
-              placeholder={gs.placeholder}
-              value={q}
-              onChange={(e) => void runSearch(e.target.value)}
-            />
-          </div>
-          <div className="max-h-80 overflow-y-auto border-t px-2 py-2">
-            {loading && (
-              <div className="flex items-center gap-2 px-2 py-3 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> {gs.searching}
+  return (
+    <div ref={boxRef} className="relative hidden md:block w-72 xl:w-80">
+      <Search className="pointer-events-none absolute left-2 top-1/2 z-10 h-3.5 w-3.5 -translate-y-1/2 text-sidebar-foreground/60" />
+      <Input
+        ref={inputRef}
+        value={q}
+        onChange={(e) => void runSearch(e.target.value)}
+        onFocus={() => {
+          if (q.trim().length >= 2) setOpen(true);
+        }}
+        placeholder={gs.placeholder}
+        title={gs.buttonTitle}
+        className="h-7 border-sidebar-border bg-sidebar-accent pl-7 pr-10 text-xs text-sidebar-foreground placeholder:text-sidebar-foreground/55"
+      />
+      <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-sidebar-foreground/50">
+        Ctrl+K
+      </kbd>
+
+      {showPanel && (
+        <div className="absolute right-0 top-full z-50 mt-1 w-[22rem] max-h-80 overflow-y-auto rounded-md border bg-popover p-2 shadow-lg">
+          {loading && (
+            <div className="flex items-center gap-2 px-2 py-3 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> {gs.searching}
+            </div>
+          )}
+          {!loading && q.trim().length >= 2 && sections.length === 0 && (
+            <p className="px-2 py-3 text-sm text-muted-foreground">{gs.noMatches}</p>
+          )}
+          {sections.map((section) => (
+            <div key={section.title} className="mb-2 last:mb-0">
+              <div className="px-2 py-1 text-[11px] font-semibold uppercase text-muted-foreground">
+                {section.title}
               </div>
-            )}
-            {!loading && q.trim().length >= 2 && sections.length === 0 && (
-              <p className="px-2 py-3 text-sm text-muted-foreground">{gs.noMatches}</p>
-            )}
-            {sections.map((section) => (
-              <div key={section.title} className="mb-2">
-                <div className="px-2 py-1 text-[11px] font-semibold uppercase text-muted-foreground">
-                  {section.title}
-                </div>
-                {section.rows.map((row) => (
-                  <button
-                    key={row.key}
-                    type="button"
-                    className="w-full text-left rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                    onClick={() => go(row.href)}
-                  >
-                    {row.label}
-                  </button>
-                ))}
-              </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
+              {section.rows.map((row) => (
+                <button
+                  key={row.key}
+                  type="button"
+                  className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+                  onClick={() => go(row.href)}
+                >
+                  {row.label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

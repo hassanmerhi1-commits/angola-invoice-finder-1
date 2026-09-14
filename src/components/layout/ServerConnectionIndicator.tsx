@@ -39,7 +39,7 @@ interface ElectronStatus {
 
 const isElectron = !!(window as any).electronAPI?.db;
 
-export function ServerConnectionIndicator() {
+export function ServerConnectionIndicator({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation();
   const [health, setHealth] = useState<HealthData | null>(null);
   const [backendReachable, setBackendReachable] = useState(false);
@@ -187,7 +187,8 @@ export function ServerConnectionIndicator() {
             onClick={checkHealth}
             disabled={isChecking}
             className={cn(
-              "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-all",
+              "flex items-center rounded-md border font-medium transition-all",
+              compact ? "gap-1 px-1.5 py-0.5 text-[10px]" : "gap-1.5 px-2.5 py-1.5 text-xs",
               allGood
                 ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
                 : systemReachable
@@ -196,29 +197,30 @@ export function ServerConnectionIndicator() {
             )}
           >
             {isChecking ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <RefreshCw className={cn("animate-spin", compact ? "w-3 h-3" : "w-3.5 h-3.5")} />
             ) : (
               <>
                 {isElectron ? (
-                  <Monitor className={cn("w-3.5 h-3.5", allGood ? "text-emerald-500" : systemReachable ? "text-orange-500" : "text-destructive")} />
+                  <Monitor className={cn(compact ? "w-3 h-3" : "w-3.5 h-3.5", allGood ? "text-emerald-500" : systemReachable ? "text-orange-500" : "text-destructive")} />
                 ) : (
-                  <Container className={cn("w-3.5 h-3.5", allGood ? "text-emerald-500" : systemReachable ? "text-orange-500" : "text-destructive")} />
+                  <Container className={cn(compact ? "w-3 h-3" : "w-3.5 h-3.5", allGood ? "text-emerald-500" : systemReachable ? "text-orange-500" : "text-destructive")} />
                 )}
                 
                 <span className={cn(
-                  "w-1.5 h-1.5 rounded-full",
+                  "rounded-full",
+                  compact ? "w-1 h-1" : "w-1.5 h-1.5",
                   allGood ? "bg-emerald-500 animate-pulse" : systemReachable ? "bg-orange-500" : "bg-destructive"
                 )} />
 
-                <Database className={cn("w-3.5 h-3.5", dbConnected ? "text-emerald-500" : "text-destructive")} />
+                <Database className={cn(compact ? "w-3 h-3" : "w-3.5 h-3.5", dbConnected ? "text-emerald-500" : "text-destructive")} />
               </>
             )}
 
-            <span className="hidden sm:inline">
+            <span className={compact ? "inline" : "hidden sm:inline"}>
               {isChecking ? t.connectionUi.checking : allGood ? t.connectionUi.connected : systemReachable ? t.connectionUi.dbOffline : t.connectionUi.disconnected}
             </span>
 
-            {health?.database?.latency != null && (
+            {!compact && health?.database?.latency != null && (
               <span className="text-[10px] opacity-70">{health.database.latency}ms</span>
             )}
           </button>
